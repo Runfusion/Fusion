@@ -149,6 +149,145 @@ describe("SetupWizardModal", () => {
     expect(registerBtn.disabled).toBe(false);
   });
 
+  it("existing-directory submit payload is unchanged", async () => {
+    mockRegisterProject.mockResolvedValueOnce({
+      id: "proj_existing",
+      name: "existing-project",
+      path: "/existing/project",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    render(
+      <SetupWizardModal
+        onProjectRegistered={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("/path/to/your/project"), {
+      target: { value: "/existing/project" },
+    });
+
+    fireEvent.click(screen.getByText("Register Project"));
+
+    await waitFor(() => {
+      expect(mockRegisterProject).toHaveBeenCalledWith({
+        name: "project",
+        path: "/existing/project",
+        isolationMode: "in-process",
+        nodeId: undefined,
+        cloneUrl: undefined,
+      });
+    });
+  });
+
+  it("clone mode renders repository url input and destination picker", () => {
+    render(
+      <SetupWizardModal
+        onProjectRegistered={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByLabelText("Clone Git Repository"));
+
+    expect(screen.getByLabelText("Repository URL")).toBeDefined();
+    expect(screen.getByPlaceholderText("/path/for/new-clone")).toBeDefined();
+    expect(screen.getByText(/Fusion will run git clone into the destination directory/)).toBeDefined();
+  });
+
+  it("clone mode submit sends cloneUrl payload", async () => {
+    mockRegisterProject.mockResolvedValueOnce({
+      id: "proj_clone",
+      name: "fusion",
+      path: "/tmp/fusion",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    render(
+      <SetupWizardModal
+        onProjectRegistered={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByLabelText("Clone Git Repository"));
+    fireEvent.change(screen.getByLabelText("Repository URL"), {
+      target: { value: "https://github.com/runfusion/fusion.git" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("/path/for/new-clone"), {
+      target: { value: "/tmp/fusion" },
+    });
+
+    fireEvent.click(screen.getByText("Register Project"));
+
+    await waitFor(() => {
+      expect(mockRegisterProject).toHaveBeenCalledWith({
+        name: "fusion",
+        path: "/tmp/fusion",
+        isolationMode: "in-process",
+        nodeId: undefined,
+        cloneUrl: "https://github.com/runfusion/fusion.git",
+      });
+    });
+  });
+
+  it("register button disabled/enabled logic is mode-aware", () => {
+    render(
+      <SetupWizardModal
+        onProjectRegistered={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    const registerBtn = screen.getByText("Register Project").closest("button")!;
+    expect(registerBtn.disabled).toBe(true);
+
+    fireEvent.click(screen.getByLabelText("Clone Git Repository"));
+    fireEvent.change(screen.getByPlaceholderText("/path/for/new-clone"), {
+      target: { value: "/tmp/repo" },
+    });
+    expect(registerBtn.disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText("Repository URL"), {
+      target: { value: "https://github.com/runfusion/fusion.git" },
+    });
+    expect(registerBtn.disabled).toBe(false);
+
+    fireEvent.click(screen.getByLabelText("Use Existing Directory"));
+    expect(registerBtn.disabled).toBe(false);
+  });
+
+  it("auto-suggested name updates until manually edited", () => {
+    render(
+      <SetupWizardModal
+        onProjectRegistered={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByLabelText("Clone Git Repository"));
+
+    const nameInput = screen.getByPlaceholderText("my-project") as HTMLInputElement;
+    const destinationInput = screen.getByPlaceholderText("/path/for/new-clone");
+
+    fireEvent.change(destinationInput, { target: { value: "/tmp/fusion" } });
+    expect(nameInput.value).toBe("fusion");
+
+    fireEvent.change(destinationInput, { target: { value: "/tmp/fusion-next" } });
+    expect(nameInput.value).toBe("fusion-next");
+
+    fireEvent.change(nameInput, { target: { value: "custom-name" } });
+    fireEvent.change(destinationInput, { target: { value: "/tmp/fusion-final" } });
+    expect(nameInput.value).toBe("custom-name");
+  });
+
   it("shows error state on registration failure", async () => {
     mockRegisterProject.mockRejectedValueOnce(new Error("Path does not exist"));
 

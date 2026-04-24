@@ -2799,6 +2799,32 @@ describe("registerProject", () => {
       })
     );
   });
+
+  it("includes cloneUrl when cloning during registration", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_PROJECT));
+
+    await registerProject({
+      name: "Test Project",
+      path: "/path/to/new/project",
+      isolationMode: "child-process",
+      nodeId: "node-1",
+      cloneUrl: "https://github.com/runfusion/fusion.git",
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/projects",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          name: "Test Project",
+          path: "/path/to/new/project",
+          isolationMode: "child-process",
+          nodeId: "node-1",
+          cloneUrl: "https://github.com/runfusion/fusion.git",
+        }),
+      }),
+    );
+  });
 });
 
 describe("unregisterProject", () => {

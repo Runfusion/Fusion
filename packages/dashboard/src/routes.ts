@@ -12,7 +12,7 @@ import * as fsPromises from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline as streamPipeline } from "node:stream/promises";
 import { execFile } from "node:child_process";
-import { resolve, sep, join } from "node:path";
+import { resolve, sep, join, dirname, isAbsolute } from "node:path";
 import { tmpdir } from "node:os";
 import * as nodeFs from "node:fs";
 import { promisify } from "node:util";
@@ -15559,13 +15559,19 @@ async function persistImportedSkills(
   /**
    * POST /api/projects
    * Register a new project.
-   * Body: { name: string, path: string, isolationMode?: "in-process" | "child-process" }
+   * Body: {
+   *   name: string,
+   *   path: string,
+   *   isolationMode?: "in-process" | "child-process",
+   *   nodeId?: string,
+   *   cloneUrl?: string
+   * }
    * Returns: RegisteredProject
    */
   router.post("/projects", async (req, res) => {
     try {
-      const { name, path, isolationMode = "in-process", nodeId } = req.body;
-      
+      const { name, path, isolationMode = "in-process", nodeId, cloneUrl } = req.body;
+
       if (!name || typeof name !== "string" || !name.trim()) {
         throw badRequest("name is required and must be a non-empty string");
       }
@@ -15575,29 +15581,122 @@ async function persistImportedSkills(
       if (!["in-process", "child-process"].includes(isolationMode)) {
         throw badRequest("isolationMode must be 'in-process' or 'child-process'");
       }
-      
-      // Check if path exists and has .fusion/ directory (async to avoid blocking event loop)
-      try {
-        await access(path);
-      } catch {
-        throw badRequest("Project path does not exist");
+
+      const normalizedName = name.trim();
+      const normalizedPath = path.trim();
+      let normalizedCloneUrl: string | undefined;
+
+      if (normalizedPath.includes("\0")) {
+        throw badRequest("path cannot contain null bytes");
       }
+      if (!isAbsolute(normalizedPath)) {
+        throw badRequest("path must be an absolute path");
+      }
+
+      if (cloneUrl !== undefined) {
+        if (typeof cloneUrl !== "string") {
+          throw badRequest("cloneUrl must be a non-empty string when provided");
+        }
+
+        const trimmedCloneUrl = cloneUrl.trim();
+        if (trimmedCloneUrl.length === 0) {
+          throw badRequest("cloneUrl must be a non-empty string when provided");
+        }
+        if (trimmedCloneUrl.includes("\0")) {
+          throw badRequest("cloneUrl cannot contain null bytes");
+        }
+
+        normalizedCloneUrl = trimmedCloneUrl;
+      }
+
+      const isCloneMode = normalizedCloneUrl !== undefined;
+      let destinationCreatedForClone = false;
+
+      if (!isCloneMode) {
+        // Existing-directory mode: path must already exist.
+        try {
+          await access(normalizedPath);
+        } catch {
+          throw badRequest("Project path does not exist");
+        }
+      } else {
+        // Clone mode: parent directory must exist.
+        const destinationParent = dirname(normalizedPath);
+        try {
+          await access(destinationParent);
+        } catch {
+          throw badRequest("Clone destination parent directory does not exist");
+        }
+
+        // Destination must either not exist yet, or be an empty directory.
+        let destinationExists = false;
+        try {
+          const destinationStats = await stat(normalizedPath);
+          destinationExists = true;
+          if (!destinationStats.isDirectory()) {
+            throw badRequest("Clone destination must be a directory path");
+          }
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
+            throw err;
+          }
+        }
+
+        if (destinationExists) {
+          const entries = await readdir(normalizedPath);
+          if (entries.length > 0) {
+            throw badRequest("Clone destination must be empty");
+          }
+        } else {
+          await mkdir(normalizedPath, { recursive: false });
+          destinationCreatedForClone = true;
+        }
+
+        const cloneSource = normalizedCloneUrl;
+        if (!cloneSource) {
+          throw badRequest("cloneUrl must be a non-empty string when provided");
+        }
+
+        try {
+          await execFileAsync("git", ["clone", cloneSource, normalizedPath], {
+            timeout: 90_000,
+            maxBuffer: 10 * 1024 * 1024,
+            encoding: "utf-8",
+          });
+        } catch (cloneError) {
+          if (destinationCreatedForClone) {
+            try {
+              await rm(normalizedPath, { recursive: true, force: true });
+            } catch {
+              // Best-effort cleanup only.
+            }
+          }
+
+          const cloneErrorInfo = cloneError as Error & { stderr?: string; stdout?: string };
+          const details = [cloneErrorInfo.stderr, cloneErrorInfo.stdout, cloneErrorInfo.message]
+            .find((value) => typeof value === "string" && value.trim().length > 0)
+            ?.toString()
+            .trim();
+          throw badRequest(`Git clone failed${details ? `: ${details}` : ""}`);
+        }
+      }
+
       let hasFusionDir = false;
-      const fusionDirPath = join(path, ".fusion");
+      const fusionDirPath = join(normalizedPath, ".fusion");
       try {
         await access(fusionDirPath);
         hasFusionDir = true;
       } catch {
         hasFusionDir = false;
       }
-      
+
       const { CentralCore } = await import("@fusion/core");
       const central = new CentralCore();
       await central.init();
-      
+
       const project = await central.registerProject({
-        name: name.trim(),
-        path: path.trim(),
+        name: normalizedName,
+        path: normalizedPath,
         isolationMode,
         nodeId,
       });
@@ -15606,7 +15705,7 @@ async function persistImportedSkills(
       const activeProject = await central.updateProject(project.id, { status: "active" });
 
       // Bootstrap memory files (non-blocking, non-fatal)
-      ensureMemoryFileWithBackend(path.trim()).catch(() => {
+      ensureMemoryFileWithBackend(normalizedPath).catch(() => {
         // Memory bootstrap failure is non-fatal - project registration succeeded
       });
 
@@ -15636,9 +15735,11 @@ async function persistImportedSkills(
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = (err instanceof Error ? err.message : String(err)).includes("already registered") ? 409 
-        : (err instanceof Error ? err.message : String(err)).includes("Duplicate path") ? 409
-        : 500;
+      const status = (err instanceof Error ? err.message : String(err)).includes("already registered")
+        ? 409
+        : (err instanceof Error ? err.message : String(err)).includes("Duplicate path")
+          ? 409
+          : 500;
       throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });

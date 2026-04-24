@@ -4300,6 +4300,7 @@ export interface ProjectCreateInput {
   path: string;
   isolationMode?: "in-process" | "child-process";
   nodeId?: string;
+  cloneUrl?: string;
 }
 
 /** Node information returned by node endpoints */

@@ -15,10 +15,13 @@ export interface SetupWizardModalProps {
 }
 
 type WizardStep = "manual" | "complete";
+type ManualSetupMode = "existing" | "clone";
 
 interface WizardState {
   step: WizardStep;
+  manualMode: ManualSetupMode;
   manualPath: string;
+  manualCloneUrl: string;
   manualName: string;
   manualIsolationMode: "in-process" | "child-process";
   manualNodeId: string;
@@ -40,7 +43,9 @@ export function SetupWizardModal({
   const [isOpen, setIsOpen] = useState(true);
   const [state, setState] = useState<WizardState>({
     step: "manual",
+    manualMode: "existing",
     manualPath: "",
+    manualCloneUrl: "",
     manualName: "",
     manualIsolationMode: "in-process",
     manualNodeId: "",
@@ -71,16 +76,22 @@ export function SetupWizardModal({
   }, []);
 
   const handleManualRegister = useCallback(async () => {
-    if (!state.manualPath || !state.manualName) return;
+    const trimmedPath = state.manualPath.trim();
+    const trimmedName = state.manualName.trim();
+    const trimmedCloneUrl = state.manualCloneUrl.trim();
+
+    if (!trimmedPath || !trimmedName) return;
+    if (state.manualMode === "clone" && !trimmedCloneUrl) return;
 
     setState((prev) => ({ ...prev, isRegistering: true, error: null }));
 
     try {
       const input: ProjectCreateInput = {
-        name: state.manualName,
-        path: state.manualPath,
+        name: trimmedName,
+        path: trimmedPath,
         isolationMode: state.manualIsolationMode,
         nodeId: state.manualNodeId || undefined,
+        cloneUrl: state.manualMode === "clone" ? trimmedCloneUrl : undefined,
       };
 
       const result = await registerProject(input);
@@ -98,7 +109,7 @@ export function SetupWizardModal({
         error: err instanceof Error ? err.message : "Failed to register project",
       }));
     }
-  }, [state.manualPath, state.manualName, state.manualIsolationMode, state.manualNodeId, onProjectRegistered]);
+  }, [state.manualPath, state.manualName, state.manualCloneUrl, state.manualMode, state.manualIsolationMode, state.manualNodeId, onProjectRegistered]);
 
   const handleSetAuthToken = useCallback(() => {
     const token = authTokenInput.trim();
@@ -115,6 +126,16 @@ export function SetupWizardModal({
   }, []);
 
   if (!isOpen) return null;
+
+  const isExistingMode = state.manualMode === "existing";
+  const isCloneMode = state.manualMode === "clone";
+  const hasPath = state.manualPath.trim().length > 0;
+  const hasName = state.manualName.trim().length > 0;
+  const hasCloneUrl = state.manualCloneUrl.trim().length > 0;
+  const isRegisterDisabled = state.isRegistering
+    || !hasPath
+    || !hasName
+    || (isCloneMode && !hasCloneUrl);
 
   return (
     <div className="modal-overlay open setup-wizard-overlay" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
@@ -171,20 +192,66 @@ export function SetupWizardModal({
                 <Sparkles size={32} />
               </div>
               <p className="welcome-text">
-                Let&apos;s set up your first project. Browse to your project directory or type the path manually.
+                Let&apos;s set up your first project. Register an existing directory or clone a git repository into a destination folder, then register it.
               </p>
 
+              <fieldset className="setup-wizard-mode-switch" aria-label="Project setup mode">
+                <legend>Setup Mode</legend>
+                <label
+                  className={`setup-wizard-mode-option${isExistingMode ? " selected" : ""}`}
+                >
+                  <input
+                    type="radio"
+                    name="setup-mode"
+                    value="existing"
+                    checked={isExistingMode}
+                    onChange={() => setState((prev) => ({ ...prev, manualMode: "existing", error: null }))}
+                  />
+                  <span>Use Existing Directory</span>
+                </label>
+                <label
+                  className={`setup-wizard-mode-option${isCloneMode ? " selected" : ""}`}
+                >
+                  <input
+                    type="radio"
+                    name="setup-mode"
+                    value="clone"
+                    checked={isCloneMode}
+                    onChange={() => setState((prev) => ({ ...prev, manualMode: "clone", error: null }))}
+                  />
+                  <span>Clone Git Repository</span>
+                </label>
+              </fieldset>
+
+              {isCloneMode && (
+                <div className="form-group">
+                  <label htmlFor="project-clone-url">Repository URL</label>
+                  <input
+                    id="project-clone-url"
+                    type="text"
+                    value={state.manualCloneUrl}
+                    onChange={(e) => setState((prev) => ({ ...prev, manualCloneUrl: e.target.value }))}
+                    placeholder="https://github.com/owner/repo.git"
+                  />
+                  <p className="form-hint">
+                    Fusion will run git clone into the destination directory, then register that cloned folder.
+                  </p>
+                </div>
+              )}
+
               <div className="form-group">
-                <label htmlFor="project-path">Project Directory</label>
+                <label htmlFor="project-path">{isCloneMode ? "Destination Directory" : "Project Directory"}</label>
                 <DirectoryPicker
                   value={state.manualPath}
                   onChange={handlePathChange}
                   nodeId={state.manualNodeId || undefined}
                   localNodeId={localNodeId}
-                  placeholder="/path/to/your/project"
+                  placeholder={isCloneMode ? "/path/for/new-clone" : "/path/to/your/project"}
                 />
                 <p className="form-hint">
-                  Select or type the absolute path to your project
+                  {isCloneMode
+                    ? "Select or type an absolute destination path. Fusion will clone into this directory."
+                    : "Select or type the absolute path to your project"}
                 </p>
               </div>
 
@@ -199,6 +266,11 @@ export function SetupWizardModal({
                   }
                   placeholder="my-project"
                 />
+                <p className="form-hint">
+                  {isCloneMode
+                    ? "By default this follows the destination folder name unless you edit it."
+                    : "By default this follows the selected directory name unless you edit it."}
+                </p>
               </div>
 
               <div className="setup-wizard-advanced">
@@ -351,7 +423,7 @@ export function SetupWizardModal({
             <button
               className="btn btn-primary"
               onClick={handleManualRegister}
-              disabled={state.isRegistering || !state.manualPath || !state.manualName}
+              disabled={isRegisterDisabled}
             >
               {state.isRegistering ? (
                 <>

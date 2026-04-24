@@ -1,29 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Task } from "@fusion/core";
 import { request } from "../test-request.js";
 import { createServer } from "../server.js";
 
-// Mock node:fs for route handler tests that check path existence
-vi.mock("node:fs", async () => {
-  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
-  return {
-    ...actual,
-    existsSync: vi.fn().mockReturnValue(true),
-  };
-});
-
-// Mock node:fs/promises access function for path validation
-vi.mock("node:fs/promises", async () => {
-  const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
-  return {
-    ...actual,
-    access: vi.fn().mockResolvedValue(undefined),
-  };
-});
-
 // Use vi.hoisted() for mock functions that need to be accessible in hoisted vi.mock calls
 const {
+  mockFsAccess,
+  mockFsStat,
+  mockFsReaddir,
+  mockFsMkdir,
+  mockFsRm,
+  mockExecFile,
   mockListProjects,
   mockGetProject,
   mockRegisterProject,
@@ -41,6 +33,15 @@ const {
   mockGetNode,
   mockEnsureMemoryFileWithBackend,
 } = vi.hoisted(() => ({
+  mockFsAccess: vi.fn().mockResolvedValue(undefined),
+  mockFsStat: vi.fn().mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" })),
+  mockFsReaddir: vi.fn().mockResolvedValue([]),
+  mockFsMkdir: vi.fn().mockResolvedValue(undefined),
+  mockFsRm: vi.fn().mockResolvedValue(undefined),
+  mockExecFile: vi.fn((_file, _args, optsOrCallback, maybeCallback) => {
+    const callback = typeof optsOrCallback === "function" ? optsOrCallback : maybeCallback;
+    callback?.(null, "", "");
+  }),
   mockListProjects: vi.fn().mockResolvedValue([]),
   mockGetProject: vi.fn().mockResolvedValue(null),
   mockRegisterProject: vi.fn().mockResolvedValue({
@@ -93,6 +94,36 @@ const {
   mockGetNode: vi.fn().mockResolvedValue(null),
   mockEnsureMemoryFileWithBackend: vi.fn().mockResolvedValue(true),
 }));
+
+// Mock node:fs for route handler tests that check path existence
+vi.mock("node:fs", async () => {
+  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+  return {
+    ...actual,
+    existsSync: vi.fn().mockReturnValue(true),
+  };
+});
+
+// Mock node:fs/promises for path validation and clone behavior checks
+vi.mock("node:fs/promises", async () => {
+  const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  return {
+    ...actual,
+    access: mockFsAccess,
+    stat: mockFsStat,
+    readdir: mockFsReaddir,
+    mkdir: mockFsMkdir,
+    rm: mockFsRm,
+  };
+});
+
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+  return {
+    ...actual,
+    execFile: mockExecFile,
+  };
+});
 
 vi.mock("@fusion/core", async () => {
   const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
@@ -563,6 +594,16 @@ class MockStoreForRoutes extends EventEmitter {
 describe("POST /api/projects route handler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFsAccess.mockResolvedValue(undefined);
+    mockFsStat.mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" }));
+    mockFsReaddir.mockResolvedValue([]);
+    mockFsMkdir.mockResolvedValue(undefined);
+    mockFsRm.mockResolvedValue(undefined);
+    mockExecFile.mockImplementation((_file, _args, optsOrCallback, maybeCallback) => {
+      const callback = typeof optsOrCallback === "function" ? optsOrCallback : maybeCallback;
+      callback?.(null, "", "");
+    });
+
     // Reset mocks to default values for route handler tests
     mockRegisterProject.mockResolvedValue({
       id: "proj_test123",
@@ -667,6 +708,136 @@ describe("POST /api/projects route handler", () => {
     // Project registration should still succeed
     expect(res.status).toBe(201);
     expect((res.body as any).status).toBe("active");
+  });
+
+  it("clones and registers when cloneUrl is provided", async () => {
+    const store = new MockStoreForRoutes();
+    const app = createServer(store as any);
+
+    const tempRoot = mkdtempSync(join(tmpdir(), "fn-2310-clone-"));
+    const bareRepo = join(tempRoot, "remote.git");
+    const cloneDestination = join(tempRoot, "cloned-project");
+
+    try {
+      execFileSync("git", ["init", "--bare", bareRepo]);
+
+      const res = await request(
+        app,
+        "POST",
+        "/api/projects",
+        JSON.stringify({
+          name: "Cloned Project",
+          path: cloneDestination,
+          cloneUrl: bareRepo,
+        }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(201);
+      expect(mockRegisterProject).toHaveBeenCalledWith({
+        name: "Cloned Project",
+        path: cloneDestination,
+        isolationMode: "in-process",
+        nodeId: undefined,
+      });
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("returns clone failure and skips registration when git clone fails", async () => {
+    const store = new MockStoreForRoutes();
+    const app = createServer(store as any);
+
+    mockExecFile.mockImplementation((_file, _args, optsOrCallback, maybeCallback) => {
+      const callback = typeof optsOrCallback === "function" ? optsOrCallback : maybeCallback;
+      const cloneError = Object.assign(new Error("git exited with code 128"), { stderr: "fatal: repository not found" });
+      callback?.(cloneError, "", "fatal: repository not found");
+    });
+
+    const res = await request(
+      app,
+      "POST",
+      "/api/projects",
+      JSON.stringify({
+        name: "Broken Clone",
+        path: "/tmp/broken-clone",
+        cloneUrl: "https://github.com/runfusion/missing.git",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect((res.body as { error?: string }).error).toContain("Git clone failed");
+    expect(mockRegisterProject).not.toHaveBeenCalled();
+    expect(mockFsRm).toHaveBeenCalledWith("/tmp/broken-clone", { recursive: true, force: true });
+  });
+
+  it("rejects clone mode when destination directory is non-empty", async () => {
+    const store = new MockStoreForRoutes();
+    const app = createServer(store as any);
+
+    mockFsStat.mockResolvedValue({ isDirectory: () => true } as import("node:fs").Stats);
+    mockFsReaddir.mockResolvedValue(["README.md"]);
+
+    const res = await request(
+      app,
+      "POST",
+      "/api/projects",
+      JSON.stringify({
+        name: "Existing Destination",
+        path: "/tmp/existing-destination",
+        cloneUrl: "https://github.com/runfusion/fusion.git",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect((res.body as { error?: string }).error).toContain("Clone destination must be empty");
+    expect(mockExecFile).not.toHaveBeenCalled();
+    expect(mockRegisterProject).not.toHaveBeenCalled();
+  });
+
+  it("rejects clone mode when cloneUrl is blank", async () => {
+    const store = new MockStoreForRoutes();
+    const app = createServer(store as any);
+
+    const res = await request(
+      app,
+      "POST",
+      "/api/projects",
+      JSON.stringify({
+        name: "Blank Clone Url",
+        path: "/tmp/blank-clone-url",
+        cloneUrl: "   ",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect((res.body as { error?: string }).error).toContain("cloneUrl must be a non-empty string");
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it("rejects clone mode destination path with null-byte input", async () => {
+    const store = new MockStoreForRoutes();
+    const app = createServer(store as any);
+
+    const res = await request(
+      app,
+      "POST",
+      "/api/projects",
+      JSON.stringify({
+        name: "Invalid Destination",
+        path: "/tmp/bad\u0000path",
+        cloneUrl: "https://github.com/runfusion/fusion.git",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect((res.body as { error?: string }).error).toContain("path cannot contain null bytes");
+    expect(mockExecFile).not.toHaveBeenCalled();
   });
 });
 

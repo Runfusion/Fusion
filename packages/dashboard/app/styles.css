@@ -21709,6 +21709,52 @@ html .column.drag-over * {
   margin: 0 0 var(--space-xl);
 }
 
+.setup-wizard-mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-sm);
+  margin: 0 0 var(--space-lg);
+  padding: 0;
+  border: 0;
+}
+
+.setup-wizard-mode-switch legend {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: var(--space-xs);
+}
+
+.setup-wizard-mode-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    background-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.setup-wizard-mode-option input {
+  accent-color: var(--todo);
+}
+
+.setup-wizard-mode-option:hover {
+  border-color: var(--text-dim);
+}
+
+.setup-wizard-mode-option.selected {
+  border-color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--todo) 25%, transparent);
+}
+
 .setup-wizard-manual .form-group {
   margin-bottom: var(--space-lg);
 }
@@ -21965,6 +22011,10 @@ html .column.drag-over * {
     padding: var(--space-md);
   }
 
+  .setup-wizard-mode-switch {
+    grid-template-columns: 1fr;
+  }
+
   .setup-wizard-isolation-options {
     gap: var(--space-xs);
   }
@@ -21983,6 +22033,8 @@ html .column.drag-over * {
   }
 
   .setup-wizard-footer {
+    flex-direction: column;
+    align-items: stretch;
     padding:
       var(--space-sm)
       var(--space-md)
