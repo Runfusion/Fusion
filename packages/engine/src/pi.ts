@@ -47,20 +47,28 @@ export interface PromptableSession extends AgentSession {
 }
 
 function getSessionStateError(session: AgentSession): string {
-  const error = (session as any).state?.error;
+  const state = (session as any).state;
+  const error = state?.errorMessage ?? state?.error;
   return typeof error === "string" ? error : "";
 }
 
 function clearSessionStateError(session: AgentSession): void {
   const state = (session as any).state;
-  if (!state || typeof state !== "object" || !("error" in state)) {
+  if (!state || typeof state !== "object") {
     return;
   }
 
-  try {
-    state.error = undefined;
-  } catch {
-    // Best effort only. Some session implementations may expose readonly state.
+  // pi-coding-agent 0.70+ exposes `errorMessage` as readonly — writes are
+  // silently ignored. Pre-0.70 used mutable `state.error`. Best-effort clear
+  // both so transcripts carry forward to the next prompt cleanly.
+  for (const key of ["errorMessage", "error"]) {
+    if (key in state) {
+      try {
+        state[key] = undefined;
+      } catch {
+        // readonly — no-op
+      }
+    }
   }
 }
 

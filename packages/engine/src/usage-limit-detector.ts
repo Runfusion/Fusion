@@ -55,16 +55,19 @@ export function isUsageLimitError(errorMessage: string): boolean {
  * Check if an agent session resolved with an error after exhausting retries.
  *
  * pi-coding-agent's `session.prompt()` does **not** throw when retries are
- * exhausted — it resolves normally and stores the error on `session.state.error`.
- * Call this immediately after every `await session.prompt(...)` to re-raise
- * the swallowed error so existing `catch` blocks (with `isUsageLimitError`
- * checks) can detect rate-limit conditions and trigger `UsageLimitPauser`.
+ * exhausted — it resolves normally and stores the error on
+ * `session.state.errorMessage` (was `session.state.error` prior to
+ * pi-coding-agent 0.70). Call this immediately after every
+ * `await session.prompt(...)` to re-raise the swallowed error so existing
+ * `catch` blocks (with `isUsageLimitError` checks) can detect rate-limit
+ * conditions and trigger `UsageLimitPauser`.
  *
- * @param session — The agent session (or any object with `state.error?: string`)
- * @throws {Error} If `session.state.error` is set and non-empty
+ * @param session — The agent session (or any object with `state.errorMessage?: string`)
+ * @throws {Error} If `session.state.errorMessage` is set and non-empty
  */
-export function checkSessionError(session: { state: { error?: string } }): void {
-  const error = session.state?.error;
+export function checkSessionError(session: { state: { errorMessage?: string; error?: string } }): void {
+  const state = session.state;
+  const error = state?.errorMessage ?? state?.error;
   if (error) {
     throw new Error(error);
   }

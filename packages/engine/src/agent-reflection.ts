@@ -111,8 +111,10 @@ export class AgentReflectionService {
       try {
         await promptWithFallback(session, this.buildReflectionPrompt(context, options.triggerDetail));
 
-        if (session.state?.error) {
-          throw new Error(session.state.error);
+        const sessionError = (session.state as { errorMessage?: string; error?: string } | undefined);
+        const stateErr = sessionError?.errorMessage ?? sessionError?.error;
+        if (stateErr) {
+          throw new Error(stateErr);
         }
       } finally {
         try {
