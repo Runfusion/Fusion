@@ -4114,22 +4114,43 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       return task;
     });
 
+    const commentContextBase: Record<string, unknown> = {
+      taskId: id,
+      author,
+      commentLength: text.length,
+      column: task.column,
+      priorStatus: task.status ?? null,
+    };
+    if (runContext) {
+      commentContextBase.runId = runContext.runId;
+      commentContextBase.agentId = runContext.agentId;
+      if (runContext.source) {
+        commentContextBase.runSource = runContext.source;
+      }
+    }
+
     // Phase 2: Auto-refinement OUTSIDE the lock (to avoid lock contention)
-    // Only create refinement for user comments on done tasks
-    // Steering comments skip refinement — they are injected into the agent stream instead
+    // Only create refinement for user comments on done tasks.
+    // This remains best-effort: failures are logged for observability but never
+    // fail the comment add operation itself.
+    // Steering comments skip refinement — they are injected into the agent stream instead.
     if (task.column === "done" && author === "user" && !options?.skipRefinement) {
       try {
         await this.refineTask(id, text);
-      } catch {
-        // Silently ignore - refinement is best-effort and shouldn't fail
-        // the comment addition. refineTask already validates
-        // feedback text, so empty/whitespace comments won't create refinements.
+      } catch (err) {
+        storeLog.warn("Best-effort post-comment auto-refinement failed", {
+          ...commentContextBase,
+          phase: "addComment:auto-refinement",
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
 
     // Phase 3: Invalidate stale spec approval when a user comments on
     // a triage task that is awaiting manual approval. The new comment
     // means the spec is now stale and must be re-specified/re-reviewed.
+    // This remains best-effort: failures are logged for observability but
+    // never fail the comment add operation itself.
     // Note: The `task` returned above reflects the state BEFORE this
     // transition. Callers that need the post-transition status should
     // re-read the task (e.g., via getTask).
@@ -4138,18 +4159,39 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       && task.status === "awaiting-approval"
       && author === "user"
     ) {
+      let invalidatedStatus = false;
       try {
         await this.updateTask(id, {
           status: "needs-respecify",
         });
-        await this.logEntry(
-          id,
-          `User comment invalidated spec approval — task needs re-specification`,
-          undefined,
-          runContext,
-        );
-      } catch {
-        // Best-effort: don't fail the comment if the status update fails
+        invalidatedStatus = true;
+      } catch (err) {
+        storeLog.warn("Best-effort post-comment awaiting-approval invalidation failed", {
+          ...commentContextBase,
+          phase: "addComment:awaiting-approval-invalidation",
+          stage: "status-update",
+          nextStatus: "needs-respecify",
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      if (invalidatedStatus) {
+        try {
+          await this.logEntry(
+            id,
+            `User comment invalidated spec approval — task needs re-specification`,
+            undefined,
+            runContext,
+          );
+        } catch (err) {
+          storeLog.warn("Best-effort post-comment awaiting-approval invalidation failed", {
+            ...commentContextBase,
+            phase: "addComment:awaiting-approval-invalidation",
+            stage: "post-invalidation-log-entry",
+            nextStatus: "needs-respecify",
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
     }
 

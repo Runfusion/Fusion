@@ -103,27 +103,28 @@ export function resolveClaudeCliExtension(): ClaudeCliExtensionResolution {
 }
 
 /**
- * Compute the paths to append to `discoverAndLoadExtensions`' configuredPaths.
+ * Compute the paths to append to `discoverAndLoadExtensions`' configuredPaths
+ * based on the user's `useClaudeCli` setting.
  *
- * The extension is loaded unconditionally — the provider it registers lives
- * under a distinct id (`"pi-claude-cli"`, see the vendored package's
- * index.ts) so coexistence with direct Anthropic auth is safe. When the
- * user flips `useClaudeCli` off, the provider stays registered; the dashboard
- * simply hides its models from the picker via the `/api/models` filter.
+ * When the setting is off we return no paths at all — the bundled
+ * `@fusion/pi-claude-cli` sits idle in node_modules and contributes nothing
+ * to the running pi session. Flipping the toggle on requires a server
+ * restart to pick up the new extension (pi has no stable runtime-reload API
+ * for custom provider registrations). The dashboard toggle hook surfaces
+ * this in its status response.
  *
- * This "always load" choice means toggling the setting has immediate effect
- * — no Fusion restart required. If `@fusion/pi-claude-cli` itself is missing
- * or broken (unusual — it's a hard workspace dep), we emit a warning and
- * return no paths; pi will continue without CLI-routed models.
- *
- * `warning` is populated when resolution fails. Callers should log it but
- * must not fail startup.
+ * `warning` is populated when resolution fails (corrupted install, missing
+ * entry). Callers should log it but must not fail startup — the feature is
+ * optional.
  */
-export function resolveClaudeCliExtensionPaths(): {
-  paths: string[];
-  warning?: string;
-  resolution: ClaudeCliExtensionResolution;
-} {
+export function resolveClaudeCliExtensionPaths(globalSettings: {
+  useClaudeCli?: unknown;
+}): { paths: string[]; warning?: string; resolution: ClaudeCliExtensionResolution | null } {
+  const enabled = globalSettings?.useClaudeCli === true;
+  if (!enabled) {
+    return { paths: [], resolution: null };
+  }
+
   const resolution = resolveClaudeCliExtension();
   switch (resolution.status) {
     case "ok":
@@ -133,7 +134,7 @@ export function resolveClaudeCliExtensionPaths(): {
         paths: [],
         resolution,
         warning:
-          "@fusion/pi-claude-cli is not installed in node_modules. Run `pnpm install`.",
+          "useClaudeCli is on but @fusion/pi-claude-cli is not installed in node_modules. Run `pnpm install`.",
       };
     case "missing-entry":
     case "error":

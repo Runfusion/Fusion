@@ -19125,16 +19125,15 @@ function registerModelsRoute(
         }
       }
 
-      // The vendored @fusion/pi-claude-cli extension registers its provider
-      // as "pi-claude-cli" (distinct from "anthropic") regardless of the
-      // toggle. When the toggle is OFF, hide those entries from the picker
-      // so users don't see CLI-routed models they haven't opted into.
-      // When ON, show everything — the user deliberately wants them visible
-      // alongside any direct Anthropic auth or other providers they've
-      // connected. Hiding only the CLI-routed entries (not restricting to
-      // them) preserves full flexibility.
-      if (!useClaudeCli) {
-        models = models.filter((m) => m.provider !== "pi-claude-cli");
+      // When the user has opted to route AI through pi-claude-cli, only
+      // Anthropic Claude models are reachable — pi-claude-cli wraps the
+      // local Claude CLI and does not bridge other providers. Surface only
+      // those models so every picker in the app (settings, onboarding, per
+      // lane overrides) stays honest about what'll actually run.
+      // OpenRouter-proxied Claude (provider: "openrouter") is excluded on
+      // purpose: it hits OpenRouter's API, not the local CLI.
+      if (useClaudeCli) {
+        models = models.filter((m) => m.provider === "anthropic");
       }
 
       res.json({ models, favoriteProviders, favoriteModels });
@@ -19351,14 +19350,12 @@ function registerAuthRoutes(
 
       res.json({
         enabled: next,
-        // The pi-claude-cli extension is loaded unconditionally at startup
-        // (the provider it registers is namespaced distinctly so it doesn't
-        // clash with direct Anthropic auth), so flipping this setting has
-        // immediate effect — the /api/models filter reads the new value on
-        // next request. No restart needed. `restartRequired` is retained
-        // in the response shape for forward compatibility but is always
-        // false today.
-        restartRequired: false,
+        // Pi extension registrations can't be added/removed mid-process,
+        // so flipping on/off requires a restart for the model routing
+        // itself to take effect. Skill install/backfill happens
+        // immediately either way. Surface this so the UI can show a
+        // "Restart Fusion to activate" prompt when next !== prev.
+        restartRequired: prev !== next,
       });
     } catch (err: unknown) {
       if (err instanceof ApiError) {

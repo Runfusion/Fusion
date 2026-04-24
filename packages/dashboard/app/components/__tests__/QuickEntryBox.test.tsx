@@ -587,6 +587,7 @@ describe("QuickEntryBox", () => {
     const { props } = renderQuickEntryBox({});
     const textarea = screen.getByTestId("quick-entry-input");
 
+    fireEvent.focus(textarea);
     fireEvent.change(textarea, { target: { value: "Task to create" } });
     fireEvent.keyDown(textarea, { key: "Enter" });
 
@@ -594,8 +595,10 @@ describe("QuickEntryBox", () => {
       expect(props.onCreate).toHaveBeenCalled();
     });
 
-    // After successful creation, focus should be maintained
-    expect(document.activeElement).toBe(textarea);
+    // Focus restoration happens after submit state clears
+    await waitFor(() => {
+      expect(document.activeElement).toBe(textarea);
+    });
   });
 
   describe("Rich creation features", () => {

@@ -5,8 +5,8 @@ import http from "node:http";
 import { createHmac } from "node:crypto";
 import express from "express";
 import { createServer, setupTerminalWebSocket } from "./server.js";
-import { RATE_LIMITS } from "./rate-limit.js";
 import { toSessionTag } from "./terminal-websocket-diagnostics.js";
+import { RATE_LIMITS } from "./rate-limit.js";
 import type { TaskStore } from "@fusion/core";
 import { get as performGet, request as performRequest } from "./test-request.js";
 

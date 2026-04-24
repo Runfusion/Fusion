@@ -9,8 +9,8 @@
  * - Error isolation (plugin crashes don't crash the loader)
  */
 
-import { copyFile, rm } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, resolve } from "node:path";
+import { copyFile, rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { EventEmitter } from "node:events";
 import type { TaskStore } from "./store.js";

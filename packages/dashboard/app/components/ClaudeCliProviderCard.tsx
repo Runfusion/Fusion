@@ -130,81 +130,9 @@ export function ClaudeCliProviderCard({
     </span>
   );
 
-  const actions = (
-    <>
-      <button
-        type="button"
-        className="btn btn-sm"
-        onClick={handleTest}
-        disabled={busy !== null}
-      >
-        {busy === "testing" ? (
-          <>
-            <Loader2 size={12} className="animate-spin" />
-            Testing…
-          </>
-        ) : (
-          "Test"
-        )}
-      </button>
-      {currentlyEnabled ? (
-        <button
-          type="button"
-          className="btn btn-sm"
-          onClick={() => void handleToggle(false)}
-          disabled={busy !== null}
-        >
-          {busy === "disabling" ? "Disabling…" : "Disable"}
-        </button>
-      ) : (
-        <button
-          type="button"
-          className="btn btn-primary btn-sm"
-          onClick={() => void handleToggle(true)}
-          disabled={busy !== null || !binaryAvailable}
-          title={
-            !binaryAvailable
-              ? "`claude` binary not detected on PATH — install Claude CLI first."
-              : undefined
-          }
-        >
-          {busy === "enabling" ? "Enabling…" : "Enable"}
-        </button>
-      )}
-    </>
-  );
-
-  // Compact layout mirrors `.auth-provider-card` so it slots cleanly into
-  // the Settings > Authentication list and picks up the shared mobile rules.
-  if (compact) {
-    return (
-      <div
-        className={`auth-provider-card auth-provider-card--cli${authenticated ? " auth-provider-card--authenticated" : ""}`}
-        data-testid="claude-cli-provider-card"
-      >
-        <div className="auth-provider-header">
-          <div className="auth-provider-info">
-            <ProviderIcon provider="claude-cli" size="sm" />
-            <strong>Anthropic — via Claude CLI</strong>
-            <ClaudeCliBadge status={status} authenticated={authenticated} />
-          </div>
-          <div className="auth-provider-cli-actions">{actions}</div>
-        </div>
-        <details className="auth-provider-cli-details">
-          <summary>Details</summary>
-          <div className="auth-provider-cli-details-body">
-            {description}
-            <ClaudeCliStatusLine status={status} authenticated={authenticated} />
-            {lastAction && <ClaudeCliActionToast action={lastAction} />}
-          </div>
-        </details>
-      </div>
-    );
-  }
-
   return (
     <div
-      className={`onboarding-provider-card${authenticated ? " onboarding-provider-card--connected" : ""}`}
+      className={`onboarding-provider-card${authenticated ? " onboarding-provider-card--connected" : ""}${compact ? " onboarding-provider-card--compact" : ""}`}
       data-testid="claude-cli-provider-card"
     >
       <div className="onboarding-provider-card__icon">
@@ -214,31 +142,67 @@ export function ClaudeCliProviderCard({
         <strong className="onboarding-provider-card__name">
           Anthropic — via Claude CLI
         </strong>
-        {description}
-        <ClaudeCliStatusLine status={status} authenticated={authenticated} />
+        {compact ? (
+          <details className="onboarding-provider-card__details">
+            <summary className="onboarding-provider-card__details-summary">
+              Details
+            </summary>
+            {description}
+            <ClaudeCliStatusLine status={status} authenticated={authenticated} />
+          </details>
+        ) : (
+          <>
+            {description}
+            <ClaudeCliStatusLine status={status} authenticated={authenticated} />
+          </>
+        )}
       </div>
-      <div className="onboarding-provider-card__actions">{actions}</div>
-      {lastAction && <ClaudeCliActionToast action={lastAction} />}
+      <div className="onboarding-provider-card__actions">
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={handleTest}
+          disabled={busy !== null}
+        >
+          {busy === "testing" ? (
+            <>
+              <Loader2 size={12} className="animate-spin" />
+              Testing…
+            </>
+          ) : (
+            "Test"
+          )}
+        </button>
+        {currentlyEnabled ? (
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => void handleToggle(false)}
+            disabled={busy !== null}
+          >
+            {busy === "disabling" ? "Disabling…" : "Disable"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={() => void handleToggle(true)}
+            disabled={busy !== null || !binaryAvailable}
+            title={
+              !binaryAvailable
+                ? "`claude` binary not detected on PATH — install Claude CLI first."
+                : undefined
+            }
+          >
+            {busy === "enabling" ? "Enabling…" : "Enable"}
+          </button>
+        )}
+      </div>
+      {lastAction && (
+        <ClaudeCliActionToast action={lastAction} />
+      )}
     </div>
   );
-}
-
-function ClaudeCliBadge({
-  status,
-  authenticated,
-}: {
-  status: ClaudeCliStatus | null;
-  authenticated: boolean;
-}) {
-  const enabled = status?.enabled ?? authenticated;
-  const available = status?.binary.available ?? false;
-  if (enabled) {
-    return <span className="auth-status-badge authenticated">✓ Active</span>;
-  }
-  if (!available && status) {
-    return <span className="auth-status-badge not-authenticated">✗ Not installed</span>;
-  }
-  return <span className="auth-status-badge not-authenticated">✗ Not connected</span>;
 }
 
 /**
@@ -291,11 +255,10 @@ function ClaudeCliStatusLine({
       </small>
     );
   }
-  // Enabled but `ready` is false and we have no specific reason — usually a
-  // transient state after flipping the toggle before the first probe
-  // completes.
   return (
-    <small className="settings-muted">Enabled. Validating…</small>
+    <small className="settings-muted">
+      Enabled. Restart Fusion to complete activation.
+    </small>
   );
 }
 
@@ -318,9 +281,9 @@ function ClaudeCliActionToast({
   return (
     <p className="onboarding-helper-text">
       {verb}.{" "}
-      {action.kind === "enabled"
-        ? "Claude-CLI-routed models are now visible in the model picker."
-        : "Claude-CLI-routed models are hidden from the model picker."}
+      {action.restartRequired
+        ? "Restart Fusion to activate the routing change."
+        : "No further action needed."}
     </p>
   );
 }

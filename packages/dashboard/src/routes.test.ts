@@ -15182,7 +15182,7 @@ describe("POST /workflow-step-templates/:id/create", () => {
       templateId: "qa-check",
       name: "QA Check",
       description: "Run lint, tests, and typecheck; verify they pass and check for obvious bugs",
-      prompt: expect.stringContaining("QA tester"),
+      prompt: expect.stringContaining("Quality Gate Execution"),
       toolMode: "coding",
       enabled: true,
     });

@@ -4370,6 +4370,148 @@ Task with acceptance criteria
       expect(updated.comments![0].text).toBe("   ");
     });
 
+    it("logs warning and still persists comment when best-effort auto-refinement fails", async () => {
+      const task = await store.createTask({ description: "Original task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const runContext = { runId: "run-refinement-failure", agentId: "agent-refinement" };
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const refineSpy = vi.spyOn(store, "refineTask").mockRejectedValue(new Error("refine unavailable"));
+
+      try {
+        const taskCountBefore = (await store.listTasks()).length;
+        const updated = await store.addComment(task.id, "Need refinement", "user", undefined, runContext);
+
+        expect(updated.comments).toHaveLength(1);
+        expect(updated.comments![0].text).toBe("Need refinement");
+
+        const taskCountAfter = (await store.listTasks()).length;
+        expect(taskCountAfter).toBe(taskCountBefore);
+
+        const persisted = await store.getTask(task.id);
+        expect(persisted.comments).toHaveLength(1);
+        expect(persisted.comments![0].text).toBe("Need refinement");
+
+        expect(refineSpy).toHaveBeenCalledWith(task.id, "Need refinement");
+
+        const warningCall = warnSpy.mock.calls.find(
+          (call) => typeof call[0] === "string" && call[0].includes("[task-store] Best-effort post-comment auto-refinement failed"),
+        );
+        expect(warningCall).toBeDefined();
+
+        const [, context] = warningCall as [string, Record<string, unknown>];
+        expect(context).toMatchObject({
+          taskId: task.id,
+          author: "user",
+          commentLength: "Need refinement".length,
+          column: "done",
+          priorStatus: null,
+          phase: "addComment:auto-refinement",
+          runId: "run-refinement-failure",
+          agentId: "agent-refinement",
+          error: "refine unavailable",
+        });
+      } finally {
+        refineSpy.mockRestore();
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("logs warning and still persists comment when status update fails during awaiting-approval invalidation", async () => {
+      const task = await store.createTask({ description: "Task in triage" });
+      await store.updateTask(task.id, { status: "awaiting-approval" });
+
+      const runContext = { runId: "run-invalidation-failure", agentId: "agent-invalidation" };
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const updateSpy = vi.spyOn(store, "updateTask").mockRejectedValueOnce(new Error("status update failed"));
+
+      try {
+        const updated = await store.addComment(task.id, "New user feedback", "user", undefined, runContext);
+
+        expect(updated.comments).toHaveLength(1);
+        expect(updated.comments![0].text).toBe("New user feedback");
+
+        const persisted = await store.getTask(task.id);
+        expect(persisted.comments).toHaveLength(1);
+        expect(persisted.comments![0].text).toBe("New user feedback");
+        expect(persisted.status).toBe("awaiting-approval");
+
+        expect(updateSpy).toHaveBeenCalled();
+
+        const warningCall = warnSpy.mock.calls.find(
+          (call) => typeof call[0] === "string" && call[0].includes("[task-store] Best-effort post-comment awaiting-approval invalidation failed"),
+        );
+        expect(warningCall).toBeDefined();
+
+        const [, context] = warningCall as [string, Record<string, unknown>];
+        expect(context).toMatchObject({
+          taskId: task.id,
+          author: "user",
+          commentLength: "New user feedback".length,
+          column: "triage",
+          priorStatus: "awaiting-approval",
+          phase: "addComment:awaiting-approval-invalidation",
+          stage: "status-update",
+          nextStatus: "needs-respecify",
+          runId: "run-invalidation-failure",
+          agentId: "agent-invalidation",
+          error: "status update failed",
+        });
+      } finally {
+        updateSpy.mockRestore();
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("logs warning and keeps invalidated status when log entry fails after awaiting-approval invalidation", async () => {
+      const task = await store.createTask({ description: "Task in triage" });
+      await store.updateTask(task.id, { status: "awaiting-approval" });
+
+      const runContext = { runId: "run-post-invalidation-log-failure", agentId: "agent-invalidation" };
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const logEntrySpy = vi.spyOn(store, "logEntry").mockRejectedValueOnce(new Error("log entry failed"));
+
+      try {
+        const updated = await store.addComment(task.id, "New user feedback", "user", undefined, runContext);
+
+        expect(updated.comments).toHaveLength(1);
+        expect(updated.comments![0].text).toBe("New user feedback");
+
+        const persisted = await store.getTask(task.id);
+        expect(persisted.comments).toHaveLength(1);
+        expect(persisted.comments![0].text).toBe("New user feedback");
+        expect(persisted.status).toBe("needs-respecify");
+
+        expect(logEntrySpy).toHaveBeenCalled();
+
+        const warningCall = warnSpy.mock.calls.find(
+          (call) => typeof call[0] === "string" && call[0].includes("[task-store] Best-effort post-comment awaiting-approval invalidation failed"),
+        );
+        expect(warningCall).toBeDefined();
+
+        const [, context] = warningCall as [string, Record<string, unknown>];
+        expect(context).toMatchObject({
+          taskId: task.id,
+          author: "user",
+          commentLength: "New user feedback".length,
+          column: "triage",
+          priorStatus: "awaiting-approval",
+          phase: "addComment:awaiting-approval-invalidation",
+          stage: "post-invalidation-log-entry",
+          nextStatus: "needs-respecify",
+          runId: "run-post-invalidation-log-failure",
+          agentId: "agent-invalidation",
+          error: "log entry failed",
+        });
+      } finally {
+        logEntrySpy.mockRestore();
+        warnSpy.mockRestore();
+      }
+    });
+
     it("addSteeringComment on done task does NOT create a refinement task", async () => {
       const task = await store.createTask({ description: "Original task" });
       await store.moveTask(task.id, "todo");

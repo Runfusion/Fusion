@@ -768,14 +768,22 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       .filter((r) => r.enabled)
       .map((r) => r.path);
 
-    // Always load the vendored pi-claude-cli extension — see serve.ts.
-    const claudeCliPaths = (() => {
-      const result = resolveClaudeCliExtensionPaths();
-      setCachedClaudeCliResolution(result.resolution);
-      if (result.warning) {
-        console.warn(`[extensions] pi-claude-cli: ${result.warning}`);
+    const claudeCliPaths = await (async () => {
+      try {
+        const globalSettings = await store.getGlobalSettingsStore().getSettings();
+        const result = resolveClaudeCliExtensionPaths(globalSettings);
+        setCachedClaudeCliResolution(result.resolution);
+        if (result.warning) {
+          console.warn(`[extensions] pi-claude-cli: ${result.warning}`);
+        }
+        return result.paths;
+      } catch (err) {
+        console.warn(
+          `[extensions] Unable to evaluate useClaudeCli setting: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        setCachedClaudeCliResolution(null);
+        return [];
       }
-      return result.paths;
     })();
 
     // Load all enabled extensions: Fusion/Pi filesystem-discovered + package-resolved.

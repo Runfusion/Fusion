@@ -1,9 +1,12 @@
 import { defineConfig } from "vitest/config";
 import { resolve } from "node:path";
+import { cpus } from "node:os";
 
-const defaultMaxWorkers = 2;
+// Use all-but-one core by default. Override with VITEST_MAX_WORKERS for
+// constrained environments (CI runners, laptops on battery, etc.).
+const defaultMaxWorkers = Math.max(1, cpus().length - 1);
 const requestedMaxWorkers = Number.parseInt(process.env.VITEST_MAX_WORKERS ?? String(defaultMaxWorkers), 10);
-const maxWorkers = Math.max(1, Math.min(4, Number.isFinite(requestedMaxWorkers) ? requestedMaxWorkers : defaultMaxWorkers));
+const maxWorkers = Math.max(1, Number.isFinite(requestedMaxWorkers) ? requestedMaxWorkers : defaultMaxWorkers);
 process.env.VITEST_MAX_WORKERS = String(maxWorkers);
 
 export default defineConfig({

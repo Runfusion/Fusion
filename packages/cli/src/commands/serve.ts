@@ -447,19 +447,25 @@ export async function runServe(
       .filter((r) => r.enabled)
       .map((r) => r.path);
 
-    // Always load the vendored pi-claude-cli extension. It registers under
-    // a distinct provider id ("pi-claude-cli") so it coexists with direct
-    // Anthropic auth. The `useClaudeCli` setting only controls whether the
-    // dashboard shows those models in the picker — the extension itself is
-    // a no-op when the `claude` binary is missing (it catches and logs
-    // internally, see packages/pi-claude-cli/index.ts:106).
-    const claudeCliPaths = (() => {
-      const result = resolveClaudeCliExtensionPaths();
-      setCachedClaudeCliResolution(result.resolution);
-      if (result.warning) {
-        console.warn(`[extensions] pi-claude-cli: ${result.warning}`);
+    // Conditionally load the vendored pi-claude-cli extension so the user's
+    // "Anthropic — via Claude CLI" provider routing takes effect without
+    // requiring a manual `pi-claude-cli` install.
+    const claudeCliPaths = await (async () => {
+      try {
+        const globalSettings = await store.getGlobalSettingsStore().getSettings();
+        const result = resolveClaudeCliExtensionPaths(globalSettings);
+        setCachedClaudeCliResolution(result.resolution);
+        if (result.warning) {
+          console.warn(`[extensions] pi-claude-cli: ${result.warning}`);
+        }
+        return result.paths;
+      } catch (err) {
+        console.warn(
+          `[extensions] Unable to evaluate useClaudeCli setting: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        setCachedClaudeCliResolution(null);
+        return [];
       }
-      return result.paths;
     })();
 
     const extensionsResult = await discoverAndLoadExtensions(

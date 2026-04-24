@@ -71,7 +71,7 @@ export default function (pi: ExtensionAPI) {
     validateCliPresence(); // throws if CLI not on PATH
     validateCliAuth(); // warns if not authenticated
 
-    const catalogModels = getModels("anthropic").map((model) => ({
+    const models = getModels("anthropic").map((model) => ({
       id: model.id,
       name: model.name,
       reasoning: model.reasoning,
@@ -80,28 +80,6 @@ export default function (pi: ExtensionAPI) {
       contextWindow: model.contextWindow,
       maxTokens: model.maxTokens,
     }));
-
-    // Newer models released after the pinned @mariozechner/pi-ai catalog
-    // was generated. Dedupe by id so this list is harmless once the upstream
-    // catalog catches up.
-    // https://platform.claude.com/docs/en/about-claude/models/overview
-    const extraModels: typeof catalogModels = [
-      {
-        id: "claude-opus-4-7",
-        name: "Claude Opus 4.7",
-        reasoning: true,
-        input: ["text", "image"],
-        cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
-        contextWindow: 1_000_000,
-        maxTokens: 128_000,
-      },
-    ];
-
-    const seen = new Set(catalogModels.map((m) => m.id));
-    const models = [
-      ...catalogModels,
-      ...extraModels.filter((m) => !seen.has(m.id)),
-    ];
 
     // Ensure all registered tools are active so pi can execute them.
     // Some tools (find, grep, ls) are registered but not activated by default.
