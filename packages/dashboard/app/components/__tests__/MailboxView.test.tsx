@@ -974,12 +974,9 @@ describe("MailboxView", () => {
       fireEvent.change(screen.getByTestId("mailbox-agent-select"), { target: { value: "agent-001" } });
 
       await waitFor(() => {
-        expect(screen.getByTestId("mailbox-agent-subtabs")).toBeDefined();
+        const inboxTab = screen.getByTestId("mailbox-agent-subtab-inbox");
+        expect(inboxTab.querySelector(".mailbox-tab-badge")?.textContent).toBe("3");
       });
-
-      // Inbox tab should have the unread badge
-      const inboxTab = screen.getByTestId("mailbox-agent-subtab-inbox");
-      expect(inboxTab.querySelector(".mailbox-tab-badge")?.textContent).toBe("3");
     });
   });
 
