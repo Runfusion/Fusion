@@ -404,8 +404,11 @@ describe("MailboxView", () => {
       expect(screen.getByTestId("mailbox-mark-all-read")).toBeDefined();
     });
 
+    const markAllReadButton = screen.getByTestId("mailbox-mark-all-read");
+    expect(markAllReadButton).toHaveClass("btn", "btn-sm", "btn-secondary");
+
     await act(async () => {
-      fireEvent.click(screen.getByTestId("mailbox-mark-all-read"));
+      fireEvent.click(markAllReadButton);
     });
 
     await waitFor(() => {
@@ -436,8 +439,13 @@ describe("MailboxView", () => {
       expect(screen.getByTestId("mailbox-message-detail")).toBeDefined();
     });
 
+    const backToListButton = screen.getByTestId("mailbox-back-to-list");
+    const deleteButton = screen.getByTestId("mailbox-delete");
+    expect(backToListButton).toHaveClass("btn", "btn-sm", "btn-secondary");
+    expect(deleteButton).toHaveClass("btn", "btn-sm", "btn-secondary");
+
     await act(async () => {
-      fireEvent.click(screen.getByTestId("mailbox-delete"));
+      fireEvent.click(deleteButton);
     });
 
     await waitFor(() => {
@@ -467,8 +475,11 @@ describe("MailboxView", () => {
       expect(screen.getByTestId("mailbox-reply")).toBeDefined();
     });
 
+    const replyButton = screen.getByTestId("mailbox-reply");
+    expect(replyButton).toHaveClass("btn", "btn-sm", "btn-secondary");
+
     await act(async () => {
-      fireEvent.click(screen.getByTestId("mailbox-reply"));
+      fireEvent.click(replyButton);
     });
 
     await waitFor(() => {
@@ -607,6 +618,40 @@ describe("MailboxView", () => {
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-header-compose")).toBeDefined();
     });
+  });
+
+  it("renders mailbox tabs and agent subtabs with shared button classes", async () => {
+    mockFetchInbox.mockResolvedValue({
+      messages: [],
+      unreadCount: 0,
+    });
+    mockFetchAgentMailbox.mockResolvedValue({
+      ownerId: "agent-001",
+      ownerType: "agent",
+      unreadCount: 0,
+      messages: [],
+      inbox: [],
+      outbox: [],
+    });
+
+    render(<MailboxView {...defaultProps} />);
+
+    expect(screen.getByTestId("mailbox-tab-inbox")).toHaveClass("btn", "btn-sm", "btn-secondary", "mailbox-tab");
+    expect(screen.getByTestId("mailbox-tab-outbox")).toHaveClass("btn", "btn-sm", "btn-secondary", "mailbox-tab");
+    expect(screen.getByTestId("mailbox-tab-agents")).toHaveClass("btn", "btn-sm", "btn-secondary", "mailbox-tab");
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("mailbox-tab-agents"));
+    });
+
+    fireEvent.change(screen.getByTestId("mailbox-agent-select"), { target: { value: "agent-001" } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mailbox-agent-subtabs")).toBeDefined();
+    });
+
+    expect(screen.getByTestId("mailbox-agent-subtab-inbox")).toHaveClass("btn", "btn-sm", "btn-secondary", "mailbox-agent-subtab");
+    expect(screen.getByTestId("mailbox-agent-subtab-outbox")).toHaveClass("btn", "btn-sm", "btn-secondary", "mailbox-agent-subtab");
   });
 
   it("shows loading skeleton while loading", async () => {
@@ -1041,6 +1086,31 @@ describe("MailboxView", () => {
       // Content should have padding-bottom accounting for mobile nav
       expect(contentRuleMatch![0]).toContain("padding-bottom");
 
+    });
+
+    it("keeps mailbox tab selectors aligned with shared rounded-button defaults", async () => {
+      const fs = await import("fs");
+      const path = await import("path");
+      const cssPath = path.resolve(__dirname, "../../styles.css");
+      const css = fs.readFileSync(cssPath, "utf-8");
+
+      const mailboxTabBlockMatch = css.match(/\.mailbox-tab\s*\{([^}]*)\}/);
+      expect(mailboxTabBlockMatch).toBeTruthy();
+      const mailboxTabBlock = mailboxTabBlockMatch![1];
+      expect(mailboxTabBlock).toContain("border-color: var(--border);");
+      expect(mailboxTabBlock).toContain("background: var(--surface);");
+      expect(mailboxTabBlock).not.toContain("border: none");
+      expect(mailboxTabBlock).not.toContain("background: none");
+      expect(mailboxTabBlock).not.toContain("border-bottom: 2px solid transparent");
+
+      const agentSubtabBlockMatch = css.match(/\.mailbox-agent-subtab\s*\{([^}]*)\}/);
+      expect(agentSubtabBlockMatch).toBeTruthy();
+      const agentSubtabBlock = agentSubtabBlockMatch![1];
+      expect(agentSubtabBlock).toContain("border-color: var(--border);");
+      expect(agentSubtabBlock).toContain("background: var(--surface);");
+      expect(agentSubtabBlock).not.toContain("border-radius: 0");
+      expect(agentSubtabBlock).not.toContain("border: none");
+      expect(agentSubtabBlock).not.toContain("background: transparent");
     });
 
     it("renders structural elements that mobile CSS targets", async () => {
