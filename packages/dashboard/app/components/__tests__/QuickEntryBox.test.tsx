@@ -650,6 +650,123 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("subtask-button")).toBeTruthy();
     });
 
+    it("shows Fast toggle when expanded", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      const fastToggle = screen.getByTestId("quick-entry-fast-toggle");
+      expect(fastToggle).toBeTruthy();
+      expect(fastToggle.getAttribute("aria-pressed")).toBe("false");
+    });
+
+    it("toggles Fast pressed state", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      const fastToggle = screen.getByTestId("quick-entry-fast-toggle");
+      fireEvent.click(fastToggle);
+      expect(fastToggle.getAttribute("aria-pressed")).toBe("true");
+
+      fireEvent.click(fastToggle);
+      expect(fastToggle.getAttribute("aria-pressed")).toBe("false");
+    });
+
+    it.each(["Enter", "Save"] as const)("submits executionMode=fast when Fast is active via %s", async (submitPath) => {
+      const { props } = renderQuickEntryBox({});
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
+      fireEvent.change(textarea, { target: { value: `Fast submission via ${submitPath}` } });
+
+      if (submitPath === "Enter") {
+        fireEvent.keyDown(textarea, { key: "Enter" });
+      } else {
+        clickSave();
+      }
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            description: `Fast submission via ${submitPath}`,
+            executionMode: "fast",
+          }),
+        );
+      });
+    });
+
+    it("omits executionMode when Fast is not active", async () => {
+      const { props } = renderQuickEntryBox({});
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.change(textarea, { target: { value: "Standard submission" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalled();
+      });
+
+      const firstPayload = props.onCreate.mock.calls[0]?.[0];
+      expect(firstPayload.executionMode).toBeUndefined();
+    });
+
+    it("resets Fast toggle to standard after successful task creation", async () => {
+      const { props } = renderQuickEntryBox({});
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
+      fireEvent.change(textarea, { target: { value: "First fast task" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalledTimes(1);
+        expect(props.onCreate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            description: "First fast task",
+            executionMode: "fast",
+          }),
+        );
+      });
+
+      expandQuickEntry();
+      const fastToggle = screen.getByTestId("quick-entry-fast-toggle");
+      expect(fastToggle.getAttribute("aria-pressed")).toBe("false");
+
+      fireEvent.change(textarea, { target: { value: "Second standard task" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalledTimes(2);
+      });
+
+      const secondPayload = props.onCreate.mock.calls[1]?.[0];
+      expect(secondPayload.executionMode).toBeUndefined();
+    });
+
+    it.each([
+      { label: "Plan", buttonId: "plan-button", callbackProp: "onPlanningMode" as const },
+      { label: "Subtask", buttonId: "subtask-button", callbackProp: "onSubtaskBreakdown" as const },
+    ])("clears Fast state after %s flow reset", async ({ buttonId, callbackProp }) => {
+      const onPlanningMode = vi.fn();
+      const onSubtaskBreakdown = vi.fn();
+      renderQuickEntryBox({ onPlanningMode, onSubtaskBreakdown });
+
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+      fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
+      fireEvent.change(textarea, { target: { value: `${callbackProp} input` } });
+      fireEvent.click(screen.getByTestId(buttonId));
+
+      await waitFor(() => {
+        expect(callbackProp === "onPlanningMode" ? onPlanningMode : onSubtaskBreakdown).toHaveBeenCalled();
+      });
+
+      expandQuickEntry();
+      expect(screen.getByTestId("quick-entry-fast-toggle").getAttribute("aria-pressed")).toBe("false");
+    });
+
     it("opens dependency dropdown when clicking deps button", () => {
       renderQuickEntryBox({});
       expandQuickEntry();

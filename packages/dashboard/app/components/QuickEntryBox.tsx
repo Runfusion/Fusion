@@ -137,6 +137,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [selectedPresetId, setSelectedPresetId] = useState<string | undefined>(undefined);
+  const [isFastMode, setIsFastMode] = useState(false);
 
   // AI Refinement state
   const [isRefineMenuOpen, setIsRefineMenuOpen] = useState(false);
@@ -377,6 +378,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setPlanningProvider(undefined);
     setPlanningModelId(undefined);
     setSelectedPresetId(undefined);
+    setIsFastMode(false);
     setShowDeps(false);
     setIsModelMenuOpen(false);
     setModelMenuPosition(null);
@@ -444,6 +446,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         validatorModelId: hasValidatorOverride ? validatorModelId : undefined,
         planningModelProvider: hasPlanningOverride ? planningProvider : undefined,
         planningModelId: hasPlanningOverride ? planningModelId : undefined,
+        ...(isFastMode ? { executionMode: "fast" } : {}),
       });
       if (createdTask && pendingImages.length > 0) {
         const failures: string[] = [];
@@ -487,6 +490,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     projectId,
     addToast,
     resetForm,
+    isFastMode,
   ]);
 
   const handleKeyDown = useCallback(
@@ -1416,6 +1420,18 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               </div>,
               portalRoot,
             )}
+
+            <button
+              type="button"
+              className={`btn btn-sm ${isFastMode ? "btn-primary" : ""}`}
+              onClick={() => setIsFastMode((prev) => !prev)}
+              onMouseDown={(e) => e.preventDefault()}
+              aria-pressed={isFastMode}
+              data-testid="quick-entry-fast-toggle"
+              title="Toggle fast execution mode"
+            >
+              Fast
+            </button>
 
             <button
               type="button"
