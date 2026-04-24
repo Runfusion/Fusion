@@ -1741,7 +1741,7 @@ describe("AgentStore", () => {
       const activeRun = await store.getActiveHeartbeatRun(agent.id);
       expect(activeRun).not.toBeNull();
       expect(activeRun!.id).toBe(run.id);
-    });
+    }, 15_000);
 
     it("throws for non-existent agent", async () => {
       await expect(

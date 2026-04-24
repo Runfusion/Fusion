@@ -76,6 +76,8 @@ type AgentToolHookSession = AgentSession & {
   __fusionMessageContentGuardInstalled?: boolean;
 };
 
+const FN_MEMORY_APPEND_TOOL_NAME = "fn_memory_append";
+
 function getSessionStateError(session: AgentSession): string {
   const state = (session as any).state;
   const error = state?.errorMessage ?? state?.error;
@@ -286,7 +288,7 @@ async function flushMemoryBeforeSessionCompaction(session: AgentSession): Promis
 
   const flushPrompt = [
     "Before context compaction, preserve only unresolved durable memory if needed.",
-    "If memory_append is available and you learned reusable project decisions, conventions, pitfalls, or open loops that are not already saved, append them now.",
+    "If fn_memory_append is available and you learned reusable project decisions, conventions, pitfalls, or open loops that are not already saved, append them now.",
     "Use layer=\"long-term\" for durable facts and layer=\"daily\" for running notes/open loops.",
     "If there is nothing durable to save, reply exactly: NONE.",
   ].join("\n");
@@ -965,7 +967,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
   const { session } = sessionResult;
   installToolResultContentGuard(session as AgentToolHookSession);
   installMessageContentGuard(session as AgentToolHookSession, sessionManager as unknown as SessionManagerLike);
-  (session as any).__fusionMemoryAppendAvailable = options.customTools?.some((tool) => tool.name === "memory_append") === true;
+  (session as any).__fusionMemoryAppendAvailable = options.customTools?.some((tool) => tool.name === FN_MEMORY_APPEND_TOOL_NAME) === true;
   const promptableSession = session as PromptableSession;
 
   promptableSession.promptWithFallback = async (prompt: string, promptOptions?: unknown) => {
@@ -1026,7 +1028,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
         fallbackSession as unknown as AgentToolHookSession,
         sessionManager as unknown as SessionManagerLike,
       );
-      (fallbackSession as any).__fusionMemoryAppendAvailable = options.customTools?.some((tool) => tool.name === "memory_append") === true;
+      (fallbackSession as any).__fusionMemoryAppendAvailable = options.customTools?.some((tool) => tool.name === FN_MEMORY_APPEND_TOOL_NAME) === true;
 
       if (options.defaultThinkingLevel) {
         fallbackSession.setThinkingLevel(options.defaultThinkingLevel as any);

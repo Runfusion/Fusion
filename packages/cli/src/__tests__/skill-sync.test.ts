@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { resolve, dirname, relative, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -50,6 +50,25 @@ function getCapabilitiesToolNames(): string[] {
   );
   const matches = [...doc.matchAll(/\| `(fn_[a-z_]+)` \|/g)];
   return matches.map((m) => m[1]).sort();
+}
+
+function collectMarkdownFiles(dir: string): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...collectMarkdownFiles(fullPath));
+      continue;
+    }
+    if (entry.isFile() && entry.name.endsWith(".md")) {
+      files.push(fullPath);
+    }
+  }
+  return files.sort();
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 describe("Skill-Extension Sync", () => {
@@ -103,6 +122,65 @@ describe("Skill-Extension Sync", () => {
       (t) => !capTools.includes(t),
     );
     expect(missingFromCaps).toEqual([]);
+  });
+
+  it("covers the full Fusion skill markdown surface", () => {
+    const markdownFiles = collectMarkdownFiles(skillDir).map((filePath) =>
+      relative(skillDir, filePath),
+    );
+
+    expect(markdownFiles).toEqual([
+      "SKILL.md",
+      "references/best-practices.md",
+      "references/cli-commands.md",
+      "references/extension-tools.md",
+      "references/fusion-capabilities.md",
+      "references/skill-patterns.md",
+      "references/task-structure.md",
+      "workflows/dashboard-cli.md",
+      "workflows/specifications.md",
+      "workflows/task-lifecycle.md",
+      "workflows/task-management.md",
+    ]);
+  });
+
+  it("enforces fn_* naming across extension + all skill markdown for public tools", () => {
+    const extensionTools = getExtensionToolNames();
+    const publicSuffixes = extensionTools.map((toolName) =>
+      toolName.replace(/^fn_/, ""),
+    );
+
+    // These names are intentionally unprefixed engine/runtime tools and are allowed
+    // to appear in docs that explain capability boundaries.
+    const allowedUnprefixedInternalTools = new Set([
+      "task_create",
+      "task_update",
+      "task_log",
+      "task_done",
+      "review_step",
+      "spawn_agent",
+    ]);
+
+    const forbiddenSuffixes = publicSuffixes.filter(
+      (suffix) => !allowedUnprefixedInternalTools.has(suffix),
+    );
+
+    const filesToScan = [extensionPath, ...collectMarkdownFiles(skillDir)];
+    const violations: string[] = [];
+
+    for (const filePath of filesToScan) {
+      const content = readFileSync(filePath, "utf-8");
+      const relativePath = relative(cliRoot, filePath);
+
+      for (const suffix of forbiddenSuffixes) {
+        const regex = new RegExp(`(?<!fn_)\\b${escapeRegex(suffix)}\\b`, "g");
+        if (regex.test(content)) {
+          violations.push(`${relativePath}: ${suffix}`);
+        }
+      }
+    }
+
+    expect(violations).toEqual([]);
   });
 
   it("/fn command is documented in the skill", () => {

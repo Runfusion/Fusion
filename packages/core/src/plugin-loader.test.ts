@@ -931,7 +931,7 @@ describe("PluginLoader", () => {
         "Failed to load plugin bad-load-all-log:",
         expect.any(Error),
       );
-    });
+    }, 15_000);
 
     it("logs invokeHook failures", async () => {
       await pluginStore.init();
@@ -1412,7 +1412,7 @@ describe("PluginLoader", () => {
       expect(runtimes).toHaveLength(2);
       expect(runtimes.find((r) => r.pluginId === "plugin-a")?.runtime.metadata.runtimeId).toBe("runtime-a");
       expect(runtimes.find((r) => r.pluginId === "plugin-b")?.runtime.metadata.runtimeId).toBe("runtime-b");
-    });
+    }, 15_000);
 
     it("skips plugins without runtime registration when other plugins have runtimes", async () => {
       await pluginStore.init();

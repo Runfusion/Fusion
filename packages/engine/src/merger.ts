@@ -1251,7 +1251,7 @@ and the bash tool returned exit code 0.
 1. Run the build command (shown in the prompt context below)
 2. If the build succeeds (exit code 0), proceed with the commit
 3. If the build fails (non-zero exit code), DO NOT commit. Instead:
-   - Call the \`report_build_failure\` tool with the real error details
+   - Call the \`fn_report_build_failure\` tool with the real error details
    - Stop immediately and do not run \`git commit\`
    - Do not claim success in plain text
 
@@ -1291,7 +1291,7 @@ and the bash tool returned exit code 0.
 1. Run the build command (shown in the prompt context below)
 2. If the build succeeds (exit code 0), proceed with the commit
 3. If the build fails (non-zero exit code), DO NOT commit. Instead:
-   - Call the \`report_build_failure\` tool with the real error details
+   - Call the \`fn_report_build_failure\` tool with the real error details
    - Stop immediately and do not run \`git commit\`
    - Do not claim success in plain text
 
@@ -2800,7 +2800,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
 
   // Create custom tool for reporting build failures
   const reportBuildFailureTool: ToolDefinition = {
-    name: "report_build_failure",
+    name: "fn_report_build_failure",
     label: "Report Build Failure",
     description: "Report that the build verification failed. Use this when the build command returns a non-zero exit code. Provide the error details in the message parameter.",
     parameters: Type.Object({
@@ -3076,7 +3076,7 @@ export function buildMergePrompt(params: MergePromptParams): string {
       "This command is mandatory before commit.",
       "Run it with the bash tool in the current worktree and inspect the actual exit code.",
       "Only proceed if it exits 0.",
-      "If it exits non-zero, call `report_build_failure` with the concrete error output and stop without committing.",
+      "If it exits non-zero, call `fn_report_build_failure` with the concrete error output and stop without committing.",
     );
   }
 
@@ -3090,7 +3090,7 @@ export function buildMergePrompt(params: MergePromptParams): string {
       "This command is mandatory before commit.",
       "Run it with the bash tool in the current worktree and inspect the actual exit code.",
       "Only commit if it exits 0.",
-      "If it exits non-zero, call `report_build_failure` with the concrete error output and stop without committing.",
+      "If it exits non-zero, call `fn_report_build_failure` with the concrete error output and stop without committing.",
     );
   }
 

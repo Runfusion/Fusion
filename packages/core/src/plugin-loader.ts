@@ -289,7 +289,6 @@ export class PluginLoader extends EventEmitter<{
     } else {
       mod = await import(moduleUrl);
     }
-
     this.loadedModules.set(path, mod);
     return mod;
   }

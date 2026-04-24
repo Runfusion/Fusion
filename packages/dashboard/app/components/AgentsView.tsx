@@ -350,6 +350,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
       .filter((n): n is OrgTreeNode => n !== null);
   }, [orgTree, showSystemAgents]);
 
+
   useEffect(() => {
     if (agentView !== "org") return;
 

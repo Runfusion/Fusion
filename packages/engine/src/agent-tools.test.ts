@@ -115,22 +115,22 @@ describe("createMemoryTools", () => {
     expect(createMemoryTools("/repo", { memoryEnabled: false }).map((tool) => tool.name)).toEqual([]);
   });
 
-  it("omits memory_append for read-only memory backends", () => {
+  it("omits fn_memory_append for read-only memory backends", () => {
     expect(createMemoryTools("/repo", { memoryBackendType: "readonly" }).map((tool) => tool.name)).toEqual([
-      "memory_search",
-      "memory_get",
+      "fn_memory_search",
+      "fn_memory_get",
     ]);
   });
 
-  it("includes memory_append for writable memory backends", () => {
+  it("includes fn_memory_append for writable memory backends", () => {
     expect(createMemoryTools("/repo", { memoryBackendType: "file" }).map((tool) => tool.name)).toEqual([
-      "memory_search",
-      "memory_get",
-      "memory_append",
+      "fn_memory_search",
+      "fn_memory_get",
+      "fn_memory_append",
     ]);
   });
 
-  it("searches per-agent memory through the memory_search tool", async () => {
+  it("searches per-agent memory through the fn_memory_search tool", async () => {
     const [searchTool, getTool] = createMemoryTools(tempDir, { memoryBackendType: "file" }, {
       agentMemory: {
         agentId: "ceo-agent",
@@ -180,7 +180,7 @@ describe("createMemoryTools", () => {
       .resolves.toContain("Agent Daily Memory");
   });
 
-  it("appends to this agent's daily memory through memory_append", async () => {
+  it("appends to this agent's daily memory through fn_memory_append", async () => {
     const tools = createMemoryTools(tempDir, { memoryBackendType: "file" }, {
       agentMemory: {
         agentId: "ceo-agent",
@@ -188,7 +188,7 @@ describe("createMemoryTools", () => {
         memory: "The CEO agent should prioritize roadmap sequencing and delegation.",
       },
     });
-    const appendTool = tools.find((tool) => tool.name === "memory_append")!;
+    const appendTool = tools.find((tool) => tool.name === "fn_memory_append")!;
 
     const result = await (appendTool as any).execute("call-1", {
       scope: "agent",
@@ -202,7 +202,7 @@ describe("createMemoryTools", () => {
     expect(result.details).toEqual({ scope: "agent", layer: "daily" });
   });
 
-  it("memory_get reads agent dreams returned by memory_search", async () => {
+  it("fn_memory_get reads agent dreams returned by fn_memory_search", async () => {
     const [, getTool, appendTool] = createMemoryTools(tempDir, { memoryBackendType: "file" }, {
       agentMemory: {
         agentId: "ceo-agent",
@@ -318,7 +318,7 @@ describe("createMemoryTools", () => {
         memory: "Roadmap delegation priorities are tracked here.",
       },
     });
-    const appendTool = tools.find((tool) => tool.name === "memory_append")!;
+    const appendTool = tools.find((tool) => tool.name === "fn_memory_append")!;
 
     const result = await (appendTool as any).execute("call-1", {
       scope: "agent",
@@ -376,8 +376,8 @@ describe("createSendMessageTool", () => {
     return tool.execute("call-1", params, undefined, undefined, undefined);
   };
 
-  it("creates a tool with name 'send_message'", () => {
-    expect(tool.name).toBe("send_message");
+  it("creates a tool with name 'fn_send_message'", () => {
+    expect(tool.name).toBe("fn_send_message");
   });
 
   it("creates a tool with correct label", () => {
@@ -545,8 +545,8 @@ describe("createReadMessagesTool", () => {
     return tool.execute("call-1", params, undefined, undefined, undefined);
   };
 
-  it("creates a tool with name 'read_messages'", () => {
-    expect(tool.name).toBe("read_messages");
+  it("creates a tool with name 'fn_read_messages'", () => {
+    expect(tool.name).toBe("fn_read_messages");
   });
 
   it("creates a tool with correct label", () => {

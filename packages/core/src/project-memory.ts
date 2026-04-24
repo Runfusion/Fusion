@@ -387,8 +387,8 @@ This project has OpenClaw-style memory files:
 - \`.fusion/memory/YYYY-MM-DD.md\` — append-only daily notes for running context
 
 **Before writing the specification:**
-1. Use \`memory_search\` first for task-relevant context
-2. Use \`memory_get\` only for specific memory files/line ranges returned by search
+1. Use \`fn_memory_search\` first for task-relevant context
+2. Use \`fn_memory_get\` only for specific memory files/line ranges returned by search
 3. Incorporate relevant learnings into your specification — reference actual patterns, constraints, and conventions documented there
 
 Do not read all memory directly by default. If memory is irrelevant, skip it.
@@ -402,8 +402,8 @@ Do not read all memory directly by default. If memory is irrelevant, skip it.
 This project has a memory system that stores durable project learnings.
 
 **Before writing the specification:**
-1. Use \`memory_search\` first for task-relevant context
-2. Use \`memory_get\` only for specific memory files/line ranges returned by search
+1. Use \`fn_memory_search\` first for task-relevant context
+2. Use \`fn_memory_get\` only for specific memory files/line ranges returned by search
 3. Incorporate useful learnings into your specification
 
 **If the memory contains useful context for this task, reference it in the specification.**
@@ -465,12 +465,12 @@ This project has OpenClaw-style memory files:
 - \`.fusion/memory/YYYY-MM-DD.md\` — append-only daily notes for running observations and open loops
 
 **At the start of execution:**
-1. Use \`memory_search\` first for task-relevant context
-2. Use \`memory_get\` only for specific memory files/line ranges returned by search
+1. Use \`fn_memory_search\` first for task-relevant context
+2. Use \`fn_memory_get\` only for specific memory files/line ranges returned by search
 3. Apply relevant learnings to your implementation — follow documented patterns and avoid known pitfalls
 4. Do not load all memory directly by default. Skip memory reads when memory is irrelevant or context is tight.
 
-**At the end of execution (before calling \`task_done()\`):**
+**At the end of execution (before calling \`fn_task_done()\`):**
 1. Review what you learned during this task that would genuinely benefit future runs
 2. Write durable decisions, conventions, and pitfalls to \`.fusion/memory/MEMORY.md\`
 3. Write running observations, unresolved context, and open loops to today's \`.fusion/memory/YYYY-MM-DD.md\`
@@ -501,11 +501,11 @@ This project has OpenClaw-style memory files:
 This project has a memory system that stores durable project learnings accumulated from past task runs.
 
 **At the start of execution:**
-1. Use \`memory_search\` first for task-relevant context
-2. Use \`memory_get\` only for specific memory files/line ranges returned by search
+1. Use \`fn_memory_search\` first for task-relevant context
+2. Use \`fn_memory_get\` only for specific memory files/line ranges returned by search
 3. Apply useful learnings to your implementation
 
-**At the end of execution (before calling \`task_done()\`):**
+**At the end of execution (before calling \`fn_task_done()\`):**
 1. Review what you learned during this task that would genuinely benefit future runs
 2. **If nothing durable was learned, skip the memory update entirely** — do not append trivial or task-specific notes
 3. Only write when you have genuinely durable, reusable insights such as:
@@ -538,8 +538,8 @@ export function buildReviewerMemoryInstructions(
 This project has a memory system that stores durable project learnings.
 
 **During review:**
-1. Use \`memory_search\` for task-relevant project conventions, pitfalls, and prior decisions when they could affect your verdict
-2. Use \`memory_get\` only for specific memory files/line ranges returned by search
+1. Use \`fn_memory_search\` for task-relevant project conventions, pitfalls, and prior decisions when they could affect your verdict
+2. Use \`fn_memory_get\` only for specific memory files/line ranges returned by search
 3. Treat documented durable conventions and pitfalls as review evidence when deciding APPROVE, REVISE, or RETHINK
 4. Do not update memory during review; reviewer memory access is read-only
 5. Skip memory reads when they are not relevant to the reviewed plan or code

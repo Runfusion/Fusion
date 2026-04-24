@@ -117,8 +117,8 @@ Follow this structure exactly:
 ### Step {N}: Documentation & Delivery
 
 - [ ] Update relevant documentation
-- [ ] Save documentation deliverables as task documents via \`task_document_write\` (key="docs", content=...)
-- [ ] Out-of-scope findings created as new tasks via \`task_create\` tool
+- [ ] Save documentation deliverables as task documents via \`fn_task_document_write\` (key="docs", content=...)
+- [ ] Out-of-scope findings created as new tasks via \`fn_task_create\` tool
 
 ## Documentation Requirements
 
@@ -151,7 +151,7 @@ Commits at step boundaries. All commits include the task ID:
 - Refuse necessary fixes just because they touch files outside the initial File Scope
 - Commit without the task ID prefix
 - Remove, delete, or gut modules, settings, interfaces, exports, or test files outside the File Scope
-- Remove features as "cleanup" — if something seems unused, create a task via \`task_create\`
+- Remove features as "cleanup" — if something seems unused, create a task via \`fn_task_create\`
 
 ## Changeset Requirements
 
@@ -173,13 +173,13 @@ tests. Manual verification is NOT a test.
   as part of this task (not just skipping tests)
 
 ## Duplicate check
-Before writing a spec, call \`task_list\` to see existing tasks.
+Before writing a spec, call \`fn_task_list\` to see existing tasks.
 If a task already covers the same work (even if worded differently), do NOT
 write a PROMPT.md. Instead, write a single line to the output file:
 \`DUPLICATE: {existing-task-id}\`
 
 ## Dependency awareness
-When you plan to list a task in the \`## Dependencies\` section, first call \`task_get\` on that task ID to read its PROMPT.md.
+When you plan to list a task in the \`## Dependencies\` section, first call \`fn_task_get\` on that task ID to read its PROMPT.md.
 Use what you learn — file scope, APIs, patterns, completion criteria — to make the new spec accurate: reference the right paths, avoid conflicting assumptions, and describe what the dependency must deliver before this task starts.
 If the dependency task has no PROMPT.md yet (not yet specified), note that in the Dependencies section.
 
@@ -187,8 +187,8 @@ If the dependency task has no PROMPT.md yet (not yet specified), note that in th
 When the task includes \`breakIntoSubtasks: true\`, first decide whether it should be split.
 
 - Split only when the work is meaningfully decomposable into 2-5 independently executable child tasks.
-- If splitting: use the \`task_create\` tool to create child tasks in triage, include clear descriptions and dependencies between them, then stop. Do NOT write a PROMPT.md for the parent task.
-- **CRITICAL — subtask dependencies:** the parent task is deleted once all subtasks are created. \`dependencies\` on a new subtask may ONLY reference sibling subtasks you have created earlier in this same split (or unrelated existing tasks). **Never depend on the parent task's id.** If a child conceptually "waits for the parent's remaining work", create a sibling subtask that does that work and depend on the sibling instead. The \`task_create\` tool will reject parent-id dependencies with an error.
+- If splitting: use the \`fn_task_create\` tool to create child tasks in triage, include clear descriptions and dependencies between them, then stop. Do NOT write a PROMPT.md for the parent task.
+- **CRITICAL — subtask dependencies:** the parent task is deleted once all subtasks are created. \`dependencies\` on a new subtask may ONLY reference sibling subtasks you have created earlier in this same split (or unrelated existing tasks). **Never depend on the parent task's id.** If a child conceptually "waits for the parent's remaining work", create a sibling subtask that does that work and depend on the sibling instead. The \`fn_task_create\` tool will reject parent-id dependencies with an error.
 - If not splitting: proceed with a normal PROMPT.md specification.
 
 ## Proactive Subtask Breakdown for M/L Tasks
@@ -211,20 +211,20 @@ For tasks you assess as Size M or L, proactively evaluate whether splitting into
 
 ## Triage tools
 You have these extra tools during triage:
-- \`task_list\` — list existing active tasks
-- \`task_get\` — inspect a task and its PROMPT.md
-- \`task_create\` — create a child/follow-up task while triaging
-- \`task_document_write\` — save a planning document (e.g., key="plan")
-- \`task_document_read\` — read back a previously saved document
+- \`fn_task_list\` — list existing active tasks
+- \`fn_task_get\` — inspect a task and its PROMPT.md
+- \`fn_task_create\` — create a child/follow-up task while triaging
+- \`fn_task_document_write\` — save a planning document (e.g., key="plan")
+- \`fn_task_document_read\` — read back a previously saved document
 
-When the planning conversation produces a structured plan, save it as a document with \`task_document_write(key='plan', content='...')\` so the executor can reference it during implementation.
+When the planning conversation produces a structured plan, save it as a document with \`fn_task_document_write(key='plan', content='...')\` so the executor can reference it during implementation.
 
 ## Guidelines
 - Read the project structure and relevant source files to understand context BEFORE writing
 - Be specific — name actual files, functions, and patterns from the codebase
 - Steps should express OUTCOMES, not micro-instructions (2-5 checkboxes per step)
 - Always include a testing step and a documentation step
-- For tasks whose primary deliverable is documentation (updating docs, writing README, API references), include an explicit step or checkbox instructing the executor to save the final documentation content via \`task_document_write\`
+- For tasks whose primary deliverable is documentation (updating docs, writing README, API references), include an explicit step or checkbox instructing the executor to save the final documentation content via \`fn_task_document_write\`
 - Include a "Do NOT" section with project-appropriate guardrails
 - Size assessment: S (<2h), M (2-4h), L (4-8h). Split if XL (8h+)
 - Review level scoring: Blast radius (0-2), Pattern novelty (0-2), Security (0-2), Reversibility (0-2)
@@ -238,16 +238,16 @@ package.json when explicit commands are provided.
 
 ## Spec Review
 
-After writing the PROMPT.md, call \`review_spec()\` to get an independent quality review.
+After writing the PROMPT.md, call \`fn_review_spec()\` to get an independent quality review.
 
 - **APPROVE** → your spec is accepted, you're done
-- **REVISE** → fix the issues described in the review feedback, rewrite the PROMPT.md, and call \`review_spec()\` again. Repeat until approved.
+- **REVISE** → fix the issues described in the review feedback, rewrite the PROMPT.md, and call \`fn_review_spec()\` again. Repeat until approved.
 - **RETHINK** → your approach was fundamentally rejected. The conversation will rewind. Read the feedback carefully and take a completely different approach. Do NOT repeat the rejected strategy.
 
-You MUST call \`review_spec()\` after writing the PROMPT.md. Do not finish without getting an APPROVE verdict.
+You MUST call \`fn_review_spec()\` after writing the PROMPT.md. Do not finish without getting an APPROVE verdict.
 
 ## Output
-Write the PROMPT.md directly using the write tool, then call \`review_spec()\` for review.
+Write the PROMPT.md directly using the write tool, then call \`fn_review_spec()\` for review.
 
 ## Frontend UX Criteria Injection
 
@@ -621,11 +621,11 @@ export class TriageProcessor {
   /**
    * Specify a triage task by spawning an AI agent to generate a PROMPT.md.
    *
-   * After the agent writes the PROMPT.md, it calls `review_spec()` to spawn
+   * After the agent writes the PROMPT.md, it calls `fn_review_spec()` to spawn
    * an independent reviewer agent that evaluates the specification quality.
    * The review loop works as follows:
    * - **APPROVE**: the spec is accepted and the task moves to `todo`
-   * - **REVISE**: the agent revises the spec and calls `review_spec()` again.
+   * - **REVISE**: the agent revises the spec and calls `fn_review_spec()` again.
    *   If the agent finishes without getting APPROVE, the task is NOT moved to
    *   `todo` — a post-session gate requires an explicit APPROVE verdict.
    * - **RETHINK**: the conversation rewinds to a pre-specification checkpoint
@@ -670,7 +670,7 @@ export class TriageProcessor {
 
         // Mutable ref — populated after createFnAgent, tools access lazily via closure
         const sessionRef: { current: AgentSession | null } = { current: null };
-        // Checkpoint for RETHINK rewind — captured lazily on first review_spec call
+        // Checkpoint for RETHINK rewind — captured lazily on first fn_review_spec call
         const checkpointRef: { current: string | null } = { current: null };
         // Track the last spec review verdict for post-session enforcement
         const specReviewVerdictRef: { current: ReviewVerdict | null } = {
@@ -789,7 +789,7 @@ export class TriageProcessor {
           "triage",
         );
 
-        // Make session available to review_spec tool (for RETHINK rewind)
+        // Make session available to fn_review_spec tool (for RETHINK rewind)
         sessionRef.current = session;
 
         // Register session so the global pause listener can terminate it
@@ -875,7 +875,7 @@ export class TriageProcessor {
               triageLog.log(`✓ ${task.id} split into subtasks (${childTaskIds}) and closed`);
             } catch (err: unknown) {
               // deleteTask refuses when live tasks still depend on this id.
-              // If task_create's validation worked correctly this branch is
+              // If fn_task_create's validation worked correctly this branch is
               // unreachable, but we keep it as defense-in-depth: leaving the
               // parent alive is always safer than stranding dependents.
               const msg = err instanceof Error ? err.message : String(err);
@@ -902,7 +902,7 @@ export class TriageProcessor {
           if (canRetryWithPlanningFallback) {
             const verdictDesc =
               specReviewVerdictRef.current === null
-                ? "review_spec was never called"
+                ? "fn_review_spec was never called"
                 : `verdict was ${specReviewVerdictRef.current}`;
             const fallbackDesc = `${planningFallbackProvider}/${planningFallbackModelId}`;
             triageLog.warn(
@@ -979,7 +979,7 @@ export class TriageProcessor {
           if (specReviewVerdictRef.current !== "APPROVE") {
             const verdictDesc =
               specReviewVerdictRef.current === null
-                ? "review_spec was never called"
+                ? "fn_review_spec was never called"
                 : `verdict was ${specReviewVerdictRef.current}`;
             const decision = computeRecoveryDecision({
               recoveryRetryCount: task.recoveryRetryCount,
@@ -1195,7 +1195,7 @@ export class TriageProcessor {
     });
 
     const taskList: ToolDefinition = {
-      name: "task_list",
+      name: "fn_task_list",
       label: "List Tasks",
       description:
         "List all tasks that aren't done. Returns ID, description, column, " +
@@ -1225,7 +1225,7 @@ export class TriageProcessor {
     };
 
     const taskGet: ToolDefinition = {
-      name: "task_get",
+      name: "fn_task_get",
       label: "Get Task",
       description:
         "Get full details of a specific task including its PROMPT.md content. " +
@@ -1254,7 +1254,7 @@ export class TriageProcessor {
           };
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          triageLog.warn(`${options.parentTaskId}: task_get lookup failed for ${params.id}: ${msg}`);
+          triageLog.warn(`${options.parentTaskId}: fn_task_get lookup failed for ${params.id}: ${msg}`);
           return {
             content: [
               { type: "text" as const, text: `Task ${params.id} not found.` },
@@ -1266,7 +1266,7 @@ export class TriageProcessor {
     };
 
     const taskCreate: ToolDefinition = {
-      name: "task_create",
+      name: "fn_task_create",
       label: "Create Child Task",
       description:
         "Create a child task (subtask) while breaking a larger task into smaller pieces. " +
@@ -1282,7 +1282,7 @@ export class TriageProcessor {
         _callId: string,
         params: Static<typeof taskCreateParams>,
       ) => {
-        // task_create is always available during triage to support both
+        // fn_task_create is always available during triage to support both
         // explicit breakIntoSubtasks and proactive splitting of oversized tasks.
         try {
           // Validate dependencies before creating the child:
@@ -1328,8 +1328,8 @@ export class TriageProcessor {
                 {
                   type: "text" as const,
                   text:
-                    `ERROR: task_create rejected. Invalid dependencies:\n${summary}\n\n` +
-                    `Remove or replace these ids and call task_create again.`,
+                    `ERROR: fn_task_create rejected. Invalid dependencies:\n${summary}\n\n` +
+                    `Remove or replace these ids and call fn_task_create again.`,
                 },
               ],
               details: { rejectedDependencies: rejected },
@@ -1342,7 +1342,7 @@ export class TriageProcessor {
             parentTask = await store.getTask(options.parentTaskId);
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            triageLog.warn(`${options.parentTaskId}: failed to load parent task for task_create inheritance: ${msg}`);
+            triageLog.warn(`${options.parentTaskId}: failed to load parent task for fn_task_create inheritance: ${msg}`);
             // Parent task not found or error - proceed without inheritance
             parentTask = undefined;
           }
@@ -1389,13 +1389,13 @@ export class TriageProcessor {
   }
 
   /**
-   * Create the `review_spec` tool for the triage agent.
+   * Create the `fn_review_spec` tool for the triage agent.
    *
    * Spawns an independent reviewer agent to evaluate the generated PROMPT.md.
    * Verdict handling:
    * - **APPROVE**: returns "APPROVE" — the triage agent's work is done.
    * - **REVISE**: returns the review feedback. The triage agent must fix the
-   *   PROMPT.md and call `review_spec` again. A post-session gate in
+   *   PROMPT.md and call `fn_review_spec` again. A post-session gate in
    *   `specifyTask()` prevents moving to `todo` if the last verdict is REVISE.
    * - **RETHINK**: rewinds the conversation to a pre-specification checkpoint
    *   using `session.navigateTree()`. Returns a re-prompt instructing the agent
@@ -1421,7 +1421,7 @@ export class TriageProcessor {
     const options = this.options;
 
     return {
-      name: "review_spec",
+      name: "fn_review_spec",
       label: "Review Specification",
       description:
         "Spawn a reviewer agent to evaluate the generated PROMPT.md specification. " +
@@ -1448,7 +1448,7 @@ export class TriageProcessor {
             "utf-8",
           ).catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
-            triageLog.warn(`${taskId}: failed to read PROMPT.md for review_spec (${promptPath}): ${msg}`);
+            triageLog.warn(`${taskId}: failed to read PROMPT.md for fn_review_spec (${promptPath}): ${msg}`);
             return "";
           });
 
@@ -1457,7 +1457,7 @@ export class TriageProcessor {
               content: [
                 {
                   type: "text" as const,
-                  text: "UNAVAILABLE — PROMPT.md file not found or empty. Write the specification first, then call review_spec.",
+                  text: "UNAVAILABLE — PROMPT.md file not found or empty. Write the specification first, then call fn_review_spec.",
                 },
               ],
               details: {},
@@ -1525,7 +1525,7 @@ export class TriageProcessor {
               text = "APPROVE";
               break;
             case "REVISE":
-              text = `REVISE — fix the issues below, rewrite the PROMPT.md, and call review_spec() again.\n\n${result.review}`;
+              text = `REVISE — fix the issues below, rewrite the PROMPT.md, and call fn_review_spec() again.\n\n${result.review}`;
               break;
             case "RETHINK": {
               // Rewind conversation to pre-specification checkpoint
@@ -1900,12 +1900,12 @@ The user has requested that this task be broken into smaller subtasks if it is c
 
 **How to split:**
 1. First, analyze the task to determine if it should be split
-2. If splitting: use the \\\`task_create\\\` tool to create child tasks in order, setting up dependencies as needed
+2. If splitting: use the \\\`fn_task_create\\\` tool to create child tasks in order, setting up dependencies as needed
 3. Include clear descriptions and acceptance criteria for each child task
 4. After creating all subtasks, stop — do NOT write a PROMPT.md for the parent task
 5. If NOT splitting: proceed with a normal PROMPT.md specification for this task
 
-**Subtask dependencies rule:** \`dependencies\` on a child may only reference **sibling subtasks created earlier in this same split** or **pre-existing tasks in the store**. They must NEVER reference the parent task being split — the parent is deleted after the split completes, and a dependency on a deleted task permanently blocks the dependent. If a child "needs the rest of the parent's work to finish first", create another sibling subtask for that remaining work and depend on the sibling. The \`task_create\` tool rejects parent-id dependencies.
+**Subtask dependencies rule:** \`dependencies\` on a child may only reference **sibling subtasks created earlier in this same split** or **pre-existing tasks in the store**. They must NEVER reference the parent task being split — the parent is deleted after the split completes, and a dependency on a deleted task permanently blocks the dependent. If a child "needs the rest of the parent's work to finish first", create another sibling subtask for that remaining work and depend on the sibling. The \`fn_task_create\` tool rejects parent-id dependencies.
 
 **Important:** If you create subtasks, this parent task will be closed and replaced by the children. Make sure each child is a complete, executable task.`;
   } else {
@@ -1931,7 +1931,7 @@ The user did not explicitly request subtask breakdown, so you should first asses
 - Adding a small feature to one module with 5 steps
 
 **How to decide:**
-- If you choose to split: use the \\\`task_create\\\` tool to create the child tasks, set dependencies where needed, and then stop without writing a PROMPT.md for the parent task.
+- If you choose to split: use the \\\`fn_task_create\\\` tool to create the child tasks, set dependencies where needed, and then stop without writing a PROMPT.md for the parent task.
 - **Subtask dependencies must only reference sibling subtasks created earlier in this same split, or pre-existing tasks. NEVER depend on the parent task being split — the parent is deleted after splitting, and the tool will reject parent-id dependencies.**
 - If the work appears to be Size S, or if an M/L task genuinely has 5 or fewer focused steps with a clear scope, proceed with a normal PROMPT.md specification.
 - If size is uncertain at first, make a quick assessment from the available context before deciding.`;

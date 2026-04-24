@@ -5,6 +5,8 @@
 
 <objective>
 Guide the agent through creating well-specified tasks and organizing work using the mission hierarchy for complex multi-phase projects.
+
+All tool examples in this workflow intentionally use the public `fn_*` extension namespace.
 </objective>
 
 <process>

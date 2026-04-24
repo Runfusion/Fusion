@@ -421,12 +421,12 @@ export function buildStepPrompt(
   if (isLastStep) {
     parts.push(
       "",
-      "**Document your deliverables:** When this task produces written output (documentation, specifications, reports, API references, README updates, guides, or any other content), save that content as a task document using `task_document_write(key='...', content='...')`. Use a key that describes the deliverable (e.g., key=\"readme\", key=\"api-docs\"). The document persists in the task for review even after the worktree is cleaned up.",
+      "**Document your deliverables:** When this task produces written output (documentation, specifications, reports, API references, README updates, guides, or any other content), save that content as a task document using `fn_task_document_write(key='...', content='...')`. Use a key that describes the deliverable (e.g., key=\"readme\", key=\"api-docs\"). The document persists in the task for review even after the worktree is cleaned up.",
       "",
     );
   }
 
-  parts.push("After completing this step, commit your changes and call task_done(). Do NOT proceed to subsequent steps.");
+  parts.push("After completing this step, commit your changes and call fn_task_done(). Do NOT proceed to subsequent steps.");
 
   return parts.join("\n");
 }
@@ -526,7 +526,7 @@ function buildReducedStepPrompt(taskDetail: TaskDetail, stepIndex: number): stri
     "IMPORTANT: Your previous attempt hit the context window limit.",
     "Do NOT repeat work that's already been done.",
     "Check git status and git log to see what's been committed.",
-    "Complete the remaining work and call task_done().",
+    "Complete the remaining work and call fn_task_done().",
   ];
 
   return parts.join("\n").replace(/\n{3,}/g, "\n\n"); // Collapse multiple blank lines

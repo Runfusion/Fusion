@@ -80,7 +80,7 @@ export const sendMessageParams = Type.Object({
     Type.Literal("agent-to-user"),
   ], { description: "Message type (defaults to 'agent-to-agent')" })),
   reply_to_message_id: Type.Optional(
-    Type.String({ description: "Optional ID of the message you are replying to (use IDs from read_messages output)" }),
+    Type.String({ description: "Optional ID of the message you are replying to (use IDs from fn_read_messages output)" }),
   ),
 });
 
@@ -95,7 +95,7 @@ export const memorySearchParams = Type.Object({
 });
 
 export const memoryGetParams = Type.Object({
-  path: Type.String({ description: "Memory path from memory_search, e.g. .fusion/memory/MEMORY.md or .fusion/memory/YYYY-MM-DD.md" }),
+  path: Type.String({ description: "Memory path from fn_memory_search, e.g. .fusion/memory/MEMORY.md or .fusion/memory/YYYY-MM-DD.md" }),
   startLine: Type.Optional(Type.Number({ description: "1-based start line (default: 1)" })),
   lineCount: Type.Optional(Type.Number({ description: "Number of lines to read (default: 120, max: 400)" })),
 });
@@ -415,14 +415,14 @@ async function getAgentMemoryWindow(rootDir: string, agentMemory: AgentMemoryCon
 // ── Tool factory functions ────────────────────────────────────────────────
 
 /**
- * Create a `task_create` tool that creates a new task in triage.
+ * Create a `fn_task_create` tool that creates a new task in triage.
  *
  * @param store - TaskStore for task persistence
- * @returns ToolDefinition for the `task_create` tool
+ * @returns ToolDefinition for the `fn_task_create` tool
  */
 export function createTaskCreateTool(store: TaskStore): ToolDefinition {
   return {
-    name: "task_create",
+    name: "fn_task_create",
     label: "Create Task",
     description:
       "Create a new task for out-of-scope work discovered during execution. " +
@@ -449,15 +449,15 @@ export function createTaskCreateTool(store: TaskStore): ToolDefinition {
 }
 
 /**
- * Create a `task_log` tool that logs an entry for a specific task.
+ * Create a `fn_task_log` tool that logs an entry for a specific task.
  *
  * @param store - TaskStore for task persistence
  * @param taskId - The task ID to log entries against
- * @returns ToolDefinition for the `task_log` tool
+ * @returns ToolDefinition for the `fn_task_log` tool
  */
 export function createTaskLogTool(store: TaskStore, taskId: string): ToolDefinition {
   return {
-    name: "task_log",
+    name: "fn_task_log",
     label: "Log Entry",
     description:
       "Log an important action, decision, or issue for this task. " +
@@ -474,16 +474,16 @@ export function createTaskLogTool(store: TaskStore, taskId: string): ToolDefinit
 }
 
 /**
- * Create a `task_log` tool with run context for mutation correlation.
+ * Create a `fn_task_log` tool with run context for mutation correlation.
  *
  * @param store - TaskStore for task persistence
  * @param taskId - The task ID to log entries against
  * @param runContext - Optional run context for mutation correlation
- * @returns ToolDefinition for the `task_log` tool
+ * @returns ToolDefinition for the `fn_task_log` tool
  */
 export function createTaskLogToolWithContext(store: TaskStore, taskId: string, runContext?: RunMutationContext): ToolDefinition {
   return {
-    name: "task_log",
+    name: "fn_task_log",
     label: "Log Entry",
     description:
       "Log an important action, decision, or issue for this task. " +
@@ -500,15 +500,15 @@ export function createTaskLogToolWithContext(store: TaskStore, taskId: string, r
 }
 
 /**
- * Create a `task_document_write` tool that stores a named task document.
+ * Create a `fn_task_document_write` tool that stores a named task document.
  *
  * @param store - TaskStore for task document persistence
  * @param taskId - The task ID to write documents against
- * @returns ToolDefinition for the `task_document_write` tool
+ * @returns ToolDefinition for the `fn_task_document_write` tool
  */
 export function createTaskDocumentWriteTool(store: TaskStore, taskId: string): ToolDefinition {
   return {
-    name: "task_document_write",
+    name: "fn_task_document_write",
     label: "Write Document",
     description:
       "Save a named document for this task (for example plan, notes, or research). " +
@@ -545,15 +545,15 @@ export function createTaskDocumentWriteTool(store: TaskStore, taskId: string): T
 }
 
 /**
- * Create a `task_document_read` tool that reads task-scoped documents.
+ * Create a `fn_task_document_read` tool that reads task-scoped documents.
  *
  * @param store - TaskStore for task document reads
  * @param taskId - The task ID to read documents from
- * @returns ToolDefinition for the `task_document_read` tool
+ * @returns ToolDefinition for the `fn_task_document_read` tool
  */
 export function createTaskDocumentReadTool(store: TaskStore, taskId: string): ToolDefinition {
   return {
-    name: "task_document_read",
+    name: "fn_task_document_read",
     label: "Read Document",
     description:
       "Read a named document for this task, or list all documents when no key is provided.",
@@ -614,11 +614,11 @@ export function createTaskDocumentReadTool(store: TaskStore, taskId: string): To
 
 export function createMemorySearchTool(rootDir: string, settings?: MemoryToolSettings, options?: MemoryToolOptions): ToolDefinition {
   return {
-    name: "memory_search",
+    name: "fn_memory_search",
     label: "Search Memory",
     description:
       "Search durable project memory and this agent's own memory, returning small snippets with file paths and line ranges. " +
-      "Use this before memory_get; do not read all memory by default.",
+      "Use this before fn_memory_get; do not read all memory by default.",
     parameters: memorySearchParams,
     execute: async (_id: string, params: Static<typeof memorySearchParams>) => {
       const limit = params.limit ?? 5;
@@ -653,10 +653,10 @@ export function createMemorySearchTool(rootDir: string, settings?: MemoryToolSet
 
 export function createMemoryGetTool(rootDir: string, settings?: MemoryToolSettings, options?: MemoryToolOptions): ToolDefinition {
   return {
-    name: "memory_get",
+    name: "fn_memory_get",
     label: "Get Memory",
     description:
-      "Read a bounded line window from a memory file returned by memory_search. " +
+      "Read a bounded line window from a memory file returned by fn_memory_search. " +
       "Allowed files include project memory under .fusion/memory/ and this agent's own .fusion/agent-memory/{agentId}/MEMORY.md file.",
     parameters: memoryGetParams,
     execute: async (_id: string, params: Static<typeof memoryGetParams>) => {
@@ -690,7 +690,7 @@ export function createMemoryGetTool(rootDir: string, settings?: MemoryToolSettin
 
 export function createMemoryAppendTool(rootDir: string, settings?: MemoryToolSettings, options?: MemoryToolOptions): ToolDefinition {
   return {
-    name: "memory_append",
+    name: "fn_memory_append",
     label: "Append Memory",
     description:
       "Append concise Markdown to project memory. Use long-term only for durable conventions/decisions/pitfalls; " +
@@ -755,7 +755,7 @@ export function createMemoryTools(rootDir: string, settings?: MemoryToolSettings
 }
 
 /**
- * Create a `reflect_on_performance` tool that asks the reflection service to
+ * Create a `fn_reflect_on_performance` tool that asks the reflection service to
  * analyze recent agent performance and return actionable insights.
  */
 export function createReflectOnPerformanceTool(
@@ -763,7 +763,7 @@ export function createReflectOnPerformanceTool(
   agentId: string,
 ): ToolDefinition {
   return {
-    name: "reflect_on_performance",
+    name: "fn_reflect_on_performance",
     label: "Reflect on Performance",
     description:
       'Review your past task performance and generate insights for improvement. Optionally focus on a specific area like "code quality", "speed", or "testing".',
@@ -803,14 +803,14 @@ export function createReflectOnPerformanceTool(
 }
 
 /**
- * Create a `list_agents` tool that lists all available agents.
+ * Create a `fn_list_agents` tool that lists all available agents.
  *
  * @param agentStore - AgentStore for agent discovery
- * @returns ToolDefinition for the `list_agents` tool
+ * @returns ToolDefinition for the `fn_list_agents` tool
  */
 export function createListAgentsTool(agentStore: AgentStore): ToolDefinition {
   return {
-    name: "list_agents",
+    name: "fn_list_agents",
     label: "List Agents",
     description:
       "List all available agents in the system. Shows each agent's name, role, state, " +
@@ -860,20 +860,20 @@ export function createListAgentsTool(agentStore: AgentStore): ToolDefinition {
 }
 
 /**
- * Create a `delegate_task` tool that creates and assigns a task to a specific agent.
+ * Create a `fn_delegate_task` tool that creates and assigns a task to a specific agent.
  *
  * @param agentStore - AgentStore for agent lookup
  * @param taskStore - TaskStore for task creation
- * @returns ToolDefinition for the `delegate_task` tool
+ * @returns ToolDefinition for the `fn_delegate_task` tool
  */
 export function createDelegateTaskTool(agentStore: AgentStore, taskStore: TaskStore): ToolDefinition {
   return {
-    name: "delegate_task",
+    name: "fn_delegate_task",
     label: "Delegate Task",
     description:
       "Create a new task and assign it to a specific agent for execution. The task goes to " +
       "'todo' and will be picked up by the target agent on their next heartbeat cycle. " +
-      "Use list_agents first to find available agents and their capabilities.",
+      "Use fn_list_agents first to find available agents and their capabilities.",
     parameters: delegateTaskParams,
     execute: async (_id: string, params: Static<typeof delegateTaskParams>) => {
       // Validate target agent exists
@@ -915,15 +915,15 @@ export function createDelegateTaskTool(agentStore: AgentStore, taskStore: TaskSt
 }
 
 /**
- * Create a `send_message` tool that sends a message to another agent or user.
+ * Create a `fn_send_message` tool that sends a message to another agent or user.
  *
  * @param messageStore - MessageStore for message persistence
  * @param fromAgentId - The agent ID sending the message
- * @returns ToolDefinition for the `send_message` tool
+ * @returns ToolDefinition for the `fn_send_message` tool
  */
 export function createSendMessageTool(messageStore: MessageStore, fromAgentId: string): ToolDefinition {
   return {
-    name: "send_message",
+    name: "fn_send_message",
     label: "Send Message",
     description:
       "Send a message to another agent or user. The recipient will be woken if they have " +
@@ -988,15 +988,15 @@ export function createSendMessageTool(messageStore: MessageStore, fromAgentId: s
 }
 
 /**
- * Create a `read_messages` tool that reads inbox messages for an agent.
+ * Create a `fn_read_messages` tool that reads inbox messages for an agent.
  *
  * @param messageStore - MessageStore for message retrieval
  * @param agentId - The agent ID whose inbox to read
- * @returns ToolDefinition for the `read_messages` tool
+ * @returns ToolDefinition for the `fn_read_messages` tool
  */
 export function createReadMessagesTool(messageStore: MessageStore, agentId: string): ToolDefinition {
   return {
-    name: "read_messages",
+    name: "fn_read_messages",
     label: "Read Messages",
     description: "Read your inbox messages. Returns unread messages by default.",
     parameters: readMessagesParams,

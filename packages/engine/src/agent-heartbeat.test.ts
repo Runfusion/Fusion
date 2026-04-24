@@ -396,7 +396,7 @@ describe("HeartbeatMonitor", () => {
         capturedTools = [];
       });
 
-      it("includes send_message and read_messages tools when messageStore is available", () => {
+      it("includes fn_send_message and fn_read_messages tools when messageStore is available", () => {
         const messageStore = createMockMessageStore();
         const customMonitor = new HeartbeatMonitor({
           store,
@@ -408,8 +408,8 @@ describe("HeartbeatMonitor", () => {
         const tools = customMonitor.createHeartbeatTools("agent-001", mockTaskStore, "FN-001", undefined, undefined, messageStore);
         const toolNames = tools.map((t) => t.name);
 
-        expect(toolNames).toContain("send_message");
-        expect(toolNames).toContain("read_messages");
+        expect(toolNames).toContain("fn_send_message");
+        expect(toolNames).toContain("fn_read_messages");
       });
 
       it("does not include message tools when messageStore is not provided", () => {
@@ -422,8 +422,8 @@ describe("HeartbeatMonitor", () => {
         const tools = customMonitor.createHeartbeatTools("agent-001", mockTaskStore, "FN-001");
         const toolNames = tools.map((t) => t.name);
 
-        expect(toolNames).not.toContain("send_message");
-        expect(toolNames).not.toContain("read_messages");
+        expect(toolNames).not.toContain("fn_send_message");
+        expect(toolNames).not.toContain("fn_read_messages");
       });
 
       it("does not include message tools when messageStore is undefined even if other params are passed", () => {
@@ -443,8 +443,8 @@ describe("HeartbeatMonitor", () => {
         );
         const toolNames = tools.map((t) => t.name);
 
-        expect(toolNames).not.toContain("send_message");
-        expect(toolNames).not.toContain("read_messages");
+        expect(toolNames).not.toContain("fn_send_message");
+        expect(toolNames).not.toContain("fn_read_messages");
       });
     });
   });
@@ -1474,7 +1474,7 @@ describe("HeartbeatMonitor", () => {
         expect(result.resultJson).toEqual({ reason: "no_assignment" });
       });
 
-      it("identity agent without task receives correct tools (task_create, list_agents, delegate_task, heartbeat_done)", async () => {
+      it("identity agent without task receives correct tools (fn_task_create, fn_list_agents, fn_delegate_task, fn_heartbeat_done)", async () => {
         const store = createStoreWithAgentForExec({ taskId: undefined, soul: "I am a coordinator" });
         const mockSession = createMockAgentSession();
         mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
@@ -1487,20 +1487,20 @@ describe("HeartbeatMonitor", () => {
         const callArgs = mockedCreateFnAgent.mock.calls[0]![0]!;
         const toolNames = callArgs.customTools!.map((tool: any) => tool.name);
 
-        // Should have task_create, list_agents, delegate_task
-        expect(toolNames).toContain("task_create");
-        expect(toolNames).toContain("list_agents");
-        expect(toolNames).toContain("delegate_task");
-        // Should have heartbeat_done
-        expect(toolNames).toContain("heartbeat_done");
+        // Should have fn_task_create, fn_list_agents, fn_delegate_task
+        expect(toolNames).toContain("fn_task_create");
+        expect(toolNames).toContain("fn_list_agents");
+        expect(toolNames).toContain("fn_delegate_task");
+        // Should have fn_heartbeat_done
+        expect(toolNames).toContain("fn_heartbeat_done");
         // Should have memory tools
-        expect(toolNames).toContain("memory_search");
-        expect(toolNames).toContain("memory_append");
+        expect(toolNames).toContain("fn_memory_search");
+        expect(toolNames).toContain("fn_memory_append");
 
-        // Should NOT have task_log, task_document_write, task_document_read (they require taskId)
-        expect(toolNames).not.toContain("task_log");
-        expect(toolNames).not.toContain("task_document_write");
-        expect(toolNames).not.toContain("task_document_read");
+        // Should NOT have fn_task_log, fn_task_document_write, fn_task_document_read (they require taskId)
+        expect(toolNames).not.toContain("fn_task_log");
+        expect(toolNames).not.toContain("fn_task_document_write");
+        expect(toolNames).not.toContain("fn_task_document_read");
       });
 
       it("no-task run receives HEARTBEAT_NO_TASK_SYSTEM_PROMPT as system prompt", async () => {
@@ -1517,17 +1517,17 @@ describe("HeartbeatMonitor", () => {
         const systemPrompt = callArgs.systemPrompt;
 
         expect(systemPrompt).toContain(HEARTBEAT_NO_TASK_SYSTEM_PROMPT);
-        expect(systemPrompt).not.toContain("task_log");
-        expect(systemPrompt).not.toContain("task_document_write");
-        expect(systemPrompt).not.toContain("task_document_read");
-        expect(systemPrompt).toContain("task_create");
-        expect(systemPrompt).toContain("list_agents");
-        expect(systemPrompt).toContain("delegate_task");
-        expect(systemPrompt).toContain("read_messages");
-        expect(systemPrompt).toContain("send_message");
-        expect(systemPrompt).toContain("memory_search");
-        expect(systemPrompt).toContain("memory_append");
-        expect(systemPrompt).toContain("heartbeat_done");
+        expect(systemPrompt).not.toContain("fn_task_log");
+        expect(systemPrompt).not.toContain("fn_task_document_write");
+        expect(systemPrompt).not.toContain("fn_task_document_read");
+        expect(systemPrompt).toContain("fn_task_create");
+        expect(systemPrompt).toContain("fn_list_agents");
+        expect(systemPrompt).toContain("fn_delegate_task");
+        expect(systemPrompt).toContain("fn_read_messages");
+        expect(systemPrompt).toContain("fn_send_message");
+        expect(systemPrompt).toContain("fn_memory_search");
+        expect(systemPrompt).toContain("fn_memory_append");
+        expect(systemPrompt).toContain("fn_heartbeat_done");
       });
 
       it("identity agent without task receives no-task execution prompt mentioning 'no assigned task'", async () => {
@@ -1543,13 +1543,13 @@ describe("HeartbeatMonitor", () => {
         const callArgs = mockedCreateFnAgent.mock.calls[0]![0]!;
         const systemPrompt = callArgs.systemPrompt;
         expect(systemPrompt).toContain(HEARTBEAT_NO_TASK_SYSTEM_PROMPT);
-        expect(systemPrompt).not.toContain("task_log");
-        expect(systemPrompt).not.toContain("task_document_write");
-        expect(systemPrompt).not.toContain("task_document_read");
+        expect(systemPrompt).not.toContain("fn_task_log");
+        expect(systemPrompt).not.toContain("fn_task_document_write");
+        expect(systemPrompt).not.toContain("fn_task_document_read");
         expect(systemPrompt).not.toContain("Task Documents:");
-        expect(systemPrompt).toContain("task_create");
-        expect(systemPrompt).toContain("heartbeat_done");
-        expect(systemPrompt).toContain("memory_append");
+        expect(systemPrompt).toContain("fn_task_create");
+        expect(systemPrompt).toContain("fn_heartbeat_done");
+        expect(systemPrompt).toContain("fn_memory_append");
 
         // The execution prompt is passed to session.prompt by promptWithFallback mock
         const promptCalls = mockSession.prompt.mock.calls;
@@ -1560,9 +1560,9 @@ describe("HeartbeatMonitor", () => {
         expect(executionPrompt).toContain("No assigned task");
         // Should describe ambient work capabilities
         expect(executionPrompt).toContain("ambient work");
-        expect(executionPrompt).toContain("task_create");
-        expect(executionPrompt).toContain("list_agents");
-        expect(executionPrompt).toContain("delegate_task");
+        expect(executionPrompt).toContain("fn_task_create");
+        expect(executionPrompt).toContain("fn_list_agents");
+        expect(executionPrompt).toContain("fn_delegate_task");
         // Should NOT include task-specific content
         expect(executionPrompt).not.toContain("Assigned task:");
         expect(executionPrompt).not.toContain("Task description:");
@@ -1582,8 +1582,8 @@ describe("HeartbeatMonitor", () => {
         const systemPrompt = callArgs.systemPrompt;
 
         expect(systemPrompt).toContain(HEARTBEAT_SYSTEM_PROMPT);
-        expect(systemPrompt).toContain("task_log");
-        expect(systemPrompt).toContain("task_document_write");
+        expect(systemPrompt).toContain("fn_task_log");
+        expect(systemPrompt).toContain("fn_task_document_write");
         expect(systemPrompt).toContain("Task Documents:");
       });
 
@@ -1650,8 +1650,8 @@ describe("HeartbeatMonitor", () => {
         const toolNames = callArgs.customTools!.map((tool: any) => tool.name);
 
         // Should have messaging tools when messageStore is available
-        expect(toolNames).toContain("send_message");
-        expect(toolNames).toContain("read_messages");
+        expect(toolNames).toContain("fn_send_message");
+        expect(toolNames).toContain("fn_read_messages");
       });
 
       it("identity agent without task does NOT include messaging tools when messageStore is unavailable", async () => {
@@ -1668,8 +1668,8 @@ describe("HeartbeatMonitor", () => {
         const toolNames = callArgs.customTools!.map((tool: any) => tool.name);
 
         // Should NOT have messaging tools when messageStore is not available
-        expect(toolNames).not.toContain("send_message");
-        expect(toolNames).not.toContain("read_messages");
+        expect(toolNames).not.toContain("fn_send_message");
+        expect(toolNames).not.toContain("fn_read_messages");
       });
 
       it("identity agent without task fetches messages and includes them in prompt for timer trigger", async () => {
@@ -2406,7 +2406,7 @@ describe("HeartbeatMonitor", () => {
           expect(executionPrompt).toContain("dashboard");
 
           const callArgs = mockedCreateFnAgent.mock.calls[0]![0]!;
-          const sendMessageTool = callArgs.customTools?.find((tool: { name: string }) => tool.name === "send_message");
+          const sendMessageTool = callArgs.customTools?.find((tool: { name: string }) => tool.name === "fn_send_message");
           expect(sendMessageTool).toBeDefined();
 
           await sendMessageTool!.execute(
@@ -2613,29 +2613,29 @@ describe("HeartbeatMonitor", () => {
     });
 
     describe("execution", () => {
-      it("no-task system prompt does not reference task_log or task_document tools", () => {
-        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).not.toContain("task_log");
-        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).not.toContain("task_document_write");
-        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).not.toContain("task_document_read");
+      it("no-task system prompt does not reference fn_task_log or task_document tools", () => {
+        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).not.toContain("fn_task_log");
+        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).not.toContain("fn_task_document_write");
+        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).not.toContain("fn_task_document_read");
         expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).not.toContain("task_document");
       });
 
       it("no-task system prompt references only available tools", () => {
-        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("task_create");
-        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("list_agents");
-        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("delegate_task");
-        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("send_message");
-        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("read_messages");
-        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("memory_search");
-        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("memory_get");
-        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("memory_append");
-        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("heartbeat_done");
+        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("fn_task_create");
+        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("fn_list_agents");
+        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("fn_delegate_task");
+        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("fn_send_message");
+        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("fn_read_messages");
+        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("fn_memory_search");
+        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("fn_memory_get");
+        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("fn_memory_append");
+        expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("fn_heartbeat_done");
       });
 
-      it("task-scoped system prompt still references task_log and task_document tools", () => {
-        expect(HEARTBEAT_SYSTEM_PROMPT).toContain("task_log");
-        expect(HEARTBEAT_SYSTEM_PROMPT).toContain("task_document_write");
-        expect(HEARTBEAT_SYSTEM_PROMPT).toContain("task_document tools");
+      it("task-scoped system prompt still references fn_task_log and fn_task_document tools", () => {
+        expect(HEARTBEAT_SYSTEM_PROMPT).toContain("fn_task_log");
+        expect(HEARTBEAT_SYSTEM_PROMPT).toContain("fn_task_document_write");
+        expect(HEARTBEAT_SYSTEM_PROMPT).toContain("fn_task_document tools");
       });
 
       it("both prompts include memory boundaries section", () => {
@@ -2648,9 +2648,9 @@ describe("HeartbeatMonitor", () => {
         expect(HEARTBEAT_NO_TASK_SYSTEM_PROMPT).toContain("reply_to_message_id");
       });
 
-      it("no-task system prompt processing messages section does not reference task_log", () => {
+      it("no-task system prompt processing messages section does not reference fn_task_log", () => {
         const processingMessagesSection = HEARTBEAT_NO_TASK_SYSTEM_PROMPT.split("## Processing Messages")[1] ?? "";
-        expect(processingMessagesSection).not.toContain("task_log");
+        expect(processingMessagesSection).not.toContain("fn_task_log");
       });
 
       it("creates session with enriched system prompt and expected tools", async () => {
@@ -2678,24 +2678,24 @@ describe("HeartbeatMonitor", () => {
         expect(callArgs.systemPrompt).toContain("Recent runs found flaky tests in integration suites.");
         expect(callArgs.systemPrompt).toContain("Always log blockers with actionable next steps.");
         expect(callArgs.systemPrompt).toContain("## Project Memory");
-        expect(callArgs.systemPrompt).toContain("memory_search");
-        expect(callArgs.systemPrompt).toContain("task_log");
-        expect(callArgs.systemPrompt).toContain("task_document_write");
+        expect(callArgs.systemPrompt).toContain("fn_memory_search");
+        expect(callArgs.systemPrompt).toContain("fn_task_log");
+        expect(callArgs.systemPrompt).toContain("fn_task_document_write");
         expect(callArgs.tools).toBe("readonly");
-        // Tools: task_create, task_log, task_document_write, task_document_read, list_agents, delegate_task,
-        // memory_search, memory_get, memory_append, heartbeat_done
+        // Tools: fn_task_create, fn_task_log, fn_task_document_write, fn_task_document_read, fn_list_agents, fn_delegate_task,
+        // fn_memory_search, fn_memory_get, fn_memory_append, fn_heartbeat_done
         expect(callArgs.customTools).toHaveLength(10);
-        expect(callArgs.customTools![0]!.name).toBe("task_create");
-        expect(callArgs.customTools![1]!.name).toBe("task_log");
-        expect(callArgs.customTools![2]!.name).toBe("task_document_write");
-        expect(callArgs.customTools![3]!.name).toBe("task_document_read");
-        expect(callArgs.customTools![4]!.name).toBe("list_agents");
-        expect(callArgs.customTools![5]!.name).toBe("delegate_task");
-        expect(callArgs.customTools![6]!.name).toBe("memory_search");
-        expect(callArgs.customTools![7]!.name).toBe("memory_get");
-        expect(callArgs.customTools![8]!.name).toBe("memory_append");
-        // heartbeat_done is last (terminal tool)
-        expect(callArgs.customTools![9]!.name).toBe("heartbeat_done");
+        expect(callArgs.customTools![0]!.name).toBe("fn_task_create");
+        expect(callArgs.customTools![1]!.name).toBe("fn_task_log");
+        expect(callArgs.customTools![2]!.name).toBe("fn_task_document_write");
+        expect(callArgs.customTools![3]!.name).toBe("fn_task_document_read");
+        expect(callArgs.customTools![4]!.name).toBe("fn_list_agents");
+        expect(callArgs.customTools![5]!.name).toBe("fn_delegate_task");
+        expect(callArgs.customTools![6]!.name).toBe("fn_memory_search");
+        expect(callArgs.customTools![7]!.name).toBe("fn_memory_get");
+        expect(callArgs.customTools![8]!.name).toBe("fn_memory_append");
+        // fn_heartbeat_done is last (terminal tool)
+        expect(callArgs.customTools![9]!.name).toBe("fn_heartbeat_done");
       });
 
       it("includes memory instructions even when agent has no custom instructions", async () => {
@@ -2736,12 +2736,12 @@ describe("HeartbeatMonitor", () => {
         const callArgs = mockedCreateFnAgent.mock.calls[0]![0];
         const toolNames = callArgs.customTools!.map((tool: any) => tool.name);
         expect(callArgs.systemPrompt).not.toContain("## Project Memory");
-        expect(toolNames).not.toContain("memory_search");
-        expect(toolNames).not.toContain("memory_get");
-        expect(toolNames).not.toContain("memory_append");
+        expect(toolNames).not.toContain("fn_memory_search");
+        expect(toolNames).not.toContain("fn_memory_get");
+        expect(toolNames).not.toContain("fn_memory_append");
       });
 
-      it("wires user-created agent memory into the memory_search tool", async () => {
+      it("wires user-created agent memory into the fn_memory_search tool", async () => {
         const store = createStoreWithAgentForExec({
           name: "CEO",
           memory: "Prioritize roadmap sequencing and delegate implementation follow-ups.",
@@ -2759,7 +2759,7 @@ describe("HeartbeatMonitor", () => {
         await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
 
         const callArgs = mockedCreateFnAgent.mock.calls[0]![0];
-        const memorySearch = callArgs.customTools!.find((tool: any) => tool.name === "memory_search") as any;
+        const memorySearch = callArgs.customTools!.find((tool: any) => tool.name === "fn_memory_search") as any;
         expect(memorySearch).toBeDefined();
         const result = await memorySearch.execute("call-1", {
           query: "roadmap delegate",
@@ -2784,11 +2784,11 @@ describe("HeartbeatMonitor", () => {
 
         const callArgs = mockedCreateFnAgent.mock.calls[0]![0];
         const toolNames = callArgs.customTools!.map((t: any) => t.name);
-        expect(toolNames).toContain("task_document_write");
-        expect(toolNames).toContain("task_document_read");
+        expect(toolNames).toContain("fn_task_document_write");
+        expect(toolNames).toContain("fn_task_document_read");
       });
 
-      it("heartbeat_done is the terminal tool (last in array)", async () => {
+      it("fn_heartbeat_done is the terminal tool (last in array)", async () => {
         const store = createStoreWithAgentForExec();
         const mockSession = createMockAgentSession();
         mockedCreateFnAgent.mockResolvedValue({
@@ -2801,8 +2801,8 @@ describe("HeartbeatMonitor", () => {
 
         const callArgs = mockedCreateFnAgent.mock.calls[0]![0];
         const toolNames = callArgs.customTools!.map((t: any) => t.name);
-        // heartbeat_done should be last for stable terminal signaling
-        expect(toolNames[toolNames.length - 1]).toBe("heartbeat_done");
+        // fn_heartbeat_done should be last for stable terminal signaling
+        expect(toolNames[toolNames.length - 1]).toBe("fn_heartbeat_done");
       });
 
       it("calls promptWithFallback with task context", async () => {
@@ -2929,10 +2929,10 @@ describe("HeartbeatMonitor", () => {
 
         // Should have fetched the override task
         expect(mockTaskStore.getTask).toHaveBeenCalledWith("FN-OVERRIDE");
-        // task_log tool should use the override task ID
+        // fn_task_log tool should use the override task ID
         const callArgs = mockedCreateFnAgent.mock.calls[0]![0];
         const taskLogTool = callArgs.customTools![1]!;
-        expect(taskLogTool.name).toBe("task_log");
+        expect(taskLogTool.name).toBe("fn_task_log");
       });
 
       it("passes model config from agent runtimeConfig to createFnAgent", async () => {
@@ -3035,20 +3035,20 @@ describe("HeartbeatMonitor", () => {
       });
     });
 
-    describe("heartbeat_done tool", () => {
-      it("captures summary from heartbeat_done in resultJson", async () => {
+    describe("fn_heartbeat_done tool", () => {
+      it("captures summary from fn_heartbeat_done in resultJson", async () => {
         const store = createStoreWithAgentForExec();
         let capturedDoneTool: any;
         const mockSession = createMockAgentSession();
         mockedCreateFnAgent.mockImplementation(async (opts: any) => {
-          // heartbeat_done is last in the customTools array (index 4)
+          // fn_heartbeat_done is last in the customTools array (index 4)
           capturedDoneTool = opts.customTools[opts.customTools.length - 1];
           return { session: mockSession as any };
         });
 
-        // Simulate: when prompt is called, invoke the heartbeat_done tool
+        // Simulate: when prompt is called, invoke the fn_heartbeat_done tool
         mockSession.prompt = vi.fn().mockImplementation(async (prompt: string) => {
-          // Simulate the agent calling heartbeat_done
+          // Simulate the agent calling fn_heartbeat_done
           const result = await capturedDoneTool.execute("call-1", { summary: "Checked task, all good" });
           expect(result.content[0].text).toContain("Heartbeat complete");
           expect(result.content[0].text).toContain("Checked task, all good");
@@ -3062,7 +3062,7 @@ describe("HeartbeatMonitor", () => {
         expect((run.resultJson as any).summary).toBe("Checked task, all good");
       });
 
-      it("works without summary in heartbeat_done", async () => {
+      it("works without summary in fn_heartbeat_done", async () => {
         const store = createStoreWithAgentForExec();
         let capturedDoneTool: any;
         const mockSession = createMockAgentSession();
@@ -3084,13 +3084,13 @@ describe("HeartbeatMonitor", () => {
       });
     });
 
-    describe("task_create tool", () => {
-      it("creates a task in the store when task_create tool is called", async () => {
+    describe("fn_task_create tool", () => {
+      it("creates a task in the store when fn_task_create tool is called", async () => {
         const store = createStoreWithAgentForExec();
         let capturedCreateTool: any;
         const mockSession = createMockAgentSession();
         mockedCreateFnAgent.mockImplementation(async (opts: any) => {
-          capturedCreateTool = opts.customTools[0]; // task_create
+          capturedCreateTool = opts.customTools[0]; // fn_task_create
           return { session: mockSession as any };
         });
 
@@ -3512,22 +3512,22 @@ describe("HeartbeatMonitor", () => {
       mockTaskStore = createMockTaskStoreForTools();
     });
 
-    it("returns task_create, task_log, task_document_write, and task_document_read tools", () => {
+    it("returns fn_task_create, fn_task_log, fn_task_document_write, and fn_task_document_read tools", () => {
       const store = createMockStore();
       const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
 
       const tools = monitor.createHeartbeatTools("agent-001", mockTaskStore, "FN-001");
 
       expect(tools).toHaveLength(6);
-      expect(tools[0]!.name).toBe("task_create");
-      expect(tools[1]!.name).toBe("task_log");
-      expect(tools[2]!.name).toBe("task_document_write");
-      expect(tools[3]!.name).toBe("task_document_read");
-      expect(tools[4]!.name).toBe("list_agents");
-      expect(tools[5]!.name).toBe("delegate_task");
+      expect(tools[0]!.name).toBe("fn_task_create");
+      expect(tools[1]!.name).toBe("fn_task_log");
+      expect(tools[2]!.name).toBe("fn_task_document_write");
+      expect(tools[3]!.name).toBe("fn_task_document_read");
+      expect(tools[4]!.name).toBe("fn_list_agents");
+      expect(tools[5]!.name).toBe("fn_delegate_task");
     });
 
-    it("task_create tool creates a task in triage via TaskStore", async () => {
+    it("fn_task_create tool creates a task in triage via TaskStore", async () => {
       const store = createMockStore();
       const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
 
@@ -3548,7 +3548,7 @@ describe("HeartbeatMonitor", () => {
       expect(result.details).toEqual({ taskId: "FN-100" });
     });
 
-    it("task_create details includes taskId matching mock store return", async () => {
+    it("fn_task_create details includes taskId matching mock store return", async () => {
       const store = createMockStore();
       const matchingStore = createMockTaskStoreForTools({
         createTask: vi.fn().mockResolvedValue({
@@ -3566,7 +3566,7 @@ describe("HeartbeatMonitor", () => {
       expect((result.details as any).taskId).toBe("ZX-321");
     });
 
-    it("task_create tracking uses details.taskId for non-standard ID prefixes", async () => {
+    it("fn_task_create tracking uses details.taskId for non-standard ID prefixes", async () => {
       const store = createMockStore();
       const prefixedTaskStore = createMockTaskStoreForTools({
         createTask: vi.fn().mockResolvedValue({
@@ -3589,10 +3589,10 @@ describe("HeartbeatMonitor", () => {
       );
     });
 
-    it("task_create tracking falls back to unknown when details has no taskId", async () => {
+    it("fn_task_create tracking falls back to unknown when details has no taskId", async () => {
       const store = createMockStore();
       const createTaskCreateToolSpy = vi.spyOn(agentTools, "createTaskCreateTool").mockReturnValue({
-        name: "task_create",
+        name: "fn_task_create",
         label: "Create Task",
         description: "Create a task",
         parameters: {} as any,
@@ -3618,7 +3618,7 @@ describe("HeartbeatMonitor", () => {
       }
     });
 
-    it("task_create tracking handles missing details gracefully", async () => {
+    it("fn_task_create tracking handles missing details gracefully", async () => {
       const store = createMockStore();
       const missingDetailsTaskStore = createMockTaskStoreForTools({
         createTask: vi.fn().mockResolvedValue({
@@ -3685,12 +3685,12 @@ describe("HeartbeatMonitor", () => {
       expect(mockTaskStore.createTask).toHaveBeenCalled();
     });
 
-    it("task_document_write tool persists documents via TaskStore", async () => {
+    it("fn_task_document_write tool persists documents via TaskStore", async () => {
       const store = createMockStore();
       const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
 
       const tools = monitor.createHeartbeatTools("agent-001", mockTaskStore, "FN-001");
-      const writeTool = tools.find((t) => t.name === "task_document_write")!;
+      const writeTool = tools.find((t) => t.name === "fn_task_document_write")!;
 
       const result = await writeTool.execute("call-1", { key: "plan", content: "Implementation plan here" }, undefined as any, undefined as any, undefined as any);
 
@@ -3705,7 +3705,7 @@ describe("HeartbeatMonitor", () => {
       expect(responseText).toContain("plan");
     });
 
-    it("task_document_read tool reads specific document by key", async () => {
+    it("fn_task_document_read tool reads specific document by key", async () => {
       const store = createMockStore();
       mockTaskStore.getTaskDocument = vi.fn().mockResolvedValue({
         id: "doc-1",
@@ -3720,7 +3720,7 @@ describe("HeartbeatMonitor", () => {
       const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
 
       const tools = monitor.createHeartbeatTools("agent-001", mockTaskStore, "FN-001");
-      const readTool = tools.find((t) => t.name === "task_document_read")!;
+      const readTool = tools.find((t) => t.name === "fn_task_document_read")!;
 
       const result = await readTool.execute("call-1", { key: "plan" }, undefined as any, undefined as any, undefined as any);
 
@@ -3731,7 +3731,7 @@ describe("HeartbeatMonitor", () => {
       expect(responseText).toContain("Implementation plan content");
     });
 
-    it("task_document_read tool lists all documents when key is omitted", async () => {
+    it("fn_task_document_read tool lists all documents when key is omitted", async () => {
       const store = createMockStore();
       mockTaskStore.getTaskDocuments = vi.fn().mockResolvedValue([
         { id: "doc-1", taskId: "FN-001", key: "plan", content: "", revision: 1, author: "agent", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
@@ -3740,7 +3740,7 @@ describe("HeartbeatMonitor", () => {
       const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
 
       const tools = monitor.createHeartbeatTools("agent-001", mockTaskStore, "FN-001");
-      const readTool = tools.find((t) => t.name === "task_document_read")!;
+      const readTool = tools.find((t) => t.name === "fn_task_document_read")!;
 
       const result = await readTool.execute("call-1", { key: undefined }, undefined as any, undefined as any, undefined as any);
 
@@ -5027,8 +5027,8 @@ describe("HeartbeatTriggerScheduler", () => {
       // Create tools with run context
       const tools = monitor.createHeartbeatTools("agent-456", mockTaskStore, "FN-001", runContext);
 
-      // Find the task_log tool and execute it
-      const taskLogTool = tools.find(t => t.name === "task_log");
+      // Find the fn_task_log tool and execute it
+      const taskLogTool = tools.find(t => t.name === "fn_task_log");
       expect(taskLogTool).toBeDefined();
 
       const result = await taskLogTool!.execute("call-1", { message: "Test log entry", outcome: undefined }, undefined as any, undefined as any, undefined as any);
@@ -5066,8 +5066,8 @@ describe("HeartbeatTriggerScheduler", () => {
       // Create tools with run context
       const tools = monitor.createHeartbeatTools("agent-abc", mockTaskStore, "FN-001", runContext);
 
-      // Find the task_create tool and execute it
-      const taskCreateTool = tools.find(t => t.name === "task_create");
+      // Find the fn_task_create tool and execute it
+      const taskCreateTool = tools.find(t => t.name === "fn_task_create");
       expect(taskCreateTool).toBeDefined();
 
       const result = await taskCreateTool!.execute("call-1", { description: "New task created" }, undefined as any, undefined as any, undefined as any);
@@ -5103,8 +5103,8 @@ describe("HeartbeatTriggerScheduler", () => {
       // Create tools without run context
       const tools = monitor.createHeartbeatTools("agent-456", mockTaskStore, "FN-001");
 
-      // Find the task_log tool and execute it
-      const taskLogTool = tools.find(t => t.name === "task_log");
+      // Find the fn_task_log tool and execute it
+      const taskLogTool = tools.find(t => t.name === "fn_task_log");
       expect(taskLogTool).toBeDefined();
 
       const result = await taskLogTool!.execute("call-1", { message: "Test log entry", outcome: undefined }, undefined as any, undefined as any, undefined as any);

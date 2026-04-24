@@ -7,6 +7,8 @@ Triage → Todo → In Progress → In Review → Done → Archived
 
 ## Pi Extension Tools (Available to Agents)
 
+All skill/extension tool invocations in this catalog use the public `fn_*` namespace. Engine runtime tools (for example `task_create`, `task_update`, `task_log`, `task_done`) are internal and intentionally not listed here.
+
 | Tool | Purpose |
 |------|---------|
 | `fn_task_create` | Create a new task in triage |

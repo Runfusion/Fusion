@@ -160,7 +160,7 @@ describe("reviewStep — spec review type", () => {
     const opts = mockedCreateFnAgent.mock.calls[0][0];
     expect(opts.systemPrompt).toContain("## Project Memory");
     expect(opts.systemPrompt).toContain("Do not update memory during review");
-    expect(opts.customTools?.map((tool: any) => tool.name)).toEqual(["memory_search", "memory_get"]);
+    expect(opts.customTools?.map((tool: any) => tool.name)).toEqual(["fn_memory_search", "fn_memory_get"]);
   });
 
   it("omits reviewer memory tools and instructions when memory is disabled", async () => {
@@ -462,10 +462,10 @@ describe("REVIEWER_SYSTEM_PROMPT", () => {
     );
   });
 
-  it("instructs planner to use task_create for undersplit tasks", () => {
+  it("instructs planner to use fn_task_create for undersplit tasks", () => {
     // The reviewer's REVISE feedback must explicitly direct the planner to
-    // create child tasks via task_create rather than just flagging the issue.
-    expect(REVIEWER_SYSTEM_PROMPT).toContain("task_create");
+    // create child tasks via fn_task_create rather than just flagging the issue.
+    expect(REVIEWER_SYSTEM_PROMPT).toContain("fn_task_create");
     expect(REVIEWER_SYSTEM_PROMPT).toContain(
       "create 2–5 child tasks",
     );

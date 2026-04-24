@@ -264,7 +264,7 @@ describe("worktree path boundary helpers", () => {
 
     it("wraps only file tools, not other tools", async () => {
       const mockTaskTool = {
-        name: "task_create",
+        name: "fn_task_create",
         label: "Create Task",
         description: "Create a task",
         parameters: {},
@@ -279,7 +279,7 @@ describe("worktree path boundary helpers", () => {
         "/project",
       );
 
-      // task_create should be unchanged (not wrapped)
+      // fn_task_create should be unchanged (not wrapped)
       expect(wrapped[0]).toBe(mockTaskTool);
     });
 

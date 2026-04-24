@@ -2,6 +2,8 @@
 
 All tools are registered via the pi extension. They are available in any pi agent session when the Fusion extension is installed.
 
+> Naming contract: all externally exposed Fusion extension tools are `fn_*` (for example `fn_task_create`). Internal engine/executor runtime tools (`task_create`, `task_update`, `task_log`, `task_done`, etc.) are separate and intentionally out of scope for this skill surface.
+
 ## Task Tools
 
 ### fn_task_create

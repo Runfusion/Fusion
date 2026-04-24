@@ -73,9 +73,9 @@ const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"
 
 /** Maximum retry attempts for workflow step hard failures before giving up */
 const MAX_WORKFLOW_STEP_RETRIES = 3;
-/** Maximum in-session retries when an agent exits without calling task_done(). */
+/** Maximum in-session retries when an agent exits without calling fn_task_done(). */
 const MAX_TASK_DONE_SESSION_RETRIES = 3;
-/** Maximum todo requeues after exhausting in-session task_done retries. */
+/** Maximum todo requeues after exhausting in-session fn_task_done retries. */
 const MAX_TASK_DONE_REQUEUE_RETRIES = 3;
 
 /**
@@ -197,7 +197,7 @@ const spawnAgentParams = Type.Object({
   task: Type.String({ description: "Task description for the child agent to execute" }),
 });
 
-/** Result returned from spawn_agent tool */
+/** Result returned from fn_spawn_agent tool */
 interface SpawnAgentResult {
   agentId: string;
   name: string;
@@ -260,22 +260,22 @@ You are working in a git worktree isolated from the main branch. Your job is to 
 You have tools to report progress. The board updates in real-time.
 
 **Step lifecycle:**
-- Before starting a step: \`task_update(step=N, status="in-progress")\`
-- After completing a step: \`task_update(step=N, status="done")\`
-- If skipping a step: \`task_update(step=N, status="skipped")\`
+- Before starting a step: \`fn_task_update(step=N, status="in-progress")\`
+- After completing a step: \`fn_task_update(step=N, status="done")\`
+- If skipping a step: \`fn_task_update(step=N, status="skipped")\`
 
-**Logging important actions:** \`task_log(message="what happened")\`
+**Logging important actions:** \`fn_task_log(message="what happened")\`
 
-**Out-of-scope work found during execution:** \`task_create(description="what needs doing")\`
+**Out-of-scope work found during execution:** \`fn_task_create(description="what needs doing")\`
 When creating multiple related tasks, declare dependencies between them:
-\`task_create(description="load door sounds", dependencies=[])\` → returns KB-050
-\`task_create(description="play sound on door open/close", dependencies=["KB-050"])\`
+\`fn_task_create(description="load door sounds", dependencies=[])\` → returns KB-050
+\`fn_task_create(description="play sound on door open/close", dependencies=["KB-050"])\`
 
-**Discovered a dependency:** \`task_add_dep(task_id="KB-XXX")\` — use when you discover mid-execution that another task must be completed first. This will return a warning first — you must call again with \`confirm=true\` to proceed. Adding a dependency stops execution, discards current work, and moves the task to triage for re-specification.
+**Discovered a dependency:** \`fn_task_add_dep(task_id="KB-XXX")\` — use when you discover mid-execution that another task must be completed first. This will return a warning first — you must call again with \`confirm=true\` to proceed. Adding a dependency stops execution, discards current work, and moves the task to triage for re-specification.
 
-## Cross-model review via review_step tool
+## Cross-model review via fn_review_step tool
 
-You have a \`review_step\` tool. It spawns a SEPARATE reviewer agent (different
+You have a \`fn_review_step\` tool. It spawns a SEPARATE reviewer agent (different
 model, read-only access) to independently assess your work.
 
 **When to call it** — based on the Review Level in the PROMPT.md:
@@ -283,8 +283,8 @@ model, read-only access) to independently assess your work.
 | Review Level | Before implementing | After implementing + committing |
 |-------------|--------------------|---------------------------------|
 | 0 (None)    | —                  | —                               |
-| 1 (Plan)    | \`review_step(step, "plan", step_name)\` | —              |
-| 2 (Plan+Code) | \`review_step(step, "plan", step_name)\` | \`review_step(step, "code", step_name, baseline)\` |
+| 1 (Plan)    | \`fn_review_step(step, "plan", step_name)\` | —              |
+| 2 (Plan+Code) | \`fn_review_step(step, "plan", step_name)\` | \`fn_review_step(step, "code", step_name, baseline)\` |
 | 3 (Full)    | plan review        | code review + test review       |
 
 **Skip reviews for** Step 0 (Preflight) and the final documentation/delivery step.
@@ -293,13 +293,13 @@ model, read-only access) to independently assess your work.
 1. Before starting a step, capture baseline: \`git rev-parse HEAD\`
 2. Implement the step
 3. Commit
-4. Call \`review_step\` with the baseline SHA so the reviewer sees only your changes
+4. Call \`fn_review_step\` with the baseline SHA so the reviewer sees only your changes
 
 **Handling verdicts:**
 - **APPROVE** → proceed to next step
 - **REVISE (code review)** → **enforced**. You MUST fix the issues, commit again,
-  and re-run \`review_step(type="code")\` before the step can be marked done.
-  \`task_update(status="done")\` will be rejected until the code review passes.
+  and re-run \`fn_review_step(type="code")\` before the step can be marked done.
+  \`fn_task_update(status="done")\` will be rejected until the code review passes.
 - **REVISE (plan review)** → advisory. Incorporate the feedback at your discretion
   and proceed with implementation. No re-review is required.
 - **RETHINK (code review)** → your code changes have been reverted and conversation rewound. Read the feedback carefully and take a fundamentally different approach. Do NOT repeat the rejected strategy.
@@ -309,13 +309,13 @@ model, read-only access) to independently assess your work.
 
 You can save and retrieve named documents for this task. Use these to store planning notes, research findings, or any persistent data that should survive across sessions.
 
-- **Save a document:** \`task_document_write(key="plan", content="...")\`
-- **Read a document:** \`task_document_read(key="plan")\`
-- **List all documents:** \`task_document_read()\` (no key)
+- **Save a document:** \`fn_task_document_write(key="plan", content="...")\`
+- **Read a document:** \`fn_task_document_read(key="plan")\`
+- **List all documents:** \`fn_task_document_read()\` (no key)
 
 Documents are versioned — each write creates a new revision. Use meaningful keys like "plan", "notes", "research", "architecture".
 
-**IMPORTANT — Save your deliverables as documents:** When your task produces written output (documentation, specifications, reports, API references, README updates, guides, or any other content), you MUST save that content as a task document using \`task_document_write\`. Use a key that describes the deliverable (e.g., key="readme", key="api-docs", key="changelog"). Do this in addition to writing the file to disk — the document persists in the task for review even after the worktree is cleaned up.
+**IMPORTANT — Save your deliverables as documents:** When your task produces written output (documentation, specifications, reports, API references, README updates, guides, or any other content), you MUST save that content as a task document using \`fn_task_document_write\`. Use a key that describes the deliverable (e.g., key="readme", key="api-docs", key="changelog"). Do this in addition to writing the file to disk — the document persists in the task for review even after the worktree is cleaned up.
 
 If the task's PROMPT.md includes a "Documentation Requirements" section listing files to update, save each updated file's final content as a task document with a matching key.
 
@@ -341,7 +341,7 @@ If you attempt to write to a path outside the worktree, the file tools will reje
 - Read "Context to Read First" files before starting
 - Follow the "Do NOT" section strictly
 - If tests, lint, build, or typecheck fail and the fix requires touching code outside the declared File Scope, fix those failures directly and keep the repo green
-- Use \`task_create\` for genuinely separate follow-up work, not for mandatory fixes required to make this task land cleanly
+- Use \`fn_task_create\` for genuinely separate follow-up work, not for mandatory fixes required to make this task land cleanly
 - Update documentation listed in "Must Update" and check "Check If Affected"
 - NEVER delete, remove, or gut modules, interfaces, settings, exports, or test files outside your File Scope
 - NEVER remove features as "cleanup" — if something seems unused, create a task for investigation instead
@@ -352,14 +352,14 @@ If you attempt to write to a path outside the worktree, the file tools will reje
 
 You can spawn child agents to handle parallel work or specialized sub-tasks:
 
-**When to use \`spawn_agent\`:**
+**When to use \`fn_spawn_agent\`:**
 - Parallel work that can be divided into independent chunks
 - Specialized tasks requiring different expertise or tools
 - Delegation of sub-tasks to specialized agents
 
 **How to spawn:**
 \`\`\`javascript
-spawn_agent({
+fn_spawn_agent({
   name: "researcher",
   role: "engineer",
   task: "Research best practices for authentication in React applications"
@@ -369,7 +369,7 @@ spawn_agent({
 **Child agent behavior:**
 - Each child runs in its own git worktree (branched from your worktree)
 - Children execute autonomously and report completion
-- When you end (task_done), all spawned children are terminated
+- When you end (fn_task_done), all spawned children are terminated
 - Check AgentStore for spawned agent status
 
 **Limits:**
@@ -379,13 +379,13 @@ spawn_agent({
 ## Completion
 After all steps are done, lint passes, tests pass, typecheck passes, and docs are updated:
 \`\`\`bash
-Call \`task_done()\` to signal completion.
+Call \`fn_task_done()\` to signal completion.
 \`\`\`
 
 If a project build command is listed in the prompt, it is a hard completion gate:
-- Run the exact build command in the current worktree before \`task_done()\`
+- Run the exact build command in the current worktree before \`fn_task_done()\`
 - Do not claim the build passes unless you actually ran it and got exit code 0
-- If the build fails, do NOT call \`task_done()\`; keep working until it passes
+- If the build fails, do NOT call \`fn_task_done()\`; keep working until it passes
 
 Lint, tests, and typecheck are also hard quality gates:
 - Keep fixing failures until lint, the configured/full test suite, and typecheck all pass
@@ -448,7 +448,7 @@ export interface TaskExecutorOptions {
   reflectionService?: AgentReflectionService;
   /** Plugin runner for invoking plugin hooks and providing plugin tools. */
   pluginRunner?: PluginRunner;
-  /** MessageStore for sending messages to other agents. When provided, executor agents gain send_message capability. */
+  /** MessageStore for sending messages to other agents. When provided, executor agents gain fn_send_message capability. */
   messageStore?: import("@fusion/core").MessageStore;
   missionStore?: MissionStore;
   onSliceComplete?: (slice: Slice) => void;
@@ -786,8 +786,8 @@ export class TaskExecutor {
 
   /**
    * Check whether a task's work is complete — all steps are done or skipped.
-   * Used to detect tasks that called task_done() but never transitioned to in-review
-   * (e.g., killed by stuck detector after task_done but before moveTask).
+   * Used to detect tasks that called fn_task_done() but never transitioned to in-review
+   * (e.g., killed by stuck detector after fn_task_done but before moveTask).
    */
   private isTaskWorkComplete(task: Task): boolean {
     if (task.steps.length === 0) return false;
@@ -796,7 +796,7 @@ export class TaskExecutor {
 
   private isNoProgressNoTaskDoneFailure(task: Task): boolean {
     return task.status === "failed" &&
-      task.error?.includes("without calling task_done") === true &&
+      task.error?.includes("without calling fn_task_done") === true &&
       task.steps.every((step) => step.status === "pending");
   }
 
@@ -1022,7 +1022,7 @@ export class TaskExecutor {
       }
 
       if (this.isNoProgressNoTaskDoneFailure(task)) {
-        executorLog.log(`${task.id} failed without task_done and has no step progress — leaving for self-healing requeue`);
+        executorLog.log(`${task.id} failed without fn_task_done and has no step progress — leaving for self-healing requeue`);
         continue;
       }
 
@@ -1676,7 +1676,7 @@ export class TaskExecutor {
       // ── Single-Session Path (default) ────────────────────────────────
       // Build custom tools for the worker
       // Track the last code review verdict per step so we can enforce REVISE
-      // (block task_update status="done" until the agent re-reviews and gets APPROVE).
+      // (block fn_task_update status="done" until the agent re-reviews and gets APPROVE).
       const codeReviewVerdicts = new Map<number, ReviewVerdict>();
 
       let wasPaused = false;
@@ -1695,7 +1695,7 @@ export class TaskExecutor {
 
       // Log fast mode status
       if (executionMode === "fast") {
-        executorLog.log(`${task.id}: fast mode — review_step tool not injected`);
+        executorLog.log(`${task.id}: fast mode — fn_review_step tool not injected`);
       }
 
       const customTools = [
@@ -1704,7 +1704,7 @@ export class TaskExecutor {
         this.createTaskCreateTool(),
         this.createTaskAddDepTool(task.id),
         this.createTaskDoneTool(task.id, () => { taskDone = true; }),
-        // Skip review_step tool in fast mode — fast mode bypasses automated review gates
+        // Skip fn_review_step tool in fast mode — fast mode bypasses automated review gates
         ...(executionMode !== "fast" ? [
           this.createReviewStepTool(task.id, worktreePath, detail.prompt, codeReviewVerdicts, sessionRef, stepCheckpoints, detail, stuckDetector),
         ] : []),
@@ -1816,7 +1816,7 @@ export class TaskExecutor {
           }
         }
 
-        // Make session available to custom tools (task_update checkpoint capture, review_step rewind)
+        // Make session available to custom tools (fn_task_update checkpoint capture, fn_review_step rewind)
         sessionRef.current = session;
 
         // Register session so the pause listener can terminate it
@@ -1913,7 +1913,7 @@ export class TaskExecutor {
               "3. Review the PROMPT.md steps to see which are still pending",
               "",
               "Take a DIFFERENT approach from what you were doing before.",
-              "If the current step is complete, call task_update to mark it done and move to the next step.",
+              "If the current step is complete, call fn_task_update to mark it done and move to the next step.",
               "If you're stuck on a problem, try a simpler or alternative solution.",
               "",
               "Continue the task from where you left off.",
@@ -1960,7 +1960,7 @@ export class TaskExecutor {
             return;
           }
 
-          // If the agent didn't explicitly call task_done, check whether
+          // If the agent didn't explicitly call fn_task_done, check whether
           // all steps are already complete — treat as implicit done to avoid
           // unnecessary retry sessions for context-overflow / compaction cases.
           if (!taskDone) {
@@ -1968,8 +1968,8 @@ export class TaskExecutor {
             if (implicitCheck.steps.length > 0 &&
                 implicitCheck.steps.every((s) => s.status === "done" || s.status === "skipped")) {
               taskDone = true;
-              executorLog.log(`${task.id} all steps done — treating as implicit task_done`);
-              await this.store.logEntry(task.id, "All steps complete — implicit task_done (agent did not call tool explicitly)", undefined, this.currentRunContext);
+              executorLog.log(`${task.id} all steps done — treating as implicit fn_task_done`);
+              await this.store.logEntry(task.id, "All steps complete — implicit fn_task_done (agent did not call tool explicitly)", undefined, this.currentRunContext);
             }
           }
 
@@ -2016,11 +2016,11 @@ export class TaskExecutor {
             while (!taskDone && taskDoneSessionRetries < MAX_TASK_DONE_SESSION_RETRIES) {
               taskDoneSessionRetries++;
               executorLog.log(
-                `⚠ ${task.id} finished without task_done — retrying with new session (${taskDoneSessionRetries}/${MAX_TASK_DONE_SESSION_RETRIES})`,
+                `⚠ ${task.id} finished without fn_task_done — retrying with new session (${taskDoneSessionRetries}/${MAX_TASK_DONE_SESSION_RETRIES})`,
               );
               await this.store.logEntry(
                 task.id,
-                `Agent finished without calling task_done — retrying with new session (${taskDoneSessionRetries}/${MAX_TASK_DONE_SESSION_RETRIES})`,
+                `Agent finished without calling fn_task_done — retrying with new session (${taskDoneSessionRetries}/${MAX_TASK_DONE_SESSION_RETRIES})`,
                 undefined,
                 this.currentRunContext,
               );
@@ -2067,10 +2067,10 @@ export class TaskExecutor {
               stuckDetector?.trackTask(task.id, retrySession);
 
               const retryPrompt = [
-                "Your previous session ended without calling the task_done tool.",
+                "Your previous session ended without calling the fn_task_done tool.",
                 "The task may already be complete — review the current state of the worktree and either:",
-                "1. If the work is done, call task_done with a summary of what was accomplished.",
-                "2. If there is remaining work, finish it and then call task_done.",
+                "1. If the work is done, call fn_task_done with a summary of what was accomplished.",
+                "2. If there is remaining work, finish it and then call fn_task_done.",
                 "",
                 "Original task:",
                 buildExecutionPrompt(detail, this.rootDir, settings, worktreePath),
@@ -2085,8 +2085,8 @@ export class TaskExecutor {
                 if (implicitCheck.steps.length > 0 &&
                     implicitCheck.steps.every((s) => s.status === "done" || s.status === "skipped")) {
                   taskDone = true;
-                  executorLog.log(`${task.id} all steps done — treating as implicit task_done`);
-                  await this.store.logEntry(task.id, "All steps complete — implicit task_done (agent did not call tool explicitly)", undefined, this.currentRunContext);
+                  executorLog.log(`${task.id} all steps done — treating as implicit fn_task_done`);
+                  await this.store.logEntry(task.id, "All steps complete — implicit fn_task_done (agent did not call tool explicitly)", undefined, this.currentRunContext);
                 }
               }
             }
@@ -2123,7 +2123,7 @@ export class TaskExecutor {
             } else {
               const priorRequeues = task.taskDoneRetryCount ?? 0;
               const nextRequeueCount = priorRequeues + 1;
-              const errorMessage = `Agent finished without calling task_done (after ${MAX_TASK_DONE_SESSION_RETRIES} retries)`;
+              const errorMessage = `Agent finished without calling fn_task_done (after ${MAX_TASK_DONE_SESSION_RETRIES} retries)`;
 
               if (priorRequeues < MAX_TASK_DONE_REQUEUE_RETRIES) {
                 await this.store.updateTask(task.id, {
@@ -2143,7 +2143,7 @@ export class TaskExecutor {
                 await this.store.updateTask(task.id, { status: "failed", error: errorMessage });
                 await this.store.logEntry(task.id, `${errorMessage} — moved to in-review for inspection`, undefined, this.currentRunContext);
                 await this.store.moveTask(task.id, "in-review");
-                executorLog.log(`✗ ${task.id} failed after ${MAX_TASK_DONE_SESSION_RETRIES} retries — no task_done → in-review`);
+                executorLog.log(`✗ ${task.id} failed after ${MAX_TASK_DONE_SESSION_RETRIES} retries — no fn_task_done → in-review`);
               }
               this.options.onError?.(task, new Error(errorMessage));
             }
@@ -2277,7 +2277,7 @@ export class TaskExecutor {
                 "2. Identify the most critical remaining work",
                 "3. Complete it with a simpler, more focused approach",
                 "",
-                "Do not repeat what's already been done. Just complete the task and call task_done.",
+                "Do not repeat what's already been done. Just complete the task and call fn_task_done.",
               ].join("\n");
 
               await promptWithFallback(activeEntry.session, reducedPrompt);
@@ -2469,7 +2469,7 @@ export class TaskExecutor {
   ): ToolDefinition {
     const store = this.store;
     return {
-      name: "task_update",
+      name: "fn_task_update",
       label: "Update Step",
       description:
         "Update a step's status. Call before starting a step (in-progress), " +
@@ -2489,14 +2489,14 @@ export class TaskExecutor {
 
         // Enforce code review REVISE: block advancing to "done" when the last
         // code review for this step returned REVISE. The agent must fix the
-        // issues and call review_step(type="code") again before proceeding.
+        // issues and call fn_review_step(type="code") again before proceeding.
         if (status === "done" && codeReviewVerdicts.get(step) === "REVISE") {
           return {
             content: [{
               type: "text" as const,
               text: `Cannot mark Step ${step} as done — the last code review returned REVISE. ` +
                 `Fix the issues from the code review, commit your changes, and call ` +
-                `review_step(step=${step}, type="code") again. The step can only advance ` +
+                `fn_review_step(step=${step}, type="code") again. The step can only advance ` +
                 `after the code review passes.`,
             }],
             details: {},
@@ -2544,7 +2544,7 @@ export class TaskExecutor {
   private createTaskAddDepTool(taskId: string): ToolDefinition {
     const store = this.store;
     return {
-      name: "task_add_dep",
+      name: "fn_task_add_dep",
       label: "Add Dependency",
       description:
         "Declare a dependency on an existing task. Use when you discover " +
@@ -2637,7 +2637,7 @@ export class TaskExecutor {
   private createTaskDoneTool(taskId: string, onDone: () => void): ToolDefinition {
     const store = this.store;
     return {
-      name: "task_done",
+      name: "fn_task_done",
       label: "Mark Task Done",
       description:
         "Signal that all steps are complete, tests pass, and documentation is updated. " +
@@ -2656,7 +2656,7 @@ export class TaskExecutor {
           return {
             content: [{
               type: "text" as const,
-              text: `Cannot mark task done yet — ${completionBlocker}. Resolve the blocker before calling task_done().`,
+              text: `Cannot mark task done yet — ${completionBlocker}. Resolve the blocker before calling fn_task_done().`,
             }],
             details: {},
           };
@@ -2687,7 +2687,7 @@ export class TaskExecutor {
   }
 
   /**
-   * Create the review_step tool for the executor agent.
+   * Create the fn_review_step tool for the executor agent.
    *
    * When the reviewer returns a RETHINK verdict, this tool:
    * 1. Runs `git reset --hard <baseline>` to revert file changes
@@ -2709,7 +2709,7 @@ export class TaskExecutor {
     const options = this.options;
 
     return {
-      name: "review_step",
+      name: "fn_review_step",
       label: "Review Step",
       description:
         "Spawn a reviewer agent to evaluate your plan or code for a step. " +
@@ -2782,7 +2782,7 @@ export class TaskExecutor {
             case "REVISE":
               if (reviewType === "code") {
                 text = `REVISE — this step cannot be marked done until the code review passes.\n\n` +
-                  `Fix the issues below, commit your changes, and call review_step(step=${step}, ` +
+                  `Fix the issues below, commit your changes, and call fn_review_step(step=${step}, ` +
                   `type="code", step_name="${step_name}", baseline="<new SHA>") again.\n\n${result.review}`;
               } else {
                 text = `REVISE\n\n${result.review}`;
@@ -3022,7 +3022,7 @@ export class TaskExecutor {
 
     // All prior steps stay done — agent applies the feedback as an in-place
     // patch rather than re-planning or re-executing earlier steps.
-    const scopeLine = "All prior steps remain **done**. Apply the feedback above as an in-place fix (make the necessary code changes, commit, and call `task_done()` when complete). Do **not** re-run or re-plan any earlier step unless the feedback explicitly calls it out.";
+    const scopeLine = "All prior steps remain **done**. Apply the feedback above as an in-place fix (make the necessary code changes, commit, and call `fn_task_done()` when complete). Do **not** re-run or re-plan any earlier step unless the feedback explicitly calls it out.";
 
     // Check for existing Workflow Revision Instructions section
     const revisionSectionHeader = "## Workflow Revision Instructions";
@@ -4305,7 +4305,7 @@ and show an appropriate message to the user.\`
   /**
    * When the engine restarts mid-step, an `in-progress` step may have already
    * passed its code review (log: `code review Step N: APPROVE`) but not yet
-   * been flipped to `done` by the agent's next `task_update` call. Without
+   * been flipped to `done` by the agent's next `fn_task_update` call. Without
    * intervention, the next executor pass re-enters the step and replays plan
    * + code review, which we've measured at 5–20 min of pure waste per restart.
    *
@@ -4635,17 +4635,17 @@ and show an appropriate message to the user.\`
   }
 
   /**
-   * Create the spawn_agent tool definition.
+   * Create the fn_spawn_agent tool definition.
    * Allows the parent agent to spawn child agents with delegated tasks.
    */
   private createSpawnAgentTool(taskId: string, worktreePath: string, settings: Settings): ToolDefinition {
     return {
-      name: "spawn_agent",
+      name: "fn_spawn_agent",
       label: "Spawn Agent",
       description:
         "Spawn a child agent to handle parallel work or specialized sub-tasks. " +
         "Each child runs in its own git worktree (branched from your worktree) and executes autonomously. " +
-        "When you end (task_done), all spawned children are terminated.",
+        "When you end (fn_task_done), all spawned children are terminated.",
       parameters: spawnAgentParams,
       execute: async (_id: string, params: Static<typeof spawnAgentParams>) => {
         const { name, role, task: taskPrompt } = params;
@@ -4902,10 +4902,10 @@ ${attachmentsSection}${commandsSection}${memorySection}${progressSection}${steer
 
 ${reviewLevel === 0 ? "No reviews required. Implement directly." : ""}
 ${reviewLevel >= 1 ? `Before implementing each step (except Step 0 and the final step), call:
-\`review_step(step=N, type="plan", step_name="...")\`` : ""}
+\`fn_review_step(step=N, type="plan", step_name="...")\`` : ""}
 ${reviewLevel >= 2 ? `After implementing + committing each step, call:
-\`review_step(step=N, type="code", step_name="...", baseline="<SHA from before step>")\`` : ""}
-${reviewLevel >= 3 ? `After tests, also call review_step with type="code" for test review.` : ""}
+\`fn_review_step(step=N, type="code", step_name="...", baseline="<SHA from before step>")\`` : ""}
+${reviewLevel >= 3 ? `After tests, also call fn_review_step with type="code" for test review.` : ""}
 
 ## Worktree Boundaries
 
@@ -4921,18 +4921,18 @@ You are running in an **isolated git worktree**. This means:
 ${hasProgress
     ? `Resume from Step ${task.currentStep}. Do NOT redo completed steps.`
     : "Start with Step 0 (Preflight). Work through each step in order."}
-Use \`task_update\` to report progress on every step transition.
-Use \`task_log\` for important actions and decisions.
-Use \`task_create\` for truly separate follow-up work, not for fixes required to get tests, build, or typecheck back to green.
+Use \`fn_task_update\` to report progress on every step transition.
+Use \`fn_task_log\` for important actions and decisions.
+Use \`fn_task_create\` for truly separate follow-up work, not for fixes required to get tests, build, or typecheck back to green.
 Commit at step boundaries: \`git commit -m "feat(${task.id}): complete Step N — description"${authorArg}\`
-When all steps are complete: call \`task_done()\`
+When all steps are complete: call \`fn_task_done()\`
 
-If a build command is configured, run that exact command in this worktree before calling \`task_done()\`.
+If a build command is configured, run that exact command in this worktree before calling \`fn_task_done()\`.
 Treat a non-zero exit code as a blocking failure. Do not claim success without a real passing run.
 Run the configured/full test suite and fix failures even when that requires edits outside the original File Scope.
-If the repo has a lint command (e.g. \`pnpm lint\`, \`npm run lint\`), run it before \`task_done()\` and fix any failures it reports.
-If the repo has a typecheck command, run it before \`task_done()\` and fix any failures it reports.
-Use \`task_create\` for truly separate follow-up work, not for fixes required to get tests, build, or typecheck back to green.
+If the repo has a lint command (e.g. \`pnpm lint\`, \`npm run lint\`), run it before \`fn_task_done()\` and fix any failures it reports.
+If the repo has a typecheck command, run it before \`fn_task_done()\` and fix any failures it reports.
+Use \`fn_task_create\` for truly separate follow-up work, not for fixes required to get tests, build, or typecheck back to green.
 If lint is configured and failing, fix that too before completion.
 **CRITICAL: Resolve ALL test failures (and any lint/typecheck failures) before completing the task, even if they appear unrelated or pre-existing.** Unrelated failures left unfixed accumulate technical debt and block future integrations. Investigate and fix or suppress them — do not defer them to a separate task.`;
 }

@@ -8,7 +8,7 @@
  * 
  * When `executeHeartbeat()` is called (via API, timer, or assignment),
  * the system wakes the agent, checks its assigned task from AgentStore,
- * executes work in a lightweight agent session with `task_create` capability,
+ * executes work in a lightweight agent session with `fn_task_create` capability,
  * records results, and transitions the run to completed.
  * 
  * Callback pattern (not EventEmitter):
@@ -62,7 +62,7 @@ export interface HeartbeatMonitorOptions {
   onRunStarted?: (agentId: string, run: AgentHeartbeatRun) => void;
   /** Callback when a run completes */
   onRunCompleted?: (agentId: string, run: AgentHeartbeatRun) => void;
-  /** TaskStore for task_create and task_log tools during heartbeat execution.
+  /** TaskStore for fn_task_create and fn_task_log tools during heartbeat execution.
    *  When not provided, executeHeartbeat() will throw. */
   taskStore?: TaskStore;
   /** Project root directory for agent session CWD.
@@ -125,21 +125,21 @@ export function isBlockedStateDuplicate(current: BlockedStateSnapshot, previous:
 /**
  * System prompt for heartbeat agent sessions.
  * Instructs the agent to perform a single-pass check on its assigned task
- * and use `task_create` / `task_log` / task documents to record findings or spawn follow-up work.
+ * and use `fn_task_create` / `fn_task_log` / `fn_task_document_*` tools to record findings or spawn follow-up work.
  */
 export const HEARTBEAT_SYSTEM_PROMPT = `You are a heartbeat agent running in a short execution window.
 
 Your job:
 1. Check your assigned task — read the description and PROMPT.md if present.
 2. Do ONE useful action: analyze, review, create follow-up tasks, or log findings.
-3. Use task_create to spawn follow-up work, task_log to record observations.
-4. Use task_document_write to save durable findings, plans, or research notes.
-5. Call heartbeat_done when finished with an optional summary of what was accomplished.
+3. Use fn_task_create to spawn follow-up work, fn_task_log to record observations.
+4. Use fn_task_document_write to save durable findings, plans, or research notes.
+5. Call fn_heartbeat_done when finished with an optional summary of what was accomplished.
 
 Keep work lightweight — this is a single-pass check, not a full implementation run.
-You have readonly file access plus task_create, task_log, and task_document tools.
+You have readonly file access plus fn_task_create, fn_task_log, and fn_task_document tools.
 
-**Task Documents:** Save important findings with task_document_write(key="...", content="...").
+**Task Documents:** Save important findings with fn_task_document_write(key="...", content="...").
 Documents persist across sessions and are visible in the dashboard's Documents tab.
 
 ## Memory Boundaries
@@ -152,12 +152,12 @@ You may receive an Agent Memory section and a Project Memory section.
 ## Processing Messages
 
 When you are woken by an incoming message (source includes "wake-on-message"), you should:
-1. Use read_messages to check your inbox for unread messages.
+1. Use fn_read_messages to check your inbox for unread messages.
 2. Review each message and determine the appropriate action:
-   - If the message requires a response, use send_message to reply.
-   - When replying, include 'reply_to_message_id' with the original message ID from read_messages output.
-   - If the message is informational, acknowledge it by logging with task_log.
-   - If the message requests work, create a follow-up task with task_create or handle it directly.
+   - If the message requires a response, use fn_send_message to reply.
+   - When replying, include 'reply_to_message_id' with the original message ID from fn_read_messages output.
+   - If the message is informational, acknowledge it by logging with fn_task_log.
+   - If the message requests work, create a follow-up task with fn_task_create or handle it directly.
 3. After processing messages, continue with your normal heartbeat duties.
 
 When sending messages:
@@ -175,17 +175,17 @@ export const HEARTBEAT_NO_TASK_SYSTEM_PROMPT = `You are a heartbeat agent runnin
 Your job:
 1. Review your context — check messages, memory, and project state.
 2. Do ONE useful action: analyze, create follow-up tasks, delegate work, or update memory.
-3. Use task_create to spawn follow-up work.
-4. Use list_agents and delegate_task to coordinate with other agents.
-5. Call heartbeat_done when finished with an optional summary of what was accomplished.
+3. Use fn_task_create to spawn follow-up work.
+4. Use fn_list_agents and fn_delegate_task to coordinate with other agents.
+5. Call fn_heartbeat_done when finished with an optional summary of what was accomplished.
 
 Keep work lightweight — this is a single-pass ambient check, not a full implementation run.
 You have readonly file access plus:
-- task_create
-- list_agents and delegate_task
-- memory_search, memory_get, and memory_append
-- heartbeat_done
-- send_message and read_messages when messaging is enabled for this run (they may not always be available)
+- fn_task_create
+- fn_list_agents and fn_delegate_task
+- fn_memory_search, fn_memory_get, and fn_memory_append
+- fn_heartbeat_done
+- fn_send_message and fn_read_messages when messaging is enabled for this run (they may not always be available)
 
 ## Memory Boundaries
 
@@ -197,12 +197,12 @@ You may receive an Agent Memory section and a Project Memory section.
 ## Processing Messages
 
 When you are woken by an incoming message (source includes "wake-on-message"), you should:
-1. If read_messages is available, use it to check your inbox for unread messages.
+1. If fn_read_messages is available, use it to check your inbox for unread messages.
 2. Review each message and determine the appropriate action:
-   - If the message requires a response and send_message is available, use send_message to reply.
-   - When replying, include 'reply_to_message_id' with the original message ID from read_messages output.
-   - If the message is informational, acknowledge it and respond via send_message when appropriate.
-   - If the message requests work, create a follow-up task with task_create.
+   - If the message requires a response and fn_send_message is available, use fn_send_message to reply.
+   - When replying, include 'reply_to_message_id' with the original message ID from fn_read_messages output.
+   - If the message is informational, acknowledge it and respond via fn_send_message when appropriate.
+   - If the message requests work, create a follow-up task with fn_task_create.
 3. After processing messages, continue with your ambient work.
 
 When sending messages:
@@ -214,7 +214,7 @@ When sending messages:
 // Backward-compatible alias; prefer HEARTBEAT_NO_TASK_SYSTEM_PROMPT.
 export const HEARTBEAT_SYSTEM_PROMPT_NO_TASK = HEARTBEAT_NO_TASK_SYSTEM_PROMPT;
 
-/** Parameter schema for the heartbeat_done tool */
+/** Parameter schema for the fn_heartbeat_done tool */
 const heartbeatDoneParams = Type.Object({
   summary: Type.Optional(Type.String({ description: "Summary of what was accomplished this heartbeat" })),
 });
@@ -726,7 +726,7 @@ export class HeartbeatMonitor {
    * Implements the Paperclip-style execution model:
    * 1. Wake — start a heartbeat run record
    * 2. Check inbox — resolve the agent's assigned task
-   * 3. Work — run a lightweight agent session with readonly tools + task_create/task_log
+   * 3. Work — run a lightweight agent session with readonly tools + fn_task_create/fn_task_log
    * 4. Exit — record results and complete the run
    * 
    * Budget governance:
@@ -1053,9 +1053,9 @@ export class HeartbeatMonitor {
           stdoutExcerpt += delta.slice(0, remaining);
         };
 
-        // Create heartbeat_done tool
+        // Create fn_heartbeat_done tool
         const heartbeatDoneTool: ToolDefinition = {
-          name: "heartbeat_done",
+          name: "fn_heartbeat_done",
           label: "Heartbeat Done",
           description: "Signal that the heartbeat execution is complete. Call when finished.",
           parameters: heartbeatDoneParams,
@@ -1079,13 +1079,13 @@ export class HeartbeatMonitor {
         const { buildSessionSkillContextSync } = await import("./session-skill-context.js");
 
         // Build tools with task creation tracking and run context for mutation correlation
-        // For no-task runs, exclude task_log and document tools (they require a taskId)
+        // For no-task runs, exclude fn_task_log and document tools (they require a taskId)
         let heartbeatTools: ToolDefinition[];
         if (isNoTaskRun) {
-          // No-task runs: task_create, list_agents, delegate_task, messaging, memory, heartbeat_done
+          // No-task runs: fn_task_create, fn_list_agents, fn_delegate_task, messaging, memory, fn_heartbeat_done
           heartbeatTools = [];
 
-          // task_create tool (no tracking needed for no-task runs)
+          // fn_task_create tool (no tracking needed for no-task runs)
           heartbeatTools.push(createTaskCreateTool(taskStore));
 
           // Agent delegation tools
@@ -1098,7 +1098,7 @@ export class HeartbeatMonitor {
             heartbeatTools.push(createReadMessagesTool(this.messageStore, agentId));
           }
         } else {
-          // Task-scoped runs: full tool set including task_log and document tools
+          // Task-scoped runs: full tool set including fn_task_log and document tools
           // taskId is guaranteed to be defined here because isNoTaskRun = !taskId
           heartbeatTools = this.createHeartbeatTools(agentId, taskStore, taskId!, runContext, audit, this.messageStore);
         }
@@ -1220,16 +1220,16 @@ export class HeartbeatMonitor {
               "You have identity (soul, instructions, and/or memory) loaded, which means you can perform",
               "useful ambient work. Here are some things you can do:",
               "",
-              "1. **Check your messages** — Use read_messages to review any pending messages",
-              "   and use send_message with reply_to_message_id when responding.",
+              "1. **Check your messages** — Use fn_read_messages to review any pending messages",
+              "   and use fn_send_message with reply_to_message_id when responding.",
               "",
-              "2. **Create new tasks** — Use task_create to spawn follow-up work that needs",
+              "2. **Create new tasks** — Use fn_task_create to spawn follow-up work that needs",
               "   to be done. This is useful for surfacing issues or ideas you discover.",
               "",
-              "3. **Delegate work** — Use list_agents to discover available agents and",
-              "   delegate_task to assign work to them.",
+              "3. **Delegate work** — Use fn_list_agents to discover available agents and",
+              "   fn_delegate_task to assign work to them.",
               "",
-              "4. **Update your memory** — Use memory_append to persist important learnings",
+              "4. **Update your memory** — Use fn_memory_append to persist important learnings",
               "   or context that will help you in future sessions.",
               "",
               "5. **Monitor the project** — Review the task board and identify any issues",
@@ -1238,7 +1238,7 @@ export class HeartbeatMonitor {
               "",
               "Your soul, instructions, and memory are already loaded in the system prompt.",
               "Focus on work that benefits the project without requiring a specific task context.",
-              "Call heartbeat_done when finished.",
+              "Call fn_heartbeat_done when finished.",
             ].join("\n");
           } else {
             // Task-scoped heartbeat: agent has an assigned task
@@ -1307,7 +1307,7 @@ export class HeartbeatMonitor {
               ...triggeringCommentLines,
               ...pendingMessagesLines,
               "",
-              "Review the task status and take appropriate action. Call heartbeat_done when finished.",
+              "Review the task status and take appropriate action. Call fn_heartbeat_done when finished.",
             ].join("\n");
           }
 
@@ -1431,7 +1431,7 @@ export class HeartbeatMonitor {
    *
    * @param agentId - The agent ID (used for tracking and logging)
    * @param taskStore - TaskStore for task creation and logging
-   * @param taskId - The assigned task ID (for task_log context)
+   * @param taskId - The assigned task ID (for fn_task_log context)
    * @param runContext - Optional run context for mutation correlation
    * @param audit - Optional run auditor for audit trail (FN-1404)
    * @param messageStore - Optional MessageStore for messaging tools
@@ -1480,7 +1480,7 @@ export class HeartbeatMonitor {
     };
     tools.push(trackedCreateTool);
 
-    // task_log tool (with run context for mutation correlation)
+    // fn_task_log tool (with run context for mutation correlation)
     tools.push(createTaskLogToolWithContext(taskStore, taskId, runContext));
 
     // Document tools for persisting durable findings

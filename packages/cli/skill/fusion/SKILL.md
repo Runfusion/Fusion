@@ -21,6 +21,8 @@ Mission → Milestone → Slice → Feature → Task
 
 **Available tools:** Fusion registers tools via the pi extension (prefixed `fn_*`). No CLI commands or Bash needed — use the registered tools directly.
 
+**Naming boundary:** The published skill surface always uses `fn_*` tool names (for example `fn_task_create`, `fn_mission_create`). Internal engine runtime tools like `task_create`, `task_update`, `task_log`, and `task_done` are intentionally unprefixed and not part of this skill.
+
 **Tool categories:**
 - **Task tools** — `fn_task_create`, `fn_task_update`, `fn_task_list`, `fn_task_show`, `fn_task_attach`, `fn_task_pause`, `fn_task_unpause`, `fn_task_retry`, `fn_task_duplicate`, `fn_task_refine`, `fn_task_archive`, `fn_task_unarchive`, `fn_task_delete`, `fn_task_plan`
 - **GitHub tools** — `fn_task_import_github`, `fn_task_import_github_issue`, `fn_task_browse_github_issues`

@@ -5,6 +5,8 @@
 
 <objective>
 Guide the agent through creating, viewing, and managing tasks on the Fusion board using pi extension tools.
+
+Use only the public `fn_*` extension tools in this workflow. Do not substitute internal engine runtime tools like `task_create`, `task_update`, `task_log`, or `task_done`.
 </objective>
 
 <process>

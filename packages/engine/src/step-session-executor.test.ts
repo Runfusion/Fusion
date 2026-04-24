@@ -520,10 +520,10 @@ Some freeform text without checkboxes.`;
     expect(result).not.toContain("Project Commands");
   });
 
-  it("includes task_done instruction at the end", () => {
+  it("includes fn_task_done instruction at the end", () => {
     const task = makeTaskDetail({ prompt: fullPrompt });
     const result = buildStepPrompt(task, 1);
-    expect(result).toContain("task_done()");
+    expect(result).toContain("fn_task_done()");
   });
 
   it("does not include content from other steps", () => {
@@ -2134,7 +2134,7 @@ describe("StepSessionExecutor tool availability", () => {
     return captured;
   }
 
-  it("includes list_agents and delegate_task when agentStore is available", async () => {
+  it("includes fn_list_agents and fn_delegate_task when agentStore is available", async () => {
     const mockAgentStore = {
       listAgents: vi.fn().mockResolvedValue([]),
       getAgent: vi.fn().mockResolvedValue(null),
@@ -2145,19 +2145,19 @@ describe("StepSessionExecutor tool availability", () => {
     });
 
     const toolNames = tools.map((t: any) => t.name);
-    expect(toolNames).toContain("list_agents");
-    expect(toolNames).toContain("delegate_task");
+    expect(toolNames).toContain("fn_list_agents");
+    expect(toolNames).toContain("fn_delegate_task");
   });
 
   it("excludes delegation tools when agentStore is not provided", async () => {
     const tools = await captureCustomTools({});
 
     const toolNames = tools.map((t: any) => t.name);
-    expect(toolNames).not.toContain("list_agents");
-    expect(toolNames).not.toContain("delegate_task");
+    expect(toolNames).not.toContain("fn_list_agents");
+    expect(toolNames).not.toContain("fn_delegate_task");
   });
 
-  it("includes send_message and read_messages when messageStore and assignedAgentId are available", async () => {
+  it("includes fn_send_message and fn_read_messages when messageStore and assignedAgentId are available", async () => {
     const mockMessageStore = {
       sendMessage: vi.fn().mockReturnValue({ id: "msg-001" }),
       getInbox: vi.fn().mockReturnValue([]),
@@ -2169,8 +2169,8 @@ describe("StepSessionExecutor tool availability", () => {
     });
 
     const toolNames = tools.map((t: any) => t.name);
-    expect(toolNames).toContain("send_message");
-    expect(toolNames).toContain("read_messages");
+    expect(toolNames).toContain("fn_send_message");
+    expect(toolNames).toContain("fn_read_messages");
   });
 
   it("excludes messaging tools when messageStore is not provided", async () => {
@@ -2179,8 +2179,8 @@ describe("StepSessionExecutor tool availability", () => {
     });
 
     const toolNames = tools.map((t: any) => t.name);
-    expect(toolNames).not.toContain("send_message");
-    expect(toolNames).not.toContain("read_messages");
+    expect(toolNames).not.toContain("fn_send_message");
+    expect(toolNames).not.toContain("fn_read_messages");
   });
 
   it("excludes messaging tools when assignedAgentId is not provided", async () => {
@@ -2194,16 +2194,16 @@ describe("StepSessionExecutor tool availability", () => {
     });
 
     const toolNames = tools.map((t: any) => t.name);
-    expect(toolNames).not.toContain("send_message");
-    expect(toolNames).not.toContain("read_messages");
+    expect(toolNames).not.toContain("fn_send_message");
+    expect(toolNames).not.toContain("fn_read_messages");
   });
 
-  it("includes task_log and task_create when store is available", async () => {
+  it("includes fn_task_log and fn_task_create when store is available", async () => {
     const tools = await captureCustomTools({});
 
     const toolNames = tools.map((t: any) => t.name);
-    expect(toolNames).toContain("task_log");
-    expect(toolNames).toContain("task_create");
+    expect(toolNames).toContain("fn_task_log");
+    expect(toolNames).toContain("fn_task_create");
   });
 });
 

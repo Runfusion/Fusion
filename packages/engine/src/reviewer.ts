@@ -2,7 +2,7 @@
  * Reviewer — spawns a separate pi agent to review a worker's plan or code.
  *
  * Replicates taskplane's cross-model review pattern:
- * - Worker calls review_step(step, type) during execution
+ * - Worker calls fn_review_step(step, type) during execution
  * - A separate reviewer agent is spawned with read-only tools
  * - Reviewer writes a structured verdict: APPROVE, REVISE, or RETHINK
  * - Verdict + feedback is returned to the worker
@@ -138,12 +138,12 @@ When reviewing specs, actively assess whether the task should have been broken i
 Say explicitly: "This task should be broken into subtasks because [specific reason]."
 Recommend the number of child tasks (2-5) and what each should cover.
 **Critically**, instruct the planner to take these actions in your REVISE feedback:
-1. Use the \`task_create\` tool to create 2–5 child tasks from the oversized spec
+1. Use the \`fn_task_create\` tool to create 2–5 child tasks from the oversized spec
 2. Do NOT write a parent PROMPT.md — the parent will be closed automatically after children are created
 3. Each child task should cover one coherent deliverable with clear scope boundaries
 
 Example REVISE feedback for an undersplit task:
-"This task should be broken into 3 subtasks because it spans the engine, dashboard, and CLI packages with independent deliverables. Use task_create to create: (1) engine logic, (2) dashboard UI, (3) CLI integration. Do not write a parent PROMPT."
+"This task should be broken into 3 subtasks because it spans the engine, dashboard, and CLI packages with independent deliverables. Use fn_task_create to create: (1) engine logic, (2) dashboard UI, (3) CLI integration. Do not write a parent PROMPT."
 
 **Do NOT flag if:**
 - Steps are sequential and tightly coupled (e.g., a pipeline where each step depends on the previous)

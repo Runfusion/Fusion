@@ -505,11 +505,11 @@ describe("TaskExecutor worktreeInitCommand", () => {
     );
 
     // The init command failure itself does not abort execution, but the mocked
-    // agent still exits without task_done. After 3 retries it requeues to todo
+    // agent still exits without fn_task_done. After 3 retries it requeues to todo
     // and reports an error.
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({ id: "FN-010" }),
-      expect.objectContaining({ message: "Agent finished without calling task_done (after 3 retries)" }),
+      expect.objectContaining({ message: "Agent finished without calling fn_task_done (after 3 retries)" }),
     );
 
     // Agent should still have been created
@@ -2290,7 +2290,7 @@ describe("buildExecutionPrompt", () => {
     } as any);
 
     expect(result).toContain("fix failures even when that requires edits outside the original File Scope");
-    expect(result).toContain("If the repo has a typecheck command, run it before `task_done()`");
+    expect(result).toContain("If the repo has a typecheck command, run it before `fn_task_done()`");
     expect(result).toContain("not for fixes required to get tests, build, or typecheck back to green");
   });
 
@@ -2490,7 +2490,7 @@ describe("buildExecutionPrompt", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    // Called four times: initial execution + 3 retries when agent finishes without task_done
+    // Called four times: initial execution + 3 retries when agent finishes without fn_task_done
     expect(mockPrompt).toHaveBeenCalledTimes(4);
     const agentPrompt = mockPrompt.mock.calls[0][0];
     expect(agentPrompt).toContain("## Project Commands");
@@ -2533,7 +2533,7 @@ describe("buildExecutionPrompt", () => {
       } as any);
       // Should instruct selective writes, not unconditional appends
       expect(result).toMatch(/skip.*memory.*update|selectively|durable.*learnings/i);
-      expect(result).toMatch(/end of execution|before calling.*task_done/i);
+      expect(result).toMatch(/end of execution|before calling.*fn_task_done/i);
       // Should forbid task-specific trivia
       expect(result).toMatch(/avoid.*trivia|task-specific.*trivia|per-task.*log/i);
       // Should allow consolidation/editing
@@ -2593,8 +2593,8 @@ describe("buildExecutionPrompt", () => {
       const memorySection = memorySectionMatch![1];
       // QMD should NOT unconditionally reference .fusion/memory/ in the memory section
       expect(memorySection).not.toContain(".fusion/memory/");
-      expect(memorySection).toContain("memory_search");
-      expect(memorySection).toContain("memory_get");
+      expect(memorySection).toContain("fn_memory_search");
+      expect(memorySection).toContain("fn_memory_get");
     });
 
     it("QMD prompt has actionable memory instructions", () => {
@@ -2610,7 +2610,7 @@ describe("buildExecutionPrompt", () => {
       const memorySection = memorySectionMatch![1];
       // QMD should NOT contain .fusion/memory/
       expect(memorySection).not.toContain(".fusion/memory/");
-      expect(memorySection).toContain("memory_search");
+      expect(memorySection).toContain("fn_memory_search");
       // Contains "end of execution" write guidance
       expect(memorySection).toMatch(/end of execution/i);
     });
@@ -2707,7 +2707,7 @@ describe("summarizeToolArgs", () => {
   });
 
   it("returns first string arg for unknown tools", () => {
-    expect(summarizeToolArgs("task_update", { step: 1, status: "done" })).toBe("done");
+    expect(summarizeToolArgs("fn_task_update", { step: 1, status: "done" })).toBe("done");
   });
 
   it("returns undefined when no args provided", () => {
@@ -2948,7 +2948,7 @@ describe("TaskExecutor pause behavior", () => {
     // Wait for async execution to start
     await new Promise((r) => setTimeout(r, 50));
 
-    // Agent created at least twice: initial resume + retry when agent finishes without task_done
+    // Agent created at least twice: initial resume + retry when agent finishes without fn_task_done
     // (async worktree validation may allow additional retry cycles within the timeout)
     expect(mockedCreateFnAgent.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Resuming execution after unpause", undefined, undefined);
@@ -3094,7 +3094,7 @@ describe("TaskExecutor pause behavior", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    // At least two agent creations (initial + retry without task_done), but no duplicate from the unpause event
+    // At least two agent creations (initial + retry without fn_task_done), but no duplicate from the unpause event
     // (async worktree validation may allow additional retry cycles)
     expect(mockedCreateFnAgent.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
@@ -3164,7 +3164,7 @@ describe("TaskExecutor pause behavior", () => {
 
     await executePromise;
 
-    // Four agent sessions (initial + 3 retries without task_done) — the unpause during active session was a no-op
+    // Four agent sessions (initial + 3 retries without fn_task_done) — the unpause during active session was a no-op
     expect(mockedCreateFnAgent).toHaveBeenCalledTimes(4);
   });
 
@@ -3419,7 +3419,7 @@ describe("swallowed async store failure observability", () => {
       return {
         session: {
           prompt: vi.fn().mockImplementation(async () => {
-            const taskDoneTool = capturedCustomTools.find((tool) => tool.name === "task_done");
+            const taskDoneTool = capturedCustomTools.find((tool) => tool.name === "fn_task_done");
             if (taskDoneTool) {
               await taskDoneTool.execute("call-1", { summary: "done" });
             }
@@ -3531,7 +3531,7 @@ describe("swallowed async store failure observability", () => {
       return {
         session: {
           prompt: vi.fn().mockImplementation(async () => {
-            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "task_done");
+            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "fn_task_done");
             if (taskDoneTool) {
               await taskDoneTool.execute("call-1", { summary: "done" });
             }
@@ -3950,7 +3950,7 @@ describe("TaskExecutor global pause behavior", () => {
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
   });
 
-  it("finalizes to in-review when global pause hits after task_done", async () => {
+  it("finalizes to in-review when global pause hits after fn_task_done", async () => {
     const store = createMockStore();
 
     mockedCreateFnAgent.mockImplementation(async (opts: any) => {
@@ -3958,7 +3958,7 @@ describe("TaskExecutor global pause behavior", () => {
       return {
         session: {
           prompt: vi.fn().mockImplementation(async () => {
-            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
             if (taskDoneTool) {
               await taskDoneTool.execute("tool-1", {});
             }
@@ -4002,7 +4002,7 @@ describe("TaskExecutor global pause behavior", () => {
               settings: { globalPause: false },
               previous: { globalPause: false },
             });
-            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "task_done");
+            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "fn_task_done");
             if (taskDoneTool) {
               await taskDoneTool.execute("call-1", { summary: "done" });
             }
@@ -4037,7 +4037,7 @@ describe("TaskExecutor global pause behavior", () => {
               settings: { globalPause: true },
               previous: { globalPause: true },
             });
-            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "task_done");
+            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "fn_task_done");
             if (taskDoneTool) {
               await taskDoneTool.execute("call-1", { summary: "done" });
             }
@@ -4080,7 +4080,7 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
               settings: { enginePaused: true },
               previous: { enginePaused: false },
             });
-            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "task_done");
+            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "fn_task_done");
             if (taskDoneTool) {
               await taskDoneTool.execute("call-1", { summary: "done" });
             }
@@ -4119,7 +4119,7 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
               settings: { enginePaused: true },
               previous: { enginePaused: false },
             });
-            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "task_done");
+            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "fn_task_done");
             if (taskDoneTool) {
               await taskDoneTool.execute("call-1", { summary: "done" });
             }
@@ -4154,7 +4154,7 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
               settings: { enginePaused: false },
               previous: { enginePaused: false },
             });
-            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "task_done");
+            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "fn_task_done");
             if (taskDoneTool) {
               await taskDoneTool.execute("call-1", { summary: "done" });
             }
@@ -4189,7 +4189,7 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
               settings: { enginePaused: true },
               previous: { enginePaused: true },
             });
-            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "task_done");
+            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "fn_task_done");
             if (taskDoneTool) {
               await taskDoneTool.execute("call-1", { summary: "done" });
             }
@@ -4282,7 +4282,7 @@ describe("Code review verdict tracking", () => {
     });
 
     const tools = await captureTools();
-    const result = await tools.review_step("call1", {
+    const result = await tools.fn_review_step("call1", {
       step: 1,
       type: "code",
       step_name: "Implement",
@@ -4292,8 +4292,8 @@ describe("Code review verdict tracking", () => {
     expect(result.content[0].text).toContain("REVISE");
     expect(result.content[0].text).toContain("cannot be marked done");
 
-    // Now task_update(step=1, status="done") should be blocked
-    const updateResult = await tools.task_update("call2", { step: 1, status: "done" });
+    // Now fn_task_update(step=1, status="done") should be blocked
+    const updateResult = await tools.fn_task_update("call2", { step: 1, status: "done" });
     expect(updateResult.content[0].text).toContain("Cannot mark Step 1 as done");
     expect(updateResult.content[0].text).toContain("REVISE");
   });
@@ -4307,7 +4307,7 @@ describe("Code review verdict tracking", () => {
     });
 
     const tools = await captureTools();
-    await tools.review_step("call1", {
+    await tools.fn_review_step("call1", {
       step: 1,
       type: "code",
       step_name: "Implement",
@@ -4315,7 +4315,7 @@ describe("Code review verdict tracking", () => {
     });
 
     // Verify it's blocked
-    const blocked = await tools.task_update("call2", { step: 1, status: "done" });
+    const blocked = await tools.fn_task_update("call2", { step: 1, status: "done" });
     expect(blocked.content[0].text).toContain("Cannot mark Step 1 as done");
 
     // Now: APPROVE
@@ -4325,15 +4325,15 @@ describe("Code review verdict tracking", () => {
       summary: "All good",
     });
 
-    await tools.review_step("call3", {
+    await tools.fn_review_step("call3", {
       step: 1,
       type: "code",
       step_name: "Implement",
       baseline: "def456",
     });
 
-    // Now task_update should succeed
-    const updateResult = await tools.task_update("call4", { step: 1, status: "done" });
+    // Now fn_task_update should succeed
+    const updateResult = await tools.fn_task_update("call4", { step: 1, status: "done" });
     expect(updateResult.content[0].text).toContain("→ done");
   });
 
@@ -4345,7 +4345,7 @@ describe("Code review verdict tracking", () => {
     });
 
     const tools = await captureTools();
-    const result = await tools.review_step("call1", {
+    const result = await tools.fn_review_step("call1", {
       step: 1,
       type: "plan",
       step_name: "Implement",
@@ -4355,19 +4355,19 @@ describe("Code review verdict tracking", () => {
     expect(result.content[0].text).toContain("REVISE");
     expect(result.content[0].text).not.toContain("cannot be marked done");
 
-    // task_update should still work (plan reviews are advisory)
-    const updateResult = await tools.task_update("call2", { step: 1, status: "done" });
+    // fn_task_update should still work (plan reviews are advisory)
+    const updateResult = await tools.fn_task_update("call2", { step: 1, status: "done" });
     expect(updateResult.content[0].text).toContain("→ done");
   });
 });
 
-describe("Code review verdict enforcement - task_update blocking", () => {
+describe("Code review verdict enforcement - fn_task_update blocking", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedExistsSync.mockReturnValue(true);
   });
 
-  it("task_update(status='done') is rejected when last code review was REVISE", async () => {
+  it("fn_task_update(status='done') is rejected when last code review was REVISE", async () => {
     mockedReviewStep.mockResolvedValue({
       verdict: "REVISE",
       review: "Fix issues",
@@ -4375,38 +4375,38 @@ describe("Code review verdict enforcement - task_update blocking", () => {
     });
 
     const tools = await captureTools();
-    await tools.review_step("call1", {
+    await tools.fn_review_step("call1", {
       step: 1,
       type: "code",
       step_name: "Implement",
       baseline: "abc",
     });
 
-    const result = await tools.task_update("call2", { step: 1, status: "done" });
+    const result = await tools.fn_task_update("call2", { step: 1, status: "done" });
     expect(result.content[0].text).toContain("Cannot mark Step 1 as done");
-    expect(result.content[0].text).toContain("review_step");
+    expect(result.content[0].text).toContain("fn_review_step");
   });
 
-  it("task_update succeeds after a subsequent APPROVE", async () => {
+  it("fn_task_update succeeds after a subsequent APPROVE", async () => {
     const tools = await captureTools();
 
     // REVISE first
     mockedReviewStep.mockResolvedValue({ verdict: "REVISE", review: "Fix", summary: "Bad" });
-    await tools.review_step("c1", { step: 1, type: "code", step_name: "Impl", baseline: "a" });
+    await tools.fn_review_step("c1", { step: 1, type: "code", step_name: "Impl", baseline: "a" });
 
     // Then APPROVE
     mockedReviewStep.mockResolvedValue({ verdict: "APPROVE", review: "OK", summary: "Good" });
-    await tools.review_step("c2", { step: 1, type: "code", step_name: "Impl", baseline: "b" });
+    await tools.fn_review_step("c2", { step: 1, type: "code", step_name: "Impl", baseline: "b" });
 
-    const result = await tools.task_update("c3", { step: 1, status: "done" });
+    const result = await tools.fn_task_update("c3", { step: 1, status: "done" });
     expect(result.content[0].text).toContain("→ done");
   });
 
-  it("task_update succeeds when no code review was requested (review level 0)", async () => {
+  it("fn_task_update succeeds when no code review was requested (review level 0)", async () => {
     const tools = await captureTools();
 
-    // No review_step calls at all
-    const result = await tools.task_update("c1", { step: 1, status: "done" });
+    // No fn_review_step calls at all
+    const result = await tools.fn_task_update("c1", { step: 1, status: "done" });
     expect(result.content[0].text).toContain("→ done");
   });
 
@@ -4414,9 +4414,9 @@ describe("Code review verdict enforcement - task_update blocking", () => {
     mockedReviewStep.mockResolvedValue({ verdict: "REVISE", review: "Rethink", summary: "Plan issue" });
 
     const tools = await captureTools();
-    await tools.review_step("c1", { step: 1, type: "plan", step_name: "Impl" });
+    await tools.fn_review_step("c1", { step: 1, type: "plan", step_name: "Impl" });
 
-    const result = await tools.task_update("c2", { step: 1, status: "done" });
+    const result = await tools.fn_task_update("c2", { step: 1, status: "done" });
     expect(result.content[0].text).toContain("→ done");
   });
 
@@ -4424,14 +4424,14 @@ describe("Code review verdict enforcement - task_update blocking", () => {
     mockedReviewStep.mockResolvedValue({ verdict: "REVISE", review: "Fix", summary: "Bad" });
 
     const tools = await captureTools();
-    await tools.review_step("c1", { step: 1, type: "code", step_name: "Step1", baseline: "a" });
+    await tools.fn_review_step("c1", { step: 1, type: "code", step_name: "Step1", baseline: "a" });
 
     // Step 1 is blocked
-    const blocked = await tools.task_update("c2", { step: 1, status: "done" });
+    const blocked = await tools.fn_task_update("c2", { step: 1, status: "done" });
     expect(blocked.content[0].text).toContain("Cannot mark Step 1 as done");
 
     // Step 2 is NOT blocked (no review for step 2)
-    const allowed = await tools.task_update("c3", { step: 2, status: "done" });
+    const allowed = await tools.fn_task_update("c3", { step: 2, status: "done" });
     expect(allowed.content[0].text).toContain("→ done");
   });
 
@@ -4439,10 +4439,10 @@ describe("Code review verdict enforcement - task_update blocking", () => {
     mockedReviewStep.mockResolvedValue({ verdict: "REVISE", review: "Bug found", summary: "Issues" });
 
     const tools = await captureTools();
-    const result = await tools.review_step("c1", { step: 1, type: "code", step_name: "Implement", baseline: "abc" });
+    const result = await tools.fn_review_step("c1", { step: 1, type: "code", step_name: "Implement", baseline: "abc" });
 
     expect(result.content[0].text).toContain("cannot be marked done");
-    expect(result.content[0].text).toContain("review_step");
+    expect(result.content[0].text).toContain("fn_review_step");
     expect(result.content[0].text).toContain('type="code"');
   });
 
@@ -4487,14 +4487,14 @@ describe("Code review verdict enforcement - task_update blocking", () => {
   // The direct test for EXECUTOR_SYSTEM_PROMPT is skipped because of module caching issues in vitest.
   // The buildExecutionPrompt test verifies the CRITICAL language is included in execution prompts.
 
-  it("task_update with non-done status is not blocked by REVISE", async () => {
+  it("fn_task_update with non-done status is not blocked by REVISE", async () => {
     mockedReviewStep.mockResolvedValue({ verdict: "REVISE", review: "Fix", summary: "Bad" });
 
     const tools = await captureTools();
-    await tools.review_step("c1", { step: 1, type: "code", step_name: "Step1", baseline: "a" });
+    await tools.fn_review_step("c1", { step: 1, type: "code", step_name: "Step1", baseline: "a" });
 
     // "in-progress" should still work even with REVISE
-    const result = await tools.task_update("c2", { step: 1, status: "in-progress" });
+    const result = await tools.fn_task_update("c2", { step: 1, status: "in-progress" });
     expect(result.content[0].text).toContain("→ in-progress");
   });
 });
@@ -4515,7 +4515,7 @@ describe("RETHINK verdict handling", () => {
     updatedAt: new Date().toISOString(),
   });
 
-  /** Return value for store.updateStep that satisfies the task_update tool. */
+  /** Return value for store.updateStep that satisfies the fn_task_update tool. */
   function makeStepResult(stepIndex: number, status: string) {
     const steps = Array.from({ length: Math.max(stepIndex + 1, 3) }, (_, i) => ({
       name: `Step ${i}`,
@@ -4575,13 +4575,13 @@ describe("RETHINK verdict handling", () => {
     });
 
     const { toolMap } = await captureRethinkTools(store);
-    const reviewTool = toolMap.get("review_step");
+    const reviewTool = toolMap.get("fn_review_step");
 
-    // First call task_update to set in-progress (captures checkpoint)
-    const updateTool = toolMap.get("task_update");
+    // First call fn_task_update to set in-progress (captures checkpoint)
+    const updateTool = toolMap.get("fn_task_update");
     await updateTool.execute("call-1", { step: 1, status: "in-progress" });
 
-    // Now call review_step with a baseline
+    // Now call fn_review_step with a baseline
     const result = await reviewTool.execute("call-2", {
       step: 1,
       type: "code",
@@ -4611,11 +4611,11 @@ describe("RETHINK verdict handling", () => {
     const { toolMap, mockNavigateTree } = await captureRethinkTools(store);
 
     // Capture checkpoint
-    const updateTool = toolMap.get("task_update");
+    const updateTool = toolMap.get("fn_task_update");
     await updateTool.execute("call-1", { step: 1, status: "in-progress" });
 
     // Trigger RETHINK
-    await toolMap.get("review_step").execute("call-2", {
+    await toolMap.get("fn_review_step").execute("call-2", {
       step: 1,
       type: "code",
       step_name: "Test Step",
@@ -4640,10 +4640,10 @@ describe("RETHINK verdict handling", () => {
 
     const { toolMap } = await captureRethinkTools(store);
 
-    const updateTool = toolMap.get("task_update");
+    const updateTool = toolMap.get("fn_task_update");
     await updateTool.execute("call-1", { step: 1, status: "in-progress" });
 
-    await toolMap.get("review_step").execute("call-2", {
+    await toolMap.get("fn_review_step").execute("call-2", {
       step: 1,
       type: "code",
       step_name: "Test Step",
@@ -4668,10 +4668,10 @@ describe("RETHINK verdict handling", () => {
 
     const { toolMap } = await captureRethinkTools(store);
 
-    const updateTool = toolMap.get("task_update");
+    const updateTool = toolMap.get("fn_task_update");
     await updateTool.execute("call-1", { step: 1, status: "in-progress" });
 
-    const result = await toolMap.get("review_step").execute("call-2", {
+    const result = await toolMap.get("fn_review_step").execute("call-2", {
       step: 1,
       type: "code",
       step_name: "Test Step",
@@ -4699,11 +4699,11 @@ describe("RETHINK verdict handling", () => {
 
     const { toolMap, mockNavigateTree } = await captureRethinkTools(store);
 
-    const updateTool = toolMap.get("task_update");
+    const updateTool = toolMap.get("fn_task_update");
     await updateTool.execute("call-1", { step: 1, status: "in-progress" });
 
-    // Call review_step WITHOUT baseline
-    await toolMap.get("review_step").execute("call-2", {
+    // Call fn_review_step WITHOUT baseline
+    await toolMap.get("fn_review_step").execute("call-2", {
       step: 1,
       type: "code",
       step_name: "Test Step",
@@ -4734,10 +4734,10 @@ describe("RETHINK verdict handling", () => {
 
     const { toolMap, mockNavigateTree } = await captureRethinkTools(store);
 
-    // Do NOT call task_update for step 2, so no checkpoint exists
+    // Do NOT call fn_task_update for step 2, so no checkpoint exists
 
-    // Call review_step for step 2 — should not crash
-    const result = await toolMap.get("review_step").execute("call-2", {
+    // Call fn_review_step for step 2 — should not crash
+    const result = await toolMap.get("fn_review_step").execute("call-2", {
       step: 2,
       type: "code",
       step_name: "Test Step",
@@ -4751,7 +4751,7 @@ describe("RETHINK verdict handling", () => {
     expect(result.content[0].text).toContain("RETHINK");
   });
 
-  it("pre-step checkpoint is captured when task_update sets status to in-progress", async () => {
+  it("pre-step checkpoint is captured when fn_task_update sets status to in-progress", async () => {
     const store = createMockStore();
     store.updateStep.mockImplementation(async (_id: string, step: number, status: string) =>
       makeStepResult(step, status),
@@ -4759,7 +4759,7 @@ describe("RETHINK verdict handling", () => {
 
     const { toolMap, mockSessionManager } = await captureRethinkTools(store);
 
-    const updateTool = toolMap.get("task_update");
+    const updateTool = toolMap.get("fn_task_update");
     await updateTool.execute("call-1", { step: 1, status: "in-progress" });
 
     // Verify getLeafId was called
@@ -4804,10 +4804,10 @@ describe("RETHINK verdict handling", () => {
     for (const tool of capturedTools) toolMap.set(tool.name, tool);
 
     // Capture checkpoint
-    await toolMap.get("task_update").execute("call-1", { step: 1, status: "in-progress" });
+    await toolMap.get("fn_task_update").execute("call-1", { step: 1, status: "in-progress" });
 
     // Trigger RETHINK
-    await toolMap.get("review_step").execute("call-2", {
+    await toolMap.get("fn_review_step").execute("call-2", {
       step: 1,
       type: "code",
       step_name: "Test Step",
@@ -4896,10 +4896,10 @@ describe("Plan RETHINK verdict handling", () => {
     const { toolMap, mockNavigateTree } = await capturePlanRethinkTools(store);
 
     // Capture checkpoint by starting step
-    await toolMap.get("task_update").execute("call-1", { step: 1, status: "in-progress" });
+    await toolMap.get("fn_task_update").execute("call-1", { step: 1, status: "in-progress" });
 
     // Trigger plan RETHINK
-    await toolMap.get("review_step").execute("call-2", {
+    await toolMap.get("fn_review_step").execute("call-2", {
       step: 1,
       type: "plan",
       step_name: "Test Step",
@@ -4923,10 +4923,10 @@ describe("Plan RETHINK verdict handling", () => {
 
     const { toolMap } = await capturePlanRethinkTools(store);
 
-    await toolMap.get("task_update").execute("call-1", { step: 1, status: "in-progress" });
+    await toolMap.get("fn_task_update").execute("call-1", { step: 1, status: "in-progress" });
 
     // Even if baseline is passed, plan RETHINK should NOT git reset
-    await toolMap.get("review_step").execute("call-2", {
+    await toolMap.get("fn_review_step").execute("call-2", {
       step: 1,
       type: "plan",
       step_name: "Test Step",
@@ -4954,9 +4954,9 @@ describe("Plan RETHINK verdict handling", () => {
 
     const { toolMap } = await capturePlanRethinkTools(store);
 
-    await toolMap.get("task_update").execute("call-1", { step: 1, status: "in-progress" });
+    await toolMap.get("fn_task_update").execute("call-1", { step: 1, status: "in-progress" });
 
-    await toolMap.get("review_step").execute("call-2", {
+    await toolMap.get("fn_review_step").execute("call-2", {
       step: 1,
       type: "plan",
       step_name: "Test Step",
@@ -4980,9 +4980,9 @@ describe("Plan RETHINK verdict handling", () => {
 
     const { toolMap } = await capturePlanRethinkTools(store);
 
-    await toolMap.get("task_update").execute("call-1", { step: 1, status: "in-progress" });
+    await toolMap.get("fn_task_update").execute("call-1", { step: 1, status: "in-progress" });
 
-    const result = await toolMap.get("review_step").execute("call-2", {
+    const result = await toolMap.get("fn_review_step").execute("call-2", {
       step: 1,
       type: "plan",
       step_name: "Test Step",
@@ -5010,10 +5010,10 @@ describe("Plan RETHINK verdict handling", () => {
 
     const { toolMap, mockNavigateTree } = await capturePlanRethinkTools(store);
 
-    // Do NOT call task_update for step 2, so no checkpoint exists
+    // Do NOT call fn_task_update for step 2, so no checkpoint exists
 
-    // Call review_step for step 2 — should not crash
-    const result = await toolMap.get("review_step").execute("call-2", {
+    // Call fn_review_step for step 2 — should not crash
+    const result = await toolMap.get("fn_review_step").execute("call-2", {
       step: 2,
       type: "plan",
       step_name: "Test Step",
@@ -5041,9 +5041,9 @@ describe("Plan RETHINK verdict handling", () => {
 
     const { toolMap } = await capturePlanRethinkTools(store);
 
-    await toolMap.get("task_update").execute("call-1", { step: 1, status: "in-progress" });
+    await toolMap.get("fn_task_update").execute("call-1", { step: 1, status: "in-progress" });
 
-    await toolMap.get("review_step").execute("call-2", {
+    await toolMap.get("fn_review_step").execute("call-2", {
       step: 1,
       type: "plan",
       step_name: "Test Step",
@@ -5133,11 +5133,11 @@ describe("E2E review pipeline — multi-verdict sequence", () => {
     const { tools } = await captureE2ETools(store);
 
     // Step 1: Start the step
-    await tools.task_update("u1", { step: 1, status: "in-progress" });
+    await tools.fn_task_update("u1", { step: 1, status: "in-progress" });
 
     // Step 2: Plan review → APPROVE (advisory, no blocking)
     mockedReviewStep.mockResolvedValue({ verdict: "APPROVE", review: "Good plan", summary: "Approved" });
-    const planResult = await tools.review_step("r1", {
+    const planResult = await tools.fn_review_step("r1", {
       step: 1, type: "plan", step_name: "Implement",
     });
     expect(planResult.content[0].text).toBe("APPROVE");
@@ -5146,26 +5146,26 @@ describe("E2E review pipeline — multi-verdict sequence", () => {
     mockedReviewStep.mockResolvedValue({
       verdict: "REVISE", review: "Missing error handling in fetchUser()", summary: "Needs fixes",
     });
-    const reviseResult = await tools.review_step("r2", {
+    const reviseResult = await tools.fn_review_step("r2", {
       step: 1, type: "code", step_name: "Implement", baseline: "sha-1",
     });
     expect(reviseResult.content[0].text).toContain("cannot be marked done");
 
     // Step 4: Attempt to mark done — should be blocked
-    const blockedResult = await tools.task_update("u2", { step: 1, status: "done" });
+    const blockedResult = await tools.fn_task_update("u2", { step: 1, status: "done" });
     expect(blockedResult.content[0].text).toContain("Cannot mark Step 1 as done");
 
     // Step 5: Fix issues, re-submit code review → APPROVE
     mockedReviewStep.mockResolvedValue({
       verdict: "APPROVE", review: "Error handling added correctly", summary: "All good",
     });
-    const approveResult = await tools.review_step("r3", {
+    const approveResult = await tools.fn_review_step("r3", {
       step: 1, type: "code", step_name: "Implement", baseline: "sha-2",
     });
     expect(approveResult.content[0].text).toBe("APPROVE");
 
     // Step 6: Now marking done should succeed
-    const doneResult = await tools.task_update("u3", { step: 1, status: "done" });
+    const doneResult = await tools.fn_task_update("u3", { step: 1, status: "done" });
     expect(doneResult.content[0].text).toContain("→ done");
   });
 
@@ -5178,13 +5178,13 @@ describe("E2E review pipeline — multi-verdict sequence", () => {
     const { tools, mockNavigateTree } = await captureE2ETools(store);
 
     // Step 1: Start the step (captures checkpoint)
-    await tools.task_update("u1", { step: 1, status: "in-progress" });
+    await tools.fn_task_update("u1", { step: 1, status: "in-progress" });
 
     // Step 2: Code review → RETHINK (rewind everything)
     mockedReviewStep.mockResolvedValue({
       verdict: "RETHINK", review: "Using polling instead of events is wrong", summary: "Bad approach",
     });
-    const rethinkResult = await tools.review_step("r1", {
+    const rethinkResult = await tools.fn_review_step("r1", {
       step: 1, type: "code", step_name: "Implement", baseline: "sha-bad",
     });
 
@@ -5199,19 +5199,19 @@ describe("E2E review pipeline — multi-verdict sequence", () => {
     expect(store.updateStep).toHaveBeenCalledWith("FN-E2E", 1, "pending");
 
     // Step 3: Restart the step (new approach)
-    await tools.task_update("u2", { step: 1, status: "in-progress" });
+    await tools.fn_task_update("u2", { step: 1, status: "in-progress" });
 
     // Step 4: Code review → APPROVE on second attempt
     mockedReviewStep.mockResolvedValue({
       verdict: "APPROVE", review: "Event-driven approach is correct", summary: "Approved",
     });
-    const approveResult = await tools.review_step("r2", {
+    const approveResult = await tools.fn_review_step("r2", {
       step: 1, type: "code", step_name: "Implement", baseline: "sha-good",
     });
     expect(approveResult.content[0].text).toBe("APPROVE");
 
     // Step 5: Mark done — should succeed (no REVISE blocking)
-    const doneResult = await tools.task_update("u3", { step: 1, status: "done" });
+    const doneResult = await tools.fn_task_update("u3", { step: 1, status: "done" });
     expect(doneResult.content[0].text).toContain("→ done");
   });
 
@@ -5224,19 +5224,19 @@ describe("E2E review pipeline — multi-verdict sequence", () => {
     const { tools } = await captureE2ETools(store);
 
     // Step 1: Complete with APPROVE
-    await tools.task_update("u1", { step: 1, status: "in-progress" });
+    await tools.fn_task_update("u1", { step: 1, status: "in-progress" });
     mockedReviewStep.mockResolvedValue({ verdict: "APPROVE", review: "OK", summary: "Good" });
-    await tools.review_step("r1", { step: 1, type: "code", step_name: "Implement", baseline: "sha-1" });
-    const step1Done = await tools.task_update("u2", { step: 1, status: "done" });
+    await tools.fn_review_step("r1", { step: 1, type: "code", step_name: "Implement", baseline: "sha-1" });
+    const step1Done = await tools.fn_task_update("u2", { step: 1, status: "done" });
     expect(step1Done.content[0].text).toContain("→ done");
 
     // Step 2: Gets REVISE
-    await tools.task_update("u3", { step: 2, status: "in-progress" });
+    await tools.fn_task_update("u3", { step: 2, status: "in-progress" });
     mockedReviewStep.mockResolvedValue({ verdict: "REVISE", review: "Tests insufficient", summary: "Bad" });
-    await tools.review_step("r2", { step: 2, type: "code", step_name: "Tests", baseline: "sha-2" });
+    await tools.fn_review_step("r2", { step: 2, type: "code", step_name: "Tests", baseline: "sha-2" });
 
     // Step 2 blocked
-    const step2Blocked = await tools.task_update("u4", { step: 2, status: "done" });
+    const step2Blocked = await tools.fn_task_update("u4", { step: 2, status: "done" });
     expect(step2Blocked.content[0].text).toContain("Cannot mark Step 2 as done");
 
     // Step 1 remains unaffected — if agent tries to re-update step 1, it still works
@@ -5252,13 +5252,13 @@ describe("E2E review pipeline — multi-verdict sequence", () => {
     const { tools, mockNavigateTree } = await captureE2ETools(store);
 
     // Start step
-    await tools.task_update("u1", { step: 1, status: "in-progress" });
+    await tools.fn_task_update("u1", { step: 1, status: "in-progress" });
 
     // Plan review → RETHINK
     mockedReviewStep.mockResolvedValue({
       verdict: "RETHINK", review: "Plan ignores edge cases", summary: "Bad plan",
     });
-    const rethinkResult = await tools.review_step("r1", {
+    const rethinkResult = await tools.fn_review_step("r1", {
       step: 1, type: "plan", step_name: "Implement",
     });
     expect(rethinkResult.content[0].text).toContain("Your plan was rejected");
@@ -5273,25 +5273,25 @@ describe("E2E review pipeline — multi-verdict sequence", () => {
     expect(mockNavigateTree).toHaveBeenCalled();
 
     // Restart step with new plan
-    await tools.task_update("u2", { step: 1, status: "in-progress" });
+    await tools.fn_task_update("u2", { step: 1, status: "in-progress" });
 
     // Plan review → APPROVE
     mockedReviewStep.mockResolvedValue({ verdict: "APPROVE", review: "Good plan", summary: "Approved" });
-    await tools.review_step("r2", { step: 1, type: "plan", step_name: "Implement" });
+    await tools.fn_review_step("r2", { step: 1, type: "plan", step_name: "Implement" });
 
     // Code phase: APPROVE directly
     mockedReviewStep.mockResolvedValue({ verdict: "APPROVE", review: "Clean code", summary: "Good" });
-    await tools.review_step("r3", { step: 1, type: "code", step_name: "Implement", baseline: "sha-1" });
+    await tools.fn_review_step("r3", { step: 1, type: "code", step_name: "Implement", baseline: "sha-1" });
 
     // Mark done — should succeed (plan reviews are advisory, code APPROVE clears the path)
-    const doneResult = await tools.task_update("u3", { step: 1, status: "done" });
+    const doneResult = await tools.fn_task_update("u3", { step: 1, status: "done" });
     expect(doneResult.content[0].text).toContain("→ done");
   });
 });
 
-// ── task_add_dep tool tests ──────────────────────────────────────────
+// ── fn_task_add_dep tool tests ──────────────────────────────────────────
 
-describe("task_add_dep tool", () => {
+describe("fn_task_add_dep tool", () => {
   /**
    * Helper: run executor with a customized mock store and capture custom tools.
    * The mock store's getTask is configured to:
@@ -5392,7 +5392,7 @@ describe("task_add_dep tool", () => {
   it("adds a valid dependency via store.updateTask when confirm=true", async () => {
     const { tools, store } = await captureAddDepTools();
 
-    const result = await tools.task_add_dep("call1", { task_id: "FN-OTHER", confirm: true });
+    const result = await tools.fn_task_add_dep("call1", { task_id: "FN-OTHER", confirm: true });
 
     expect(result.content[0].text).toContain("Added dependency");
     expect(result.content[0].text).toContain("triage");
@@ -5404,7 +5404,7 @@ describe("task_add_dep tool", () => {
   it("returns error for self-dependency", async () => {
     const { tools, store } = await captureAddDepTools();
 
-    const result = await tools.task_add_dep("call1", { task_id: "FN-TEST" });
+    const result = await tools.fn_task_add_dep("call1", { task_id: "FN-TEST" });
 
     expect(result.content[0].text).toContain("Cannot add self-dependency");
     expect(result.content[0].text).toContain("FN-TEST cannot depend on itself");
@@ -5419,7 +5419,7 @@ describe("task_add_dep tool", () => {
   it("returns error for non-existent target task", async () => {
     const { tools, store } = await captureAddDepTools({ targetExists: false });
 
-    const result = await tools.task_add_dep("call1", { task_id: "FN-OTHER" });
+    const result = await tools.fn_task_add_dep("call1", { task_id: "FN-OTHER" });
 
     expect(result.content[0].text).toContain("FN-OTHER not found");
     expect(result.content[0].text).toContain("Cannot add dependency on a non-existent task");
@@ -5432,7 +5432,7 @@ describe("task_add_dep tool", () => {
   it("returns informational message for duplicate dependency without duplicating", async () => {
     const { tools, store } = await captureAddDepTools({ existingDeps: ["FN-OTHER"] });
 
-    const result = await tools.task_add_dep("call1", { task_id: "FN-OTHER" });
+    const result = await tools.fn_task_add_dep("call1", { task_id: "FN-OTHER" });
 
     expect(result.content[0].text).toContain("already a dependency");
     expect(result.content[0].text).toContain("No changes made");
@@ -5445,7 +5445,7 @@ describe("task_add_dep tool", () => {
   it("logs the dependency addition via store.logEntry when confirm=true", async () => {
     const { tools, store } = await captureAddDepTools();
 
-    await tools.task_add_dep("call1", { task_id: "FN-OTHER", confirm: true });
+    await tools.fn_task_add_dep("call1", { task_id: "FN-OTHER", confirm: true });
 
     expect(store.logEntry).toHaveBeenCalledWith("FN-TEST", "Added dependency on FN-OTHER — stopping execution for re-specification");
   });
@@ -5453,7 +5453,7 @@ describe("task_add_dep tool", () => {
   it("appends to existing dependencies without overwriting when confirm=true", async () => {
     const { tools, store } = await captureAddDepTools({ existingDeps: ["FN-001"] });
 
-    const result = await tools.task_add_dep("call1", { task_id: "FN-OTHER", confirm: true });
+    const result = await tools.fn_task_add_dep("call1", { task_id: "FN-OTHER", confirm: true });
 
     expect(result.content[0].text).toContain("Added dependency");
     expect(store.updateTask).toHaveBeenCalledWith("FN-TEST", {
@@ -5464,14 +5464,14 @@ describe("task_add_dep tool", () => {
   it("is registered in customTools array", async () => {
     const { tools } = await captureAddDepTools();
 
-    expect(tools.task_add_dep).toBeDefined();
-    expect(typeof tools.task_add_dep).toBe("function");
+    expect(tools.fn_task_add_dep).toBeDefined();
+    expect(typeof tools.fn_task_add_dep).toBe("function");
   });
 
   it("returns warning without confirm=true and does NOT add dependency", async () => {
     const { tools, store } = await captureAddDepTools();
 
-    const result = await tools.task_add_dep("call1", { task_id: "FN-OTHER" });
+    const result = await tools.fn_task_add_dep("call1", { task_id: "FN-OTHER" });
 
     expect(result.content[0].text).toContain("stop execution and discard current work");
     expect(result.content[0].text).toContain("confirm=true");
@@ -5490,17 +5490,17 @@ describe("task_add_dep tool", () => {
   it("validation errors (self-dep, not-found, dedup) return immediately without requiring confirm", async () => {
     // Self-dep — no confirm needed
     const { tools: tools1 } = await captureAddDepTools();
-    const selfResult = await tools1.task_add_dep("call1", { task_id: "FN-TEST" });
+    const selfResult = await tools1.fn_task_add_dep("call1", { task_id: "FN-TEST" });
     expect(selfResult.content[0].text).toContain("Cannot add self-dependency");
 
     // Not found — no confirm needed
     const { tools: tools2 } = await captureAddDepTools({ targetExists: false });
-    const notFoundResult = await tools2.task_add_dep("call1", { task_id: "FN-OTHER" });
+    const notFoundResult = await tools2.fn_task_add_dep("call1", { task_id: "FN-OTHER" });
     expect(notFoundResult.content[0].text).toContain("not found");
 
     // Dedup — no confirm needed
     const { tools: tools3 } = await captureAddDepTools({ existingDeps: ["FN-OTHER"] });
-    const dedupResult = await tools3.task_add_dep("call1", { task_id: "FN-OTHER" });
+    const dedupResult = await tools3.fn_task_add_dep("call1", { task_id: "FN-OTHER" });
     expect(dedupResult.content[0].text).toContain("already a dependency");
   });
 
@@ -5550,8 +5550,8 @@ describe("task_add_dep tool", () => {
       return {
         session: {
           prompt: vi.fn().mockImplementation(async () => {
-            // The agent calls task_add_dep with confirm=true during execution
-            const addDepTool = capturedTools.find((t: any) => t.name === "task_add_dep");
+            // The agent calls fn_task_add_dep with confirm=true during execution
+            const addDepTool = capturedTools.find((t: any) => t.name === "fn_task_add_dep");
             await addDepTool.execute("call1", { task_id: "FN-TARGET", confirm: true });
             // After dispose is called, session.prompt throws
             throw new Error("Session terminated");
@@ -6087,7 +6087,7 @@ describe("TaskExecutor bounded recovery retries", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    // Exhausted no-task_done retries now requeue immediately to todo.
+    // Exhausted no-fn_task_done retries now requeue immediately to todo.
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
   });
 });
@@ -6796,12 +6796,12 @@ describe("Invalid transition error handling", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    // A missing task_done triggers 3 retries. The final requeue-to-todo move
+    // A missing fn_task_done triggers 3 retries. The final requeue-to-todo move
     // then throws the Invalid transition error,
     // which is caught by the outer handler.
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       status: "failed",
-      error: "Agent finished without calling task_done (after 3 retries)",
+      error: "Agent finished without calling fn_task_done (after 3 retries)",
       taskDoneRetryCount: 1,
     });
 
@@ -6890,7 +6890,7 @@ describe("Invalid transition error handling", () => {
   });
 });
 
-describe("TaskExecutor task_done with summary", () => {
+describe("TaskExecutor fn_task_done with summary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedExistsSync.mockReturnValue(true);
@@ -6901,8 +6901,8 @@ describe("TaskExecutor task_done with summary", () => {
     let capturedTool: any = null;
 
     mockedCreateFnAgent.mockImplementation(async ({ customTools }: any) => {
-      // Capture the task_done tool
-      capturedTool = customTools?.find((t: any) => t.name === "task_done");
+      // Capture the fn_task_done tool
+      capturedTool = customTools?.find((t: any) => t.name === "fn_task_done");
       return {
         session: {
           prompt: vi.fn().mockResolvedValue(undefined),
@@ -6927,9 +6927,9 @@ describe("TaskExecutor task_done with summary", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    // Verify task_done tool was created
+    // Verify fn_task_done tool was created
     expect(capturedTool).toBeDefined();
-    expect(capturedTool.name).toBe("task_done");
+    expect(capturedTool.name).toBe("fn_task_done");
 
     // Verify the tool accepts summary parameter
     expect(capturedTool.parameters).toBeDefined();
@@ -6949,7 +6949,7 @@ describe("TaskExecutor task_done with summary", () => {
     let capturedTool: any = null;
 
     mockedCreateFnAgent.mockImplementation(async ({ customTools }: any) => {
-      capturedTool = customTools?.find((t: any) => t.name === "task_done");
+      capturedTool = customTools?.find((t: any) => t.name === "fn_task_done");
       return {
         session: {
           prompt: vi.fn().mockResolvedValue(undefined),
@@ -6987,13 +6987,13 @@ describe("TaskExecutor task_done with summary", () => {
   });
 });
 
-describe("TaskExecutor task_done blockers", () => {
+describe("TaskExecutor fn_task_done blockers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedExistsSync.mockReturnValue(true);
   });
 
-  it("rejects task_done when the task is explicitly blocked", async () => {
+  it("rejects fn_task_done when the task is explicitly blocked", async () => {
     const store = createMockStore();
     let capturedTool: any = null;
 
@@ -7021,7 +7021,7 @@ describe("TaskExecutor task_done blockers", () => {
     });
 
     mockedCreateFnAgent.mockImplementation(async ({ customTools }: any) => {
-      capturedTool = customTools?.find((t: any) => t.name === "task_done");
+      capturedTool = customTools?.find((t: any) => t.name === "fn_task_done");
       return {
         session: {
           prompt: vi.fn().mockResolvedValue(undefined),
@@ -7064,8 +7064,8 @@ describe("Workflow Steps Execution", () => {
   });
 
   /**
-   * Create a mock agent that auto-triggers the task_done tool when prompt is called.
-   * This simulates a successful task execution where the agent calls task_done().
+   * Create a mock agent that auto-triggers the fn_task_done tool when prompt is called.
+   * This simulates a successful task execution where the agent calls fn_task_done().
    */
   function createAgentWithTaskDone() {
     let capturedCustomTools: any[] = [];
@@ -7074,8 +7074,8 @@ describe("Workflow Steps Execution", () => {
       capturedCustomTools = opts.customTools || [];
       const session = {
         prompt: vi.fn().mockImplementation(async () => {
-          // Find and execute task_done tool to set taskDone = true
-          const taskDoneTool = capturedCustomTools.find((t: any) => t.name === "task_done");
+          // Find and execute fn_task_done tool to set taskDone = true
+          const taskDoneTool = capturedCustomTools.find((t: any) => t.name === "fn_task_done");
           if (taskDoneTool) {
             await taskDoneTool.execute("tool-1", {});
           }
@@ -7090,7 +7090,7 @@ describe("Workflow Steps Execution", () => {
     }) as any);
   }
 
-  it("requeues to todo after 3 retries when the agent exits without calling task_done", async () => {
+  it("requeues to todo after 3 retries when the agent exits without calling fn_task_done", async () => {
     const store = createMockStore();
     store.getTask.mockResolvedValue({
       id: "FN-001",
@@ -7137,27 +7137,27 @@ describe("Workflow Steps Execution", () => {
     // Should have been called four times: initial + 3 retries
     expect(mockedCreateFnAgent).toHaveBeenCalledTimes(4);
 
-    // Retries still didn't call task_done, so it fails and requeues immediately.
+    // Retries still didn't call fn_task_done, so it fails and requeues immediately.
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       status: "failed",
-      error: "Agent finished without calling task_done (after 3 retries)",
+      error: "Agent finished without calling fn_task_done (after 3 retries)",
       taskDoneRetryCount: 1,
     });
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
-      "Agent finished without calling task_done (after 3 retries) — requeued to todo immediately (1/3)",
+      "Agent finished without calling fn_task_done (after 3 retries) — requeued to todo immediately (1/3)",
       undefined,
       expect.objectContaining({ agentId: "executor" }),
     );
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({ id: "FN-001" }),
-      expect.objectContaining({ message: "Agent finished without calling task_done (after 3 retries)" }),
+      expect.objectContaining({ message: "Agent finished without calling fn_task_done (after 3 retries)" }),
     );
     expect(onComplete).not.toHaveBeenCalled();
   });
 
-  it("moves task to in-review once task_done requeue budget is exhausted", async () => {
+  it("moves task to in-review once fn_task_done requeue budget is exhausted", async () => {
     const store = createMockStore();
     store.getTask.mockResolvedValue({
       id: "FN-001",
@@ -7205,13 +7205,13 @@ describe("Workflow Steps Execution", () => {
     expect(mockedCreateFnAgent.mock.calls.length).toBeGreaterThanOrEqual(1);
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       status: "failed",
-      error: "Agent finished without calling task_done (after 3 retries)",
+      error: "Agent finished without calling fn_task_done (after 3 retries)",
     });
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({ id: "FN-001" }),
-      expect.objectContaining({ message: "Agent finished without calling task_done (after 3 retries)" }),
+      expect.objectContaining({ message: "Agent finished without calling fn_task_done (after 3 retries)" }),
     );
   });
 
@@ -7244,16 +7244,16 @@ describe("Workflow Steps Execution", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    // First call: main agent with task_done, subsequent calls: simple mocks for workflow step agents
+    // First call: main agent with fn_task_done, subsequent calls: simple mocks for workflow step agents
     let callIdx = 0;
     mockedCreateFnAgent.mockImplementation((async (opts: any) => {
       callIdx++;
       if (callIdx === 1) {
-        // Main execution — find and trigger task_done
+        // Main execution — find and trigger fn_task_done
         const customTools = opts.customTools || [];
         const session = {
           prompt: vi.fn().mockImplementation(async () => {
-            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
             if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
           }),
           dispose: vi.fn(),
@@ -7345,7 +7345,7 @@ describe("Workflow Steps Execution", () => {
         const customTools = opts.customTools || [];
         const session = {
           prompt: vi.fn().mockImplementation(async () => {
-            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
             if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
           }),
           dispose: vi.fn(),
@@ -7426,7 +7426,7 @@ describe("Workflow Steps Execution", () => {
         const customTools = opts.customTools || [];
         const session = {
           prompt: vi.fn().mockImplementation(async () => {
-            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
             if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
           }),
           dispose: vi.fn(),
@@ -7608,7 +7608,7 @@ describe("Workflow Steps Execution", () => {
         const customTools = opts.customTools || [];
         const session = {
           prompt: vi.fn().mockImplementation(async () => {
-            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
             if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
           }),
           dispose: vi.fn(),
@@ -7700,7 +7700,7 @@ describe("Workflow Steps Execution", () => {
         const customTools = opts.customTools || [];
         const session = {
           prompt: vi.fn().mockImplementation(async () => {
-            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
             if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
           }),
           dispose: vi.fn(),
@@ -7799,7 +7799,7 @@ describe("Workflow Steps Execution", () => {
       return Buffer.from("");
     });
 
-    // Main agent with task_done
+    // Main agent with fn_task_done
     createAgentWithTaskDone();
 
     const onComplete = vi.fn();
@@ -7965,7 +7965,7 @@ describe("Workflow Steps Execution", () => {
 
     // Should reset all steps to pending
     // Check that updateStep was called with "pending" for step 0
-    // (There may be multiple calls - first from task_done marking it done, second from sendTaskBackForFix resetting it)
+    // (There may be multiple calls - first from fn_task_done marking it done, second from sendTaskBackForFix resetting it)
     const updateStepCalls = store.updateStep.mock.calls;
     const hasResetToPending = updateStepCalls.some(
       (call: any[]) => call[0] === "FN-001" && call[1] === 0 && call[2] === "pending"
@@ -8097,7 +8097,7 @@ describe("Workflow Steps Execution", () => {
 
     // Should reset all steps to pending
     // Check that updateStep was called with "pending" for step 0
-    // (There may be multiple calls - first from task_done marking it done, second from sendTaskBackForFix resetting it)
+    // (There may be multiple calls - first from fn_task_done marking it done, second from sendTaskBackForFix resetting it)
     const updateStepCalls = store.updateStep.mock.calls;
     const hasResetToPending = updateStepCalls.some(
       (call: any[]) => call[0] === "FN-001" && call[1] === 0 && call[2] === "pending"
@@ -8177,7 +8177,7 @@ describe("Workflow Steps Execution", () => {
         const customTools = opts.customTools || [];
         const session = {
           prompt: vi.fn().mockImplementation(async () => {
-            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
             if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
           }),
           dispose: vi.fn(),
@@ -8339,7 +8339,7 @@ describe("Workflow Steps Execution", () => {
         const customTools = opts.customTools || [];
         const session = {
           prompt: vi.fn().mockImplementation(async () => {
-            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
             if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
           }),
           dispose: vi.fn(),
@@ -8439,7 +8439,7 @@ describe("Workflow Steps Execution", () => {
       return undefined;
     });
 
-    // Main agent calls task_done, then a workflow step agent for pre-merge only
+    // Main agent calls fn_task_done, then a workflow step agent for pre-merge only
     let callIdx = 0;
     mockedCreateFnAgent.mockImplementation((async (opts: any) => {
       callIdx++;
@@ -8447,7 +8447,7 @@ describe("Workflow Steps Execution", () => {
         const customTools = opts.customTools || [];
         const session = {
           prompt: vi.fn().mockImplementation(async () => {
-            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
             if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
           }),
           dispose: vi.fn(),
@@ -8538,7 +8538,7 @@ describe("Workflow Steps Execution", () => {
         const customTools = opts.customTools || [];
         const session = {
           prompt: vi.fn().mockImplementation(async () => {
-            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
             if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
           }),
           dispose: vi.fn(),
@@ -8674,7 +8674,7 @@ describe("Workflow Steps Execution", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    // First call: main agent with task_done
+    // First call: main agent with fn_task_done
     // Second call: workflow step agent that returns REQUEST REVISION
     let callIdx = 0;
     let subscribeHandler: any;
@@ -8685,7 +8685,7 @@ describe("Workflow Steps Execution", () => {
         const customTools = opts.customTools || [];
         const session = {
           prompt: vi.fn().mockImplementation(async () => {
-            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
             if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
           }),
           dispose: vi.fn(),
@@ -8800,7 +8800,7 @@ describe("Workflow Steps Execution", () => {
         const customTools = opts.customTools || [];
         const session = {
           prompt: vi.fn().mockImplementation(async () => {
-            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
             if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
           }),
           dispose: vi.fn(),
@@ -9518,12 +9518,12 @@ describe("TaskExecutor context limit error recovery", () => {
       "2. Identify the most critical remaining work",
       "3. Complete it with a simpler, more focused approach",
       "",
-      "Do not repeat what's already been done. Just complete the task and call task_done.",
+      "Do not repeat what's already been done. Just complete the task and call fn_task_done.",
     ].join("\n");
 
     expect(reducedPrompt).toContain("context window limit");
     expect(reducedPrompt).toContain("git status");
-    expect(reducedPrompt).toContain("task_done");
+    expect(reducedPrompt).toContain("fn_task_done");
     expect(reducedPrompt).toContain("Do not repeat what's already been done");
   });
 });
@@ -9643,15 +9643,15 @@ describe("Agent Spawning", () => {
     vi.mocked(execSync).mockReturnValue("");
   });
 
-  it("spawn_agent tool is registered in customTools", async () => {
+  it("fn_spawn_agent tool is registered in customTools", async () => {
     const { tools } = await captureToolsWithAgentStore();
-    expect(tools.spawn_agent).toBeDefined();
-    expect(typeof tools.spawn_agent).toBe("function");
+    expect(tools.fn_spawn_agent).toBeDefined();
+    expect(typeof tools.fn_spawn_agent).toBe("function");
   });
 
   it("returns error when AgentStore is not configured", async () => {
     const { tools } = await captureToolsWithAgentStore(undefined);
-    const result = await tools.spawn_agent("call1", {
+    const result = await tools.fn_spawn_agent("call1", {
       name: "researcher",
       role: "engineer",
       task: "Research something",
@@ -9666,7 +9666,7 @@ describe("Agent Spawning", () => {
     const agentStore = createMockAgentStore();
     const { tools } = await captureToolsWithAgentStore(agentStore);
 
-    const result = await tools.spawn_agent("call1", {
+    const result = await tools.fn_spawn_agent("call1", {
       name: "researcher",
       role: "engineer",
       task: "Research authentication patterns",
@@ -9685,7 +9685,7 @@ describe("Agent Spawning", () => {
     const agentStore = createMockAgentStore();
     const { tools } = await captureToolsWithAgentStore(agentStore);
 
-    const result = await tools.spawn_agent("call1", {
+    const result = await tools.fn_spawn_agent("call1", {
       name: "researcher",
       role: "engineer",
       task: "Research authentication patterns",
@@ -9710,7 +9710,7 @@ describe("Agent Spawning", () => {
     const agentStore = createMockAgentStore();
     const { tools } = await captureToolsWithAgentStore(agentStore);
 
-    await tools.spawn_agent("call1", {
+    await tools.fn_spawn_agent("call1", {
       name: "worker",
       role: "custom",
       task: "Do some work",
@@ -9728,7 +9728,7 @@ describe("Agent Spawning", () => {
     const agentStore = createMockAgentStore();
     const { tools } = await captureToolsWithAgentStore(agentStore);
 
-    await tools.spawn_agent("call1", {
+    await tools.fn_spawn_agent("call1", {
       name: "worker",
       role: "engineer",
       task: "Do some work",
@@ -9753,11 +9753,11 @@ describe("Agent Spawning", () => {
     });
 
     // Spawn 2 agents (limit)
-    await tools.spawn_agent("call1", { name: "a1", role: "engineer", task: "task 1" });
-    await tools.spawn_agent("call2", { name: "a2", role: "engineer", task: "task 2" });
+    await tools.fn_spawn_agent("call1", { name: "a1", role: "engineer", task: "task 1" });
+    await tools.fn_spawn_agent("call2", { name: "a2", role: "engineer", task: "task 2" });
 
     // 3rd should be rejected
-    const result = await tools.spawn_agent("call3", { name: "a3", role: "engineer", task: "task 3" });
+    const result = await tools.fn_spawn_agent("call3", { name: "a3", role: "engineer", task: "task 3" });
     expect(result.content[0].text).toContain("Per-parent spawn limit reached");
     expect(result.content[0].text).toContain("2/2");
     expect(result.details.state).toBe("error");
@@ -9770,12 +9770,12 @@ describe("Agent Spawning", () => {
     });
 
     // Spawn 3 agents (global limit)
-    await tools.spawn_agent("call1", { name: "a1", role: "engineer", task: "task 1" });
-    await tools.spawn_agent("call2", { name: "a2", role: "engineer", task: "task 2" });
-    await tools.spawn_agent("call3", { name: "a3", role: "engineer", task: "task 3" });
+    await tools.fn_spawn_agent("call1", { name: "a1", role: "engineer", task: "task 1" });
+    await tools.fn_spawn_agent("call2", { name: "a2", role: "engineer", task: "task 2" });
+    await tools.fn_spawn_agent("call3", { name: "a3", role: "engineer", task: "task 3" });
 
     // 4th should hit global limit
-    const result = await tools.spawn_agent("call4", { name: "a4", role: "engineer", task: "task 4" });
+    const result = await tools.fn_spawn_agent("call4", { name: "a4", role: "engineer", task: "task 4" });
     expect(result.content[0].text).toContain("Global spawn limit reached");
     expect(result.content[0].text).toContain("3/3");
     expect(result.details.state).toBe("error");
@@ -9787,7 +9787,7 @@ describe("Agent Spawning", () => {
     const { tools } = await captureToolsWithAgentStore(agentStore);
 
     // Should be able to spawn (defaults: 5 per parent, 20 global)
-    const result = await tools.spawn_agent("call1", {
+    const result = await tools.fn_spawn_agent("call1", {
       name: "worker",
       role: "engineer",
       task: "task 1",
@@ -9802,7 +9802,7 @@ describe("Agent Spawning", () => {
 
     const { tools } = await captureToolsWithAgentStore(agentStore);
 
-    const result = await tools.spawn_agent("call1", {
+    const result = await tools.fn_spawn_agent("call1", {
       name: "worker",
       role: "engineer",
       task: "task 1",
@@ -9817,7 +9817,7 @@ describe("Agent Spawning", () => {
     const agentStore = createMockAgentStore();
     const { tools } = await captureToolsWithAgentStore(agentStore);
 
-    await tools.spawn_agent("call1", {
+    await tools.fn_spawn_agent("call1", {
       name: "  researcher  ",
       role: "engineer",
       task: "task 1",
@@ -9832,7 +9832,7 @@ describe("Agent Spawning", () => {
     const { tools } = await captureToolsWithAgentStore(agentStore);
 
     const longTask = "A".repeat(200);
-    const result = await tools.spawn_agent("call1", {
+    const result = await tools.fn_spawn_agent("call1", {
       name: "worker",
       role: "engineer",
       task: longTask,
@@ -10592,7 +10592,7 @@ describe("TaskExecutor agent execution flow (FN-978)", () => {
 
     // The executing guard prevents duplicate execution from the event handler.
     // Note: createFnAgent may be called a second time if the agent finishes
-    // without calling task_done (retry path), but the initial trigger should
+    // without calling fn_task_done (retry path), but the initial trigger should
     // only cause one execution, not two.
     // Verify that store.on was called with task:moved (listener registered)
     expect(store.on).toHaveBeenCalledWith("task:moved", expect.any(Function));
@@ -11084,7 +11084,7 @@ describe("StepSessionExecutor integration", () => {
     // Give it time to set up the step executor
     await new Promise((r) => setTimeout(r, 50));
 
-    // Simulate dep-abort by directly triggering the task_add_dep cleanup logic
+    // Simulate dep-abort by directly triggering the fn_task_add_dep cleanup logic
     // The dep-abort flag should cause the step-session path to handle cleanup
     // We can test this by checking that when depAborted is set, cleanup is called
     // For now, just resolve and verify cleanup runs
@@ -11707,7 +11707,7 @@ describe("TaskExecutor messaging tools", () => {
     return captured;
   }
 
-  it("includes send_message when messageStore and assignedAgentId are available", async () => {
+  it("includes fn_send_message when messageStore and assignedAgentId are available", async () => {
     const mockMessageStore = {
       sendMessage: vi.fn().mockReturnValue({ id: "msg-001" }),
     };
@@ -11717,43 +11717,43 @@ describe("TaskExecutor messaging tools", () => {
     });
 
     const toolNames = tools.map((t: any) => t.name);
-    expect(toolNames).toContain("send_message");
+    expect(toolNames).toContain("fn_send_message");
   });
 
-  it("includes read_messages when messageStore and assignedAgentId are available", async () => {
-    const mockMessageStore = {
-      sendMessage: vi.fn().mockReturnValue({ id: "msg-001" }),
-      getInbox: vi.fn().mockReturnValue([]),
-    };
-    const tools = await captureCustomTools({
-      messageStore: mockMessageStore,
-      assignedAgentId: "agent-001",
-    });
-
-    const toolNames = tools.map((t: any) => t.name);
-    expect(toolNames).toContain("read_messages");
-  });
-
-  it("excludes read_messages when messageStore is not provided", async () => {
-    const tools = await captureCustomTools({
-      assignedAgentId: "agent-001",
-    });
-
-    const toolNames = tools.map((t: any) => t.name);
-    expect(toolNames).not.toContain("read_messages");
-  });
-
-  it("excludes read_messages when assignedAgentId is not provided", async () => {
+  it("includes fn_read_messages when messageStore and assignedAgentId are available", async () => {
     const mockMessageStore = {
       sendMessage: vi.fn().mockReturnValue({ id: "msg-001" }),
       getInbox: vi.fn().mockReturnValue([]),
     };
     const tools = await captureCustomTools({
       messageStore: mockMessageStore,
+      assignedAgentId: "agent-001",
     });
 
     const toolNames = tools.map((t: any) => t.name);
-    expect(toolNames).not.toContain("read_messages");
+    expect(toolNames).toContain("fn_read_messages");
+  });
+
+  it("excludes fn_read_messages when messageStore is not provided", async () => {
+    const tools = await captureCustomTools({
+      assignedAgentId: "agent-001",
+    });
+
+    const toolNames = tools.map((t: any) => t.name);
+    expect(toolNames).not.toContain("fn_read_messages");
+  });
+
+  it("excludes fn_read_messages when assignedAgentId is not provided", async () => {
+    const mockMessageStore = {
+      sendMessage: vi.fn().mockReturnValue({ id: "msg-001" }),
+      getInbox: vi.fn().mockReturnValue([]),
+    };
+    const tools = await captureCustomTools({
+      messageStore: mockMessageStore,
+    });
+
+    const toolNames = tools.map((t: any) => t.name);
+    expect(toolNames).not.toContain("fn_read_messages");
   });
 
   it("excludes messaging tools when messageStore is not provided", async () => {
@@ -11762,11 +11762,11 @@ describe("TaskExecutor messaging tools", () => {
     });
 
     const toolNames = tools.map((t: any) => t.name);
-    expect(toolNames).not.toContain("send_message");
-    expect(toolNames).not.toContain("read_messages");
+    expect(toolNames).not.toContain("fn_send_message");
+    expect(toolNames).not.toContain("fn_read_messages");
   });
 
-  it("includes list_agents and delegate_task when agentStore is available", async () => {
+  it("includes fn_list_agents and fn_delegate_task when agentStore is available", async () => {
     const mockAgentStore = {
       listAgents: vi.fn().mockResolvedValue([]),
       getAgent: vi.fn().mockResolvedValue(null),
@@ -11776,16 +11776,16 @@ describe("TaskExecutor messaging tools", () => {
     });
 
     const toolNames = tools.map((t: any) => t.name);
-    expect(toolNames).toContain("list_agents");
-    expect(toolNames).toContain("delegate_task");
+    expect(toolNames).toContain("fn_list_agents");
+    expect(toolNames).toContain("fn_delegate_task");
   });
 
   it("excludes delegation tools when agentStore is not provided", async () => {
     const tools = await captureCustomTools({});
 
     const toolNames = tools.map((t: any) => t.name);
-    expect(toolNames).not.toContain("list_agents");
-    expect(toolNames).not.toContain("delegate_task");
+    expect(toolNames).not.toContain("fn_list_agents");
+    expect(toolNames).not.toContain("fn_delegate_task");
   });
 
   describe("fast mode", () => {
@@ -11794,39 +11794,39 @@ describe("TaskExecutor messaging tools", () => {
       mockedExistsSync.mockReturnValue(true);
     });
 
-    it("excludes review_step tool when executionMode is 'fast'", async () => {
+    it("excludes fn_review_step tool when executionMode is 'fast'", async () => {
       const tools = await captureCustomTools({
         executionMode: "fast",
       });
 
       const toolNames = tools.map((t: any) => t.name);
-      expect(toolNames).not.toContain("review_step");
+      expect(toolNames).not.toContain("fn_review_step");
     });
 
-    it("includes task_update and task_done tools in fast mode", async () => {
+    it("includes fn_task_update and fn_task_done tools in fast mode", async () => {
       const tools = await captureCustomTools({
         executionMode: "fast",
       });
 
       const toolNames = tools.map((t: any) => t.name);
-      expect(toolNames).toContain("task_update");
-      expect(toolNames).toContain("task_done");
+      expect(toolNames).toContain("fn_task_update");
+      expect(toolNames).toContain("fn_task_done");
     });
 
-    it("includes review_step tool when executionMode is 'standard'", async () => {
+    it("includes fn_review_step tool when executionMode is 'standard'", async () => {
       const tools = await captureCustomTools({
         executionMode: "standard",
       });
 
       const toolNames = tools.map((t: any) => t.name);
-      expect(toolNames).toContain("review_step");
+      expect(toolNames).toContain("fn_review_step");
     });
 
-    it("includes review_step tool when executionMode is undefined (defaults to standard)", async () => {
+    it("includes fn_review_step tool when executionMode is undefined (defaults to standard)", async () => {
       const tools = await captureCustomTools({});
 
       const toolNames = tools.map((t: any) => t.name);
-      expect(toolNames).toContain("review_step");
+      expect(toolNames).toContain("fn_review_step");
     });
 
     it("logs executor model usage when execution starts", async () => {
@@ -11910,12 +11910,12 @@ describe("TaskExecutor messaging tools", () => {
         updatedAt: new Date().toISOString(),
       });
 
-      // Mock agent with task_done
+      // Mock agent with fn_task_done
       mockedCreateFnAgent.mockImplementation((async (opts: any) => {
         const customTools = opts.customTools || [];
         const session = {
           prompt: vi.fn().mockImplementation(async () => {
-            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
             if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
           }),
           dispose: vi.fn(),
@@ -11995,11 +11995,11 @@ describe("TaskExecutor messaging tools", () => {
         const session = {
           prompt: vi.fn().mockImplementation(async () => {
             if (callIdx === 1) {
-              // Main execution — find and trigger task_done
-              const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+              // Main execution — find and trigger fn_task_done
+              const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
               if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
             } else {
-              // Workflow step — no task_done needed
+              // Workflow step — no fn_task_done needed
             }
           }),
           dispose: vi.fn(),
@@ -12036,7 +12036,7 @@ describe("TaskExecutor messaging tools", () => {
       expect(mockedCreateFnAgent).toHaveBeenCalledTimes(2);
     });
 
-    it("still enforces task_done requirement in fast mode", async () => {
+    it("still enforces fn_task_done requirement in fast mode", async () => {
       const store = createMockStore();
 
       // Task in fast mode
@@ -12055,7 +12055,7 @@ describe("TaskExecutor messaging tools", () => {
         updatedAt: new Date().toISOString(),
       });
 
-      // Mock agent that exits WITHOUT calling task_done
+      // Mock agent that exits WITHOUT calling fn_task_done
       mockedCreateFnAgent.mockResolvedValue({
         session: {
           prompt: vi.fn().mockResolvedValue(undefined),
@@ -12084,14 +12084,14 @@ describe("TaskExecutor messaging tools", () => {
         updatedAt: new Date().toISOString(),
       });
 
-      // Fast mode should still enforce task_done requirement.
+      // Fast mode should still enforce fn_task_done requirement.
       // After 3 retries it should fail and requeue.
       expect(onError).toHaveBeenCalled();
       expect(store.updateTask).toHaveBeenCalledWith(
         "FN-001",
         expect.objectContaining({
           status: "failed",
-          error: "Agent finished without calling task_done (after 3 retries)",
+          error: "Agent finished without calling fn_task_done (after 3 retries)",
           taskDoneRetryCount: 1,
         }),
       );
@@ -12117,12 +12117,12 @@ describe("TaskExecutor messaging tools", () => {
         updatedAt: new Date().toISOString(),
       });
 
-      // Mock agent with task_done
+      // Mock agent with fn_task_done
       mockedCreateFnAgent.mockImplementation((async (opts: any) => {
         const customTools = opts.customTools || [];
         const session = {
           prompt: vi.fn().mockImplementation(async () => {
-            const taskDoneTool = customTools.find((t: any) => t.name === "task_done");
+            const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
             if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
           }),
           dispose: vi.fn(),

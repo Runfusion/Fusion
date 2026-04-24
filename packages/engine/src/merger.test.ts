@@ -2496,7 +2496,7 @@ describe("aiMergeTask — reset cleanup failure diagnostics", () => {
     const resetFailureMessage = "lock file busy";
 
     mockedCreateFnAgent.mockImplementation(async (opts: any) => {
-      const reportTool = opts.customTools?.find((t: any) => t.name === "report_build_failure");
+      const reportTool = opts.customTools?.find((t: any) => t.name === "fn_report_build_failure");
       return {
         session: {
           prompt: vi.fn().mockImplementation(async () => {
@@ -2881,7 +2881,7 @@ describe("aiMergeTask — build verification", () => {
     expect(capturedSystemPrompt).toContain("## Build verification");
     expect(capturedSystemPrompt).toContain("build verification is a hard gate");
     expect(capturedSystemPrompt).toContain("Do not assume the build passes");
-    expect(capturedSystemPrompt).toContain("report_build_failure");
+    expect(capturedSystemPrompt).toContain("fn_report_build_failure");
   });
 
   it("includes build command in merge prompt when configured", async () => {
@@ -2927,11 +2927,11 @@ describe("aiMergeTask — build verification", () => {
 
     // Verify custom tool was passed
     expect(capturedArgs.customTools).toBeDefined();
-    expect(capturedArgs.customTools.some((t: any) => t.name === "report_build_failure")).toBe(true);
+    expect(capturedArgs.customTools.some((t: any) => t.name === "fn_report_build_failure")).toBe(true);
     expect(capturedPrompt).toContain("Build command: `pnpm build`");
     expect(capturedPrompt).toContain("This command is mandatory before commit.");
     expect(capturedPrompt).toContain("Only commit if it exits 0.");
-    expect(capturedPrompt).toContain("call `report_build_failure`");
+    expect(capturedPrompt).toContain("call `fn_report_build_failure`");
   });
 
   it("merge succeeds when build passes (agent reports success)", async () => {
@@ -2974,10 +2974,10 @@ describe("aiMergeTask — build verification", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
   });
 
-  it("merge aborts when build fails via report_build_failure tool", async () => {
-    // Mock agent that calls the report_build_failure tool execute method
+  it("merge aborts when build fails via fn_report_build_failure tool", async () => {
+    // Mock agent that calls the fn_report_build_failure tool execute method
     mockedCreateFnAgent.mockImplementation(async (opts: any) => {
-      const reportTool = opts.customTools?.find((t: any) => t.name === "report_build_failure");
+      const reportTool = opts.customTools?.find((t: any) => t.name === "fn_report_build_failure");
       return {
         session: {
           prompt: vi.fn().mockImplementation(async () => {
@@ -3052,7 +3052,7 @@ describe("aiMergeTask — build verification", () => {
     const resetFailureMessage = "reset failed: dirty working tree";
 
     mockedCreateFnAgent.mockImplementation(async (opts: any) => {
-      const reportTool = opts.customTools?.find((t: any) => t.name === "report_build_failure");
+      const reportTool = opts.customTools?.find((t: any) => t.name === "fn_report_build_failure");
       return {
         session: {
           prompt: vi.fn().mockImplementation(async () => {

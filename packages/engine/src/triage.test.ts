@@ -264,7 +264,7 @@ describe("buildSpecificationPrompt", () => {
     );
 
     expect(prompt).toContain("## Subtask Breakdown Requested");
-    expect(prompt).toContain("If splitting: use the \\\`task_create\\\` tool");
+    expect(prompt).toContain("If splitting: use the \\\`fn_task_create\\\` tool");
     expect(prompt).not.toContain("## Subtask Consideration");
   });
 
@@ -285,8 +285,8 @@ describe("buildSpecificationPrompt", () => {
       );
       expect(prompt).toContain("Specify this task");
       expect(prompt).toContain("## Project Memory");
-      expect(prompt).toContain("memory_search");
-      expect(prompt).toContain("memory_get");
+      expect(prompt).toContain("fn_memory_search");
+      expect(prompt).toContain("fn_memory_get");
     });
 
     it("excludes memory instructions when memoryEnabled: false", () => {
@@ -315,8 +315,8 @@ describe("buildSpecificationPrompt", () => {
       );
       expect(prompt).toContain("Specify this task");
       expect(prompt).toContain("## Project Memory");
-      expect(prompt).toContain("memory_search");
-      expect(prompt).toContain("memory_get");
+      expect(prompt).toContain("fn_memory_search");
+      expect(prompt).toContain("fn_memory_get");
     });
   });
 
@@ -380,8 +380,8 @@ describe("buildSpecificationPrompt", () => {
       expect(prompt).toContain("## Project Memory");
       // QMD should NOT unconditionally reference .fusion/memory/
       expect(prompt).not.toContain(".fusion/memory/");
-      expect(prompt).toContain("memory_search");
-      expect(prompt).toContain("memory_get");
+      expect(prompt).toContain("fn_memory_search");
+      expect(prompt).toContain("fn_memory_get");
     });
 
     it("QMD prompt has actionable memory instructions", () => {
@@ -402,7 +402,7 @@ describe("buildSpecificationPrompt", () => {
       expect(prompt).toContain("## Project Memory");
       // QMD should NOT contain .fusion/memory/
       expect(prompt).not.toContain(".fusion/memory/");
-      expect(prompt).toContain("memory_search");
+      expect(prompt).toContain("fn_memory_search");
     });
   });
 
@@ -710,7 +710,7 @@ describe("TriageProcessor", () => {
     expect(store.on).toHaveBeenCalledWith("settings:updated", expect.any(Function));
   });
 
-  it("re-reads settings when review_spec runs so reviewer uses the latest validator model", async () => {
+  it("re-reads settings when fn_review_spec runs so reviewer uses the latest validator model", async () => {
     const taskId = "FN-001";
     const testRootDir = await createTriageFixtureRoot("fusion-triage-review-spec-");
     try {
@@ -1194,8 +1194,8 @@ describe("taskCreate tool model inheritance", () => {
     }));
   });
 
-  describe("proactive subtask creation (task_create always available)", () => {
-    it("task_create tool is included in triage tools regardless of breakIntoSubtasks", () => {
+  describe("proactive subtask creation (fn_task_create always available)", () => {
+    it("fn_task_create tool is included in triage tools regardless of breakIntoSubtasks", () => {
       const store = createMockStore();
       const processor = new TriageProcessor(store, "/test/root");
       const createdSubtasksRef = { current: [] };
@@ -1207,13 +1207,13 @@ describe("taskCreate tool model inheritance", () => {
       });
 
       const toolNames = tools.map((t: any) => t.name);
-      expect(toolNames).toContain("task_create");
-      expect(toolNames).toContain("task_list");
-      expect(toolNames).toContain("task_get");
+      expect(toolNames).toContain("fn_task_create");
+      expect(toolNames).toContain("fn_task_list");
+      expect(toolNames).toContain("fn_task_get");
       expect(tools).toHaveLength(3);
     });
 
-    it("task_create tool succeeds and tracks created subtask", async () => {
+    it("fn_task_create tool succeeds and tracks created subtask", async () => {
       const parentTask: Task = {
         id: "FN-400",
         description: "Large task without breakIntoSubtasks",
@@ -1252,7 +1252,7 @@ describe("taskCreate tool model inheritance", () => {
         createdSubtasksRef,
       });
 
-      const taskCreateTool = tools.find((t: any) => t.name === "task_create");
+      const taskCreateTool = tools.find((t: any) => t.name === "fn_task_create");
       const result = await taskCreateTool.execute("call-1", {
         description: "Child task description",
         title: "Child Task",
@@ -1275,7 +1275,7 @@ describe("taskCreate tool model inheritance", () => {
       }));
     });
 
-    it("task_create rejects a dependency on the parent task being split", async () => {
+    it("fn_task_create rejects a dependency on the parent task being split", async () => {
       // Regression: triage used to accept any id in `dependencies`. If the AI
       // named the parent, the parent got deleted after the split and the child
       // was blocked forever by a nonexistent dep (FN-2163/FN-2164 incident).
@@ -1303,7 +1303,7 @@ describe("taskCreate tool model inheritance", () => {
         allowTaskCreate: true,
         createdSubtasksRef,
       });
-      const taskCreateTool = tools.find((t: any) => t.name === "task_create");
+      const taskCreateTool = tools.find((t: any) => t.name === "fn_task_create");
 
       const result = await taskCreateTool.execute("call-1", {
         description: "Child that tries to wait for the parent",
@@ -1319,7 +1319,7 @@ describe("taskCreate tool model inheritance", () => {
       expect(createdSubtasksRef.current).toEqual([]);
     });
 
-    it("task_create accepts dependencies on sibling subtasks created earlier in the same split", async () => {
+    it("fn_task_create accepts dependencies on sibling subtasks created earlier in the same split", async () => {
       // The valid case: two siblings where the second depends on the first.
       const parentTask: Task = {
         id: "FN-700",
@@ -1352,7 +1352,7 @@ describe("taskCreate tool model inheritance", () => {
         allowTaskCreate: true,
         createdSubtasksRef,
       });
-      const taskCreateTool = tools.find((t: any) => t.name === "task_create");
+      const taskCreateTool = tools.find((t: any) => t.name === "fn_task_create");
 
       const firstRes = await taskCreateTool.execute("c1", {
         description: "Sibling 1",
@@ -1374,7 +1374,7 @@ describe("taskCreate tool model inheritance", () => {
       expect(createdSubtasksRef.current).toEqual(["FN-701", "FN-702"]);
     });
 
-    it("task_create rejects an unknown dependency id that is neither sibling nor existing task", async () => {
+    it("fn_task_create rejects an unknown dependency id that is neither sibling nor existing task", async () => {
       const parentTask: Task = {
         id: "FN-800",
         description: "Parent",
@@ -1402,7 +1402,7 @@ describe("taskCreate tool model inheritance", () => {
         allowTaskCreate: true,
         createdSubtasksRef,
       });
-      const taskCreateTool = tools.find((t: any) => t.name === "task_create");
+      const taskCreateTool = tools.find((t: any) => t.name === "fn_task_create");
 
       const result = await taskCreateTool.execute("c1", {
         description: "Child naming a nonexistent dep",
@@ -1418,7 +1418,7 @@ describe("taskCreate tool model inheritance", () => {
     it("closes parent after proactive split even when breakIntoSubtasks is undefined", async () => {
       // Test that the post-session closure path doesn't gate on breakIntoSubtasks.
       // Strategy: capture the customTools from createFnAgent, then have
-      // promptWithFallback invoke the task_create tool to simulate the agent
+      // promptWithFallback invoke the fn_task_create tool to simulate the agent
       // proactively splitting an oversized task.
       const task: Task = {
         id: "FN-500",
@@ -1487,13 +1487,13 @@ describe("taskCreate tool model inheritance", () => {
         };
       });
 
-      // Make promptWithFallback invoke the task_create tool twice to simulate
+      // Make promptWithFallback invoke the fn_task_create tool twice to simulate
       // the agent proactively splitting the oversized task
       const { promptWithFallback } = await import("./pi.js");
       (promptWithFallback as ReturnType<typeof vi.fn>).mockImplementationOnce(
         async () => {
           const taskCreateTool = capturedCustomTools.find(
-            (t: any) => t.name === "task_create",
+            (t: any) => t.name === "fn_task_create",
           );
           expect(taskCreateTool).toBeDefined();
           // Simulate agent creating two child tasks
@@ -1527,7 +1527,7 @@ describe("taskCreate tool model inheritance", () => {
   });
 
   describe("bounded recovery retries for triage", () => {
-    it("requeues triage with backoff when the agent exits without calling review_spec", async () => {
+    it("requeues triage with backoff when the agent exits without calling fn_review_spec", async () => {
       const task = {
         id: "FN-202",
         description: "Test triage task",
@@ -1572,7 +1572,7 @@ describe("taskCreate tool model inheritance", () => {
       }));
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-202",
-        expect.stringContaining("Spec review not approved (review_spec was never called)"),
+        expect.stringContaining("Spec review not approved (fn_review_spec was never called)"),
       );
     });
 
@@ -2140,7 +2140,7 @@ describe("stale approval detection", () => {
     expect(fp1).toBe(fp2);
   });
 
-  it("captures fingerprint on review_spec APPROVE", async () => {
+  it("captures fingerprint on fn_review_spec APPROVE", async () => {
     const taskId = "FN-CAP";
     const taskDir = join(rootDir, ".fusion", "tasks", taskId);
     await mkdir(taskDir, { recursive: true });
@@ -2184,14 +2184,14 @@ describe("stale approval detection", () => {
       {},
     );
 
-    // Execute review_spec — should capture fingerprint at APPROVE time
+    // Execute fn_review_spec — should capture fingerprint at APPROVE time
     await tool.execute({});
 
     // Verify fingerprint was captured from the user comments at approval time
     expect(approvedCommentFingerprintRef.current).toBe("c1");
   });
 
-  it("fingerprint is empty string when review_spec returns REVISE (no capture)", async () => {
+  it("fingerprint is empty string when fn_review_spec returns REVISE (no capture)", async () => {
     const taskId = "FN-REV";
     const taskDir = join(rootDir, ".fusion", "tasks", taskId);
     await mkdir(taskDir, { recursive: true });
@@ -3034,7 +3034,7 @@ describe("TriageProcessor delegation tools", () => {
     };
   }
 
-  it("createTriageTools returns task_list, task_get, task_create (no delegation tools — those are in customTools)", () => {
+  it("createTriageTools returns fn_task_list, fn_task_get, fn_task_create (no delegation tools — those are in customTools)", () => {
     const store = createMockStore();
     const processor = new TriageProcessor(store as any, "/tmp/root");
 
@@ -3045,12 +3045,12 @@ describe("TriageProcessor delegation tools", () => {
     });
 
     const toolNames = tools.map((t: any) => t.name);
-    expect(toolNames).toContain("task_list");
-    expect(toolNames).toContain("task_get");
-    expect(toolNames).toContain("task_create");
-    // list_agents and delegate_task are added in customTools, not createTriageTools
-    expect(toolNames).not.toContain("list_agents");
-    expect(toolNames).not.toContain("delegate_task");
+    expect(toolNames).toContain("fn_task_list");
+    expect(toolNames).toContain("fn_task_get");
+    expect(toolNames).toContain("fn_task_create");
+    // fn_list_agents and fn_delegate_task are added in customTools, not createTriageTools
+    expect(toolNames).not.toContain("fn_list_agents");
+    expect(toolNames).not.toContain("fn_delegate_task");
   });
 
   it("delegation tools are accessible when agentStore is available", () => {

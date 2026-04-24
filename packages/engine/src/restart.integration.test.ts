@@ -216,9 +216,9 @@ function mockAgentFailure(error = "agent crashed") {
 }
 
 /**
- * Create a mock agent that auto-triggers the task_done tool when prompt is called.
- * This simulates a successful task execution where the agent calls task_done(),
- * preventing the executor from entering the "finished without task_done — retrying
+ * Create a mock agent that auto-triggers the fn_task_done tool when prompt is called.
+ * This simulates a successful task execution where the agent calls fn_task_done(),
+ * preventing the executor from entering the "finished without fn_task_done — retrying
  * with new session" branch. Follows the same pattern as executor.test.ts.
  *
  * Uses per-session local customTools capture to avoid race conditions when
@@ -230,8 +230,8 @@ function createAgentWithTaskDone() {
     const localCustomTools = opts?.customTools || [];
     const session = {
       prompt: vi.fn().mockImplementation(async () => {
-        // Find and execute task_done tool to set taskDone = true
-        const taskDoneTool = localCustomTools.find((t: any) => t.name === "task_done");
+        // Find and execute fn_task_done tool to set taskDone = true
+        const taskDoneTool = localCustomTools.find((t: any) => t.name === "fn_task_done");
         if (taskDoneTool) {
           await taskDoneTool.execute("tool-1", {});
         }
@@ -290,7 +290,7 @@ describe("In-progress task resume after restart", () => {
     const taskDone = makeTask("FN-003", "done");
     store.listTasks.mockResolvedValue([task1, task2, taskDone]);
 
-    // Use deterministic mock that calls task_done to prevent retry-with-new-session
+    // Use deterministic mock that calls fn_task_done to prevent retry-with-new-session
     createAgentWithTaskDone();
 
     const executor = new TaskExecutor(store, "/tmp/test");
@@ -589,11 +589,11 @@ describe("In-progress task resume after restart", () => {
     expect(recoverSpy).toHaveBeenCalledWith(completedTask);
   });
 
-  it("resumeOrphaned() leaves no-progress no-task_done failures for self-healing", async () => {
+  it("resumeOrphaned() leaves no-progress no-fn_task_done failures for self-healing", async () => {
     const store = createMockStore();
     const failedTask = makeTask("FN-1473", "in-progress", {
       status: "failed",
-      error: "Agent finished without calling task_done (after retry)",
+      error: "Agent finished without calling fn_task_done (after retry)",
       steps: [],
     });
     store.listTasks.mockResolvedValue([failedTask]);
@@ -1027,7 +1027,7 @@ describe("Crash scenario edge cases", () => {
     vi.clearAllMocks();
     store.listTasks.mockResolvedValue([task]);
     store.getTask.mockResolvedValue(makeTaskDetail("FN-090", "in-progress"));
-    // Use deterministic mock that calls task_done to prevent retry-with-new-session
+    // Use deterministic mock that calls fn_task_done to prevent retry-with-new-session
     createAgentWithTaskDone();
 
     await executor.resumeOrphaned();
@@ -1407,8 +1407,8 @@ describe("Engine pause/unpause cycle", () => {
             previous: { enginePaused: false },
           });
 
-          // Session continues normally and completes by calling task_done
-          const taskDoneTool = opts?.customTools?.find((t: any) => t.name === "task_done");
+          // Session continues normally and completes by calling fn_task_done
+          const taskDoneTool = opts?.customTools?.find((t: any) => t.name === "fn_task_done");
           if (taskDoneTool) {
             await taskDoneTool.execute("tool-1", {});
           }

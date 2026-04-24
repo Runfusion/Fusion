@@ -38,7 +38,7 @@ describe("summarizeToolArgs", () => {
   });
 
   it("falls back to first short string arg for unknown tools", () => {
-    expect(summarizeToolArgs("task_update", { step: 1, status: "done" })).toBe("done");
+    expect(summarizeToolArgs("fn_task_update", { step: 1, status: "done" })).toBe("done");
   });
 
   it("returns undefined when no args or empty args", () => {
@@ -140,10 +140,10 @@ describe("AgentLogger", () => {
     const store = createMockStore();
     const logger = new AgentLogger({ store, taskId: "FN-005" });
 
-    logger.onToolStart("task_done", { count: 42 });
+    logger.onToolStart("fn_task_done", { count: 42 });
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-005", "task_done", "tool", undefined, undefined);
+    expect(store.appendAgentLog).toHaveBeenCalledWith("FN-005", "fn_task_done", "tool", undefined, undefined);
   });
 
   it("flush() clears timer and writes remaining text", async () => {
