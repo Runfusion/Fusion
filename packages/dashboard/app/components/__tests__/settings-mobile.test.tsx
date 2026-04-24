@@ -245,5 +245,8 @@ describe("SettingsModal mobile adaptations", () => {
     expectMobileRule(css, ".settings-empty-state", "padding: 12px 14px;");
     expectMobileRule(css, ".settings-description", "padding: 0 14px;");
     expectMobileRule(css, ".theme-selector", "padding: 0 14px 14px;");
+    expectMobileRule(css, ".settings-preset-item", "flex-direction: column;");
+    expectMobileRule(css, ".settings-preset-item-actions", "justify-content: flex-start;");
+    expectMobileRule(css, ".settings-preset-size-grid", "grid-template-columns: 1fr;");
   });
 });

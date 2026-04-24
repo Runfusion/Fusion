@@ -154,6 +154,7 @@ fn plugin install /path/to/${name}
 
 \`\`\`bash
 pnpm install
+pnpm lint
 pnpm test
 pnpm build
 \`\`\`
@@ -220,6 +221,7 @@ export async function runPluginCreate(
   console.log("  Next steps:");
   console.log(`    cd ${targetDir}`);
   console.log("    pnpm install");
+  console.log("    pnpm lint");
   console.log("    pnpm test");
   console.log();
 }

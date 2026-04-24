@@ -36,11 +36,14 @@ interface ClaudeCliProviderCardProps {
   authenticated: boolean;
   /** Optional callback fired after Enable/Disable to let the parent refetch the provider list. */
   onToggled?: (nextEnabled: boolean) => void;
+  /** Render a smaller card with the description and status tucked behind a disclosure triangle. */
+  compact?: boolean;
 }
 
 export function ClaudeCliProviderCard({
   authenticated,
   onToggled,
+  compact = false,
 }: ClaudeCliProviderCardProps) {
   const [status, setStatus] = useState<ClaudeCliStatus | null>(null);
   const [busy, setBusy] = useState<"enabling" | "disabling" | "testing" | null>(
@@ -120,9 +123,16 @@ export function ClaudeCliProviderCard({
   const binaryAvailable = status?.binary.available ?? false;
   const currentlyEnabled = status?.enabled ?? authenticated;
 
+  const description = (
+    <span className="onboarding-provider-card__description">
+      Route AI calls through your locally-installed <code>claude</code> CLI.
+      Uses your existing Claude subscription / quota instead of an API key.
+    </span>
+  );
+
   return (
     <div
-      className={`onboarding-provider-card${authenticated ? " onboarding-provider-card--connected" : ""}`}
+      className={`onboarding-provider-card${authenticated ? " onboarding-provider-card--connected" : ""}${compact ? " onboarding-provider-card--compact" : ""}`}
       data-testid="claude-cli-provider-card"
     >
       <div className="onboarding-provider-card__icon">
@@ -132,11 +142,20 @@ export function ClaudeCliProviderCard({
         <strong className="onboarding-provider-card__name">
           Anthropic — via Claude CLI
         </strong>
-        <span className="onboarding-provider-card__description">
-          Route AI calls through your locally-installed <code>claude</code> CLI.
-          Uses your existing Claude subscription / quota instead of an API key.
-        </span>
-        <ClaudeCliStatusLine status={status} authenticated={authenticated} />
+        {compact ? (
+          <details className="onboarding-provider-card__details">
+            <summary className="onboarding-provider-card__details-summary">
+              Details
+            </summary>
+            {description}
+            <ClaudeCliStatusLine status={status} authenticated={authenticated} />
+          </details>
+        ) : (
+          <>
+            {description}
+            <ClaudeCliStatusLine status={status} authenticated={authenticated} />
+          </>
+        )}
       </div>
       <div className="onboarding-provider-card__actions">
         <button

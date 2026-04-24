@@ -5223,7 +5223,9 @@ ${deps}
 
 ### Step 2: Testing & Verification
 
+- [ ] Lint passes
 - [ ] All tests pass
+- [ ] Typecheck passes
 - [ ] No regressions introduced
 
 ### Step 3: Documentation & Delivery

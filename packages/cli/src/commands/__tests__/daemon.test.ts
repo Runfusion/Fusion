@@ -53,6 +53,7 @@ const mocks = vi.hoisted(() => {
       watch: vi.fn().mockResolvedValue(undefined),
       close: vi.fn(),
       getFusionDir: vi.fn().mockReturnValue("/repo/.fusion"),
+      getRootDir: vi.fn().mockReturnValue("/repo"),
       getMissionStore: vi.fn().mockReturnValue(missionStore),
       getSettings: vi.fn().mockResolvedValue({
         maxConcurrent: 2,

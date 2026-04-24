@@ -4930,9 +4930,11 @@ When all steps are complete: call \`task_done()\`
 If a build command is configured, run that exact command in this worktree before calling \`task_done()\`.
 Treat a non-zero exit code as a blocking failure. Do not claim success without a real passing run.
 Run the configured/full test suite and fix failures even when that requires edits outside the original File Scope.
+If the repo has a lint command (e.g. \`pnpm lint\`, \`npm run lint\`), run it before \`task_done()\` and fix any failures it reports.
 If the repo has a typecheck command, run it before \`task_done()\` and fix any failures it reports.
 Use \`task_create\` for truly separate follow-up work, not for fixes required to get tests, build, or typecheck back to green.
-**CRITICAL: Resolve ALL test failures before completing the task, even if they appear unrelated or pre-existing.** Unrelated failures left unfixed accumulate technical debt and block future integrations. Investigate and fix or suppress them — do not defer them to a separate task.`;
+If lint is configured and failing, fix that too before completion.
+**CRITICAL: Resolve ALL test failures (and any lint/typecheck failures) before completing the task, even if they appear unrelated or pre-existing.** Unrelated failures left unfixed accumulate technical debt and block future integrations. Investigate and fix or suppress them — do not defer them to a separate task.`;
 }
 
 /**

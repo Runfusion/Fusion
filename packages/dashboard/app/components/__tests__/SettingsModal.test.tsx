@@ -1176,6 +1176,33 @@ describe("SettingsModal", () => {
     ]);
   });
 
+  it("renders model presets with dedicated preset-specific layout classes", async () => {
+    const user = userEvent.setup();
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      modelPresets: [
+        { id: "budget", name: "Budget" },
+      ],
+    });
+
+    const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("Project Models"));
+
+    const presetList = container.querySelector(".settings-preset-list");
+    expect(presetList).toBeTruthy();
+    expect(container.querySelector(".settings-preset-item")).toBeTruthy();
+    expect(container.querySelector(".settings-preset-item-meta")).toBeTruthy();
+    expect(container.querySelector(".settings-preset-item-actions")).toBeTruthy();
+    expect(container.querySelector(".auth-provider-row")).toBeFalsy();
+
+    await user.click(screen.getByText("Edit"));
+    expect(container.querySelector(".settings-preset-editor")).toBeTruthy();
+    expect(container.querySelector(".settings-preset-editor-fields")).toBeTruthy();
+    expect(container.querySelector(".settings-preset-editor-actions")).toBeTruthy();
+  });
+
   it("supports auto-select preset mappings by size", async () => {
     const user = userEvent.setup();
     (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({

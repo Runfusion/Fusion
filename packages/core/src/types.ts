@@ -236,16 +236,18 @@ Output Requirements:
   {
     id: "qa-check",
     name: "QA Check",
-    description: "Run tests and verify they pass, check for obvious bugs",
+    description: "Run lint, tests, and typecheck; verify they pass and check for obvious bugs",
     category: "Quality",
     icon: "check-circle",
     toolMode: "coding",
-    prompt: `You are a QA tester. Verify the task implementation by running tests and checking for bugs.
+    prompt: `You are a QA tester. Verify the task implementation by running lint, tests, and typecheck, and checking for bugs.
 
-Test Execution:
-1. Run the project's test suite (use pnpm test, npm test, or the configured test command)
-2. Verify all tests pass
-3. If tests fail, analyze whether failures are related to the task changes
+Quality Gate Execution (all three must pass):
+1. Run the project's lint command (e.g. \`pnpm lint\`, \`npm run lint\`)
+2. Run the project's test suite (e.g. \`pnpm test\`, \`npm test\`, or the configured test command)
+3. Run the project's typecheck command if one exists (e.g. \`pnpm typecheck\`, \`tsc --noEmit\`)
+4. Verify lint, tests, and typecheck all pass
+5. If any gate fails, analyze whether failures are related to the task changes
 
 Code Review:
 1. Review the changes for obvious bugs or edge cases
@@ -254,8 +256,8 @@ Code Review:
 4. Look for common issues: null pointer risks, off-by-one errors, race conditions
 
 Output Requirements:
-- If all tests pass and no bugs found: call task_done() with success status
-- If tests fail: provide detailed failure information via task_log()
+- If lint, tests, and typecheck all pass and no bugs found: call task_done() with success status
+- If any gate fails (lint, tests, or typecheck): provide detailed failure information via task_log()
 - If bugs are found: describe the bug, affected files, and suggested fix via task_log()`,
   },
   {

@@ -3978,6 +3978,99 @@ input[type="range"]:focus-visible {
   line-height: 1.5;
 }
 
+/* === Settings: Model Presets === */
+.settings-model-presets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.settings-preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.settings-preset-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+
+.settings-preset-item-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.settings-preset-item-meta strong {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.settings-preset-summary {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.settings-preset-item-actions {
+  display: flex;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.settings-preset-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.settings-preset-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 85%, var(--card));
+}
+
+.settings-preset-editor-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.settings-preset-editor .form-group {
+  padding: 0;
+}
+
+.settings-preset-editor-actions {
+  justify-content: flex-start;
+  margin-top: 0;
+  padding: 0;
+}
+
+.settings-preset-auto-select {
+  margin-top: var(--space-sm);
+}
+
+.settings-preset-size-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-sm);
+}
+
+.settings-preset-size-row {
+  padding: 0;
+}
+
 /* === Task Comments === */
 .comments-header-row {
   justify-content: space-between;
@@ -7376,7 +7469,7 @@ input[type="range"]:focus-visible {
   }
 
   .settings-content .btn,
-  .auth-provider-row .btn {
+  .settings-preset-item-actions .btn {
     min-height: 36px;
   }
 
@@ -7723,11 +7816,32 @@ input[type="range"]:focus-visible {
     min-width: 0;
   }
 
-  /* Settings modal: keep model preset rows stackable on narrow screens */
-  .settings-preset-list {
-    display: flex;
-    flex-direction: column;
+  /* Settings modal: model preset controls stack cleanly on narrow screens */
+  .settings-model-presets {
     gap: var(--space-sm);
+  }
+
+  .settings-preset-item {
+    flex-direction: column;
+    align-items: stretch;
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .settings-preset-item-actions {
+    justify-content: flex-start;
+  }
+
+  .settings-preset-editor {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .settings-preset-editor-actions {
+    flex-wrap: wrap;
+  }
+
+  .settings-preset-size-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-xs);
   }
 
   /* Git manager: align breakpoint behavior with global 768px mobile modal rules */
@@ -25271,6 +25385,39 @@ html .column.drag-over * {
 .onboarding-provider-card__actions--api-key {
   align-items: stretch;
   width: min(calc(var(--space-2xl) * 10), 100%);
+}
+
+.onboarding-provider-card--compact {
+  padding: var(--space-sm) var(--space-md);
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.onboarding-provider-card--compact .onboarding-provider-card__name {
+  font-size: 13px;
+}
+
+.onboarding-provider-card__details {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.onboarding-provider-card__details-summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+  list-style: revert;
+  user-select: none;
+}
+
+.onboarding-provider-card__details[open] .onboarding-provider-card__details-summary {
+  margin-bottom: var(--space-xs);
+}
+
+.onboarding-provider-card__details > *:not(summary) {
+  display: block;
+  margin-top: var(--space-xs);
 }
 
 /* === Onboarding API Key Form === */

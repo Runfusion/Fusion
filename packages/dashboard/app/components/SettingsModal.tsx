@@ -1413,7 +1413,7 @@ export function SettingsModal({
 
             {/* --- Model Presets --- */}
             <h4 className="settings-section-heading settings-section-heading--spaced">Model Presets</h4>
-            <div className="form-group">
+            <div className="form-group settings-model-presets">
               <label>Configured presets</label>
               {presets.length === 0 ? (
                 <div className="settings-empty-state settings-muted">No presets configured yet.</div>
@@ -1423,12 +1423,12 @@ export function SettingsModal({
                     const selection = applyPresetToSelection(preset);
                     const summary = `${selection.executorValue || "default"} / ${selection.validatorValue || "default"}`;
                     return (
-                      <div key={preset.id} className="auth-provider-row">
-                        <div className="auth-provider-info">
+                      <div key={preset.id} className="settings-preset-item">
+                        <div className="settings-preset-item-meta">
                           <strong>{preset.name}</strong>
-                          <span className="settings-muted">{summary}</span>
+                          <span className="settings-muted settings-preset-summary">{summary}</span>
                         </div>
-                        <div>
+                        <div className="settings-preset-item-actions">
                           <button
                             type="button"
                             className="btn btn-sm"
@@ -1468,100 +1468,104 @@ export function SettingsModal({
                 </div>
               )}
               {!presetDraft ? (
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  onClick={() => {
-                    setEditingPresetId(null);
-                    setPresetDraft({ id: "", name: "", executorProvider: undefined, executorModelId: undefined, validatorProvider: undefined, validatorModelId: undefined });
-                  }}
-                >
-                  Add Preset
-                </button>
+                <div className="settings-preset-actions">
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => {
+                      setEditingPresetId(null);
+                      setPresetDraft({ id: "", name: "", executorProvider: undefined, executorModelId: undefined, validatorProvider: undefined, validatorModelId: undefined });
+                    }}
+                  >
+                    Add Preset
+                  </button>
+                </div>
               ) : null}
             </div>
 
             {presetDraft ? (
-              <div className="form-group">
+              <div className="form-group settings-preset-editor">
                 <label>Preset editor</label>
-                <div className="form-group">
-                  <label htmlFor="preset-name">Name</label>
-                  <input
-                    id="preset-name"
-                    type="text"
-                    value={presetDraft.name}
-                    onChange={(e) => {
-                      const name = e.target.value;
-                      setPresetDraft((current) => current ? { ...current, name } : current);
-                    }}
-                  />
+                <div className="settings-preset-editor-fields">
+                  <div className="form-group">
+                    <label htmlFor="preset-name">Name</label>
+                    <input
+                      id="preset-name"
+                      type="text"
+                      value={presetDraft.name}
+                      onChange={(e) => {
+                        const name = e.target.value;
+                        setPresetDraft((current) => current ? { ...current, name } : current);
+                      }}
+                    />
+                  </div>
+                  {availableModels.length === 0 ? (
+                    <small>No models available. Configure authentication first.</small>
+                  ) : (
+                    <>
+                      <div className="form-group">
+                        <label htmlFor="preset-executor-model">Executor model</label>
+                        <CustomModelDropdown
+                          id="preset-executor-model"
+                          label="Preset executor model"
+                          models={availableModels}
+                          value={presetDraft.executorProvider && presetDraft.executorModelId ? `${presetDraft.executorProvider}/${presetDraft.executorModelId}` : ""}
+                          onChange={(val) => {
+                            if (!val) {
+                              setPresetDraft((current) => current ? { ...current, executorProvider: undefined, executorModelId: undefined } : current);
+                              return;
+                            }
+                            const slashIdx = val.indexOf("/");
+                            setPresetDraft((current) => current ? {
+                              ...current,
+                              executorProvider: val.slice(0, slashIdx),
+                              executorModelId: val.slice(slashIdx + 1),
+                            } : current);
+                          }}
+                          placeholder="Use default"
+                          favoriteProviders={favoriteProviders}
+                          onToggleFavorite={handleToggleFavorite}
+                          favoriteModels={favoriteModels}
+                          onToggleModelFavorite={handleToggleModelFavorite}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label htmlFor="preset-validator-model">Validator model</label>
+                        <CustomModelDropdown
+                          id="preset-validator-model"
+                          label="Preset validator model"
+                          models={availableModels}
+                          value={presetDraft.validatorProvider && presetDraft.validatorModelId ? `${presetDraft.validatorProvider}/${presetDraft.validatorModelId}` : ""}
+                          onChange={(val) => {
+                            if (!val) {
+                              setPresetDraft((current) => current ? { ...current, validatorProvider: undefined, validatorModelId: undefined } : current);
+                              return;
+                            }
+                            const slashIdx = val.indexOf("/");
+                            setPresetDraft((current) => current ? {
+                              ...current,
+                              validatorProvider: val.slice(0, slashIdx),
+                              validatorModelId: val.slice(slashIdx + 1),
+                            } : current);
+                          }}
+                          placeholder="Use default"
+                          favoriteProviders={favoriteProviders}
+                          onToggleFavorite={handleToggleFavorite}
+                          favoriteModels={favoriteModels}
+                          onToggleModelFavorite={handleToggleModelFavorite}
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
-                {availableModels.length === 0 ? (
-                  <small>No models available. Configure authentication first.</small>
-                ) : (
-                  <>
-                    <div className="form-group">
-                      <label htmlFor="preset-executor-model">Executor model</label>
-                      <CustomModelDropdown
-                        id="preset-executor-model"
-                        label="Preset executor model"
-                        models={availableModels}
-                        value={presetDraft.executorProvider && presetDraft.executorModelId ? `${presetDraft.executorProvider}/${presetDraft.executorModelId}` : ""}
-                        onChange={(val) => {
-                          if (!val) {
-                            setPresetDraft((current) => current ? { ...current, executorProvider: undefined, executorModelId: undefined } : current);
-                            return;
-                          }
-                          const slashIdx = val.indexOf("/");
-                          setPresetDraft((current) => current ? {
-                            ...current,
-                            executorProvider: val.slice(0, slashIdx),
-                            executorModelId: val.slice(slashIdx + 1),
-                          } : current);
-                        }}
-                        placeholder="Use default"
-                        favoriteProviders={favoriteProviders}
-                        onToggleFavorite={handleToggleFavorite}
-                        favoriteModels={favoriteModels}
-                        onToggleModelFavorite={handleToggleModelFavorite}
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label htmlFor="preset-validator-model">Validator model</label>
-                      <CustomModelDropdown
-                        id="preset-validator-model"
-                        label="Preset validator model"
-                        models={availableModels}
-                        value={presetDraft.validatorProvider && presetDraft.validatorModelId ? `${presetDraft.validatorProvider}/${presetDraft.validatorModelId}` : ""}
-                        onChange={(val) => {
-                          if (!val) {
-                            setPresetDraft((current) => current ? { ...current, validatorProvider: undefined, validatorModelId: undefined } : current);
-                            return;
-                          }
-                          const slashIdx = val.indexOf("/");
-                          setPresetDraft((current) => current ? {
-                            ...current,
-                            validatorProvider: val.slice(0, slashIdx),
-                            validatorModelId: val.slice(slashIdx + 1),
-                          } : current);
-                        }}
-                        placeholder="Use default"
-                        favoriteProviders={favoriteProviders}
-                        onToggleFavorite={handleToggleFavorite}
-                        favoriteModels={favoriteModels}
-                        onToggleModelFavorite={handleToggleModelFavorite}
-                      />
-                    </div>
-                  </>
-                )}
-                <div className="modal-actions" style={{ justifyContent: "flex-start" }}>
+                <div className="modal-actions settings-preset-editor-actions">
                   <button type="button" className="btn btn-primary btn-sm" onClick={savePresetDraft}>Save preset</button>
                   <button type="button" className="btn btn-sm" onClick={() => { setEditingPresetId(null); setPresetDraft(null); }}>Cancel</button>
                 </div>
               </div>
             ) : null}
 
-            <div className="form-group">
+            <div className="form-group settings-preset-auto-select">
               <label htmlFor="autoSelectModelPreset" className="checkbox-label">
                 <input
                   id="autoSelectModelPreset"
@@ -1574,9 +1578,9 @@ export function SettingsModal({
             </div>
 
             {form.autoSelectModelPreset ? (
-              <>
+              <div className="settings-preset-size-grid">
                 {(["S", "M", "L"] as const).map((sizeKey) => (
-                  <div className="form-group" key={sizeKey}>
+                  <div className="form-group settings-preset-size-row" key={sizeKey}>
                     <label htmlFor={`preset-size-${sizeKey}`}>
                       {sizeKey === "S" ? "Small tasks (S):" : sizeKey === "M" ? "Medium tasks (M):" : "Large tasks (L):"}
                     </label>
@@ -1601,7 +1605,7 @@ export function SettingsModal({
                     </select>
                   </div>
                 ))}
-              </>
+              </div>
             ) : null}
 
             {/* --- AI Summarization --- */}
@@ -3055,6 +3059,18 @@ export function SettingsModal({
               </div>
             ) : (
               <>
+              {cliAuthProviders.some((p) => p.id === "claude-cli") && (
+                <ClaudeCliProviderCard
+                  compact
+                  authenticated={
+                    cliAuthProviders.find((p) => p.id === "claude-cli")
+                      ?.authenticated ?? false
+                  }
+                  onToggled={() => {
+                    void loadAuthStatus();
+                  }}
+                />
+              )}
               {authenticatedProviders.length === 0 && (
                 <div className="auth-section-hint">
                   Sign in to at least one provider to get started with AI models.
@@ -3217,21 +3233,6 @@ export function SettingsModal({
               </div>
             )}
 
-            {cliAuthProviders.some((p) => p.id === "claude-cli") && (
-              <div className="auth-provider-group">
-                <div className="auth-group-label">Local CLI</div>
-                <ClaudeCliProviderCard
-                  authenticated={
-                    cliAuthProviders.find((p) => p.id === "claude-cli")
-                      ?.authenticated ?? false
-                  }
-                  onToggled={() => {
-                    // Refetch so the provider list reflects the new state.
-                    void loadAuthStatus();
-                  }}
-                />
-              </div>
-            )}
           </>
         );
       }

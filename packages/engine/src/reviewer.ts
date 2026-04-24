@@ -54,7 +54,7 @@ access to the codebase and can run commands to inspect code.
 ### Do NOT issue REVISE for
 - STATUS/formatting preferences
 - Splitting outcome checkboxes into implementation sub-steps
-- Necessary fixes outside the initial File Scope when they are required to restore green tests, build, or typecheck and do not delete/gut unrelated functionality
+- Necessary fixes outside the initial File Scope when they are required to restore green lint, tests, build, or typecheck and do not delete/gut unrelated functionality
 - Suggestions that improve quality but aren't required for correctness
 
 ## Plan Review Format
