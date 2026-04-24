@@ -39,7 +39,6 @@ homebrew-tap/
 # Ad-hoc task completion notes left by agents after a run; per-session scratch,
 # never meant to be committed.
 .DONE
-.changeset/
 improvements.md
 docs/screenshots/
 .claude/
