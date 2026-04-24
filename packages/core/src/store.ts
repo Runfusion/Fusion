@@ -203,17 +203,21 @@ function compactTaskActivityLog(entries: TaskLogEntry[]): TaskLogEntry[] {
 }
 
 /**
- * Canonicalizes a settings object by stripping legacy fields that are no longer valid.
+ * Canonicalizes a settings object by stripping legacy fields that are no longer valid
+ * and rewriting legacy path values left over from the kb → fn rename.
  */
 function canonicalizeSettings(settings: Settings): Settings {
   // Strip legacy globalMaxConcurrent from project settings - this field was
   // deprecated in favor of the global-level maxConcurrent in concurrency settings.
   const { globalMaxConcurrent, ...rest } = settings as Settings & { globalMaxConcurrent?: number };
-  if (globalMaxConcurrent !== undefined) {
-    return rest as Settings;
-  }
+  const base = globalMaxConcurrent !== undefined ? (rest as Settings) : settings;
 
-  return settings;
+  // Rewrite legacy .kb/backups → .fusion/backups for projects upgraded from the
+  // old brand so persisted settings keep working. Custom .kb/* paths are left alone.
+  if (base.autoBackupDir === ".kb/backups") {
+    return { ...base, autoBackupDir: ".fusion/backups" };
+  }
+  return base;
 }
 
 export interface TaskStoreEvents {

@@ -105,10 +105,11 @@ export class BackupManager {
       const backups: BackupInfo[] = [];
 
       for (const filename of files) {
-        // Match fusion-* backup patterns:
+        // Match fusion-* and legacy kb-* backup patterns:
         //   fusion-YYYY-MM-DD-HHmmss.db, fusion-YYYY-MM-DD-HHmmss-N.db,
         //   fusion-pre-restore-YYYY-MM-DD-HHmmss.db
-        if (!filename.match(/^fusion(-pre-restore)?-\d{4}-\d{2}-\d{2}-\d{6}(-\d+)?\.db$/)) {
+        //   kb-* variants kept for the ongoing kb → fn rename (see memory).
+        if (!filename.match(/^(?:fusion|kb)(-pre-restore)?-\d{4}-\d{2}-\d{2}-\d{6}(-\d+)?\.db$/)) {
           continue;
         }
 
@@ -116,9 +117,9 @@ export class BackupManager {
         const stats = await stat(filePath);
 
         // Parse timestamp from filename. Also handles counter suffix: fusion-YYYY-MM-DD-HHmmss-N.db
-        const match = filename.match(/^(fusion(?:-pre-restore)?)-(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})(?:-\d+)?\.db$/);
+        const match = filename.match(/^(?:fusion|kb)(?:-pre-restore)?-(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})(?:-\d+)?\.db$/);
         const createdAt = match
-          ? `${match[2]}-${match[3]}-${match[4]}T${match[5]}:${match[6]}:${match[7]}Z`
+          ? `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}Z`
           : stats.mtime.toISOString();
 
         backups.push({
@@ -291,9 +292,19 @@ export function createBackupManager(
   settings?: Partial<ProjectSettings>
 ): BackupManager {
   return new BackupManager(fusionDir, {
-    backupDir: settings?.autoBackupDir,
+    backupDir: canonicalizeBackupDir(settings?.autoBackupDir),
     retention: settings?.autoBackupRetention,
   });
+}
+
+/**
+ * Canonicalize a legacy `.kb/backups` value to `.fusion/backups`.
+ * The kb → fn rename left some persisted settings pointing at the old path;
+ * we rewrite it on read so existing projects keep working.
+ */
+function canonicalizeBackupDir(dir: string | undefined): string | undefined {
+  if (dir === ".kb/backups") return ".fusion/backups";
+  return dir;
 }
 
 /**

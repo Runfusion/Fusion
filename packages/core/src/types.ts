@@ -3013,3 +3013,7 @@ export interface Mailbox {
 
 // Re-export PROMPT_KEY_CATALOG for backward compatibility with vite alias
 export { PROMPT_KEY_CATALOG } from "./prompt-overrides.js";
+
+// Re-exported here so the dashboard's `@fusion/core` → types.ts alias resolves
+// client-side consumers (see packages/dashboard/vite.config.ts).
+export { getErrorMessage } from "./error-message.js";
