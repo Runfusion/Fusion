@@ -498,7 +498,6 @@ export function createSSE(
     // --- Cleanup (all handlers are defined above, safe to reference) ---
 
     let cleaned = false;
-    let heartbeat: ReturnType<typeof setInterval> | undefined;
     let clientStaleTimer: ReturnType<typeof setTimeout> | undefined;
 
     function resetClientStaleTimer(): void {
@@ -517,7 +516,7 @@ export function createSSE(
       activeConnections--;
       console.log(`[sse] - connection (active=${activeConnections})`);
       if (clientStaleTimer) clearTimeout(clientStaleTimer);
-      if (heartbeat) clearInterval(heartbeat);
+      clearInterval(heartbeat);
       store.off("task:created", onCreated);
       store.off("task:moved", onMoved);
       store.off("task:updated", onUpdated);
@@ -684,7 +683,7 @@ export function createSSE(
     });
     resetClientStaleTimer();
 
-    heartbeat = setInterval(() => {
+    const heartbeat = setInterval(() => {
       send("event: heartbeat\ndata: \n\n");
     }, 30_000);
 
