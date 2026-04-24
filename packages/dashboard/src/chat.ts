@@ -23,8 +23,6 @@ import type {
 import { summarizeTitle } from "@fusion/core";
 import { EventEmitter } from "node:events";
 import { join, resolve, relative } from "node:path";
-import { readFile } from "node:fs/promises";
-
 import { SessionEventBuffer } from "./sse-buffer.js";
 
 // Dynamic import for @fusion/engine to avoid resolution issues in test environment

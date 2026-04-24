@@ -210,7 +210,7 @@ export function useFileMention(options: UseFileMentionOptions = {}): UseFileMent
    * Supports ArrowUp/ArrowDown to navigate, Enter/Tab to select, Escape to dismiss.
    */
   const handleKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLElement>, currentText: string): boolean => {
+    (event: React.KeyboardEvent<HTMLElement>, _currentText: string): boolean => {
       if (!mentionActive || files.length === 0) {
         return false;
       }

@@ -149,7 +149,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
     }
   };
 
-  const handleRoleKeyDown = (e: React.KeyboardEvent, agentId: string) => {
+  const handleRoleKeyDown = (e: React.KeyboardEvent, _agentId: string) => {
     if (e.key === "Escape") {
       setEditingRoleForAgent(null);
     }

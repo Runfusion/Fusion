@@ -12,7 +12,7 @@ import {
   type WindowState,
 } from "./native.js";
 import { setupTray } from "./tray.js";
-import { getRendererUrl, getRendererFilePath, IS_DEVELOPMENT, isUrlRenderer } from "./renderer.js";
+import { getRendererUrl, getRendererFilePath, isUrlRenderer } from "./renderer.js";
 
 // Re-export for backward compatibility
 export { IS_DEVELOPMENT } from "./renderer.js";

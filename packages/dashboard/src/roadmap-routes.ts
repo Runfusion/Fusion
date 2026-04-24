@@ -455,9 +455,7 @@ export function createRoadmapRouter(store: TaskStore): Router {
   router.post("/:roadmapId/suggestions/milestones", async (req, res) => {
     // Route-level timeout as safety net (slightly longer than internal timeout)
     const ROUTE_TIMEOUT_MS = SUGGESTION_TIMEOUT_MS + 10_000;
-    let routeTimedOut = false;
     const routeTimeoutId = setTimeout(() => {
-      routeTimedOut = true;
       if (!res.headersSent) {
         res.status(503).json({ error: "Request timed out" });
       }
@@ -528,9 +526,7 @@ export function createRoadmapRouter(store: TaskStore): Router {
   router.post("/milestones/:milestoneId/suggestions/features", async (req, res) => {
     // Route-level timeout as safety net (slightly longer than internal timeout)
     const ROUTE_TIMEOUT_MS = SUGGESTION_TIMEOUT_MS + 10_000;
-    let routeTimedOut = false;
     const routeTimeoutId = setTimeout(() => {
-      routeTimedOut = true;
       if (!res.headersSent) {
         res.status(503).json({ error: "Request timed out" });
       }

@@ -26,7 +26,6 @@ import type {
   AutopilotStatus,
   MissionWithHierarchy,
   Slice,
-  SliceWithFeatures,
   MissionEventType,
 } from "@fusion/core";
 import { autopilotLog } from "./logger.js";

@@ -87,11 +87,7 @@ export function MilestoneSliceInterviewModal({
   const trackedLockSessionRef = useRef<string | null>(null);
   const [lockSessionId, setLockSessionId] = useState<string | null>(null);
   const sessionTabId = useMemo(() => getSessionTabId(), []);
-  const {
-    isLockedByOther,
-    takeControl,
-    isLoading: isLockLoading,
-  } = useSessionLock(isOpen ? lockSessionId : null);
+  useSessionLock(isOpen ? lockSessionId : null);
   const {
     activeTabMap,
     broadcastUpdate,

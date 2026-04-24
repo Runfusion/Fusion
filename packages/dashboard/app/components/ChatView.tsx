@@ -464,9 +464,8 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
   const [mentionStartPos, setMentionStartPos] = useState(-1);
 
   // File mention state and hook
-  const [fileMentionPopupVisible, setFileMentionPopupVisible] = useState(false);
+  const [, setFileMentionPopupVisible] = useState(false);
   const [fileMentionPosition, setFileMentionPosition] = useState({ top: 0, left: 0 });
-  const fileMentionRef = useRef<HTMLDivElement>(null);
 
   const fileMention = useFileMention({ projectId });
 

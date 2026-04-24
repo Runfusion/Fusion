@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   detectDevServerCommands,
   fetchDevServer,
-  fetchDevServerLogs,
   fetchDevServers,
   getDevServerLogsStreamUrl,
   getDevServerSessionLogsStreamUrl,
@@ -25,8 +24,6 @@ import { subscribeSse } from "../sse-bus";
 
 const MAX_LOG_LINES = 500;
 const POLL_INTERVAL_MS = 3000;
-
-let resetVersion = 0;
 
 function normalizeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -161,7 +158,7 @@ export interface UseDevServerReturn {
 }
 
 export function __resetUseDevServerForTests(): void {
-  resetVersion += 1;
+  // no-op: reserved hook for future test reset coordination.
 }
 
 export function useDevServer(projectId?: string): UseDevServerReturn {

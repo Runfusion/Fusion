@@ -57,10 +57,8 @@ import type {
   Insight,
   InsightCategory,
   InsightStatus,
-  InsightListOptions,
   InsightRun,
   InsightRunTrigger,
-  InsightRunCreateInput,
 } from "@fusion/core";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 import type { ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult } from "@fusion/core";
@@ -2523,7 +2521,7 @@ export async function fetchDevServers(projectId?: string): Promise<DevServerSess
           }
           : undefined,
         previewUrl: legacy.previewUrl ?? legacy.detectedUrl ?? undefined,
-        logHistory: (legacy.logs ?? []).map<DevServerLogEntry>((text, i) => ({
+        logHistory: (legacy.logs ?? []).map<DevServerLogEntry>((text) => ({
           timestamp: new Date().toISOString(),
           stream: text.startsWith("[stderr]") ? "stderr" : "stdout",
           text: text.replace(/^\[stderr\]\s*/, ""),

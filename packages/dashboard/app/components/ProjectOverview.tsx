@@ -203,16 +203,6 @@ export function ProjectOverview({
     }));
   }, [projects, nodes]);
 
-  // Handle sort change
-  const handleSort = useCallback((option: SortOption) => {
-    if (sortBy === option) {
-      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
-    } else {
-      setSortBy(option);
-      setSortDirection(option === "name" ? "asc" : "desc");
-    }
-  }, [sortBy]);
-
   // Handle project selection
   const handleSelectProject = useCallback((project: ProjectInfo) => {
     // Update recent projects in localStorage

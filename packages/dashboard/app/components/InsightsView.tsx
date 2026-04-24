@@ -23,15 +23,13 @@ import {
   Users,
   LineChart,
   TrendingUp,
-  MoreVertical,
   ExternalLink,
   Archive,
   Clock,
 } from "lucide-react";
-import { useInsights, INSIGHT_CATEGORIES, CATEGORY_LABELS, type InsightSection } from "../hooks/useInsights";
+import { useInsights, type InsightSection } from "../hooks/useInsights";
 import type { InsightCategory } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
-import { createTask } from "../api";
 
 interface InsightsViewProps {
   projectId?: string;

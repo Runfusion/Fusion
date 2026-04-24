@@ -1073,8 +1073,8 @@ export class HeartbeatMonitor {
           },
         };
 
-        // Lazy-load createFnAgent and promptWithFallback
-        const { createFnAgent, promptWithFallback } = await import("./pi.js");
+        // Lazy-load promptWithFallback
+        const { promptWithFallback } = await import("./pi.js");
         const { createResolvedAgentSession } = await import("./agent-session-helpers.js");
         const { buildSessionSkillContextSync } = await import("./session-skill-context.js");
 

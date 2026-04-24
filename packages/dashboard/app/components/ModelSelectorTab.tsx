@@ -174,7 +174,7 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings }: Mo
 
     try {
       await updateGlobalSettings({ favoriteProviders: newFavorites, favoriteModels });
-    } catch (err) {
+    } catch {
       // Revert on error
       setFavoriteProviders(currentFavorites);
       addToast("Failed to update favorites", "error");
@@ -193,7 +193,7 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings }: Mo
 
     try {
       await updateGlobalSettings({ favoriteProviders, favoriteModels: newFavorites });
-    } catch (err) {
+    } catch {
       // Revert on error
       setFavoriteModels(currentFavorites);
       addToast("Failed to update model favorites", "error");

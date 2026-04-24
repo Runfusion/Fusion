@@ -406,7 +406,6 @@ function ApiKeyEntryForm({
 import {
   getOnboardingState,
   saveOnboardingState,
-  clearOnboardingState,
   markOnboardingCompleted,
   markStepSkipped,
   getSkippedSteps,
@@ -1523,7 +1522,6 @@ export function ModelOnboardingModal({
                   const connectedCount = authProviders.filter(p => p.id !== "github" && p.authenticated).length;
                   const totalAiProviders = authProviders.filter(p => p.id !== "github").length;
                   const skippedCount = Object.keys(skippedProviders).filter(id => !authProviders.find(p => p.id === id)?.authenticated).length;
-                  const connectedProviders = authProviders.filter(p => p.id !== "github" && p.authenticated);
 
                   if (totalAiProviders === 0) return null;
 

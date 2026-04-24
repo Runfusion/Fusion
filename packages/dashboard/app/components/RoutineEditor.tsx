@@ -3,7 +3,6 @@ import { Calendar, Webhook, Code, Zap, Globe, Folder } from "lucide-react";
 import type {
   Routine,
   RoutineCreateInput,
-  RoutineUpdateInput,
   RoutineTrigger,
   RoutineTriggerType,
   RoutineCronTrigger,
@@ -125,13 +124,6 @@ function extractTriggerFields(routine: Routine) {
       };
   }
 }
-
-const TRIGGER_TYPE_LABELS: Record<RoutineTriggerType, string> = {
-  cron: "Cron Schedule",
-  webhook: "Webhook",
-  api: "API",
-  manual: "Manual",
-};
 
 const EXECUTION_POLICY_OPTIONS: { value: RoutineExecutionPolicy; label: string }[] = [
   { value: "parallel", label: "Allow concurrent runs" },

@@ -249,7 +249,6 @@ export class PeerExchangeService {
 
       // ── Settings sync: decide whether to include settings in request ──
       let shouldIncludeSettings = false;
-      let currentVersion: string | undefined;
 
       if (this.settingsSyncEnabled) {
         try {
@@ -291,7 +290,6 @@ export class PeerExchangeService {
           }
 
           if (shouldIncludeSettings) {
-            currentVersion = this.cachedSettingsPayload.checksum;
             request.settings = this.cachedSettingsPayload;
           }
         } catch (err) {

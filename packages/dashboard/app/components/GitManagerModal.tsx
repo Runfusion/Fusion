@@ -168,7 +168,7 @@ interface GitManagerModalProps {
 
 // ── Main Component ────────────────────────────────────────────────
 
-export function GitManagerModal({ isOpen, onClose, tasks, addToast, projectId }: GitManagerModalProps) {
+export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, projectId }: GitManagerModalProps) {
   const [activeSection, setActiveSection] = useState<SectionId>("status");
   const [loading, setLoading] = useState(false);
   const [sectionError, setSectionError] = useState<string | null>(null);

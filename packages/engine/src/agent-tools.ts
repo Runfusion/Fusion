@@ -157,10 +157,6 @@ function agentDreamsDisplayPath(agentId: string): string {
   return `${AGENT_MEMORY_ROOT}/${sanitizeAgentMemoryId(agentId)}/${AGENT_DREAMS_FILENAME}`;
 }
 
-function agentDailyDisplayPath(agentId: string, date = new Date()): string {
-  return `${AGENT_MEMORY_ROOT}/${sanitizeAgentMemoryId(agentId)}/${date.toISOString().slice(0, 10)}.md`;
-}
-
 function agentMemoryDirectory(rootDir: string, agentId: string): string {
   return join(rootDir, AGENT_MEMORY_ROOT, sanitizeAgentMemoryId(agentId));
 }

@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { BUILTIN_AGENT_PROMPTS, PROMPT_KEY_CATALOG } from "../utils/builtinPrompts";
 import type { AgentPromptTemplate, AgentPromptsConfig, AgentCapability } from "@fusion/core";
 import type { PromptKey } from "@fusion/core";
-import { X, Plus, Pencil, Trash2, BookOpen, Users, Settings2, ChevronDown, ChevronUp, Maximize2, Minimize2 } from "lucide-react";
+import { Plus, Pencil, Trash2, BookOpen, Users, Settings2, ChevronDown, ChevronUp, Maximize2, Minimize2 } from "lucide-react";
 
 /**
  * Props for the AgentPromptsManager component.
@@ -807,7 +807,6 @@ export function AgentPromptsManager({
                   (t) => t.id === currentAssignment,
                 );
                 const isOverriding = !!currentAssignment;
-                const isOverridingBuiltin = isBuiltinId(currentAssignment);
 
                 return (
                   <div
