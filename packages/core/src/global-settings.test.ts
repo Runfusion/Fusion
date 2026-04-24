@@ -273,6 +273,18 @@ describe("GlobalSettingsStore", () => {
       expect(settings.ntfyDashboardHost).toBeUndefined();
     });
 
+    it("persists custom ntfy event lists including planning-awaiting-input", async () => {
+      await store.init();
+
+      await store.updateSettings({ ntfyEvents: ["planning-awaiting-input", "failed"] });
+
+      const raw = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
+      expect(raw.ntfyEvents).toEqual(["planning-awaiting-input", "failed"]);
+
+      const settings = await store.getSettings();
+      expect(settings.ntfyEvents).toEqual(["planning-awaiting-input", "failed"]);
+    });
+
     it("clearing ntfyEvents with null resets to default on read", async () => {
       await store.init();
       await store.updateSettings({ ntfyEvents: ["in-review", "failed"] });
@@ -287,7 +299,7 @@ describe("GlobalSettingsStore", () => {
       // After clear, reading back gives the default value
       // (either undefined on disk with default applied, or default written directly)
       const settings = await store.getSettings();
-      expect(settings.ntfyEvents).toEqual(["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review"]);
+      expect(settings.ntfyEvents).toEqual(["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review", "planning-awaiting-input"]);
     });
 
     it("handles concurrent updates safely via locking", async () => {

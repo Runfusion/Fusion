@@ -22,6 +22,7 @@ import {
   __resetPlanningState,
   __setCreateFnAgent,
   __setPlanningDiagnostics,
+  __setPlanningNtfyHelpers,
   rehydrateFromStore,
   setAiSessionStore,
   RateLimitError,
@@ -115,6 +116,12 @@ function getUniqueIp(): string {
   return `127.0.0.${++ipCounter}`;
 }
 
+async function flushAsyncWork(): Promise<void> {
+  await vi.waitFor(() => {
+    expect(true).toBe(true);
+  });
+}
+
 /**
  * Helper: set up a fresh mock agent for the next createSession call.
  * Returns the agent so tests can inspect `.session.prompt` calls.
@@ -156,6 +163,20 @@ function setupMockStreamingAgent(options?: {
 
   __setCreateFnAgent(createFnAgentSpy as any);
   return { createFnAgentSpy };
+}
+
+function setupMockPlanningNtfyHelpers(options?: { enabledEvent?: boolean; clickUrl?: string }) {
+  const sendNtfyNotification = vi.fn(async () => undefined);
+  const isNtfyEventEnabled = vi.fn(() => options?.enabledEvent ?? true);
+  const buildNtfyClickUrl = vi.fn(() => options?.clickUrl ?? "http://localhost:4040/?project=proj-123");
+
+  __setPlanningNtfyHelpers({
+    sendNtfyNotification,
+    isNtfyEventEnabled,
+    buildNtfyClickUrl,
+  });
+
+  return { sendNtfyNotification, isNtfyEventEnabled, buildNtfyClickUrl };
 }
 
 class MockAiSessionStore extends EventEmitter {
@@ -266,6 +287,7 @@ describe("planning module", () => {
 
   afterEach(() => {
     __setCreateFnAgent(undefined as any);
+    __setPlanningNtfyHelpers(undefined);
   });
 
   describe("createSession", () => {
@@ -552,6 +574,136 @@ describe("planning module", () => {
       } finally {
         resetDiagnosticsSink();
       }
+    });
+
+    it("persists projectId across planning session state transitions", async () => {
+      const store = new MockAiSessionStore();
+      setAiSessionStore(store as any);
+      setupMockStreamingAgent({ responses: STANDARD_QUESTION_RESPONSES });
+
+      const sessionId = await createSessionWithAgent(
+        getUniqueIp(),
+        "Build auth system",
+        TEST_ROOT_DIR,
+        undefined,
+        undefined,
+        undefined,
+        {
+          projectId: "proj-123",
+          ntfyConfig: { enabled: false, topic: "planning-topic" },
+        },
+      );
+
+      await vi.waitFor(() => {
+        expect(store.get(sessionId)?.status).toBe("awaiting_input");
+      });
+      expect(store.get(sessionId)?.projectId).toBe("proj-123");
+
+      await submitResponse(sessionId, { "q-scope": "medium" }, TEST_ROOT_DIR);
+      await vi.waitFor(() => {
+        expect(store.get(sessionId)?.status).toBe("awaiting_input");
+      });
+      expect(store.get(sessionId)?.projectId).toBe("proj-123");
+
+      await submitResponse(sessionId, { "q-requirements": "Must support SSO" }, TEST_ROOT_DIR);
+      await submitResponse(sessionId, { "q-confirm": true }, TEST_ROOT_DIR);
+
+      await vi.waitFor(() => {
+        expect(store.get(sessionId)?.status).toBe("complete");
+      });
+      expect(store.get(sessionId)?.projectId).toBe("proj-123");
+    });
+
+    it("sends planning awaiting-input notifications once per question and allows later distinct questions", async () => {
+      const firstQuestion = JSON.stringify({
+        type: "question",
+        data: { id: "q-1", type: "text", question: "First question?", description: "one" },
+      });
+      const repeatedQuestion = JSON.stringify({
+        type: "question",
+        data: { id: "q-1", type: "text", question: "First question?", description: "one" },
+      });
+      const secondQuestion = JSON.stringify({
+        type: "question",
+        data: { id: "q-2", type: "text", question: "Second question?", description: "two" },
+      });
+
+      setupMockStreamingAgent({ responses: [firstQuestion, repeatedQuestion, secondQuestion] });
+      const { sendNtfyNotification, isNtfyEventEnabled, buildNtfyClickUrl } = setupMockPlanningNtfyHelpers({
+        enabledEvent: true,
+        clickUrl: "http://localhost:4040/?project=proj-123",
+      });
+
+      const sessionId = await createSessionWithAgent(
+        getUniqueIp(),
+        "Build auth system",
+        TEST_ROOT_DIR,
+        undefined,
+        undefined,
+        undefined,
+        {
+          projectId: "proj-123",
+          ntfyConfig: {
+            enabled: true,
+            topic: "planning-topic",
+            dashboardHost: "http://localhost:4040/",
+            events: ["planning-awaiting-input"],
+          },
+        },
+      );
+
+      await vi.waitFor(() => {
+        expect(sendNtfyNotification).toHaveBeenCalledTimes(1);
+      });
+
+      await submitResponse(sessionId, { "q-1": "answer one" }, TEST_ROOT_DIR);
+      await flushAsyncWork();
+      expect(sendNtfyNotification).toHaveBeenCalledTimes(1);
+
+      await submitResponse(sessionId, { "q-1": "answer two" }, TEST_ROOT_DIR);
+      await vi.waitFor(() => {
+        expect(sendNtfyNotification).toHaveBeenCalledTimes(2);
+      });
+
+      expect(isNtfyEventEnabled).toHaveBeenCalledWith(["planning-awaiting-input"], "planning-awaiting-input");
+      expect(buildNtfyClickUrl).toHaveBeenCalledWith({
+        dashboardHost: "http://localhost:4040/",
+        projectId: "proj-123",
+      });
+      expect(sendNtfyNotification).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          topic: "planning-topic",
+          priority: "high",
+          clickUrl: "http://localhost:4040/?project=proj-123",
+        }),
+      );
+    });
+
+    it("suppresses planning awaiting-input notifications when event is disabled", async () => {
+      setupMockStreamingAgent({ responses: STANDARD_QUESTION_RESPONSES });
+      const { sendNtfyNotification } = setupMockPlanningNtfyHelpers({ enabledEvent: false });
+
+      await createSessionWithAgent(
+        getUniqueIp(),
+        "Build auth system",
+        TEST_ROOT_DIR,
+        undefined,
+        undefined,
+        undefined,
+        {
+          projectId: "proj-123",
+          ntfyConfig: {
+            enabled: true,
+            topic: "planning-topic",
+            dashboardHost: "http://localhost:4040/",
+            events: ["failed"],
+          },
+        },
+      );
+
+      await flushAsyncWork();
+      expect(sendNtfyNotification).not.toHaveBeenCalled();
     });
   });
 

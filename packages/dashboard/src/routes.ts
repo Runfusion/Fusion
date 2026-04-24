@@ -8752,7 +8752,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw badRequest("planningModelId must be a string when provided");
       }
 
-      const { store: scopedStore } = await getProjectContext(req);
+      const { store: scopedStore, projectId } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       const ip = req.ip || req.socket.remoteAddress || "unknown";
       const rootDir = scopedStore.getRootDir();
@@ -8782,6 +8782,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         resolvedPlanningProvider,
         resolvedPlanningModelId,
         settings.promptOverrides,
+        {
+          projectId,
+          ntfyConfig: {
+            enabled: settings.ntfyEnabled ?? false,
+            topic: settings.ntfyTopic,
+            dashboardHost: settings.ntfyDashboardHost,
+            events: settings.ntfyEvents,
+          },
+        },
       );
       res.status(201).json({ sessionId });
     } catch (err: unknown) {

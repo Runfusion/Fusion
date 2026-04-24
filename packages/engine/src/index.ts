@@ -38,7 +38,18 @@ export { isUsageLimitError, UsageLimitPauser } from "./usage-limit-detector.js";
 export { withRateLimitRetry } from "./rate-limit-retry.js";
 export { PrMonitor, type PrComment, type TrackedPr, type OnNewCommentsCallback } from "./pr-monitor.js";
 export { PrCommentHandler } from "./pr-comment-handler.js";
-export { NtfyNotifier, type NtfyNotifierOptions } from "./notifier.js";
+export {
+  NtfyNotifier,
+  DEFAULT_NTFY_EVENTS,
+  resolveNtfyEvents,
+  isNtfyEventEnabled,
+  buildNtfyClickUrl,
+  sendNtfyNotification,
+  type NtfyNotifierOptions,
+  type NtfyNotificationPriority,
+  type NtfyNotificationConfigInput,
+  type SendNtfyNotificationInput,
+} from "./notifier.js";
 export { CronRunner, type CronRunnerOptions, type AiPromptExecutor, createAiPromptExecutor } from "./cron-runner.js";
 export { RoutineRunner, type RoutineRunnerOptions } from "./routine-runner.js";
 export { RoutineScheduler, type RoutineSchedulerOptions } from "./routine-scheduler.js";

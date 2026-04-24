@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Task, Column, MergeResult, Settings } from "@fusion/core";
-import { NtfyNotifier } from "./notifier.js";
+import {
+  NtfyNotifier,
+  DEFAULT_NTFY_EVENTS,
+  buildNtfyClickUrl,
+  isNtfyEventEnabled,
+  resolveNtfyEvents,
+} from "./notifier.js";
 
 // Mock the logger
 vi.mock("./logger.js", () => ({
@@ -55,6 +61,24 @@ class MockTaskStore extends EventEmitter<MockTaskStoreEvents> {
     this.emit("task:merged", result);
   }
 }
+
+describe("Ntfy notifier helpers", () => {
+  it("includes planning-awaiting-input in default events", () => {
+    expect(DEFAULT_NTFY_EVENTS).toContain("planning-awaiting-input");
+    expect(resolveNtfyEvents(undefined)).toContain("planning-awaiting-input");
+  });
+
+  it("checks planning-awaiting-input event enablement", () => {
+    expect(isNtfyEventEnabled(["planning-awaiting-input"], "planning-awaiting-input")).toBe(true);
+    expect(isNtfyEventEnabled(["failed"], "planning-awaiting-input")).toBe(false);
+  });
+
+  it("builds project dashboard root links without task id", () => {
+    expect(buildNtfyClickUrl({ dashboardHost: "http://localhost:4040/", projectId: "proj-1" })).toBe(
+      "http://localhost:4040/?project=proj-1",
+    );
+  });
+});
 
 describe("NtfyNotifier", () => {
   let store: MockTaskStore;
@@ -1334,7 +1358,7 @@ describe("NtfyNotifier", () => {
     });
 
     it("updates notifications when ntfyEvents changes at runtime", async () => {
-      store.setSettings({ ntfyEnabled: true, ntfyTopic: "test-topic", ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review"] });
+      store.setSettings({ ntfyEnabled: true, ntfyTopic: "test-topic", ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review", "planning-awaiting-input"] });
       notifier = new NtfyNotifier(store);
       await notifier.start();
 
@@ -1351,7 +1375,7 @@ describe("NtfyNotifier", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1); // No new call for in-review
 
       // Enable in-review again
-      store.setSettings({ ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review"] });
+      store.setSettings({ ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review", "planning-awaiting-input"] });
 
       store.triggerTaskMoved(createTask("FN-003", "Test Task 3"), "in-progress", "in-review");
       await flushAsyncWork();

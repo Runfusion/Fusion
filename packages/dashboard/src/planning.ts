@@ -17,6 +17,7 @@ import type {
   PlanningSummary,
   PlanningResponse,
   TaskStore,
+  NtfyNotificationEvent,
 } from "@fusion/core";
 import { resolvePrompt, type PromptOverrideMap } from "@fusion/core";
 import type { SubtaskItem } from "./subtask-breakdown.js";
@@ -35,6 +36,30 @@ import {
 type AgentResult = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let createFnAgent: any;
+
+interface PlanningNtfyConfig {
+  enabled: boolean;
+  topic?: string;
+  dashboardHost?: string;
+  events?: NtfyNotificationEvent[];
+  ntfyBaseUrl?: string;
+}
+
+interface PlanningNtfyHelpers {
+  isNtfyEventEnabled: (events: NtfyNotificationEvent[] | undefined, event: NtfyNotificationEvent) => boolean;
+  buildNtfyClickUrl: (options: { dashboardHost?: string; projectId?: string; taskId?: string }) => string | undefined;
+  sendNtfyNotification: (input: {
+    ntfyBaseUrl?: string;
+    topic: string;
+    title: string;
+    message: string;
+    priority?: "low" | "default" | "high" | "urgent";
+    clickUrl?: string;
+  }) => Promise<void>;
+}
+
+let planningNtfyHelpers: PlanningNtfyHelpers | undefined;
+let ntfyHelpersReady: Promise<void> | undefined;
 
 /**
  * Shared diagnostics helper for the planning module.
@@ -69,19 +94,24 @@ export function __setPlanningDiagnostics(_logger: unknown): void {
 
 // Initialize the import (this runs in actual server, mocked in tests)
 async function initEngine() {
-  if (!createFnAgent) {
-    try {
-      // Use dynamic import with variable to prevent static analysis
-      const engineModule = "@fusion/engine";
-      const engine = await import(/* @vite-ignore */ engineModule);
-      if (!createFnAgent) {
-        createFnAgent = engine.createFnAgent;
-      }
-    } catch {
-      // Allow failure in test environments - agent functionality will be stubbed
-      if (!createFnAgent) {
-        createFnAgent = undefined;
-      }
+  try {
+    // Use dynamic import with variable to prevent static analysis
+    const engineModule = "@fusion/engine";
+    const engine = await import(/* @vite-ignore */ engineModule);
+    if (!createFnAgent) {
+      createFnAgent = engine.createFnAgent;
+    }
+    if (!planningNtfyHelpers) {
+      planningNtfyHelpers = {
+        isNtfyEventEnabled: engine.isNtfyEventEnabled,
+        buildNtfyClickUrl: engine.buildNtfyClickUrl,
+        sendNtfyNotification: engine.sendNtfyNotification,
+      };
+    }
+  } catch {
+    // Allow failure in test environments - agent functionality will be stubbed
+    if (!createFnAgent) {
+      createFnAgent = undefined;
     }
   }
 }
@@ -90,6 +120,11 @@ let engineReady: Promise<void> | undefined;
 function ensureEngineReady() {
   engineReady ??= initEngine();
   return engineReady;
+}
+
+async function ensureNtfyHelpersReady(): Promise<void> {
+  ntfyHelpersReady ??= initEngine();
+  await ntfyHelpersReady;
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -170,6 +205,10 @@ interface Session {
   id: string;
   ip: string;
   initialPlan: string;
+  projectId?: string;
+  ntfyConfig?: PlanningNtfyConfig;
+  /** Last planning question notified via ntfy, keyed as `${sessionId}:${questionId}` for dedupe across reconnect/replay. */
+  lastNotifiedQuestionKey?: string;
   history: PlanningHistoryEntry[];
   currentQuestion?: PlanningQuestion;
   summary?: PlanningSummary;
@@ -260,7 +299,7 @@ function cleanupInMemorySession(sessionId: string): boolean {
 }
 
 /** Persist the current session state to SQLite (no-op if store not wired). */
-function persistSession(session: Session, status: "generating" | "awaiting_input" | "complete" | "error", projectId?: string, error?: string): void {
+function persistSession(session: Session, status: "generating" | "awaiting_input" | "complete" | "error", error?: string): void {
   if (!_aiSessionStore) return;
   const row: AiSessionRow = {
     id: session.id,
@@ -273,7 +312,7 @@ function persistSession(session: Session, status: "generating" | "awaiting_input
     result: session.summary ? JSON.stringify(session.summary) : null,
     thinkingOutput: session.thinkingOutput,
     error: error ?? null,
-    projectId: projectId ?? null,
+    projectId: session.projectId ?? null,
     createdAt: session.createdAt.toISOString(),
     updatedAt: new Date().toISOString(),
     lockedByTab: null,
@@ -308,21 +347,25 @@ function buildSessionFromRow(row: AiSessionRow): Session {
     throw new Error("Invalid session timestamps");
   }
 
+  const currentQuestion = row.currentQuestion
+    ? (safeParseJson<PlanningQuestion | null>(row.currentQuestion, null, {
+        throwOnError: true,
+        fieldName: "currentQuestion",
+      }) ?? undefined)
+    : undefined;
+
   return {
     id: row.id,
     ip: payload.ip ?? "",
     initialPlan: payload.initialPlan ?? row.title,
+    projectId: row.projectId ?? undefined,
     history: safeParseJson<PlanningHistoryEntry[]>(
       row.conversationHistory,
       [],
       { throwOnError: true, fieldName: "conversationHistory" },
     ),
-    currentQuestion: row.currentQuestion
-      ? (safeParseJson<PlanningQuestion | null>(row.currentQuestion, null, {
-          throwOnError: true,
-          fieldName: "currentQuestion",
-        }) ?? undefined)
-      : undefined,
+    currentQuestion,
+    lastNotifiedQuestionKey: currentQuestion ? `${row.id}:${currentQuestion.id}` : undefined,
     summary: row.result
       ? (safeParseJson<PlanningSummary | null>(row.result, null, {
           throwOnError: true,
@@ -768,6 +811,7 @@ export async function createSessionWithAgent(
   modelProvider?: string,
   modelId?: string,
   promptOverrides?: PromptOverrideMap,
+  options?: { projectId?: string; ntfyConfig?: PlanningNtfyConfig },
 ): Promise<string> {
   // Check rate limit
   if (!checkRateLimit(ip)) {
@@ -784,6 +828,16 @@ export async function createSessionWithAgent(
     id: sessionId,
     ip,
     initialPlan,
+    projectId: options?.projectId,
+    ntfyConfig: options?.ntfyConfig
+      ? {
+          enabled: options.ntfyConfig.enabled,
+          topic: options.ntfyConfig.topic,
+          dashboardHost: options.ntfyConfig.dashboardHost,
+          events: options.ntfyConfig.events ? [...options.ntfyConfig.events] : undefined,
+          ntfyBaseUrl: options.ntfyConfig.ntfyBaseUrl,
+        }
+      : undefined,
     history: [],
     thinkingOutput: "",
     lastGeneratedThinking: "",
@@ -797,7 +851,7 @@ export async function createSessionWithAgent(
   // Initialize AI agent in background - it will stream via planningStreamManager
   initializeAgent(session, rootDir, modelProvider, modelId, promptOverrides).catch((err) => {
     diagnostics.errorFromException("Failed to initialize agent for session", err, { sessionId, operation: "initialize-agent" });
-    persistSession(session, "error", undefined, err.message || "Failed to initialize AI agent");
+    persistSession(session, "error", err.message || "Failed to initialize AI agent");
     planningStreamManager.broadcast(sessionId, {
       type: "error",
       data: err.message || "Failed to initialize AI agent",
@@ -828,7 +882,7 @@ async function initializeAgent(
     diagnostics.errorFromException("Agent initialization error for session", err, { sessionId: session.id, operation: "initialize-agent" });
     session.error = errorMessage;
     session.updatedAt = new Date();
-    persistSession(session, "error", undefined, errorMessage);
+    persistSession(session, "error", errorMessage);
     planningStreamManager.broadcast(session.id, {
       type: "error",
       data: errorMessage,
@@ -913,6 +967,53 @@ async function ensureSessionAgent(
 
   const contextMessage = buildHistoryReplayPrompt(historyForReplay);
   await session.agent.session.prompt(contextMessage);
+}
+
+async function maybeNotifyPlanningAwaitingInput(session: Session, question: PlanningQuestion): Promise<void> {
+  const config = session.ntfyConfig;
+  if (!config?.enabled || !config.topic) {
+    return;
+  }
+
+  await ensureNtfyHelpersReady();
+  const eventEnabled = planningNtfyHelpers?.isNtfyEventEnabled
+    ? planningNtfyHelpers.isNtfyEventEnabled(config.events, "planning-awaiting-input")
+    : (config.events ? config.events.includes("planning-awaiting-input") : true);
+  if (!eventEnabled) {
+    return;
+  }
+
+  const questionKey = `${session.id}:${question.id}`;
+  if (session.lastNotifiedQuestionKey === questionKey) {
+    return;
+  }
+  session.lastNotifiedQuestionKey = questionKey;
+
+  if (!planningNtfyHelpers) {
+    return;
+  }
+
+  try {
+    const clickUrl = planningNtfyHelpers.buildNtfyClickUrl({
+      dashboardHost: config.dashboardHost,
+      projectId: session.projectId,
+    });
+    await planningNtfyHelpers.sendNtfyNotification({
+      ntfyBaseUrl: config.ntfyBaseUrl,
+      topic: config.topic,
+      title: "Planning needs your input",
+      message: `Planning mode is waiting for input: ${question.question}`,
+      priority: "high",
+      clickUrl,
+    });
+  } catch (error) {
+    diagnostics.warn("Failed to deliver planning awaiting-input ntfy notification", {
+      sessionId: session.id,
+      questionId: question.id,
+      error: error instanceof Error ? error.message : String(error),
+      operation: "planning-notify-awaiting-input",
+    });
+  }
 }
 
 /** Max number of retry attempts when AI returns unparseable output */
@@ -1024,7 +1125,7 @@ async function continueAgentConversation(session: Session, message: string): Pro
       );
       session.error = errorMsg;
       session.updatedAt = new Date();
-      persistSession(session, "error", undefined, errorMsg);
+      persistSession(session, "error", errorMsg);
       planningStreamManager.broadcast(session.id, {
         type: "error",
         data: errorMsg,
@@ -1038,6 +1139,7 @@ async function continueAgentConversation(session: Session, message: string): Pro
       session.lastGeneratedThinking = session.thinkingOutput;
       session.updatedAt = new Date();
       persistSession(session, "awaiting_input");
+      void maybeNotifyPlanningAwaitingInput(session, parsed.data);
       planningStreamManager.broadcast(session.id, {
         type: "question",
         data: parsed.data,
@@ -1059,7 +1161,7 @@ async function continueAgentConversation(session: Session, message: string): Pro
     diagnostics.errorFromException("Agent conversation error for session", err, { sessionId: session.id, operation: "conversation" });
     session.error = errorMessage;
     session.updatedAt = new Date();
-    persistSession(session, "error", undefined, errorMessage);
+    persistSession(session, "error", errorMessage);
     planningStreamManager.broadcast(session.id, {
       type: "error",
       data: errorMessage,
@@ -1603,6 +1705,9 @@ export function __resetPlanningState(): void {
   _aiSessionDeletedListener = undefined;
   _aiSessionStore = undefined;
 
+  planningNtfyHelpers = undefined;
+  ntfyHelpersReady = undefined;
+
   // Reset diagnostics sink to default
   resetDiagnosticsSink();
 }
@@ -1612,6 +1717,12 @@ export function __resetPlanningState(): void {
  */
 export function __setCreateFnAgent(mock: typeof createFnAgent): void {
   createFnAgent = mock;
+}
+
+/** Inject ntfy helper implementations (test-only). */
+export function __setPlanningNtfyHelpers(mock: PlanningNtfyHelpers | undefined): void {
+  planningNtfyHelpers = mock;
+  ntfyHelpersReady = undefined;
 }
 
 // ── Custom Errors ───────────────────────────────────────────────────────────
