@@ -55,6 +55,7 @@ import {
   fetchPiSettings,
   updatePiSettings,
   installPiPackage,
+  reinstallFusionPiPackage,
   fetchPiExtensions,
   updatePiExtensions,
   fetchProjectTasks,
@@ -5959,6 +5960,45 @@ describe("installPiPackage", () => {
       method: "POST",
       body: JSON.stringify({ source: "git:https://github.com/example/pi-extension.git" }),
     }));
+  });
+});
+
+describe("reinstallFusionPiPackage", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("sends POST to /api/pi-settings/reinstall-fusion", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(
+      mockFetchResponse(true, { success: true, source: "npm:@runfusion/fusion" })
+    );
+
+    const result = await reinstallFusionPiPackage();
+
+    expect(result).toEqual({ success: true, source: "npm:@runfusion/fusion" });
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/pi-settings/reinstall-fusion", expect.objectContaining({
+      method: "POST",
+    }));
+  });
+
+  it("forwards projectId query parameter when provided", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(
+      mockFetchResponse(true, { success: true, source: "npm:@runfusion/fusion" })
+    );
+
+    await reinstallFusionPiPackage("proj-123");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/pi-settings/reinstall-fusion?projectId=proj-123", expect.objectContaining({
+      method: "POST",
+    }));
+  });
+
+  it("throws API error message on failure", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Reinstall failed" }, 500));
+
+    await expect(reinstallFusionPiPackage()).rejects.toThrow("Reinstall failed");
   });
 });
 

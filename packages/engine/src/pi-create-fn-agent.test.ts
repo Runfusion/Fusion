@@ -23,10 +23,12 @@ const existsSyncMock = vi.fn((_path: PathLike) => false);
 const readFileSyncMock = vi.fn((_path?: any) => "{}");
 
 // Route async `exec` through the `execSync` mock so the promisify bridge works.
-vi.mock("node:child_process", async () => {
-  const { promisify } = await import("node:util");
+// Use Symbol.for("nodejs.util.promisify.custom") directly to avoid async imports
+// in the mock factory (which can cause occasional module-loader deadlocks).
+vi.mock("node:child_process", () => {
   const execSyncFn = execSyncMock;
-   
+  const kPromisifyCustom = Symbol.for("nodejs.util.promisify.custom");
+
   const execFn: any = vi.fn((cmd: string, opts: any, cb: any) => {
     const callback = typeof opts === "function" ? opts : cb;
     const options = typeof opts === "function" ? {} : (opts ?? {});
@@ -41,10 +43,9 @@ vi.mock("node:child_process", async () => {
       }
     }
   });
-   
-  execFn[promisify.custom] = (cmd: string, opts?: any) =>
+
+  execFn[kPromisifyCustom] = (cmd: string, opts?: any) =>
     new Promise((resolve, reject) => {
-       
       execFn(cmd, opts, (err: any, stdout: string, stderr: string) => {
         if (err) {
           (err as Record<string, unknown>).stdout = stdout;

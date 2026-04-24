@@ -67,6 +67,12 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
   } as unknown as TaskStore;
 }
 
+async function flushAsyncWork(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("pathsOverlap", () => {
   it("returns false for empty arrays", () => {
     expect(pathsOverlap([], [])).toBe(false);
@@ -204,7 +210,7 @@ describe("Scheduler", () => {
       scheduler.start();
 
       // Wait for initial schedule pass to complete
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       // Find and call the task:created handler
       const onCalls = (store.on as any).mock.calls;
@@ -216,7 +222,7 @@ describe("Scheduler", () => {
       await createdHandler(newTask);
 
       // Wait for async schedule to complete
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       // Verify schedule() was called (moveTask should be called since task can start)
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
@@ -257,7 +263,7 @@ describe("Scheduler", () => {
       scheduler.start();
 
       // Wait for initial schedule pass to complete
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       // Find and call the task:moved handler
       const onCalls = (store.on as any).mock.calls;
@@ -269,7 +275,7 @@ describe("Scheduler", () => {
       await movedHandler({ task: doneTask, from: "in-progress", to: "done" });
 
       // Wait for async schedule to complete
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       // Verify schedule() was called - FN-002 should now be able to start
       expect(store.moveTask).toHaveBeenCalledWith("FN-002", "in-progress");
@@ -328,7 +334,7 @@ describe("Scheduler", () => {
       scheduler.start();
 
       // Wait for initial schedule pass to complete
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       // Find and call the task:moved handler
       const onCalls = (store.on as any).mock.calls;
@@ -340,7 +346,7 @@ describe("Scheduler", () => {
       await movedHandler({ task: todoTask, from: "in-progress", to: "todo" });
 
       // Wait for async schedule to complete
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       // Verify schedule() was called — task in todo should be scheduled
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
@@ -370,7 +376,7 @@ describe("Scheduler", () => {
       scheduler.start();
 
       // Wait for initial schedule pass to complete
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       // Find the task:updated handler
       const onCalls = (store.on as any).mock.calls;
@@ -384,7 +390,7 @@ describe("Scheduler", () => {
       await updatedHandler(createMockTask({ id: "FN-001", column: "todo", paused: undefined }));
 
       // Wait for async scheduling to complete
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       // Should have triggered scheduling and moved the task to in-progress
       expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
@@ -422,7 +428,7 @@ describe("Scheduler", () => {
 
       const scheduler = new Scheduler(store);
       scheduler.start();
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       // Clear calls from initial schedule
       (store.moveTask as any).mockClear();
@@ -433,7 +439,7 @@ describe("Scheduler", () => {
       // Fire task:updated for a task that was never paused — should NOT trigger extra scheduling
       await updatedHandler(createMockTask({ id: "FN-001", column: "todo", paused: undefined }));
 
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       // moveTask should not be called (no scheduling triggered)
       expect(store.moveTask).not.toHaveBeenCalled();
@@ -448,7 +454,7 @@ describe("Scheduler", () => {
 
       const scheduler = new Scheduler(store);
       scheduler.start();
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       (store.moveTask as any).mockClear();
 
@@ -459,7 +465,7 @@ describe("Scheduler", () => {
       await updatedHandler(createMockTask({ id: "FN-001", column: "in-progress", paused: true }));
       await updatedHandler(createMockTask({ id: "FN-001", column: "in-progress", paused: undefined }));
 
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       // Scheduler should NOT try to schedule an in-progress task
       expect(store.moveTask).not.toHaveBeenCalled();
@@ -478,7 +484,7 @@ describe("Scheduler", () => {
 
       const scheduler = new Scheduler(store);
       scheduler.start();
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       // Clear calls from initial start() schedule
       scheduleSpy.mockClear();
@@ -1090,7 +1096,7 @@ describe("Scheduler", () => {
       movedHandler({ task, from: "in-review", to: "done" });
 
       // Wait for the void Promise.resolve chain to complete
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       expect(prMonitor.drainComments).toHaveBeenCalledWith("FN-001");
       expect(onClosedPrFeedback).toHaveBeenCalledWith("FN-001", task.prInfo, mockComments);
@@ -1122,7 +1128,7 @@ describe("Scheduler", () => {
 
       movedHandler({ task, from: "in-review", to: "done" });
 
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       expect(prMonitor.drainComments).toHaveBeenCalledWith("FN-001");
       expect(onClosedPrFeedback).not.toHaveBeenCalled();
@@ -1154,7 +1160,7 @@ describe("Scheduler", () => {
 
       movedHandler({ task, from: "in-review", to: "done" });
 
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       expect(prMonitor.drainComments).not.toHaveBeenCalled();
       expect(onClosedPrFeedback).not.toHaveBeenCalled();
@@ -1189,7 +1195,7 @@ describe("Scheduler", () => {
       // Should not throw
       movedHandler({ task, from: "in-review", to: "done" });
 
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       expect(prMonitor.drainComments).toHaveBeenCalledWith("FN-001");
       expect(prMonitor.stopMonitoring).toHaveBeenCalledWith("FN-001");
@@ -1225,7 +1231,7 @@ describe("Scheduler", () => {
 
       movedHandler({ task, from: "in-review", to: "done" });
 
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       // drainComments should be called before stopMonitoring
       expect(callOrder).toEqual(["drainComments", "stopMonitoring"]);
@@ -1256,11 +1262,11 @@ describe("Scheduler", () => {
 
       // First move — comments were already drained, buffer is empty
       movedHandler({ task, from: "in-review", to: "done" });
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       // Second move — still empty
       movedHandler({ task, from: "in-review", to: "done" });
-      await new Promise((r) => setTimeout(r, 10));
+      await flushAsyncWork();
 
       // onClosedPrFeedback should never be called since buffer is empty
       expect(onClosedPrFeedback).not.toHaveBeenCalled();

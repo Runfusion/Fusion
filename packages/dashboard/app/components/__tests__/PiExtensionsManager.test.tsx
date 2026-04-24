@@ -7,6 +7,7 @@ import { PiExtensionsManager } from "../PiExtensionsManager";
 const mockFetchPiSettings = vi.fn();
 const mockUpdatePiSettings = vi.fn();
 const mockInstallPiPackage = vi.fn();
+const mockReinstallFusionPiPackage = vi.fn();
 const mockFetchPiExtensions = vi.fn();
 const mockUpdatePiExtensions = vi.fn();
 
@@ -53,6 +54,7 @@ vi.mock("../../api", () => ({
   fetchPiSettings: (...args: unknown[]) => mockFetchPiSettings(...args),
   updatePiSettings: (...args: unknown[]) => mockUpdatePiSettings(...args),
   installPiPackage: (...args: unknown[]) => mockInstallPiPackage(...args),
+  reinstallFusionPiPackage: (...args: unknown[]) => mockReinstallFusionPiPackage(...args),
   fetchPiExtensions: (...args: unknown[]) => mockFetchPiExtensions(...args),
   updatePiExtensions: (...args: unknown[]) => mockUpdatePiExtensions(...args),
 }));
@@ -91,6 +93,7 @@ describe("PiExtensionsManager", () => {
     // Default mock for fetchPiExtensions to return empty settings
     mockFetchPiExtensions.mockResolvedValue({ extensions: [], disabledIds: [], settingsPath: "" });
     mockUpdatePiExtensions.mockResolvedValue({ extensions: [], disabledIds: [], settingsPath: "" });
+    mockReinstallFusionPiPackage.mockResolvedValue({ success: true, source: "npm:@runfusion/fusion" });
   });
 
   describe("Rendering", () => {
@@ -110,6 +113,15 @@ describe("PiExtensionsManager", () => {
       await waitFor(() => {
         expect(screen.getByRole("textbox")).toBeTruthy();
         expect(screen.getByRole("button", { name: /Add/i })).toBeTruthy();
+      });
+    });
+
+    it("renders reinstall Fusion skill action", async () => {
+      mockFetchPiSettings.mockResolvedValueOnce(mockPiSettings);
+      render(<PiExtensionsManager addToast={addToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Reinstall Fusion skill" })).toBeTruthy();
       });
     });
 
@@ -265,6 +277,55 @@ describe("PiExtensionsManager", () => {
       const addBtn = screen.getByRole("button", { name: /Add/i });
       expect(addBtn).toBeDisabled();
       expect(mockInstallPiPackage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Reinstall Fusion action", () => {
+    it("calls reinstall API and refreshes settings and extensions on success", async () => {
+      mockFetchPiSettings.mockResolvedValue(mockPiSettings);
+      mockFetchPiExtensions.mockResolvedValue({ extensions: [], disabledIds: [], settingsPath: "" });
+      mockReinstallFusionPiPackage.mockResolvedValueOnce({ success: true, source: "npm:@runfusion/fusion" });
+
+      render(<PiExtensionsManager addToast={addToast} projectId="proj-123" />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Reinstall Fusion skill" })).toBeTruthy();
+      });
+
+      const settingsCallsBefore = mockFetchPiSettings.mock.calls.length;
+      const extensionCallsBefore = mockFetchPiExtensions.mock.calls.length;
+
+      await userEvent.click(screen.getByRole("button", { name: "Reinstall Fusion skill" }));
+
+      await waitFor(() => {
+        expect(mockReinstallFusionPiPackage).toHaveBeenCalledWith("proj-123");
+      });
+      await waitFor(() => {
+        expect(mockFetchPiSettings.mock.calls.length).toBeGreaterThan(settingsCallsBefore);
+        expect(mockFetchPiExtensions.mock.calls.length).toBeGreaterThan(extensionCallsBefore);
+      });
+      expect(addToast).toHaveBeenCalledWith("Fusion skill reinstalled successfully", "success");
+    });
+
+    it("shows error toast and resets loading state when reinstall fails", async () => {
+      mockFetchPiSettings.mockResolvedValue(mockPiSettings);
+      mockReinstallFusionPiPackage.mockRejectedValueOnce(new Error("Boom"));
+
+      render(<PiExtensionsManager addToast={addToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Reinstall Fusion skill" })).toBeTruthy();
+      });
+
+      await userEvent.click(screen.getByRole("button", { name: "Reinstall Fusion skill" }));
+
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith("Failed to reinstall Fusion skill: Boom", "error");
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Reinstall Fusion skill" })).toBeTruthy();
+      });
     });
   });
 

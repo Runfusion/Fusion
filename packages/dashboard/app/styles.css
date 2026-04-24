@@ -36549,6 +36549,9 @@ html .column.drag-over * {
 }
 
 .pi-ext-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
   margin-bottom: var(--space-md);
 }
 

@@ -3702,6 +3702,34 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   /**
+   * POST /api/pi-settings/reinstall-fusion
+   * Reinstalls Fusion's bundled pi package and ensures it remains configured in global settings.
+   */
+  router.post("/pi-settings/reinstall-fusion", async (_req, res) => {
+    try {
+      const source = "npm:@runfusion/fusion";
+      const { SettingsManager, DefaultPackageManager, getAgentDir } = await import("@mariozechner/pi-coding-agent");
+      const agentDir = getAgentDir();
+      const cwd = process.cwd();
+      const settingsManager = SettingsManager.create(process.cwd(), agentDir);
+      const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
+
+      await packageManager.install(source);
+      const added = packageManager.addSourceToSettings(source);
+      if (added) {
+        await settingsManager.flush();
+      }
+
+      res.json({ success: true, source });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /**
    * POST /api/settings/test-ntfy
    * Send a test notification to verify ntfy configuration.
    * Returns: { success: true } on success, { error: string } on failure.

@@ -56,6 +56,8 @@ As a [pi](https://github.com/badlogic/pi-mono) extension (bundled skill + `/fn` 
 pi install npm:@runfusion/fusion
 ```
 
+If your local Pi install gets stale or broken, open Fusion dashboard **Settings → Pi Extensions** and use **Reinstall Fusion skill** to reinstall `npm:@runfusion/fusion` and refresh discovered extensions.
+
 ## Launch the dashboard
 
 Inside a pi session:

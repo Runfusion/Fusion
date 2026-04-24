@@ -657,6 +657,13 @@ export async function installPiPackage(source: string): Promise<{ success: boole
   });
 }
 
+/** Reinstall Fusion's bundled pi package and ensure it remains in global Pi settings. */
+export async function reinstallFusionPiPackage(projectId?: string): Promise<{ success: boolean; source: string }> {
+  return api<{ success: boolean; source: string }>(withProjectId("/pi-settings/reinstall-fusion", projectId), {
+    method: "POST",
+  });
+}
+
 export async function uploadAttachment(id: string, file: File, projectId?: string): Promise<TaskAttachment> {
   const formData = new FormData();
   formData.append("file", file);

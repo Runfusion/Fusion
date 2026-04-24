@@ -26,7 +26,7 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react";
-import { fetchPiSettings, updatePiSettings, installPiPackage, fetchPiExtensions, updatePiExtensions, type PiSettings, type PiExtensionEntry } from "../api";
+import { fetchPiSettings, updatePiSettings, installPiPackage, reinstallFusionPiPackage, fetchPiExtensions, updatePiExtensions, type PiSettings, type PiExtensionEntry } from "../api";
 import type { ToastType } from "../hooks/useToast";
 
 interface PiExtensionsManagerProps {
@@ -67,6 +67,7 @@ export function PiExtensionsManager({ addToast, projectId }: PiExtensionsManager
   const [settings, setSettings] = useState<PiSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [installing, setInstalling] = useState(false);
+  const [reinstallingFusion, setReinstallingFusion] = useState(false);
   const [newSource, setNewSource] = useState("");
   const [expandedPackages, setExpandedPackages] = useState<Set<number>>(new Set());
 
@@ -151,6 +152,19 @@ export function PiExtensionsManager({ addToast, projectId }: PiExtensionsManager
       addToast(`Failed to install package: ${err instanceof Error ? err.message : String(err)}`, "error");
     } finally {
       setInstalling(false);
+    }
+  };
+
+  const handleReinstallFusion = async () => {
+    try {
+      setReinstallingFusion(true);
+      await reinstallFusionPiPackage(projectId);
+      await Promise.all([loadSettings(), loadExtensions()]);
+      addToast("Fusion skill reinstalled successfully", "success");
+    } catch (err) {
+      addToast(`Failed to reinstall Fusion skill: ${err instanceof Error ? err.message : String(err)}`, "error");
+    } finally {
+      setReinstallingFusion(false);
     }
   };
 
@@ -261,6 +275,15 @@ export function PiExtensionsManager({ addToast, projectId }: PiExtensionsManager
               >
                 <Plus size={14} />
                 {installing ? "Installing…" : "Add"}
+              </button>
+            </div>
+            <div className="pi-ext-add-form-row">
+              <button
+                className="btn"
+                onClick={handleReinstallFusion}
+                disabled={reinstallingFusion}
+              >
+                {reinstallingFusion ? "Reinstalling Fusion…" : "Reinstall Fusion skill"}
               </button>
             </div>
           </div>

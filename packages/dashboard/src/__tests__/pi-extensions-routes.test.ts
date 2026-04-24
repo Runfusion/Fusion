@@ -17,15 +17,17 @@ const mockSettingsManager = {
   flush: vi.fn().mockResolvedValue(undefined),
 };
 
+const mockPackageManager = {
+  install: vi.fn().mockResolvedValue(undefined),
+  addSourceToSettings: vi.fn().mockReturnValue(true),
+};
+
 vi.mock("@mariozechner/pi-coding-agent", () => ({
   SettingsManager: {
     create: vi.fn(() => mockSettingsManager),
   },
   getAgentDir: vi.fn(() => "/fake/agent/dir"),
-  DefaultPackageManager: vi.fn().mockImplementation(() => ({
-    install: vi.fn().mockResolvedValue(undefined),
-    addSourceToSettings: vi.fn().mockReturnValue(true),
-  })),
+  DefaultPackageManager: vi.fn().mockImplementation(() => mockPackageManager),
 }));
 
 // Minimal store implementation for the test server
@@ -58,6 +60,8 @@ describe("Pi settings routes", () => {
     mockSettingsManager.getPromptTemplatePaths.mockReturnValue(["/path/to/prompts"]);
     mockSettingsManager.getThemePaths.mockReturnValue(["/path/to/themes"]);
     mockSettingsManager.flush.mockResolvedValue(undefined);
+    mockPackageManager.install.mockResolvedValue(undefined);
+    mockPackageManager.addSourceToSettings.mockReturnValue(true);
   });
 
   describe("GET /api/pi-settings", () => {
@@ -227,6 +231,7 @@ describe("Pi settings routes", () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ success: true });
+      expect(mockPackageManager.install).toHaveBeenCalledWith("npm:pi-new-extension");
     });
 
     it("installs git package source", async () => {
@@ -295,6 +300,38 @@ describe("Pi settings routes", () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ success: true });
+    });
+  });
+
+  describe("POST /api/pi-settings/reinstall-fusion", () => {
+    it("reinstalls Fusion package and returns source metadata", async () => {
+      const res = await request(app, "POST", "/api/pi-settings/reinstall-fusion", JSON.stringify({}), JSON_HEADERS);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true, source: "npm:@runfusion/fusion" });
+      expect(mockPackageManager.install).toHaveBeenCalledWith("npm:@runfusion/fusion");
+      expect(mockPackageManager.addSourceToSettings).toHaveBeenCalledWith("npm:@runfusion/fusion");
+      expect(mockSettingsManager.flush).toHaveBeenCalledTimes(1);
+    });
+
+    it("succeeds when Fusion package is already configured", async () => {
+      mockPackageManager.addSourceToSettings.mockReturnValueOnce(false);
+
+      const res = await request(app, "POST", "/api/pi-settings/reinstall-fusion", JSON.stringify({}), JSON_HEADERS);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ success: true, source: "npm:@runfusion/fusion" });
+      expect(mockPackageManager.install).toHaveBeenCalledWith("npm:@runfusion/fusion");
+      expect(mockSettingsManager.flush).not.toHaveBeenCalled();
+    });
+
+    it("returns 500 when reinstall fails", async () => {
+      mockPackageManager.install.mockRejectedValueOnce(new Error("Reinstall failed"));
+
+      const res = await request(app, "POST", "/api/pi-settings/reinstall-fusion", JSON.stringify({}), JSON_HEADERS);
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: "Reinstall failed" });
     });
   });
 });
