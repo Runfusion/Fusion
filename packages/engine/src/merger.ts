@@ -18,7 +18,7 @@ import { isContextLimitError } from "./context-limit-detector.js";
 import { withRateLimitRetry } from "./rate-limit-retry.js";
 import { resolveAgentInstructions, buildSystemPromptWithInstructions } from "./agent-instructions.js";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext } from "./run-audit.js";
 
 /** Conflict type classification for merge conflict resolution */
