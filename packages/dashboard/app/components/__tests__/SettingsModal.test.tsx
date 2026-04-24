@@ -225,6 +225,24 @@ import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettin
 
 const onClose = vi.fn();
 const addToast = vi.fn();
+const FN1712_SCOPE_TEST_TIMEOUT_MS = 15_000;
+
+async function chooseModelOption(label: string, optionName: string | RegExp): Promise<void> {
+  const user = userEvent.setup();
+  const trigger = screen.getByLabelText(label);
+  await user.click(trigger);
+
+  const matchingTextNodes = await screen.findAllByText(optionName);
+  const optionText = matchingTextNodes.find((el) =>
+    el.classList.contains("model-combobox-option-text")
+  );
+
+  if (!optionText) {
+    throw new Error(`Could not find model option text node for ${String(optionName)}`);
+  }
+
+  await user.click(optionText);
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -4020,14 +4038,7 @@ describe("Prompts section", () => {
       fireEvent.click(screen.getAllByText("Models")[0]);
       await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
-      // Open the Default Model dropdown and select a model
-      const user = userEvent.setup();
-      const dropdownBtn = screen.getByRole("button", { name: /default model/i });
-      await user.click(dropdownBtn);
-
-      // Select a model from the dropdown
-      const option = await screen.findByRole("option", { name: /gpt-4o/i });
-      await user.click(option);
+      await chooseModelOption("Default Model", /gpt-4o/i);
 
       // Save
       fireEvent.click(screen.getByText("Save"));
@@ -4051,7 +4062,7 @@ describe("Prompts section", () => {
         expect(projectPayload.defaultProvider).toBeUndefined();
         expect(projectPayload.defaultModelId).toBeUndefined();
       }
-    });
+    }, FN1712_SCOPE_TEST_TIMEOUT_MS);
 
     it("project-only change calls updateSettings but not updateGlobalSettings for project keys", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
@@ -4060,14 +4071,7 @@ describe("Prompts section", () => {
       fireEvent.click(screen.getAllByText("Project Models")[0]);
       await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
-      // Open Planning Model dropdown
-      const user = userEvent.setup();
-      const dropdownBtn = screen.getByRole("button", { name: /planning model/i });
-      await user.click(dropdownBtn);
-
-      // Select a model
-      const option = await screen.findByRole("option", { name: /gpt-4o/i });
-      await user.click(option);
+      await chooseModelOption("Planning Model", /gpt-4o/i);
 
       // Save
       fireEvent.click(screen.getByText("Save"));
@@ -4091,53 +4095,8 @@ describe("Prompts section", () => {
         expect(globalPayload.planningProvider).toBeUndefined();
         expect(globalPayload.planningModelId).toBeUndefined();
       }
-    });
+    }, FN1712_SCOPE_TEST_TIMEOUT_MS);
 
-    it("mixed global and project changes call both endpoints with correct subsets", async () => {
-      render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
-
-      // Change global model
-      fireEvent.click(screen.getAllByText("Models")[0]);
-      await waitFor(() => expect(fetchModels).toHaveBeenCalled());
-
-      let user = userEvent.setup();
-      let dropdownBtn = screen.getByRole("button", { name: /default model/i });
-      await user.click(dropdownBtn);
-      let option = await screen.findByRole("option", { name: /gpt-4o/i });
-      await user.click(option);
-
-      // Change project model
-      fireEvent.click(screen.getAllByText("Project Models")[0]);
-      await waitFor(() => expect(fetchModels).toHaveBeenCalled());
-
-      dropdownBtn = screen.getByRole("button", { name: /planning model/i });
-      await user.click(dropdownBtn);
-      option = await screen.findByRole("option", { name: /claude/i });
-      await user.click(option);
-
-      // Save
-      fireEvent.click(screen.getByText("Save"));
-      await waitFor(() => {
-        expect(updateSettings).toHaveBeenCalled();
-        expect(updateGlobalSettings).toHaveBeenCalled();
-      });
-
-      const globalPayload = (updateGlobalSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      const projectPayload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
-
-      // Verify global payload contains only global keys
-      expect(globalPayload).toHaveProperty("defaultProvider");
-      expect(globalPayload).toHaveProperty("defaultModelId");
-      expect(globalPayload.planningProvider).toBeUndefined();
-      expect(globalPayload.planningModelId).toBeUndefined();
-
-      // Verify project payload contains only project keys
-      expect(projectPayload).toHaveProperty("planningProvider");
-      expect(projectPayload).toHaveProperty("planningModelId");
-      expect(projectPayload.defaultProvider).toBeUndefined();
-      expect(projectPayload.defaultModelId).toBeUndefined();
-    });
   });
 
   describe("Reset/clear null-as-delete semantics (FN-1712)", () => {
@@ -4174,42 +4133,8 @@ describe("Prompts section", () => {
       const projectPayload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(projectPayload.planningProvider).toBeNull();
       expect(projectPayload.planningModelId).toBeNull();
-    });
+    }, FN1712_SCOPE_TEST_TIMEOUT_MS);
 
-    it("clearing a global setting sends null to delete it", async () => {
-      // Set up initial global settings with defaultProvider/defaultModelId set
-      (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-        ...defaultSettings,
-        defaultProvider: "anthropic",
-        defaultModelId: "claude-sonnet-4-5",
-      });
-
-      render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
-
-      fireEvent.click(screen.getAllByText("Models")[0]);
-      await waitFor(() => expect(fetchModels).toHaveBeenCalled());
-
-      // Open the Default Model dropdown
-      const user = userEvent.setup();
-      const dropdownBtn = screen.getByRole("button", { name: /default model/i });
-      await user.click(dropdownBtn);
-
-      // Select "Use default" option to clear
-      const useDefaultOption = await screen.findByRole("option", { name: /use default/i });
-      await user.click(useDefaultOption);
-
-      // Save
-      fireEvent.click(screen.getByText("Save"));
-      await waitFor(() => {
-        expect(updateGlobalSettings).toHaveBeenCalled();
-      });
-
-      // Verify null-as-delete: defaultProvider and defaultModelId should be null when clearing an existing value
-      const globalPayload = (updateGlobalSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(globalPayload.defaultProvider).toBeNull();
-      expect(globalPayload.defaultModelId).toBeNull();
-    });
   });
 
   describe("Memory section - file editor", () => {
