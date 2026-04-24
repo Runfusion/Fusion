@@ -9,7 +9,7 @@ import type { Task, TaskStore, MergeResult, AutomationStore, RoutineStore, Centr
 import { AgentStore, ChatStore } from "@fusion/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { createApiRoutes } from "./routes.js";
-import { createSSE } from "./sse.js";
+import { createSSE, disconnectSSEClient, markSSEClientAlive } from "./sse.js";
 import { rateLimit, RATE_LIMITS } from "./rate-limit.js";
 import { ApiError, sendErrorResponse } from "./api-error.js";
 import { getOrCreateProjectStore, evictAllProjectStores, setOnProjectFirstCreated } from "./project-store-resolver.js";
@@ -449,6 +449,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   const mutationRateLimit = rateLimit(RATE_LIMITS.mutation);
   const setupRateLimit = rateLimit(RATE_LIMITS.api);
   const setupReadRateLimit = rateLimit(RATE_LIMITS.api);
+  const sseControlRateLimit = rateLimit({ windowMs: 60_000, max: 300 });
 
   // Raw body buffer for webhook signature verification - must be before express.json()
   // Only applied to the webhook route
@@ -506,6 +507,23 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
   // Create ChatStore for chat session management (available for SSE event forwarding)
   const chatStore = options?.chatStore ?? new ChatStore(store.getFusionDir(), store.getDatabase());
+
+  // Lets the browser explicitly release server-side SSE listeners during page
+  // unload. EventSource.close() is not enough in Chrome refresh paths because
+  // the HTTP/1.1 transport can remain open in the browser network service.
+  app.post("/api/events/disconnect", sseControlRateLimit, (req, res) => {
+    const clientId = typeof req.query.clientId === "string" ? req.query.clientId : undefined;
+    const projectId = typeof req.query.projectId === "string" ? req.query.projectId : undefined;
+    disconnectSSEClient(clientId, projectId);
+    res.status(204).end();
+  });
+
+  app.post("/api/events/keepalive", sseControlRateLimit, (req, res) => {
+    const clientId = typeof req.query.clientId === "string" ? req.query.clientId : undefined;
+    const projectId = typeof req.query.projectId === "string" ? req.query.projectId : undefined;
+    markSSEClientAlive(clientId, projectId);
+    res.status(204).end();
+  });
 
   // Rate limiting — stricter limit on SSE connections
   app.get("/api/events", rateLimit(RATE_LIMITS.sse), async (req, res) => {
