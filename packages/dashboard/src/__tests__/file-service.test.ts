@@ -1560,6 +1560,128 @@ describe("listProjectMarkdownFiles", () => {
     expect(mockReaddir).not.toHaveBeenCalledWith("/project/dist", { withFileTypes: true });
   });
 
+  it("omits hidden markdown files and markdown files inside hidden directories by default", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+
+    mockReaddir.mockImplementation(async (targetPath: string) => {
+      if (targetPath === "/project") {
+        return [
+          fileEntry("README.md"),
+          fileEntry(".secret.md"),
+          directoryEntry("docs"),
+          directoryEntry(".hidden"),
+        ];
+      }
+
+      if (targetPath === "/project/docs") {
+        return [fileEntry("guide.md")];
+      }
+
+      if (targetPath === "/project/.hidden") {
+        return [fileEntry("internal.md")];
+      }
+
+      return [];
+    });
+
+    mockStat.mockResolvedValue({
+      isFile: () => true,
+      isDirectory: () => false,
+      size: 64,
+      mtime: new Date("2024-01-02T00:00:00.000Z"),
+    });
+
+    const result = await listProjectMarkdownFiles(mockStore);
+
+    expect(result.files.map((entry) => entry.path)).toEqual([
+      "docs/guide.md",
+      "README.md",
+    ]);
+    expect(mockReaddir).not.toHaveBeenCalledWith("/project/.hidden", { withFileTypes: true });
+  });
+
+  it("includes hidden markdown files and hidden directories when showHidden is true", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+
+    mockReaddir.mockImplementation(async (targetPath: string) => {
+      if (targetPath === "/project") {
+        return [
+          fileEntry("README.md"),
+          fileEntry(".secret.md"),
+          directoryEntry("docs"),
+          directoryEntry(".hidden"),
+        ];
+      }
+
+      if (targetPath === "/project/docs") {
+        return [fileEntry("guide.md")];
+      }
+
+      if (targetPath === "/project/.hidden") {
+        return [fileEntry("internal.md")];
+      }
+
+      return [];
+    });
+
+    mockStat.mockResolvedValue({
+      isFile: () => true,
+      isDirectory: () => false,
+      size: 64,
+      mtime: new Date("2024-01-02T00:00:00.000Z"),
+    });
+
+    const result = await listProjectMarkdownFiles(mockStore, { showHidden: true });
+
+    expect(result.files.map((entry) => entry.path)).toEqual([
+      ".hidden/internal.md",
+      ".secret.md",
+      "docs/guide.md",
+      "README.md",
+    ]);
+  });
+
+  it("keeps hard-excluded directories hidden even when showHidden is true", async () => {
+    mockGetRootDir.mockReturnValue("/project");
+
+    mockReaddir.mockImplementation(async (targetPath: string) => {
+      if (targetPath === "/project") {
+        return [
+          directoryEntry(".git"),
+          directoryEntry(".fusion"),
+          directoryEntry(".hidden"),
+          directoryEntry("docs"),
+        ];
+      }
+
+      if (targetPath === "/project/.hidden") {
+        return [fileEntry("internal.md")];
+      }
+
+      if (targetPath === "/project/docs") {
+        return [fileEntry("guide.md")];
+      }
+
+      return [];
+    });
+
+    mockStat.mockResolvedValue({
+      isFile: () => true,
+      isDirectory: () => false,
+      size: 64,
+      mtime: new Date("2024-01-02T00:00:00.000Z"),
+    });
+
+    const result = await listProjectMarkdownFiles(mockStore, { showHidden: true });
+
+    expect(result.files.map((entry) => entry.path)).toEqual([
+      ".hidden/internal.md",
+      "docs/guide.md",
+    ]);
+    expect(mockReaddir).not.toHaveBeenCalledWith("/project/.git", { withFileTypes: true });
+    expect(mockReaddir).not.toHaveBeenCalledWith("/project/.fusion", { withFileTypes: true });
+  });
+
   it("returns an empty list when no markdown files exist", async () => {
     mockGetRootDir.mockReturnValue("/project");
 

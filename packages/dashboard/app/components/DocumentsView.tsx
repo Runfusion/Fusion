@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef, type ChangeEvent } from "react";
-import { ArrowLeft, FileText, ChevronDown, ChevronUp, ChevronRight, RefreshCw, Search, X } from "lucide-react";
+import { ArrowLeft, FileText, ChevronDown, ChevronUp, ChevronRight, RefreshCw, Search, X, Eye, EyeOff } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { TaskDocumentWithTask, TaskDetail } from "@fusion/core";
@@ -172,6 +172,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsVi
   const [activeTab, setActiveTab] = useState<DocumentsTab>("project");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedFile, setSelectedFile] = useState<MarkdownFileEntry | null>(null);
+  const [showHiddenProjectFiles, setShowHiddenProjectFiles] = useState(false);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -201,7 +202,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsVi
     loading: projectFilesLoading,
     error: projectFilesError,
     refresh: refreshProjectFiles,
-  } = useProjectMarkdownFiles(projectId);
+  } = useProjectMarkdownFiles(projectId, { showHidden: showHiddenProjectFiles });
 
   useEffect(() => {
     const updateMobile = () => {
@@ -220,6 +221,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsVi
     initialTabSetRef.current = false;
     setActiveTab("project");
     setSelectedFile(null);
+    setShowHiddenProjectFiles(false);
     setFileContent(null);
     setFileError(null);
     setFileLoading(false);
@@ -407,6 +409,19 @@ export function DocumentsView({ projectId, addToast, onOpenDetail }: DocumentsVi
             <span className="documents-tab-count">{groupedDocuments.length}</span>
           </button>
         </div>
+
+        {activeTab === "project" && (
+          <button
+            className="btn btn-sm documents-hidden-toggle"
+            onClick={() => setShowHiddenProjectFiles((prev) => !prev)}
+            aria-pressed={showHiddenProjectFiles}
+            aria-label={showHiddenProjectFiles ? "Hide hidden project files" : "Show hidden project files"}
+            title={showHiddenProjectFiles ? "Hide hidden files" : "Show hidden files"}
+          >
+            {showHiddenProjectFiles ? <EyeOff size={14} /> : <Eye size={14} />}
+            {showHiddenProjectFiles ? "Hide Hidden" : "Show Hidden"}
+          </button>
+        )}
 
         <div className="documents-search">
           <Search size={16} className="documents-search-icon" />

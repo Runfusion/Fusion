@@ -1,11 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { fetchProjectMarkdownFiles, type MarkdownFileEntry } from "../api";
 
+export interface ProjectMarkdownFilesVisibilityOptions {
+  showHidden?: boolean;
+}
+
 export interface UseProjectMarkdownFilesResult {
   files: MarkdownFileEntry[];
   loading: boolean;
   error: string | null;
-  refresh: () => Promise<void>;
+  refresh: (options?: ProjectMarkdownFilesVisibilityOptions) => Promise<void>;
 }
 
 /**
@@ -14,14 +18,19 @@ export interface UseProjectMarkdownFilesResult {
  * Loading behavior matches useDocuments: loading is true only for the initial
  * fetch, not for subsequent refreshes, to avoid content flicker.
  */
-export function useProjectMarkdownFiles(projectId?: string): UseProjectMarkdownFilesResult {
+export function useProjectMarkdownFiles(
+  projectId?: string,
+  options?: ProjectMarkdownFilesVisibilityOptions,
+): UseProjectMarkdownFilesResult {
   const [files, setFiles] = useState<MarkdownFileEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const initialLoadCompleteRef = useRef(false);
 
-  const refresh = useCallback(async () => {
+  const showHidden = options?.showHidden ?? false;
+
+  const refresh = useCallback(async (refreshOptions?: ProjectMarkdownFilesVisibilityOptions) => {
     if (abortRef.current) {
       abortRef.current.abort();
     }
@@ -37,7 +46,9 @@ export function useProjectMarkdownFiles(projectId?: string): UseProjectMarkdownF
     setError(null);
 
     try {
-      const response = await fetchProjectMarkdownFiles(projectId);
+      const response = await fetchProjectMarkdownFiles(projectId, {
+        showHidden: refreshOptions?.showHidden ?? showHidden,
+      });
 
       if (requestController.signal.aborted) {
         return;
@@ -56,18 +67,18 @@ export function useProjectMarkdownFiles(projectId?: string): UseProjectMarkdownF
         setLoading(false);
       }
     }
-  }, [projectId]);
+  }, [projectId, showHidden]);
 
   useEffect(() => {
     initialLoadCompleteRef.current = false;
-    void refresh();
+    void refresh({ showHidden });
 
     return () => {
       if (abortRef.current) {
         abortRef.current.abort();
       }
     };
-  }, [refresh]);
+  }, [refresh, showHidden]);
 
   return {
     files,

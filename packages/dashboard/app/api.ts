@@ -803,8 +803,23 @@ export async function fetchAllDocuments(
   return api<TaskDocumentWithTask[]>(withProjectId(path, projectId));
 }
 
-export function fetchProjectMarkdownFiles(projectId?: string): Promise<MarkdownFileListResponse> {
-  return api<MarkdownFileListResponse>(withProjectId("/files/markdown-list", projectId));
+export interface FetchProjectMarkdownFilesOptions {
+  showHidden?: boolean;
+}
+
+export function fetchProjectMarkdownFiles(
+  projectId?: string,
+  options?: FetchProjectMarkdownFilesOptions,
+): Promise<MarkdownFileListResponse> {
+  const params = new URLSearchParams();
+  if (options?.showHidden) {
+    params.set("showHidden", "1");
+  }
+
+  const query = params.toString();
+  const path = `/files/markdown-list${query ? `?${query}` : ""}`;
+
+  return api<MarkdownFileListResponse>(withProjectId(path, projectId));
 }
 
 export function putTaskDocument(

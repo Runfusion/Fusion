@@ -932,10 +932,19 @@ const MARKDOWN_SCAN_EXCLUDED_DIRS = new Set([
   ".vercel",
 ]);
 
+interface ListProjectMarkdownFilesOptions {
+  showHidden?: boolean;
+}
+
+function isHiddenPathSegment(name: string): boolean {
+  return name.startsWith(".");
+}
+
 async function walkDirForMarkdown(
   basePath: string,
   currentRelative: string,
   results: MarkdownFileEntry[],
+  options: ListProjectMarkdownFilesOptions,
 ): Promise<void> {
   const currentPath = currentRelative ? join(basePath, currentRelative) : basePath;
 
@@ -955,11 +964,20 @@ async function walkDirForMarkdown(
       if (MARKDOWN_SCAN_EXCLUDED_DIRS.has(entry.name)) {
         continue;
       }
-      await walkDirForMarkdown(basePath, entryRelativePath, results);
+
+      if (!options.showHidden && isHiddenPathSegment(entry.name)) {
+        continue;
+      }
+
+      await walkDirForMarkdown(basePath, entryRelativePath, results, options);
       continue;
     }
 
     if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) {
+      continue;
+    }
+
+    if (!options.showHidden && isHiddenPathSegment(entry.name)) {
       continue;
     }
 
@@ -987,11 +1005,14 @@ async function walkDirForMarkdown(
 
 export async function listProjectMarkdownFiles(
   store: TaskStore,
+  options?: ListProjectMarkdownFilesOptions,
 ): Promise<MarkdownFileListResponse> {
   const projectBasePath = getProjectBasePath(store);
   const files: MarkdownFileEntry[] = [];
 
-  await walkDirForMarkdown(projectBasePath, "", files);
+  await walkDirForMarkdown(projectBasePath, "", files, {
+    showHidden: options?.showHidden ?? false,
+  });
 
   files.sort((a, b) => a.path.localeCompare(b.path));
 

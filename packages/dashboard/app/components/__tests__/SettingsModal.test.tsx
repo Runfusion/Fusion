@@ -246,6 +246,42 @@ async function chooseModelOption(label: string, optionName: string | RegExp): Pr
 
 beforeEach(() => {
   vi.clearAllMocks();
+
+  (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...defaultSettings });
+  (fetchSettingsByScope as ReturnType<typeof vi.fn>).mockResolvedValue({
+    global: { ...defaultSettings },
+    project: {},
+  });
+  (updateSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...defaultSettings });
+  (updateGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ ...defaultSettings });
+  (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+    providers: [{ id: "anthropic", name: "Anthropic", authenticated: false }],
+  });
+  (loginProvider as ReturnType<typeof vi.fn>).mockResolvedValue({ url: "https://auth.example.com/login" });
+  (logoutProvider as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+  (saveApiKey as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+  (clearApiKey as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+  (fetchModels as ReturnType<typeof vi.fn>).mockResolvedValue({
+    models: [
+      { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
+      { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
+    ],
+    favoriteProviders: [],
+    favoriteModels: [],
+  });
+  (testNtfyNotification as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+  (fetchGlobalConcurrency as ReturnType<typeof vi.fn>).mockResolvedValue({
+    globalMaxConcurrent: 4,
+    currentlyActive: 0,
+    queuedCount: 0,
+    projectsActive: {},
+  });
+  (updateGlobalConcurrency as ReturnType<typeof vi.fn>).mockResolvedValue({
+    globalMaxConcurrent: 4,
+    currentlyActive: 0,
+    queuedCount: 0,
+    projectsActive: {},
+  });
 });
 
 describe("SettingsModal", () => {
@@ -1834,10 +1870,12 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Models"));
+    fireEvent.click(screen.getAllByText("Models")[0]);
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
-    expect(screen.queryByLabelText("Thinking Effort")).toBeNull();
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Thinking Effort")).toBeNull();
+    });
   });
 
   it("shows loading state during login", async () => {
@@ -2644,7 +2682,7 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Notifications"));
+    fireEvent.click((await screen.findAllByText("Notifications"))[0]);
     expect((screen.getByLabelText("Task completed (in-review)") as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText("Task merged") as HTMLInputElement).checked).toBe(false);
     expect((screen.getByLabelText("Task failed") as HTMLInputElement).checked).toBe(false);
@@ -4096,7 +4134,6 @@ describe("Prompts section", () => {
         expect(globalPayload.planningModelId).toBeUndefined();
       }
     }, FN1712_SCOPE_TEST_TIMEOUT_MS);
-
   });
 
   describe("Reset/clear null-as-delete semantics (FN-1712)", () => {

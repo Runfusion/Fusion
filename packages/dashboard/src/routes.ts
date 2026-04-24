@@ -8104,7 +8104,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.get("/files/markdown-list", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const result: MarkdownFileListResponse = await listProjectMarkdownFiles(scopedStore);
+      const showHiddenQuery = req.query.showHidden;
+      const showHidden = showHiddenQuery === "1" || showHiddenQuery === "true";
+      const result: MarkdownFileListResponse = await listProjectMarkdownFiles(scopedStore, { showHidden });
       res.json(result);
     } catch (err: unknown) {
       if (err instanceof ApiError) {

@@ -28390,6 +28390,17 @@ html .column.drag-over * {
   font-family: var(--font-mono);
 }
 
+.documents-hidden-toggle {
+  align-self: flex-start;
+  margin-bottom: var(--space-sm);
+}
+
+.documents-hidden-toggle[aria-pressed="true"] {
+  color: var(--todo);
+  border-color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+}
+
 .documents-search {
   position: relative;
   display: flex;
@@ -29161,6 +29172,12 @@ html .column.drag-over * {
 
   .documents-tab {
     flex: 1;
+    justify-content: center;
+    min-height: 44px;
+  }
+
+  .documents-hidden-toggle {
+    width: 100%;
     justify-content: center;
     min-height: 44px;
   }

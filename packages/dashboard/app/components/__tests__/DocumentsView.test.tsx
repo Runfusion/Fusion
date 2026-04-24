@@ -68,6 +68,13 @@ const mockProjectFiles = [
   },
 ];
 
+const mockHiddenProjectFile = {
+  path: ".hidden/notes.md",
+  name: "notes.md",
+  size: 512,
+  mtime: "2026-04-19T10:00:00.000Z",
+};
+
 function setupHookDefaults(): void {
   mockUseDocuments.mockReturnValue({
     documents: mockTaskDocuments,
@@ -112,6 +119,31 @@ describe("DocumentsView", () => {
     expect(screen.getByRole("tab", { name: /show project markdown files/i })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "Open README.md" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open docs/guide.md" })).toBeInTheDocument();
+  });
+
+  it("keeps hidden project files off by default and reveals them when toggled on", async () => {
+    const refreshMock = vi.fn().mockResolvedValue(undefined);
+
+    mockUseProjectMarkdownFiles.mockImplementation((_, options) => ({
+      files: options?.showHidden
+        ? [...mockProjectFiles, mockHiddenProjectFile]
+        : mockProjectFiles,
+      loading: false,
+      error: null,
+      refresh: refreshMock,
+    }));
+
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+
+    expect(screen.queryByRole("button", { name: "Open .hidden/notes.md" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /show hidden project files/i })).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(screen.getByRole("button", { name: /show hidden project files/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Open .hidden/notes.md" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /hide hidden project files/i })).toHaveAttribute("aria-pressed", "true");
+    });
   });
 
   it("renders task documents tab when there are no project files", async () => {
