@@ -169,8 +169,8 @@ Open:    http://localhost:4040/?token=fn_8f3a...
 Click the **Open** link. Your browser captures the token into `localStorage`,
 strips it from the visible URL, and reuses it automatically on later loads.
 See [CLI reference → fn dashboard → Authentication](./cli-reference.md#fn-dashboard)
-for details, including how to set a stable token via `FUSION_DASHBOARD_TOKEN`
-or disable auth with `--no-auth` for strictly-local setups.
+for details, including token precedence (CLI/env overrides over the persisted
+`~/.fusion` token) and how to disable auth with `--no-auth` for strictly-local setups.
 
 Other launch modes:
 

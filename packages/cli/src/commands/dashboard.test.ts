@@ -15,22 +15,36 @@ const {
   mockSelfHealingStop,
   mockCheckStuckBudget,
   mockStuckCheckNow,
-} = vi.hoisted(() => ({
-  mockAuthStorage: { getAuth: vi.fn(), setAuth: vi.fn(), getApiKey: vi.fn().mockResolvedValue(undefined) },
-  mockModelRegistry: {
-    registerProvider: vi.fn(),
-    refresh: vi.fn(),
-  },
-  mockDiscoverAndLoadExtensions: vi.fn().mockResolvedValue({
-    runtime: { pendingProviderRegistrations: [] },
-    errors: [],
-  }),
-  mockCreateExtensionRuntime: vi.fn(),
-  mockSelfHealingStart: vi.fn(),
-  mockSelfHealingStop: vi.fn(),
-  mockCheckStuckBudget: vi.fn().mockResolvedValue(true),
-  mockStuckCheckNow: vi.fn().mockResolvedValue(undefined),
-}));
+  mockResolveGlobalDir,
+  mockGlobalSettingsGetSettings,
+  mockGlobalSettingsUpdateSettings,
+  mockDaemonTokenGetOrCreate,
+} = vi.hoisted(() => {
+  delete process.env.FUSION_DASHBOARD_TOKEN;
+  delete process.env.FUSION_DAEMON_TOKEN;
+  delete process.env.FUSION_BEARER_TOKEN;
+
+  return {
+    mockAuthStorage: { getAuth: vi.fn(), setAuth: vi.fn(), getApiKey: vi.fn().mockResolvedValue(undefined) },
+    mockModelRegistry: {
+      registerProvider: vi.fn(),
+      refresh: vi.fn(),
+    },
+    mockDiscoverAndLoadExtensions: vi.fn().mockResolvedValue({
+      runtime: { pendingProviderRegistrations: [] },
+      errors: [],
+    }),
+    mockCreateExtensionRuntime: vi.fn(),
+    mockSelfHealingStart: vi.fn(),
+    mockSelfHealingStop: vi.fn(),
+    mockCheckStuckBudget: vi.fn().mockResolvedValue(true),
+    mockStuckCheckNow: vi.fn().mockResolvedValue(undefined),
+    mockResolveGlobalDir: vi.fn().mockReturnValue("/tmp/test-global"),
+    mockGlobalSettingsGetSettings: vi.fn().mockResolvedValue({}),
+    mockGlobalSettingsUpdateSettings: vi.fn().mockResolvedValue({}),
+    mockDaemonTokenGetOrCreate: vi.fn().mockResolvedValue("fn_test_dashboard_token"),
+  };
+});
 
 // Minimal mock store backed by EventEmitter so `store.on` works
 function makeMockStore() {
@@ -157,6 +171,16 @@ vi.mock("@fusion/core", () => ({
     };
   }),
   getEnabledPiExtensionPaths: vi.fn(() => []),
+  resolveGlobalDir: mockResolveGlobalDir,
+  GlobalSettingsStore: vi.fn().mockImplementation(() => ({
+    getSettings: mockGlobalSettingsGetSettings,
+    updateSettings: mockGlobalSettingsUpdateSettings,
+  })),
+  DaemonTokenManager: vi.fn().mockImplementation(() => ({
+    getOrCreateToken: mockDaemonTokenGetOrCreate,
+    getToken: vi.fn().mockResolvedValue(undefined),
+    generateToken: vi.fn().mockResolvedValue("fn_test_dashboard_token"),
+  })),
   getTaskMergeBlocker: vi.fn((task: any) => {
     if (task.column !== "in-review") return `task is in '${task.column}', must be in 'in-review'`;
     if (task.paused) return "task is paused";
@@ -732,12 +756,24 @@ function resetGitHubMocks() {
 }
 
 beforeEach(() => {
+  delete process.env.FUSION_DASHBOARD_TOKEN;
+  delete process.env.FUSION_DAEMON_TOKEN;
+  delete process.env.FUSION_BEARER_TOKEN;
+
   resetGitHubMocks();
   mockExecSync.mockReset();
   mockExecSync.mockReturnValue("");
   mockExec.mockClear();
   mockStuckCheckNow.mockReset();
   mockStuckCheckNow.mockResolvedValue(undefined);
+  mockResolveGlobalDir.mockReset();
+  mockResolveGlobalDir.mockReturnValue("/tmp/test-global");
+  mockGlobalSettingsGetSettings.mockReset();
+  mockGlobalSettingsGetSettings.mockResolvedValue({});
+  mockGlobalSettingsUpdateSettings.mockReset();
+  mockGlobalSettingsUpdateSettings.mockResolvedValue({});
+  mockDaemonTokenGetOrCreate.mockReset();
+  mockDaemonTokenGetOrCreate.mockResolvedValue("fn_test_dashboard_token");
 });
 
 afterEach(() => {
@@ -2646,6 +2682,7 @@ describe("StreamedLogBuffer", () => {
 
 describe("runDashboard — merge stream sink routing", () => {
   it("routes streamed merge deltas through log sink without raw stdout writes", async () => {
+    process.env.FUSION_DASHBOARD_TOKEN = "fn_test_dashboard_token";
     const { TaskStore, AutomationStore, AgentStore, PluginStore, PluginLoader, CentralCore } = await import("@fusion/core");
     const { aiMergeTask } = await import("@fusion/engine");
     const { createServer } = await import("@fusion/dashboard");
@@ -2726,11 +2763,13 @@ describe("runDashboard — merge stream sink routing", () => {
 
     stdoutWriteSpy.mockRestore();
     consoleLogSpy.mockRestore();
+    delete process.env.FUSION_DASHBOARD_TOKEN;
   });
 });
 
 describe("runDashboard runtime logger wiring", () => {
   it("injects a runtime logger into createServer and preserves non-TTY console fallback", async () => {
+    process.env.FUSION_DASHBOARD_TOKEN = "fn_test_dashboard_token";
     const { createServer } = await import("@fusion/dashboard");
     const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -2747,9 +2786,11 @@ describe("runDashboard runtime logger wiring", () => {
     );
 
     consoleLogSpy.mockRestore();
+    delete process.env.FUSION_DASHBOARD_TOKEN;
   });
 
   it("routes runtime logger output through DashboardLogSink in TTY mode", async () => {
+    process.env.FUSION_DASHBOARD_TOKEN = "fn_test_dashboard_token";
     const { createServer } = await import("@fusion/dashboard");
     const { DashboardLogSink, DashboardTUI } = await import("./dashboard-tui.js");
 
@@ -2783,6 +2824,7 @@ describe("runDashboard runtime logger wiring", () => {
       tuiStopSpy.mockRestore();
       tuiLogSpy.mockRestore();
       captureConsoleSpy.mockRestore();
+      delete process.env.FUSION_DASHBOARD_TOKEN;
     }
   });
 });

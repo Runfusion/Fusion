@@ -2,9 +2,25 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 
 // Use vi.hoisted to define mocks that need to be referenced in vi.mock
-const { centralInstances } = vi.hoisted(() => {
+const {
+  centralInstances,
+  mockResolveGlobalDir,
+  mockGlobalSettingsGetSettings,
+  mockGlobalSettingsUpdateSettings,
+  mockDaemonTokenGetOrCreate,
+} = vi.hoisted(() => {
+  delete process.env.FUSION_DASHBOARD_TOKEN;
+  delete process.env.FUSION_DAEMON_TOKEN;
+  delete process.env.FUSION_BEARER_TOKEN;
+
   const centralInstances: any[] = [];
-  return { centralInstances };
+  return {
+    centralInstances,
+    mockResolveGlobalDir: vi.fn().mockReturnValue("/tmp/test-global"),
+    mockGlobalSettingsGetSettings: vi.fn().mockResolvedValue({}),
+    mockGlobalSettingsUpdateSettings: vi.fn().mockResolvedValue({}),
+    mockDaemonTokenGetOrCreate: vi.fn().mockResolvedValue("fn_test_dashboard_token"),
+  };
 });
 
 // ── Multi-project test fixtures ─────────────────────────────────────────
@@ -151,6 +167,16 @@ vi.mock("@fusion/core", () => ({
     getLoadedPlugins: vi.fn().mockReturnValue([]),
   })),
   getEnabledPiExtensionPaths: vi.fn(() => []),
+  resolveGlobalDir: mockResolveGlobalDir,
+  GlobalSettingsStore: vi.fn().mockImplementation(() => ({
+    getSettings: mockGlobalSettingsGetSettings,
+    updateSettings: mockGlobalSettingsUpdateSettings,
+  })),
+  DaemonTokenManager: vi.fn().mockImplementation(() => ({
+    getOrCreateToken: mockDaemonTokenGetOrCreate,
+    getToken: vi.fn().mockResolvedValue(undefined),
+    generateToken: vi.fn().mockResolvedValue("fn_test_dashboard_token"),
+  })),
   getTaskMergeBlocker: vi.fn().mockReturnValue(undefined),
   syncInsightExtractionAutomation: mockSyncInsightExtraction,
   INSIGHT_EXTRACTION_SCHEDULE_NAME: "Memory Insight Extraction",
@@ -411,9 +437,112 @@ function setupProjectByPath(
 
 // ── Tests ───────────────────────────────────────────────────────────
 
+beforeEach(() => {
+  delete process.env.FUSION_DASHBOARD_TOKEN;
+  delete process.env.FUSION_DAEMON_TOKEN;
+  delete process.env.FUSION_BEARER_TOKEN;
+  mockResolveGlobalDir.mockReset();
+  mockResolveGlobalDir.mockReturnValue("/tmp/test-global");
+  mockGlobalSettingsGetSettings.mockReset();
+  mockGlobalSettingsGetSettings.mockResolvedValue({});
+  mockGlobalSettingsUpdateSettings.mockReset();
+  mockGlobalSettingsUpdateSettings.mockResolvedValue({});
+  mockDaemonTokenGetOrCreate.mockReset();
+  mockDaemonTokenGetOrCreate.mockResolvedValue("fn_test_dashboard_token");
+});
+
 afterEach(() => {
   disposeTrackedDashboards();
   resetMultiProjectState();
+});
+
+describe("runDashboard — dashboard auth token persistence + precedence", () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockDiscoverAndLoadExtensions.mockResolvedValue({
+      runtime: { pendingProviderRegistrations: [] },
+      errors: [],
+    });
+    const { TaskStore, DaemonTokenManager } = await import("@fusion/core");
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
+    (DaemonTokenManager as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      getOrCreateToken: mockDaemonTokenGetOrCreate,
+      getToken: vi.fn().mockResolvedValue(undefined),
+      generateToken: vi.fn().mockResolvedValue("fn_test_dashboard_token"),
+    }));
+  });
+
+  it("generates exactly once on first authenticated run and reuses token on subsequent runs", async () => {
+    const { DaemonTokenManager } = await import("@fusion/core");
+    const { createServer } = await import("@fusion/dashboard");
+
+    let storedToken: string | undefined;
+    let generationCount = 0;
+
+    (DaemonTokenManager as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      getOrCreateToken: vi.fn().mockImplementation(async () => {
+        if (!storedToken) {
+          generationCount += 1;
+          storedToken = "fn_persisted_dashboard_token";
+        }
+        return storedToken;
+      }),
+    }));
+
+    await runDashboard(0, { open: false, dev: true });
+    const firstOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
+
+    await runDashboard(0, { open: false, dev: true });
+    const secondOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
+
+    expect(generationCount).toBe(1);
+    expect(firstOpts.daemon).toEqual({ token: "fn_persisted_dashboard_token" });
+    expect(secondOpts.daemon).toEqual({ token: "fn_persisted_dashboard_token" });
+  });
+
+  it("uses --token over env vars and persisted token", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+    process.env.FUSION_DASHBOARD_TOKEN = "fn_env_dashboard_token";
+    process.env.FUSION_DAEMON_TOKEN = "fn_env_daemon_token";
+
+    await runDashboard(0, { open: false, dev: true, token: "fn_cli_token" });
+
+    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
+    expect(serverOpts.daemon).toEqual({ token: "fn_cli_token" });
+  });
+
+  it("uses FUSION_DASHBOARD_TOKEN before FUSION_DAEMON_TOKEN", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+    process.env.FUSION_DASHBOARD_TOKEN = "fn_env_dashboard_token";
+    process.env.FUSION_DAEMON_TOKEN = "fn_env_daemon_token";
+
+    await runDashboard(0, { open: false, dev: true });
+
+    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
+    expect(serverOpts.daemon).toEqual({ token: "fn_env_dashboard_token" });
+  });
+
+  it("uses FUSION_DAEMON_TOKEN when dashboard token env var is absent", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+    process.env.FUSION_DAEMON_TOKEN = "fn_env_daemon_token";
+
+    await runDashboard(0, { open: false, dev: true });
+
+    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
+    expect(serverOpts.daemon).toEqual({ token: "fn_env_daemon_token" });
+  });
+
+  it("disables auth entirely with --no-auth and bypasses persisted token lookup", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+    const { DaemonTokenManager } = await import("@fusion/core");
+
+    await runDashboard(0, { open: false, dev: true, noAuth: true });
+
+    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
+    expect(serverOpts.daemon).toBeUndefined();
+    expect(serverOpts.noAuth).toBe(true);
+    expect(DaemonTokenManager).not.toHaveBeenCalled();
+  });
 });
 
 describe("runDashboard — AuthStorage & ModelRegistry wiring", () => {

@@ -1,7 +1,19 @@
 import type { AddressInfo } from "node:net";
-import { randomBytes } from "node:crypto";
 import { join } from "node:path";
-import { TaskStore, AutomationStore, CentralCore, AgentStore, PluginStore, PluginLoader, getTaskMergeBlocker, getEnabledPiExtensionPaths, isEphemeralAgent } from "@fusion/core";
+import {
+  TaskStore,
+  AutomationStore,
+  CentralCore,
+  AgentStore,
+  PluginStore,
+  PluginLoader,
+  getTaskMergeBlocker,
+  getEnabledPiExtensionPaths,
+  isEphemeralAgent,
+  DaemonTokenManager,
+  GlobalSettingsStore,
+  resolveGlobalDir,
+} from "@fusion/core";
 import {
   createServer,
   GitHubClient,
@@ -307,6 +319,34 @@ async function resolveRuntimeProjectPath(): Promise<string> {
   }
 }
 
+async function resolveDashboardAuthToken(opts: { noAuth?: boolean; token?: string }): Promise<string | undefined> {
+  if (opts.noAuth) {
+    return undefined;
+  }
+
+  const explicitToken = opts.token
+    ?? process.env.FUSION_DASHBOARD_TOKEN
+    ?? process.env.FUSION_DAEMON_TOKEN;
+
+  if (explicitToken) {
+    return explicitToken;
+  }
+
+  const globalDir = resolveGlobalDir();
+  const settingsStore = new GlobalSettingsStore(globalDir);
+  const tokenManager = new DaemonTokenManager(settingsStore);
+
+  if (typeof tokenManager.getOrCreateToken === "function") {
+    return tokenManager.getOrCreateToken();
+  }
+
+  const existingToken = await tokenManager.getToken();
+  if (existingToken) {
+    return existingToken;
+  }
+  return tokenManager.generateToken();
+}
+
 export async function runDashboard(port: number, opts: { paused?: boolean; dev?: boolean; interactive?: boolean; open?: boolean; host?: string; noAuth?: boolean; token?: string } = {}) {
   // Default to localhost so the dashboard (and its shell-capable terminal API)
   // is not exposed on the LAN. Pass --host 0.0.0.0 explicitly to opt-in.
@@ -318,19 +358,15 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // server is bound to a non-localhost interface (e.g. `pnpm dev dashboard`
   // which injects --host 0.0.0.0 for LAN testing) nearby users can't hit the
   // terminal or exec endpoints uninvited. Precedence:
-  //   1. `opts.token`            — explicit override (mostly for tests)
+  //   1. `opts.token`             — explicit override (mostly for tests)
   //   2. `FUSION_DASHBOARD_TOKEN` — user-provided env
   //   3. `FUSION_DAEMON_TOKEN`    — back-compat with daemon mode
-  //   4. auto-generated random token (printed at startup so the user can auth)
+  //   4. stored token in ~/.fusion/settings.json
+  //   5. newly generated persisted token (first authenticated run only)
   // `--no-auth` skips the middleware entirely. The token is embedded in the
   // launch URL (as `?token=...`) so the user can click once and the browser
   // stores it to localStorage for subsequent loads.
-  const dashboardAuthToken: string | undefined = opts.noAuth
-    ? undefined
-    : opts.token
-      ?? process.env.FUSION_DASHBOARD_TOKEN
-      ?? process.env.FUSION_DAEMON_TOKEN
-      ?? `fn_${randomBytes(16).toString("hex")}`;
+  const dashboardAuthToken = await resolveDashboardAuthToken(opts);
 
   // Single sink/logger pair for all dashboard command diagnostics.
   // In TTY mode this routes to DashboardTUI; in non-TTY mode it falls back to console.*.

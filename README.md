@@ -263,10 +263,13 @@ pnpm dev dashboard
 
 Then click the `Open:` URL printed in the terminal. It embeds a bearer token
 (`http://localhost:4040/?token=fn_...`) that the browser captures to
-`localStorage` on first visit and reuses automatically thereafter. See
+`localStorage` on first visit and reuses automatically thereafter. On the
+server side, Fusion now persists the dashboard/daemon token in
+`~/.fusion/settings.json` on first authenticated run and reuses it on later
+starts unless you override it (`--token`, `FUSION_DASHBOARD_TOKEN`,
+`FUSION_DAEMON_TOKEN`) or disable auth with `--no-auth`. See
 [CLI reference → fn dashboard → Authentication](./docs/cli-reference.md#fn-dashboard)
-for how to pin a stable token via `FUSION_DASHBOARD_TOKEN` or opt out with
-`--no-auth`.
+for full precedence and reset/revocation options.
 
 ### First-run setup
 

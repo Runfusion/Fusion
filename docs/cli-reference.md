@@ -134,8 +134,14 @@ plain console output to maintain compatibility with automated workflows.
 ### Authentication
 
 Unless `--no-auth` is passed, the dashboard API (including the terminal
-WebSocket) is protected by a bearer token. On startup, Fusion prints both the
-raw token and a click-to-open URL that embeds `?token=<token>`:
+WebSocket) is protected by a bearer token. On first authenticated startup,
+Fusion resolves a token via the daemon-token manager and persists it in the
+existing global settings file (`~/.fusion/settings.json`, owner-only when
+supported). Later dashboard startups reuse the same stored token unless you
+explicitly override it.
+
+On startup, Fusion prints both the resolved token and a click-to-open URL that
+embeds `?token=<token>`:
 
 ```
 fn dashboard
@@ -154,21 +160,24 @@ closing and reopening the tab) reuse the stored token.
 
 Precedence when resolving the token:
 
-1. `--token <token>` flag
-2. `FUSION_DASHBOARD_TOKEN` environment variable
-3. `FUSION_DAEMON_TOKEN` environment variable (back-compat with `fn daemon`)
-4. Random `fn_<32 hex>` generated per run
+1. `--no-auth` (disables auth middleware entirely)
+2. `--token <token>` flag
+3. `FUSION_DASHBOARD_TOKEN` environment variable
+4. `FUSION_DAEMON_TOKEN` environment variable (back-compat with `fn daemon`)
+5. Stored token in `~/.fusion/settings.json`
+6. New generated token persisted to `~/.fusion/settings.json` (first authenticated run)
 
-To reuse a stable token across runs, export one of the env vars:
+To override defaults without changing stored settings, export one of the env vars:
 
 ```bash
-export FUSION_DASHBOARD_TOKEN=fn_my_stable_token
+export FUSION_DASHBOARD_TOKEN=fn_my_override_token
 fn dashboard
 ```
 
-If you ever need to revoke access, either restart `fn dashboard` (which
-rotates the auto-generated token) or clear the `fn.authToken` entry from
-each client's `localStorage`.
+To revoke/reset access, choose the behavior you want:
+- **Temporary override:** set `--token` / env var for the current run.
+- **Persistent reset:** clear `daemonToken` from `~/.fusion/settings.json` (or rotate it via `fn daemon --token-only`/token rotation workflow), then restart dashboard.
+- **Client logout:** clear `fn.authToken` in browser localStorage so clients must re-authenticate with the current server token.
 
 ---
 

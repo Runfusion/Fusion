@@ -65,6 +65,30 @@ export class DaemonTokenManager {
   }
 
   /**
+   * Retrieve the existing daemon token or create/persist one if missing.
+   *
+   * Safe for concurrent callers: if another process writes the token between
+   * the initial read and generateToken(), this method re-reads and returns the
+   * persisted token instead of failing.
+   */
+  async getOrCreateToken(): Promise<string> {
+    const existing = await this.getToken();
+    if (existing) {
+      return existing;
+    }
+
+    try {
+      return await this.generateToken();
+    } catch (error) {
+      const afterRace = await this.getToken();
+      if (afterRace) {
+        return afterRace;
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Validate that a provided token matches the stored token.
    *
    * Uses constant-time comparison to prevent timing attacks.
