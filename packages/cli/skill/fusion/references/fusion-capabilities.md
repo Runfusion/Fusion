@@ -2,7 +2,7 @@
 
 ## Overview
 
-Fusion (kb) is an AI-orchestrated task board. Tasks flow through columns:
+Fusion is an AI-orchestrated task board. Tasks flow through columns:
 Triage → Todo → In Progress → In Review → Done → Archived
 
 ## Pi Extension Tools (Available to Agents)
@@ -14,7 +14,7 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 | `fn_task_create` | Create a new task in triage |
 | `fn_task_update` | Update task title, description, or dependencies |
 | `fn_task_list` | List all tasks grouped by column |
-| `fn_task_show` | Show full task details, steps, log |
+| `fn_task_show` | Show full task details, steps, and log preview |
 | `fn_task_attach` | Attach a file to a task |
 | `fn_task_pause` | Pause automation for a task |
 | `fn_task_unpause` | Resume automation for a task |
@@ -44,45 +44,36 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 
 ## CLI Commands (fn)
 
-### Dashboard
+### Dashboard and Node Runtime
 - `fn dashboard` — Start web UI + AI engine
 - `fn dashboard --paused` — Start with automation paused
 - `fn dashboard --dev` — Start web UI only (no AI engine)
+- `fn serve` — Start headless node mode (API + engine, no UI)
+- `fn daemon` — Start daemon mode with auth
 
 ### Task Management
 - `fn task create "description"` — Create a new task
 - `fn task plan "description"` — AI-guided planning mode
 - `fn task list` — List all tasks
-- `fn task show KB-001` — Show task details
-- `fn task move KB-001 todo` — Move task to a column
-- `fn task merge KB-001` — Merge an in-review task
-- `fn task duplicate KB-001` — Duplicate a task
-- `fn task refine KB-001 --feedback "..."` — Create refinement task
-- `fn task archive/unarchive KB-001` — Archive/restore tasks
-- `fn task delete KB-001` — Delete a task
-- `fn task retry KB-001` — Retry a failed task
-- `fn task comment KB-001 "..."` — Add a task comment
-- `fn task steer KB-001 "..."` — Add steering comment
-- `fn task pause/unpause KB-001` — Control automation
-- `fn task logs KB-001` — View task agent logs
+- `fn task show FN-001` — Show task details
+- `fn task move FN-001 todo` — Move task to a column
+- `fn task merge FN-001` — Merge an in-review task
+- `fn task duplicate FN-001` — Duplicate a task
+- `fn task refine FN-001 --feedback "..."` — Create refinement task
+- `fn task archive FN-001` / `fn task unarchive FN-001` — Archive/restore tasks
+- `fn task delete FN-001` — Delete a task
+- `fn task retry FN-001` — Retry a failed task
+- `fn task comment FN-001 "..."` — Add a task comment
+- `fn task steer FN-001 "..."` — Add steering comment
+- `fn task pause FN-001` / `fn task unpause FN-001` — Control automation
+- `fn task logs FN-001` — View task agent logs
 
-### GitHub Integration
+### GitHub, Skills, and Settings
 - `fn task import owner/repo` — Batch import issues
-- `fn task import owner/repo -i` — Interactive import
-- `fn task pr-create KB-001` — Create PR for task
-
-### Git Commands
-- `fn git status/fetch/pull/push` — Git operations
-
-### Settings
-- `fn settings` — Show current settings
-- `fn settings set key value` — Update a setting
-
-## AI Engine Components
-
-1. **TriageProcessor** — Auto-specifications for tasks in triage column
-2. **Scheduler** — Dependency resolution, concurrency management
-3. **TaskExecutor** — Creates worktrees, executes tasks with coding tools
+- `fn task pr-create FN-001` — Create PR for task
+- `fn skills search "react"` — Search skill registry
+- `fn skills install owner/repo --skill <name>` — Install a skill
+- `fn settings` / `fn settings set key value` — View/update settings
 
 ## Task Storage Structure
 
@@ -90,7 +81,7 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 .fusion/
 ├── fusion.db                # SQLite database (WAL mode)
 └── tasks/
-    └── KB-001/
+    └── FN-001/
         ├── PROMPT.md        # Task specification
         ├── agent.log        # Execution logs
         └── attachments/     # File attachments
@@ -107,7 +98,7 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 - Workflow step manager
 - Scheduled tasks (automations)
 - GitHub import modal
-- Theme system (8+ themes, dark/light/system)
+- Theme system with dark/light support and color themes
 
 ## Key Settings
 
@@ -117,6 +108,6 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 | `maxTriageConcurrent` | 2 | Concurrent triage/specification agents. Falls back to `maxConcurrent` when undefined. |
 | `autoMerge` | true | Auto-merge completed tasks |
 | `requirePlanApproval` | false | Manual approval for specs |
-| `prCompletionMode` | direct | Completion: direct/pr-first |
+| `prCompletionMode` | direct | Completion mode: direct/pr-first |
 | `taskStuckTimeoutMs` | — | Stuck task detection timeout |
 | `recycleWorktrees` | false | Pool and reuse worktrees |

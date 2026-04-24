@@ -32,11 +32,11 @@ These cannot be done with pi extension tools:
 
 | Operation | CLI Command | Dashboard |
 |-----------|-------------|-----------|
-| Move task to column | `fn task move KB-001 todo` | Drag card between columns |
-| Merge completed task | `fn task merge KB-001` | Click merge in task detail |
-| Add steering comment | `fn task steer KB-001 "Use TypeScript"` | Comments tab in task detail |
-| Add general comment | `fn task comment KB-001 "Looks good"` | Comments tab in task detail |
-| View agent logs | `fn task logs KB-001 --follow` | Agent log tab in task detail |
+| Move task to column | `fn task move FN-001 todo` | Drag card between columns |
+| Merge completed task | `fn task merge FN-001` | Click merge in task detail |
+| Add steering comment | `fn task steer FN-001 "Use TypeScript"` | Comments tab in task detail |
+| Add general comment | `fn task comment FN-001 "Looks good"` | Comments tab in task detail |
+| View agent logs | `fn task logs FN-001 --follow` | Agent log tab in task detail |
 | Change settings | `fn settings set maxConcurrent 4` | Settings modal |
 | Create workflow steps | — | Workflow Steps button in header |
 | Git operations | `fn git status/fetch/pull/push` | Git manager panel |
@@ -60,7 +60,7 @@ Key settings (configure via dashboard Settings or `fn settings set`):
 
 When `prCompletionMode` is set to "pr-first":
 - Completed tasks create a GitHub PR instead of direct-merging
-- Use `fn task pr-create KB-001` to manually create a PR for any in-review task
+- Use `fn task pr-create FN-001` to manually create a PR for any in-review task
 - PRs can be reviewed and merged through the normal GitHub workflow
 
 **Backup operations:**

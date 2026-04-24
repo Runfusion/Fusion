@@ -241,7 +241,7 @@ Activate a pending slice for implementation.
 
 ### fn_feature_link_task
 
-Link a feature to a kb task. Updates feature status to triaged.
+Link a feature to a Fusion task. Updates feature status to triaged.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

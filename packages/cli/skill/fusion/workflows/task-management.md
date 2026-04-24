@@ -29,7 +29,7 @@ Example:
 ```
 fn_task_create({
   description: "The login form doesn't validate email format before submission. Add client-side email validation that shows an inline error message when the email is invalid. Use the existing form validation pattern from the signup form.",
-  depends: ["KB-042"]
+  depends: ["FN-042"]
 })
 ```
 

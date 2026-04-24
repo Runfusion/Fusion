@@ -94,11 +94,11 @@ For large-scale projects spanning multiple tasks, use the mission hierarchy:
    fn_slice_activate({ id: "SL-001" })
    ```
 
-6. **Link features to tasks** — Connect features to kb tasks
+6. **Link features to tasks** — Connect features to Fusion tasks
    ```
    fn_task_create({ description: "Create user model with email, password hash, and timestamps" })
-   # → Created KB-101
-   fn_feature_link_task({ featureId: "F-001", taskId: "KB-101" })
+   # → Created FN-101
+   fn_feature_link_task({ featureId: "F-001", taskId: "FN-101" })
    ```
 
 **Mission status flows automatically:**

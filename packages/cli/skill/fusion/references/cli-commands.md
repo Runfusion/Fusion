@@ -17,27 +17,27 @@ fn dashboard --dev                        # Web UI only (no AI engine)
 ```bash
 fn task create "description"              # Create task → triage
 fn task create "desc" --attach file.png   # Create with attachment
-fn task create "desc" --depends KB-001    # Create with dependency
+fn task create "desc" --depends FN-001    # Create with dependency
 fn task plan "description"                # AI-guided planning mode
 fn task list                              # List all tasks by column
-fn task show KB-001                       # Show task details + steps + log
-fn task move KB-001 todo                  # Move task to column
-fn task merge KB-001                      # Merge in-review task to main
-fn task duplicate KB-001                  # Copy task to triage
-fn task refine KB-001 --feedback "..."    # Create follow-up task
-fn task archive KB-001                    # Move done → archived
-fn task unarchive KB-001                  # Move archived → done
-fn task delete KB-001 [--force]           # Permanently delete
-fn task retry KB-001                      # Retry failed task → todo
-fn task comment KB-001 "text"             # Add general comment
-fn task comments KB-001                   # List task comments
-fn task steer KB-001 "guidance"           # Add steering comment for AI
-fn task pause KB-001                      # Pause automation
-fn task unpause KB-001                    # Resume automation
-fn task logs KB-001                       # View agent execution logs
-fn task logs KB-001 --follow              # Stream logs in real-time
-fn task logs KB-001 --limit 50            # Limit log lines
-fn task logs KB-001 --type tool           # Filter by log type
+fn task show FN-001                       # Show task details + steps + log
+fn task move FN-001 todo                  # Move task to column
+fn task merge FN-001                      # Merge in-review task to main
+fn task duplicate FN-001                  # Copy task to triage
+fn task refine FN-001 --feedback "..."    # Create follow-up task
+fn task archive FN-001                    # Move done → archived
+fn task unarchive FN-001                  # Move archived → done
+fn task delete FN-001 [--force]           # Permanently delete
+fn task retry FN-001                      # Retry failed task → todo
+fn task comment FN-001 "text"             # Add general comment
+fn task comments FN-001                   # List task comments
+fn task steer FN-001 "guidance"           # Add steering comment for AI
+fn task pause FN-001                      # Pause automation
+fn task unpause FN-001                    # Resume automation
+fn task logs FN-001                       # View agent execution logs
+fn task logs FN-001 --follow              # Stream logs in real-time
+fn task logs FN-001 --limit 50            # Limit log lines
+fn task logs FN-001 --type tool           # Filter by log type
 ```
 
 ## Mission Management
@@ -57,9 +57,9 @@ fn task import owner/repo                  # Import all open issues
 fn task import owner/repo --interactive    # Select issues interactively
 fn task import owner/repo --limit 10       # Limit import count
 fn task import owner/repo --labels bug     # Filter by labels
-fn task pr-create KB-001                   # Create GitHub PR
-fn task pr-create KB-001 --title "Fix"     # PR with custom title
-fn task pr-create KB-001 --base main       # PR targeting specific base
+fn task pr-create FN-001                   # Create GitHub PR
+fn task pr-create FN-001 --title "Fix"     # PR with custom title
+fn task pr-create FN-001 --base main       # PR targeting specific base
 ```
 
 ## Git Operations

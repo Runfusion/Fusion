@@ -87,7 +87,7 @@ The AI triage agent sets the review level based on task complexity and risk asse
 **Interpreting `fn_task_show` output:**
 
 ```
-KB-042: Fix login validation
+FN-042: Fix login validation
 Column: In Progress · Size: M · Review: 2
 
 Steps (2/5):

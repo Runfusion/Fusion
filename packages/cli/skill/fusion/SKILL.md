@@ -1,6 +1,6 @@
 ---
 name: fusion
-description: AI-orchestrated task board (Fusion) interface. Use when working with the Fusion task management system, creating or managing tasks, understanding task workflows, organizing work into missions, or interfacing with the fusion dashboard. Triggers on "create a task", "list tasks", "show board", "plan a mission", "check task status", "import issues", or any Fusion interaction.
+description: AI-orchestrated task board (Fusion) interface. Use when working with the Fusion task management system, creating or managing tasks, understanding task workflows, organizing work into missions, or interfacing with the Fusion dashboard. Triggers on "create a task", "list tasks", "show board", "plan a mission", "check task status", "import issues", or any Fusion interaction.
 ---
 
 <essential_principles>
@@ -61,7 +61,7 @@ Use `fn_task_create` with a descriptive message. Include the problem AND desired
 Use `fn_task_list` to see all tasks grouped by column. Use `column` param to filter.
 
 **Show task details:**
-Use `fn_task_show` with the task ID (e.g., KB-001) to see steps, progress, and log.
+Use `fn_task_show` with the task ID (e.g., FN-001) to see steps, progress, and log.
 
 **Plan complex work:**
 Use `fn_task_plan` for AI-guided planning that interviews you before creating the task.
@@ -84,7 +84,7 @@ These operations are **not available** via pi extension tools and require the da
 - **Moving tasks between columns** — No tool for column moves (handled by the AI engine)
 - **Workflow steps** — Creating/managing workflow step definitions requires the dashboard
 - **Settings** — Changing settings requires the dashboard or `fn settings set` CLI command
-- **Steering comments** — Adding steering comments to guide task execution requires CLI (`fn task steer`)
+- **Task comments** — Adding comments or steering guidance requires CLI (`fn task comment`, `fn task steer`) or the dashboard comments tab
 - **Merge operations** — Merging completed tasks requires CLI (`fn task merge`) or auto-merge
 
 For these operations, guide the user to the dashboard (`/fn`) or CLI commands documented in workflows/dashboard-cli.md.
