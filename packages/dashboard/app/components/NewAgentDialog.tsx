@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import type { AgentCapability, ModelInfo, AgentGenerationSpec } from "../api";
-import { createAgent, fetchModels, updateGlobalSettings } from "../api";
+import type { Agent, AgentCapability, ModelInfo, AgentGenerationSpec } from "../api";
+import { createAgent, fetchAgents, fetchModels, updateGlobalSettings } from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ProviderIcon } from "./ProviderIcon";
 import { AgentGenerationModal } from "./AgentGenerationModal";
@@ -63,6 +63,10 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
   const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
   const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
 
+  // Manager dropdown state
+  const [availableManagers, setAvailableManagers] = useState<Agent[]>([]);
+  const [managersLoading, setManagersLoading] = useState(false);
+
   // Load models when dialog opens — guard prevents async setState after test assertions
   useEffect(() => {
     if (!isOpen) return;
@@ -78,6 +82,22 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
       })
       .finally(() => setModelsLoading(false));
   }, [isOpen]);
+
+  // Load manager options when dialog opens
+  useEffect(() => {
+    if (!isOpen) return;
+    setManagersLoading(true);
+    setAvailableManagers([]);
+    fetchAgents(undefined, projectId)
+      .then((agents) => {
+        setAvailableManagers(agents);
+      })
+      .catch(() => {
+        // Gracefully handle — manager selector will show "No manager" only
+        setAvailableManagers([]);
+      })
+      .finally(() => setManagersLoading(false));
+  }, [isOpen, projectId]);
 
   // Selected model in "provider/modelId" format, or "" for default
   const selectedModel = runtimeConfig.model.includes("/")
@@ -210,6 +230,10 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
   };
 
   const selectedRole = AGENT_ROLES.find(r => r.value === role);
+  const selectedReportsToId = reportsTo.trim();
+  const selectedManager = selectedReportsToId
+    ? availableManagers.find((manager) => manager.id === selectedReportsToId)
+    : undefined;
 
   return (
     <div className="agent-dialog-overlay" onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}>
@@ -321,15 +345,21 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
               <div className="agent-dialog-section">
                 <div className="agent-dialog-section-header">Configuration</div>
                 <div className="agent-dialog-field">
-                  <label htmlFor="agent-reports-to">Reports To <span className="agent-dialog-optional">(optional agent ID)</span></label>
-                  <input
+                  <label htmlFor="agent-reports-to">Reports To <span className="agent-dialog-optional">(optional)</span></label>
+                  <select
                     id="agent-reports-to"
-                    type="text"
-                    className="input"
-                    placeholder="e.g. agent-1234abcd"
+                    className="select"
                     value={reportsTo}
                     onChange={e => setReportsTo(e.target.value)}
-                  />
+                    disabled={managersLoading}
+                  >
+                    <option value="">No manager</option>
+                    {availableManagers.map((manager) => (
+                      <option key={manager.id} value={manager.id}>
+                        {manager.name} ({manager.id})
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="agent-dialog-field">
                   <label htmlFor="agent-soul">Soul <span className="agent-dialog-optional">(optional)</span></label>
@@ -479,10 +509,14 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
                   <span className="agent-dialog-summary-row-label">Role</span>
                   <span>{selectedRole?.icon} {selectedRole?.label}</span>
                 </div>
-                {reportsTo.trim() && (
+                {selectedReportsToId && (
                   <div className="agent-dialog-summary-row">
                     <span className="agent-dialog-summary-row-label">Reports To</span>
-                    <span>{reportsTo.trim()}</span>
+                    <span>
+                      {selectedManager
+                        ? `${selectedManager.name} (${selectedManager.id})`
+                        : selectedReportsToId}
+                    </span>
                   </div>
                 )}
                 {instructionsPath.trim() && (

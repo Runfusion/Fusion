@@ -7,6 +7,7 @@ import * as apiModule from "../../api";
 // Mock the API module
 vi.mock("../../api", () => ({
   createAgent: vi.fn(),
+  fetchAgents: vi.fn(),
   fetchModels: vi.fn(),
   updateGlobalSettings: vi.fn(),
   fetchDiscoveredSkills: vi.fn(),
@@ -75,6 +76,7 @@ vi.mock("../AgentGenerationModal", () => ({
 }));
 
 const mockCreateAgent = vi.mocked(apiModule.createAgent);
+const mockFetchAgents = vi.mocked(apiModule.fetchAgents);
 const mockFetchModels = vi.mocked(apiModule.fetchModels);
 const mockUpdateGlobalSettings = vi.mocked(apiModule.updateGlobalSettings);
 const mockFetchDiscoveredSkills = vi.mocked(apiModule.fetchDiscoveredSkills);
@@ -91,6 +93,27 @@ const MOCK_MODELS_RESPONSE = {
 const MOCK_SKILLS_RESPONSE = [
   { id: "skill-1", name: "Skill One", path: "/path/skill-1", relativePath: "skills/skill-1", enabled: true, metadata: { source: "*", scope: "user" as const, origin: "top-level" as const } },
   { id: "skill-2", name: "Skill Two", path: "/path/skill-2", relativePath: "skills/skill-2", enabled: true, metadata: { source: "*", scope: "user" as const, origin: "top-level" as const } },
+];
+
+const MOCK_MANAGER_AGENTS = [
+  {
+    id: "agent-manager-1",
+    name: "Manager One",
+    role: "executor",
+    state: "idle",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    metadata: {},
+  },
+  {
+    id: "agent-manager-2",
+    name: "Manager Two",
+    role: "reviewer",
+    state: "active",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    metadata: {},
+  },
 ];
 
 async function openModelDropdown(label = "Model") {
@@ -118,6 +141,7 @@ describe("NewAgentDialog", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetchModels.mockResolvedValue(MOCK_MODELS_RESPONSE);
+    mockFetchAgents.mockResolvedValue(MOCK_MANAGER_AGENTS as any);
     mockCreateAgent.mockResolvedValue({} as any);
     mockUpdateGlobalSettings.mockResolvedValue({});
     mockFetchDiscoveredSkills.mockResolvedValue(MOCK_SKILLS_RESPONSE);
@@ -151,6 +175,114 @@ describe("NewAgentDialog", () => {
       expect(screen.getByText("Configuration")).toBeInTheDocument();
       expect(screen.getByLabelText(/Name/)).toBeInTheDocument();
       expect(screen.getByLabelText(/Reports To/)).toBeInTheDocument();
+    });
+  });
+
+  describe("manager dropdown", () => {
+    it("fetches manager options on open with projectId", async () => {
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} projectId="proj-123" />,
+      );
+
+      await waitFor(() => {
+        expect(mockFetchAgents).toHaveBeenCalledWith(undefined, "proj-123");
+      });
+    });
+
+    it("renders reports-to as a select with no-manager and fetched manager options", async () => {
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => {
+        expect(mockFetchAgents).toHaveBeenCalledOnce();
+      });
+
+      const reportsToSelect = screen.getByLabelText(/Reports To/) as HTMLSelectElement;
+      expect(reportsToSelect.tagName).toBe("SELECT");
+      expect(within(reportsToSelect).getByRole("option", { name: "No manager" })).toBeTruthy();
+      expect(within(reportsToSelect).getByRole("option", { name: "Manager One (agent-manager-1)" })).toBeTruthy();
+      expect(within(reportsToSelect).getByRole("option", { name: "Manager Two (agent-manager-2)" })).toBeTruthy();
+    });
+
+    it("sends selected manager id as reportsTo in createAgent payload", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchAgents).toHaveBeenCalledOnce());
+
+      const nameInput = screen.getByLabelText(/Name/);
+      await user.type(nameInput, "Agent With Manager");
+
+      const reportsToSelect = screen.getByLabelText(/Reports To/);
+      await user.selectOptions(reportsToSelect, "agent-manager-1");
+
+      await user.click(screen.getByText("Next"));
+      await user.click(screen.getByText("Next"));
+
+      expect(screen.getByText("Reports To")).toBeTruthy();
+      expect(screen.getByText("Manager One (agent-manager-1)")).toBeTruthy();
+
+      await user.click(screen.getByText("Create"));
+
+      await waitFor(() => {
+        expect(mockCreateAgent).toHaveBeenCalledOnce();
+      });
+
+      expect(mockCreateAgent.mock.calls[0][0]).toMatchObject({
+        name: "Agent With Manager",
+        reportsTo: "agent-manager-1",
+      });
+    });
+
+    it("omits reportsTo from payload when no manager is selected", async () => {
+      const user = userEvent.setup();
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => expect(mockFetchAgents).toHaveBeenCalledOnce());
+
+      await user.type(screen.getByLabelText(/Name/), "Agent Without Manager");
+      await user.click(screen.getByText("Next"));
+      await user.click(screen.getByText("Next"));
+      await user.click(screen.getByText("Create"));
+
+      await waitFor(() => {
+        expect(mockCreateAgent).toHaveBeenCalledOnce();
+      });
+
+      expect(mockCreateAgent.mock.calls[0][0].reportsTo).toBeUndefined();
+    });
+
+    it("keeps dialog functional when manager fetch fails", async () => {
+      mockFetchAgents.mockRejectedValueOnce(new Error("manager fetch failed"));
+      const user = userEvent.setup();
+
+      render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} />,
+      );
+
+      await waitFor(() => {
+        expect(mockFetchAgents).toHaveBeenCalledOnce();
+      });
+
+      const reportsToSelect = screen.getByLabelText(/Reports To/) as HTMLSelectElement;
+      expect(within(reportsToSelect).getByRole("option", { name: "No manager" })).toBeTruthy();
+      expect(reportsToSelect.options).toHaveLength(1);
+
+      await user.type(screen.getByLabelText(/Name/), "Agent Works Without Managers");
+      await user.click(screen.getByText("Next"));
+      await user.click(screen.getByText("Next"));
+      await user.click(screen.getByText("Create"));
+
+      await waitFor(() => {
+        expect(mockCreateAgent).toHaveBeenCalledOnce();
+      });
+
+      expect(mockCreateAgent.mock.calls[0][0].reportsTo).toBeUndefined();
     });
   });
 
