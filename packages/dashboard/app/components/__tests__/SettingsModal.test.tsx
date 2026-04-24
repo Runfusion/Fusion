@@ -885,7 +885,10 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Save"));
+    const saveButton = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(saveButton).toBeEnabled());
+
+    fireEvent.click(saveButton);
     await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
 
     const payload = (updateSettings as ReturnType<typeof vi.fn>).mock.calls[0][0];

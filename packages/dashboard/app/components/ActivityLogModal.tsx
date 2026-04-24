@@ -234,7 +234,6 @@ export function ActivityLogModal({
             <button
               className="activity-log-refresh"
               onClick={() => refresh()}
-              disabled={isLoading}
               title="Refresh"
               data-testid="activity-refresh"
             >

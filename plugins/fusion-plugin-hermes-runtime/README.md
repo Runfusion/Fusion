@@ -1,20 +1,34 @@
 # Hermes Runtime Plugin
 
-> **Status:** Scaffolded - Full implementation deferred to FN-2264
+> **Status:** Experimental placeholder runtime (current behavior)
 
-Provides a Hermes AI runtime plugin for Fusion, enabling AI agent execution capabilities for task automation.
+Provides a Hermes runtime plugin for Fusion. The plugin is active today for runtime registration/discovery and runtime selection via `runtimeConfig.runtimeHint: "hermes"`.
 
-## Overview
+## What it does today
 
-This plugin registers the Hermes runtime with the Fusion plugin system. The Hermes runtime is designed to provide AI-powered task execution capabilities for Fusion tasks.
+- Registers Hermes runtime metadata with the plugin system
+- Exposes a runtime factory that returns a placeholder runtime object
+- Emits `hermes-runtime:loaded` on plugin load
+- Supports runtime routing with `runtimeHint: "hermes"`
 
-**Note:** The runtime behavior is intentionally deferred. Any runtime invocation will return a "not implemented" signal referencing FN-2264 for the full implementation.
+## Current behavior and limitations
 
-## Features
+This plugin currently provides **registration + placeholder execution semantics**.
 
-- **Hermes Runtime Registration**: Registers the Hermes runtime with the Fusion plugin system
-- **Runtime Discovery**: Exposes runtime metadata for plugin discovery pipeline
-- **Runtime Factory**: Provides factory function for runtime instance creation (placeholder)
+- Runtime factory returns an object with:
+  - `runtimeId: "hermes"`
+  - `version: "0.1.0"`
+  - `status: "deferred"`
+  - `message` describing placeholder/deferred status
+  - `execute()` function
+- Calling `execute()` always throws a not-implemented error.
+- Runtime creation itself does **not** throw.
+
+Expected execution failure message includes:
+
+```
+Hermes runtime is not yet implemented. Full implementation deferred to FN-2264. See https://github.com/gsxdsm/fusion/issues/FN-2264
+```
 
 ## Installation
 
@@ -30,22 +44,7 @@ cp -r fusion-plugin-hermes-runtime ~/.fusion/plugins/
 fn plugin add ./plugins/fusion-plugin-hermes-runtime
 ```
 
-## Current Status
-
-| Component | Status |
-|-----------|--------|
-| Plugin Scaffold | ✅ Complete |
-| Runtime Registration | ✅ Complete |
-| Runtime Behavior | ⏳ Deferred to FN-2264 |
-
-## Runtime Registration
-
-The plugin registers a runtime with the following metadata:
-
-- **Runtime ID:** `hermes`
-- **Name:** `Hermes Runtime`
-- **Description:** Experimental Hermes runtime integration for Fusion tasks (implementation deferred to FN-2264)
-- **Version:** `0.1.0`
+## Runtime routing (`runtimeHint`)
 
 To route an agent to Hermes, set `runtimeConfig.runtimeHint` to `"hermes"`:
 
@@ -59,48 +58,18 @@ To route an agent to Hermes, set `runtimeConfig.runtimeHint` to `"hermes"`:
 }
 ```
 
-> ⚠️ Hermes is currently an experimental placeholder runtime. Session creation succeeds, but `execute()` intentionally throws until FN-2264 is implemented.
+> ⚠️ With the current placeholder runtime, agent/session selection can target Hermes successfully, but runtime `execute()` will throw.
 
-### Deferred Implementation
+## Source-of-truth metadata
 
-The runtime factory currently returns a placeholder object. When `execute()` is called, it throws an error referencing FN-2264:
-
-```
-Error: Hermes runtime is not yet implemented. Full implementation deferred to FN-2264.
-```
-
-## Development
-
-```bash
-# Install dependencies
-pnpm install
-
-# Run tests
-pnpm test
-
-# Build
-pnpm build
-```
-
-### Test Coverage
-
-The plugin includes comprehensive tests covering:
-
-- Plugin manifest identity verification
-- Runtime registration presence and metadata consistency
-- Deferred implementation behavior (placeholder, error on execute)
-- Plugin lifecycle hooks (onLoad, onUnload)
-
-## API
-
-### Plugin Manifest
+### `manifest.json`
 
 ```json
 {
   "id": "fusion-plugin-hermes-runtime",
   "name": "Hermes Runtime Plugin",
   "version": "0.1.0",
-  "description": "Hermes AI runtime plugin for Fusion",
+  "description": "Hermes AI runtime plugin for Fusion - provides AI agent execution runtime capabilities",
   "author": "Fusion Team",
   "homepage": "https://github.com/gsxdsm/fusion",
   "runtime": {
@@ -112,18 +81,42 @@ The plugin includes comprehensive tests covering:
 }
 ```
 
-### Exports
+### Runtime metadata (from `src/index.ts`)
 
-The plugin exports the following for testing and verification:
+- **Runtime ID:** `hermes`
+- **Name:** `Hermes Runtime`
+- **Version:** `0.1.0`
+- **Description:** `Experimental Hermes runtime integration for Fusion tasks (implementation deferred to FN-2264)`
 
-- `default` - The FusionPlugin instance
-- `hermesRuntimeMetadata` - Runtime manifest metadata object
-- `hermesRuntimeFactory` - Factory function for creating runtime instances
-- `HERMES_RUNTIME_ID` - Runtime ID constant (`"hermes"`)
+## Development
 
-## Related
+```bash
+# Install dependencies
+pnpm install
 
-- [FN-2264](https://github.com/gsxdsm/fusion/issues/FN-2264) - Full Hermes runtime implementation
+# Run plugin tests
+pnpm --filter @fusion-plugin-examples/hermes-runtime test
+
+# Build
+pnpm build
+```
+
+## Test coverage
+
+The plugin tests validate:
+
+- Manifest identity
+- Runtime registration + metadata consistency
+- Placeholder runtime return shape (`status: "deferred"`)
+- `execute()` failure semantics
+- Hook behavior (`onLoad`, `onUnload`, event emission)
+
+## Exports
+
+- `default` — plugin instance
+- `hermesRuntimeMetadata` — runtime metadata object
+- `hermesRuntimeFactory` — runtime factory
+- `HERMES_RUNTIME_ID` — runtime ID constant (`"hermes"`)
 
 ## License
 
