@@ -702,8 +702,8 @@ function TaskCardComponent({
 
     void onArchiveTask(task.id).then(() => {
       addToast(`Archived ${task.id}`, "success");
-    }).catch((err: any) => {
-      addToast(`Failed to archive ${task.id}: ${err.message}`, "error");
+    }).catch((err) => {
+      addToast(`Failed to archive ${task.id}: ${getErrorMessage(err)}`, "error");
     });
   }, [addToast, onArchiveTask, task.id]);
 
@@ -713,8 +713,8 @@ function TaskCardComponent({
 
     void onUnarchiveTask(task.id).then(() => {
       addToast(`Unarchived ${task.id}`, "success");
-    }).catch((err: any) => {
-      addToast(`Failed to unarchive ${task.id}: ${err.message}`, "error");
+    }).catch((err) => {
+      addToast(`Failed to unarchive ${task.id}: ${getErrorMessage(err)}`, "error");
     });
   }, [addToast, onUnarchiveTask, task.id]);
 
@@ -725,8 +725,8 @@ function TaskCardComponent({
     if (window.confirm(`Delete ${task.id}?`)) {
       void onDeleteTask(task.id).then(() => {
         addToast(`Deleted ${task.id}`, "success");
-      }).catch((err: any) => {
-        addToast(`Failed to delete ${task.id}: ${err.message}`, "error");
+      }).catch((err) => {
+        addToast(`Failed to delete ${task.id}: ${getErrorMessage(err)}`, "error");
       });
     }
   }, [addToast, onDeleteTask, task.id]);
@@ -760,8 +760,8 @@ function TaskCardComponent({
 
     void onMoveTask(task.id, column).then(() => {
       addToast(`Moved ${task.id} to ${COLUMN_LABELS[column]}`, "success");
-    }).catch((err: any) => {
-      addToast(`Failed to move ${task.id}: ${err.message}`, "error");
+    }).catch((err) => {
+      addToast(`Failed to move ${task.id}: ${getErrorMessage(err)}`, "error");
     });
   }, [addToast, onMoveTask, task.id]);
 

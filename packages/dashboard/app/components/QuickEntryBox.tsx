@@ -175,9 +175,9 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
             }
           }
         })
-        .catch((err: any) => {
+        .catch((err) => {
           if (!cancelled) {
-            setModelsError(err?.message || "Failed to load models");
+            setModelsError(getErrorMessage(err) || "Failed to load models");
           }
         })
         .finally(() => {

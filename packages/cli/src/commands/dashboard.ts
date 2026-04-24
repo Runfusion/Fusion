@@ -866,8 +866,6 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   //
   // Create the skills adapter using the same DefaultPackageManager instance
   // that was set up earlier for extension resolution.
-  //
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   const skillsAdapter = packageManager
     ? createSkillsAdapter({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dashboard's resolve() uses a looser onMissing signature than pi's DefaultPackageManager

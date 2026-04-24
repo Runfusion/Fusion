@@ -235,7 +235,6 @@ export async function probeFallbackPorts(host = DEFAULT_PROBE_HOST, timeoutMs = 
     }
 
     // Probe sequentially so first responsive common port wins deterministically.
-    // eslint-disable-next-line no-await-in-loop
     const isOpen = await probePort(safeHost, port, safeTimeout);
     if (isOpen) {
       return {

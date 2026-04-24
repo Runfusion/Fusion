@@ -125,9 +125,12 @@ export default tseslint.config(
           caughtErrorsIgnorePattern: "^_",
         },
       ],
-      // Keep no-explicit-any as WARN for production source
-      // (use @ts-expect-error or proper types when possible)
-      "@typescript-eslint/no-explicit-any": ["warn", {
+      // Ratcheted to error once the codebase was clean. Caught errors should
+      // use `catch (err) { ... getErrorMessage(err) ... }` from @fusion/core;
+      // SQLite rows should be cast via `as unknown as XxxRow[]` with a typed
+      // row interface. Reach for `// eslint-disable-next-line` only when a
+      // library's own types are genuinely wrong, with a one-line justification.
+      "@typescript-eslint/no-explicit-any": ["error", {
         "ignoreRestArgs": true,
       }],
       // Fallthrough only permitted with an explicit comment.

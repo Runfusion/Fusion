@@ -71,7 +71,7 @@ export async function retryDynamicImport<T>(
 function isMobileDevice(): boolean {
   if (typeof window === "undefined") return false;
   const hasTouchScreen =
-    "ontouchstart" in window || (navigator as any).maxTouchPoints > 0;
+    "ontouchstart" in window || navigator.maxTouchPoints > 0;
   const isNarrow = window.innerWidth <= 768;
   return hasTouchScreen && isNarrow;
 }

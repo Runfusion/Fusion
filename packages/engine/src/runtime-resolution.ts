@@ -78,7 +78,6 @@ export class DefaultPiRuntime implements AgentRuntime {
   readonly name = "Default PI Runtime";
 
   // Synchronous cached describeModel function
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private static describeModelFn: ((session: AgentSession) => string) | null = null;
 
   /**
@@ -223,7 +222,6 @@ function wrapPluginRuntime(
     describeModel: (session: AgentSession) => {
       const adapter = instance as Record<string, unknown>;
       if (typeof adapter.describeModel === "function") {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return (adapter.describeModel as (s: AgentSession) => string)(session);
       }
       // Fallback to default pi describeModel - use cached sync function

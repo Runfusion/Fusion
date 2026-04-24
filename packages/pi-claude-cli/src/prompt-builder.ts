@@ -438,19 +438,30 @@ function contentToText(content: string | unknown[]): string {
       if (block.type === "thinking") return ""; // Skip thinking — internal reasoning, not conversation
       if (block.type === "toolCall") {
         const name = typeof block.name === "string" ? block.name : "";
-        const args = block.arguments && typeof block.arguments === "object"
-          ? (block.arguments as Record<string, unknown>)
-          : undefined;
+        const rawArgs = block.arguments;
+        // A toolCall may carry either parsed args (object) or the raw unparsed
+        // string that pi produced — preserve the raw string verbatim so callers
+        // can see what the model actually sent.
+        const argsObject =
+          rawArgs && typeof rawArgs === "object" ? (rawArgs as Record<string, unknown>) : undefined;
         const isCustom = isCustomToolName(name);
         if (isCustom) {
           // Custom tools: don't reference the MCP tool name — Claude might try to re-call it.
           // Just note what was done. The result follows as a TOOL RESULT message.
-          const argsStr = args ? JSON.stringify(args) : "{}";
+          const argsStr = argsObject
+            ? JSON.stringify(argsObject)
+            : typeof rawArgs === "string"
+              ? JSON.stringify(rawArgs)
+              : "{}";
           return `[Used ${name} tool with args: ${argsStr}]`;
         }
         const claudeName = mapPiToolNameToClaude(name);
-        const claudeArgs = args ? translatePiArgsToClaude(name, args) : undefined;
-        const argsStr = claudeArgs ? JSON.stringify(claudeArgs) : "{}";
+        const claudeArgs = argsObject ? translatePiArgsToClaude(name, argsObject) : undefined;
+        const argsStr = claudeArgs
+          ? JSON.stringify(claudeArgs)
+          : typeof rawArgs === "string"
+            ? JSON.stringify(rawArgs)
+            : "{}";
         return `Historical tool call (non-executable): ${claudeName} args=${argsStr}`;
       }
       // Unknown block types are represented as a placeholder

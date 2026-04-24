@@ -4,7 +4,6 @@
  * Uses Fusion auth for writes and legacy pi auth as a read-only fallback.
  * Provides factory functions for creating triage and executor agent sessions.
  */
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { existsSync, readFileSync } from "node:fs";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";

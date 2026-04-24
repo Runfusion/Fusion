@@ -312,7 +312,6 @@ export class DevServerManager extends EventEmitter<DevServerManagerEvents> {
 
   private async findFirstReachablePort(ports: number[]): Promise<number | null> {
     for (const port of ports) {
-      // eslint-disable-next-line no-await-in-loop
       const reachable = await probePort(port);
       if (reachable) {
         return port;
