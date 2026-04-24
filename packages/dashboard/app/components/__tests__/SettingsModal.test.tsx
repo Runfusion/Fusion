@@ -2368,7 +2368,14 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Notifications"));
+    const notificationsButton = screen.queryByRole("button", { name: /Notifications/ });
+    if (notificationsButton) {
+      fireEvent.click(notificationsButton);
+    } else {
+      // Mobile layout uses the section picker dropdown instead of sidebar buttons.
+      fireEvent.change(screen.getByLabelText("Settings Section"), { target: { value: "notifications" } });
+    }
+
     const checkbox = screen.getByLabelText("Enable ntfy.sh notifications");
     fireEvent.click(checkbox);
 
