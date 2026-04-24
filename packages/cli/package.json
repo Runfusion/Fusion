@@ -33,6 +33,7 @@
     "dist/**/*.d.ts.map",
     "dist/**/*.js.map",
     "dist/client/**",
+    "dist/pi-claude-cli/**",
     "skill/**",
     "README.md"
   ],
@@ -46,7 +47,6 @@
     "test:build-exe": "FUSION_TEST_BUILD_EXE=1 vitest run --config vitest.build-exe.config.ts --silent=passed-only --reporter=dot"
   },
   "dependencies": {
-    "@fusion/pi-claude-cli": "workspace:*",
     "@mariozechner/pi-ai": "^0.70.0",
     "@mariozechner/pi-coding-agent": "^0.70.0",
     "express": "^5.1.0",
@@ -73,6 +73,7 @@
     "@fusion/core": "workspace:*",
     "@fusion/dashboard": "workspace:*",
     "@fusion/engine": "workspace:*",
+    "@fusion/pi-claude-cli": "workspace:*",
     "typebox": "^1.0.0",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^3.1.0",

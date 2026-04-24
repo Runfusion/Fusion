@@ -43,22 +43,33 @@ export type ClaudeCliExtensionResolution =
 /**
  * Resolve the absolute path to `@fusion/pi-claude-cli`'s pi extension entry file.
  *
- * Implementation notes:
- *   - `require.resolve("@fusion/pi-claude-cli/package.json")` is the canonical way
- *     to find a package's root from a dependent module without importing the
- *     package itself. It respects pnpm's strict layout.
- *   - We read pi.extensions[0] from the package.json rather than assuming
- *     a fixed filename; if upstream renames the entry we still work.
- *   - `createRequire(import.meta.url)` anchors resolution to this module's
- *     physical location, not `process.cwd()`, so the dep is found wherever
- *     `@runfusion/fusion` itself is installed.
+ * The package is bundled into the published @runfusion/fusion as
+ * `dist/pi-claude-cli/` (see tsup.config.ts) so it is not a runtime npm
+ * dependency. We look for that bundled copy first by walking up from this
+ * module's location, and fall back to `require.resolve` for monorepo
+ * dev/test runs where this file executes from `src/` rather than `dist/`.
  */
 export function resolveClaudeCliExtension(): ClaudeCliExtensionResolution {
-  let pkgJsonPath: string;
-  try {
-    pkgJsonPath = require_.resolve("@fusion/pi-claude-cli/package.json");
-  } catch {
-    return { status: "not-installed" };
+  let pkgJsonPath: string | undefined;
+
+  // Bundled lookup: when running from dist/, sibling dir dist/pi-claude-cli/
+  // holds the staged extension. Walk up a few levels to also catch nested
+  // layouts (e.g. dist/commands/foo.js) without hard-coding depth.
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const rel of ["pi-claude-cli", "../pi-claude-cli", "../../pi-claude-cli"]) {
+    const candidate = resolve(here, rel, "package.json");
+    if (existsSync(candidate)) {
+      pkgJsonPath = candidate;
+      break;
+    }
+  }
+
+  if (!pkgJsonPath) {
+    try {
+      pkgJsonPath = require_.resolve("@fusion/pi-claude-cli/package.json");
+    } catch {
+      return { status: "not-installed" };
+    }
   }
 
   let pkgJson: { pi?: { extensions?: unknown }; version?: string };
