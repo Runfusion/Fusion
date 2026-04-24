@@ -3407,7 +3407,7 @@ describe("aiMergeTask — deterministic merge verification", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-050",
-      "[verification] test command succeeded (exit 0, output exceeded buffer)",
+      expect.stringMatching(/^\[timing\] \[verification\] test command succeeded \(exit 0, output exceeded buffer\) in \d+ms$/),
     );
   });
 

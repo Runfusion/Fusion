@@ -1326,13 +1326,15 @@ export class TaskExecutor {
           // with "@fusion/core entry not found" because monorepo exports point
           // to dist/. 5-minute timeout accommodates install + build together.
           if (settings.worktreeInitCommand) {
+            const initStartedAt = Date.now();
             try {
               const initResult = await runConfiguredCommand(settings.worktreeInitCommand, worktreePath, 300_000);
               if (initResult.spawnError || initResult.timedOut || initResult.exitCode !== 0) {
                 throw new Error(configuredCommandErrorMessage(initResult));
               }
-              await this.store.logEntry(task.id, "Worktree init command completed", settings.worktreeInitCommand, this.currentRunContext);
+              await this.store.logEntry(task.id, `[timing] Worktree init command completed in ${Date.now() - initStartedAt}ms`, settings.worktreeInitCommand, this.currentRunContext);
             } catch (err: unknown) {
+              await this.store.logEntry(task.id, `[timing] Worktree init command failed after ${Date.now() - initStartedAt}ms`, undefined, this.currentRunContext);
               const execError = err instanceof Error ? err : new Error(String(err));
               const message = "stderr" in execError && typeof (execError as Record<string, unknown>).stderr === "string"
                 ? String((execError as Record<string, unknown>).stderr)
@@ -1351,12 +1353,13 @@ export class TaskExecutor {
           if (settings.setupScript) {
             const scriptCommand = settings.scripts?.[settings.setupScript];
             if (scriptCommand) {
+              const setupStartedAt = Date.now();
               try {
                 const setupResult = await runConfiguredCommand(scriptCommand, worktreePath, 120_000);
                 if (setupResult.spawnError || setupResult.timedOut || setupResult.exitCode !== 0) {
                   throw new Error(configuredCommandErrorMessage(setupResult));
                 }
-                await this.store.logEntry(task.id, `Setup script '${settings.setupScript}' completed`, scriptCommand, this.currentRunContext);
+                await this.store.logEntry(task.id, `[timing] Setup script '${settings.setupScript}' completed in ${Date.now() - setupStartedAt}ms`, scriptCommand, this.currentRunContext);
               } catch (err: unknown) {
                 const execError = err instanceof Error ? err : new Error(String(err));
                 const message = "stderr" in execError && typeof (execError as Record<string, unknown>).stderr === "string"
@@ -3427,6 +3430,7 @@ ${failureFeedback}
       executorLog.log(`${task.id} — [pre-merge] running workflow step: ${ws.name} (${stepMode} mode)`);
 
       const startedAt = new Date().toISOString();
+      const stepStartedAtMs = Date.now();
 
       // Push pending entry BEFORE execution so dashboard can show live status
       results.push({
@@ -3445,6 +3449,7 @@ ${failureFeedback}
         const completedAt = new Date().toISOString();
 
         if (result.success) {
+          await this.store.logEntry(task.id, `[timing] Workflow step '${ws.name}' completed in ${Date.now() - stepStartedAtMs}ms`);
           await this.store.logEntry(task.id, `[pre-merge] Workflow step completed: ${ws.name}`);
           executorLog.log(`${task.id} — [pre-merge] workflow step passed: ${ws.name}`);
           // Update existing pending entry in place
@@ -3460,6 +3465,7 @@ ${failureFeedback}
           await this.store.updateTask(task.id, { workflowStepResults: results });
         } else if (result.revisionRequested) {
           // Revision requested — this is a structured outcome that routes back to executor
+          await this.store.logEntry(task.id, `[timing] Workflow step '${ws.name}' requested revision after ${Date.now() - stepStartedAtMs}ms`);
           await this.store.logEntry(
             task.id,
             `[pre-merge] Workflow step requested revision: ${ws.name}`,
@@ -3485,6 +3491,7 @@ ${failureFeedback}
           };
         } else {
           // Hard failure
+          await this.store.logEntry(task.id, `[timing] Workflow step '${ws.name}' failed after ${Date.now() - stepStartedAtMs}ms`);
           await this.store.logEntry(
             task.id,
             `[pre-merge] Workflow step failed: ${ws.name}`,

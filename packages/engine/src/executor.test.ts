@@ -451,7 +451,7 @@ describe("TaskExecutor worktreeInitCommand", () => {
     // Should log success
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-010",
-      "Worktree init command completed",
+      expect.stringMatching(/^\[timing\] Worktree init command completed in \d+ms$/),
       "pnpm install",
       expect.objectContaining({ agentId: "executor" }),
     );

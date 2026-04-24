@@ -397,6 +397,18 @@ export function inferDefaultTestCommand(
 
   // Infer test command from lock files
   if (existsSync(join(rootDir, "pnpm-lock.yaml"))) {
+    // Monorepo heuristic: a pnpm-workspace.yaml means `pnpm test` will fan out
+    // across every workspace package on every merge, which is usually far slower
+    // than necessary. Warn so the user sets an explicit scoped testCommand
+    // (e.g. `pnpm -r --filter "...[main]" test`). We don't auto-scope because
+    // the default branch name isn't guaranteed and git context may be unavailable.
+    if (existsSync(join(rootDir, "pnpm-workspace.yaml"))) {
+      mergerLog.warn(
+        `Inferred test command "pnpm test" in a pnpm workspace (${rootDir}). ` +
+        `This runs the full monorepo suite on every merge. Consider setting an explicit ` +
+        `scoped testCommand in project settings, e.g. \`pnpm -r --filter "...[main]" test\`.`,
+      );
+    }
     return {
       command: "pnpm test",
       testSource: "inferred",
@@ -572,6 +584,7 @@ async function runVerificationCommand(
     success: false,
   };
 
+  const verificationStartedAt = Date.now();
   try {
     const { stdout, stderr } = await execAsync(command, {
       cwd: rootDir,
@@ -585,10 +598,12 @@ async function runVerificationCommand(
     result.exitCode = 0;
     result.success = true;
 
-    mergerLog.log(`${taskId}: ${type} command succeeded`);
-    await store.logEntry(taskId, `[verification] ${type} command succeeded (exit 0)`);
+    const verificationDurationMs = Date.now() - verificationStartedAt;
+    mergerLog.log(`${taskId}: ${type} command succeeded in ${verificationDurationMs}ms`);
+    await store.logEntry(taskId, `[timing] [verification] ${type} command succeeded (exit 0) in ${verificationDurationMs}ms`);
     return result;
   } catch (error: any) {
+    const verificationDurationMs = Date.now() - verificationStartedAt;
     result.stdout = error?.stdout?.toString?.() || "";
     result.stderr = error?.stderr?.toString?.() || "";
     result.exitCode = typeof error?.status === "number"
@@ -601,10 +616,10 @@ async function runVerificationCommand(
     result.success = maxBufferExceeded && result.exitCode === 0;
 
     if (result.success) {
-      mergerLog.log(`${taskId}: ${type} command succeeded (exit 0, output exceeded buffer)`);
+      mergerLog.log(`${taskId}: ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`);
       await store.logEntry(
         taskId,
-        `[verification] ${type} command succeeded (exit 0, output exceeded buffer)`,
+        `[timing] [verification] ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`,
       );
       return result;
     }
@@ -613,10 +628,10 @@ async function runVerificationCommand(
     // the task for diagnostics without dumping test output to the engine stdout.
     const output = result.stderr || result.stdout || error?.message || "Unknown error";
     const summary = summarizeVerificationOutput(output, type);
-    mergerLog.error(`${taskId}: ${type} command failed (exit ${result.exitCode}); output captured in task log`);
+    mergerLog.error(`${taskId}: ${type} command failed (exit ${result.exitCode}) in ${verificationDurationMs}ms; output captured in task log`);
     await store.logEntry(
       taskId,
-      `[verification] ${type} command failed (exit ${result.exitCode}):\n${summary}`,
+      `[timing] [verification] ${type} command failed (exit ${result.exitCode}) after ${verificationDurationMs}ms:\n${summary}`,
     );
   }
 
@@ -2062,6 +2077,7 @@ export async function aiMergeTask(
           if (failedResult) {
             let fixSuccess = false;
             for (let fixAttempt = 1; fixAttempt <= maxFixRetries; fixAttempt++) {
+              const fixAttemptStartedAt = Date.now();
               mergerLog.log(`${taskId}: in-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`);
               await store.logEntry(taskId, `In-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`);
 
@@ -2076,14 +2092,15 @@ export async function aiMergeTask(
                 settings, options, effectiveTestCommand, effectiveBuildCommand,
               );
 
+              const fixAttemptDurationMs = Date.now() - fixAttemptStartedAt;
               if (fixSuccess) {
-                mergerLog.log(`${taskId}: in-merge verification fix succeeded on attempt ${fixAttempt}`);
-                await store.logEntry(taskId, `In-merge verification fix succeeded — verification now passes`);
+                mergerLog.log(`${taskId}: in-merge verification fix succeeded on attempt ${fixAttempt} in ${fixAttemptDurationMs}ms`);
+                await store.logEntry(taskId, `[timing] In-merge verification fix succeeded on attempt ${fixAttempt} in ${fixAttemptDurationMs}ms — verification now passes`);
                 break;
               }
 
-              mergerLog.warn(`${taskId}: in-merge verification fix attempt ${fixAttempt} — verification still fails`);
-              await store.logEntry(taskId, `In-merge verification fix attempt ${fixAttempt} — verification still fails`);
+              mergerLog.warn(`${taskId}: in-merge verification fix attempt ${fixAttempt} — verification still fails (${fixAttemptDurationMs}ms)`);
+              await store.logEntry(taskId, `[timing] In-merge verification fix attempt ${fixAttempt} — verification still fails (${fixAttemptDurationMs}ms)`);
             }
 
             if (fixSuccess) {
@@ -2114,6 +2131,7 @@ export async function aiMergeTask(
 
           let fixSuccess = false;
           for (let fixAttempt = 1; fixAttempt <= maxFixRetries; fixAttempt++) {
+            const fixAttemptStartedAt = Date.now();
             mergerLog.log(`${taskId}: in-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`);
             await store.logEntry(taskId, `In-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`);
 
@@ -2128,11 +2146,13 @@ export async function aiMergeTask(
               settings, options, effectiveTestCommand, effectiveBuildCommand,
             );
 
+            const fixAttemptDurationMs = Date.now() - fixAttemptStartedAt;
             if (fixSuccess) {
-              mergerLog.log(`${taskId}: in-merge verification fix succeeded on attempt ${fixAttempt}`);
-              await store.logEntry(taskId, `In-merge verification fix succeeded`);
+              mergerLog.log(`${taskId}: in-merge verification fix succeeded on attempt ${fixAttempt} in ${fixAttemptDurationMs}ms`);
+              await store.logEntry(taskId, `[timing] In-merge verification fix succeeded on attempt ${fixAttempt} in ${fixAttemptDurationMs}ms`);
               break;
             }
+            await store.logEntry(taskId, `[timing] In-merge verification fix attempt ${fixAttempt} — verification still fails (${fixAttemptDurationMs}ms)`);
           }
 
           if (fixSuccess) {
