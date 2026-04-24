@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { FileText, ChevronDown, ChevronUp, Plus, Trash2, History, X } from "lucide-react";
+import { FileText, ChevronDown, ChevronUp, Plus, Trash2, History } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Task, TaskDocument, TaskDocumentRevision } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import {
   fetchTaskDocuments,
-  fetchTaskDocument,
   fetchTaskDocumentRevisions,
   putTaskDocument,
   deleteTaskDocument,
@@ -37,7 +36,7 @@ function getContentPreview(content: string, maxLength: number = MAX_CONTENT_PREV
 export function TaskDocumentsTab({
   taskId,
   addToast,
-  onTaskUpdated,
+  onTaskUpdated: _onTaskUpdated,
   projectId,
   canEdit = false,
 }: TaskDocumentsTabProps) {

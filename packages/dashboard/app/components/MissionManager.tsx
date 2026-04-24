@@ -39,16 +39,11 @@ import type {
   MilestoneStatus,
   SliceStatus,
   FeatureStatus,
-  MilestoneWithSlices,
-  SliceWithFeatures,
   MissionHealth,
   MissionEvent,
   MissionEventType,
-  FeatureLoopState,
   MissionAssertionStatus,
   MissionContractAssertion,
-  ContractAssertionCreateInput,
-  ContractAssertionUpdateInput,
   MilestoneValidationRollup,
   MilestoneValidationTelemetry,
   MissionFeatureLoopSnapshot,
@@ -79,17 +74,13 @@ import {
   stopMission,
   startMission,
   updateMissionAutopilot,
-  fetchMissionHealth,
   fetchMissionsHealth,
   fetchMissionEvents,
   fetchAssertions,
   createAssertion,
   updateAssertion,
-  deleteAssertion,
-  reorderAssertions,
   linkFeatureToAssertion,
   unlinkFeatureFromAssertion,
-  fetchAssertionsForFeature,
   fetchFeaturesForAssertion,
   fetchMilestoneValidation,
   fetchMilestoneValidationTelemetry,
@@ -97,12 +88,11 @@ import {
   fetchValidationLoopState,
   fetchValidationRuns,
   fetchValidationRun,
-  fetchAssertion,
   fetchAiSessions,
   fetchAiSession,
   type AiSessionSummary,
 } from "../api";
-import type { AutopilotStatus as AutopilotStatusType, AutopilotState } from "./mission-types";
+import type { AutopilotState } from "./mission-types";
 
 interface MissionManagerProps {
   isOpen: boolean;
@@ -155,16 +145,6 @@ const autopilotStateColors: Record<AutopilotState, { bg: string; text: string }>
   watching: { bg: "var(--autopilot-watching-bg)", text: "var(--autopilot-watching-text)" },
   activating: { bg: "var(--autopilot-activating-bg)", text: "var(--autopilot-activating-text)" },
   completing: { bg: "var(--autopilot-completing-bg)", text: "var(--autopilot-completing-text)" },
-};
-
-/** Loop state colors for feature execution loop */
-const loopStateColors: Record<FeatureLoopState, { bg: string; text: string; indicator: string }> = {
-  idle: { bg: "var(--loop-idle-bg)", text: "var(--loop-idle-text)", indicator: "var(--loop-idle-indicator)" },
-  implementing: { bg: "var(--loop-implementing-bg)", text: "var(--loop-implementing-text)", indicator: "var(--loop-implementing-indicator)" },
-  validating: { bg: "var(--loop-validating-bg)", text: "var(--loop-validating-text)", indicator: "var(--loop-validating-indicator)" },
-  needs_fix: { bg: "var(--loop-needs-fix-bg)", text: "var(--loop-needs-fix-text)", indicator: "var(--loop-needs-fix-indicator)" },
-  passed: { bg: "var(--loop-passed-bg)", text: "var(--loop-passed-text)", indicator: "var(--loop-passed-indicator)" },
-  blocked: { bg: "var(--loop-blocked-bg)", text: "var(--loop-blocked-text)", indicator: "var(--loop-blocked-indicator)" },
 };
 
 /** Assertion status colors */
@@ -570,7 +550,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
   // Assertion panel state
   const [assertionsByMilestone, setAssertionsByMilestone] = useState<Map<string, MissionContractAssertion[]>>(new Map());
-  const [assertionsLoading, setAssertionsLoading] = useState(false);
   const [editingAssertionId, setEditingAssertionId] = useState<string | null>(null);
   const [assertionForm, setAssertionForm] = useState<{ title: string; assertion: string; status: MissionAssertionStatus }>({
     title: "",
@@ -929,7 +908,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
       }
     };
 
-    const handleSliceUpdated = (rawEvent: Event) => {
+    const handleSliceUpdated = (_rawEvent: Event) => {
       refreshHealth();
       // Reload the selected mission detail to reflect updated slice status
       if (selectedMissionRef.current) {
@@ -1560,7 +1539,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         next.set(milestoneId, assertions);
         return next;
       });
-    } catch (err: any) {
+    } catch {
       // Silently fail - assertions are optional
     }
   }, [projectId]);
@@ -1573,7 +1552,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         next.set(milestoneId, rollup);
         return next;
       });
-    } catch (err: any) {
+    } catch {
       // Silently fail
     }
   }, [projectId]);
@@ -1640,18 +1619,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     }
   }, [assertionForm, addToast, loadAssertionsForMilestone, loadValidationRollup, handleCancelAssertion, projectId]);
 
-  const handleDeleteAssertion = useCallback(async (assertionId: string, milestoneId: string) => {
-    try {
-      await deleteAssertion(assertionId, projectId);
-      addToast("Assertion deleted", "success");
-      await loadAssertionsForMilestone(milestoneId);
-      await loadValidationRollup(milestoneId);
-      setDeleteConfirmId(null);
-    } catch (err: any) {
-      addToast(err.message || "Failed to delete assertion", "error");
-    }
-  }, [addToast, loadAssertionsForMilestone, loadValidationRollup, projectId]);
-
   const loadLinkedFeaturesForAssertion = useCallback(async (assertionId: string) => {
     try {
       const features = await fetchFeaturesForAssertion(assertionId, projectId);
@@ -1660,7 +1627,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         next.set(assertionId, features);
         return next;
       });
-    } catch (err: any) {
+    } catch {
       // Silently fail
     }
   }, [projectId]);
@@ -1753,7 +1720,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         next.set(featureId, snapshot);
         return next;
       });
-    } catch (err: any) {
+    } catch {
       // Silently fail
     }
   }, [projectId]);
@@ -1767,7 +1734,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         next.set(featureId, runs);
         return next;
       });
-    } catch (err: any) {
+    } catch {
       // Silently fail
     }
   }, [projectId]);
@@ -1821,7 +1788,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         next.set(runId, detail);
         return next;
       });
-    } catch (err: any) {
+    } catch {
       // Silently fail
     }
   }, [projectId]);

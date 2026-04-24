@@ -7,7 +7,7 @@
  * creation and prompting.
  */
 
-import type { AgentRuntimeOptions, AgentSessionResult } from "./agent-runtime.js";
+import type { AgentRuntimeOptions } from "./agent-runtime.js";
 import type { PluginRunner } from "./plugin-runner.js";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import { resolveRuntime, buildRuntimeResolutionContext, type SessionPurpose } from "./runtime-resolution.js";

@@ -25,11 +25,6 @@ export interface TerminalTab {
   createdAt: number;
 }
 
-interface StoredTab extends TerminalTab {
-  /** Marked as unverified during server validation */
-  _verified?: boolean;
-}
-
 interface UseTerminalSessionsReturn {
   /** All terminal tabs */
   tabs: TerminalTab[];

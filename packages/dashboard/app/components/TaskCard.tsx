@@ -507,7 +507,7 @@ function TaskCardComponent({
     try {
       const detail = await fetchTaskDetail(depId, projectId);
       onOpenDetail(detail);
-    } catch (err: any) {
+    } catch {
       addToast(`Failed to load dependency ${depId}`, "error");
     }
   }, [onOpenDetail, addToast]);

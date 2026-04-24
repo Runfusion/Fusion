@@ -26,10 +26,8 @@ import type { AiSessionStore, AiSessionRow } from "./ai-session-store.js";
 import { SessionEventBuffer, type SessionBufferedEvent } from "./sse-buffer.js";
 import {
   createSessionDiagnostics,
-  setDiagnosticsSink,
   resetDiagnosticsSink,
   nonfatal,
-  nonfatalAsync,
 } from "./ai-session-diagnostics.js";
 
 // Dynamic import for @fusion/engine to avoid resolution issues in test environment

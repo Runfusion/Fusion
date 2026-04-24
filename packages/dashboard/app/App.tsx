@@ -52,7 +52,7 @@ import { useRemoteNodeData } from "./hooks/useRemoteNodeData";
 import { useRemoteNodeEvents } from "./hooks/useRemoteNodeEvents";
 import { NodeProvider, useNodeContext } from "./context/NodeContext";
 import type { AiSessionSummary } from "./api";
-import { fetchAiSession, fetchUnreadCount, reportDashboardPerf } from "./api";
+import { fetchUnreadCount, reportDashboardPerf } from "./api";
 import { getScopedItem, setScopedItem } from "./utils/projectStorage";
 import { subscribeSse } from "./sse-bus";
 
@@ -63,7 +63,7 @@ function AppInner() {
   const isElectron = typeof window !== "undefined" && Boolean((window as Window & { electronAPI?: unknown }).electronAPI);
   
   // Project management hooks - MUST be called before any conditional logic
-  const { projects, loading: projectsLoading, error: projectsError, refresh: refreshProjects, register: registerProject, update: updateProjectHook, unregister: unregisterProjectHook } = useProjects();
+  const { projects, loading: projectsLoading, refresh: refreshProjects } = useProjects();
   const { nodes } = useNodes();
 
   // Node context for local/remote node switching - must be called before useCurrentProject
@@ -109,11 +109,10 @@ function AppInner() {
   
   // Remote node data and events when in remote mode (pass searchQuery for server-side filtering)
   const remoteData = useRemoteNodeData(currentNodeId, { projectId: currentProject?.id, searchQuery: searchQuery || undefined });
-  const remoteEvents = useRemoteNodeEvents(currentNodeId);
-  
+  useRemoteNodeEvents(currentNodeId);
+
   // Use remote data when in remote mode, local data otherwise
   const effectiveProjects = isRemote && remoteData.projects.length > 0 ? remoteData.projects : projects;
-  const effectiveTasks = isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : [];
   
   // Theme management - required before useViewState
   const { themeMode, colorTheme, setThemeMode, setColorTheme } = useTheme();
@@ -131,7 +130,7 @@ function AppInner() {
   });
 
   // View state must be defined before useTasks since useTasks depends on taskView for SSE gating
-  const { viewMode, setViewMode, taskView, handleChangeTaskView, handleToggleTheme } = useViewState({
+  const { viewMode, setViewMode, taskView, handleChangeTaskView } = useViewState({
     projectsLoading,
     currentProjectLoading,
     currentProject,
@@ -270,7 +269,6 @@ function AppInner() {
   // Settings state
   const {
     maxConcurrent,
-    rootDir,
     autoMerge,
     globalPaused,
     enginePaused,
@@ -400,12 +398,6 @@ function AppInner() {
     if (!nodesEnabled) return;
     setNodesOpen((prev) => !prev);
   }, [nodesEnabled]);
-
-  const handleOpenMissionsView = useCallback(() => {
-    setMissionTargetId(undefined);
-    setMissionResumeSessionId(undefined);
-    handleChangeTaskView("missions");
-  }, [handleChangeTaskView]);
 
   const handleOpenMission = useCallback((missionId: string) => {
     setMissionTargetId(missionId);

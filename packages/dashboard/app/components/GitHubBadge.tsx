@@ -16,7 +16,7 @@ function getIssueModifierClass(state: string, stateReason?: string): string {
   return "card-github-badge--closed";
 }
 
-export function GitHubBadge({ prInfo, issueInfo, onIssueRefresh }: GitHubBadgeProps) {
+export function GitHubBadge({ prInfo, issueInfo, onIssueRefresh: _onIssueRefresh }: GitHubBadgeProps) {
   const handlePrClick = () => {
     if (prInfo?.url) {
       window.open(prInfo.url, "_blank", "noopener,noreferrer");

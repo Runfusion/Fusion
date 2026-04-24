@@ -87,7 +87,7 @@ interface UsageWindowRowProps {
 /**
  * Single usage window row with progress bar
  */
-function UsageWindowRow({ window, viewMode, providerName }: UsageWindowRowProps) {
+function UsageWindowRow({ window, viewMode, providerName: _providerName }: UsageWindowRowProps) {
   const colorClass = getUsageColorClass(window.percentUsed);
   const isRemainingMode = viewMode === 'remaining';
   

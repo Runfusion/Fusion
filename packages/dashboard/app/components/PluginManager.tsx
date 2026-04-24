@@ -88,8 +88,6 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
           return;
         }
 
-        const currentPlugins = pluginsRef.current;
-
         switch (payload.transition) {
           case "installing":
           case "enabled":

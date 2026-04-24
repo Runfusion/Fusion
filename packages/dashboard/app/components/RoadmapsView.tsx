@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Plus, Pencil, Trash2, Check, X, GripVertical, Sparkles, Download, Copy, Loader, ChevronLeft, ArrowLeft, ChevronUp } from "lucide-react";
+import { Plus, Pencil, Trash2, Check, X, GripVertical, Sparkles, Download, Copy, Loader, ArrowLeft, ChevronUp } from "lucide-react";
 import type { ToastType } from "../hooks/useToast";
 import { useRoadmaps, type FeatureSuggestion, type MilestoneSuggestion, type SuggestionDraftPatch } from "../hooks/useRoadmaps";
 import { useViewportMode } from "../hooks/useViewportMode";
@@ -466,11 +466,11 @@ function MilestoneCard({
   onCancelMilestoneEdit,
   onSaveMilestoneEdit,
   featureEdit,
-  onStartFeatureEdit,
+  onStartFeatureEdit: _onStartFeatureEdit,
   onCancelFeatureEdit,
   onSaveFeatureEdit,
-  projectId,
-  addToast,
+  projectId: _projectId,
+  addToast: _addToast,
   // Milestone drag-and-drop props
   isMilestoneDragging,
   isMilestoneDropTarget,
@@ -631,7 +631,7 @@ function MilestoneCard({
                 type="text"
                 className="roadmaps-view__inline-input"
                 value={milestoneEdit.value}
-                onChange={(e) =>
+                onChange={() =>
                   onStartMilestoneEdit()
                 }
                 onKeyDown={handleMilestoneTitleKeyDown}
@@ -659,7 +659,7 @@ function MilestoneCard({
             <textarea
               className="roadmaps-view__inline-textarea"
               value={milestoneEdit.field === "description" ? milestoneEdit.value : milestone.description || ""}
-              onChange={(e) => {
+              onChange={() => {
                 // Update the edit state with description
               }}
               onKeyDown={handleMilestoneDescKeyDown}
@@ -1623,9 +1623,6 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
     const isCrossMilestone = draggingMilestoneId !== targetMilestoneId;
 
     if (isCrossMilestone) {
-      // Cross-milestone move
-      const targetFeatures = featuresByMilestoneId[targetMilestoneId] || [];
-
       // No-op check: if moving to same position in same milestone (shouldn't happen but safety check)
       if (draggingMilestoneId === targetMilestoneId) {
         handleFeatureDragEnd();
@@ -1907,7 +1904,7 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
 
   // Feature handlers
   const handleStartFeatureEdit = useCallback(
-    (featureId: string, currentTitle: string, currentDescription?: string) => {
+    (featureId: string, currentTitle: string, _currentDescription?: string) => {
       setFeatureEdit({
         featureId,
         field: "title",

@@ -49,7 +49,7 @@ export function usePreviewEmbed(url: string | null, options: UsePreviewEmbedOpti
 
   const [embedStatus, setEmbedStatusState] = useState<EmbedStatus>("unknown");
   const [blockReason, setBlockReason] = useState<string | null>(null);
-  const [detectionMethod, setDetectionMethod] = useState<EmbedDetectionMethod>(initialDetectionMethod);
+  const [detectionMethod] = useState<EmbedDetectionMethod>(initialDetectionMethod);
 
   const clearLoadingTimeout = useCallback(() => {
     if (timeoutRef.current !== null) {

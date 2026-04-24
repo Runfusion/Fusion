@@ -11,7 +11,7 @@ import { findWorktreeUser } from "./merger.js";
 import { generateWorktreeName, slugify } from "./worktree-names.js";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import { describeModel, promptWithFallback, compactSessionContext } from "./pi.js";
-import { createResolvedAgentSession, describeAgentModel } from "./agent-session-helpers.js";
+import { createResolvedAgentSession } from "./agent-session-helpers.js";
 import { buildSessionSkillContext } from "./session-skill-context.js";
 import { reviewStep, type ReviewVerdict } from "./reviewer.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@mariozechner/pi-coding-agent";

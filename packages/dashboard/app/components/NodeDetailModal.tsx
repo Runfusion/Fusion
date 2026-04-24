@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Download, Key, Pencil, Save, Shield, Upload, X } from "lucide-react";
+import { Activity, Download, Pencil, Save, Shield, Upload, X } from "lucide-react";
 import type { NodeInfo, NodeUpdateInput, ProjectInfo } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { getProjectsForNode } from "../utils/nodeProjectAssignment";
@@ -66,7 +66,7 @@ export function NodeDetailModal({
 
   // Conflict resolution modal state
   const [showConflictModal, setShowConflictModal] = useState(false);
-  const [conflicts, setConflicts] = useState<SettingsConflictEntry[]>([]);
+  const [conflicts] = useState<SettingsConflictEntry[]>([]);
 
   useEffect(() => {
     isMountedRef.current = true;

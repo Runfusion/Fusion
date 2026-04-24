@@ -143,7 +143,7 @@ export function useBatchBadgeFetch(projectId?: string): UseBatchBadgeFetchResult
         batchBadgeStore.data.set(getScopedTaskKey(taskId, projectId), { result, timestamp });
       }
       batchBadgeStore.lastFetchTime = timestamp;
-    } catch (err) {
+    } catch {
       // Even on error, we don't throw - the hook handles errors gracefully
       // and partial results are still stored
     } finally {

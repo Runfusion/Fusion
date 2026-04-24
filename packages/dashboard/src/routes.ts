@@ -28,7 +28,7 @@ const {
   writeFile: fsWriteFile,
 } = fsPromises;
 import type { TaskStore, Column, ScheduleType, ActivityEventType, ModelPreset, MessageType, ParticipantType, RoutineTriggerType, ProjectSettings, EnrichedChatSession, PlanningSummary } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAvailable, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupRoutine, exportSettings, importSettings, validateImportData, MessageStore, validateMessageMetadata, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, listProjectMemoryFiles, readProjectMemoryFile, readProjectMemoryFileContent, writeProjectMemoryFile, listAgentMemoryFiles, readAgentMemoryFile, writeAgentMemoryFile, readMemory, writeMemory, searchProjectMemory, isQmdAvailable, installQmd, refreshQmdProjectMemoryIndex, QMD_INSTALL_COMMAND, MemoryBackendError, scheduleQmdProjectMemoryRefresh, discoverPiExtensions, updatePiExtensionDisabledIds, getFusionAgentDir, getLegacyPiAgentDir, ensureMemoryFileWithBackend, readInsightsMemory, writeInsightsMemory, generateMemoryAudit, buildInsightExtractionPrompt, parseInsightExtractionResponse, processAndAuditInsightExtraction } from "@fusion/core";
+import { COLUMNS, VALID_TRANSITIONS, GLOBAL_SETTINGS_KEYS, type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAvailable, isGhAuthenticated, AutomationStore, validateBackupSchedule, validateBackupRetention, validateBackupDir, syncBackupRoutine, exportSettings, importSettings, validateImportData, MessageStore, validateMessageMetadata, RoutineStore, isWebhookTrigger, resolveMemoryBackend, getMemoryBackendCapabilities, listMemoryBackendTypes, listProjectMemoryFiles, readProjectMemoryFile, readProjectMemoryFileContent, writeProjectMemoryFile, listAgentMemoryFiles, readAgentMemoryFile, writeAgentMemoryFile, readMemory, writeMemory, searchProjectMemory, isQmdAvailable, installQmd, refreshQmdProjectMemoryIndex, QMD_INSTALL_COMMAND, MemoryBackendError, scheduleQmdProjectMemoryRefresh, discoverPiExtensions, updatePiExtensionDisabledIds, getFusionAgentDir, getLegacyPiAgentDir, ensureMemoryFileWithBackend, readInsightsMemory, writeInsightsMemory, generateMemoryAudit, buildInsightExtractionPrompt, processAndAuditInsightExtraction } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { probeClaudeCli } from "./claude-cli-probe.js";
 import { GitHubClient, parseBadgeUrl } from "./github.js";
@@ -16352,9 +16352,6 @@ async function persistImportedSkills(
       // Get local global settings
       const globalSettingsStore = store.getGlobalSettingsStore();
       const globalSettings = await globalSettingsStore.getSettings();
-
-      // Get local node ID for source tracking
-      const localPeerInfo = await central.getLocalPeerInfo();
 
       // Build sync payload
       const payload = {

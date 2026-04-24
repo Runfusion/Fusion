@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Pencil, Bot, X, ChevronDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, PrInfo, Settings, AgentLogEntry, Agent } from "@fusion/core";
+import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, Settings, AgentLogEntry, Agent } from "@fusion/core";
 import { COLUMN_LABELS, VALID_TRANSITIONS } from "@fusion/core";
 import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent } from "../api";
 import type { WorkflowStepResult } from "@fusion/core";
@@ -27,23 +27,7 @@ interface ModelSelection {
   modelId?: string;
 }
 
-function normalizeModelField(value: string | null | undefined): string | undefined {
-  return value ?? undefined;
-}
 
-function getExecutorSelection(task: Task | TaskDetail): ModelSelection {
-  return {
-    provider: normalizeModelField(task.modelProvider),
-    modelId: normalizeModelField(task.modelId),
-  };
-}
-
-function getValidatorSelection(task: Task | TaskDetail): ModelSelection {
-  return {
-    provider: normalizeModelField(task.validatorModelProvider),
-    modelId: normalizeModelField(task.validatorModelId),
-  };
-}
 
 /**
  * Resolve the effective executor model following the engine's resolution order:
@@ -996,7 +980,7 @@ export function TaskDetailModal({
     try {
       const detail = await fetchTaskDetail(depId, projectId);
       onOpenDetail(detail);
-    } catch (err: any) {
+    } catch {
       addToast(`Failed to load dependency ${depId}`, "error");
     }
   }, [onOpenDetail, addToast]);

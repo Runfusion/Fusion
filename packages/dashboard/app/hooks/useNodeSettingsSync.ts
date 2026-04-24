@@ -156,7 +156,7 @@ export function useNodeSettingsSync(): UseNodeSettingsSyncResult {
    * Fetch sync status for a single node and update state.
    * Does NOT set loading=true (called during polling and initial fetch).
    */
-  const fetchNodeStatus = useCallback(async (nodeId: string, isInitial: boolean): Promise<void> => {
+  const fetchNodeStatus = useCallback(async (nodeId: string, _isInitial: boolean): Promise<void> => {
     try {
       const status = await fetchNodeSettingsSyncStatus(nodeId);
       setSyncStatusMap((prev) => ({

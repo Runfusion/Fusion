@@ -1,7 +1,6 @@
 import { memo, useCallback, useMemo } from "react";
 import { 
-  GitPullRequest, 
-  GitMerge, 
+  GitMerge,
   CheckCircle, 
   XCircle, 
   Plus, 

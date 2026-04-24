@@ -7,7 +7,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getTaskMergeBlocker, type TaskStore, type MergeResult, type MergeDetails, type WorkflowStep, type WorkflowStepResult, type Settings, type AgentPromptsConfig } from "@fusion/core";
 import { resolveAgentPrompt } from "@fusion/core";
-import { describeModel, promptWithFallback, compactSessionContext } from "./pi.js";
+import { describeModel, promptWithFallback } from "./pi.js";
 import { createResolvedAgentSession } from "./agent-session-helpers.js";
 import { buildSessionSkillContext } from "./session-skill-context.js";
 import type { WorktreePool } from "./worktree-pool.js";

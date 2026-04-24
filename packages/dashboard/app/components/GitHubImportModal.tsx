@@ -319,7 +319,6 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId 
   // Determine state flags
   const hasRemotes = remotes.length > 0;
   const singleRemote = remotes.length === 1;
-  const multipleRemotes = remotes.length > 1;
 
   // Tab-specific counts
   const importedIssueCount = issues.filter((issue) => importedUrls.has(issue.html_url)).length;

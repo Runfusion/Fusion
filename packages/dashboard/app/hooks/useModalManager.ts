@@ -121,7 +121,7 @@ export interface ModalManager {
  * and cross-modal transitions (for example, script runner -> terminal handoff).
  */
 export function useModalManager(options: UseModalManagerOptions): ModalManager {
-  const { projectId, planningSessions } = options;
+  const { planningSessions } = options;
 
   const [newTaskModalOpen, setNewTaskModalOpen] = useState(false);
   const [isPlanningOpen, setIsPlanningOpen] = useState(false);

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { X, History, Trash2, Filter, RefreshCw, CheckCircle, XCircle, ArrowRight, Plus, Settings, AlertCircle, Loader2, Folder } from "lucide-react";
 import { clearActivityLog, type ActivityLogEntry, type ActivityEventType, type ActivityFeedEntry } from "../api";
 import { useActivityLog } from "../hooks/useActivityLog";
@@ -72,10 +72,10 @@ function formatTimestamp(timestamp: string): string {
  * - Real-time updates via useActivityLog hook
  */
 export function ActivityLogModal({ 
-  isOpen, 
-  onClose, 
-  tasks, 
-  onOpenTaskDetail, 
+  isOpen,
+  onClose,
+  tasks: _tasks,
+  onOpenTaskDetail,
   projectId,
   projects = [],
   onProjectFilterChange,
@@ -136,7 +136,7 @@ export function ActivityLogModal({
       await clearActivityLog();
       refresh();
       setShowConfirmClear(false);
-    } catch (err) {
+    } catch {
       // Error handled by hook
       setShowConfirmClear(false);
     }

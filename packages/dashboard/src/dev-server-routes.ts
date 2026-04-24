@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from "express";
+import { Router, type Response } from "express";
 import { badRequest, conflict, ApiError, sendErrorResponse } from "./api-error.js";
 import { detectDevServerScripts } from "./dev-server-detect.js";
 import {

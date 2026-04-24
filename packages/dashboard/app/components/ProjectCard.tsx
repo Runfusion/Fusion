@@ -1,5 +1,5 @@
 import { memo, useCallback, useState } from "react";
-import { Play, Pause, AlertCircle, Loader2, MoreHorizontal, Trash2, Folder, ArrowRight } from "lucide-react";
+import { Play, Pause, AlertCircle, Loader2, Trash2, Folder, ArrowRight } from "lucide-react";
 import type { RegisteredProject, ProjectHealth, ProjectStatus } from "@fusion/core";
 import type { NodeInfo } from "../api";
 

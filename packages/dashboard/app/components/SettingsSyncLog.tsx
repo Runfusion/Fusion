@@ -31,7 +31,7 @@ interface SettingsSyncLogProps {
  * with filtering by direction and node name.
  */
 export function SettingsSyncLog({
-  nodeId,
+  nodeId: _nodeId,
   entries,
   loading = false,
   singleNode = false,
