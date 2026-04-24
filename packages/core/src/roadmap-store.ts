@@ -13,7 +13,6 @@
 
 import { EventEmitter } from "node:events";
 import type { Database } from "./db.js";
-import { toJsonNullable } from "./db.js";
 import type {
   Roadmap,
   RoadmapMilestone,
@@ -35,9 +34,7 @@ import type {
   RoadmapFeatureSourceRef,
 } from "./roadmap-types.js";
 import {
-  normalizeRoadmapMilestoneOrder,
   applyRoadmapMilestoneReorder,
-  normalizeRoadmapFeatureOrder,
   applyRoadmapFeatureReorder,
   moveRoadmapFeature,
 } from "./roadmap-ordering.js";
@@ -393,8 +390,6 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
     if (!milestone) {
       throw new Error(`Milestone ${id} not found`);
     }
-
-    const roadmapId = milestone.roadmapId;
 
     // SQLite FK cascade will handle features
     this.db.prepare("DELETE FROM roadmap_milestones WHERE id = ?").run(id);

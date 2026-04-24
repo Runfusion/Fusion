@@ -27,7 +27,6 @@ import type {
   SetupCompletionResult,
   DetectedProject,
   RegisteredProject,
-  GlobalSettings,
 } from "./types.js";
 import type { CentralCore } from "./central-core.js";
 import { MigrationOrchestrator } from "./migration-orchestrator.js";

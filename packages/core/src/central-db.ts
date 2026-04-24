@@ -184,10 +184,7 @@ const CENTRAL_SCHEMA_V3_CREATE_PEERS_SQL = CENTRAL_SCHEMA_V3_MIGRATION_SQL
   .filter((line) => !line.trim().startsWith("ALTER TABLE nodes ADD COLUMN"))
   .join("\n");
 
-const CENTRAL_SCHEMA_V4_MIGRATION_SQL = `
-ALTER TABLE nodes ADD COLUMN versionInfo TEXT;
-ALTER TABLE nodes ADD COLUMN pluginVersions TEXT;
-`;
+// V4 migration is applied inline via ALTER TABLE checks (see runMigrations).
 
 const CENTRAL_SCHEMA_V5_MIGRATION_SQL = `
 CREATE TABLE IF NOT EXISTS settingsSyncState (

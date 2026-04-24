@@ -273,7 +273,7 @@ export async function ensureMemoryFileWithBackend(
     const result = await backend.write(rootDir, getDefaultMemoryScaffold());
     refreshQmdIfNeeded();
     return result.success;
-  } catch (err) {
+  } catch {
     // Non-writable backends (readonly) don't throw during bootstrap
     // This is intentional - bootstrap should not fail for non-writable backends
     // The error is caught and we return false to indicate no action was taken

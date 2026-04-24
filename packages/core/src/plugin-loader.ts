@@ -9,7 +9,7 @@
  * - Error isolation (plugin crashes don't crash the loader)
  */
 
-import { join, isAbsolute, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { EventEmitter } from "node:events";
 import type { TaskStore } from "./store.js";
 import { PluginStore } from "./plugin-store.js";
@@ -21,7 +21,6 @@ import type {
   PluginRouteDefinition,
   PluginUiSlotDefinition,
   PluginRuntimeRegistration,
-  PluginState,
   PluginInstallation,
 } from "./plugin-types.js";
 import { validatePluginManifest } from "./plugin-types.js";

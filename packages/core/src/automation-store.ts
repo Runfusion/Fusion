@@ -10,7 +10,7 @@ import type {
 } from "./automation.js";
 import { AUTOMATION_PRESETS, MAX_RUN_HISTORY } from "./automation.js";
 import type { ScheduleType } from "./automation.js";
-import { Database, toJsonNullable, fromJson } from "./db.js";
+import { Database, fromJson } from "./db.js";
 
 export interface AutomationStoreEvents {
   "schedule:created": [schedule: ScheduledTask];

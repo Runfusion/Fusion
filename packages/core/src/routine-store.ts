@@ -10,7 +10,7 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { CronExpressionParser } from "cron-parser";
-import { Database, toJson, fromJson } from "./db.js";
+import { Database, fromJson } from "./db.js";
 import {
   isCronTrigger,
   type Routine,

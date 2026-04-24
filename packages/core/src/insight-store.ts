@@ -28,8 +28,7 @@
 
 import { EventEmitter } from "node:events";
 import type { Database } from "./db.js";
-import { toJson, toJsonNullable, fromJson } from "./db.js";
-import { randomUUID } from "node:crypto";
+import { toJsonNullable, fromJson } from "./db.js";
 import type {
   Insight,
   InsightCreateInput,

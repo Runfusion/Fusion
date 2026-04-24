@@ -29,7 +29,6 @@ import type {
   MigrationOptions,
   MigrationResult,
   RegisteredProject,
-  IsolationMode,
 } from "./types.js";
 import type { CentralCore } from "./central-core.js";
 

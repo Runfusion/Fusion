@@ -62,15 +62,6 @@ export interface AgentStoreEvents {
   "rating:added": (rating: AgentRating) => void;
 }
 
-type TypedEventEmitter<Events extends Record<string, unknown[]>> = {
-  [K in keyof Events]: {
-    emit(event: K, ...args: Events[K]): boolean;
-    on(event: K, listener: (...args: Events[K]) => void): TypedEventEmitter<Events>;
-    once(event: K, listener: (...args: Events[K]) => void): TypedEventEmitter<Events>;
-    off(event: K, listener: (...args: Events[K]) => void): TypedEventEmitter<Events>;
-  };
-}[keyof Events] & EventEmitter;
-
 /** Options for AgentStore constructor */
 export interface AgentStoreOptions {
   /** Root directory for kb data (default: .fusion) */

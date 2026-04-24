@@ -7,11 +7,8 @@
  */
 
 import { writeFile, readFile, rename } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import type { Settings, GlobalSettings, ProjectSettings } from "./types.js";
 import { TaskStore } from "./store.js";
-import { GlobalSettingsStore } from "./global-settings.js";
 
 /**
  * Structure for exported settings JSON.

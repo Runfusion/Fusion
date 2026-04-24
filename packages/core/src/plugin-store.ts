@@ -420,7 +420,7 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
     id: string,
     updates: PluginUpdateInput,
   ): Promise<PluginInstallation> {
-    const plugin = await this.getPlugin(id);
+    await this.getPlugin(id);
     const now = new Date().toISOString();
 
     const setClauses: string[] = ["updatedAt = ?"];
