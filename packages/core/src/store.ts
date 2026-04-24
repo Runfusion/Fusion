@@ -65,7 +65,7 @@ function assertSafeAbsolutePath(path: string): void {
     !isAbsolute ||
     path.startsWith("-") ||
     // Reject shell metacharacters, quotes, control chars, and NULs.
-    /["'`$\n\r\t;&|<>()*?\[\]{}\\\0]/.test(
+    /["'`$\n\r\t;&|<>()*?[\]{}\\\0]/.test(
       path.replace(/^[A-Za-z]:/, ""), // ignore the drive-letter colon on Windows
     )
   ) {

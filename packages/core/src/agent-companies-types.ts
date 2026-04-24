@@ -59,7 +59,7 @@ export interface AgentManifest extends AgentCompaniesFrontmatter {
   instructionBody?: string;
 }
 
-export interface ProjectManifest extends AgentCompaniesFrontmatter {}
+export type ProjectManifest = AgentCompaniesFrontmatter;
 
 export interface TaskManifest extends AgentCompaniesFrontmatter {
   assignee?: string;

@@ -71,7 +71,7 @@ export function useFileMention(options: UseFileMentionOptions = {}): UseFileMent
     }
 
     // Path characters: alphanumeric, /, _, -, .
-    const isPathChar = (char: string): boolean => /[a-zA-Z0-9/_.\-]/.test(char);
+    const isPathChar = (char: string): boolean => /[a-zA-Z0-9/_.-]/.test(char);
 
     // Find # by scanning backwards from cursor
     // Skip over path chars (they're part of the mention text)

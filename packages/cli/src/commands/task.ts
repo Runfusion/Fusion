@@ -912,7 +912,7 @@ export async function runTaskImportFromGitHub(
   const importedUrls = new Map<string, string>();
   for (const task of existingTasks) {
     // Match Source URL anywhere in description (more robust than end-of-string anchor)
-    const sourceMatch = task.description.match(/Source: (https:\/\/github\.com\/[^\/]+\/[^\/]+\/issues\/\d+)/);
+    const sourceMatch = task.description.match(/Source: (https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+)/);
     if (sourceMatch) {
       importedUrls.set(sourceMatch[1], task.id);
     }

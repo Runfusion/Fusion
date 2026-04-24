@@ -610,7 +610,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
         if (xtermRef.current) {
           const currentSize = xtermRef.current.options.fontSize || 14;
           xtermRef.current.options.fontSize = Math.min(currentSize + 1, 32);
-          fitAddonRef.current && (fitAddonRef.current as InstanceType<typeof FitAddon>).fit();
+          (fitAddonRef.current as InstanceType<typeof FitAddon> | null)?.fit();
         }
         return;
       }
@@ -621,7 +621,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
         if (xtermRef.current) {
           const currentSize = xtermRef.current.options.fontSize || 14;
           xtermRef.current.options.fontSize = Math.max(currentSize - 1, 8);
-          fitAddonRef.current && (fitAddonRef.current as InstanceType<typeof FitAddon>).fit();
+          (fitAddonRef.current as InstanceType<typeof FitAddon> | null)?.fit();
         }
         return;
       }
@@ -631,7 +631,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
         e.preventDefault();
         if (xtermRef.current) {
           xtermRef.current.options.fontSize = 14;
-          fitAddonRef.current && (fitAddonRef.current as InstanceType<typeof FitAddon>).fit();
+          (fitAddonRef.current as InstanceType<typeof FitAddon> | null)?.fit();
         }
         return;
       }

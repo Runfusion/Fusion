@@ -108,12 +108,13 @@ export function ProjectOverview({
         case "name":
           comparison = a.project.name.localeCompare(b.project.name);
           break;
-        case "activity":
+        case "activity": {
           const aTime = a.project.lastActivityAt || a.health?.lastActivityAt || a.project.updatedAt;
           const bTime = b.project.lastActivityAt || b.health?.lastActivityAt || b.project.updatedAt;
           comparison = new Date(bTime).getTime() - new Date(aTime).getTime();
           break;
-        case "status":
+        }
+        case "status": {
           const statusOrder: Record<ProjectStatus, number> = {
             errored: 0,
             initializing: 1,
@@ -122,6 +123,7 @@ export function ProjectOverview({
           };
           comparison = statusOrder[a.project.status] - statusOrder[b.project.status];
           break;
+        }
       }
 
       return sortDirection === "asc" ? comparison : -comparison;

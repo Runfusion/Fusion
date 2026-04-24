@@ -3024,7 +3024,7 @@ export function SettingsModal({
         );
       case "pi-extensions":
         return <PiExtensionsManager addToast={addToast} projectId={projectId} />;
-      case "authentication":
+      case "authentication": {
         // CLI-backed providers (currently just claude-cli) render their own
         // compact card with Enable/Disable + Test actions — bypassing the
         // OAuth/API-key rendering below. Filter them out of the standard
@@ -3231,6 +3231,7 @@ export function SettingsModal({
             )}
           </>
         );
+      }
     }
   };
 

@@ -130,27 +130,19 @@ export default tseslint.config(
       "@typescript-eslint/no-explicit-any": ["warn", {
         "ignoreRestArgs": true,
       }],
-      // Allow fallthrough with comment
-      "no-fallthrough": ["warn", { "commentPattern": ".*fallthrough.*" }],
-      // Allow useless escape
-      "no-useless-escape": "warn",
-      // Allow empty blocks
+      // Fallthrough only permitted with an explicit comment.
+      "no-fallthrough": ["error", { "commentPattern": ".*fallthrough.*" }],
+      // Ratcheted to error: codebase is clean for these mechanical rules.
+      "no-useless-escape": "error",
+      "no-case-declarations": "error",
+      "prefer-const": "error",
+      "@typescript-eslint/no-unused-expressions": "error",
+      "@typescript-eslint/no-empty-object-type": "error",
+      "@typescript-eslint/no-empty-interface": "error",
+      // Remaining soft rules — leave as warn while we tackle them later.
       "no-empty": "warn",
-      // Allow case declarations
-      "no-case-declarations": "warn",
-      // Allow unused expressions (for intentional side effects)
-      "@typescript-eslint/no-unused-expressions": "warn",
-      // Allow empty object types
-      "@typescript-eslint/no-empty-object-type": "warn",
-      // Allow empty interface
-      "@typescript-eslint/no-empty-interface": "warn",
-      // Allow @ts-ignore comments
       "@typescript-eslint/ban-ts-comment": "warn",
-      // Allow control regex
       "no-control-regex": "warn",
-      // Allow prefer-const (warn instead of error)
-      "prefer-const": "warn",
-      // Allow useless catch
       "no-useless-catch": "warn",
     },
     ignores: ["**/*.gen.ts", "**/*.gen.tsx"],

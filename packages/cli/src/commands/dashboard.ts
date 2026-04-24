@@ -366,8 +366,12 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   const dashboardStartedAt = Date.now();
 
   // Declare store and agentStore early so callbacks can safely reference them
-  // (they're assigned after initialization, but the variables exist from the start)
+  // (they're assigned after initialization, but the variables exist from the start).
+  // prefer-const disabled: callbacks close over these identifiers before the
+  // single assignment below, which requires `let` even though no reassignment occurs.
+  // eslint-disable-next-line prefer-const
   let store: TaskStore | undefined;
+  // eslint-disable-next-line prefer-const
   let agentStore: AgentStore | undefined;
 
   if (isTTY) {

@@ -173,13 +173,13 @@ export function ensureGhAuth(): void {
  */
 export function parseRepoFromRemote(remoteUrl: string): { owner: string; repo: string } | null {
   // HTTPS: https://github.com/owner/repo.git or https://github.com/owner/repo
-  const httpsMatch = remoteUrl.match(/github\.com\/([^\/]+)\/([^\/\.]+)(?:\.git)?$/);
+  const httpsMatch = remoteUrl.match(/github\.com\/([^/]+)\/([^/.]+)(?:\.git)?$/);
   if (httpsMatch) {
     return { owner: httpsMatch[1], repo: httpsMatch[2] };
   }
 
   // SSH: git@github.com:owner/repo.git or git@github.com:owner/repo
-  const sshMatch = remoteUrl.match(/github\.com:([^\/]+)\/([^\/\.]+)(?:\.git)?$/);
+  const sshMatch = remoteUrl.match(/github\.com:([^/]+)\/([^/.]+)(?:\.git)?$/);
   if (sshMatch) {
     return { owner: sshMatch[1], repo: sshMatch[2] };
   }

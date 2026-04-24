@@ -1051,6 +1051,7 @@ async function main() {
         console.error(`Unknown settings subcommand: ${subcommand}`);
         console.error("Try: fn settings | fn settings set <key> <value> | fn settings export | fn settings import <file>");
         process.exit(1);
+        break;
       }
 
       case "git": {

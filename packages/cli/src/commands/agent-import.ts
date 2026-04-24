@@ -44,7 +44,7 @@ function slugifyPathSegment(input: string): string {
   if (!input || typeof input !== "string") {
     return "unnamed";
   }
-  let slug = input
+  const slug = input
     .toLowerCase()
     .replace(/\s+/g, "-")
     .replace(/[^a-z0-9\-_]/g, "")
