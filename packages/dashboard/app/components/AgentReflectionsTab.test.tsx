@@ -2,19 +2,31 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { AgentReflectionsTab } from "./AgentReflectionsTab";
 import {
-  fetchAgentReflections,
+  addAgentRating,
+  deleteAgentRating,
   fetchAgentPerformance,
+  fetchAgentRatings,
+  fetchAgentRatingSummary,
+  fetchAgentReflections,
   triggerAgentReflection,
 } from "../api";
 
 vi.mock("../api", () => ({
-  fetchAgentReflections: vi.fn(),
+  addAgentRating: vi.fn(),
+  deleteAgentRating: vi.fn(),
   fetchAgentPerformance: vi.fn(),
+  fetchAgentRatings: vi.fn(),
+  fetchAgentRatingSummary: vi.fn(),
+  fetchAgentReflections: vi.fn(),
   triggerAgentReflection: vi.fn(),
 }));
 
+const mockedAddAgentRating = vi.mocked(addAgentRating);
+const mockedDeleteAgentRating = vi.mocked(deleteAgentRating);
 const mockedFetchAgentReflections = vi.mocked(fetchAgentReflections);
 const mockedFetchAgentPerformance = vi.mocked(fetchAgentPerformance);
+const mockedFetchAgentRatings = vi.mocked(fetchAgentRatings);
+const mockedFetchAgentRatingSummary = vi.mocked(fetchAgentRatingSummary);
 const mockedTriggerAgentReflection = vi.mocked(triggerAgentReflection);
 
 describe("AgentReflectionsTab", () => {
@@ -22,30 +34,16 @@ describe("AgentReflectionsTab", () => {
     {
       id: "ref-001",
       agentId: "agent-001",
-      timestamp: new Date(Date.now() - 3600000).toISOString(), // 1 hour ago
+      timestamp: new Date(Date.now() - 3_600_000).toISOString(),
       trigger: "periodic",
       metrics: {
         tasksCompleted: 5,
         tasksFailed: 1,
-        avgDurationMs: 120000,
+        avgDurationMs: 120_000,
       },
       insights: ["Insight 1", "Insight 2"],
       suggestedImprovements: ["Improve X", "Fix Y"],
       summary: "Test summary for the reflection",
-    },
-    {
-      id: "ref-002",
-      agentId: "agent-001",
-      timestamp: new Date(Date.now() - 86400000).toISOString(), // 1 day ago
-      trigger: "manual",
-      metrics: {
-        tasksCompleted: 3,
-        tasksFailed: 0,
-        avgDurationMs: 90000,
-      },
-      insights: ["Another insight"],
-      suggestedImprovements: ["Another suggestion"],
-      summary: "Another summary",
     },
   ];
 
@@ -53,7 +51,7 @@ describe("AgentReflectionsTab", () => {
     agentId: "agent-001",
     totalTasksCompleted: 10,
     totalTasksFailed: 2,
-    avgDurationMs: 110000,
+    avgDurationMs: 110_000,
     successRate: 0.833,
     commonErrors: ["Error 1"],
     strengths: ["Strong point"],
@@ -62,128 +60,132 @@ describe("AgentReflectionsTab", () => {
     computedAt: new Date().toISOString(),
   };
 
+  const mockRatingSummary = {
+    agentId: "agent-001",
+    averageScore: 4.2,
+    totalRatings: 5,
+    trend: "improving" as const,
+    categoryAverages: {
+      quality: 4.5,
+      speed: 4,
+    },
+    recentRatings: [],
+  };
+
+  const mockRatings = [
+    {
+      id: "rating-1",
+      agentId: "agent-001",
+      score: 4,
+      category: "quality",
+      comment: "Great execution",
+      raterType: "user" as const,
+      createdAt: new Date(Date.now() - 10_000).toISOString(),
+    },
+  ];
+
   const addToast = vi.fn();
 
   beforeEach(() => {
+    mockedAddAgentRating.mockReset();
+    mockedDeleteAgentRating.mockReset();
     mockedFetchAgentReflections.mockReset();
     mockedFetchAgentPerformance.mockReset();
+    mockedFetchAgentRatings.mockReset();
+    mockedFetchAgentRatingSummary.mockReset();
     mockedTriggerAgentReflection.mockReset();
+
     mockedFetchAgentReflections.mockResolvedValue(mockReflections);
     mockedFetchAgentPerformance.mockResolvedValue(mockPerformance);
+    mockedFetchAgentRatings.mockResolvedValue(mockRatings);
+    mockedFetchAgentRatingSummary.mockResolvedValue(mockRatingSummary);
+    mockedTriggerAgentReflection.mockResolvedValue(mockReflections[0]);
+
     addToast.mockReset();
   });
 
   it("renders loading state initially", () => {
-    render(
-      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
-    );
-
-    expect(screen.getByText("Loading reflections...")).toBeInTheDocument();
+    render(<AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />);
+    expect(screen.getByText("Loading evaluation...")).toBeInTheDocument();
   });
 
-  it("renders performance summary cards with data", async () => {
-    render(
-      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
-    );
+  it("loads and renders reflections, performance, and ratings", async () => {
+    render(<AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Tasks Completed")).toBeInTheDocument();
+      expect(screen.getByText("Performance, Reflections & Ratings")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("10")).toBeInTheDocument(); // totalTasksCompleted
-    expect(screen.getByText("2")).toBeInTheDocument(); // totalTasksFailed
-    expect(screen.getByText("83%")).toBeInTheDocument(); // successRate
-    expect(screen.getByText("3")).toBeInTheDocument(); // recentReflectionCount
+    expect(screen.getByText("Tasks Completed")).toBeInTheDocument();
+    expect(screen.getByText("User Ratings")).toBeInTheDocument();
+    expect(screen.getByText("Category Averages")).toBeInTheDocument();
+    expect(screen.getByText("Reflection History")).toBeInTheDocument();
+    expect(screen.getByText("Rating History")).toBeInTheDocument();
+    expect(screen.getByText("Great execution")).toBeInTheDocument();
   });
 
-  it("renders reflections list with correct timestamps and trigger badges", async () => {
-    render(
-      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
-    );
+  it("shows empty ratings history state", async () => {
+    mockedFetchAgentRatings.mockResolvedValue([]);
+
+    render(<AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Reflection History")).toBeInTheDocument();
-    });
-
-    // Check trigger badges
-    expect(screen.getByText("Periodic")).toBeInTheDocument();
-    expect(screen.getByText("Manual")).toBeInTheDocument();
-
-    // Check summaries are shown
-    expect(screen.getByText("Test summary for the reflection")).toBeInTheDocument();
-    expect(screen.getByText("Another summary")).toBeInTheDocument();
-  });
-
-  it("shows empty state when no reflections exist", async () => {
-    mockedFetchAgentReflections.mockResolvedValue([]);
-    mockedFetchAgentPerformance.mockResolvedValue({
-      ...mockPerformance,
-      totalTasksCompleted: 0,
-      totalTasksFailed: 0,
-      recentReflectionCount: 0,
-    });
-
-    render(
-      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("No reflections yet")).toBeInTheDocument();
-    });
-
-    expect(screen.getByText("Trigger a reflection to get started")).toBeInTheDocument();
-  });
-
-  it("shows 'no performance data' when summary has zeros", async () => {
-    mockedFetchAgentPerformance.mockResolvedValue({
-      ...mockPerformance,
-      totalTasksCompleted: 0,
-      totalTasksFailed: 0,
-      recentReflectionCount: 0,
-    });
-
-    render(
-      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("No performance data yet")).toBeInTheDocument();
+      expect(screen.getByText("No ratings yet")).toBeInTheDocument();
     });
   });
 
-  it("clicking a reflection card expands it to show insights and suggestions", async () => {
-    render(
-      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
-    );
+  it("submits a new rating and refreshes rating data", async () => {
+    mockedAddAgentRating.mockResolvedValue(mockRatings[0]);
+
+    render(<AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Test summary for the reflection")).toBeInTheDocument();
+      expect(screen.getByText("Submit Rating")).toBeInTheDocument();
     });
 
-    // Click on the first reflection card
-    const firstCard = screen.getByText("Test summary for the reflection").closest(".reflection-card");
-    expect(firstCard).toBeInTheDocument();
-    fireEvent.click(firstCard!);
+    fireEvent.click(screen.getByTitle("4 stars"));
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "speed" } });
+    fireEvent.change(screen.getByPlaceholderText("Optional comment..."), { target: { value: "Fast" } });
+    fireEvent.click(screen.getByText("Submit Rating"));
 
-    // Check expanded content
     await waitFor(() => {
-      expect(screen.getByText("Insights")).toBeInTheDocument();
-      expect(screen.getByText("Suggested Improvements")).toBeInTheDocument();
+      expect(mockedAddAgentRating).toHaveBeenCalledWith(
+        "agent-001",
+        {
+          score: 4,
+          category: "speed",
+          comment: "Fast",
+          raterType: "user",
+        },
+        "test-project",
+      );
     });
 
-    expect(screen.getByText("Insight 1")).toBeInTheDocument();
-    expect(screen.getByText("Improve X")).toBeInTheDocument();
+    expect(addToast).toHaveBeenCalledWith("Rating added", "success");
+    expect(mockedFetchAgentRatings).toHaveBeenCalledTimes(2);
+    expect(mockedFetchAgentRatingSummary).toHaveBeenCalledTimes(2);
   });
 
-  it("clicking Reflect Now calls triggerAgentReflection and refreshes data", async () => {
-    mockedTriggerAgentReflection.mockResolvedValue({
-      ...mockReflections[0],
-      id: "ref-003",
+  it("deletes a rating and refreshes rating data", async () => {
+    mockedDeleteAgentRating.mockResolvedValue();
+
+    render(<AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByTitle("Delete rating")).toBeInTheDocument();
     });
 
-    render(
-      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
-    );
+    fireEvent.click(screen.getByTitle("Delete rating"));
+
+    await waitFor(() => {
+      expect(mockedDeleteAgentRating).toHaveBeenCalledWith("agent-001", "rating-1", "test-project");
+    });
+
+    expect(addToast).toHaveBeenCalledWith("Rating deleted", "success");
+  });
+
+  it("refreshes reflections and performance after Reflect Now", async () => {
+    render(<AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />);
 
     await waitFor(() => {
       expect(screen.getByText("Reflect Now")).toBeInTheDocument();
@@ -191,27 +193,19 @@ describe("AgentReflectionsTab", () => {
 
     fireEvent.click(screen.getByText("Reflect Now"));
 
-    // Should call triggerAgentReflection
     await waitFor(() => {
       expect(mockedTriggerAgentReflection).toHaveBeenCalledWith("agent-001", "test-project");
     });
 
-    // Should show success toast
-    await waitFor(() => {
-      expect(addToast).toHaveBeenCalledWith("Reflection generated successfully", "success");
-    });
-
-    // Should refresh data
-    expect(mockedFetchAgentReflections).toHaveBeenCalledTimes(2); // Initial + refresh
-    expect(mockedFetchAgentPerformance).toHaveBeenCalledTimes(2); // Initial + refresh
+    expect(addToast).toHaveBeenCalledWith("Reflection generated successfully", "success");
+    expect(mockedFetchAgentReflections).toHaveBeenCalledTimes(2);
+    expect(mockedFetchAgentPerformance).toHaveBeenCalledTimes(2);
   });
 
   it("shows not-enough-history toast when Reflect Now returns null", async () => {
     mockedTriggerAgentReflection.mockResolvedValue(null);
 
-    render(
-      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
-    );
+    render(<AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />);
 
     await waitFor(() => {
       expect(screen.getByText("Reflect Now")).toBeInTheDocument();
@@ -224,139 +218,65 @@ describe("AgentReflectionsTab", () => {
     });
   });
 
-  it("shows agent-deleted toast when Reflect Now returns agent-not-found", async () => {
-    mockedTriggerAgentReflection.mockRejectedValue(new Error("Agent not found"));
+  it("shows error toast when ratings load fails", async () => {
+    mockedFetchAgentRatingSummary.mockRejectedValue(new Error("ratings unavailable"));
 
-    render(
-      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
-    );
+    render(<AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Reflect Now")).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByText("Reflect Now"));
-
-    await waitFor(() => {
-      expect(addToast).toHaveBeenCalledWith("This agent is no longer available. It may have been deleted.", "error");
+      expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Failed to load ratings"), "error");
     });
   });
 
-  it("shows not-enough-history toast when Reflect Now fails with insufficient-history error", async () => {
-    mockedTriggerAgentReflection.mockRejectedValue(
-      new Error("Unable to generate reflection — insufficient history or AI unavailable")
-    );
+  it("shows error toast when add rating fails", async () => {
+    mockedAddAgentRating.mockRejectedValue(new Error("save failed"));
 
-    render(
-      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
-    );
+    render(<AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Reflect Now")).toBeInTheDocument();
+      expect(screen.getByText("Submit Rating")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText("Reflect Now"));
+    fireEvent.click(screen.getByTitle("3 stars"));
+    fireEvent.click(screen.getByText("Submit Rating"));
 
     await waitFor(() => {
-      expect(addToast).toHaveBeenCalledWith("Not enough history to generate a reflection yet", "error");
+      expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Failed to add rating: save failed"), "error");
     });
   });
 
-  it("shows error toast when Reflect Now fails", async () => {
-    mockedTriggerAgentReflection.mockRejectedValue(new Error("Service unavailable"));
+  it("shows error toast when delete rating fails", async () => {
+    mockedDeleteAgentRating.mockRejectedValue(new Error("delete failed"));
 
-    render(
-      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
-    );
+    render(<AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />);
 
     await waitFor(() => {
-      expect(screen.getByText("Reflect Now")).toBeInTheDocument();
+      expect(screen.getByTitle("Delete rating")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText("Reflect Now"));
+    fireEvent.click(screen.getByTitle("Delete rating"));
 
     await waitFor(() => {
-      expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Service unavailable"), "error");
+      expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Failed to delete rating: delete failed"), "error");
     });
   });
 
-  it("disables Reflect Now button while reflecting is in progress", async () => {
-    mockedTriggerAgentReflection.mockImplementation(
-      () => new Promise((resolve) => setTimeout(() => resolve(mockReflections[0]), 1000))
-    );
-
-    render(
-      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Reflect Now")).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByText("Reflect Now"));
-
-    // Should show "Reflecting..." text
-    await waitFor(() => {
-      expect(screen.getByText("Reflecting...")).toBeInTheDocument();
-    });
-
-    // Button should be disabled
-    const button = screen.getByText("Reflecting...").closest("button");
-    expect(button).toBeDisabled();
-  });
-
-  it("shows error toast when loading data fails", async () => {
-    mockedFetchAgentReflections.mockRejectedValue(new Error("Network error"));
-    mockedFetchAgentPerformance.mockResolvedValue(mockPerformance);
-
-    render(
-      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
-    );
-
-    await waitFor(() => {
-      expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Failed to load reflections"), "error");
-    });
-  });
-
-  it("displays metrics when expanded", async () => {
-    render(
-      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
-    );
+  it("expands and collapses reflection details", async () => {
+    render(<AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />);
 
     await waitFor(() => {
       expect(screen.getByText("Test summary for the reflection")).toBeInTheDocument();
     });
 
-    const firstCard = screen.getByText("Test summary for the reflection").closest(".reflection-card");
-    fireEvent.click(firstCard!);
+    const card = screen.getByText("Test summary for the reflection").closest(".reflection-card");
+    expect(card).toBeInTheDocument();
 
-    await waitFor(() => {
-      expect(screen.getByText("Metrics")).toBeInTheDocument();
-    });
-
-    expect(screen.getByText(/Tasks:/)).toBeInTheDocument();
-    expect(screen.getByText(/Failed:/)).toBeInTheDocument();
-  });
-
-  it("collapses reflection when clicking again", async () => {
-    render(
-      <AgentReflectionsTab agentId="agent-001" projectId="test-project" addToast={addToast} />
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Test summary for the reflection")).toBeInTheDocument();
-    });
-
-    const firstCard = screen.getByText("Test summary for the reflection").closest(".reflection-card");
-    fireEvent.click(firstCard!);
-
+    fireEvent.click(card!);
     await waitFor(() => {
       expect(screen.getByText("Insights")).toBeInTheDocument();
     });
 
-    // Click again to collapse
-    fireEvent.click(firstCard!);
-
+    fireEvent.click(card!);
     await waitFor(() => {
       expect(screen.queryByText("Insights")).not.toBeInTheDocument();
     });

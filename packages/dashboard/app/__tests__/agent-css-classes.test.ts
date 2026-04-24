@@ -246,6 +246,70 @@ describe("Agent CSS classes", () => {
     expect(hasClass(".input--error")).toBe(true);
   });
 
+  it("should define AgentReflectionsTab and ratings CSS classes", () => {
+    expect(hasClass(".reflections-tab")).toBe(true);
+    expect(hasClass(".reflections-header")).toBe(true);
+    expect(hasClass(".reflections-stats-grid")).toBe(true);
+    expect(hasClass(".reflections-stat-card")).toBe(true);
+    expect(hasClass(".reflections-no-data")).toBe(true);
+    expect(hasClass(".reflections-loading-indicator")).toBe(true);
+    expect(hasClass(".reflections-ratings-section")).toBe(true);
+    expect(hasClass(".reflections-list")).toBe(true);
+    expect(hasClass(".reflection-cards")).toBe(true);
+    expect(hasClass(".reflection-card")).toBe(true);
+    expect(hasClass(".reflection-card--expanded")).toBe(true);
+    expect(hasClass(".reflection-card-header")).toBe(true);
+    expect(hasClass(".reflection-trigger-badge")).toBe(true);
+    expect(hasClass(".reflection-summary")).toBe(true);
+    expect(hasClass(".reflection-details")).toBe(true);
+    expect(hasClass(".reflection-empty")).toBe(true);
+
+    expect(hasClass(".rating-summary-card")).toBe(true);
+    expect(hasClass(".rating-score-display")).toBe(true);
+    expect(hasClass(".rating-average")).toBe(true);
+    expect(hasClass(".rating-stats")).toBe(true);
+    expect(hasClass(".rating-count")).toBe(true);
+    expect(hasClass(".rating-trend-badge")).toBe(true);
+    expect(hasClass(".trend-improving")).toBe(true);
+    expect(hasClass(".trend-declining")).toBe(true);
+    expect(hasClass(".trend-stable")).toBe(true);
+    expect(hasClass(".trend-insufficient")).toBe(true);
+    expect(hasClass(".category-breakdown")).toBe(true);
+    expect(hasClass(".category-item")).toBe(true);
+    expect(hasClass(".category-name")).toBe(true);
+    expect(hasClass(".category-score")).toBe(true);
+    expect(hasClass(".add-rating-form")).toBe(true);
+    expect(hasClass(".add-rating-category-select")).toBe(true);
+    expect(hasClass(".add-rating-comment-input")).toBe(true);
+    expect(hasClass(".star-selector")).toBe(true);
+    expect(hasClass(".star-btn")).toBe(true);
+    expect(hasClass(".rating-stars")).toBe(true);
+    expect(hasClass(".star-filled")).toBe(true);
+    expect(hasClass(".star-empty")).toBe(true);
+    expect(hasClass(".rating-history")).toBe(true);
+    expect(hasClass(".rating-history-item")).toBe(true);
+    expect(hasClass(".rating-item-header")).toBe(true);
+    expect(hasClass(".rating-category-badge")).toBe(true);
+    expect(hasClass(".rating-time")).toBe(true);
+    expect(hasClass(".rating-delete-btn")).toBe(true);
+    expect(hasClass(".rating-comment")).toBe(true);
+  });
+
+  it("should apply accessible focus/hover styles for merged evaluation cards and actions", () => {
+    expect(stylesContent).toContain(".star-btn:focus-visible");
+    expect(extractRuleBlock(".star-btn:focus-visible")).toContain("box-shadow: var(--focus-ring-strong)");
+
+    expect(stylesContent).toContain(".reflection-card:focus-visible");
+    expect(extractRuleBlock(".reflection-card:focus-visible")).toContain("box-shadow: var(--focus-ring-strong)");
+
+    const reflectionHoverBlock = extractRuleBlock(".reflection-card:hover");
+    expect(reflectionHoverBlock).toContain("background: var(--card-hover)");
+
+    expect(stylesContent).toContain("@media (max-width: 768px)");
+    expect(stylesContent).toContain(".reflections-header {");
+    expect(stylesContent).toContain("flex-wrap: wrap");
+  });
+
   // Verify ActiveAgentsPanel classes
   it("should define ActiveAgentsPanel CSS classes", () => {
     expect(hasClass(".active-agents-panel")).toBe(true);

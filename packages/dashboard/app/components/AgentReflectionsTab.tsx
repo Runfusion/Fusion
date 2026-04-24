@@ -6,13 +6,23 @@ import {
   Lightbulb,
   Loader2,
   RefreshCw,
+  Star,
+  Trash2,
   TrendingDown,
   TrendingUp,
   Zap,
 } from "lucide-react";
-import type { AgentPerformanceSummary, AgentReflection } from "../api";
+import type {
+  AgentPerformanceSummary,
+  AgentReflection,
+} from "../api";
+import type { AgentRating, AgentRatingSummary } from "@fusion/core";
 import {
+  addAgentRating,
+  deleteAgentRating,
   fetchAgentPerformance,
+  fetchAgentRatings,
+  fetchAgentRatingSummary,
   fetchAgentReflections,
   triggerAgentReflection,
 } from "../api";
@@ -79,15 +89,62 @@ function getErrorMessage(err: unknown): string {
   return String(err);
 }
 
+function getTrendLabel(trend: string): string {
+  switch (trend) {
+    case "improving":
+      return "↑ Improving";
+    case "declining":
+      return "↓ Declining";
+    case "stable":
+      return "→ Stable";
+    default:
+      return "Insufficient data";
+  }
+}
+
+function getTrendClass(trend: string): string {
+  switch (trend) {
+    case "improving":
+      return "trend-improving";
+    case "declining":
+      return "trend-declining";
+    case "stable":
+      return "trend-stable";
+    default:
+      return "trend-insufficient";
+  }
+}
+
+function renderStars(score: number, maxScore: number = 5) {
+  return (
+    <span className="rating-stars">
+      {Array.from({ length: maxScore }, (_, i) => (
+        <Star
+          key={i}
+          size={14}
+          className={i < score ? "star-filled" : "star-empty"}
+          fill={i < score ? "currentColor" : "none"}
+        />
+      ))}
+    </span>
+  );
+}
+
 export function AgentReflectionsTab({ agentId, projectId, addToast }: AgentReflectionsTabProps) {
   const [reflections, setReflections] = useState<AgentReflection[]>([]);
   const [performance, setPerformance] = useState<AgentPerformanceSummary | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [ratingSummary, setRatingSummary] = useState<AgentRatingSummary | null>(null);
+  const [ratings, setRatings] = useState<AgentRating[]>([]);
+  const [isLoadingReflections, setIsLoadingReflections] = useState(true);
+  const [isLoadingRatings, setIsLoadingRatings] = useState(true);
   const [isReflecting, setIsReflecting] = useState(false);
+  const [isSubmittingRating, setIsSubmittingRating] = useState(false);
   const [expandedReflectionId, setExpandedReflectionId] = useState<string | null>(null);
+  const [newScore, setNewScore] = useState(0);
+  const [newCategory, setNewCategory] = useState("");
+  const [newComment, setNewComment] = useState("");
 
-  // Load data on mount
-  const loadData = useCallback(async () => {
+  const loadReflectionData = useCallback(async () => {
     try {
       const [reflectionsData, performanceData] = await Promise.all([
         fetchAgentReflections(agentId, 20, projectId),
@@ -98,15 +155,30 @@ export function AgentReflectionsTab({ agentId, projectId, addToast }: AgentRefle
     } catch (err) {
       addToast(`Failed to load reflections: ${getErrorMessage(err)}`, "error");
     } finally {
-      setIsLoading(false);
+      setIsLoadingReflections(false);
+    }
+  }, [agentId, projectId, addToast]);
+
+  const loadRatingsData = useCallback(async () => {
+    try {
+      const [summaryData, ratingsData] = await Promise.all([
+        fetchAgentRatingSummary(agentId, projectId),
+        fetchAgentRatings(agentId, { limit: 50 }, projectId),
+      ]);
+      setRatingSummary(summaryData);
+      setRatings(ratingsData);
+    } catch (err) {
+      addToast(`Failed to load ratings: ${getErrorMessage(err)}`, "error");
+    } finally {
+      setIsLoadingRatings(false);
     }
   }, [agentId, projectId, addToast]);
 
   useEffect(() => {
-    void loadData();
-  }, [loadData]);
+    void loadReflectionData();
+    void loadRatingsData();
+  }, [loadReflectionData, loadRatingsData]);
 
-  // Handle reflect now button
   const handleReflectNow = async () => {
     setIsReflecting(true);
     try {
@@ -117,8 +189,8 @@ export function AgentReflectionsTab({ agentId, projectId, addToast }: AgentRefle
       }
 
       addToast("Reflection generated successfully", "success");
-      setIsLoading(true);
-      await loadData();
+      setIsLoadingReflections(true);
+      await loadReflectionData();
     } catch (err: unknown) {
       const message = getErrorMessage(err);
       const normalizedMessage = message.toLowerCase();
@@ -135,31 +207,56 @@ export function AgentReflectionsTab({ agentId, projectId, addToast }: AgentRefle
     }
   };
 
-  // Toggle expanded state
+  const handleSubmitRating = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newScore === 0) return;
+
+    setIsSubmittingRating(true);
+    try {
+      await addAgentRating(agentId, {
+        score: newScore,
+        category: newCategory || undefined,
+        comment: newComment || undefined,
+        raterType: "user",
+      }, projectId);
+
+      setNewScore(0);
+      setNewCategory("");
+      setNewComment("");
+      addToast("Rating added", "success");
+      await loadRatingsData();
+    } catch (err) {
+      addToast(`Failed to add rating: ${getErrorMessage(err)}`, "error");
+    } finally {
+      setIsSubmittingRating(false);
+    }
+  };
+
+  const handleDeleteRating = async (ratingId: string) => {
+    try {
+      await deleteAgentRating(agentId, ratingId, projectId);
+      addToast("Rating deleted", "success");
+      await loadRatingsData();
+    } catch (err) {
+      addToast(`Failed to delete rating: ${getErrorMessage(err)}`, "error");
+    }
+  };
+
   const toggleExpanded = (id: string) => {
     setExpandedReflectionId((prev) => (prev === id ? null : id));
   };
 
-  if (isLoading) {
+  if (isLoadingReflections && isLoadingRatings) {
     return (
       <div className="reflections-tab">
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            padding: "24px",
-            justifyContent: "center",
-          }}
-        >
+        <div className="reflections-loading-indicator">
           <Loader2 size={16} className="animate-spin" />
-          <span className="text-muted">Loading reflections...</span>
+          <span className="text-muted">Loading evaluation...</span>
         </div>
       </div>
     );
   }
 
-  // Check if performance summary has no data
   const hasNoPerformanceData =
     performance &&
     performance.totalTasksCompleted === 0 &&
@@ -168,11 +265,10 @@ export function AgentReflectionsTab({ agentId, projectId, addToast }: AgentRefle
 
   return (
     <div className="reflections-tab">
-      {/* Header */}
       <div className="reflections-header">
         <h3>
           <BarChart3 size={16} />
-          Performance & Reflections
+          Performance, Reflections & Ratings
         </h3>
         <button
           className="btn btn-secondary"
@@ -194,7 +290,6 @@ export function AgentReflectionsTab({ agentId, projectId, addToast }: AgentRefle
         </button>
       </div>
 
-      {/* Performance Summary Grid */}
       {performance && !hasNoPerformanceData && (
         <div className="reflections-stats-grid">
           <div className="reflections-stat-card">
@@ -256,11 +351,132 @@ export function AgentReflectionsTab({ agentId, projectId, addToast }: AgentRefle
         </div>
       )}
 
-      {/* Reflections List */}
+      <div className="reflections-ratings-section">
+        <h4>User Ratings</h4>
+
+        {isLoadingRatings ? (
+          <div className="reflections-loading-indicator">
+            <Loader2 size={16} className="animate-spin" />
+            <span className="text-muted">Loading ratings...</span>
+          </div>
+        ) : (
+          <>
+            {ratingSummary && (
+              <div className="rating-summary-card">
+                <div className="rating-score-display">
+                  <span className="rating-average">{ratingSummary.averageScore.toFixed(1)}</span>
+                  {renderStars(Math.round(ratingSummary.averageScore))}
+                </div>
+                <div className="rating-stats">
+                  <span className="rating-count">{ratingSummary.totalRatings} ratings</span>
+                  <span className={`rating-trend-badge ${getTrendClass(ratingSummary.trend)}`}>
+                    {getTrendLabel(ratingSummary.trend)}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {ratingSummary && Object.keys(ratingSummary.categoryAverages).length > 0 && (
+              <div className="category-breakdown">
+                <h4>Category Averages</h4>
+                {Object.entries(ratingSummary.categoryAverages as Record<string, number>).map(([category, avg]) => (
+                  <div key={category} className="category-item">
+                    <span className="category-name">{category}</span>
+                    <span className="category-score">{avg.toFixed(1)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <form className="add-rating-form" onSubmit={handleSubmitRating}>
+              <h4>Add Rating</h4>
+              <div className="star-selector">
+                {[1, 2, 3, 4, 5].map((score) => (
+                  <button
+                    key={score}
+                    type="button"
+                    className="star-btn touch-target"
+                    onClick={() => setNewScore(score)}
+                    title={`${score} star${score > 1 ? "s" : ""}`}
+                  >
+                    <Star
+                      size={24}
+                      fill={score <= newScore ? "currentColor" : "none"}
+                      className={score <= newScore ? "star-filled" : "star-empty"}
+                    />
+                  </button>
+                ))}
+              </div>
+              <select
+                value={newCategory}
+                onChange={(e) => setNewCategory(e.target.value)}
+                className="select add-rating-category-select"
+              >
+                <option value="">Select category...</option>
+                <option value="quality">Quality</option>
+                <option value="speed">Speed</option>
+                <option value="communication">Communication</option>
+                <option value="reliability">Reliability</option>
+                <option value="other">Other</option>
+              </select>
+              <textarea
+                value={newComment}
+                onChange={(e) => setNewComment(e.target.value)}
+                placeholder="Optional comment..."
+                className="input add-rating-comment-input"
+                rows={3}
+              />
+              <button
+                type="submit"
+                className="btn btn--primary"
+                disabled={newScore === 0 || isSubmittingRating}
+              >
+                {isSubmittingRating ? "Submitting..." : "Submit Rating"}
+              </button>
+            </form>
+
+            <div className="rating-history">
+              <h4>Rating History</h4>
+              {ratings.length === 0 ? (
+                <p className="no-ratings">No ratings yet</p>
+              ) : (
+                ratings.map((rating) => (
+                  <div key={rating.id} className="rating-history-item">
+                    <div className="rating-item-header">
+                      {renderStars(rating.score)}
+                      {rating.category && (
+                        <span className="rating-category-badge">{rating.category}</span>
+                      )}
+                      <span className="rating-time">{relativeTime(rating.createdAt)}</span>
+                      <button
+                        type="button"
+                        className="rating-delete-btn touch-target"
+                        onClick={() => void handleDeleteRating(rating.id)}
+                        title="Delete rating"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                    {rating.comment && (
+                      <p className="rating-comment">{rating.comment}</p>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
       <div className="reflections-list">
         <h4>Reflection History</h4>
 
-        {reflections.length === 0 ? (
+        {isLoadingReflections ? (
+          <div className="reflections-loading-indicator">
+            <Loader2 size={16} className="animate-spin" />
+            <span className="text-muted">Loading reflections...</span>
+          </div>
+        ) : reflections.length === 0 ? (
           <div className="reflection-empty">
             <Lightbulb size={32} opacity={0.3} />
             <p>No reflections yet</p>

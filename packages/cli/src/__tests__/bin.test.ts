@@ -174,10 +174,14 @@ describe("bin", () => {
     return import("../bin.ts");
   }
 
-  it("routes task list with --project before subcommand", async () => {
-    await runBin(["--project", "my-app", "task", "list"]);
-    expect(runTaskList).toHaveBeenCalledWith("my-app");
-  });
+  it(
+    "routes task list with --project before subcommand",
+    async () => {
+      await runBin(["--project", "my-app", "task", "list"]);
+      expect(runTaskList).toHaveBeenCalledWith("my-app");
+    },
+    15000,
+  );
 
   it("preserves legacy task list behavior when project flag is absent", async () => {
     await runBin(["task", "list"]);

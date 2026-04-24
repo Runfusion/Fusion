@@ -3,7 +3,7 @@ import {
   Bot, Heart, Activity, Pause, Play, Square, Trash2, RefreshCw, 
   Settings, FileText, ActivitySquare, X, Copy, 
   ExternalLink, CheckCircle, XCircle, Loader2, GitBranch, ListChecks,
-  ChevronDown, ChevronRight, BarChart3, Star, BookOpen, Eye, FileEdit
+  ChevronDown, ChevronRight, BarChart3, BookOpen, Eye, FileEdit
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -60,7 +60,7 @@ interface AgentDetailViewProps {
   onChildClick?: (childId: string) => void;
 }
 
-type TabId = "dashboard" | "logs" | "config" | "runs" | "tasks" | "employees" | "soul" | "instructions" | "memory" | "reflections" | "performance";
+type TabId = "dashboard" | "logs" | "config" | "runs" | "tasks" | "employees" | "soul" | "instructions" | "memory" | "reflections";
 
 const TABS: { id: TabId; label: string; icon: typeof Activity }[] = [
   { id: "dashboard", label: "Dashboard", icon: ActivitySquare },
@@ -71,8 +71,7 @@ const TABS: { id: TabId; label: string; icon: typeof Activity }[] = [
   { id: "soul", label: "Soul", icon: Heart },
   { id: "instructions", label: "Instructions", icon: BookOpen },
   { id: "memory", label: "Agent Memory", icon: FileText },
-  { id: "reflections", label: "Reflections", icon: BarChart3 },
-  { id: "performance", label: "Performance", icon: Star },
+  { id: "reflections", label: "Evaluation", icon: BarChart3 },
   { id: "config", label: "Settings", icon: Settings },
 ];
 
@@ -560,14 +559,6 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
 
           {activeTab === "reflections" && (
             <AgentReflectionsTab
-              agentId={agent.id}
-              projectId={projectId}
-              addToast={addToast}
-            />
-          )}
-
-          {activeTab === "performance" && (
-            <PerformanceTab
               agentId={agent.id}
               projectId={projectId}
               addToast={addToast}
@@ -2410,232 +2401,6 @@ function InstructionsTab({
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function PerformanceTab({ 
-  agentId,
-  projectId,
-  addToast,
-}: { 
-  agentId: string;
-  projectId?: string;
-  addToast: (msg: string, type?: "success" | "error") => void;
-}) {
-  const [summary, setSummary] = useState<import("@fusion/core").AgentRatingSummary | null>(null);
-  const [ratings, setRatings] = useState<import("@fusion/core").AgentRating[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [newScore, setNewScore] = useState(0);
-  const [newCategory, setNewCategory] = useState("");
-  const [newComment, setNewComment] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-
-  const loadData = useCallback(async () => {
-    try {
-      const { fetchAgentRatingSummary, fetchAgentRatings } = await import("../api");
-      const [summaryData, ratingsData] = await Promise.all([
-        fetchAgentRatingSummary(agentId, projectId),
-        fetchAgentRatings(agentId, { limit: 50 }, projectId),
-      ]);
-      setSummary(summaryData);
-      setRatings(ratingsData);
-    } catch (err) {
-      addToast(`Failed to load ratings: ${getErrorMessage(err)}`, "error");
-    } finally {
-      setLoading(false);
-    }
-  }, [agentId, projectId, addToast]);
-
-  useEffect(() => {
-    void loadData();
-  }, [loadData]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (newScore === 0) return;
-
-    setSubmitting(true);
-    try {
-      const { addAgentRating } = await import("../api");
-      await addAgentRating(agentId, {
-        score: newScore,
-        category: newCategory || undefined,
-        comment: newComment || undefined,
-        raterType: "user",
-      }, projectId);
-      setNewScore(0);
-      setNewCategory("");
-      setNewComment("");
-      addToast("Rating added", "success");
-      await loadData();
-    } catch (err) {
-      addToast(`Failed to add rating: ${getErrorMessage(err)}`, "error");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleDelete = async (ratingId: string) => {
-    try {
-      const { deleteAgentRating } = await import("../api");
-      await deleteAgentRating(agentId, ratingId, projectId);
-      addToast("Rating deleted", "success");
-      await loadData();
-    } catch (err) {
-      addToast(`Failed to delete rating: ${getErrorMessage(err)}`, "error");
-    }
-  };
-
-  const getTrendLabel = (trend: string) => {
-    switch (trend) {
-      case "improving": return "↑ Improving";
-      case "declining": return "↓ Declining";
-      case "stable": return "→ Stable";
-      default: return "Insufficient data";
-    }
-  };
-
-  const getTrendClass = (trend: string) => {
-    switch (trend) {
-      case "improving": return "trend-improving";
-      case "declining": return "trend-declining";
-      case "stable": return "trend-stable";
-      default: return "trend-insufficient";
-    }
-  };
-
-  const renderStars = (score: number, maxScore: number = 5) => {
-    return (
-      <span className="rating-stars">
-        {Array.from({ length: maxScore }, (_, i) => (
-          <Star
-            key={i}
-            size={14}
-            className={i < score ? "star-filled" : "star-empty"}
-            fill={i < score ? "currentColor" : "none"}
-          />
-        ))}
-      </span>
-    );
-  };
-
-  if (loading) {
-    return (
-      <div className="performance-tab">
-        <div className="loading-indicator">Loading ratings...</div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="performance-tab">
-      {/* Summary Card */}
-      {summary && (
-        <div className="rating-summary-card">
-          <div className="rating-score-display">
-            <span className="rating-average">{summary.averageScore.toFixed(1)}</span>
-            {renderStars(Math.round(summary.averageScore))}
-          </div>
-          <div className="rating-stats">
-            <span className="rating-count">{summary.totalRatings} ratings</span>
-            <span className={cn("rating-trend-badge", getTrendClass(summary.trend))}>
-              {getTrendLabel(summary.trend)}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Category Breakdown */}
-      {summary && Object.keys(summary.categoryAverages).length > 0 && (
-        <div className="category-breakdown">
-          <h4>Category Averages</h4>
-          {Object.entries(summary.categoryAverages).map(([category, avg]) => (
-            <div key={category} className="category-item">
-              <span className="category-name">{category}</span>
-              <span className="category-score">{avg.toFixed(1)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Add Rating Form */}
-      <form className="add-rating-form" onSubmit={handleSubmit}>
-        <h4>Add Rating</h4>
-        <div className="star-selector">
-          {[1, 2, 3, 4, 5].map((score) => (
-            <button
-              key={score}
-              type="button"
-              className="star-btn"
-              onClick={() => setNewScore(score)}
-              title={`${score} star${score > 1 ? "s" : ""}`}
-            >
-              <Star
-                size={24}
-                fill={score <= newScore ? "currentColor" : "none"}
-                className={score <= newScore ? "star-filled" : "star-empty"}
-              />
-            </button>
-          ))}
-        </div>
-        <select
-          value={newCategory}
-          onChange={(e) => setNewCategory(e.target.value)}
-          className="form-select"
-        >
-          <option value="">Select category...</option>
-          <option value="quality">Quality</option>
-          <option value="speed">Speed</option>
-          <option value="communication">Communication</option>
-          <option value="reliability">Reliability</option>
-          <option value="other">Other</option>
-        </select>
-        <textarea
-          value={newComment}
-          onChange={(e) => setNewComment(e.target.value)}
-          placeholder="Optional comment..."
-          className="form-textarea"
-          rows={3}
-        />
-        <button
-          type="submit"
-          className="btn-primary"
-          disabled={newScore === 0 || submitting}
-        >
-          {submitting ? "Submitting..." : "Submit Rating"}
-        </button>
-      </form>
-
-      {/* Rating History */}
-      <div className="rating-history">
-        <h4>Rating History</h4>
-        {ratings.length === 0 ? (
-          <p className="no-ratings">No ratings yet</p>
-        ) : (
-          ratings.map((rating) => (
-            <div key={rating.id} className="rating-history-item">
-              <div className="rating-item-header">
-                {renderStars(rating.score)}
-                {rating.category && (
-                  <span className="rating-category-badge">{rating.category}</span>
-                )}
-                <span className="rating-time">{relativeTime(rating.createdAt)}</span>
-                <button
-                  className="rating-delete-btn"
-                  onClick={() => handleDelete(rating.id)}
-                  title="Delete rating"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-              {rating.comment && (
-                <p className="rating-comment">{rating.comment}</p>
-              )}
-            </div>
-          ))
-        )}
-      </div>
     </div>
   );
 }

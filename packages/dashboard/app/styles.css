@@ -27798,19 +27798,7 @@ html .column.drag-over * {
   color: var(--color-success);
 }
 
-/* === Performance Tab === */
-.performance-tab {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-  padding: 16px;
-}
-
-.performance-tab .loading-indicator {
-  text-align: center;
-  color: var(--text-muted);
-  padding: 40px;
-}
+/* === Agent Evaluation Ratings === */
 
 .rating-summary-card {
   background: var(--bg-secondary);
@@ -27873,15 +27861,15 @@ html .column.drag-over * {
 }
 
 .category-breakdown {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 16px;
+  padding: var(--space-lg);
 }
 
 .category-breakdown h4 {
-  margin: 0 0 12px 0;
-  font-size: 14px;
+  margin: 0 0 var(--space-md) 0;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 
@@ -27889,7 +27877,7 @@ html .column.drag-over * {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 0;
+  padding: var(--space-sm) 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -27899,56 +27887,57 @@ html .column.drag-over * {
 
 .category-name {
   text-transform: capitalize;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .category-score {
   font-weight: 600;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .add-rating-form {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 16px;
+  padding: var(--space-lg);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 .add-rating-form h4 {
   margin: 0;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 
 .star-selector {
   display: flex;
-  gap: 4px;
+  gap: var(--space-xs);
 }
 
 .star-btn {
   background: none;
   border: none;
-  padding: 4px;
+  padding: var(--space-xs);
   cursor: pointer;
   border-radius: var(--radius-sm);
-  transition: background-color 0.15s;
+  color: var(--text-muted);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
 .star-btn:hover {
-  background: var(--bg-tertiary);
+  background: var(--card-hover);
 }
 
-.star-btn:focus {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
+.star-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
 }
 
 .rating-stars {
   display: inline-flex;
-  gap: 2px;
+  gap: var(--space-xs);
 }
 
 .rating-stars .star-filled {
@@ -27959,46 +27948,40 @@ html .column.drag-over * {
   color: var(--text-muted);
 }
 
-.add-rating-form .form-select,
-.add-rating-form .form-textarea {
+.add-rating-form .add-rating-category-select,
+.add-rating-form .add-rating-comment-input {
   width: 100%;
-  padding: 8px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 14px;
 }
 
-.add-rating-form .form-textarea {
+.add-rating-form .add-rating-comment-input {
   resize: vertical;
-  min-height: 60px;
+  min-height: calc(var(--space-xl) + var(--space-2xl));
 }
 
 .rating-history {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 16px;
-  max-height: 300px;
+  padding: var(--space-lg);
+  max-height: calc(var(--space-xl) * 12 + var(--space-md));
   overflow-y: auto;
 }
 
 .rating-history h4 {
-  margin: 0 0 12px 0;
-  font-size: 14px;
+  margin: 0 0 var(--space-md) 0;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 
 .rating-history .no-ratings {
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: 0.875rem;
   text-align: center;
-  padding: 20px;
+  padding: var(--space-lg);
 }
 
 .rating-history-item {
-  padding: 12px 0;
+  padding: var(--space-md) 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -28009,20 +27992,20 @@ html .column.drag-over * {
 .rating-item-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-sm);
   flex-wrap: wrap;
 }
 
 .rating-category-badge {
-  font-size: 11px;
-  padding: 2px 8px;
-  background: var(--bg-tertiary);
-  border-radius: 10px;
+  font-size: 0.75rem;
+  padding: calc(var(--space-xs) * 0.5) var(--space-sm);
+  background: var(--card-hover);
+  border-radius: var(--radius-pill);
   text-transform: capitalize;
 }
 
 .rating-time {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-muted);
   margin-left: auto;
 }
@@ -28030,11 +28013,11 @@ html .column.drag-over * {
 .rating-delete-btn {
   background: none;
   border: none;
-  padding: 4px;
+  padding: var(--space-xs);
   cursor: pointer;
   color: var(--text-muted);
   border-radius: var(--radius-sm);
-  transition: color 0.15s, background-color 0.15s;
+  transition: color var(--transition-fast), background-color var(--transition-fast);
 }
 
 .rating-delete-btn:hover {
@@ -28043,8 +28026,8 @@ html .column.drag-over * {
 }
 
 .rating-comment {
-  margin: 8px 0 0 0;
-  font-size: 13px;
+  margin: var(--space-sm) 0 0 0;
+  font-size: 0.8125rem;
   color: var(--text-secondary);
   line-height: 1.4;
 }
@@ -29139,11 +29122,7 @@ html .column.drag-over * {
     min-height: calc(var(--space-lg) * 2 + var(--space-xs));
   }
 
-  /* Performance Tab mobile */
-  .performance-tab {
-    gap: 16px;
-  }
-
+  /* Agent evaluation ratings mobile */
   .rating-summary-card {
     padding: 16px;
   }
@@ -35350,6 +35329,21 @@ html .column.drag-over * {
   gap: var(--space-md);
 }
 
+.reflections-loading-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+}
+
+.reflections-ratings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.reflections-ratings-section > h4,
 .reflections-list h4 {
   font-size: 0.875rem;
   font-weight: 600;
@@ -35374,7 +35368,12 @@ html .column.drag-over * {
 
 .reflection-card:hover {
   border-color: var(--border-active);
-  background: var(--surface-hover);
+  background: var(--card-hover);
+}
+
+.reflection-card:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
 }
 
 .reflection-card--expanded {
@@ -35532,6 +35531,18 @@ html .column.drag-over * {
 
 .reflection-empty p {
   font-size: 0.875rem;
+}
+
+@media (max-width: 768px) {
+  .reflections-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .reflections-header .btn {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 /* ── Mesh Topology ──────────────────────────────────────────────────────────── */

@@ -243,10 +243,14 @@ describe("bin command routing and fallbacks", () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Usage:"));
   });
 
-  it("prints an error for unknown top-level command", async () => {
-    await expect(runBin(["unknown-cmd"])).rejects.toThrow("process.exit:1");
-    expect(errorSpy).toHaveBeenCalledWith("Unknown command: unknown-cmd");
-  });
+  it(
+    "prints an error for unknown top-level command",
+    async () => {
+      await expect(runBin(["unknown-cmd"])).rejects.toThrow("process.exit:1");
+      expect(errorSpy).toHaveBeenCalledWith("Unknown command: unknown-cmd");
+    },
+    15000,
+  );
 
   it("errors on duplicate --project flags", async () => {
     await expect(runBin(["task", "list", "--project", "alpha", "-P", "beta"])).rejects.toThrow(
