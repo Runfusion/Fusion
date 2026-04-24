@@ -9,6 +9,7 @@
  * - Error isolation (plugin crashes don't crash the loader)
  */
 
+import { randomUUID } from "node:crypto";
 import { copyFile, unlink } from "node:fs/promises";
 import { isAbsolute, parse, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -278,7 +279,7 @@ export class PluginLoader extends EventEmitter<{
       const parsed = parse(path);
       tempPath = resolve(
         parsed.dir,
-        `${parsed.name}.fusion-import-${process.pid}-${++this.importNonce}${parsed.ext || ".js"}`,
+        `${parsed.name}.fusion-import-${process.pid}-${++this.importNonce}-${randomUUID()}${parsed.ext || ".js"}`,
       );
       await copyFile(path, tempPath);
       importPath = tempPath;

@@ -598,13 +598,11 @@ describe("MissionStore", () => {
       expect(events.events[0]).toEqual(event);
     });
 
-    it("getMissionEvents supports pagination, filtering, and newest-first ordering", async () => {
+    it("getMissionEvents supports pagination, filtering, and newest-first ordering", () => {
       const mission = store.createMission({ title: "Events mission" });
 
       const first = store.logMissionEvent(mission.id, "mission_started", "first");
-      await new Promise((resolve) => setTimeout(resolve, 5));
       const second = store.logMissionEvent(mission.id, "warning", "second warning");
-      await new Promise((resolve) => setTimeout(resolve, 5));
       const third = store.logMissionEvent(mission.id, "error", "third error");
 
       const pageOne = store.getMissionEvents(mission.id, { limit: 2, offset: 0 });

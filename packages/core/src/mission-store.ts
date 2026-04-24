@@ -937,7 +937,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
       SELECT *
       FROM mission_events
       WHERE ${whereSql}
-      ORDER BY timestamp DESC, id DESC
+      ORDER BY COALESCE(seq, 0) DESC, timestamp DESC, id DESC
       LIMIT ? OFFSET ?
     `).all(...params, limit, offset) as unknown as MissionEventRow[];
 
