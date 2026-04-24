@@ -1320,11 +1320,16 @@ export class TaskExecutor {
           }
 
           // Run worktree init command for fresh worktrees (skip for pooled — caches are warm).
-          // The init command must leave the worktree in a state where workspace
-          // packages resolve at runtime (e.g. `pnpm install && pnpm build`). If
-          // it doesn't, the first command the executor runs will usually fail
-          // with "@fusion/core entry not found" because monorepo exports point
-          // to dist/. 5-minute timeout accommodates install + build together.
+          // The init command should deterministically install the full dependency
+          // graph required by test/typecheck/build commands (for pnpm workspaces,
+          // prefer `pnpm install --frozen-lockfile`) so transitive modules and
+          // declarations like @vitest/runner, loupe, debug, @types/express, and
+          // node-pty are present after bootstrap.
+          //
+          // NOTE: This is distinct from the separate workspace-export failure
+          // class where internal packages fail to resolve because exports point
+          // to missing dist/* outputs (e.g. "@fusion/core entry not found").
+          // 5-minute timeout accommodates larger dependency installs.
           if (settings.worktreeInitCommand) {
             const initStartedAt = Date.now();
             try {

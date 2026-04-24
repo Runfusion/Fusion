@@ -432,7 +432,7 @@ describe("TaskExecutor worktreeInitCommand", () => {
       pollIntervalMs: 15000,
       groupOverlappingFiles: false,
       autoMerge: false,
-      worktreeInitCommand: "pnpm install",
+      worktreeInitCommand: "pnpm install --frozen-lockfile",
     });
 
     const executor = new TaskExecutor(store, "/tmp/test");
@@ -440,7 +440,7 @@ describe("TaskExecutor worktreeInitCommand", () => {
 
     // execSync is called for worktree creation + init command
     const initCall = mockedExecSync.mock.calls.find(
-      (call) => call[0] === "pnpm install",
+      (call) => call[0] === "pnpm install --frozen-lockfile",
     );
     expect(initCall).toBeDefined();
     expect(initCall![1]).toMatchObject({
@@ -452,7 +452,7 @@ describe("TaskExecutor worktreeInitCommand", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-010",
       expect.stringMatching(/^\[timing\] Worktree init command completed in \d+ms$/),
-      "pnpm install",
+      "pnpm install --frozen-lockfile",
       expect.objectContaining({ agentId: "executor" }),
     );
   });
@@ -464,7 +464,7 @@ describe("TaskExecutor worktreeInitCommand", () => {
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute(makeTask());
 
-    // Only worktree creation calls to execSync, no "pnpm install" etc.
+    // Only worktree creation calls to execSync, no "pnpm install --frozen-lockfile" etc.
     const initCall = mockedExecSync.mock.calls.find(
       (call) => typeof call[0] === "string" && !call[0].startsWith("git"),
     );
@@ -524,7 +524,7 @@ describe("TaskExecutor worktreeInitCommand", () => {
       pollIntervalMs: 15000,
       groupOverlappingFiles: false,
       autoMerge: false,
-      worktreeInitCommand: "pnpm install",
+      worktreeInitCommand: "pnpm install --frozen-lockfile",
     });
 
     // Worktree already exists (resume)
@@ -2019,15 +2019,15 @@ describe("TaskExecutor worktree pool integration", () => {
       groupOverlappingFiles: false,
       autoMerge: false,
       recycleWorktrees: true,
-      worktreeInitCommand: "pnpm install",
+      worktreeInitCommand: "pnpm install --frozen-lockfile",
     });
 
     const executor = new TaskExecutor(store, "/tmp/test", { pool });
     await executor.execute(makeTask());
 
-    // "pnpm install" should NOT have been called (pooled worktree has warm cache)
+    // "pnpm install --frozen-lockfile" should NOT have been called (pooled worktree has warm cache)
     const initCalls = mockedExecSync.mock.calls.filter(
-      (c) => c[0] === "pnpm install",
+      (c) => c[0] === "pnpm install --frozen-lockfile",
     );
     expect(initCalls).toHaveLength(0);
   });

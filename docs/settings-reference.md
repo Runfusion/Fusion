@@ -88,7 +88,7 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `mergeStrategy` | `"direct" \| "pull-request"` | `"direct"` | Completion mode (local direct merge vs PR-first). |
 | `pushAfterMerge` | `boolean` | `false` | Auto-push to remote after successful direct merge. Includes pulling latest and AI conflict resolution. |
 | `pushRemote` | `string` | `"origin"` | Git remote (and optional branch) to push to after merge. |
-| `worktreeInitCommand` | `string` | `undefined` | Shell command run after worktree creation. |
+| `worktreeInitCommand` | `string` | `undefined` | Shell command run after worktree creation. For pnpm repos, prefer `pnpm install --frozen-lockfile` for deterministic bootstrap. |
 | `testCommand` | `string` | `undefined` | Merge-time test command (hard gate). When unset, Fusion auto-detects from lockfile. |
 | `buildCommand` | `string` | `undefined` | Merge-time build command (hard gate). |
 | `recycleWorktrees` | `boolean` | `false` | Reuse worktrees from a pool for faster startup. |

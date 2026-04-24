@@ -52,8 +52,10 @@ describe("CI workflow (.github/workflows/ci.yml)", () => {
     expect(workflow.on.pull_request).toBeUndefined();
   });
 
-  it("includes pnpm install step", () => {
-    expect(content).toContain("pnpm install");
+  it("pins dependency bootstrap to frozen lockfile", () => {
+    expect(content).toContain("run: pnpm install --frozen-lockfile");
+    expect(content).not.toContain("run: pnpm install\n");
+    expect(content).not.toContain("--no-frozen-lockfile");
   });
 
   it("uses verify:workspace as the single lint/test/build contract", () => {
@@ -120,8 +122,10 @@ describe("Version & Release workflow (.github/workflows/version.yml)", () => {
     expect(workflow.on.push).toBeUndefined();
   });
 
-  it("includes pnpm install step", () => {
-    expect(content).toContain("pnpm install");
+  it("pins release bootstrap to frozen lockfile", () => {
+    expect(content).toContain("run: pnpm install --frozen-lockfile");
+    expect(content).not.toContain("run: pnpm install\n");
+    expect(content).not.toContain("--no-frozen-lockfile");
   });
 
   it("includes pnpm build step", () => {
@@ -264,6 +268,13 @@ describe("Test-release workflow (.github/workflows/test-release.yml)", () => {
   it("has signing steps with secret-availability guards", () => {
     expect(content).toContain("APPLE_CERTIFICATE_BASE64 != ''");
     expect(content).toContain("WINDOWS_CERTIFICATE_BASE64 != ''");
+  });
+
+  it("uses frozen-lockfile install in every matrix job", () => {
+    const matches = content.match(/run:\s*pnpm install --frozen-lockfile/g) ?? [];
+    expect(matches.length).toBeGreaterThanOrEqual(1);
+    expect(content).not.toContain("run: pnpm install\n");
+    expect(content).not.toContain("--no-frozen-lockfile");
   });
 
   it("uploads artifacts", () => {

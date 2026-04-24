@@ -2000,7 +2000,7 @@ export function SettingsModal({
               <input
                 id="worktreeInitCommand"
                 type="text"
-                placeholder="pnpm install"
+                placeholder="pnpm install --frozen-lockfile"
                 value={form.worktreeInitCommand || ""}
                 onChange={(e) =>
                   setForm((f) => ({ ...f, worktreeInitCommand: e.target.value }))

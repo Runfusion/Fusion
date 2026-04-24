@@ -2638,7 +2638,7 @@ describe("SettingsModal", () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
       await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Node Sync"));
+      fireEvent.click((await screen.findAllByText("Node Sync"))[0]);
       expect(screen.getByText("Node Sync", { selector: "h4" })).toBeTruthy();
       expect(screen.getByLabelText("Enable automatic settings sync")).toBeTruthy();
     });
@@ -2652,7 +2652,7 @@ describe("SettingsModal", () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
       await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Node Sync"));
+      fireEvent.click((await screen.findAllByText("Node Sync"))[0]);
       expect(screen.queryByLabelText("Sync interval")).toBeNull();
       expect(screen.queryByLabelText("Conflict resolution")).toBeNull();
     });
@@ -2677,7 +2677,7 @@ describe("SettingsModal", () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
       await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Node Sync"));
+      fireEvent.click((await screen.findAllByText("Node Sync"))[0]);
       const checkbox = screen.getByLabelText("Enable automatic settings sync") as HTMLInputElement;
       expect(checkbox.checked).toBe(false);
 
@@ -2695,7 +2695,7 @@ describe("SettingsModal", () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
       await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Node Sync"));
+      fireEvent.click((await screen.findAllByText("Node Sync"))[0]);
       const select = screen.getByLabelText("Sync interval") as HTMLSelectElement;
       expect(select.value).toBe("900000");
 
@@ -2713,7 +2713,7 @@ describe("SettingsModal", () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
       await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Node Sync"));
+      fireEvent.click((await screen.findAllByText("Node Sync"))[0]);
       const select = screen.getByLabelText("Conflict resolution") as HTMLSelectElement;
       expect(select.value).toBe("last-write-wins");
 
@@ -2725,7 +2725,7 @@ describe("SettingsModal", () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
       await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-      fireEvent.click(screen.getByText("Node Sync"));
+      fireEvent.click((await screen.findAllByText("Node Sync"))[0]);
       const checkbox = screen.getByLabelText("Enable automatic settings sync");
       fireEvent.click(checkbox);
 

@@ -41,7 +41,7 @@ jobs:
         run: npm install -g npm@11.6.4
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Build
         run: pnpm build

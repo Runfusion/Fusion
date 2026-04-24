@@ -366,7 +366,7 @@ describe("In-progress task resume after restart", () => {
     const store = createMockStore();
     store.getSettings.mockResolvedValue({
       ...DEFAULT_SETTINGS,
-      worktreeInitCommand: "pnpm install",
+      worktreeInitCommand: "pnpm install --frozen-lockfile",
     });
     const task = makeTask("FN-030", "in-progress");
     store.listTasks.mockResolvedValue([task]);
@@ -384,7 +384,7 @@ describe("In-progress task resume after restart", () => {
 
     // No init command calls
     const initCalls = mockedExecSync.mock.calls.filter(
-      (call) => call[0] === "pnpm install",
+      (call) => call[0] === "pnpm install --frozen-lockfile",
     );
     expect(initCalls).toHaveLength(0);
   });

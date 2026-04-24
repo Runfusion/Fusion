@@ -16,7 +16,7 @@ Thanks for contributing to Fusion.
 ### Install dependencies
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
 ```
 
 ### Build all packages
@@ -54,6 +54,7 @@ pnpm typecheck         # workspace typechecks
 
 Fusion codifies workspace verification as a deterministic contract:
 
+- Use `pnpm install --frozen-lockfile` for clean bootstrap and dependency repair paths.
 - `pnpm test` must be runnable in a clean worktree without requiring a prior `pnpm build`.
 - This includes clean states where `packages/core/dist`, `packages/engine/dist`, and `packages/dashboard/dist` are absent.
 - `pnpm verify:workspace` is the canonical pre-merge gate and runs in strict order:

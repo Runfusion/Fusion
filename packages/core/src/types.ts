@@ -1160,7 +1160,7 @@ export interface ProjectSettings {
    *  Only used when pushAfterMerge is true. Default: "origin". */
   pushRemote?: string;
   /** Shell command to run inside each new worktree immediately after creation.
-   *  Useful for project-specific setup (e.g. `pnpm install`, `cp .env.local .env`). */
+   *  Useful for project-specific setup (e.g. `pnpm install --frozen-lockfile`, `cp .env.local .env`). */
   worktreeInitCommand?: string;
   /** Custom test command for the project (e.g. "pnpm test") */
   testCommand?: string;
