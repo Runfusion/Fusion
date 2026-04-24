@@ -75,7 +75,6 @@ type AgentToolHookSession = AgentSession & {
   __fusionToolResultGuardInstalled?: boolean;
   __fusionMessageContentGuardInstalled?: boolean;
 };
-
 const FN_MEMORY_APPEND_TOOL_NAME = "fn_memory_append";
 
 function getSessionStateError(session: AgentSession): string {
