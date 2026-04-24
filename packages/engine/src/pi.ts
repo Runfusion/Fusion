@@ -781,14 +781,22 @@ async function assertValidWorktreeSession(cwd: string, projectRoot: string): Pro
  * - Paths inside the worktree are always allowed
  * - Project root .fusion/memory/ files are allowed (for durable project learnings)
  * - Task attachments under .fusion/tasks/N/attachments/ are allowed (for reading context files)
+ * - Sibling task specs (.fusion/tasks/N/PROMPT.md and task.json) are allowed for
+ *   read-only tools (read/glob/grep) so agents can consult dependency specs.
  * - All other paths outside the worktree are rejected
  *
  * @param worktreePath - Absolute path to the worktree directory
  * @param projectRoot - Absolute path to the project root (derived from worktree)
  * @param requestedPath - The path being accessed
+ * @param toolName - Tool making the request (controls read-only exceptions)
  * @returns true if allowed, false if rejected
  */
-function isWorktreeAllowedPath(worktreePath: string, projectRoot: string, requestedPath: string): boolean {
+function isWorktreeAllowedPath(
+  worktreePath: string,
+  projectRoot: string,
+  requestedPath: string,
+  toolName?: string,
+): boolean {
   // Normalize paths
   const worktreeResolved = resolve(worktreePath);
   const projectRootResolved = resolve(projectRoot);
@@ -812,6 +820,16 @@ function isWorktreeAllowedPath(worktreePath: string, projectRoot: string, reques
 
   // Exception: task attachments under `.fusion/tasks/*/attachments/*`
   if (relToProjectRoot.match(/^\.fusion\/tasks\/[^/]+\/attachments\//)) {
+    return true;
+  }
+
+  // Exception (read-only): sibling task specs so the agent can consult the
+  // PROMPT.md / task.json of dependency tasks without needing them copied
+  // into the worktree. `glob`/`grep` are narrow enough to allow as well so
+  // the agent can discover them; writes and bash remain restricted.
+  const readOnlyTools = new Set(["read", "glob", "grep"]);
+  if (toolName && readOnlyTools.has(toolName) &&
+      /^\.fusion\/tasks\/[^/]+\/(PROMPT\.md|task\.json)$/.test(relToProjectRoot)) {
     return true;
   }
 
@@ -874,18 +892,19 @@ export function wrapToolsWithBoundary(
 
         // Check path argument for file operations
         const pathArg = params.path as string | undefined;
-        if (pathArg && !isWorktreeAllowedPath(worktreePath, projectRoot, pathArg)) {
+        if (pathArg && !isWorktreeAllowedPath(worktreePath, projectRoot, pathArg, tool.name)) {
           const relToProject = relative(projectRoot, pathArg);
           return boundaryRejection(
             `Path "${relToProject}" is outside the worktree boundary. ` +
               `Coding agents can only modify files inside the current worktree. ` +
-              `Exception: .fusion/memory/ (project root) and .fusion/tasks/*/attachments/* are permitted for reading.`,
+              `Exceptions (read-only): .fusion/memory/, .fusion/tasks/*/attachments/, ` +
+              `and .fusion/tasks/*/{PROMPT.md,task.json} for dependency context.`,
           );
         }
 
         // For bash, also check the working directory if specified
         const cwdArg = params.cwd as string | undefined;
-        if (tool.name === "bash" && cwdArg && !isWorktreeAllowedPath(worktreePath, projectRoot, cwdArg)) {
+        if (tool.name === "bash" && cwdArg && !isWorktreeAllowedPath(worktreePath, projectRoot, cwdArg, tool.name)) {
           return boundaryRejection(
             `Working directory is outside the worktree boundary. ` +
               `Commands must run inside the worktree.`,

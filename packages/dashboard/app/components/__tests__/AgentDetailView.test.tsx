@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import { AgentDetailView } from "../AgentDetailView";
@@ -825,11 +825,11 @@ describe("AgentDetailView", () => {
     });
 
     it("shows loading state while fetching chain of command", async () => {
-      let resolveChain: ((agents: AgentDetail[]) => void) | undefined;
+      const resolveChainCalls: Array<(agents: AgentDetail[]) => void> = [];
       mockFetchChainOfCommand.mockImplementation(
         () =>
           new Promise((resolve) => {
-            resolveChain = resolve;
+            resolveChainCalls.push(resolve as (agents: AgentDetail[]) => void);
           }) as any,
       );
 
@@ -845,7 +845,11 @@ describe("AgentDetailView", () => {
         expect(screen.getByText("Loading reporting chain...")).toBeInTheDocument();
       });
 
-      resolveChain?.([{ id: "agent-001", name: "Test Agent" } as AgentDetail]);
+      await act(async () => {
+        for (const resolve of resolveChainCalls) {
+          resolve([{ id: "agent-001", name: "Test Agent" } as AgentDetail]);
+        }
+      });
 
       await waitFor(() => {
         expect(screen.queryByText("Loading reporting chain...")).not.toBeInTheDocument();

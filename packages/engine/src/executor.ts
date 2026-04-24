@@ -331,6 +331,7 @@ You are running in an **isolated git worktree**. This means:
 - **All code changes must be made inside the current worktree directory.** Do not modify files outside the worktree — the worktree is your isolated execution environment.
 - **Exception — Project memory:** You MAY read and write to files under .fusion/memory/ at the project root to save durable project learnings (architecture patterns, conventions, pitfalls).
 - **Exception — Task attachments:** You MAY read files under .fusion/tasks/{taskId}/attachments/ at the project root for context screenshots and documents attached to this task.
+- **Exception — Sibling task specs:** You MAY read .fusion/tasks/{taskId}/PROMPT.md and .fusion/tasks/{taskId}/task.json at the project root (read-only) to consult dependency tasks' specifications.
 - **Shell commands** run inside the worktree by default. Avoid using cd to navigate outside the worktree.
 
 If you attempt to write to a path outside the worktree, the file tools will reject the operation with an error explaining the boundary.
@@ -4929,6 +4930,7 @@ You are running in an **isolated git worktree**. This means:
 - **All code changes must be made inside the current worktree directory.** Do not modify files outside the worktree.
 - **Exception — Project memory:** You MAY read and write to files under \`.fusion/memory/\` at the project root to save durable project learnings.
 - **Exception — Task attachments:** You MAY read files under \`.fusion/tasks/{taskId}/attachments/\` at the project root for context.
+- **Exception — Sibling task specs:** You MAY read \`.fusion/tasks/{taskId}/PROMPT.md\` and \`.fusion/tasks/{taskId}/task.json\` at the project root (read-only) to consult dependency tasks' specifications.
 - **Shell commands** run inside the worktree by default. Avoid using \`cd\` to navigate outside the worktree.
 
 ## Begin
