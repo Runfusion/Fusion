@@ -61,7 +61,12 @@ async function stopChildProcess(child: ChildProcess | null): Promise<void> {
   });
 }
 
-describe("build-exe", () => {
+// Native-binary build tests are expensive (~2 min of pegged CPU). Skip by
+// default locally; opt in with FUSION_TEST_BUILD_EXE=1 or run on CI.
+const SHOULD_RUN_BUILD_EXE =
+  Boolean(process.env.FUSION_TEST_BUILD_EXE) || Boolean(process.env.CI);
+
+describe.skipIf(!SHOULD_RUN_BUILD_EXE)("build-exe", () => {
   beforeAll(() => {
     // Build the executable (skip if already built to speed up re-runs)
     if (!existsSync(outBinary)) {

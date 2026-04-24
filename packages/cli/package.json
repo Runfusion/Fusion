@@ -42,7 +42,8 @@
     "build:exe": "bun run build.ts",
     "build:exe:all": "bun run build.ts --all",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --silent=passed-only --reporter=dot"
+    "test": "vitest run --silent=passed-only --reporter=dot",
+    "test:build-exe": "FUSION_TEST_BUILD_EXE=1 vitest run --config vitest.build-exe.config.ts --silent=passed-only --reporter=dot"
   },
   "dependencies": {
     "@fusion/pi-claude-cli": "workspace:*",

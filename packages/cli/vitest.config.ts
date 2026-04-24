@@ -23,6 +23,10 @@ export default defineConfig({
   },
   test: {
     include: ["src/**/*.test.ts"],
+    // build-exe + build-exe-cross live in their own vitest project
+    // (see vitest.build-exe.config.ts) so the rest of the CLI suite can
+    // run with file parallelism enabled.
+    exclude: ["**/node_modules/**", "**/dist/**", "src/__tests__/build-exe*.test.ts"],
     setupFiles: [
       "./src/__tests__/setup-test-isolation.ts",
       resolve(__dirname, "../core/src/__test-utils__/vitest-setup.ts"),
@@ -30,9 +34,7 @@ export default defineConfig({
     globalSetup: [resolve(__dirname, "../core/src/__test-utils__/vitest-teardown.ts")],
     maxWorkers,
     poolOptions: { threads: { minThreads: 1, maxThreads: maxWorkers }, forks: { minForks: 1, maxForks: maxWorkers } },
-    // build-exe and build-exe-cross suites both operate on packages/cli/dist/
-    // and can race when run in parallel workers.
-    fileParallelism: false,
+    fileParallelism: true,
     coverage: {
       enabled: false,
       reporter: ["text", "html", "json"],

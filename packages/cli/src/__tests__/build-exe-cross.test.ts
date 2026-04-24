@@ -38,9 +38,15 @@ function nativeTarget(): string | null {
   return `bun-${platform}-${arch}`;
 }
 
-describe("build-exe-cross: single target", () => {
+// Cross-compiling native binaries pegs CPU for ~60s per target. Skip by
+// default locally; opt in with FUSION_TEST_BUILD_EXE=1 or run on CI.
+const SHOULD_RUN_BUILD_EXE =
+  Boolean(process.env.FUSION_TEST_BUILD_EXE) || Boolean(process.env.CI);
+
+describe.skipIf(!SHOULD_RUN_BUILD_EXE)("build-exe-cross: single target", () => {
   beforeAll(() => {
-    // Build for linux-x64 specifically
+    const bin = join(distDir, "fn-linux-x64");
+    if (existsSync(bin)) return;
     execSync("bun run build.ts --target bun-linux-x64", {
       cwd: cliRoot,
       stdio: "pipe",
@@ -59,8 +65,10 @@ describe("build-exe-cross: single target", () => {
   });
 });
 
-describe("build-exe-cross: windows target has .exe extension", () => {
+describe.skipIf(!SHOULD_RUN_BUILD_EXE)("build-exe-cross: windows target has .exe extension", () => {
   beforeAll(() => {
+    const bin = join(distDir, "fn-windows-x64.exe");
+    if (existsSync(bin)) return;
     execSync("bun run build.ts --target bun-windows-x64", {
       cwd: cliRoot,
       stdio: "pipe",
@@ -75,8 +83,12 @@ describe("build-exe-cross: windows target has .exe extension", () => {
   });
 });
 
-describe("build-exe-cross: --all builds all platforms", () => {
+describe.skipIf(!SHOULD_RUN_BUILD_EXE)("build-exe-cross: --all builds all platforms", () => {
   beforeAll(() => {
+    const allBuilt = SUPPORTED_TARGETS.every((target) =>
+      existsSync(join(distDir, expectedBinaryName(target))),
+    );
+    if (allBuilt) return;
     execSync("bun run build.ts --all", {
       cwd: cliRoot,
       stdio: "pipe",
@@ -147,8 +159,11 @@ describe("build-exe-cross: --all builds all platforms", () => {
   }, 60_000);
 });
 
-describe("build-exe-cross: default (no args) backward compatibility", () => {
+describe.skipIf(!SHOULD_RUN_BUILD_EXE)("build-exe-cross: default (no args) backward compatibility", () => {
   beforeAll(() => {
+    const defaultName = process.platform === "win32" ? "fn.exe" : "fn";
+    const bin = join(distDir, defaultName);
+    if (existsSync(bin)) return;
     execSync("bun run build.ts", {
       cwd: cliRoot,
       stdio: "pipe",
