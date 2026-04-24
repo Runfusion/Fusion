@@ -581,6 +581,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
               addToast={addToast}
               onSaved={loadAgent}
               onHasChangesChange={handleConfigChangesState}
+              onDelete={handleDelete}
             />
           )}
         </div>
@@ -2694,12 +2695,14 @@ function ConfigTab({
   addToast,
   onSaved,
   onHasChangesChange,
+  onDelete,
 }: { 
   agent: AgentDetail;
   projectId?: string;
   addToast: (message: string, type?: "success" | "error") => void;
   onSaved: () => Promise<void>;
   onHasChangesChange?: (hasChanges: boolean) => void;
+  onDelete?: () => Promise<void> | void;
 }) {
   // Identity field state
   const [nameValue, setNameValue] = useState(agent.name);
@@ -2836,6 +2839,7 @@ function ConfigTab({
   const [isSaving, setIsSaving] = useState(false);
   const [errors, setErrors] = useState<ValidationErrors>({});
   const [justSaved, setJustSaved] = useState(false);
+  const isDeletableState = agent.state === "idle" || agent.state === "terminated";
   const justSavedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previousAgentRuntimeSyncRef = useRef<{ id: string; updatedAt: string } | null>(null);
 
@@ -3689,6 +3693,30 @@ function ConfigTab({
               Settings saved
             </span>
           )}
+        </div>
+      </div>
+
+      <div className="config-section config-section--danger">
+        <h3>Danger Zone</h3>
+        <p className="config-description">
+          Permanently delete this agent from the project.
+        </p>
+        <div className="config-fields">
+          <div className="config-field">
+            <button
+              className="btn btn--danger"
+              disabled={!isDeletableState || !onDelete}
+              onClick={() => void onDelete?.()}
+            >
+              <Trash2 size={16} />
+              Delete Agent
+            </button>
+            <span className="config-danger-note">
+              {isDeletableState
+                ? "Deletion is permanent and cannot be undone."
+                : `Agent deletion is only available when state is idle or terminated (current state: ${agent.state}).`}
+            </span>
+          </div>
         </div>
       </div>
     </div>

@@ -27695,6 +27695,15 @@ html .column.drag-over * {
   margin: 0 0 var(--space-sm) 0;
 }
 
+.config-section--danger {
+  border: 1px solid color-mix(in srgb, var(--color-error) 40%, transparent);
+}
+
+.config-danger-note {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+}
+
 /* === Agent Content Preview === */
 .agent-content-toolbar {
   display: flex;

@@ -88,12 +88,13 @@ vi.mock("../SkillMultiselect", () => ({
   ),
 }));
 
-import { fetchAgent, fetchAgents, updateAgent, updateAgentState, fetchAgentChildren, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchDiscoveredSkills, fetchModels, fetchAgentLogsWithMeta } from "../../api";
+import { fetchAgent, fetchAgents, updateAgent, updateAgentState, deleteAgent, fetchAgentChildren, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchDiscoveredSkills, fetchModels, fetchAgentLogsWithMeta } from "../../api";
 
 const mockFetchAgent = vi.mocked(fetchAgent);
 const mockFetchAgents = vi.mocked(fetchAgents);
 const mockUpdateAgent = vi.mocked(updateAgent);
 const mockUpdateAgentState = vi.mocked(updateAgentState);
+const mockDeleteAgent = vi.mocked(deleteAgent);
 const mockFetchAgentChildren = vi.mocked(fetchAgentChildren);
 const mockFetchAgentRunLogs = vi.mocked(fetchAgentRunLogs);
 const mockFetchAgentRuns = vi.mocked(fetchAgentRuns);
@@ -165,6 +166,7 @@ describe("AgentDetailView", () => {
       { id: "agent-003", name: "Director Agent", role: "triage", state: "active", metadata: {} },
     ] as any);
     mockUpdateAgentState.mockResolvedValue(createMockAgent({ state: "paused" }));
+    mockDeleteAgent.mockResolvedValue(undefined);
     mockUpdateAgent.mockResolvedValue(createMockAgent() as any);
     // Default: return runs from mock agent
     mockFetchAgentRuns.mockResolvedValue([
@@ -983,6 +985,113 @@ describe("AgentDetailView", () => {
       });
       await user.click(screen.getByText("Settings"));
     };
+
+    it("shows settings delete control for idle and terminated agents", async () => {
+      const user = userEvent.setup();
+
+      mockFetchAgent.mockResolvedValue(createMockAgent({ state: "idle" }));
+      const idleRender = render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />,
+      );
+
+      await navigateToSettings(user);
+      expect(await screen.findByRole("button", { name: "Delete Agent" })).toBeEnabled();
+      idleRender.unmount();
+
+      mockFetchAgent.mockResolvedValue(createMockAgent({ state: "terminated" }));
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />,
+      );
+
+      await navigateToSettings(user);
+      expect(await screen.findByRole("button", { name: "Delete Agent" })).toBeEnabled();
+    });
+
+    it("deletes an agent from Settings after confirmation", async () => {
+      mockFetchAgent.mockResolvedValue(createMockAgent({ state: "idle" }));
+      const addToast = vi.fn();
+      const onClose = vi.fn();
+      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+      const user = userEvent.setup();
+
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          projectId="proj_123"
+          onClose={onClose}
+          addToast={addToast}
+        />,
+      );
+
+      await navigateToSettings(user);
+      await user.click(await screen.findByRole("button", { name: "Delete Agent" }));
+
+      await waitFor(() => {
+        expect(confirmSpy).toHaveBeenCalledWith('Delete agent "Test Agent"? This cannot be undone.');
+        expect(mockDeleteAgent).toHaveBeenCalledWith("agent-001", "proj_123");
+        expect(addToast).toHaveBeenCalledWith('Agent "Test Agent" deleted', "success");
+        expect(onClose).toHaveBeenCalledTimes(1);
+      });
+
+      confirmSpy.mockRestore();
+    });
+
+    it("does not delete from Settings when confirmation is canceled", async () => {
+      mockFetchAgent.mockResolvedValue(createMockAgent({ state: "idle" }));
+      const addToast = vi.fn();
+      const onClose = vi.fn();
+      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+      const user = userEvent.setup();
+
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          projectId="proj_123"
+          onClose={onClose}
+          addToast={addToast}
+        />,
+      );
+
+      await navigateToSettings(user);
+      await user.click(await screen.findByRole("button", { name: "Delete Agent" }));
+
+      await waitFor(() => {
+        expect(confirmSpy).toHaveBeenCalled();
+      });
+      expect(mockDeleteAgent).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+      expect(addToast).not.toHaveBeenCalledWith(expect.stringContaining("deleted"), "success");
+
+      confirmSpy.mockRestore();
+    });
+
+    it("shows settings delete control as unavailable for non-deletable states", async () => {
+      mockFetchAgent.mockResolvedValue(createMockAgent({ state: "active" }));
+      const user = userEvent.setup();
+
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />,
+      );
+
+      await navigateToSettings(user);
+
+      expect(await screen.findByRole("button", { name: "Delete Agent" })).toBeDisabled();
+      expect(
+        screen.getByText("Agent deletion is only available when state is idle or terminated (current state: active)."),
+      ).toBeInTheDocument();
+    });
 
     it("renders advanced settings form fields on Settings tab", async () => {
       const user = userEvent.setup();

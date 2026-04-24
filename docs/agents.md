@@ -92,6 +92,15 @@ The agents surface provides:
 - Run history
 - Task assignment context
 
+### Agent Deletion Controls
+
+Agent deletion is available from both the detail header lifecycle controls and the **Settings** tab's danger zone.
+
+- The Settings-tab delete button reuses the same delete flow as the header action.
+- Deletion still requires confirmation before calling `DELETE /api/agents/:id`.
+- On successful deletion, the dashboard shows a success toast and closes the detail view.
+- Deletion availability is intentionally restricted to agents in `idle` or `terminated` state.
+
 ![Agents view](./screenshots/agents-view.png)
 
 ## Built-In Agent Prompt Templates
