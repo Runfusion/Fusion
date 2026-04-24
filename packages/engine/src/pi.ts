@@ -828,6 +828,22 @@ function isWorktreeAllowedPath(worktreePath: string, projectRoot: string, reques
  * @param projectRoot - Absolute path to the project root (if applicable)
  * @returns Wrapped tools with boundary validation
  */
+/**
+ * Build a tool result payload in the shape pi-coding-agent / pi-ai expect
+ * (content as an array of typed blocks, isError=true) rather than a bare
+ * `{ok:false,error}` object. Returning the bare object leaves the toolResult
+ * message with `content: undefined`, which pi's downstream handling later
+ * crashes on with "Cannot read properties of undefined (reading 'filter')".
+ */
+function boundaryRejection(message: string) {
+  return {
+    content: [{ type: "text", text: message }],
+    isError: true,
+    ok: false,
+    error: message,
+  };
+}
+
 export function wrapToolsWithBoundary(
   tools: ToolDefinition[],
   worktreePath: string | null,
@@ -860,22 +876,20 @@ export function wrapToolsWithBoundary(
         const pathArg = params.path as string | undefined;
         if (pathArg && !isWorktreeAllowedPath(worktreePath, projectRoot, pathArg)) {
           const relToProject = relative(projectRoot, pathArg);
-          return {
-            ok: false,
-            error: `Path "${relToProject}" is outside the worktree boundary. ` +
+          return boundaryRejection(
+            `Path "${relToProject}" is outside the worktree boundary. ` +
               `Coding agents can only modify files inside the current worktree. ` +
               `Exception: .fusion/memory/ (project root) and .fusion/tasks/*/attachments/* are permitted for reading.`,
-          };
+          );
         }
 
         // For bash, also check the working directory if specified
         const cwdArg = params.cwd as string | undefined;
         if (tool.name === "bash" && cwdArg && !isWorktreeAllowedPath(worktreePath, projectRoot, cwdArg)) {
-          return {
-            ok: false,
-            error: `Working directory is outside the worktree boundary. ` +
+          return boundaryRejection(
+            `Working directory is outside the worktree boundary. ` +
               `Commands must run inside the worktree.`,
-          };
+          );
         }
 
         // Call the original tool implementation with all arguments passed through
