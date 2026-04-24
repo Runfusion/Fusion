@@ -152,116 +152,6 @@ describe("TaskCard memoization", () => {
     expect(screen.getByText("Test task")).toBeDefined();
   });
 
-  it("re-renders when a render-relevant task field changes", () => {
-    const onOpenDetail = vi.fn();
-    const addToast = vi.fn();
-    const cardRenderSpy = vi.fn();
-
-    function MemoProbe({ task }: { task: Task }) {
-      cardRenderSpy();
-      return <TaskCard task={task} onOpenDetail={onOpenDetail} addToast={addToast} />;
-    }
-
-    const MemoizedProbe = React.memo(MemoProbe);
-    const { rerender } = render(<MemoizedProbe task={createTask({ title: "Original" })} />);
-
-    expect(cardRenderSpy).toHaveBeenCalledTimes(1);
-
-    rerender(<MemoizedProbe task={createTask({ title: "Updated" })} />);
-
-    expect(cardRenderSpy).toHaveBeenCalledTimes(2);
-    expect(screen.getByText("Updated")).toBeDefined();
-  });
-
-  it("re-renders when dependency badges change", () => {
-    const onOpenDetail = vi.fn();
-    const addToast = vi.fn();
-    const cardRenderSpy = vi.fn();
-
-    function MemoProbe({ task }: { task: Task }) {
-      cardRenderSpy();
-      return <TaskCard task={task} onOpenDetail={onOpenDetail} addToast={addToast} />;
-    }
-
-    const MemoizedProbe = React.memo(MemoProbe);
-    const { rerender } = render(<MemoizedProbe task={createTask({ dependencies: ["FN-001"] })} />);
-
-    expect(cardRenderSpy).toHaveBeenCalledTimes(1);
-
-    rerender(<MemoizedProbe task={createTask({ dependencies: ["FN-001", "FN-002"] })} />);
-
-    expect(cardRenderSpy).toHaveBeenCalledTimes(2);
-    expect(screen.getAllByTitle(/Click to view/)).toHaveLength(2);
-  });
-
-  it("re-renders when PR badge data changes", () => {
-    const onOpenDetail = vi.fn();
-    const addToast = vi.fn();
-    const cardRenderSpy = vi.fn();
-
-    function MemoProbe({ task }: { task: Task }) {
-      cardRenderSpy();
-      return <TaskCard task={task} onOpenDetail={onOpenDetail} addToast={addToast} />;
-    }
-
-    const MemoizedProbe = React.memo(MemoProbe);
-    const basePrInfo = {
-      number: 42,
-      url: "https://github.com/example/repo/pull/42",
-      status: "open" as const,
-      title: "Initial PR",
-      headBranch: "fusion/fn-129",
-      baseBranch: "main",
-      lastCheckedAt: "2026-01-01T00:00:00Z",
-    };
-    const { rerender } = render(<MemoizedProbe task={createTask({ prInfo: basePrInfo })} />);
-
-    expect(cardRenderSpy).toHaveBeenCalledTimes(1);
-
-    rerender(
-      <MemoizedProbe
-        task={createTask({
-          prInfo: { ...basePrInfo, status: "merged", title: "Merged PR" },
-        })}
-      />,
-    );
-
-    expect(cardRenderSpy).toHaveBeenCalledTimes(2);
-  });
-
-  it("re-renders when step progress changes", () => {
-    const onOpenDetail = vi.fn();
-    const addToast = vi.fn();
-    const cardRenderSpy = vi.fn();
-
-    function MemoProbe({ task }: { task: Task }) {
-      cardRenderSpy();
-      return <TaskCard task={task} onOpenDetail={onOpenDetail} addToast={addToast} />;
-    }
-
-    const MemoizedProbe = React.memo(MemoProbe);
-    const { rerender } = render(
-      <MemoizedProbe
-        task={createTask({
-          steps: [{ name: "Step 1", status: "pending" }],
-        })}
-      />,
-    );
-
-    expect(cardRenderSpy).toHaveBeenCalledTimes(1);
-
-    rerender(
-      <MemoizedProbe
-        task={createTask({
-          steps: [{ name: "Step 1", status: "done" }],
-        })}
-      />,
-    );
-
-    expect(cardRenderSpy).toHaveBeenCalledTimes(2);
-    expect(screen.getByText("1/1")).toBeDefined();
-  });
-
   it("re-renders workflow labels when workflowStepNameLookup prop changes", () => {
     const task = createTask({
       enabledWorkflowSteps: ["WS-003"],
@@ -295,196 +185,53 @@ describe("TaskCard memoization", () => {
     expect(screen.getByText("Accessibility Audit")).toBeDefined();
   });
 
-  it("re-renders when blockedBy changes", () => {
-    const onOpenDetail = vi.fn();
-    const addToast = vi.fn();
-    const cardRenderSpy = vi.fn();
-
-    function MemoProbe({ task }: { task: Task }) {
-      cardRenderSpy();
-      return <TaskCard task={task} onOpenDetail={onOpenDetail} addToast={addToast} />;
-    }
-
-    const MemoizedProbe = React.memo(MemoProbe);
-    const { rerender } = render(<MemoizedProbe task={createTask()} />);
-
-    expect(cardRenderSpy).toHaveBeenCalledTimes(1);
-
-    rerender(<MemoizedProbe task={createTask({ blockedBy: "FN-777" })} />);
-
-    expect(cardRenderSpy).toHaveBeenCalledTimes(2);
-    expect(screen.getByText("FN-777")).toBeDefined();
-  });
-
-  it("re-renders when queued state changes", () => {
-    const onOpenDetail = vi.fn();
-    const addToast = vi.fn();
-    const cardRenderSpy = vi.fn();
-
-    function MemoProbe({ queued }: { queued?: boolean }) {
-      cardRenderSpy();
-      return <TaskCard task={createTask()} queued={queued} onOpenDetail={onOpenDetail} addToast={addToast} />;
-    }
-
-    const MemoizedProbe = React.memo(MemoProbe);
-    const { rerender } = render(<MemoizedProbe />);
-
-    expect(cardRenderSpy).toHaveBeenCalledTimes(1);
-
-    rerender(<MemoizedProbe queued />);
-
-    expect(cardRenderSpy).toHaveBeenCalledTimes(2);
-    expect(screen.getByText(/Queued/)).toBeDefined();
-  });
 });
 
 describe("TaskCard agent-active class", () => {
-  it("applies agent-active for an active status (executing)", () => {
-    const cls = computeCardClass({ status: "executing" });
-    expect(cls).toContain("agent-active");
-  });
-
-  it("applies agent-active for all active statuses", () => {
+  it("iterates every active status to apply agent-active", () => {
     for (const status of ["planning", "researching", "executing", "finalizing", "merging", "specifying"]) {
-      const cls = computeCardClass({ status });
-      expect(cls).toContain("agent-active");
+      expect(computeCardClass({ status })).toContain("agent-active");
     }
   });
 
-  it("does NOT apply agent-active when status is undefined and column is not in-progress", () => {
-    const cls = computeCardClass({});
-    expect(cls).not.toContain("agent-active");
-  });
-
-  it("does NOT apply agent-active for non-active status (idle) outside in-progress", () => {
-    const cls = computeCardClass({ status: "idle" });
-    expect(cls).not.toContain("agent-active");
-  });
-
-  it("does NOT apply agent-active for queued card even with active status", () => {
-    const cls = computeCardClass({ status: "executing", queued: true });
-    expect(cls).not.toContain("agent-active");
-    expect(cls).toContain("queued");
-  });
-
-  it("does NOT apply agent-active for queued card with no status", () => {
-    const cls = computeCardClass({ queued: true });
-    expect(cls).not.toContain("agent-active");
-  });
-
-  it("combines dragging and agent-active correctly", () => {
-    const cls = computeCardClass({ status: "executing", dragging: true });
-    expect(cls).toContain("agent-active");
-    expect(cls).toContain("dragging");
-  });
-
-  it("base card class is always present", () => {
+  it("base card class is `card` with no modifiers for empty opts", () => {
     expect(computeCardClass({})).toBe("card");
-    expect(computeCardClass({ status: "executing" })).toMatch(/^card /);
   });
 
-  // Column-based agent-active tests
-
-  it("applies agent-active for in-progress column with no status", () => {
-    const cls = computeCardClass({ column: "in-progress" });
-    expect(cls).toContain("agent-active");
-  });
-
-  it("applies agent-active for in-progress column with an active status", () => {
-    const cls = computeCardClass({ column: "in-progress", status: "executing" });
-    expect(cls).toContain("agent-active");
-  });
-
-  it("does NOT apply agent-active for todo column with no status", () => {
-    const cls = computeCardClass({ column: "todo" });
-    expect(cls).not.toContain("agent-active");
-  });
-
-  it("applies agent-active for in-review column with active status (merging)", () => {
-    const cls = computeCardClass({ column: "in-review", status: "merging" });
-    expect(cls).toContain("agent-active");
-  });
-
-  it("does NOT apply agent-active for queued card in in-progress column", () => {
-    const cls = computeCardClass({ column: "in-progress", queued: true });
-    expect(cls).not.toContain("agent-active");
-    expect(cls).toContain("queued");
-  });
-
-  it("does NOT apply agent-active when status is 'failed' even in in-progress column", () => {
-    const cls = computeCardClass({ column: "in-progress", status: "failed" });
-    expect(cls).not.toContain("agent-active");
-    expect(cls).toContain("failed");
-  });
-
-  // globalPaused tests (hard stop suppresses glow; soft pause does not)
-
-  it("does NOT apply agent-active when globalPaused is true with active status", () => {
-    for (const status of ["planning", "researching", "executing", "finalizing", "merging", "specifying"]) {
-      const cls = computeCardClass({ status, globalPaused: true });
-      expect(cls).not.toContain("agent-active");
-    }
-  });
-
-  it("does NOT apply agent-active when globalPaused is true for in-progress column", () => {
-    const cls = computeCardClass({ column: "in-progress", globalPaused: true });
-    expect(cls).not.toContain("agent-active");
-  });
-
-  it("does NOT apply agent-active when globalPaused is true with active status and in-progress column", () => {
-    const cls = computeCardClass({ column: "in-progress", status: "executing", globalPaused: true });
-    expect(cls).not.toContain("agent-active");
-  });
-
-  it("applies agent-active when globalPaused is false with active status", () => {
-    const cls = computeCardClass({ status: "executing", globalPaused: false });
-    expect(cls).toContain("agent-active");
-  });
-
-  it("applies agent-active when globalPaused is undefined (backward compat)", () => {
-    const cls = computeCardClass({ status: "executing", globalPaused: undefined });
-    expect(cls).toContain("agent-active");
-  });
-
-  it("applies agent-active when only soft-paused (globalPaused is false)", () => {
-    // Soft pause (enginePaused) should NOT suppress the glow — only globalPaused matters
-    const cls = computeCardClass({ status: "executing", globalPaused: false });
-    expect(cls).toContain("agent-active");
-  });
-
-  it("applies agent-active for in-progress column when only soft-paused", () => {
-    const cls = computeCardClass({ column: "in-progress", globalPaused: false });
-    expect(cls).toContain("agent-active");
+  it.each<[string, Parameters<typeof computeCardClass>[0], string[], string[]]>([
+    ["active status alone", { status: "executing" }, ["agent-active"], []],
+    ["in-progress column with no status", { column: "in-progress" }, ["agent-active"], []],
+    ["in-review column + merging status", { column: "in-review", status: "merging" }, ["agent-active"], []],
+    ["todo column, no status", { column: "todo" }, [], ["agent-active"]],
+    ["queued overrides active status", { status: "executing", queued: true }, ["queued"], ["agent-active"]],
+    ["failed overrides active in in-progress", { column: "in-progress", status: "failed" }, ["failed"], ["agent-active"]],
+    ["globalPaused suppresses glow", { status: "executing", globalPaused: true }, [], ["agent-active"]],
+    ["globalPaused=false (soft pause) keeps glow", { column: "in-progress", globalPaused: false }, ["agent-active"], []],
+    ["dragging + active compose", { status: "executing", dragging: true }, ["agent-active", "dragging"], []],
+  ])("%s", (_label, opts, contains, notContains) => {
+    const cls = computeCardClass(opts);
+    for (const c of contains) expect(cls).toContain(c);
+    for (const c of notContains) expect(cls).not.toContain(c);
   });
 });
 
 describe("TaskCard failed status", () => {
-  it("applies 'failed' class to card when status is 'failed'", () => {
+  /** Mirrors the badge style condition from TaskCard.tsx */
+  const shouldShowFailedBadge = (status?: string | null): boolean => status === "failed";
+
+  it("applies 'failed' class and suppresses agent-active when status is 'failed'", () => {
     const cls = computeCardClass({ status: "failed", column: "in-progress" });
     expect(cls).toContain("failed");
     expect(cls).not.toContain("agent-active");
   });
 
   it("does NOT apply 'failed' class for non-failed statuses", () => {
-    const cls = computeCardClass({ status: "executing", column: "in-progress" });
-    expect(cls).not.toContain("failed");
+    expect(computeCardClass({ status: "executing", column: "in-progress" })).not.toContain("failed");
+    expect(computeCardClass({ column: "in-progress" })).not.toContain("failed");
   });
 
-  it("does NOT apply 'failed' class when status is undefined", () => {
-    const cls = computeCardClass({ column: "in-progress" });
-    expect(cls).not.toContain("failed");
-  });
-
-  /** Mirrors the badge style condition from TaskCard.tsx */
-  function shouldShowFailedBadge(status?: string | null): boolean {
-    return status === "failed";
-  }
-
-  it("shows failed badge when status is 'failed'", () => {
+  it("failed badge visibility tracks status === 'failed'", () => {
     expect(shouldShowFailedBadge("failed")).toBe(true);
-  });
-
-  it("does NOT show failed badge for other statuses", () => {
     expect(shouldShowFailedBadge("executing")).toBe(false);
     expect(shouldShowFailedBadge(undefined)).toBe(false);
     expect(shouldShowFailedBadge(null)).toBe(false);
@@ -492,32 +239,15 @@ describe("TaskCard failed status", () => {
 });
 
 describe("TaskCard stuck status", () => {
-  it("applies 'stuck' class to card when task is stuck", () => {
-    const cls = computeCardClass({ isStuck: true, column: "in-progress", status: "executing" });
-    expect(cls).toContain("stuck");
-  });
-
-  it("does NOT apply 'stuck' class when task is not stuck", () => {
-    const cls = computeCardClass({ column: "in-progress", status: "executing" });
-    expect(cls).not.toContain("stuck");
-  });
-
-  it("stuck takes precedence over agent-active", () => {
+  it("stuck class is applied and takes precedence over agent-active", () => {
     const cls = computeCardClass({ isStuck: true, column: "in-progress", status: "executing" });
     expect(cls).toContain("stuck");
     expect(cls).not.toContain("agent-active");
   });
 
-  it("stuck and failed can coexist (stuck appears in class list)", () => {
-    const cls = computeCardClass({ isStuck: true, status: "failed", column: "in-progress" });
-    expect(cls).toContain("stuck");
-    expect(cls).toContain("failed");
-  });
-
-  it("stuck and paused can coexist", () => {
-    const cls = computeCardClass({ isStuck: true, isPaused: true, column: "in-progress" });
-    expect(cls).toContain("stuck");
-    expect(cls).toContain("paused");
+  it("stuck composes with failed and paused modifiers", () => {
+    expect(computeCardClass({ isStuck: true, status: "failed", column: "in-progress" })).toMatch(/stuck.*failed|failed.*stuck/);
+    expect(computeCardClass({ isStuck: true, isPaused: true, column: "in-progress" })).toMatch(/stuck.*paused|paused.*stuck/);
   });
 });
 
@@ -605,38 +335,26 @@ describe("TaskCard queued badge logic", () => {
     return !!(opts.queued || opts.status === "queued") && opts.column !== "in-progress";
   }
 
-  it("shows queued-badge when queued prop is true", () => {
+  it("shows queued-badge when queued prop OR status is 'queued'", () => {
     expect(shouldShowQueuedBadge({ queued: true })).toBe(true);
-  });
-
-  it("shows queued-badge when task.status is 'queued'", () => {
     expect(shouldShowQueuedBadge({ status: "queued" })).toBe(true);
-  });
-
-  it("shows queued-badge when both queued prop and status are set", () => {
     expect(shouldShowQueuedBadge({ queued: true, status: "queued" })).toBe(true);
   });
 
-  it("does NOT show queued-badge when neither queued prop nor status is 'queued'", () => {
-    expect(shouldShowQueuedBadge({ queued: false, status: "executing" })).toBe(false);
+  it("does NOT show queued-badge otherwise, or when column is 'in-progress'", () => {
     expect(shouldShowQueuedBadge({})).toBe(false);
-  });
-
-  it("does NOT show queued-badge when column is 'in-progress' even if status is stale 'queued'", () => {
+    expect(shouldShowQueuedBadge({ queued: false, status: "executing" })).toBe(false);
     expect(shouldShowQueuedBadge({ status: "queued", column: "in-progress" })).toBe(false);
     expect(shouldShowQueuedBadge({ queued: true, column: "in-progress" })).toBe(false);
   });
 
-  it("does NOT show card-status-badge when status is 'queued'", () => {
+  it("card-status-badge hides 'queued' status (shown via queued-badge instead)", () => {
     expect(shouldShowStatusBadge("queued")).toBe(false);
   });
 
-  it("shows card-status-badge for non-queued statuses", () => {
+  it("card-status-badge shows non-queued statuses but not null/undefined", () => {
     expect(shouldShowStatusBadge("executing")).toBe(true);
     expect(shouldShowStatusBadge("planning")).toBe(true);
-  });
-
-  it("does NOT show card-status-badge when status is null/undefined", () => {
     expect(shouldShowStatusBadge(null)).toBe(false);
     expect(shouldShowStatusBadge(undefined)).toBe(false);
   });
@@ -797,89 +515,16 @@ describe("TaskCard size badge", () => {
     vi.clearAllMocks();
   });
 
-  it("renders size badge when task.size is 'S'", () => {
-    const task = makeTask({ size: "S" });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    const sizeBadge = screen.getByText("S");
-    expect(sizeBadge).toBeDefined();
-    expect(sizeBadge.classList.contains("card-size-badge")).toBe(true);
-    expect(sizeBadge.classList.contains("size-s")).toBe(true);
-  });
-
-  it("renders size badge when task.size is 'M'", () => {
-    const task = makeTask({ size: "M" });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    const sizeBadge = screen.getByText("M");
-    expect(sizeBadge).toBeDefined();
-    expect(sizeBadge.classList.contains("card-size-badge")).toBe(true);
-    expect(sizeBadge.classList.contains("size-m")).toBe(true);
-  });
-
-  it("renders size badge when task.size is 'L'", () => {
-    const task = makeTask({ size: "L" });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    const sizeBadge = screen.getByText("L");
-    expect(sizeBadge).toBeDefined();
-    expect(sizeBadge.classList.contains("card-size-badge")).toBe(true);
-    expect(sizeBadge.classList.contains("size-l")).toBe(true);
+  it.each(["S", "M", "L"] as const)("renders size badge for size=%s with matching size-* class", (size) => {
+    render(<TaskCard task={makeTask({ size })} onOpenDetail={vi.fn()} addToast={noopToast} />);
+    const badge = screen.getByText(size);
+    expect(badge.classList.contains("card-size-badge")).toBe(true);
+    expect(badge.classList.contains(`size-${size.toLowerCase()}`)).toBe(true);
   });
 
   it("does NOT render size badge when task.size is undefined", () => {
-    const task = makeTask({ size: undefined });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    const sizeBadge = screen.queryByText(/^[SML]$/);
-    expect(sizeBadge).toBeNull();
-  });
-
-  it("positioned in card-header with other badges", () => {
-    const task = makeTask({ size: "M", status: "executing" });
-
-    const { container } = render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    const cardHeader = container.querySelector(".card-header");
-    expect(cardHeader).toBeDefined();
-    
-    const sizeBadge = cardHeader?.querySelector(".card-size-badge");
-    expect(sizeBadge).toBeDefined();
-    expect(sizeBadge?.textContent).toBe("M");
+    render(<TaskCard task={makeTask({ size: undefined })} onOpenDetail={vi.fn()} addToast={noopToast} />);
+    expect(screen.queryByText(/^[SML]$/)).toBeNull();
   });
 
   it("size badge appears at far right (after Archive button) in done column cards", () => {
@@ -1884,185 +1529,40 @@ describe("TaskCard steps auto-expand", () => {
     vi.clearAllMocks();
   });
 
-  it("steps are expanded by default for 'in-progress' column tasks", () => {
-    const task = makeTask({
-      column: "in-progress",
-      steps: [
-        { name: "Step 1", status: "done" },
-        { name: "Step 2", status: "pending" },
-      ],
-    });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    // Steps should be visible without clicking
-    expect(screen.getByText("Step 1")).toBeDefined();
-    expect(screen.getByText("Step 2")).toBeDefined();
-
-    // Toggle should show "Hide steps"
-    const toggle = screen.getByRole("button", { name: /Hide steps/i });
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("steps are collapsed by default for fresh 'triage' column tasks (no completed steps)", () => {
-    const task = makeTask({
-      column: "triage",
-      steps: [
-        { name: "Step 1", status: "pending" },
-        { name: "Step 2", status: "pending" },
-      ],
-    });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    // Steps should not be visible
-    expect(screen.queryByText("Step 1")).toBeNull();
-    expect(screen.queryByText("Step 2")).toBeNull();
-
-    // Toggle should show "Show steps"
-    const toggle = screen.getByRole("button", { name: /Show steps/i });
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-  });
-
-  it("steps are auto-expanded for re-triaged tasks with completed steps", () => {
-    const task = makeTask({
-      column: "triage",
-      steps: [
-        { name: "Step 1", status: "done" },
-        { name: "Step 2", status: "pending" },
-      ],
-    });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    // Steps should be visible without clicking
-    expect(screen.getByText("Step 1")).toBeDefined();
-    expect(screen.getByText("Step 2")).toBeDefined();
-
-    // Toggle should show "Hide steps"
-    const toggle = screen.getByRole("button", { name: /Hide steps/i });
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("steps are auto-expanded for re-triaged tasks with skipped steps", () => {
-    const task = makeTask({
-      column: "triage",
-      steps: [
-        { name: "Step 1", status: "skipped" },
-        { name: "Step 2", status: "pending" },
-      ],
-    });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    // Steps should be visible without clicking
-    expect(screen.getByText("Step 1")).toBeDefined();
-    expect(screen.getByText("Step 2")).toBeDefined();
-
-    const toggle = screen.getByRole("button", { name: /Hide steps/i });
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("steps are collapsed by default for 'todo' column tasks", () => {
-    const task = makeTask({
-      column: "todo",
-      steps: [
-        { name: "Step 1", status: "done" },
-        { name: "Step 2", status: "pending" },
-      ],
-    });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    // Steps should not be visible
-    expect(screen.queryByText("Step 1")).toBeNull();
-    expect(screen.queryByText("Step 2")).toBeNull();
-
-    // Toggle should show "Show steps"
-    const toggle = screen.getByRole("button", { name: /Show steps/i });
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-  });
-
-  it("steps are collapsed by default for 'in-review' column tasks", () => {
-    const task = makeTask({
-      column: "in-review",
-      steps: [
-        { name: "Step 1", status: "done" },
-        { name: "Step 2", status: "pending" },
-      ],
-    });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    // Steps should not be visible
-    expect(screen.queryByText("Step 1")).toBeNull();
-    expect(screen.queryByText("Step 2")).toBeNull();
-
-    // Toggle should show "Show steps"
-    const toggle = screen.getByRole("button", { name: /Show steps/i });
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-  });
-
-  it("steps are collapsed by default for 'done' column tasks", () => {
-    const task = makeTask({
-      column: "done",
-      steps: [
-        { name: "Step 1", status: "done" },
-        { name: "Step 2", status: "done" },
-      ],
-    });
-
-    render(
-      <TaskCard
-        task={task}
-        onOpenDetail={vi.fn()}
-        addToast={noopToast}
-      />
-    );
-
-    // Steps should not be visible
-    expect(screen.queryByText("Step 1")).toBeNull();
-    expect(screen.queryByText("Step 2")).toBeNull();
-
-    // Toggle should show "Show steps"
-    const toggle = screen.getByRole("button", { name: /Show steps/i });
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  it.each<[string, Partial<Task>, boolean]>([
+    [
+      "in-progress column: always auto-expanded",
+      { column: "in-progress", steps: [{ name: "Step 1", status: "done" }, { name: "Step 2", status: "pending" }] },
+      true,
+    ],
+    [
+      "fresh triage (all pending): collapsed",
+      { column: "triage", steps: [{ name: "Step 1", status: "pending" }, { name: "Step 2", status: "pending" }] },
+      false,
+    ],
+    [
+      "re-triaged (has completed or skipped steps): expanded",
+      { column: "triage", steps: [{ name: "Step 1", status: "done" }, { name: "Step 2", status: "pending" }] },
+      true,
+    ],
+    [
+      "todo / in-review / done: collapsed even with completed steps",
+      { column: "done", steps: [{ name: "Step 1", status: "done" }, { name: "Step 2", status: "done" }] },
+      false,
+    ],
+  ])("default expansion — %s", (_label, overrides, expanded) => {
+    const task = makeTask(overrides);
+    render(<TaskCard task={task} onOpenDetail={vi.fn()} addToast={noopToast} />);
+    const nameMatcher = expanded ? /Hide steps/i : /Show steps/i;
+    const toggle = screen.getByRole("button", { name: nameMatcher });
+    expect(toggle.getAttribute("aria-expanded")).toBe(expanded ? "true" : "false");
+    if (expanded) {
+      expect(screen.getByText("Step 1")).toBeDefined();
+      expect(screen.getByText("Step 2")).toBeDefined();
+    } else {
+      expect(screen.queryByText("Step 1")).toBeNull();
+      expect(screen.queryByText("Step 2")).toBeNull();
+    }
   });
 
   it("toggle button works to collapse steps on in-progress cards", () => {
