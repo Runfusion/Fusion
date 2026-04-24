@@ -1543,7 +1543,8 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getAllByText("Authentication")[0]);
+    const authNav = await screen.findByRole("button", { name: /Authentication/ });
+    fireEvent.click(authNav);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
 
     expect(screen.getByText("Anthropic")).toBeTruthy();
@@ -2024,7 +2025,8 @@ describe("SettingsModal", () => {
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getAllByText("Authentication")[0]);
+    const authNav = await screen.findByRole("button", { name: /Authentication/ });
+    fireEvent.click(authNav);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
 
     const input = screen.getByPlaceholderText("Enter API key");
@@ -2202,6 +2204,7 @@ describe("SettingsModal", () => {
   it("has .settings-content as sibling of .settings-sidebar", async () => {
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitFor(() => expect(container.querySelector(".settings-layout")).toBeTruthy());
 
     const layout = container.querySelector(".settings-layout");
     const children = Array.from(layout!.children);
@@ -2355,7 +2358,8 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Notifications"));
+    const notificationsNav = await screen.findByRole("button", { name: /Notifications/ });
+    fireEvent.click(notificationsNav);
     const input = screen.getByLabelText("ntfy Topic") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "" } });
 

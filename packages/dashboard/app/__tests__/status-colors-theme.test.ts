@@ -77,6 +77,30 @@ describe("Status color CSS custom properties", () => {
     );
   });
 
+  it("defines semantic neutral surface tiers in :root", () => {
+    const rootBlock = extractRootBlock(css);
+    expect(rootBlock).toContain("--surface-subtle");
+    expect(rootBlock).toContain("--surface-muted");
+    expect(rootBlock).toContain("--surface-emphasis");
+    expect(rootBlock).toContain("--surface-hover-strong");
+  });
+
+  it("defines semantic neutral surface tier overrides in light theme", () => {
+    const lightBlock = extractLightThemeBlock(css);
+    expect(lightBlock).toContain("--surface-subtle");
+    expect(lightBlock).toContain("--surface-muted");
+    expect(lightBlock).toContain("--surface-emphasis");
+    expect(lightBlock).toContain("--surface-hover-strong");
+  });
+
+  it("defines semantic neutral tiers with tokenized color-mix expressions", () => {
+    expect(css).toMatch(/--surface-subtle:\s*color-mix\(in\s+srgb,\s*var\(--surface\)\s+96%,\s*var\(--text\)\s+4%\)/);
+    expect(css).toMatch(/--surface-muted:\s*color-mix\(in\s+srgb,\s*var\(--surface\)\s+94%,\s*var\(--text\)\s+6%\)/);
+    expect(css).toMatch(/--surface-emphasis:\s*color-mix\(in\s+srgb,\s*var\(--surface\)\s+92%,\s*var\(--text\)\s+8%\)/);
+    expect(css).toMatch(/--surface-hover-strong:\s*color-mix\(in\s+srgb,\s*var\(--surface\)\s+88%,\s*var\(--text\)\s+12%\)/);
+    expect(css).not.toMatch(/--surface-(subtle|muted|emphasis|hover-strong):\s*rgba\(/);
+  });
+
   it("uses --surface-hover without per-rule fallback overrides", () => {
     expect(css).toContain("var(--surface-hover)");
     expect(css).not.toContain("var(--surface-hover,");
