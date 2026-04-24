@@ -1,11 +1,10 @@
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Type, type Static } from "typebox";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { Type } from "typebox";
 import { StringEnum } from "@mariozechner/pi-ai";
 import {
   TaskStore,
   COLUMNS,
   COLUMN_LABELS,
-  type Column,
   type Task,
 } from "@fusion/core";
 import {
@@ -235,9 +234,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       const store = await getStore(ctx.cwd);
 
       // Validate task exists
-      let task;
       try {
-        task = await store.getTask(params.id);
+        await store.getTask(params.id);
       } catch {
         return {
           content: [{ type: "text", text: `Task ${params.id} not found` }],
@@ -1018,7 +1016,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       ),
     }),
 
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       // Import the planning function dynamically to avoid circular dependencies
       const { runTaskPlan } = await import("./commands/task.js");
 
@@ -1685,7 +1683,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       ),
     }),
 
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       // Dynamic import to match existing extension patterns
       const { searchSkills, formatInstalls } = await import("./commands/skills.js");
 
@@ -1781,12 +1779,9 @@ export default function kbExtension(pi: ExtensionAPI) {
         stdio: "pipe",
       });
 
-      let stdout = "";
       let stderr = "";
 
-      child.stdout?.on("data", (data) => {
-        stdout += data.toString();
-      });
+      child.stdout?.on("data", () => {});
 
       child.stderr?.on("data", (data) => {
         stderr += data.toString();

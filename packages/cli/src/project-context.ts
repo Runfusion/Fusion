@@ -6,7 +6,7 @@
  */
 
 import { TaskStore, type RegisteredProject, CentralCore, GlobalSettingsStore } from "@fusion/core";
-import { isAbsolute, resolve, dirname } from "node:path";
+import { resolve, dirname } from "node:path";
 import { existsSync } from "node:fs";
 
 /** Project context for CLI operations */

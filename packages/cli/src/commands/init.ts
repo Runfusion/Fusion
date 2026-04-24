@@ -10,12 +10,10 @@
 
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join, resolve, basename } from "node:path";
-import { homedir } from "node:os";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 const execAsync = promisify(exec);
 import { CentralCore, QMD_INSTALL_COMMAND, isQmdAvailable } from "@fusion/core";
-import { resolveGlobalDir } from "@fusion/core";
 import { maybeInstallClaudeSkillForNewProject } from "./claude-skills-runner.js";
 
 /** Options for the init command */

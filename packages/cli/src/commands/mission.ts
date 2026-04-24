@@ -1,4 +1,4 @@
-import { type MissionStatus, type MilestoneStatus, type SliceStatus, type FeatureStatus } from "@fusion/core";
+import { type MilestoneStatus, type SliceStatus, type FeatureStatus } from "@fusion/core";
 import { createInterface } from "node:readline/promises";
 import { getStore } from "../project-resolver.js";
 

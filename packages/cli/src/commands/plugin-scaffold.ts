@@ -25,7 +25,6 @@ function toTitleCase(str: string): string {
  * Generate package.json template
  */
 function generatePackageJson(name: string): string {
-  const titleCase = toTitleCase(name);
   return JSON.stringify(
     {
       name: `@fusion-plugin-examples/${name}`,

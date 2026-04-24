@@ -1,4 +1,4 @@
-import { TaskStore, COLUMNS, COLUMN_LABELS, type Column, type MergeResult, type StepStatus, type AgentLogType, type AgentLogEntry, type Task } from "@fusion/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, type Column, type StepStatus, type AgentLogType, type AgentLogEntry } from "@fusion/core";
 import { aiMergeTask } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
@@ -60,7 +60,7 @@ async function getCommandContext(projectName?: string): Promise<CommandContext> 
       projectName: context.projectName,
       explicit: false,
     };
-  } catch (error) {
+  } catch {
     const store = new TaskStore(process.cwd());
     await store.init();
     return {
@@ -331,7 +331,6 @@ export async function runTaskLogs(id: string, options: LogsOptions = {}, project
 
   // Follow mode: watch for new entries
   if (options.follow) {
-    const followStore = store;
     const projectPath = projectContext?.projectPath ?? process.cwd();
     const logPath = join(projectPath, ".fusion", "tasks", id, "agent.log");
 
@@ -666,10 +665,9 @@ export async function runTaskDelete(id: string, force?: boolean, projectName?: s
   const store = await getStore(projectName);
 
   // Check if task exists first
-  let task;
   try {
-    task = await store.getTask(id);
-  } catch (err: any) {
+    await store.getTask(id);
+  } catch {
     console.error(`✗ Task ${id} not found`);
     process.exit(1);
     return;

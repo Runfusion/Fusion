@@ -25,7 +25,7 @@ import {
 import { resolve, isAbsolute, relative, basename } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
-import { formatProjectLine, detectProjectFromCwd, setDefaultProject, resolveProject as resolveProjectContext } from "../project-context.js";
+import { detectProjectFromCwd, setDefaultProject } from "../project-context.js";
 import { maybeInstallClaudeSkillForNewProject } from "./claude-skills-runner.js";
 
 const VALID_ISOLATION_MODES: IsolationMode[] = ["in-process", "child-process"];

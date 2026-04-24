@@ -6,7 +6,7 @@
  * - fn skills install <owner/repo> - Install skills from a source
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 
 /**
  * Skill entry from the skills.sh /api/search endpoint.

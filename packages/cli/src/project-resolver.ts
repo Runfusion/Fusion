@@ -868,7 +868,7 @@ export async function getProjectSummaryInfo(
   lastActivity: string | undefined;
   runtimeStatus: import("@fusion/engine").RuntimeStatus | "not_started";
 }> {
-  const central = await getCentralCore();
+  await getCentralCore();
   const pm = await getProjectManager();
 
   const [taskCounts, lastActivity, runtime] = await Promise.all([

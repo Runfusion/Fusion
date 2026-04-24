@@ -144,7 +144,7 @@ export function setupNativeResolution(): { success: boolean; nativeDir: string |
         symlinkSync(fnDir, bunfsRoot);
         bunfsSymlinkPath = bunfsRoot;
         console.log("[fn-native-patch] Created /$bunfs/root symlink for native module resolution");
-      } catch (symlinkErr) {
+      } catch {
         // Symlink creation failed (likely permission denied) - not fatal
         // The terminal service will try alternative loading methods
         console.log("[fn-native-patch] Could not create /$bunfs/root symlink (permissions), using fallback");

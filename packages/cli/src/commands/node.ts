@@ -1,4 +1,4 @@
-import { CentralCore, type NodeConfig, type SystemMetrics } from "@fusion/core";
+import { CentralCore, type NodeConfig } from "@fusion/core";
 import { createInterface } from "node:readline/promises";
 
 // ── Options Interfaces ───────────────────────────────────────────────────────
