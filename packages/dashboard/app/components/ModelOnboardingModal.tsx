@@ -1197,6 +1197,10 @@ export function ModelOnboardingModal({
   }, [completeOnboarding, completedSteps, skippedSteps]);
 
   const handleCreateFirstTask = useCallback(async () => {
+    if (!projectId) {
+      return;
+    }
+
     const trimmedDescription = firstTaskDescription.trim();
     if (!trimmedDescription) {
       setTaskCreationError("Please enter a task description.");
@@ -1209,7 +1213,7 @@ export function ModelOnboardingModal({
     let success = false;
 
     try {
-      const createdTask = await createTask({ description: trimmedDescription });
+      const createdTask = await createTask({ description: trimmedDescription }, projectId);
       setInlineCreatedTask(createdTask);
       setShowTaskCreated(true);
       trackOnboardingEvent("onboarding:first-task-created", { taskId: createdTask?.id });
@@ -1229,7 +1233,7 @@ export function ModelOnboardingModal({
     if (success) {
       void completeOnboarding();
     }
-  }, [firstTaskDescription, addToast, completeOnboarding]);
+  }, [projectId, firstTaskDescription, addToast, completeOnboarding]);
 
   // Handle first task CTA - mark complete, close modal, then open new task
   const handleOpenNewTask = useCallback(async () => {

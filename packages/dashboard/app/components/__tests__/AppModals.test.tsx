@@ -213,7 +213,7 @@ describe("AppModals", () => {
   });
 
   describe("ModelOnboardingModal wiring", () => {
-    it("passes project context and setup-wizard callback into onboarding modal", () => {
+    it("passes empty project id and setup-wizard callback into onboarding modal when no project is selected", () => {
       const handleAddProject = vi.fn();
       const manager = { ...mockModalManager, modelOnboardingOpen: true };
 
@@ -239,6 +239,32 @@ describe("AppModals", () => {
       const props = mockModelOnboardingModalProps.mock.calls[0][0];
       expect(props.projectId).toBe("");
       expect(props.onOpenSetupWizard).toBe(handleAddProject);
+    });
+
+    it("passes active project id into onboarding modal when a project is selected", () => {
+      const manager = { ...mockModalManager, modelOnboardingOpen: true };
+
+      render(
+        <AppModals
+          projectId="proj_123"
+          tasks={[]}
+          projects={[]}
+          currentProject={null}
+          addToast={vi.fn()}
+          toasts={mockToasts}
+          removeToast={vi.fn()}
+          modalManager={manager}
+          projectActions={{ handleAddProject: vi.fn(), handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
+          taskHandlers={{ handleModalCreate: vi.fn(), handlePlanningTaskCreated: vi.fn(), handlePlanningTasksCreated: vi.fn(), handleSubtaskTasksCreated: vi.fn(), handleGitHubImport: vi.fn() }}
+          taskOperations={{ moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(), duplicateTask: vi.fn() }}
+          deepLink={{ handleDetailClose: vi.fn() }}
+          settings={mockSettings}
+        />,
+      );
+
+      expect(mockModelOnboardingModalProps).toHaveBeenCalledTimes(1);
+      const props = mockModelOnboardingModalProps.mock.calls[0][0];
+      expect(props.projectId).toBe("proj_123");
     });
   });
 

@@ -762,7 +762,10 @@ describe("onboarding flow integration", () => {
       await simulateFirstTaskCreation(renderResult, "Ship onboarding telemetry");
 
       await waitFor(() => {
-        expect(mockCreateTask).toHaveBeenCalledWith({ description: "Ship onboarding telemetry" });
+        expect(mockCreateTask).toHaveBeenCalledWith(
+          { description: "Ship onboarding telemetry" },
+          "proj_123",
+        );
       });
 
       expect(mockMarkOnboardingCompleted).toHaveBeenCalled();

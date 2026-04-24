@@ -1476,6 +1476,16 @@ describe("ModelOnboardingModal", () => {
 
       expect(screen.queryByTestId("onboarding-task-error")).toBeNull();
       expect(mockCreateTask).toHaveBeenCalledTimes(2);
+      expect(mockCreateTask).toHaveBeenNthCalledWith(
+        1,
+        { description: "Build auth" },
+        "proj_123",
+      );
+      expect(mockCreateTask).toHaveBeenNthCalledWith(
+        2,
+        { description: "Build auth" },
+        "proj_123",
+      );
     });
 
     it("disables first-task submit button while creating the task", async () => {
