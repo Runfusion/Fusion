@@ -5769,25 +5769,25 @@ input[type="range"]:focus-visible {
 
 .detail-log-timestamp {
   font-size: 11px;
-  color: var(--text-dim);
+  color: var(--text-muted);
   font-family: var(--font-mono);
 }
 
 .detail-log-action {
   font-size: 13px;
-  color: var(--text-muted);
+  color: var(--text);
   line-height: 1.4;
 }
 
 .detail-log-outcome {
   margin-top: 6px;
   padding: var(--space-sm) var(--space-md);
-  background: var(--bg);
+  background: var(--surface);
   border-left: 3px solid var(--border);
   border-radius: 0 var(--radius) var(--radius) 0;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--text-muted);
+  color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
 }

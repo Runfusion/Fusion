@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { useState } from "react";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TaskDetailModal } from "../TaskDetailModal";
@@ -92,6 +94,28 @@ const noopDelete = vi.fn(async () => ({}) as Task);
 const noopMerge = vi.fn(async () => ({ merged: false }) as MergeResult);
 const noopRetry = vi.fn(async () => ({}) as Task);
 const noopOpenDetail = vi.fn();
+
+function getCssRuleBlock(css: string, selector: string): string {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const ruleMatch = css.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`));
+  return ruleMatch?.[1] ?? "";
+}
+
+function readDashboardStylesSource(): string {
+  const candidatePaths = [
+    process.env.PWD ? resolve(process.env.PWD, "app/styles.css") : null,
+    process.env.npm_config_local_prefix ? resolve(process.env.npm_config_local_prefix, "app/styles.css") : null,
+    resolve(process.cwd(), "app/styles.css"),
+    resolve(process.cwd(), "../app/styles.css"),
+    resolve(process.cwd(), "../../packages/dashboard/app/styles.css"),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  const cssPath = candidatePaths.find((candidate) => existsSync(candidate));
+  if (!cssPath) {
+    throw new Error("Unable to locate dashboard styles.css for Activity timeline CSS assertions");
+  }
+  return readFileSync(cssPath, "utf8");
+}
 
 describe("TaskDetailModal", () => {
   beforeEach(() => {
@@ -1300,6 +1324,49 @@ describe("TaskDetailModal", () => {
       expect(logEntries[1].textContent).toContain("Started work");
       expect(logEntries[1].textContent).toContain("Success"); // outcome
       expect(logEntries[2].textContent).toContain("Created task");
+    });
+
+    it("Activity subview keeps action/outcome rendering intact", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            log: [
+              { timestamp: "2026-01-01T00:01:00Z", action: "Started work", outcome: "Step completed successfully" },
+              { timestamp: "2026-01-01T00:00:00Z", action: "Created task" },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Logs"));
+
+      const actions = container.querySelectorAll(".detail-log-action");
+      const outcomes = container.querySelectorAll(".detail-log-outcome");
+      expect(actions).toHaveLength(2);
+      expect(outcomes).toHaveLength(1);
+      expect(Array.from(actions).map((entry) => entry.textContent)).toEqual(["Created task", "Started work"]);
+      expect(outcomes[0].textContent).toBe("Step completed successfully");
+    });
+
+    it("Activity timeline CSS keeps action/outcome high-contrast and timestamp secondary", () => {
+      const stylesCssText = readDashboardStylesSource();
+      expect(stylesCssText).toContain(".detail-log-action");
+
+      const actionRule = getCssRuleBlock(stylesCssText, ".detail-log-action");
+      const outcomeRule = getCssRuleBlock(stylesCssText, ".detail-log-outcome");
+      const timestampRule = getCssRuleBlock(stylesCssText, ".detail-log-timestamp");
+
+      expect(actionRule).toContain("color: var(--text);");
+      expect(outcomeRule).toContain("color: var(--text);");
+      expect(outcomeRule).toContain("background: var(--surface);");
+      expect(timestampRule).toContain("color: var(--text-muted);");
+      expect(timestampRule).not.toContain("color: var(--text);");
     });
 
     it("Activity subview shows empty state when no logs", () => {
