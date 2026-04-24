@@ -54,6 +54,24 @@ pnpm build         # build all packages
 
 Tests are required. Typechecks and manual verification are not substitutes for real tests with assertions.
 
+### What NOT to write
+
+New tests should cover behavior a user could notice break, not implementation shape. Don't write:
+
+- **CSS-class permutation tests** — iterating `status × column × flag` to assert `cardClass()` output. Use a single `it.each` for the boolean matrix, not one `it` per combination.
+- **Field-presence tests** when a payload-roundtrip test for the same field already exists — toggling and asserting the save payload implicitly requires the field to be present.
+- **React.memo tautologies** — `React.memo(Probe)` + rerender + assert-called-once tests React's behavior, not ours. If you need to verify a custom comparator (e.g. `areTaskCardPropsEqual`), test *that* directly — one case.
+- **Mock-the-world wiring tests** — if a test mocks 8+ dependencies just to render a component, either (a) it's a legitimate glue-component test (shim child components with `() => null`), or (b) delete it and rely on an integration test one level up.
+- **Structural CSS assertions** — "tab container uses .class-name not inline style". Consolidate into one aggregate layout-contract test per component.
+
+Prefer `it.each` over copy-pasted `it()` blocks. When trimming: keep the first case + the opposite case + any precedence/override case; drop linear iterations.
+
+### What TO keep unconditionally
+
+- Tests linked to an FN-ticket in `describe`/`it` names — these guard real regressions.
+- Integration tests exercising real SQLite, real worker pool, or spawned processes.
+- Lean core/engine unit tests with low mock burden.
+
 ## Port 4040 is Reserved
 
 Port 4040 is the production dashboard port. A user's live dashboard session is typically running there. **Agents must NEVER:**
