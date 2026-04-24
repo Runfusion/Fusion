@@ -114,10 +114,16 @@ immediately see host/port and access-token details.
 | `Enter`, `Space`, or `e` | Toggle expanded view for selected entry |
 | `Esc` | Close expanded view |
 | `w` | Toggle wrap mode (long messages wrap vs. truncate) |
+| `f` | Cycle severity filter (`all → info → warn → error → all`) |
 
 The Logs list uses a scrollable viewport across the full in-memory ring buffer.
 As long as an entry is still inside the buffer, you can reach it with
 `↑`/`↓` (or `k`/`j`) and jump to absolute bounds with `Home`/`End`.
+
+Severity filtering is a view-only control for the current Logs pane. Cycling with
+`f` narrows the rendered list to the selected level (`info`, `warn`, or `error`),
+but all entries remain in the ring buffer and are shown again when you return to
+`all`.
 
 In wrapped mode, long log messages are displayed with word wrapping. Long
 unbroken tokens (such as URLs or stack traces) are hard-wrapped at the

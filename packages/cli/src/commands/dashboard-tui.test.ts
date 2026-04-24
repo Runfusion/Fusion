@@ -652,6 +652,8 @@ function simulateKeypress(tui: DashboardTUI, key: string): void {
   (tui as any).handleLogsKeypress(key);
 }
 
+const stripAnsi = (output: string): string => output.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+
 describe("DashboardTUI Logs Selection", () => {
   let tui: DashboardTUI & {
     _stdout: string[];
@@ -739,6 +741,110 @@ describe("DashboardTUI Logs Selection", () => {
   });
 });
 
+describe("DashboardTUI Logs severity filter", () => {
+  let tui: DashboardTUI & {
+    _stdout: string[];
+    _setTerminalSize: (cols: number, rows: number) => void;
+  };
+  let stdoutWriteSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tui = createTestTUI();
+    (tui as any).activeSection = "logs";
+    (tui as any).isRunning = true;
+    stdoutWriteSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    stdoutWriteSpy.mockRestore();
+    Object.defineProperty(process.stdout, "columns", { value: 80, writable: true });
+    Object.defineProperty(process.stdout, "rows", { value: 24, writable: true });
+  });
+
+  function renderLogs(): string {
+    stdoutWriteSpy.mockClear();
+    (tui as any).renderLogsSection();
+    return stripAnsi(stdoutWriteSpy.mock.calls.map(([chunk]) => String(chunk)).join(""));
+  }
+
+  it("cycles severity filter with f/F in all → info → warn → error → all order", () => {
+    expect((tui as any).logsSeverityFilter).toBe("all");
+
+    simulateKeypress(tui, "f");
+    expect((tui as any).logsSeverityFilter).toBe("info");
+
+    simulateKeypress(tui, "f");
+    expect((tui as any).logsSeverityFilter).toBe("warn");
+
+    simulateKeypress(tui, "f");
+    expect((tui as any).logsSeverityFilter).toBe("error");
+
+    simulateKeypress(tui, "F");
+    expect((tui as any).logsSeverityFilter).toBe("all");
+  });
+
+  it("renders only entries that match the active severity filter", () => {
+    tui.log("info-entry");
+    tui.warn("warn-entry");
+    tui.error("error-entry");
+
+    simulateKeypress(tui, "f"); // info
+    let rendered = renderLogs();
+    expect(rendered).toContain("info-entry");
+    expect(rendered).not.toContain("warn-entry");
+    expect(rendered).not.toContain("error-entry");
+
+    simulateKeypress(tui, "f"); // warn
+    rendered = renderLogs();
+    expect(rendered).toContain("warn-entry");
+    expect(rendered).not.toContain("info-entry");
+    expect(rendered).not.toContain("error-entry");
+
+    simulateKeypress(tui, "f"); // error
+    rendered = renderLogs();
+    expect(rendered).toContain("error-entry");
+    expect(rendered).not.toContain("info-entry");
+    expect(rendered).not.toContain("warn-entry");
+  });
+
+  it("applies Home/End and arrow bounds to filtered entries", () => {
+    tui.warn("warn-1");
+    tui.log("info-1");
+    tui.error("error-1");
+    tui.warn("warn-2");
+    tui.log("info-2");
+
+    simulateKeypress(tui, "f"); // info
+    simulateKeypress(tui, "f"); // warn
+
+    expect((tui as any).logsSeverityFilter).toBe("warn");
+
+    simulateKeypress(tui, "End");
+    expect((tui as any).selectedLogIndex).toBe(1);
+
+    simulateKeypress(tui, "\x1b[B");
+    expect((tui as any).selectedLogIndex).toBe(1);
+
+    simulateKeypress(tui, "Home");
+    expect((tui as any).selectedLogIndex).toBe(0);
+
+    simulateKeypress(tui, "\x1b[A");
+    expect((tui as any).selectedLogIndex).toBe(0);
+  });
+
+  it("shows a filter-specific empty message when no entries match", () => {
+    tui.log("only-info");
+
+    simulateKeypress(tui, "f"); // info
+    simulateKeypress(tui, "f"); // warn (zero matches)
+
+    const rendered = renderLogs();
+    expect(rendered).toContain("No log entries match filter WARN.");
+    expect(rendered).toContain("Press [f] to cycle severity filter.");
+    expect(rendered).not.toContain("No log entries yet.");
+  });
+});
+
 describe("DashboardTUI Logs viewport window", () => {
   let tui: DashboardTUI & {
     _stdout: string[];
@@ -808,8 +914,6 @@ describe("DashboardTUI Logs footer-safe row budgeting", () => {
     _setTerminalSize: (cols: number, rows: number) => void;
   };
   let stdoutWriteSpy: ReturnType<typeof vi.spyOn>;
-
-  const stripAnsi = (output: string): string => output.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
 
   beforeEach(() => {
     tui = createTestTUI();

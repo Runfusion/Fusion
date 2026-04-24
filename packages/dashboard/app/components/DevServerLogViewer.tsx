@@ -13,6 +13,9 @@ interface DevServerLogViewerProps {
   isRunning: boolean;
 }
 
+type LogSeverity = "info" | "warn" | "error";
+type LogSeverityFilter = "all" | LogSeverity;
+
 // eslint-disable-next-line no-control-regex -- ANSI escape stripping is required for readable terminal logs.
 const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;]*m/g;
 
@@ -40,6 +43,23 @@ function formatTime(value: string): string {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getEntrySeverity(entry: DevServerLogEntry): LogSeverity {
+  if (entry.stream === "stderr") {
+    return "error";
+  }
+
+  const normalizedText = stripAnsi(entry.text).toLowerCase();
+  if (/\b(warn|warning)\b/.test(normalizedText)) {
+    return "warn";
+  }
+
+  if (/\b(error|fatal)\b/.test(normalizedText)) {
+    return "error";
+  }
+
+  return "info";
 }
 
 function highlightText(value: string, search: string): ReactNode {
@@ -77,15 +97,24 @@ export function DevServerLogViewer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isUserScrolling, setIsUserScrolling] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [severityFilter, setSeverityFilter] = useState<LogSeverityFilter>("all");
+
+  const filteredBySeverity = useMemo(() => {
+    if (severityFilter === "all") {
+      return entries;
+    }
+
+    return entries.filter((entry) => getEntrySeverity(entry) === severityFilter);
+  }, [entries, severityFilter]);
 
   const filteredEntries = useMemo(() => {
     const normalizedSearch = searchQuery.trim().toLowerCase();
     if (!normalizedSearch) {
-      return entries;
+      return filteredBySeverity;
     }
 
-    return entries.filter((entry) => stripAnsi(entry.text).toLowerCase().includes(normalizedSearch));
-  }, [entries, searchQuery]);
+    return filteredBySeverity.filter((entry) => stripAnsi(entry.text).toLowerCase().includes(normalizedSearch));
+  }, [filteredBySeverity, searchQuery]);
 
   const matchCount = filteredEntries.length;
 
@@ -159,7 +188,25 @@ export function DevServerLogViewer({
         </div>
 
         <div className="devserver-log-viewer__toolbar-actions">
+          <label className="devserver-log-viewer__severity" htmlFor="devserver-log-severity-filter">
+            <span className="visually-hidden">Filter logs by severity</span>
+            <select
+              id="devserver-log-severity-filter"
+              className="select devserver-log-viewer__severity-select"
+              value={severityFilter}
+              onChange={(event) => setSeverityFilter(event.target.value as LogSeverityFilter)}
+              data-testid="devserver-log-severity-filter"
+              aria-label="Filter logs by severity"
+            >
+              <option value="all">All severities</option>
+              <option value="info">Info</option>
+              <option value="warn">Warn</option>
+              <option value="error">Error</option>
+            </select>
+          </label>
+
           <label className="devserver-log-viewer__search" htmlFor="devserver-log-search">
+            <span className="visually-hidden">Search logs</span>
             <Search size={14} />
             <input
               id="devserver-log-search"
@@ -169,6 +216,7 @@ export function DevServerLogViewer({
               onChange={(event) => setSearchQuery(event.target.value)}
               placeholder="Search logs"
               data-testid="devserver-log-search-input"
+              aria-label="Search logs"
             />
           </label>
 
@@ -222,7 +270,9 @@ export function DevServerLogViewer({
             <p className="devserver-log-viewer__empty" data-testid="devserver-log-empty">
               {entries.length === 0
                 ? "No logs yet. Start the dev server to see output."
-                : "No log lines match your search."}
+                : (filteredBySeverity.length === 0
+                    ? "No log lines match the selected severity."
+                    : "No log lines match your search.")}
             </p>
           )}
 

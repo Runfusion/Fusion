@@ -97,6 +97,58 @@ describe("DevServerLogViewer", () => {
     expect(screen.getByText("No logs yet. Start the dev server to see output.")).toBeInTheDocument();
   });
 
+  it("provides an accessible label for search", () => {
+    renderViewer({
+      entries: [createEntry({ id: 1, text: "line" })],
+      total: 1,
+    });
+
+    expect(screen.getByLabelText("Search logs")).toBeInTheDocument();
+  });
+
+  it("filters entries by selected severity", () => {
+    renderViewer({
+      entries: [
+        createEntry({ id: 1, text: "server ready", stream: "stdout" }),
+        createEntry({ id: 2, text: "[warn] slow response", stream: "stdout" }),
+        createEntry({ id: 3, text: "fatal exception", stream: "stdout" }),
+        createEntry({ id: 4, text: "stderr output", stream: "stderr" }),
+      ],
+      total: 4,
+    });
+
+    const severitySelect = screen.getByTestId("devserver-log-severity-filter");
+
+    fireEvent.change(severitySelect, { target: { value: "warn" } });
+    expect(screen.getByText("[warn] slow response")).toBeInTheDocument();
+    expect(screen.queryByText("server ready")).not.toBeInTheDocument();
+    expect(screen.queryByText("fatal exception")).not.toBeInTheDocument();
+
+    fireEvent.change(severitySelect, { target: { value: "error" } });
+    expect(screen.getByText("fatal exception")).toBeInTheDocument();
+    expect(screen.getByText("stderr output")).toBeInTheDocument();
+    expect(screen.queryByText("[warn] slow response")).not.toBeInTheDocument();
+
+    fireEvent.change(severitySelect, { target: { value: "all" } });
+    expect(screen.getByText("server ready")).toBeInTheDocument();
+    expect(screen.getByText("[warn] slow response")).toBeInTheDocument();
+    expect(screen.getByText("fatal exception")).toBeInTheDocument();
+    expect(screen.getByText("stderr output")).toBeInTheDocument();
+  });
+
+  it("shows severity-specific empty message when filter has no matches", () => {
+    renderViewer({
+      entries: [createEntry({ id: 1, text: "server ready", stream: "stdout" })],
+      total: 1,
+    });
+
+    fireEvent.change(screen.getByTestId("devserver-log-severity-filter"), {
+      target: { value: "warn" },
+    });
+
+    expect(screen.getByText("No log lines match the selected severity.")).toBeInTheDocument();
+  });
+
   it("strips ANSI escape codes from display", () => {
     renderViewer({
       entries: [createEntry({ id: 1, text: "\u001b[32mSuccess\u001b[0m done" })],

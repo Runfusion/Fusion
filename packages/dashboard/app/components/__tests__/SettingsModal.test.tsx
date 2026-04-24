@@ -244,6 +244,13 @@ async function chooseModelOption(label: string, optionName: string | RegExp): Pr
   await user.click(optionText);
 }
 
+async function waitForSettingsModalReady(): Promise<void> {
+  await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+  await waitFor(() => {
+    expect(screen.queryByText("Loading…")).toBeNull();
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 
@@ -287,7 +294,7 @@ beforeEach(() => {
 describe("SettingsModal", () => {
   it("renders all sidebar section labels", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Each label appears in the sidebar nav
     expect(screen.getAllByText("General").length).toBeGreaterThanOrEqual(1);
@@ -300,7 +307,7 @@ describe("SettingsModal", () => {
 
   it("shows General fields when General section is selected", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Click on General (Authentication is now default, so we need to navigate)
     fireEvent.click(screen.getAllByText("General")[0]);
@@ -326,7 +333,7 @@ describe("SettingsModal", () => {
       />,
     );
 
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Appearance")[0]);
     fireEvent.click(screen.getByRole("button", { name: "Light mode" }));
@@ -354,7 +361,7 @@ describe("SettingsModal", () => {
     }
 
     render(<ControlledAppearanceModal />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Appearance")[0]);
 
@@ -400,7 +407,7 @@ describe("SettingsModal", () => {
     }
 
     render(<ThemeHarness />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     expect(screen.getByText(/Dark \/ Default/)).toBeTruthy();
 
@@ -419,7 +426,7 @@ describe("SettingsModal", () => {
 
   it("switches section when clicking sidebar item", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Click Scheduling
     fireEvent.click(screen.getByText("Scheduling"));
@@ -449,7 +456,7 @@ describe("SettingsModal", () => {
       />,
     );
 
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Appearance")[0]);
     fireEvent.click(screen.getByRole("button", { name: "Light mode" }));
@@ -477,7 +484,7 @@ describe("SettingsModal", () => {
     }
 
     render(<ControlledAppearanceModal />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Appearance")[0]);
 
@@ -496,7 +503,7 @@ describe("SettingsModal", () => {
 
   it("all settings fields are present across all sections", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // General
     fireEvent.click(screen.getAllByText("General")[0]);
@@ -530,7 +537,7 @@ describe("SettingsModal", () => {
 
   it("toggling recycleWorktrees checkbox sends true in save payload", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Worktrees"));
     const checkbox = screen.getByLabelText("Recycle worktrees");
@@ -545,7 +552,7 @@ describe("SettingsModal", () => {
 
   it("Task Prefix field saves correctly when set", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("General")[0]);
     const input = screen.getByLabelText("Task Prefix") as HTMLInputElement;
@@ -561,7 +568,7 @@ describe("SettingsModal", () => {
 
   it("Task Prefix field submits undefined when empty (uses default)", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("General")[0]);
     const input = screen.getByLabelText("Task Prefix") as HTMLInputElement;
@@ -576,7 +583,7 @@ describe("SettingsModal", () => {
 
   it("Task Prefix shows validation error for invalid input", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("General")[0]);
     const input = screen.getByLabelText("Task Prefix") as HTMLInputElement;
@@ -587,7 +594,7 @@ describe("SettingsModal", () => {
 
   it("Task Prefix validation error prevents save", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("General")[0]);
     const input = screen.getByLabelText("Task Prefix") as HTMLInputElement;
@@ -600,7 +607,7 @@ describe("SettingsModal", () => {
 
   it("showQuickChatFAB defaults to unchecked (false) when not set", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("General")[0]);
     const checkbox = screen.getByLabelText("Show quick chat button") as HTMLInputElement;
@@ -614,7 +621,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("General")[0]);
     const checkbox = screen.getByLabelText("Show quick chat button") as HTMLInputElement;
@@ -628,7 +635,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("General")[0]);
     const checkbox = screen.getByLabelText("Show quick chat button") as HTMLInputElement;
@@ -637,7 +644,7 @@ describe("SettingsModal", () => {
 
   it("toggling showQuickChatFAB checkbox sends true in save payload when checked", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("General")[0]);
     const checkbox = screen.getByLabelText("Show quick chat button");
@@ -658,7 +665,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("General")[0]);
     const checkbox = screen.getByLabelText("Show quick chat button");
@@ -674,7 +681,7 @@ describe("SettingsModal", () => {
 
   it("saves pull-request mergeStrategy when selected", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Merge"));
     const select = screen.getByLabelText("Auto-completion mode") as HTMLSelectElement;
@@ -689,7 +696,7 @@ describe("SettingsModal", () => {
 
   it("toggling includeTaskIdInCommit checkbox sends false in save payload", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Merge"));
     const checkbox = screen.getByLabelText("Include task ID in commit scope");
@@ -705,7 +712,7 @@ describe("SettingsModal", () => {
 
   it("toggling commitAuthorEnabled checkbox sends false in save payload when unchecked", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Merge"));
     const checkbox = screen.getByLabelText("Add author attribution to commits");
@@ -721,7 +728,7 @@ describe("SettingsModal", () => {
 
   it("shows author name and email fields when commitAuthorEnabled is true", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Merge"));
     // Author name and email fields should be visible when author attribution is enabled
@@ -736,7 +743,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Merge"));
     // Author name and email fields should be hidden
@@ -746,7 +753,7 @@ describe("SettingsModal", () => {
 
   it("sends custom author name and email in save payload", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Merge"));
 
@@ -774,7 +781,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Merge"));
 
@@ -791,7 +798,7 @@ describe("SettingsModal", () => {
 
   it("toggling autoResolveConflicts checkbox sends false in save payload when unchecked", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Merge"));
     const checkbox = screen.getByLabelText("Auto-resolve conflicts in lock files and generated files");
@@ -812,7 +819,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Merge"));
     const checkbox = screen.getByLabelText("Auto-resolve conflicts in lock files and generated files") as HTMLInputElement;
@@ -821,7 +828,7 @@ describe("SettingsModal", () => {
 
   it("toggling smartConflictResolution checkbox sends false in save payload when unchecked", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Merge"));
     const checkbox = screen.getByLabelText("Smart conflict resolution");
@@ -842,7 +849,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Merge"));
     const checkbox = screen.getByLabelText("Smart conflict resolution") as HTMLInputElement;
@@ -856,7 +863,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Merge"));
     const checkbox = screen.getByLabelText("Smart conflict resolution");
@@ -872,7 +879,7 @@ describe("SettingsModal", () => {
 
   it("does not render heartbeat multiplier control in Scheduling section", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
 
@@ -883,7 +890,7 @@ describe("SettingsModal", () => {
 
   it("save button calls updateSettings with form data", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     const saveButton = screen.getByRole("button", { name: "Save" });
     await waitFor(() => expect(saveButton).toBeEnabled());
@@ -905,7 +912,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} initialSection="scheduling" />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
     await waitFor(() => expect(fetchGlobalConcurrency).toHaveBeenCalled());
 
     const input = screen.getByLabelText("Global Max Concurrent") as HTMLInputElement;
@@ -963,7 +970,7 @@ describe("SettingsModal", () => {
 
   it("saving in General section updates project settings with task prefix", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Click on General to navigate to General section
     fireEvent.click(screen.getAllByText("General")[0]);
@@ -983,7 +990,7 @@ describe("SettingsModal", () => {
   it("saving in Models section updates global settings with default model", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Click on "Models" (global models section)
     fireEvent.click((await screen.findAllByText("Models"))[0]);
@@ -1006,7 +1013,7 @@ describe("SettingsModal", () => {
   it("saving in Models section updates global fallback model", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Click on "Models" (global models section)
     fireEvent.click(screen.getByText("Models"));
@@ -1034,7 +1041,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Click on "Models" (global models section)
     fireEvent.click(screen.getByText("Models"));
@@ -1047,7 +1054,7 @@ describe("SettingsModal", () => {
   it("saving in Project Models section updates project settings with planning and validator models", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Click on "Project Models" (project-scoped models section)
     fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
@@ -1077,7 +1084,7 @@ describe("SettingsModal", () => {
   it("saving in Project Models section updates project settings with execution model", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Click on "Project Models" (project-scoped models section)
     fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
@@ -1100,7 +1107,7 @@ describe("SettingsModal", () => {
   it("saving in Project Models section updates planning and validator fallback models", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Click on "Project Models" (project-scoped models section)
     fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
@@ -1126,7 +1133,7 @@ describe("SettingsModal", () => {
 
   it("shows Models and Project Models in sidebar", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     expect(screen.getAllByText("Models").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Project Models").length).toBeGreaterThanOrEqual(1);
@@ -1135,7 +1142,7 @@ describe("SettingsModal", () => {
   it("supports creating and saving a model preset", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Model presets are in Project Models section
     fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
@@ -1163,7 +1170,7 @@ describe("SettingsModal", () => {
     });
 
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
 
@@ -1192,7 +1199,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Auto-select presets are in Project Models section
     fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
@@ -1212,7 +1219,7 @@ describe("SettingsModal", () => {
   it("shows model selector with available models grouped by provider", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Models section has default model dropdown
     fireEvent.click(screen.getByText("Models"));
@@ -1238,7 +1245,7 @@ describe("SettingsModal", () => {
   it("selecting a model updates form with provider and model ID", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Models section has default model dropdown
     fireEvent.click(screen.getByText("Models"));
@@ -1267,7 +1274,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Models section has default model dropdown
     fireEvent.click((await screen.findAllByText("Models"))[0]);
@@ -1300,7 +1307,7 @@ describe("SettingsModal", () => {
     (fetchModels as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ models: [], favoriteProviders: [], favoriteModels: [] });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Models section shows empty state when no models available
     fireEvent.click(screen.getByText("Models"));
@@ -1315,7 +1322,7 @@ describe("SettingsModal", () => {
 
   it("shows Project Models section with planning and validator model dropdowns", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Project Models section has planning and validator model dropdowns
     fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
@@ -1329,7 +1336,7 @@ describe("SettingsModal", () => {
   it("selecting a planning model updates form with provider and model ID", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Project Models section has planning model dropdown
     fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
@@ -1352,7 +1359,7 @@ describe("SettingsModal", () => {
   it("selecting a validator model updates form with provider and model ID", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Project Models section has validator model dropdown
     fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
@@ -1377,7 +1384,7 @@ describe("SettingsModal", () => {
       const user = userEvent.setup();
 
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       // Navigate to Models (global section) and change default model
       fireEvent.click(screen.getByText("Models"));
@@ -1407,7 +1414,7 @@ describe("SettingsModal", () => {
       const user = userEvent.setup();
 
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       // Navigate to Project Models section and change planning model
       fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
@@ -1452,7 +1459,7 @@ describe("SettingsModal", () => {
       });
 
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       // Navigate to Project Models section
       fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
@@ -1480,7 +1487,7 @@ describe("SettingsModal", () => {
       const user = userEvent.setup();
 
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       // Navigate to Project Models section
       fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
@@ -1508,7 +1515,7 @@ describe("SettingsModal", () => {
     (fetchModels as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ models: [], favoriteProviders: [], favoriteModels: [] });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
@@ -1520,14 +1527,14 @@ describe("SettingsModal", () => {
 
   it("shows Authentication in sidebar", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     expect(screen.getAllByText("Authentication").length).toBeGreaterThanOrEqual(1);
   });
 
   it("Authentication nav item has globe icon in sidebar", async () => {
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Find the Authentication nav item in the sidebar
     const authNavItem = container.querySelector(".settings-nav-item");
@@ -1541,7 +1548,7 @@ describe("SettingsModal", () => {
 
   it("shows provider auth status when Authentication section is selected", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     const authNav = await screen.findByRole("button", { name: /Authentication/ });
     fireEvent.click(authNav);
@@ -1557,7 +1564,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -1571,7 +1578,7 @@ describe("SettingsModal", () => {
     vi.stubGlobal("open", openSpy);
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -1590,7 +1597,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -1612,7 +1619,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -1636,7 +1643,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -1668,7 +1675,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -1693,7 +1700,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -1706,7 +1713,7 @@ describe("SettingsModal", () => {
 
   it("auth provider rows use auth-provider-card class", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -1718,7 +1725,7 @@ describe("SettingsModal", () => {
   it("model section renders CustomModelDropdown button", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
@@ -1736,7 +1743,7 @@ describe("SettingsModal", () => {
 
   it("checkbox labels use checkbox-label class", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const label = screen.getByText("Serialize tasks with overlapping files");
@@ -1745,7 +1752,7 @@ describe("SettingsModal", () => {
 
   it("no inline style attributes remain on SettingsModal elements", async () => {
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Check that no elements in the settings content have inline styles
     const elementsWithStyle = container.querySelectorAll("[style]");
@@ -1754,7 +1761,7 @@ describe("SettingsModal", () => {
 
   it("shows Thinking Effort dropdown with correct options in Models section", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
@@ -1768,7 +1775,7 @@ describe("SettingsModal", () => {
 
   it("changing Thinking Effort dropdown updates form and is included in save payload", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
@@ -1792,7 +1799,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Models")[0]);
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
@@ -1808,7 +1815,7 @@ describe("SettingsModal", () => {
     vi.stubGlobal("open", vi.fn());
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -1824,7 +1831,7 @@ describe("SettingsModal", () => {
 
   it("opens to Authentication section when initialSection='authentication' is passed", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} initialSection="authentication" />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
 
     // Authentication content should be visible immediately
@@ -1835,7 +1842,7 @@ describe("SettingsModal", () => {
 
   it("defaults to Authentication section when no initialSection is passed", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
 
     // Authentication content should be visible (it's the default section now)
@@ -1853,7 +1860,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -1873,7 +1880,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -1894,7 +1901,7 @@ describe("SettingsModal", () => {
     });
 
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -1920,7 +1927,7 @@ describe("SettingsModal", () => {
     });
 
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -1950,7 +1957,7 @@ describe("SettingsModal", () => {
       });
 
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -1973,7 +1980,7 @@ describe("SettingsModal", () => {
     });
 
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -2000,7 +2007,7 @@ describe("SettingsModal", () => {
       });
 
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -2023,7 +2030,7 @@ describe("SettingsModal", () => {
     });
 
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     const authNav = await screen.findByRole("button", { name: /Authentication/ });
     fireEvent.click(authNav);
@@ -2054,7 +2061,7 @@ describe("SettingsModal", () => {
       });
 
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -2087,7 +2094,7 @@ describe("SettingsModal", () => {
     });
 
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -2108,7 +2115,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -2127,7 +2134,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -2140,7 +2147,7 @@ describe("SettingsModal", () => {
 
   it("has .settings-layout wrapping sidebar and content", async () => {
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     const layout = container.querySelector(".settings-layout");
     expect(layout).toBeTruthy();
@@ -2152,7 +2159,7 @@ describe("SettingsModal", () => {
     ensureTestStylesLoaded();
 
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     const layout = container.querySelector(".settings-layout") as HTMLElement | null;
     const sidebar = container.querySelector(".settings-sidebar") as HTMLElement | null;
@@ -2170,7 +2177,7 @@ describe("SettingsModal", () => {
 
   it("has .settings-sidebar with 17 .settings-nav-item buttons for all sections", async () => {
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     const sidebar = container.querySelector(".settings-sidebar");
     expect(sidebar).toBeTruthy();
@@ -2203,8 +2210,7 @@ describe("SettingsModal", () => {
 
   it("has .settings-content as sibling of .settings-sidebar", async () => {
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
-    await waitFor(() => expect(container.querySelector(".settings-layout")).toBeTruthy());
+    await waitForSettingsModalReady();
 
     const layout = container.querySelector(".settings-layout");
     const children = Array.from(layout!.children);
@@ -2216,7 +2222,7 @@ describe("SettingsModal", () => {
 
   it("marks the active nav item with .active class", async () => {
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Default active section is Authentication (first in sidebar order)
     const activeItems = container.querySelectorAll(".settings-nav-item.active");
@@ -2239,7 +2245,7 @@ describe("SettingsModal", () => {
     });
 
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Authentication")[0]);
     await waitFor(() => expect(fetchAuthStatus).toHaveBeenCalled());
@@ -2257,7 +2263,7 @@ describe("SettingsModal", () => {
 
   it("shows Notifications in sidebar", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     const notificationsLabels = await screen.findAllByText("Notifications");
     expect(notificationsLabels.length).toBeGreaterThanOrEqual(1);
@@ -2265,7 +2271,7 @@ describe("SettingsModal", () => {
 
   it("shows ntfy enable checkbox in Notifications section", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click((await screen.findAllByText("Notifications"))[0]);
     const checkbox = screen.getByLabelText("Enable ntfy.sh notifications");
@@ -2275,7 +2281,7 @@ describe("SettingsModal", () => {
 
   it("ntfy topic input is hidden when ntfy is disabled", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Notifications"));
     expect(screen.queryByLabelText("ntfy Topic")).toBeNull();
@@ -2283,7 +2289,7 @@ describe("SettingsModal", () => {
 
   it("ntfy topic input is visible when ntfy is enabled", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Notifications"));
     const checkbox = screen.getByLabelText("Enable ntfy.sh notifications");
@@ -2294,7 +2300,7 @@ describe("SettingsModal", () => {
 
   it("toggling ntfyEnabled checkbox sends true in save payload", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Notifications"));
     const checkbox = screen.getByLabelText("Enable ntfy.sh notifications");
@@ -2310,7 +2316,7 @@ describe("SettingsModal", () => {
 
   it("openrouterModelSync checkbox defaults to enabled and sends false when toggled off", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // OpenRouter model sync is in Models section (global settings)
     fireEvent.click(screen.getByText("Models"));
@@ -2330,7 +2336,7 @@ describe("SettingsModal", () => {
 
   it("ntfy topic field saves correctly when set", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Notifications"));
     const checkbox = screen.getByLabelText("Enable ntfy.sh notifications");
@@ -2356,7 +2362,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     const notificationsNav = await screen.findByRole("button", { name: /Notifications/ });
     fireEvent.click(notificationsNav);
@@ -2373,7 +2379,7 @@ describe("SettingsModal", () => {
 
   it("ntfy topic shows validation error for invalid input", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     const notificationsButton = screen.queryByRole("button", { name: /Notifications/ });
     if (notificationsButton) {
@@ -2394,7 +2400,7 @@ describe("SettingsModal", () => {
 
   it("ntfyEnabled defaults to false when setting is undefined", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Notifications"));
     const checkbox = screen.getByLabelText("Enable ntfy.sh notifications") as HTMLInputElement;
@@ -2409,7 +2415,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Notifications"));
     const checkbox = screen.getByLabelText("Enable ntfy.sh notifications") as HTMLInputElement;
@@ -2436,7 +2442,7 @@ describe("SettingsModal", () => {
     });
 
     const { unmount } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     openNotificationsSection();
     const checkbox = screen.getByLabelText("Enable ntfy.sh notifications") as HTMLInputElement;
@@ -2455,7 +2461,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     openNotificationsSection();
     const newCheckbox = screen.getByLabelText("Enable ntfy.sh notifications") as HTMLInputElement;
@@ -2473,7 +2479,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Notifications"));
     const checkbox = screen.getByLabelText("Enable ntfy.sh notifications") as HTMLInputElement;
@@ -2500,7 +2506,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Notifications"));
     await waitFor(() => expect(screen.getByLabelText("Task completed (in-review)")).toBeTruthy());
@@ -2520,7 +2526,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Notifications"));
     expect(screen.getByLabelText("Plan needs approval")).toBeTruthy();
@@ -2548,7 +2554,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click((await screen.findAllByText("Notifications"))[0]);
     expect((screen.getByLabelText("Task completed (in-review)") as HTMLInputElement).checked).toBe(true);
@@ -2568,7 +2574,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Notifications"));
 
@@ -2598,7 +2604,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click((await screen.findAllByText("Notifications"))[0]);
 
@@ -2626,7 +2632,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click((await screen.findAllByText("Notifications"))[0]);
     expect((screen.getByLabelText("Task completed (in-review)") as HTMLInputElement).checked).toBe(true);
@@ -2640,7 +2646,7 @@ describe("SettingsModal", () => {
   describe("Node Sync section", () => {
     it("Node Sync section renders with heading and toggle", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click((await screen.findAllByText("Node Sync"))[0]);
       expect(screen.getByText("Node Sync", { selector: "h4" })).toBeTruthy();
@@ -2654,7 +2660,7 @@ describe("SettingsModal", () => {
       });
 
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click((await screen.findAllByText("Node Sync"))[0]);
       expect(screen.queryByLabelText("Sync interval")).toBeNull();
@@ -2668,7 +2674,7 @@ describe("SettingsModal", () => {
       });
 
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click((await screen.findAllByText("Node Sync"))[0]);
       expect(screen.getByLabelText("Enable automatic settings sync")).toBeTruthy();
@@ -2679,7 +2685,7 @@ describe("SettingsModal", () => {
 
     it("toggle enables sync and updates form state", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click((await screen.findAllByText("Node Sync"))[0]);
       const checkbox = screen.getByLabelText("Enable automatic settings sync") as HTMLInputElement;
@@ -2697,7 +2703,7 @@ describe("SettingsModal", () => {
       });
 
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click((await screen.findAllByText("Node Sync"))[0]);
       const select = screen.getByLabelText("Sync interval") as HTMLSelectElement;
@@ -2715,7 +2721,7 @@ describe("SettingsModal", () => {
       });
 
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click((await screen.findAllByText("Node Sync"))[0]);
       const select = screen.getByLabelText("Conflict resolution") as HTMLSelectElement;
@@ -2727,7 +2733,7 @@ describe("SettingsModal", () => {
 
     it("save persists global settings with sync enabled", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click((await screen.findAllByText("Node Sync"))[0]);
       const checkbox = screen.getByLabelText("Enable automatic settings sync");
@@ -2745,7 +2751,7 @@ describe("SettingsModal", () => {
   it("renders filter input in Models section dropdown", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
@@ -2761,7 +2767,7 @@ describe("SettingsModal", () => {
   it("filters default model options in Models section", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
@@ -2785,7 +2791,7 @@ describe("SettingsModal", () => {
   it("clear button resets filter in Models section", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
@@ -2817,7 +2823,7 @@ describe("SettingsModal", () => {
   it("shows empty state in Models section when filter matches nothing", async () => {
     const user = userEvent.setup();
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Models"));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
@@ -2839,7 +2845,7 @@ describe("SettingsModal", () => {
 
   it("Test notification button is disabled when ntfy is disabled", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Notifications"));
 
@@ -2850,7 +2856,7 @@ describe("SettingsModal", () => {
 
   it("Test notification button is disabled when topic is invalid", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Notifications"));
 
@@ -2869,7 +2875,7 @@ describe("SettingsModal", () => {
 
   it("Test notification button is enabled when ntfy is enabled with valid topic", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Notifications"));
 
@@ -2888,7 +2894,7 @@ describe("SettingsModal", () => {
 
   it("Clicking test button calls testNtfyNotification API", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Notifications"));
 
@@ -2910,7 +2916,7 @@ describe("SettingsModal", () => {
 
   it("Success toast is shown when test notification succeeds", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Notifications"));
 
@@ -2934,7 +2940,7 @@ describe("SettingsModal", () => {
     (testNtfyNotification as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Network error"));
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Notifications"));
 
@@ -2957,7 +2963,7 @@ describe("SettingsModal", () => {
 
   it("shows Stuck Task Timeout field in Scheduling section", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const input = screen.getByLabelText("Stuck Task Timeout (minutes)");
@@ -2969,7 +2975,7 @@ describe("SettingsModal", () => {
 
   it("Stuck Task Timeout field saves correctly when set to a value", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const input = screen.getByLabelText("Stuck Task Timeout (minutes)") as HTMLInputElement;
@@ -2990,7 +2996,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const input = screen.getByLabelText("Stuck Task Timeout (minutes)") as HTMLInputElement;
@@ -3005,7 +3011,7 @@ describe("SettingsModal", () => {
 
   it("Stuck Task Timeout field shows helper text", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     expect(screen.getByText(/Timeout in minutes for detecting stuck tasks/)).toBeTruthy();
@@ -3018,7 +3024,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const input = screen.getByLabelText("Stuck Task Timeout (minutes)") as HTMLInputElement;
@@ -3027,7 +3033,7 @@ describe("SettingsModal", () => {
 
   it("Max Stuck Retries field saves correctly when set to a value", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const input = screen.getByLabelText("Max Stuck Retries") as HTMLInputElement;
@@ -3048,7 +3054,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const input = screen.getByLabelText("Max Stuck Retries") as HTMLInputElement;
@@ -3065,7 +3071,7 @@ describe("SettingsModal", () => {
 
   it("shows Specification Staleness fields in Scheduling section", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const checkbox = screen.getByLabelText("Enable specification staleness enforcement");
@@ -3080,7 +3086,7 @@ describe("SettingsModal", () => {
 
   it("shows auto-archive fields in Scheduling section", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(await screen.findByText("Scheduling"));
     const checkbox = screen.getByLabelText("Enable automatic task archiving");
@@ -3099,7 +3105,7 @@ describe("SettingsModal", () => {
 
   it("auto-archive age input shows default days and disables when archiving is off", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(await screen.findByText("Scheduling"));
     const ageInput = screen.getByLabelText("Archive Completed Tasks After (days)") as HTMLInputElement;
@@ -3127,7 +3133,7 @@ describe("SettingsModal", () => {
     } as SettingsWithAutoArchive);
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const checkbox = screen.getByLabelText("Enable automatic task archiving") as HTMLInputElement;
@@ -3151,7 +3157,7 @@ describe("SettingsModal", () => {
 
   it("Specification Staleness threshold input is disabled when toggle is off", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const thresholdInput = screen.getByLabelText("Stale Spec Threshold (hours)") as HTMLInputElement;
@@ -3160,7 +3166,7 @@ describe("SettingsModal", () => {
 
   it("Specification Staleness threshold input is enabled when toggle is on", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const checkbox = screen.getByLabelText("Enable specification staleness enforcement") as HTMLInputElement;
@@ -3179,7 +3185,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} initialSection="scheduling" />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     const thresholdInput = screen.getByLabelText("Stale Spec Threshold (hours)") as HTMLInputElement;
     expect(thresholdInput.value).toBe("6");
@@ -3187,7 +3193,7 @@ describe("SettingsModal", () => {
 
   it("Specification Staleness threshold converts hours to milliseconds on save", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const checkbox = screen.getByLabelText("Enable specification staleness enforcement") as HTMLInputElement;
@@ -3208,7 +3214,7 @@ describe("SettingsModal", () => {
 
   it("Specification Staleness threshold of 0 hours persists 0 milliseconds", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const checkbox = screen.getByLabelText("Enable specification staleness enforcement") as HTMLInputElement;
@@ -3229,7 +3235,7 @@ describe("SettingsModal", () => {
 
   it("Specification Staleness enabled with empty threshold submits without invalid numeric payload", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const checkbox = screen.getByLabelText("Enable specification staleness enforcement") as HTMLInputElement;
@@ -3255,7 +3261,7 @@ describe("SettingsModal", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const checkbox = screen.getByLabelText("Enable specification staleness enforcement") as HTMLInputElement;
@@ -3280,7 +3286,7 @@ describe("SettingsModal", () => {
 
   it("Specification Staleness helper text is visible", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     expect(screen.getByText(/Maximum age in hours before a specification is considered stale/)).toBeTruthy();
@@ -3289,7 +3295,7 @@ describe("SettingsModal", () => {
 
   it("scope banners render for global and project sections with theme-aware icons", async () => {
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Authentication is first (no scope banner) → should show no scope banner
     expect(container.querySelector(".settings-scope-project")).toBeNull();
@@ -3341,7 +3347,7 @@ describe("SettingsModal", () => {
     (updateSettings as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Failed to save settings"));
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("Failed to save settings", "error"));
@@ -3354,7 +3360,7 @@ describe("SettingsModal", () => {
     (updateGlobalSettings as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Failed to save global settings"));
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Switch to Models section
     fireEvent.click(screen.getByText("Models"));
@@ -3369,7 +3375,7 @@ describe("SettingsModal", () => {
 
   it("closes modal and shows success toast when settings save succeeds", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("Settings saved", "success"));
@@ -3382,7 +3388,7 @@ describe("SettingsModal", () => {
     (updateSettings as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Network error"));
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("Network error", "error"));
@@ -3392,7 +3398,7 @@ describe("SettingsModal", () => {
     (updateSettings as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Internal server error"));
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("Internal server error", "error"));
@@ -3402,7 +3408,7 @@ describe("SettingsModal", () => {
 
   it("shows runStepsInNewSessions checkbox and maxParallelSteps input in Scheduling section", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const checkbox = screen.getByLabelText("Run each step in a new session");
@@ -3416,7 +3422,7 @@ describe("SettingsModal", () => {
 
   it("maxParallelSteps input is disabled when runStepsInNewSessions is false", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const input = screen.getByLabelText("Maximum parallel steps") as HTMLInputElement;
@@ -3425,7 +3431,7 @@ describe("SettingsModal", () => {
 
   it("toggling runStepsInNewSessions to true enables the maxParallelSteps input", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const checkbox = screen.getByLabelText("Run each step in a new session");
@@ -3437,7 +3443,7 @@ describe("SettingsModal", () => {
 
   it("saving with runStepsInNewSessions true includes both fields in save payload", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getByText("Scheduling"));
     const checkbox = screen.getByLabelText("Run each step in a new session");
@@ -3463,7 +3469,7 @@ describe("SettingsModal", () => {
         error: null,
       });
       const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       // Navigate to Plugins section
       await userEvent.click(screen.getByText("Plugins"));
@@ -3486,7 +3492,7 @@ describe("SettingsModal", () => {
         error: null,
       });
       const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       await userEvent.click(screen.getByText("Plugins"));
       await waitFor(() => expect(screen.getByTestId("plugin-manager")).toBeDefined());
@@ -3500,14 +3506,14 @@ describe("SettingsModal", () => {
 describe("Prompts section", () => {
   it("renders the Prompts section in the sidebar", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     expect(screen.getAllByText("Prompts").length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows AgentPromptsManager when Prompts section is selected", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     // Click on Prompts section in sidebar (first one is the nav item)
     fireEvent.click(screen.getAllByText("Prompts")[0]);
@@ -3523,7 +3529,7 @@ describe("Prompts section", () => {
 
   it("shows built-in templates in Templates tab", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click((await screen.findAllByText("Prompts"))[0]);
 
@@ -3537,7 +3543,7 @@ describe("Prompts section", () => {
 
   it("shows Assignments tab with role dropdowns", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Prompts")[0]);
 
@@ -3553,7 +3559,7 @@ describe("Prompts section", () => {
 
   it("shows Overrides tab with accordion items", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click((await screen.findAllByText("Prompts"))[0]);
 
@@ -3567,7 +3573,7 @@ describe("Prompts section", () => {
 
   it("editing a prompt override includes override in save payload", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click((await screen.findAllByText("Prompts"))[0]);
 
@@ -3609,7 +3615,7 @@ describe("Prompts section", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Prompts")[0]);
 
@@ -3639,7 +3645,7 @@ describe("Prompts section", () => {
 
   it("promptOverrides are sent as project settings (not global)", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Prompts")[0]);
 
@@ -3683,7 +3689,7 @@ describe("Prompts section", () => {
     });
 
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Prompts")[0]);
 
@@ -3708,7 +3714,7 @@ describe("Prompts section", () => {
 
   it("can create a custom template", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Prompts")[0]);
 
@@ -3728,7 +3734,7 @@ describe("Prompts section", () => {
 
   it("saving with agentPrompts includes it in the save payload", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitForSettingsModalReady();
 
     fireEvent.click(screen.getAllByText("Prompts")[0]);
 
@@ -3759,7 +3765,7 @@ describe("Prompts section", () => {
     it("renders Reopen onboarding guide button in Authentication section when onReopenOnboarding is provided", async () => {
       const onReopenOnboarding = vi.fn();
       render(<SettingsModal onClose={onClose} addToast={addToast} onReopenOnboarding={onReopenOnboarding} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       // Navigate to Authentication section
       fireEvent.click(screen.getAllByText("Authentication")[0]);
@@ -3771,7 +3777,7 @@ describe("Prompts section", () => {
 
     it("does not render Reopen onboarding guide button when onReopenOnboarding is not provided", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       // Navigate to Authentication section
       fireEvent.click(screen.getAllByText("Authentication")[0]);
@@ -3784,7 +3790,7 @@ describe("Prompts section", () => {
     it("calls onReopenOnboarding when Reopen button is clicked", async () => {
       const onReopenOnboarding = vi.fn();
       render(<SettingsModal onClose={onClose} addToast={addToast} onReopenOnboarding={onReopenOnboarding} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       // Navigate to Authentication section
       fireEvent.click(screen.getAllByText("Authentication")[0]);
@@ -3819,7 +3825,7 @@ describe("Prompts section", () => {
   describe("Model lane rendering (FN-1712 scope UX)", () => {
     it("renders Project Models section with all three model lanes", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       // Navigate to Project Models section
       fireEvent.click(screen.getAllByText("Project Models")[0]);
@@ -3833,7 +3839,7 @@ describe("Prompts section", () => {
 
     it("renders Default Model and Fallback Model in global Models section", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       // Navigate to Models section (global)
       fireEvent.click(screen.getAllByText("Models")[0]);
@@ -3846,7 +3852,7 @@ describe("Prompts section", () => {
 
     it("renders global baseline lane dropdowns in Models section", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click(screen.getAllByText("Models")[0]);
       await waitFor(() => expect(fetchModels).toHaveBeenCalled());
@@ -3860,7 +3866,7 @@ describe("Prompts section", () => {
     it("saving a global lane selection persists execution global lane keys", async () => {
       const user = userEvent.setup();
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click(screen.getAllByText("Models")[0]);
       await waitFor(() => expect(fetchModels).toHaveBeenCalled());
@@ -3886,7 +3892,7 @@ describe("Prompts section", () => {
       });
 
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click(screen.getAllByText("Models")[0]);
       await waitFor(() => expect(fetchModels).toHaveBeenCalled());
@@ -3906,7 +3912,7 @@ describe("Prompts section", () => {
 
     it("shows Use default placeholder text for each global model lane when unset", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click((await screen.findAllByText("Models"))[0]);
       await waitFor(() => expect(fetchModels).toHaveBeenCalled());
@@ -3919,7 +3925,7 @@ describe("Prompts section", () => {
 
     it("renders Thinking Effort select in global Models section", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click((await screen.findAllByText("Models"))[0]);
       await waitFor(() => expect(fetchModels).toHaveBeenCalled());
@@ -3940,7 +3946,7 @@ describe("Prompts section", () => {
 
     it("renders Planning Fallback and Validator Fallback in project Models section", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click(screen.getAllByText("Project Models")[0]);
       await waitFor(() => expect(fetchModels).toHaveBeenCalled());
@@ -3958,7 +3964,7 @@ describe("Prompts section", () => {
       });
 
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
       await waitFor(() => expect(fetchSettingsByScope).toHaveBeenCalled());
 
       fireEvent.click(screen.getAllByText("Project Models")[0]);
@@ -3978,7 +3984,7 @@ describe("Prompts section", () => {
       });
 
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
       await waitFor(() => expect(fetchSettingsByScope).toHaveBeenCalled());
 
       fireEvent.click(screen.getAllByText("Project Models")[0]);
@@ -4001,7 +4007,7 @@ describe("Prompts section", () => {
       });
 
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
       await waitFor(() => expect(fetchSettingsByScope).toHaveBeenCalled());
 
       fireEvent.click(screen.getAllByText("Models")[0]);
@@ -4016,7 +4022,7 @@ describe("Prompts section", () => {
   describe("Save payload scope-split (FN-1712)", () => {
     it("global-only change calls updateGlobalSettings but not updateSettings for global keys", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click(screen.getAllByText("Models")[0]);
       await waitFor(() => expect(fetchModels).toHaveBeenCalled());
@@ -4049,7 +4055,7 @@ describe("Prompts section", () => {
 
     it("project-only change calls updateSettings but not updateGlobalSettings for project keys", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click(screen.getAllByText("Project Models")[0]);
       await waitFor(() => expect(fetchModels).toHaveBeenCalled());
@@ -4082,7 +4088,7 @@ describe("Prompts section", () => {
 
     it("mixed global and project changes call both endpoints with correct subsets", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       // Change global model
       fireEvent.click(screen.getAllByText("Models")[0]);
@@ -4138,7 +4144,7 @@ describe("Prompts section", () => {
       });
 
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
       await waitFor(() => expect(fetchSettingsByScope).toHaveBeenCalled());
 
       fireEvent.click(screen.getAllByText("Project Models")[0]);
@@ -4170,7 +4176,7 @@ describe("Prompts section", () => {
   describe("Memory section - file editor", () => {
     it("renders auto-summarize controls and toggles threshold/schedule inputs", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click(screen.getByText("Memory"));
 
@@ -4187,7 +4193,7 @@ describe("Prompts section", () => {
 
     it("persists auto-summarize settings changes on save", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click(screen.getByText("Memory"));
 
@@ -4217,7 +4223,7 @@ describe("Prompts section", () => {
 
     it("shows the memory file selector and defaults to dreams", async () => {
       render(<SettingsModal onClose={onClose} addToast={addToast} />);
-      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      await waitForSettingsModalReady();
 
       fireEvent.click(screen.getByText("Memory"));
 

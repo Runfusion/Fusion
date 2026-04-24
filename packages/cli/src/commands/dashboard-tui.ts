@@ -25,6 +25,8 @@ export interface LogEntry {
 
 export type SectionId = "logs" | "system" | "utilities" | "stats" | "settings";
 
+type LogsSeverityFilter = "all" | LogEntry["level"];
+
 export interface SystemInfo {
   host: string;
   port: number;
@@ -279,6 +281,7 @@ export class DashboardTUI {
   private logsViewportStart = 0;
   private logsWrapEnabled = false;
   private logsExpandedMode = false;
+  private logsSeverityFilter: LogsSeverityFilter = "all";
 
   constructor() {
     this.logBuffer = new LogRingBuffer();
@@ -315,11 +318,7 @@ export class DashboardTUI {
       ...entry,
       timestamp: new Date(),
     });
-    // Clamp selection index if it exceeds new length
-    const newLength = this.logBuffer.getAll().length;
-    if (this.selectedLogIndex >= newLength) {
-      this.selectedLogIndex = Math.max(0, newLength - 1);
-    }
+    this.clampSelectedLogIndex(this.getFilteredLogEntries());
     this.render();
   }
 
@@ -543,7 +542,7 @@ export class DashboardTUI {
   }
 
   private handleLogsKeypress(key: string): void {
-    const entries = this.logBuffer.getAll();
+    const entries = this.getFilteredLogEntries();
     const maxIndex = Math.max(0, entries.length - 1);
 
     // Esc: close expanded mode (also closes help overlay)
@@ -573,6 +572,15 @@ export class DashboardTUI {
     // w: toggle wrap mode (case-insensitive)
     if (key === "w" || key === "W") {
       this.logsWrapEnabled = !this.logsWrapEnabled;
+      this.render();
+      return;
+    }
+
+    // f: cycle severity filter (all -> info -> warn -> error -> all)
+    if (key === "f" || key === "F") {
+      this.cycleLogsSeverityFilter();
+      this.clampSelectedLogIndex(this.getFilteredLogEntries());
+      this.logsViewportStart = 0;
       this.render();
       return;
     }
@@ -629,6 +637,37 @@ export class DashboardTUI {
       this.render();
       return;
     }
+  }
+
+  private getFilteredLogEntries(): LogEntry[] {
+    const entries = this.logBuffer.getAll();
+    if (this.logsSeverityFilter === "all") {
+      return entries;
+    }
+
+    return entries.filter((entry) => entry.level === this.logsSeverityFilter);
+  }
+
+  private clampSelectedLogIndex(entries: LogEntry[]): void {
+    if (entries.length === 0) {
+      this.selectedLogIndex = 0;
+      this.logsExpandedMode = false;
+      return;
+    }
+
+    if (this.selectedLogIndex >= entries.length) {
+      this.selectedLogIndex = entries.length - 1;
+    }
+
+    if (this.selectedLogIndex < 0) {
+      this.selectedLogIndex = 0;
+    }
+  }
+
+  private cycleLogsSeverityFilter(): void {
+    const order: LogsSeverityFilter[] = ["all", "info", "warn", "error"];
+    const currentIndex = order.indexOf(this.logsSeverityFilter);
+    this.logsSeverityFilter = order[(currentIndex + 1) % order.length];
   }
 
   private async handleUtilityKeypress(key: string): Promise<void> {
@@ -853,14 +892,22 @@ export class DashboardTUI {
   private renderLogsSection(): void {
     const cols = process.stdout.columns || 80;
     const rows = process.stdout.rows ?? 38;
-    const entries = this.logBuffer.getAll();
+    const allEntries = this.logBuffer.getAll();
+    const entries = this.getFilteredLogEntries();
     const rowBudget = this.getLogsListRowBudget(rows);
 
     process.stdout.write(colorize("\n  LOGS\n", "bold"));
     process.stdout.write(colorize(`  Ring buffer: ${this.logBuffer.total}/${MAX_LOG_ENTRIES} entries\n`, "dim"));
 
-    if (entries.length === 0) {
+    if (allEntries.length === 0) {
       process.stdout.write(colorize("  No log entries yet.\n", "dim"));
+      return;
+    }
+
+    if (entries.length === 0) {
+      const filterLabel = this.logsSeverityFilter.toUpperCase();
+      process.stdout.write(colorize(`  No log entries match filter ${filterLabel}.\n`, "dim"));
+      process.stdout.write(colorize("  Press [f] to cycle severity filter.\n", "dim"));
       return;
     }
 
@@ -877,9 +924,10 @@ export class DashboardTUI {
     }
 
     // Normal list mode
-    // Show mode indicator (only in list mode)
-    const modeIndicator = this.logsWrapEnabled ? colorize("  [w] wrap on", "dim") : colorize("  [w] wrap off", "dim");
-    process.stdout.write(modeIndicator + "\n\n");
+    // Show mode indicators (only in list mode)
+    const wrapIndicator = this.logsWrapEnabled ? colorize("  [w] wrap on", "dim") : colorize("  [w] wrap off", "dim");
+    const filterIndicator = colorize(`  [f] filter ${this.logsSeverityFilter}`, "dim");
+    process.stdout.write(`${wrapIndicator}${filterIndicator}\n\n`);
 
     if (rowBudget === 0) {
       process.stdout.write(colorize("  Terminal too short — expand terminal to view logs.\n", "dim"));
@@ -1288,6 +1336,7 @@ export class DashboardTUI {
         boxRow("  [Home/End]   First/last log entry (Logs)"),
         boxRow("  [Enter/Space/e] Expand log (Logs)"),
         boxRow("  [w]          Toggle word wrap (Logs)"),
+        boxRow("  [f]          Cycle severity filter (Logs)"),
         boxRow("  [?] / [h]   Toggle help"),
         boxRow("  [q]         Quit"),
         boxRow("  [Ctrl+C]    Force quit"),
@@ -1300,6 +1349,7 @@ export class DashboardTUI {
         "  [1-5] Switch tab | [n/p] Next/Prev | [q] Quit",
         "  [↑↓/k/j] Navigate logs | [Home/End] First/Last (Logs)",
         "  [Enter/Space/e] Expand log | [w] Toggle wrap (Logs)",
+        "  [f] Cycle severity filter (Logs)",
         "  [r] Refresh | [c] Clear logs | [t] Toggle engine",
         "  [?/h] Help | [Ctrl+C] Force quit",
       ];

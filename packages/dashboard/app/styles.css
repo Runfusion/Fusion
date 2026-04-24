@@ -39626,11 +39626,18 @@ html .column.drag-over * {
   gap: var(--space-sm);
 }
 
+.devserver-log-viewer__severity,
 .devserver-log-viewer__search {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
   color: var(--text-muted);
+}
+
+.devserver-log-viewer__severity-select {
+  min-height: calc(var(--space-lg) + var(--space-md));
+  min-width: calc(var(--space-2xl) * 3);
+  font-size: 0.75rem;
 }
 
 .devserver-log-viewer__search-input {
