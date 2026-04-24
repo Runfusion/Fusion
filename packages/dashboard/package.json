@@ -37,8 +37,7 @@
     "dev": "pnpm build && pnpm typecheck && pnpm dev:serve",
     "dev:serve": "vite dev",
     "postinstall": "chmod +x node_modules/.pnpm/node-pty*/node_modules/node-pty/prebuilds/darwin-*/spawn-helper node_modules/.pnpm/node-pty*/node_modules/node-pty/prebuilds/darwin-*/*.node 2>/dev/null || true",
-    "test": "vitest run --silent=passed-only --reporter=dot --exclude '**/build-output.test.ts'",
-    "test:build": "vitest run --silent=passed-only --reporter=dot app/__tests__/build-output.test.ts",
+    "test": "vitest run --silent=passed-only --reporter=dot",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.app.json"
   },
   "dependencies": {

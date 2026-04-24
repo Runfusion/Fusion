@@ -1,10 +1,9 @@
 import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
-import { cpus } from "node:os";
 
-const defaultMaxWorkers = Math.max(1, cpus().length - 1);
+const defaultMaxWorkers = 2;
 const requestedMaxWorkers = Number.parseInt(process.env.VITEST_MAX_WORKERS ?? String(defaultMaxWorkers), 10);
-const maxWorkers = Math.max(1, Number.isFinite(requestedMaxWorkers) ? requestedMaxWorkers : defaultMaxWorkers);
+const maxWorkers = Math.max(1, Math.min(4, Number.isFinite(requestedMaxWorkers) ? requestedMaxWorkers : defaultMaxWorkers));
 process.env.VITEST_MAX_WORKERS = String(maxWorkers);
 const coreSourceEntry = fileURLToPath(new URL("../core/src/index.ts", import.meta.url));
 const testUtilsEntry = fileURLToPath(new URL("../core/src/__test-utils__/workspace.ts", import.meta.url));
