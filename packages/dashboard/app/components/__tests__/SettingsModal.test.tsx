@@ -2333,7 +2333,8 @@ describe("SettingsModal", () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    expect(screen.getAllByText("Notifications").length).toBeGreaterThanOrEqual(1);
+    const notificationsLabels = await screen.findAllByText("Notifications");
+    expect(notificationsLabels.length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows ntfy enable checkbox in Notifications section", async () => {

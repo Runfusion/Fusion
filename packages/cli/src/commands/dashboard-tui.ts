@@ -779,32 +779,82 @@ export class DashboardTUI {
     }
   }
 
-  private getLogViewportStart(totalEntries: number, maxRows: number): number {
-    if (totalEntries <= 0) {
+  private getFooterTopRow(totalRows: number): number {
+    return Math.max(1, totalRows - 2);
+  }
+
+  private getLogsListRowBudget(totalRows: number): number {
+    // In list mode, first log body line starts at row 8:
+    // 1-2: header, 3: spacer, 4: "LOGS", 5: ring buffer, 6: wrap mode, 7: spacer
+    // Footer hint is rendered at rows-2, so log body must stay above that row.
+    const firstLogBodyRow = 8;
+    const footerTopRow = this.getFooterTopRow(totalRows);
+    return Math.max(0, footerTopRow - firstLogBodyRow);
+  }
+
+  private getLogEntryRowCount(entry: LogEntry, cols: number): number {
+    if (!this.logsWrapEnabled) {
+      return 1;
+    }
+
+    const prefixLen = 30; // timestamp + level + prefix overhead
+    const availableWidth = Math.max(8, cols - prefixLen);
+    return Math.max(1, this.wrapText(entry.message, availableWidth).length);
+  }
+
+  private getLogsViewportWindow(entries: LogEntry[], rowBudget: number, cols: number): { start: number; end: number } {
+    if (entries.length === 0) {
       this.logsViewportStart = 0;
-      return 0;
+      return { start: 0, end: 0 };
     }
 
-    const maxStart = Math.max(0, totalEntries - maxRows);
-    let start = Math.min(this.logsViewportStart, maxStart);
+    const maxStart = Math.max(0, entries.length - 1);
+    const safeSelectedIndex = Math.max(0, Math.min(this.selectedLogIndex, entries.length - 1));
+    let start = Math.max(0, Math.min(this.logsViewportStart, maxStart));
 
-    if (this.selectedLogIndex < start) {
-      start = this.selectedLogIndex;
-    } else if (this.selectedLogIndex >= start + maxRows) {
-      start = this.selectedLogIndex - maxRows + 1;
+    if (safeSelectedIndex < start) {
+      start = safeSelectedIndex;
     }
 
-    this.logsViewportStart = Math.max(0, Math.min(start, maxStart));
-    return this.logsViewportStart;
+    const measureWindow = (startIndex: number): { end: number } => {
+      let rowsUsed = 0;
+      let end = startIndex;
+
+      while (end < entries.length) {
+        const entryRows = this.getLogEntryRowCount(entries[end], cols);
+
+        // Always include at least one entry, even if it needs more rows than budget.
+        if (end > startIndex && rowsUsed + entryRows > rowBudget) {
+          break;
+        }
+
+        rowsUsed += entryRows;
+        end++;
+
+        if (rowsUsed >= rowBudget) {
+          break;
+        }
+      }
+
+      return { end };
+    };
+
+    let window = measureWindow(start);
+
+    while (safeSelectedIndex >= window.end && start < maxStart) {
+      start++;
+      window = measureWindow(start);
+    }
+
+    this.logsViewportStart = start;
+    return { start, end: window.end };
   }
 
   private renderLogsSection(): void {
     const cols = process.stdout.columns || 80;
+    const rows = process.stdout.rows ?? 38;
     const entries = this.logBuffer.getAll();
-    // Clamp to minimum 1 row to handle very small terminals.
-    // Reserve 9 rows for fixed UI chrome (header, section labels/spacers, footer)
-    // so content never overlaps the footer on short terminals.
-    const maxRows = Math.max(1, (process.stdout.rows ?? 38) - 9);
+    const rowBudget = this.getLogsListRowBudget(rows);
 
     process.stdout.write(colorize("\n  LOGS\n", "bold"));
     process.stdout.write(colorize(`  Ring buffer: ${this.logBuffer.total}/${MAX_LOG_ENTRIES} entries\n`, "dim"));
@@ -831,13 +881,19 @@ export class DashboardTUI {
     const modeIndicator = this.logsWrapEnabled ? colorize("  [w] wrap on", "dim") : colorize("  [w] wrap off", "dim");
     process.stdout.write(modeIndicator + "\n\n");
 
-    // Calculate viewport window from selection, so every ring-buffer entry remains reachable.
-    const startIndex = this.getLogViewportStart(entries.length, maxRows);
-    const visibleEntries = entries.slice(startIndex, startIndex + maxRows);
+    if (rowBudget === 0) {
+      process.stdout.write(colorize("  Terminal too short — expand terminal to view logs.\n", "dim"));
+      return;
+    }
+
+    // Calculate viewport window from selection, keeping entry-based navigation
+    // while budgeting by printable rows so wrapped content cannot reach footer.
+    const { start: startIndex, end: endIndex } = this.getLogsViewportWindow(entries, rowBudget, cols);
+    const visibleEntries = entries.slice(startIndex, endIndex);
     const visibleReversed = [...visibleEntries].reverse();
 
     // Map selected index to display index (for highlighting in newest-first list)
-    const selectedDisplayIndex = safeSelectedIndex >= startIndex && safeSelectedIndex < startIndex + visibleEntries.length
+    const selectedDisplayIndex = safeSelectedIndex >= startIndex && safeSelectedIndex < endIndex
       ? visibleEntries.length - 1 - (safeSelectedIndex - startIndex)
       : -1;
 
@@ -845,7 +901,9 @@ export class DashboardTUI {
     const prefixLen = 30; // timestamp + level + prefix overhead
     const availableWidth = Math.max(8, cols - prefixLen);
 
-    for (let displayIdx = 0; displayIdx < visibleReversed.length; displayIdx++) {
+    let remainingRows = rowBudget;
+
+    for (let displayIdx = 0; displayIdx < visibleReversed.length && remainingRows > 0; displayIdx++) {
       const entry = visibleReversed[displayIdx];
       const isSelected = displayIdx === selectedDisplayIndex;
 
@@ -858,15 +916,21 @@ export class DashboardTUI {
         : colorize("✓", "brightGreen");
 
       if (this.logsWrapEnabled) {
-        // Wrapped mode: wrap message to available width
+        // Wrapped mode: wrap message to available width and cap printed rows to footer-safe budget.
         const wrappedLines = this.wrapText(entry.message, availableWidth);
+        const lineBudget = Math.max(1, remainingRows);
+        const renderedLines = wrappedLines.slice(0, lineBudget);
+
         // First line includes prefix
-        const firstLine = `${selector}${ts} ${levelChar} ${prefix ? prefix + " " : ""}${wrappedLines[0]}`;
+        const firstLine = `${selector}${ts} ${levelChar} ${prefix ? prefix + " " : ""}${renderedLines[0] ?? ""}`;
         process.stdout.write(visibleTruncate(firstLine, cols - 1) + "\n");
+        remainingRows--;
+
         // Continuation lines (indented)
-        for (let i = 1; i < wrappedLines.length; i++) {
-          const continuation = `    ${wrappedLines[i]}`;
+        for (let i = 1; i < renderedLines.length && remainingRows > 0; i++) {
+          const continuation = `    ${renderedLines[i]}`;
           process.stdout.write(visibleTruncate(continuation, cols - 1) + "\n");
+          remainingRows--;
         }
       } else {
         // Single-line mode: truncate to available width
@@ -874,6 +938,7 @@ export class DashboardTUI {
         const message = visibleTruncate(entry.message, messageWidth);
         const line = `${selector}${ts} ${levelChar} ${prefix ? prefix + " " : ""}${message}`;
         process.stdout.write(visibleTruncate(line, cols - 1) + "\n");
+        remainingRows--;
       }
     }
   }

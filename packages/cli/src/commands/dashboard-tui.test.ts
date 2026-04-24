@@ -748,7 +748,7 @@ describe("DashboardTUI Logs viewport window", () => {
 
   beforeEach(() => {
     tui = createTestTUI();
-    tui._setTerminalSize(80, 14); // maxRows = 5 in logs list
+    tui._setTerminalSize(80, 14); // rowBudget = 4 in logs list (footer-safe)
     (tui as any).activeSection = "logs";
 
     stdoutWriteSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
@@ -782,7 +782,8 @@ describe("DashboardTUI Logs viewport window", () => {
     const output = renderLogs();
 
     expect(output).toContain("Entry 5");
-    expect(output).toContain("Entry 9");
+    expect(output).toContain("Entry 8");
+    expect(output).not.toContain("Entry 9");
     expect(output).not.toContain("Entry 12");
     expect((tui as any).logsViewportStart).toBe(4);
   });
@@ -797,7 +798,60 @@ describe("DashboardTUI Logs viewport window", () => {
     expect((tui as any).selectedLogIndex).toBe(11);
     output = renderLogs();
     expect(output).toContain("Entry 12");
-    expect((tui as any).logsViewportStart).toBe(7);
+    expect((tui as any).logsViewportStart).toBe(8);
+  });
+});
+
+describe("DashboardTUI Logs footer-safe row budgeting", () => {
+  let tui: DashboardTUI & {
+    _stdout: string[];
+    _setTerminalSize: (cols: number, rows: number) => void;
+  };
+  let stdoutWriteSpy: ReturnType<typeof vi.spyOn>;
+
+  const stripAnsi = (output: string): string => output.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+
+  beforeEach(() => {
+    tui = createTestTUI();
+    (tui as any).activeSection = "logs";
+    (tui as any).isRunning = true;
+    stdoutWriteSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    stdoutWriteSpy.mockRestore();
+    Object.defineProperty(process.stdout, "columns", { value: 80, writable: true });
+    Object.defineProperty(process.stdout, "rows", { value: 24, writable: true });
+  });
+
+  it("shows a short-terminal hint and suppresses log lines when no safe body rows exist", () => {
+    tui._setTerminalSize(80, 10); // rowBudget = 0 for log body
+    for (let i = 1; i <= 6; i++) {
+      tui.log(`Entry ${i}`);
+    }
+
+    simulateKeypress(tui, "End");
+    stdoutWriteSpy.mockClear();
+    (tui as any).renderLogsSection();
+    const rendered = stripAnsi(stdoutWriteSpy.mock.calls.map(([chunk]) => String(chunk)).join(""));
+
+    expect(rendered).toContain("Terminal too short — expand terminal to view logs.");
+    expect(rendered).not.toContain("Entry 6");
+    expect(rendered).not.toContain("Entry 1");
+  });
+
+  it("caps wrapped output rows so a single long message cannot overflow footer budget", () => {
+    tui._setTerminalSize(36, 11); // rowBudget = 1 for log body
+    tui.log("aa bb cc dd ee ff gg hh ii jj kk ll mm nn");
+    simulateKeypress(tui, "w");
+
+    stdoutWriteSpy.mockClear();
+    (tui as any).renderLogsSection();
+    const rendered = stripAnsi(stdoutWriteSpy.mock.calls.map(([chunk]) => String(chunk)).join(""));
+
+    // First wrapped segment renders, but continuation rows are suppressed by budget.
+    expect(rendered).toContain("aa");
+    expect(rendered).not.toContain("nn");
   });
 });
 

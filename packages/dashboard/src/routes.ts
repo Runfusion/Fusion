@@ -4578,8 +4578,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    *
    * Strategy (in priority order):
    * 1. **Branch merge-base** — Prefer the live merge-base between HEAD and
-   *    `origin/{baseBranch}` (or bare `{baseBranch}`). This stays correct as
-   *    the base branch advances and is merged into the feature branch.
+   *    the local `{baseBranch}` ref (falling back to `origin/{baseBranch}`
+   *    when the local ref is missing). The local ref reflects the worktree's
+   *    actual fork point regardless of whether merges have been pushed; using
+   *    `origin/{baseBranch}` first would inflate the diff by every commit
+   *    between `origin/main` and a locally-advanced `main`.
    * 2. **Task-scoped baseCommitSha** — Only when no merge-base is available
    *    (e.g. the base branch was deleted), fall back to the stored SHA if it
    *    is still an ancestor of HEAD.
@@ -4596,9 +4599,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     let mergeBase: string | undefined;
     try {
       try {
-        mergeBase = (await runGitCommand(["merge-base", "HEAD", `origin/${baseBranch}`], cwd, 5000)).trim() || undefined;
-      } catch {
         mergeBase = (await runGitCommand(["merge-base", "HEAD", baseBranch], cwd, 5000)).trim() || undefined;
+      } catch {
+        mergeBase = (await runGitCommand(["merge-base", "HEAD", `origin/${baseBranch}`], cwd, 5000)).trim() || undefined;
       }
     } catch {
       // base branch may no longer exist locally
