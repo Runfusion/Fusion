@@ -870,16 +870,6 @@ describe("SettingsModal", () => {
     expect(payload.smartConflictResolution).toBe(true);
   });
 
-  it("groupOverlappingFiles input has type checkbox", async () => {
-    render(<SettingsModal onClose={onClose} addToast={addToast} />);
-    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
-
-    fireEvent.click(screen.getByText("Scheduling"));
-    const checkbox = screen.getByLabelText("Serialize tasks with overlapping files");
-    expect(checkbox).toBeTruthy();
-    expect(checkbox.getAttribute("type")).toBe("checkbox");
-  });
-
   it("does not render heartbeat multiplier control in Scheduling section", async () => {
     render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());

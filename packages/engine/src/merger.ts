@@ -655,11 +655,21 @@ async function attemptInMergeVerificationFix(
   },
   settings: Settings,
   options: MergerOptions,
+  mergeRunContext?: Pick<EngineRunContext, "runId" | "agentId">,
+  fixAttemptNumber?: number,
   _testCommand?: string,
   _buildCommand?: string,
 ): Promise<boolean> {
   try {
     mergerLog.log(`${taskId}: spawning in-merge verification fix agent`);
+
+    const logger = new AgentLogger({
+      store,
+      taskId,
+      agent: "merger",
+      onAgentText: options.onAgentText,
+      onAgentTool: options.onAgentTool,
+    });
 
     // Build skill selection context
     let skillContext = undefined;
@@ -694,12 +704,23 @@ A merge has been applied and the verification command failed. Your job is to fix
 5. Do NOT modify files unrelated to the failure
 6. If you cannot fix the issue, explain why`,
       tools: "coding", // Agent needs read/write file access
+      onText: logger.onText,
+      onThinking: logger.onThinking,
+      onToolStart: logger.onToolStart,
+      onToolEnd: logger.onToolEnd,
       defaultProvider: settings.defaultProvider,
       defaultModelId: settings.defaultModelId,
       defaultThinkingLevel: settings.defaultThinkingLevel,
       // Skill selection: use assigned agent skills if available, otherwise role fallback
       ...(skillContext?.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
     });
+
+    const runId = mergeRunContext?.runId;
+    const agentId = mergeRunContext?.agentId ?? "merger";
+    await store.logEntry(
+      taskId,
+      `In-merge verification fix agent started (model: ${describeModel(session)}, runId: ${runId ?? "unknown"}, agentId: ${agentId})`,
+    );
 
     try {
       // Build the fix prompt
@@ -729,14 +750,19 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
         },
       });
 
-      // Re-run the verification command that failed
+      // Re-run deterministic verification command after the fix attempt.
+      await store.logEntry(
+        taskId,
+        `Re-running deterministic merge verification (attempt ${fixAttemptNumber ?? "unknown"})`,
+      );
       const reRunResult = await runVerificationCommand(
         store, rootDir, taskId, failureContext.command, failureContext.type,
       );
 
       return reRunResult.success;
     } finally {
-      // Always dispose the session
+      // Flush buffered output before disposal so fix-attempt activity is visible.
+      await logger.flush();
       await session.dispose();
     }
   } catch (err: unknown) {
@@ -2089,7 +2115,12 @@ export async function aiMergeTask(
                   output: summarizeVerificationOutput(failedResult.stderr || failedResult.stdout, failedType),
                   type: failedType,
                 },
-                settings, options, effectiveTestCommand, effectiveBuildCommand,
+                settings,
+                options,
+                { runId: mergeRunId, agentId: engineRunContext.agentId },
+                fixAttempt,
+                effectiveTestCommand,
+                effectiveBuildCommand,
               );
 
               const fixAttemptDurationMs = Date.now() - fixAttemptStartedAt;
@@ -2143,7 +2174,12 @@ export async function aiMergeTask(
                 output: error.message || "Build verification failed",
                 type: fixType,
               },
-              settings, options, effectiveTestCommand, effectiveBuildCommand,
+              settings,
+              options,
+              { runId: mergeRunId, agentId: engineRunContext.agentId },
+              fixAttempt,
+              effectiveTestCommand,
+              effectiveBuildCommand,
             );
 
             const fixAttemptDurationMs = Date.now() - fixAttemptStartedAt;
