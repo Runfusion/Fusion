@@ -477,12 +477,23 @@ function normalizeAssistantOrToolResultMessage(message: unknown): message is Rec
   }
 
   const role = (message as Record<string, unknown>).role;
-  if (role !== "assistant" && role !== "toolResult") {
+  if (role !== "assistant" && role !== "toolResult" && role !== "user") {
     return false;
   }
 
-  if (!Array.isArray((message as Record<string, unknown>).content)) {
-    (message as Record<string, unknown>).content = [];
+  const obj = message as Record<string, unknown>;
+  // `user` messages may carry content as a string (plain prompt) — leave those alone.
+  // For any other shape (undefined, null, object, etc.) coerce to an empty array so
+  // pi-coding-agent's _getUserMessageText (content.filter(...)) can't crash.
+  if (role === "user") {
+    if (typeof obj.content !== "string" && !Array.isArray(obj.content)) {
+      obj.content = [];
+    }
+    return true;
+  }
+
+  if (!Array.isArray(obj.content)) {
+    obj.content = [];
   }
   return true;
 }
@@ -547,6 +558,16 @@ function installToolResultContentGuard(session: AgentToolHookSession): void {
 function installMessageContentGuard(session: AgentToolHookSession, sessionManager: SessionManagerLike): void {
   if (session.__fusionMessageContentGuardInstalled) {
     return;
+  }
+
+  // Sweep any pre-existing state.messages (e.g. restored from a session file)
+  // so messages with malformed content can't crash pi-coding-agent's
+  // _getUserMessageText / similar array traversals before our event hooks fire.
+  const existingMessages = session.agent?.state?.messages;
+  if (Array.isArray(existingMessages)) {
+    for (const candidate of existingMessages) {
+      normalizeAssistantOrToolResultMessage(candidate);
+    }
   }
 
   if (typeof session.subscribe === "function") {
