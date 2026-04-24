@@ -112,8 +112,10 @@ export default tseslint.config(
       },
     },
     rules: {
+      // Ratcheted from warn → error once the codebase was clean.
+      // Use `_`-prefix to intentionally declare an unused binding.
       "@typescript-eslint/no-unused-vars": [
-        "warn",  // Warning for unused vars
+        "error",
         {
           vars: "all",
           args: "after-used",
