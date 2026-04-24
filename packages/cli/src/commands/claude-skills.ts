@@ -24,6 +24,7 @@ import {
   lstatSync,
   mkdirSync,
   readlinkSync,
+  rmSync,
   symlinkSync,
   unlinkSync,
 } from "node:fs";
@@ -244,7 +245,5 @@ function safeReadlink(path: string): string | null {
 }
 
 function removeRecursive(path: string): void {
-  // Node 14.14+: rmSync. Imported lazily to keep the top imports minimal.
-  const { rmSync } = require("node:fs") as typeof import("node:fs");
   rmSync(path, { recursive: true, force: true });
 }

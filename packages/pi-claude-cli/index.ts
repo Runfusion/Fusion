@@ -86,7 +86,7 @@ export default function (pi: ExtensionAPI) {
     pi.on("session_start", async () => {
       const allTools = pi.getAllTools();
       if (Array.isArray(allTools)) {
-        pi.setActiveTools(allTools.map((t: any) => t.name));
+        pi.setActiveTools(allTools.map((t: { name: string }) => t.name));
       }
     });
 

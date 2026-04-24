@@ -164,8 +164,7 @@ export default tseslint.config(
     files: [
       "scripts/**/*.js",
       "scripts/**/*.mjs",
-      "*.cjs",
-      "fix.cjs",
+      "**/*.cjs",
     ],
     languageOptions: {
       ecmaVersion: "latest",
