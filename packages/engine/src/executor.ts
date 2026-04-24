@@ -514,14 +514,14 @@ export class TaskExecutor {
   private totalSpawnedCount = 0;
   /** Token cap detector for proactive context compaction. */
   private tokenCapDetector = new TokenCapDetector();
-  private _modelRegistry?: InstanceType<typeof ModelRegistry>;
+  private _modelRegistry?: ModelRegistry;
   /** Current run context for mutation correlation. Set at execute() start, cleared in finally. */
   private currentRunContext: RunMutationContext | undefined;
 
-  private get modelRegistry(): InstanceType<typeof ModelRegistry> {
+  private get modelRegistry(): ModelRegistry {
     if (!this._modelRegistry) {
       const authStorage = createFusionAuthStorage();
-      this._modelRegistry = new ModelRegistry(authStorage, getModelRegistryModelsPath());
+      this._modelRegistry = ModelRegistry.create(authStorage, getModelRegistryModelsPath());
       this._modelRegistry.refresh();
     }
     return this._modelRegistry;

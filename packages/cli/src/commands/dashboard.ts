@@ -744,7 +744,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   const authStorage = AuthStorage.create(getFusionAuthPath());
   const legacyAuthStorage = createReadOnlyAuthFileStorage(getLegacyAuthPaths());
   const mergedAuthStorage = mergeAuthStorageReads(authStorage, [legacyAuthStorage]);
-  const modelRegistry = new ModelRegistry(mergedAuthStorage, getModelRegistryModelsPath());
+  const modelRegistry = ModelRegistry.create(mergedAuthStorage, getModelRegistryModelsPath());
   const dashboardAuthStorage = wrapAuthStorageWithApiKeyProviders(mergedAuthStorage, modelRegistry);
 
   // PackageManager may be used for skills adapter even if extension loading fails

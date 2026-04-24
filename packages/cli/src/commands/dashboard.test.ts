@@ -656,7 +656,10 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   DefaultPackageManager: vi.fn().mockImplementation(() => ({
     resolve: vi.fn().mockResolvedValue({ extensions: [] }),
   })),
-  ModelRegistry: vi.fn().mockImplementation(() => mockModelRegistry),
+  ModelRegistry: {
+    create: vi.fn(() => mockModelRegistry),
+    inMemory: vi.fn(() => mockModelRegistry),
+  },
   SettingsManager: {
     create: vi.fn(() => ({})),
   },
@@ -2683,7 +2686,7 @@ describe("runDashboard — merge stream sink routing", () => {
     (DefaultPackageManager as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       resolve: vi.fn().mockResolvedValue({ extensions: [] }),
     }));
-    (ModelRegistry as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+    (ModelRegistry.create as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
       registerProvider: vi.fn(),
       refresh: vi.fn(),
     }));

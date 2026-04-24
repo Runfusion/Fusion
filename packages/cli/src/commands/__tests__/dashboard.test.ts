@@ -345,7 +345,10 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   DefaultPackageManager: vi.fn().mockImplementation(() => ({
     resolve: vi.fn().mockResolvedValue({ extensions: [] }),
   })),
-  ModelRegistry: vi.fn().mockImplementation(() => mockModelRegistry),
+  ModelRegistry: {
+    create: vi.fn(() => mockModelRegistry),
+    inMemory: vi.fn(() => mockModelRegistry),
+  },
   SettingsManager: {
     create: vi.fn(() => ({})),
   },
@@ -459,8 +462,9 @@ describe("runDashboard — AuthStorage & ModelRegistry wiring", () => {
 
     await runDashboard(0, {});
 
-    expect(ModelRegistry).toHaveBeenCalledTimes(1);
-    const registryAuthStorage = (ModelRegistry as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const createMock = ModelRegistry.create as unknown as ReturnType<typeof vi.fn>;
+    expect(createMock).toHaveBeenCalledTimes(1);
+    const registryAuthStorage = createMock.mock.calls[0][0];
     expect(registryAuthStorage).not.toBe(mockAuthStorage);
     expect(registryAuthStorage.getApiKey).toBeTypeOf("function");
   });

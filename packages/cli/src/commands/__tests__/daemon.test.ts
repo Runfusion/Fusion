@@ -553,7 +553,10 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   DefaultPackageManager: vi.fn().mockImplementation(() => ({
     resolve: vi.fn().mockResolvedValue({ extensions: [] }),
   })),
-  ModelRegistry: vi.fn().mockImplementation(() => mocks.modelRegistry),
+  ModelRegistry: {
+    create: vi.fn(() => mocks.modelRegistry),
+    inMemory: vi.fn(() => mocks.modelRegistry),
+  },
   SettingsManager: {
     create: vi.fn(() => ({})),
   },
