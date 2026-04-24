@@ -66,7 +66,7 @@ Configure an agent to use Hermes:
 }
 ```
 
-> ⚠️ Hermes is currently a deferred placeholder. Runtime registration and selection work, but execution intentionally reports "not implemented" until [FN-2264](https://github.com/gsxdsm/fusion/issues/FN-2264).
+> ℹ️ Hermes is experimental. Runtime registration, selection, and execution are supported through the Hermes plugin runtime adapter.
 
 For Hermes-specific details, see the [Hermes Runtime Plugin documentation](../plugins/fusion-plugin-hermes-runtime/README.md).
 
@@ -92,7 +92,7 @@ Configure an agent to use OpenClaw:
 }
 ```
 
-> ⚠️ OpenClaw is currently a deferred placeholder. Runtime registration and selection work, but execution intentionally reports "not implemented".
+> ℹ️ OpenClaw is experimental. Runtime registration, selection, and execution are supported through the OpenClaw plugin runtime adapter.
 
 For OpenClaw-specific details, see the [OpenClaw Runtime Plugin documentation](../plugins/fusion-plugin-openclaw-runtime/README.md).
 

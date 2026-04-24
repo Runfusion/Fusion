@@ -920,7 +920,7 @@ describe("PluginRunner", () => {
         metadata: {
           runtimeId: "hermes",
           name: "Hermes Runtime",
-          description: "Experimental Hermes runtime integration for Fusion tasks (implementation deferred to FN-2264)",
+          description: "Hermes-backed AI session using the user's configured pi provider and model",
           version: "0.1.0",
         },
         factory: vi.fn().mockReturnValue({}),
@@ -934,7 +934,7 @@ describe("PluginRunner", () => {
       expect(result?.pluginId).toBe("fusion-plugin-hermes-runtime");
       expect(result?.runtime.metadata.runtimeId).toBe("hermes");
       expect(result?.runtime.metadata.name).toBe("Hermes Runtime");
-      expect(result?.runtime.metadata.description).toContain("deferred to FN-2264");
+      expect(result?.runtime.metadata.description).toContain("Hermes-backed AI session");
       expect(result?.runtime.metadata.version).toBe("0.1.0");
     });
 
@@ -943,7 +943,7 @@ describe("PluginRunner", () => {
         metadata: {
           runtimeId: "hermes",
           name: "Hermes Runtime",
-          description: "Experimental Hermes runtime integration for Fusion tasks (implementation deferred to FN-2264)",
+          description: "Hermes-backed AI session using the user's configured pi provider and model",
           version: "0.1.0",
         },
         factory: vi.fn().mockReturnValue({}),
@@ -959,27 +959,28 @@ describe("PluginRunner", () => {
       expect(hermes?.runtime.metadata).toEqual({
         runtimeId: "hermes",
         name: "Hermes Runtime",
-        description: "Experimental Hermes runtime integration for Fusion tasks (implementation deferred to FN-2264)",
+        description: "Hermes-backed AI session using the user's configured pi provider and model",
         version: "0.1.0",
       });
     });
 
     it("should allow factory invocation for hermes runtime", async () => {
-      const hermesPlaceholderRuntime = {
-        runtimeId: "hermes",
-        version: "0.1.0",
-        status: "deferred",
-        message: "Hermes runtime implementation is deferred to FN-2264.",
-        execute: vi.fn().mockRejectedValue(new Error("FN-2264")),
+      const hermesAdapter = {
+        id: "hermes",
+        name: "Hermes Runtime",
+        createSession: vi.fn(),
+        promptWithFallback: vi.fn(),
+        describeModel: vi.fn(),
+        dispose: vi.fn(),
       };
       const hermesRuntime = {
         metadata: {
           runtimeId: "hermes",
           name: "Hermes Runtime",
-          description: "Experimental Hermes runtime integration for Fusion tasks (implementation deferred to FN-2264)",
+          description: "Hermes-backed AI session using the user's configured pi provider and model",
           version: "0.1.0",
         },
-        factory: vi.fn().mockReturnValue(hermesPlaceholderRuntime),
+        factory: vi.fn().mockResolvedValue(hermesAdapter),
       };
       mockPluginLoader.getPluginRuntimes.mockReturnValue([
         { pluginId: "fusion-plugin-hermes-runtime", runtime: hermesRuntime as any },
@@ -989,12 +990,15 @@ describe("PluginRunner", () => {
       expect(result).toBeDefined();
 
       const context = { pluginId: "fusion-plugin-hermes-runtime" };
-      const runtime = await result!.runtime.factory(context as any) as typeof hermesPlaceholderRuntime;
+      const runtime = (await result!.runtime.factory(context as any)) as typeof hermesAdapter;
 
       expect(hermesRuntime.factory).toHaveBeenCalledWith(context);
-      expect(runtime).toBe(hermesPlaceholderRuntime);
-      expect(runtime.runtimeId).toBe("hermes");
-      expect(runtime.status).toBe("deferred");
+      expect(runtime).toBe(hermesAdapter);
+      expect(runtime.id).toBe("hermes");
+      expect(runtime.name).toBe("Hermes Runtime");
+      expect(runtime.createSession).toBeTypeOf("function");
+      expect(runtime.promptWithFallback).toBeTypeOf("function");
+      expect(runtime.describeModel).toBeTypeOf("function");
     });
   });
 
@@ -1004,7 +1008,7 @@ describe("PluginRunner", () => {
         metadata: {
           runtimeId: "openclaw",
           name: "OpenClaw Runtime",
-          description: "Experimental OpenClaw runtime integration for Fusion tasks (execution deferred)",
+          description: "OpenClaw-backed AI session using the user's configured pi provider and model",
           version: "0.1.0",
         },
         factory: vi.fn().mockReturnValue({}),
@@ -1019,7 +1023,7 @@ describe("PluginRunner", () => {
       expect(result?.runtime.metadata.runtimeId).toBe("openclaw");
       expect(result?.runtime.metadata.name).toBe("OpenClaw Runtime");
       expect(result?.runtime.metadata.description).toBe(
-        "Experimental OpenClaw runtime integration for Fusion tasks (execution deferred)",
+        "OpenClaw-backed AI session using the user's configured pi provider and model",
       );
       expect(result?.runtime.metadata.version).toBe("0.1.0");
     });
@@ -1029,7 +1033,7 @@ describe("PluginRunner", () => {
         metadata: {
           runtimeId: "openclaw",
           name: "OpenClaw Runtime",
-          description: "Experimental OpenClaw runtime integration for Fusion tasks (execution deferred)",
+          description: "OpenClaw-backed AI session using the user's configured pi provider and model",
           version: "0.1.0",
         },
         factory: vi.fn().mockReturnValue({}),
@@ -1044,32 +1048,28 @@ describe("PluginRunner", () => {
       expect(result?.runtime.metadata).toEqual({
         runtimeId: "openclaw",
         name: "OpenClaw Runtime",
-        description: "Experimental OpenClaw runtime integration for Fusion tasks (execution deferred)",
+        description: "OpenClaw-backed AI session using the user's configured pi provider and model",
         version: "0.1.0",
       });
     });
 
-    it("should return deferred placeholder object when openclaw factory is invoked", async () => {
-      const openclawPlaceholderRuntime = {
-        runtimeId: "openclaw",
-        version: "0.1.0",
-        status: "deferred",
-        message:
-          "OpenClaw runtime execution is currently deferred. This runtime is registered for discovery and configuration only.",
-        execute: vi.fn().mockRejectedValue(
-          new Error(
-            "OpenClaw runtime is not implemented yet. Runtime discovery and configuration are supported, but execution is deferred.",
-          ),
-        ),
+    it("should allow factory invocation for openclaw runtime", async () => {
+      const openclawAdapter = {
+        id: "openclaw",
+        name: "OpenClaw Runtime",
+        createSession: vi.fn(),
+        promptWithFallback: vi.fn(),
+        describeModel: vi.fn(),
+        dispose: vi.fn(),
       };
       const openclawRuntime = {
         metadata: {
           runtimeId: "openclaw",
           name: "OpenClaw Runtime",
-          description: "Experimental OpenClaw runtime integration for Fusion tasks (execution deferred)",
+          description: "OpenClaw-backed AI session using the user's configured pi provider and model",
           version: "0.1.0",
         },
-        factory: vi.fn().mockReturnValue(openclawPlaceholderRuntime),
+        factory: vi.fn().mockResolvedValue(openclawAdapter),
       };
       mockPluginLoader.getPluginRuntimes.mockReturnValue([
         { pluginId: "fusion-plugin-openclaw-runtime", runtime: openclawRuntime as any },
@@ -1079,17 +1079,15 @@ describe("PluginRunner", () => {
       expect(result).toBeDefined();
 
       const context = { pluginId: "fusion-plugin-openclaw-runtime" };
-      const runtime = await result!.runtime.factory(context as any) as typeof openclawPlaceholderRuntime;
+      const runtime = (await result!.runtime.factory(context as any)) as typeof openclawAdapter;
 
       expect(openclawRuntime.factory).toHaveBeenCalledWith(context);
-      expect(runtime).toBe(openclawPlaceholderRuntime);
-      expect(runtime).toMatchObject({
-        runtimeId: "openclaw",
-        version: "0.1.0",
-        status: "deferred",
-      });
-      expect(runtime.message).toContain("discovery and configuration only");
-      expect(runtime.execute).toBeTypeOf("function");
+      expect(runtime).toBe(openclawAdapter);
+      expect(runtime.id).toBe("openclaw");
+      expect(runtime.name).toBe("OpenClaw Runtime");
+      expect(runtime.createSession).toBeTypeOf("function");
+      expect(runtime.promptWithFallback).toBeTypeOf("function");
+      expect(runtime.describeModel).toBeTypeOf("function");
     });
   });
 

@@ -1,17 +1,14 @@
 /**
  * Hermes Runtime Plugin
  *
- * Provides Hermes AI runtime capabilities for Fusion tasks.
- * This plugin registers the Hermes runtime with the Fusion plugin system.
- *
- * Note: Full runtime behavior is deferred to FN-2264.
- * Any runtime invocation will return a "not implemented" signal.
+ * Provides an executable Hermes runtime adapter for Fusion's plugin runtime
+ * discovery and session execution pipeline.
  */
 
 import { definePlugin } from "@fusion/plugin-sdk";
+import { HermesRuntimeAdapter } from "./runtime-adapter.js";
 import type {
   FusionPlugin,
-  PluginContext,
   PluginRuntimeFactory,
   PluginRuntimeManifestMetadata,
 } from "@fusion/plugin-sdk";
@@ -24,37 +21,14 @@ const HERMES_RUNTIME_VERSION = "0.1.0";
 const hermesRuntimeMetadata: PluginRuntimeManifestMetadata = {
   runtimeId: HERMES_RUNTIME_ID,
   name: "Hermes Runtime",
-  description: "Experimental Hermes runtime integration for Fusion tasks (implementation deferred to FN-2264)",
+  description: "Hermes-backed AI session using the user's configured pi provider and model",
   version: HERMES_RUNTIME_VERSION,
 };
 
 // ── Hermes Runtime Factory ────────────────────────────────────────────────────
 
-/**
- * Factory function for creating the Hermes runtime instance.
- *
- * This is a placeholder implementation. Full runtime behavior is deferred to FN-2264.
- * Any runtime invocation will throw a descriptive error referencing FN-2264.
- *
- * @param _ctx - Plugin context (unused in placeholder)
- * @throws Error with message referencing FN-2264 for full implementation
- */
-const hermesRuntimeFactory: PluginRuntimeFactory = (_ctx: PluginContext) => {
-  // Return a placeholder object that signals deferred implementation
-  return {
-    runtimeId: HERMES_RUNTIME_ID,
-    version: HERMES_RUNTIME_VERSION,
-    status: "deferred",
-    message: `Hermes runtime implementation is deferred to FN-2264. ` +
-             `Current invocation is a placeholder.`,
-    execute: async () => {
-      throw new Error(
-        `Hermes runtime is not yet implemented. ` +
-        `Full implementation deferred to FN-2264. ` +
-        `See https://github.com/gsxdsm/fusion/issues/FN-2264`,
-      );
-    },
-  };
+const hermesRuntimeFactory: PluginRuntimeFactory = async () => {
+  return new HermesRuntimeAdapter();
 };
 
 // ── Plugin Definition ─────────────────────────────────────────────────────────
@@ -72,11 +46,10 @@ const plugin: FusionPlugin = definePlugin({
   state: "installed",
   hooks: {
     onLoad: (ctx) => {
-      ctx.logger.info("Hermes Runtime Plugin loaded (placeholder - FN-2264 pending)");
+      ctx.logger.info("Hermes Runtime Plugin loaded");
       ctx.emitEvent("hermes-runtime:loaded", {
         runtimeId: HERMES_RUNTIME_ID,
         version: HERMES_RUNTIME_VERSION,
-        status: "deferred",
       });
     },
     onUnload: () => {

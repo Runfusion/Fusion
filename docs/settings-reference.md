@@ -232,8 +232,8 @@ Fusion supports multiple agent runtimes through a plugin-based runtime system. T
 |------------|------|-------------|
 | `pi` | Default PI Runtime | Built-in runtime using the `pi` agent (default) |
 | `paperclip` | Paperclip Runtime | Plugin-provided runtime (requires `fusion-plugin-paperclip-runtime`) |
-| `hermes` | Hermes Runtime (experimental) | Plugin-provided experimental runtime hint (requires `fusion-plugin-hermes-runtime`; execution deferred to FN-2264) |
-| `openclaw` | OpenClaw Runtime (experimental) | Plugin-provided experimental runtime hint (requires `fusion-plugin-openclaw-runtime`; execution currently deferred placeholder) |
+| `hermes` | Hermes Runtime (experimental) | Plugin-provided experimental runtime hint (requires `fusion-plugin-hermes-runtime`) |
+| `openclaw` | OpenClaw Runtime (experimental) | Plugin-provided experimental runtime hint (requires `fusion-plugin-openclaw-runtime`) |
 
 ### Runtime Resolution Order
 
@@ -278,7 +278,7 @@ Runtime selection is configured at the **agent level** via `runtimeConfig.runtim
 }
 ```
 
-> ⚠️ `runtimeHint: "hermes"` and `runtimeHint: "openclaw"` are currently experimental/deferred placeholders. Runtime resolution works, but execution remains intentionally unimplemented for these runtimes.
+> ℹ️ `runtimeHint: "hermes"` and `runtimeHint: "openclaw"` are experimental runtime paths. Runtime resolution and execution are supported when the corresponding runtime plugin is installed and enabled.
 
 **Important:** There is no task-level runtime configuration. Tasks inherit the runtime from their assigned agent's `runtimeConfig`.
 
@@ -502,7 +502,7 @@ Runtime selection is configured at the agent level via `runtimeConfig`. These ex
 }
 ```
 
-> ⚠️ Hermes and OpenClaw remain experimental/deferred placeholders. Runtime hint selection is available now; full runtime execution behavior is not.
+> ℹ️ Hermes and OpenClaw remain experimental runtime options. Runtime hint selection and runtime execution are both available when their plugins are installed.
 
 To create a Hermes-configured agent via the API:
 
