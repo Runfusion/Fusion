@@ -751,6 +751,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
 
   const resourceLoader = new DefaultResourceLoader({
     cwd: options.cwd,
+    agentDir: getFusionAgentDir(),
     settingsManager,
     systemPromptOverride: () => options.systemPrompt,
     appendSystemPromptOverride: () => [],
@@ -761,13 +762,22 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
   const sessionManager = options.sessionManager ?? SessionManager.inMemory();
 
   const createSessionWithModel = async (modelOverride?: typeof selectedModel) => {
+    // pi-coding-agent 0.68+: `tools` is a string[] allowlist of tool names, not
+    // Tool instances. We need boundary-wrapped versions of the built-ins, so we
+    // suppress the defaults with `noTools: "builtin"` and register our wrapped
+    // tools through `customTools` instead. The wrapped tools preserve the same
+    // names (`read`, `bash`, ...) as the built-ins they replace.
+    const customToolList: ToolDefinition[] = [
+      ...(wrappedTools as ToolDefinition[]),
+      ...(options.customTools ?? []),
+    ];
     return createAgentSession({
       cwd: options.cwd,
       authStorage,
       modelRegistry,
       resourceLoader,
-      tools: wrappedTools as any,
-      customTools: options.customTools,
+      noTools: "builtin",
+      customTools: customToolList,
       sessionManager,
       settingsManager,
       ...(modelOverride ? { model: modelOverride } : {}),

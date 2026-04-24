@@ -3455,7 +3455,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const { SettingsManager, getAgentDir } = await import("@mariozechner/pi-coding-agent");
       const agentDir = getAgentDir();
-      const settingsManager = SettingsManager.create(undefined, agentDir);
+      const settingsManager = SettingsManager.create(process.cwd(), agentDir);
       const packages = settingsManager.getPackages();
       const extensions = settingsManager.getExtensionPaths();
       const skills = settingsManager.getSkillPaths();
@@ -3493,7 +3493,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       const { SettingsManager, getAgentDir } = await import("@mariozechner/pi-coding-agent");
       const agentDir = getAgentDir();
-      const settingsManager = SettingsManager.create(undefined, agentDir);
+      const settingsManager = SettingsManager.create(process.cwd(), agentDir);
 
       if (packages !== undefined) {
         if (!Array.isArray(packages)) {
@@ -3551,7 +3551,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const { SettingsManager, DefaultPackageManager, getAgentDir } = await import("@mariozechner/pi-coding-agent");
       const agentDir = getAgentDir();
       const cwd = process.cwd();
-      const settingsManager = SettingsManager.create(undefined, agentDir);
+      const settingsManager = SettingsManager.create(process.cwd(), agentDir);
       const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
 
       await packageManager.install(source.trim());
