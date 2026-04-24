@@ -1364,9 +1364,11 @@ describe("QuickEntryBox", () => {
         expect(props.onCreate).toHaveBeenCalled();
       });
 
-      // After creation, focus is restored → autoExpand triggers isExpanded=true
-      // But disclosure should still be false (controls hidden)
-      expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
+      // After creation, focus is restored asynchronously.
+      // autoExpand should set textarea expanded while disclosure remains hidden.
+      await waitFor(() => {
+        expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(true);
+      });
       expect(controls?.hasAttribute("hidden")).toBe(true);
     });
 

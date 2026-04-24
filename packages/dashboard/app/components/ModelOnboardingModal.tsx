@@ -163,6 +163,82 @@ function getProviderDisplayName(providerId: string): string {
     .join(" ");
 }
 
+const ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER = [
+  "anthropic",
+  "claude-cli",
+  "openai-codex",
+  "gemini",
+  "minimax",
+  "kimi",
+  "zai",
+] as const;
+
+const ONBOARDING_PROVIDER_FAMILY_ALIASES: Record<string, (typeof ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER)[number]> = {
+  anthropic: "anthropic",
+  "claude-cli": "claude-cli",
+  "openai-codex": "openai-codex",
+  google: "gemini",
+  gemini: "gemini",
+  minimax: "minimax",
+  kimi: "kimi",
+  moonshot: "kimi",
+  "kimi-coding": "kimi",
+  zai: "zai",
+};
+
+const ONBOARDING_PROVIDER_ALIAS_ORDER: Record<string, string[]> = {
+  gemini: ["google", "gemini"],
+  kimi: ["kimi", "moonshot", "kimi-coding"],
+};
+
+function getOnboardingProviderFamilyId(providerId: string): string {
+  return ONBOARDING_PROVIDER_FAMILY_ALIASES[providerId] ?? providerId;
+}
+
+function getOnboardingProviderCuratedRank(providerId: string): number {
+  const familyId = getOnboardingProviderFamilyId(providerId);
+  const rank = ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER.indexOf(
+    familyId as (typeof ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER)[number],
+  );
+  return rank === -1 ? Number.POSITIVE_INFINITY : rank;
+}
+
+function compareOnboardingProviders(a: AuthProvider, b: AuthProvider): number {
+  if (a.authenticated !== b.authenticated) {
+    return a.authenticated ? -1 : 1;
+  }
+
+  const curatedRankA = getOnboardingProviderCuratedRank(a.id);
+  const curatedRankB = getOnboardingProviderCuratedRank(b.id);
+
+  if (curatedRankA !== curatedRankB) {
+    return curatedRankA - curatedRankB;
+  }
+
+  const familyA = getOnboardingProviderFamilyId(a.id);
+  const familyB = getOnboardingProviderFamilyId(b.id);
+  if (familyA !== familyB) {
+    return familyA.localeCompare(familyB);
+  }
+
+  const aliasOrder = ONBOARDING_PROVIDER_ALIAS_ORDER[familyA];
+  if (aliasOrder) {
+    const aliasRankA = aliasOrder.indexOf(a.id);
+    const aliasRankB = aliasOrder.indexOf(b.id);
+    if (aliasRankA !== aliasRankB) {
+      return (aliasRankA === -1 ? Number.POSITIVE_INFINITY : aliasRankA)
+        - (aliasRankB === -1 ? Number.POSITIVE_INFINITY : aliasRankB);
+    }
+  }
+
+  const nameCompare = a.name.localeCompare(b.name);
+  if (nameCompare !== 0) {
+    return nameCompare;
+  }
+
+  return a.id.localeCompare(b.id);
+}
+
 function validateApiKeyFormat(providerId: string, key: string): string | null {
   const trimmedKey = key.trim();
   if (!trimmedKey) {
@@ -1314,19 +1390,12 @@ export function ModelOnboardingModal({
 
   if (!isOpen) return null;
 
-  const oauthProviders = authProviders.filter(
-    (p) => !p.type || p.type === "oauth",
-  );
-  const apiKeyProviders = authProviders.filter((p) => p.type === "api_key");
-  const cliProviders = authProviders.filter((p) => p.type === "cli");
-
-  // Filter out GitHub from AI providers list
-  const aiOauthProviders = oauthProviders.filter((p) => p.id !== "github");
-  const aiApiKeyProviders = apiKeyProviders.filter((p) => p.id !== "github");
-
   const githubStatus = getGitHubStatus();
 
   const aiProviders = authProviders.filter((provider) => provider.id !== "github");
+  const orderedAiProviders = [...aiProviders].sort(compareOnboardingProviders);
+  const hasOauthProviders = orderedAiProviders.some((provider) => !provider.type || provider.type === "oauth");
+  const hasApiKeyProviders = orderedAiProviders.some((provider) => provider.type === "api_key");
   const connectedAiProviders = aiProviders.filter((provider) => provider.authenticated);
   const hasAiProvider = connectedAiProviders.length > 0;
   const hasProjectSelected = Boolean(projectId);
@@ -1605,154 +1674,149 @@ export function ModelOnboardingModal({
                 </div>
               ) : (
                 <>
-                  {/* OAuth Providers */}
-                  {aiOauthProviders.length > 0 && (
-                    <>
-                      {aiOauthProviders.map((provider) => (
-                    <div
-                      key={provider.id}
-                      className={`onboarding-provider-card${provider.authenticated ? " onboarding-provider-card--connected" : ""}`}
-                    >
-                      <div className="onboarding-provider-card__icon">
-                        <ProviderIcon provider={provider.id} size="md" />
-                      </div>
-                      <div className="onboarding-provider-card__body">
-                        <strong className="onboarding-provider-card__name">{provider.name}</strong>
-                        <span className="onboarding-provider-card__description">
-                          {getProviderInfo(provider.id).description}
-                        </span>
-                        <ProviderStatusBadge status={getProviderStatus(provider)} />
-                      </div>
-                      <div className="onboarding-provider-card__actions">
-                        {authActionInProgress === provider.id ? (
-                          <>
-                            <button className="btn btn-sm" disabled>
-                              {provider.authenticated
-                                ? "Logging out…"
-                                : "Waiting for login…"}
-                            </button>
-                            <button
-                              className="btn btn-sm"
-                              onClick={() => handleCancelLogin(provider.id)}
-                            >
-                              Cancel
-                            </button>
-                          </>
-                        ) : provider.authenticated ? (
-                          <button
-                            className="btn btn-sm"
-                            onClick={() => handleLogout(provider.id)}
-                          >
-                            Logout
-                          </button>
-                        ) : (
-                          <button
-                            className="btn btn-primary btn-sm"
-                            onClick={() => handleLogin(provider.id)}
-                          >
-                            Login
-                          </button>
-                        )}
-                      </div>
-                      {/* Show timeout message */}
-                      {loginOutcomes[provider.id] === "timeout" && authActionInProgress !== provider.id && (
-                        <p className="onboarding-helper-text" style={{ marginTop: 4 }}>
-                          Login timed out. Please try again.
-                        </p>
-                      )}
-                      {/* Show failure message */}
-                      {loginOutcomes[provider.id] === "failed" && authActionInProgress !== provider.id && (
-                        <p className="field-error" style={{ marginTop: 4 }}>
-                          Login failed. Please try again.
-                        </p>
-                      )}
-                    </div>
-                  ))}
+                  {orderedAiProviders.map((provider) => {
+                    if (provider.id === "claude-cli" && provider.type === "cli") {
+                      return (
+                        <ClaudeCliProviderCard
+                          key={provider.id}
+                          authenticated={provider.authenticated}
+                          onToggled={() => {
+                            // Refetch auth status so the parent provider list
+                            // reflects the new authenticated state.
+                            void loadAuthStatus();
+                          }}
+                        />
+                      );
+                    }
 
-                  {/* OAuth login disclosure */}
-                  <OnboardingDisclosure summary="How does login work?">
-                    <p className="onboarding-helper-text">
-                      Clicking Login opens the provider's website in a new tab where you sign in.
-                      Once you authorize Fusion, this page will automatically detect the connection.
-                      Your credentials are never stored in Fusion.
-                    </p>
-                  </OnboardingDisclosure>
-                </>
-              )}
+                    if (provider.type === "api_key") {
+                      const providerInfo = getProviderInfo(provider.id);
+                      const apiKeyInfo = getApiKeyInfo(provider);
 
-              {/* API Key Providers */}
-              {aiApiKeyProviders.length > 0 && (
-                <>
-                  {aiApiKeyProviders.map((provider) => {
-                    const providerInfo = getProviderInfo(provider.id);
-                    const apiKeyInfo = getApiKeyInfo(provider);
+                      return (
+                        <div
+                          key={provider.id}
+                          data-testid={`onboarding-provider-card-${provider.id}`}
+                          className={`onboarding-provider-card${provider.authenticated ? " onboarding-provider-card--connected" : ""}`}
+                        >
+                          <div className="onboarding-provider-card__icon">
+                            <ProviderIcon provider={provider.id} size="md" />
+                          </div>
+                          <div className="onboarding-provider-card__body">
+                            <strong className="onboarding-provider-card__name">
+                              <Key size={14} className="onboarding-provider-key-icon" />
+                              {provider.name}
+                            </strong>
+                            <span className="onboarding-provider-card__description">
+                              {providerInfo.description}
+                            </span>
+                            <ProviderStatusBadge status={getProviderStatus(provider)} />
+                            {provider.authenticated && provider.keyHint && (
+                              <span className="auth-key-hint">Key: {provider.keyHint}</span>
+                            )}
+                          </div>
+                          <div className="onboarding-provider-card__actions onboarding-provider-card__actions--api-key">
+                            <ApiKeyEntryForm
+                              provider={provider}
+                              apiKeyInfo={apiKeyInfo}
+                              inputValue={apiKeyInputs[provider.id] ?? ""}
+                              isSaving={authActionInProgress === provider.id}
+                              error={apiKeyErrors[provider.id]}
+                              success={apiKeySuccess[provider.id]}
+                              isConnected={provider.authenticated}
+                              onInputChange={handleApiKeyInputChange}
+                              onSave={handleSaveApiKey}
+                              onClear={handleClearApiKey}
+                            />
+                          </div>
+                        </div>
+                      );
+                    }
+
                     return (
                       <div
                         key={provider.id}
+                        data-testid={`onboarding-provider-card-${provider.id}`}
                         className={`onboarding-provider-card${provider.authenticated ? " onboarding-provider-card--connected" : ""}`}
                       >
                         <div className="onboarding-provider-card__icon">
                           <ProviderIcon provider={provider.id} size="md" />
                         </div>
                         <div className="onboarding-provider-card__body">
-                          <strong className="onboarding-provider-card__name">
-                            <Key size={14} className="onboarding-provider-key-icon" />
-                            {provider.name}
-                          </strong>
+                          <strong className="onboarding-provider-card__name">{provider.name}</strong>
                           <span className="onboarding-provider-card__description">
-                            {providerInfo.description}
+                            {getProviderInfo(provider.id).description}
                           </span>
                           <ProviderStatusBadge status={getProviderStatus(provider)} />
-                          {provider.authenticated && provider.keyHint && (
-                            <span className="auth-key-hint">Key: {provider.keyHint}</span>
+                        </div>
+                        <div className="onboarding-provider-card__actions">
+                          {authActionInProgress === provider.id ? (
+                            <>
+                              <button className="btn btn-sm" disabled>
+                                {provider.authenticated
+                                  ? "Logging out…"
+                                  : "Waiting for login…"}
+                              </button>
+                              <button
+                                className="btn btn-sm"
+                                onClick={() => handleCancelLogin(provider.id)}
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : provider.authenticated ? (
+                            <button
+                              className="btn btn-sm"
+                              onClick={() => handleLogout(provider.id)}
+                            >
+                              Logout
+                            </button>
+                          ) : (
+                            <button
+                              className="btn btn-primary btn-sm"
+                              onClick={() => handleLogin(provider.id)}
+                            >
+                              Login
+                            </button>
                           )}
                         </div>
-                        <div className="onboarding-provider-card__actions onboarding-provider-card__actions--api-key">
-                          <ApiKeyEntryForm
-                            provider={provider}
-                            apiKeyInfo={apiKeyInfo}
-                            inputValue={apiKeyInputs[provider.id] ?? ""}
-                            isSaving={authActionInProgress === provider.id}
-                            error={apiKeyErrors[provider.id]}
-                            success={apiKeySuccess[provider.id]}
-                            isConnected={provider.authenticated}
-                            onInputChange={handleApiKeyInputChange}
-                            onSave={handleSaveApiKey}
-                            onClear={handleClearApiKey}
-                          />
-                        </div>
+                        {loginOutcomes[provider.id] === "timeout" && authActionInProgress !== provider.id && (
+                          <p className="onboarding-helper-text" style={{ marginTop: 4 }}>
+                            Login timed out. Please try again.
+                          </p>
+                        )}
+                        {loginOutcomes[provider.id] === "failed" && authActionInProgress !== provider.id && (
+                          <p className="field-error" style={{ marginTop: 4 }}>
+                            Login failed. Please try again.
+                          </p>
+                        )}
                       </div>
                     );
                   })}
 
-                  {/* API key disclosure */}
-                  <OnboardingDisclosure summary="What is an API key?">
-                    <p className="onboarding-helper-text">
-                      An API key is a secret token that authenticates Fusion with the provider.
-                      You can find your key in the provider's dashboard under API settings.
-                      Keys are stored securely on your machine.
-                    </p>
-                  </OnboardingDisclosure>
-                </>
-              )}
-            </>
-            )}
+                  {/* OAuth login disclosure */}
+                  {hasOauthProviders && (
+                    <OnboardingDisclosure summary="How does login work?">
+                      <p className="onboarding-helper-text">
+                        Clicking Login opens the provider's website in a new tab where you sign in.
+                        Once you authorize Fusion, this page will automatically detect the connection.
+                        Your credentials are never stored in Fusion.
+                      </p>
+                    </OnboardingDisclosure>
+                  )}
 
-              {/* Claude CLI — synthetic provider card. Rendered alongside
-                  OAuth + API-key cards but with its own action set
-                  (Enable/Disable + Test) since it's backed by a binary
-                  probe rather than stored credentials. */}
-              {cliProviders.some((p) => p.id === "claude-cli") && (
-                <ClaudeCliProviderCard
-                  authenticated={
-                    cliProviders.find((p) => p.id === "claude-cli")?.authenticated ?? false
-                  }
-                  onToggled={() => {
-                    // Refetch auth status so the parent provider list
-                    // reflects the new authenticated state.
-                    void loadAuthStatus();
-                  }}
-                />
+                  {/* API key disclosure */}
+                  {hasApiKeyProviders && (
+                    <OnboardingDisclosure summary="What is an API key?">
+                      <p className="onboarding-helper-text">
+                        An API key is a secret token that authenticates Fusion with the provider.
+                        You can find your key in the provider's dashboard under API settings.
+                        Keys are stored securely on your machine.
+                      </p>
+                    </OnboardingDisclosure>
+                  )}
+
+                </>
               )}
 
               {/* Model Selection */}

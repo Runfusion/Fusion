@@ -308,7 +308,7 @@ function ClaudeCliActionToast({
 }) {
   if (action.kind === "error") {
     return (
-      <p className="onboarding-helper-text" style={{ color: "var(--danger)" }}>
+      <p className="onboarding-helper-text onboarding-helper-text--error">
         {action.message}
       </p>
     );

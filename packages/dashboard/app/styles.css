@@ -25036,6 +25036,10 @@ html .column.drag-over * {
   line-height: 1.4;
 }
 
+.onboarding-helper-text--error {
+  color: var(--color-error);
+}
+
 /* === Skip-state informational banners === */
 .onboarding-skip-banner {
   display: flex;

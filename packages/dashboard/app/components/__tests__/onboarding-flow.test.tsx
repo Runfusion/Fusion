@@ -76,6 +76,14 @@ vi.mock("../ProviderIcon", () => ({
   ),
 }));
 
+vi.mock("../ClaudeCliProviderCard", () => ({
+  ClaudeCliProviderCard: ({ authenticated }: { authenticated: boolean }) => (
+    <div data-testid="claude-cli-provider-card" data-authenticated={authenticated ? "true" : "false"}>
+      Anthropic — via Claude CLI
+    </div>
+  ),
+}));
+
 vi.mock("lucide-react", async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return {
@@ -239,6 +247,26 @@ function hasSavedStateCall(
   });
 }
 
+function getAiSetupProviderOrder(): string[] {
+  const aiSetup = document.querySelector(".model-onboarding-ai-setup");
+  if (!aiSetup) {
+    return [];
+  }
+
+  return Array.from(aiSetup.children)
+    .map((element) => {
+      const testId = element.getAttribute("data-testid");
+      if (testId?.startsWith("onboarding-provider-card-")) {
+        return testId.replace("onboarding-provider-card-", "");
+      }
+      if (testId === "claude-cli-provider-card") {
+        return "claude-cli";
+      }
+      return null;
+    })
+    .filter((providerId): providerId is string => providerId !== null);
+}
+
 interface AuthOnboardingHarnessProps {
   openModelOnboardingSpy?: () => void;
   openSettingsSpy?: (section?: string) => void;
@@ -382,6 +410,79 @@ describe("onboarding flow integration", () => {
       expect(openSettingsSpy).not.toHaveBeenCalled();
       expect(screen.queryByRole("dialog")).toBeNull();
       expect(screen.getByTestId("onboarding-modal-closed")).toBeInTheDocument();
+    });
+  });
+
+  describe("AI setup provider ordering", () => {
+    it("renders providers in curated onboarding order with connected-first priority and claude-cli near top", async () => {
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [
+          { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
+          { id: "moonshot", name: "Moonshot", authenticated: false, type: "oauth" },
+          { id: "claude-cli", name: "Anthropic — via Claude CLI", authenticated: false, type: "cli" },
+          { id: "openai-codex", name: "OpenAI Codex", authenticated: false, type: "oauth" },
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+          { id: "zai", name: "Zhipu AI", authenticated: false, type: "api_key" },
+          { id: "minimax", name: "MiniMax", authenticated: false, type: "api_key" },
+          { id: "google", name: "Google", authenticated: false, type: "oauth" },
+          { id: "gemini", name: "Gemini", authenticated: true, type: "oauth" },
+          { id: "openrouter", name: "OpenRouter", authenticated: true, type: "api_key" },
+          { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
+        ],
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(screen.getByText("Set Up AI")).toBeInTheDocument();
+      });
+
+      const providerOrder = getAiSetupProviderOrder();
+
+      expect(providerOrder).toEqual([
+        "anthropic",
+        "gemini",
+        "openrouter",
+        "claude-cli",
+        "openai-codex",
+        "google",
+        "minimax",
+        "moonshot",
+        "zai",
+        "openai",
+      ]);
+
+      expect(providerOrder).not.toContain("github");
+      expect(providerOrder.indexOf("openrouter")).toBeLessThan(providerOrder.indexOf("claude-cli"));
+      expect(providerOrder.indexOf("claude-cli")).toBeLessThan(providerOrder.indexOf("openai-codex"));
+      expect(providerOrder.indexOf("openrouter")).toBeLessThan(providerOrder.indexOf("openai"));
+    });
+
+    it("preserves provider-specific controls and status badges after reordering", async () => {
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [
+          { id: "openai-codex", name: "OpenAI Codex", authenticated: false, type: "oauth" },
+          { id: "claude-cli", name: "Anthropic — via Claude CLI", authenticated: false, type: "cli" },
+          { id: "minimax", name: "MiniMax", authenticated: false, type: "api_key" },
+        ],
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("onboarding-provider-card-openai-codex")).toBeInTheDocument();
+      });
+
+      const codexCard = screen.getByTestId("onboarding-provider-card-openai-codex");
+      expect(within(codexCard).getByRole("button", { name: "Login" })).toBeInTheDocument();
+      expect(within(codexCard).getByTestId("provider-status-badge")).toHaveTextContent("Not connected");
+
+      expect(screen.getByTestId("claude-cli-provider-card")).toHaveAttribute("data-authenticated", "false");
+
+      const minimaxCard = screen.getByTestId("onboarding-provider-card-minimax");
+      expect(within(minimaxCard).getByTestId("onboarding-apikey-input-minimax")).toBeInTheDocument();
+      expect(within(minimaxCard).getByTestId("onboarding-apikey-save-minimax")).toBeInTheDocument();
+      expect(within(minimaxCard).getByTestId("provider-status-badge")).toHaveTextContent("Not connected");
     });
   });
 

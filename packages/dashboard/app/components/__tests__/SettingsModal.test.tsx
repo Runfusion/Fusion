@@ -1050,7 +1050,7 @@ describe("SettingsModal", () => {
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     // Click on "Project Models" (project-scoped models section)
-    fireEvent.click(screen.getByText("Project Models"));
+    fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     // Select planning model
@@ -1080,7 +1080,7 @@ describe("SettingsModal", () => {
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     // Click on "Project Models" (project-scoped models section)
-    fireEvent.click(screen.getByText("Project Models"));
+    fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     // Select execution model
@@ -1103,7 +1103,7 @@ describe("SettingsModal", () => {
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     // Click on "Project Models" (project-scoped models section)
-    fireEvent.click(screen.getByText("Project Models"));
+    fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     const planningFallbackTrigger = screen.getByLabelText("Planning Fallback Model");
@@ -1138,7 +1138,7 @@ describe("SettingsModal", () => {
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     // Model presets are in Project Models section
-    fireEvent.click(screen.getByText("Project Models"));
+    fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
     await user.click(screen.getByText("Add Preset"));
 
     await user.type(screen.getByLabelText("Name"), "Budget");
@@ -1165,7 +1165,7 @@ describe("SettingsModal", () => {
     const { container } = render(<SettingsModal onClose={onClose} addToast={addToast} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByText("Project Models"));
+    fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
 
     const presetList = container.querySelector(".settings-preset-list");
     expect(presetList).toBeTruthy();
@@ -1195,7 +1195,7 @@ describe("SettingsModal", () => {
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     // Auto-select presets are in Project Models section
-    fireEvent.click(screen.getByText("Project Models"));
+    fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
     await user.click(screen.getByLabelText("Auto-select preset based on task size"));
     fireEvent.change(screen.getByLabelText("Small tasks (S):"), { target: { value: "budget" } });
     fireEvent.change(screen.getByLabelText("Medium tasks (M):"), { target: { value: "normal" } });
@@ -1318,7 +1318,7 @@ describe("SettingsModal", () => {
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     // Project Models section has planning and validator model dropdowns
-    fireEvent.click(screen.getByText("Project Models"));
+    fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     // Both dropdowns should be present
@@ -1332,7 +1332,7 @@ describe("SettingsModal", () => {
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     // Project Models section has planning model dropdown
-    fireEvent.click(screen.getByText("Project Models"));
+    fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     // Open planning model dropdown and select a model
@@ -1355,7 +1355,7 @@ describe("SettingsModal", () => {
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
     // Project Models section has validator model dropdown
-    fireEvent.click(screen.getByText("Project Models"));
+    fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
     await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
     // Open validator model dropdown and select a model
@@ -1410,7 +1410,7 @@ describe("SettingsModal", () => {
       await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
       // Navigate to Project Models section and change planning model
-      fireEvent.click(screen.getByText("Project Models"));
+      fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
       await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
       const planningTrigger = screen.getByLabelText("Planning Model");
@@ -1455,7 +1455,7 @@ describe("SettingsModal", () => {
       await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
       // Navigate to Project Models section
-      fireEvent.click(screen.getByText("Project Models"));
+      fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
       await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
       // Verify the planning lane shows as overridden
@@ -1483,7 +1483,7 @@ describe("SettingsModal", () => {
       await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
       // Navigate to Project Models section
-      fireEvent.click(screen.getByText("Project Models"));
+      fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
       await waitFor(() => expect(fetchModels).toHaveBeenCalled());
 
       // Verify lanes show as inherited (don't change anything)
@@ -3321,7 +3321,7 @@ describe("SettingsModal", () => {
     expect(modelsIcon).toBeTruthy();
 
     // Switch to Project Models → should show project scope banner
-    fireEvent.click(screen.getByText("Project Models"));
+    fireEvent.click(screen.getByRole("button", { name: /Project Models/ }));
     const projectModelsBanner = container.querySelector(".settings-scope-project");
     expect(projectModelsBanner).toBeTruthy();
     expect(projectModelsBanner?.textContent).toContain("project");
