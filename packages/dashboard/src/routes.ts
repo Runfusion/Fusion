@@ -2022,6 +2022,49 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     logger.error(input.message, context);
   }
 
+  type AuthSyncDirection = "push" | "pull" | "receive";
+  type AuthSyncOperation = "receive" | "sync";
+
+  interface AuthSyncAuditLogInput {
+    level?: "info" | "warn" | "error";
+    operation: AuthSyncOperation;
+    direction: AuthSyncDirection;
+    route: "/settings/auth-receive" | "/nodes/:id/auth/sync";
+    sourceNodeId?: string;
+    targetNodeId?: string;
+    providerNames: string[];
+  }
+
+  const AUTH_SYNC_AUDIT_MESSAGE = "Auth sync diagnostic event";
+
+  function emitAuthSyncAuditLog(input: AuthSyncAuditLogInput): void {
+    const logger = runtimeLogger.child("settings-sync").child("auth");
+    const level = input.level ?? "info";
+    const providerNames = input.providerNames.filter((provider) => typeof provider === "string");
+
+    const context: Record<string, unknown> = {
+      operation: input.operation,
+      direction: input.direction,
+      route: input.route,
+      providerNames,
+      providerCount: providerNames.length,
+      ...(input.sourceNodeId !== undefined ? { sourceNodeId: input.sourceNodeId } : {}),
+      ...(input.targetNodeId !== undefined ? { targetNodeId: input.targetNodeId } : {}),
+    };
+
+    if (level === "warn") {
+      logger.warn(AUTH_SYNC_AUDIT_MESSAGE, context);
+      return;
+    }
+
+    if (level === "error") {
+      logger.error(AUTH_SYNC_AUDIT_MESSAGE, context);
+      return;
+    }
+
+    logger.info(AUTH_SYNC_AUDIT_MESSAGE, context);
+  }
+
   /**
    * Forward an HTTP request to a remote node.
    * Validates the node exists, is remote, and has a URL, then proxies the request.
@@ -3316,10 +3359,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         }
       }
 
-      // Log without actual credentials
-      runtimeLogger.child("settings-sync").info(
-        `Auth credentials received: providers=${receivedProviders.join(",")}, source=${sourceNodeId}`,
-      );
+      emitAuthSyncAuditLog({
+        operation: "receive",
+        direction: "receive",
+        route: "/settings/auth-receive",
+        sourceNodeId,
+        providerNames: receivedProviders,
+      });
 
       await central.close();
 
@@ -16736,11 +16782,15 @@ async function persistImportedSkills(
 
         await central.close();
 
-        // Log without actual credentials
         const providerNames = Object.keys(apiKeyProviders);
-        runtimeLogger.child("settings-sync").info(
-          `Auth sync completed: direction=push, providers=${providerNames.join(",")}, targetNode=${node.id}`,
-        );
+        emitAuthSyncAuditLog({
+          operation: "sync",
+          direction: "push",
+          route: "/nodes/:id/auth/sync",
+          sourceNodeId: localPeerInfo.nodeId,
+          targetNodeId: node.id,
+          providerNames,
+        });
 
         res.json({ success: true, syncedProviders: providerNames });
       } else {
@@ -16767,10 +16817,14 @@ async function persistImportedSkills(
 
         await central.close();
 
-        // Log without actual credentials
-        runtimeLogger.child("settings-sync").info(
-          `Auth sync completed: direction=pull, providers=${syncedProviders.join(",")}, targetNode=${node.id}`,
-        );
+        emitAuthSyncAuditLog({
+          operation: "sync",
+          direction: "pull",
+          route: "/nodes/:id/auth/sync",
+          sourceNodeId: remoteAuth.sourceNodeId,
+          targetNodeId: localPeerInfo.nodeId,
+          providerNames: syncedProviders,
+        });
 
         res.json({ success: true, syncedProviders });
       }

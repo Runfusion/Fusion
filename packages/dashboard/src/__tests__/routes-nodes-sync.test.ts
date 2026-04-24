@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 import { request, get } from "../test-request.js";
+import { resetRuntimeLogSink, setRuntimeLogSink, type RuntimeLogContext } from "../runtime-logger.js";
 
 // Mock node:fs for auth.json reading
 vi.mock("node:fs", () => ({
@@ -147,10 +148,18 @@ function createMockLocalNode(overrides: Record<string, unknown> = {}) {
 
 // ── Tests ─────────────────────────────────────────────────────────────
 
+interface RuntimeEvent {
+  level: "info" | "warn" | "error";
+  scope: string;
+  message: string;
+  context?: RuntimeLogContext;
+}
+
 describe("Node settings sync routes", () => {
   let store: MockStore;
   let app: ReturnType<typeof import("../server.js").createServer>;
   let mockFetch: ReturnType<typeof vi.fn>;
+  let runtimeEvents: RuntimeEvent[];
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -170,12 +179,18 @@ describe("Node settings sync routes", () => {
     mockFetch = vi.fn();
     global.fetch = mockFetch;
 
+    runtimeEvents = [];
+    setRuntimeLogSink((level, scope, message, context) => {
+      runtimeEvents.push({ level, scope, message, context });
+    });
+
     store = new MockStore();
     const { createServer } = await import("../server.js");
     app = createServer(store as any);
   });
 
   afterEach(() => {
+    resetRuntimeLogSink();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -571,16 +586,15 @@ describe("Node settings sync routes", () => {
       expect(res.body.error).toContain("apiKey");
     });
 
-    it("logs provider names but not credentials", async () => {
+    it("emits structured redacted diagnostics for push-mode auth sync", async () => {
       const remoteNode = createMockRemoteNode();
       mockGetNode.mockResolvedValue(remoteNode);
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({ success: true }),
       });
-      const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-      await request(
+      const res = await request(
         app,
         "POST",
         "/api/nodes/node-remote-001/auth/sync",
@@ -588,25 +602,45 @@ describe("Node settings sync routes", () => {
         { "content-type": "application/json" },
       );
 
-      // Verify that some providers were logged
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining("providers="),
+      expect(res.status).toBe(200);
+      const authEvent = runtimeEvents.find((event) =>
+        event.message === "Auth sync diagnostic event"
+        && event.context?.route === "/nodes/:id/auth/sync"
+        && event.context?.direction === "push"
       );
-      // Verify that API keys are not logged
-      expect(consoleSpy).not.toHaveBeenCalledWith(
-        expect.stringContaining("sk-"),
-      );
-      consoleSpy.mockRestore();
+
+      expect(authEvent).toMatchObject({
+        level: "info",
+        message: "Auth sync diagnostic event",
+        context: expect.objectContaining({
+          operation: "sync",
+          direction: "push",
+          route: "/nodes/:id/auth/sync",
+          sourceNodeId: "node-local-001",
+          targetNodeId: "node-remote-001",
+          providerNames: res.body.syncedProviders,
+          providerCount: res.body.syncedProviders.length,
+        }),
+      });
+      expect(authEvent?.scope.endsWith("routes:settings-sync:auth")).toBe(true);
+      expect(authEvent?.context).toHaveProperty("targetNodeId", "node-remote-001");
+
+      const serialized = JSON.stringify(authEvent);
+      expect(serialized).not.toContain("sk-");
+      expect(serialized).not.toContain("Bearer ");
+      expect(serialized).not.toContain("\"key\"");
+      expect(serialized).not.toContain("\"access\"");
+      expect(serialized).not.toContain("\"refresh\"");
     });
 
-    it("successfully pulls auth credentials from remote", async () => {
+    it("emits structured redacted diagnostics for pull-mode auth sync", async () => {
       const remoteNode = createMockRemoteNode();
       mockGetNode.mockResolvedValue(remoteNode);
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({
           providers: {
-            google: { type: "api_key", key: "AIzaTest123" },
+            google: { type: "api_key", key: "sk-pull-secret-123" },
           },
           sourceNodeId: "node-other",
           timestamp: "2026-04-14T10:00:00.000Z",
@@ -624,6 +658,36 @@ describe("Node settings sync routes", () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.syncedProviders).toContain("google");
+
+      const authEvent = runtimeEvents.find((event) =>
+        event.message === "Auth sync diagnostic event"
+        && event.context?.route === "/nodes/:id/auth/sync"
+        && event.context?.direction === "pull"
+      );
+
+      expect(authEvent).toMatchObject({
+        level: "info",
+        message: "Auth sync diagnostic event",
+        context: expect.objectContaining({
+          operation: "sync",
+          direction: "pull",
+          route: "/nodes/:id/auth/sync",
+          sourceNodeId: "node-other",
+          targetNodeId: "node-local-001",
+          providerNames: ["google"],
+          providerCount: 1,
+        }),
+      });
+      expect(authEvent?.scope.endsWith("routes:settings-sync:auth")).toBe(true);
+      expect(authEvent?.context).toHaveProperty("sourceNodeId", "node-other");
+      expect(authEvent?.context).toHaveProperty("targetNodeId", "node-local-001");
+
+      const serialized = JSON.stringify(authEvent);
+      expect(serialized).not.toContain("sk-pull-secret-123");
+      expect(serialized).not.toContain("Bearer ");
+      expect(serialized).not.toContain("\"key\"");
+      expect(serialized).not.toContain("\"access\"");
+      expect(serialized).not.toContain("\"refresh\"");
     });
   });
 
@@ -762,12 +826,11 @@ describe("Node settings sync routes", () => {
       expect(res.status).toBe(400);
     });
 
-    it("logs provider names but not credentials", async () => {
+    it("emits structured redacted diagnostics for auth-receive", async () => {
       const localNode = createMockLocalNode();
       mockListNodes.mockResolvedValue([localNode]);
-      const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-      await request(
+      const res = await request(
         app,
         "POST",
         "/api/settings/auth-receive",
@@ -779,13 +842,34 @@ describe("Node settings sync routes", () => {
         { "content-type": "application/json", "Authorization": `Bearer ${localNode.apiKey}` },
       );
 
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining("anthropic"),
+      expect(res.status).toBe(200);
+      const authEvent = runtimeEvents.find((event) =>
+        event.message === "Auth sync diagnostic event"
+        && event.context?.route === "/settings/auth-receive"
+        && event.context?.direction === "receive"
       );
-      expect(consoleSpy).not.toHaveBeenCalledWith(
-        expect.stringContaining("sk-ant-secret"),
-      );
-      consoleSpy.mockRestore();
+
+      expect(authEvent).toMatchObject({
+        level: "info",
+        message: "Auth sync diagnostic event",
+        context: {
+          operation: "receive",
+          direction: "receive",
+          route: "/settings/auth-receive",
+          sourceNodeId: "node-remote-001",
+          providerNames: ["anthropic"],
+          providerCount: 1,
+        },
+      });
+      expect(authEvent?.scope.endsWith("routes:settings-sync:auth")).toBe(true);
+      expect(authEvent?.context).not.toHaveProperty("targetNodeId");
+
+      const serialized = JSON.stringify(authEvent);
+      expect(serialized).not.toContain("sk-ant-secret");
+      expect(serialized).not.toContain("Bearer ");
+      expect(serialized).not.toContain("\"key\"");
+      expect(serialized).not.toContain("\"access\"");
+      expect(serialized).not.toContain("\"refresh\"");
     });
   });
 
