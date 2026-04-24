@@ -304,6 +304,7 @@ describe("TaskCard mobile", () => {
     const task = createTask({
       id: "FN-205",
       column: "todo",
+      status: "executing",
       steps: [
         { name: "Step 1", status: "done" },
         { name: "Step 2", status: "in-progress" },
@@ -330,6 +331,7 @@ describe("TaskCard mobile", () => {
     const task = createTask({
       id: "FN-206",
       column: "todo",
+      status: "executing",
       steps: [
         { name: "Step 1", status: "done" },
         { name: "Step 2", status: "in-progress" },
@@ -370,10 +372,29 @@ describe("TaskCard mobile", () => {
     expect(screen.getByRole("button", { name: "Edit task" })).toBeTruthy();
   });
 
-  it("renders the progress bar when task has steps", () => {
+  it("hides the progress bar for todo cards that are not executing", () => {
     const task = createTask({
       id: "FN-203",
       column: "todo",
+      status: "queued",
+      steps: [
+        { name: "Step 1", status: "done" },
+        { name: "Step 2", status: "in-progress" },
+      ],
+    });
+
+    const { container } = render(
+      <TaskCard task={task} onOpenDetail={vi.fn()} addToast={vi.fn()} />,
+    );
+
+    expect(container.querySelector(".card-progress-bar")).toBeNull();
+  });
+
+  it("renders the progress bar when a todo card is executing", () => {
+    const task = createTask({
+      id: "FN-207",
+      column: "todo",
+      status: "executing",
       steps: [
         { name: "Step 1", status: "done" },
         { name: "Step 2", status: "in-progress" },

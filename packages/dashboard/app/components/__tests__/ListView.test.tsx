@@ -418,10 +418,12 @@ describe("ListView", () => {
     expect(table?.textContent).toContain("Done");
   });
 
-  it("renders unified progress bar for implementation steps + workflow checks", () => {
+  it("renders unified progress bar for actively executing tasks", () => {
     const tasks = [
       createMockTask({
         id: "FN-001",
+        column: "todo",
+        status: "executing",
         steps: [
           { name: "Step 1", status: "done" },
           { name: "Step 2", status: "done" },
@@ -447,6 +449,8 @@ describe("ListView", () => {
     const tasks = [
       createMockTask({
         id: "FN-001",
+        column: "todo",
+        status: "executing",
         steps: [],
         enabledWorkflowSteps: ["WS-001"],
         workflowStepResults: [
@@ -473,6 +477,23 @@ describe("ListView", () => {
 
     // Find the task row and check its progress cell
     const row = screen.getByText("FN-001").closest("tr")!;
+    const progressCell = row.querySelector(".list-cell-progress");
+    expect(progressCell?.textContent).toBe("-");
+  });
+
+  it("hides progress for todo tasks that are not executing", () => {
+    const tasks = [
+      createMockTask({
+        id: "FN-002",
+        column: "todo",
+        status: "pending",
+        steps: [{ name: "Step 1", status: "done" }],
+      }),
+    ];
+
+    renderListView({ tasks });
+
+    const row = screen.getByText("FN-002").closest("tr")!;
     const progressCell = row.querySelector(".list-cell-progress");
     expect(progressCell?.textContent).toBe("-");
   });
@@ -2231,7 +2252,7 @@ describe("ListView - Bulk Selection", () => {
       expect(within(card as HTMLElement).getByText("executing")).toBeInTheDocument();
     });
 
-    it("shows unified progress bar for cards with steps and workflow checks", () => {
+    it("shows unified progress bar for executing mobile cards with steps and workflow checks", () => {
       mockMobileViewport();
 
       const { container } = renderListView({
@@ -2239,6 +2260,8 @@ describe("ListView - Bulk Selection", () => {
           createMockTask({
             id: "FN-001",
             title: "Progress task",
+            column: "todo",
+            status: "executing",
             steps: [
               { name: "Step 1", status: "done" },
               { name: "Step 2", status: "pending" },
@@ -2258,6 +2281,25 @@ describe("ListView - Bulk Selection", () => {
       const card = container.querySelector('.list-card[data-id="FN-001"]') as HTMLElement;
       expect(card.querySelector(".list-progress-fill")).toBeInTheDocument();
       expect(within(card).getByText("2/3")).toBeInTheDocument();
+    });
+
+    it("hides mobile card progress for non-executing todo tasks", () => {
+      mockMobileViewport();
+
+      const { container } = renderListView({
+        tasks: [
+          createMockTask({
+            id: "FN-002",
+            title: "Todo pending task",
+            column: "todo",
+            status: "pending",
+            steps: [{ name: "Step 1", status: "done" }],
+          }),
+        ],
+      });
+
+      const card = container.querySelector('.list-card[data-id="FN-002"]') as HTMLElement;
+      expect(card.querySelector(".list-progress-bar")).not.toBeInTheDocument();
     });
 
     it("shows dependency badge for cards with dependencies", () => {

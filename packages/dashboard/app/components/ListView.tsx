@@ -133,9 +133,13 @@ interface ListViewProps {
   lastFetchTimeMs?: number;
 }
 
+function shouldShowTaskProgress(task: Task): boolean {
+  return task.status === "executing" || task.column === "in-progress";
+}
+
 function getTaskProgress(task: Task): { label: string; percent: number; hasProgress: boolean } {
   const progress = getUnifiedTaskProgress(task);
-  if (progress.total === 0) {
+  if (progress.total === 0 || !shouldShowTaskProgress(task)) {
     return { label: "-", percent: 0, hasProgress: false };
   }
 

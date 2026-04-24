@@ -559,6 +559,8 @@ function TaskCardComponent({
     () => getUnifiedTaskProgress(task, workflowStepNameLookup),
     [task.steps, task.enabledWorkflowSteps, task.workflowStepResults, workflowStepNameLookup],
   );
+  const showProgressSection =
+    unifiedProgress.total > 0 && (task.status === "executing" || task.column === "in-progress");
 
   useEffect(() => {
     if (!hasGitHubBadge || !isInViewport) {
@@ -1029,7 +1031,7 @@ function TaskCardComponent({
       <div className="card-title" title={task.title || task.description || undefined}>
         {truncate(task.title, MAX_TITLE_LENGTH) || truncate(task.description, MAX_TITLE_LENGTH) || task.id}
       </div>
-      {unifiedProgress.total > 0 && (() => {
+      {showProgressSection && (() => {
         const progressPercent = (unifiedProgress.completed / unifiedProgress.total) * 100;
         return (
           <>
