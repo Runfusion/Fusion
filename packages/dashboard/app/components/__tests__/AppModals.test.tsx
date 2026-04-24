@@ -269,99 +269,46 @@ describe("AppModals", () => {
   });
 
   describe("ScheduledTasksModal projectId forwarding", () => {
+    const commonProps = {
+      tasks: [],
+      projects: [],
+      currentProject: null,
+      toasts: mockToasts,
+      removeToast: vi.fn(),
+      projectActions: { handleAddProject: vi.fn(), handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() },
+      taskHandlers: { handleModalCreate: vi.fn(), handlePlanningTaskCreated: vi.fn(), handlePlanningTasksCreated: vi.fn(), handleSubtaskTasksCreated: vi.fn(), handleGitHubImport: vi.fn() },
+      taskOperations: { moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(), duplicateTask: vi.fn() },
+      deepLink: { handleDetailClose: vi.fn() },
+      settings: mockSettings,
+    };
+
     it("does not render ScheduledTasksModal when schedulesOpen is false", () => {
-      const manager = { ...mockModalManager, schedulesOpen: false };
       render(
         <AppModals
+          {...commonProps}
           projectId="proj-123"
-          tasks={[]}
-          projects={[]}
-          currentProject={null}
           addToast={vi.fn()}
-          toasts={mockToasts}
-          removeToast={vi.fn()}
-          modalManager={manager}
-          projectActions={{ handleAddProject: vi.fn(), handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
-          taskHandlers={{ handleModalCreate: vi.fn(), handlePlanningTaskCreated: vi.fn(), handlePlanningTasksCreated: vi.fn(), handleSubtaskTasksCreated: vi.fn(), handleGitHubImport: vi.fn() }}
-          taskOperations={{ moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(), duplicateTask: vi.fn() }}
-          deepLink={{ handleDetailClose: vi.fn() }}
-          settings={mockSettings}
-        />
+          modalManager={{ ...mockModalManager, schedulesOpen: false }}
+        />,
       );
       expect(mockScheduledTasksModalProps).not.toHaveBeenCalled();
     });
 
-    it("renders ScheduledTasksModal with projectId when schedulesOpen is true and projectId is defined", () => {
-      const manager = { ...mockModalManager, schedulesOpen: true };
+    it.each<[string, string | undefined, string | undefined]>([
+      ["defined project id", "proj-abc", "proj-abc"],
+      ["undefined project id", undefined, undefined],
+      ["empty string project id passes through as-is", "", ""],
+    ])("forwards projectId through to ScheduledTasksModal — %s", (_label, input, expected) => {
       render(
         <AppModals
-          projectId="proj-abc"
-          tasks={[]}
-          projects={[]}
-          currentProject={null}
+          {...commonProps}
+          projectId={input}
           addToast={vi.fn()}
-          toasts={mockToasts}
-          removeToast={vi.fn()}
-          modalManager={manager}
-          projectActions={{ handleAddProject: vi.fn(), handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
-          taskHandlers={{ handleModalCreate: vi.fn(), handlePlanningTaskCreated: vi.fn(), handlePlanningTasksCreated: vi.fn(), handleSubtaskTasksCreated: vi.fn(), handleGitHubImport: vi.fn() }}
-          taskOperations={{ moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(), duplicateTask: vi.fn() }}
-          deepLink={{ handleDetailClose: vi.fn() }}
-          settings={mockSettings}
-        />
+          modalManager={{ ...mockModalManager, schedulesOpen: true }}
+        />,
       );
       expect(mockScheduledTasksModalProps).toHaveBeenCalledTimes(1);
-      const captured = mockScheduledTasksModalProps.mock.calls[0][0];
-      expect(captured.projectId).toBe("proj-abc");
-    });
-
-    it("renders ScheduledTasksModal with undefined projectId when schedulesOpen is true and projectId is undefined", () => {
-      const manager = { ...mockModalManager, schedulesOpen: true };
-      render(
-        <AppModals
-          projectId={undefined}
-          tasks={[]}
-          projects={[]}
-          currentProject={null}
-          addToast={vi.fn()}
-          toasts={mockToasts}
-          removeToast={vi.fn()}
-          modalManager={manager}
-          projectActions={{ handleAddProject: vi.fn(), handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
-          taskHandlers={{ handleModalCreate: vi.fn(), handlePlanningTaskCreated: vi.fn(), handlePlanningTasksCreated: vi.fn(), handleSubtaskTasksCreated: vi.fn(), handleGitHubImport: vi.fn() }}
-          taskOperations={{ moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(), duplicateTask: vi.fn() }}
-          deepLink={{ handleDetailClose: vi.fn() }}
-          settings={mockSettings}
-        />
-      );
-      expect(mockScheduledTasksModalProps).toHaveBeenCalledTimes(1);
-      const captured = mockScheduledTasksModalProps.mock.calls[0][0];
-      expect(captured.projectId).toBeUndefined();
-    });
-
-    it("renders ScheduledTasksModal with undefined projectId when projectId is empty string", () => {
-      const manager = { ...mockModalManager, schedulesOpen: true };
-      render(
-        <AppModals
-          projectId=""
-          tasks={[]}
-          projects={[]}
-          currentProject={null}
-          addToast={vi.fn()}
-          toasts={mockToasts}
-          removeToast={vi.fn()}
-          modalManager={manager}
-          projectActions={{ handleAddProject: vi.fn(), handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
-          taskHandlers={{ handleModalCreate: vi.fn(), handlePlanningTaskCreated: vi.fn(), handlePlanningTasksCreated: vi.fn(), handleSubtaskTasksCreated: vi.fn(), handleGitHubImport: vi.fn() }}
-          taskOperations={{ moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(), duplicateTask: vi.fn() }}
-          deepLink={{ handleDetailClose: vi.fn() }}
-          settings={mockSettings}
-        />
-      );
-      expect(mockScheduledTasksModalProps).toHaveBeenCalledTimes(1);
-      const captured = mockScheduledTasksModalProps.mock.calls[0][0];
-      // Empty string should pass through as-is
-      expect(captured.projectId).toBe("");
+      expect(mockScheduledTasksModalProps.mock.calls[0][0].projectId).toBe(expected);
     });
   });
 });
