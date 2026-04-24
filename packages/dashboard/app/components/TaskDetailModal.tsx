@@ -164,7 +164,7 @@ interface TaskDetailModalProps {
   onClose: () => void;
   onOpenDetail: (task: Task | TaskDetail) => void; // For clicking dependencies
   onMoveTask: (id: string, column: Column) => Promise<Task>;
-  onDeleteTask: (id: string) => Promise<Task>;
+  onDeleteTask: (id: string, options?: { removeDependencyReferences?: boolean }) => Promise<Task>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onRetryTask?: (id: string) => Promise<Task>;
   onDuplicateTask?: (id: string) => Promise<Task>;
@@ -173,6 +173,24 @@ interface TaskDetailModalProps {
   prAuthAvailable?: boolean;
   /** Open the modal with this tab active instead of "definition" */
   initialTab?: TabId;
+}
+
+function extractDependencyDeleteConflict(err: unknown): { dependentIds: string[] } | null {
+  if (!(err instanceof Error)) {
+    return null;
+  }
+
+  const details = (err as { details?: { code?: string; dependentIds?: unknown } }).details;
+  if (details?.code === "TASK_HAS_DEPENDENTS" && Array.isArray(details.dependentIds)) {
+    return { dependentIds: details.dependentIds.filter((id): id is string => typeof id === "string") };
+  }
+
+  const idsInMessage = err.message.match(/[A-Z]+-\d+/g) ?? [];
+  if (idsInMessage.length > 1) {
+    return { dependentIds: [...new Set(idsInMessage.slice(1))] };
+  }
+
+  return null;
 }
 
 function truncate(s: string, max: number): string {
@@ -685,7 +703,28 @@ export function TaskDetailModal({
       onClose();
       addToast(`Deleted ${task.id}`, "info");
     } catch (err) {
-      addToast(getErrorMessage(err), "error");
+      const conflict = extractDependencyDeleteConflict(err);
+      if (!conflict || conflict.dependentIds.length === 0) {
+        addToast(getErrorMessage(err), "error");
+        return;
+      }
+
+      const dependentList = conflict.dependentIds.join(", ");
+      const confirmed = confirm(
+        `${task.id} is a dependency of ${dependentList}.\n\n` +
+        "Delete anyway by removing these dependency references first?",
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      try {
+        await onDeleteTask(task.id, { removeDependencyReferences: true });
+        onClose();
+        addToast(`Deleted ${task.id} after removing dependency references`, "info");
+      } catch (retryErr) {
+        addToast(getErrorMessage(retryErr), "error");
+      }
     }
   }, [task.id, onDeleteTask, onClose, addToast]);
 

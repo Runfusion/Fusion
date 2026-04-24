@@ -2047,6 +2047,61 @@ describe("POST /tasks/:id/refine", () => {
   });
 });
 
+describe("DELETE /tasks/:id", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore({
+      deleteTask: vi.fn(),
+    });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("deletes a task with the default safe mode", async () => {
+    const deletedTask = { ...FAKE_TASK_DETAIL, id: "KB-001" };
+    (store.deleteTask as ReturnType<typeof vi.fn>).mockResolvedValue(deletedTask);
+
+    const res = await REQUEST(buildApp(), "DELETE", "/api/tasks/KB-001");
+
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe("KB-001");
+    expect(store.deleteTask).toHaveBeenCalledWith("KB-001", { removeDependencyReferences: false });
+  });
+
+  it("returns structured 409 conflict when delete is blocked by dependents", async () => {
+    const err = new Error("Cannot delete task KB-001: still referenced as a dependency by KB-002.");
+    err.name = "TaskHasDependentsError";
+    (err as Error & { dependentIds: string[] }).dependentIds = ["KB-002", "KB-003"];
+    (store.deleteTask as ReturnType<typeof vi.fn>).mockRejectedValue(err);
+
+    const res = await REQUEST(buildApp(), "DELETE", "/api/tasks/KB-001");
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("Cannot delete task KB-001");
+    expect(res.body.details).toEqual({
+      code: "TASK_HAS_DEPENDENTS",
+      taskId: "KB-001",
+      dependentIds: ["KB-002", "KB-003"],
+    });
+  });
+
+  it("passes the removeDependencyReferences flag when explicitly requested", async () => {
+    const deletedTask = { ...FAKE_TASK_DETAIL, id: "KB-001" };
+    (store.deleteTask as ReturnType<typeof vi.fn>).mockResolvedValue(deletedTask);
+
+    const res = await REQUEST(buildApp(), "DELETE", "/api/tasks/KB-001?removeDependencyReferences=true");
+
+    expect(res.status).toBe(200);
+    expect(store.deleteTask).toHaveBeenCalledWith("KB-001", { removeDependencyReferences: true });
+  });
+});
+
 describe("POST /tasks/:id/archive", () => {
   let store: TaskStore;
 

@@ -2485,6 +2485,123 @@ describe("TaskDetailModal", () => {
       expect(screen.getByRole("menuitem", { name: "Pause" })).toBeTruthy();
     });
 
+    it("prompts for dependency-removal confirmation and retries delete with explicit flag", async () => {
+      const onDeleteTask = vi.fn();
+      const conflict = new Error("Cannot delete task FN-099: still referenced as a dependency by FN-100, FN-101.") as Error & {
+        status: number;
+        details: { code: string; dependentIds: string[] };
+      };
+      conflict.status = 409;
+      conflict.details = { code: "TASK_HAS_DEPENDENTS", dependentIds: ["FN-100", "FN-101"] };
+      onDeleteTask
+        .mockRejectedValueOnce(conflict)
+        .mockResolvedValueOnce({} as Task);
+
+      vi.spyOn(window, "confirm")
+        .mockReturnValueOnce(true)
+        .mockReturnValueOnce(true);
+
+      render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={onDeleteTask}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+      await waitFor(() => {
+        expect(window.confirm).toHaveBeenNthCalledWith(1, "Delete FN-099?");
+        expect(window.confirm).toHaveBeenNthCalledWith(
+          2,
+          "FN-099 is a dependency of FN-100, FN-101.\n\nDelete anyway by removing these dependency references first?",
+        );
+      });
+
+      await waitFor(() => {
+        expect(onDeleteTask).toHaveBeenNthCalledWith(1, "FN-099");
+        expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-099", { removeDependencyReferences: true });
+        expect(noop).toHaveBeenCalledWith("Deleted FN-099 after removing dependency references", "info");
+      });
+    });
+
+    it("does not retry delete when dependency-removal confirmation is canceled", async () => {
+      const onDeleteTask = vi.fn();
+      const conflict = new Error("Cannot delete task FN-099: still referenced as a dependency by FN-102.") as Error & {
+        status: number;
+        details: { code: string; dependentIds: string[] };
+      };
+      conflict.status = 409;
+      conflict.details = { code: "TASK_HAS_DEPENDENTS", dependentIds: ["FN-102"] };
+      onDeleteTask.mockRejectedValue(conflict);
+
+      vi.spyOn(window, "confirm")
+        .mockReturnValueOnce(true)
+        .mockReturnValueOnce(false);
+
+      render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={onDeleteTask}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+      await waitFor(() => {
+        expect(onDeleteTask).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it("shows error when dependency-removal retry fails", async () => {
+      const onDeleteTask = vi.fn();
+      const conflict = new Error("Cannot delete task FN-099: still referenced as a dependency by FN-103.") as Error & {
+        status: number;
+        details: { code: string; dependentIds: string[] };
+      };
+      conflict.status = 409;
+      conflict.details = { code: "TASK_HAS_DEPENDENTS", dependentIds: ["FN-103"] };
+      onDeleteTask
+        .mockRejectedValueOnce(conflict)
+        .mockRejectedValueOnce(new Error("Retry failed"));
+
+      vi.spyOn(window, "confirm")
+        .mockReturnValueOnce(true)
+        .mockReturnValueOnce(true);
+
+      render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={onDeleteTask}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+      await waitFor(() => {
+        expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-099", { removeDependencyReferences: true });
+        expect(noop).toHaveBeenCalledWith("Retry failed", "error");
+      });
+    });
+
     it("in-review modal-actions contains Merge & Close and Back to In Progress buttons", () => {
       render(
         <TaskDetailModal

@@ -16,6 +16,7 @@ import {
   archiveTask,
   unarchiveTask,
   deleteTask,
+  ApiRequestError,
   moveTask,
   mergeTask,
   retryTask,
@@ -1826,10 +1827,42 @@ describe("Git Management API", () => {
       });
     });
 
-    it("throws on error", async () => {
-      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Not found" }, 404));
+    it("sends removeDependencyReferences=true when dependency rewrite is requested", async () => {
+      const deletedTask: Task = { ...FAKE_DETAIL, column: "done" };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, deletedTask));
 
-      await expect(deleteTask("FN-001")).rejects.toThrow("Not found");
+      await deleteTask("FN-001", undefined, { removeDependencyReferences: true });
+
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001?removeDependencyReferences=true", {
+        headers: { "Content-Type": "application/json" },
+        method: "DELETE",
+      });
+    });
+
+    it("throws ApiRequestError on error and preserves details payload", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(
+        mockFetchResponse(
+          false,
+          {
+            error: "Cannot delete task FN-001: still referenced as a dependency by FN-002.",
+            details: {
+              code: "TASK_HAS_DEPENDENTS",
+              dependentIds: ["FN-002"],
+            },
+          },
+          409,
+        ),
+      );
+
+      await expect(deleteTask("FN-001")).rejects.toBeInstanceOf(ApiRequestError);
+      await expect(deleteTask("FN-001")).rejects.toMatchObject({
+        message: "Cannot delete task FN-001: still referenced as a dependency by FN-002.",
+        status: 409,
+        details: {
+          code: "TASK_HAS_DEPENDENTS",
+          dependentIds: ["FN-002"],
+        },
+      });
     });
   });
 

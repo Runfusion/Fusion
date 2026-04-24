@@ -4069,6 +4069,28 @@ Task with acceptance criteria
       await expect(store.deleteTask(parent.id)).resolves.toMatchObject({ id: parent.id });
     });
 
+    it("deleteTask removes incoming dependency references when explicitly requested", async () => {
+      const parent = await store.createTask({ description: "Parent to delete" });
+      const dependentOne = await store.createTask({ description: "Dependent one" });
+      const dependentTwo = await store.createTask({ description: "Dependent two" });
+
+      await store.updateTask(dependentOne.id, { dependencies: [parent.id, "FN-UNRELATED"] });
+      await store.updateTask(dependentTwo.id, { dependencies: [parent.id] });
+
+      await expect(
+        store.deleteTask(parent.id, { removeDependencyReferences: true }),
+      ).resolves.toMatchObject({ id: parent.id });
+
+      const updatedOne = await store.getTask(dependentOne.id);
+      const updatedTwo = await store.getTask(dependentTwo.id);
+
+      expect(updatedOne.dependencies).toEqual(["FN-UNRELATED"]);
+      expect(updatedTwo.dependencies).toEqual([]);
+      expect(updatedOne.dependencies).not.toContain(parent.id);
+      expect(updatedTwo.dependencies).not.toContain(parent.id);
+      await expect(store.getTask(parent.id)).rejects.toThrow(`Task ${parent.id} not found`);
+    });
+
     it("deleteTask allows deletion when a similarly-named id contains the target (substring false-positive guard)", async () => {
       // The LIKE probe uses '%id%'; ensure we don't misidentify e.g. FN-1 as
       // referencing FN-10 just because the id string appears inside a JSON

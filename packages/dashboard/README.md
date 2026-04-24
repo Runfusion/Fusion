@@ -601,7 +601,9 @@ The dashboard server exposes a REST API at `/api`:
 - `POST /api/tasks/:id/move` - Move task to column
 - `POST /api/tasks/:id/pause` - Pause task
 - `POST /api/tasks/:id/unpause` - Unpause task
-- `DELETE /api/tasks/:id` - Delete task
+- `DELETE /api/tasks/:id` - Delete task. Default mode is safe: if other tasks still reference this ID in `dependencies`, the route returns `409` with `{ error, details: { code: "TASK_HAS_DEPENDENTS", taskId, dependentIds } }`.
+  - To explicitly remove those incoming dependency references and then delete, call `DELETE /api/tasks/:id?removeDependencyReferences=true`.
+  - This opt-in path rewrites each dependent task's `dependencies` array atomically before deleting the target task, so no live task is left pointing at a missing task ID.
 
 ### Git Operations
 - `GET /api/git/status` - Current branch and status

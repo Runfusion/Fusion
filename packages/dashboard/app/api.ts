@@ -69,6 +69,22 @@ import { appendTokenQuery, getAuthToken, withTokenHeader } from "./auth";
 // Re-export skills types for use by hooks and components
 export type { DiscoveredSkill, CatalogEntry, CatalogFetchResult, ToggleSkillResult, SkillContent, SkillFileEntry };
 
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly details?: Record<string, unknown>;
+
+  constructor(message: string, status: number, details?: Record<string, unknown>) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.details = details;
+  }
+}
+
+export interface DeleteTaskOptions {
+  removeDependencyReferences?: boolean;
+}
+
 function looksLikeHtml(body: string): boolean {
   const trimmed = body.trim();
   return trimmed.startsWith("<!DOCTYPE") || trimmed.startsWith("<html") || trimmed.startsWith("<HTML");
@@ -146,7 +162,12 @@ export async function api<T = unknown>(path: string, opts: RequestInit = {}): Pr
   }
 
   if (!res.ok) {
-    throw new Error((data as { error?: string } | null)?.error || `Request failed for ${url}: ${res.status} ${res.statusText}`);
+    const payload = data as { error?: string; details?: Record<string, unknown> } | null;
+    throw new ApiRequestError(
+      payload?.error || `Request failed for ${url}: ${res.status} ${res.statusText}`,
+      res.status,
+      payload?.details,
+    );
   }
 
   return data as T;
@@ -280,8 +301,14 @@ export function moveTask(id: string, column: Column, projectId?: string): Promis
   });
 }
 
-export function deleteTask(id: string, projectId?: string): Promise<Task> {
-  return api<Task>(withProjectId(`/tasks/${id}`, projectId), { method: "DELETE" });
+export function deleteTask(id: string, projectId?: string, options?: DeleteTaskOptions): Promise<Task> {
+  const search = new URLSearchParams();
+  if (options?.removeDependencyReferences) {
+    search.set("removeDependencyReferences", "true");
+  }
+
+  const suffix = search.size > 0 ? `?${search.toString()}` : "";
+  return api<Task>(withProjectId(`/tasks/${id}${suffix}`, projectId), { method: "DELETE" });
 }
 
 export function mergeTask(id: string, projectId?: string): Promise<MergeResult> {

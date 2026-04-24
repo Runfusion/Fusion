@@ -97,7 +97,7 @@ interface TaskCardProps {
   ) => Promise<Task>;
   onArchiveTask?: (id: string) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
-  onDeleteTask?: (id: string) => Promise<Task>;
+  onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean }) => Promise<Task>;
   onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes") => void;
   /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
   taskStuckTimeoutMs?: number;
@@ -139,6 +139,24 @@ function areTaskWorkflowStepIdsEqual(previous?: string[], next?: string[]): bool
   if (!previous || !next) return false;
   if (previous.length !== next.length) return false;
   return previous.every((stepId, index) => stepId === next[index]);
+}
+
+function extractDependencyDeleteConflict(err: unknown): { dependentIds: string[] } | null {
+  if (!(err instanceof Error)) {
+    return null;
+  }
+
+  const details = (err as { details?: { code?: string; dependentIds?: unknown } }).details;
+  if (details?.code === "TASK_HAS_DEPENDENTS" && Array.isArray(details.dependentIds)) {
+    return { dependentIds: details.dependentIds.filter((id): id is string => typeof id === "string") };
+  }
+
+  const idsInMessage = err.message.match(/[A-Z]+-\d+/g) ?? [];
+  if (idsInMessage.length > 1) {
+    return { dependentIds: [...new Set(idsInMessage.slice(1))] };
+  }
+
+  return null;
 }
 
 function areTaskWorkflowResultsEqual(previous?: Task["workflowStepResults"], next?: Task["workflowStepResults"]): boolean {
@@ -722,13 +740,34 @@ function TaskCardComponent({
     e.stopPropagation();
     if (!onDeleteTask) return;
 
-    if (window.confirm(`Delete ${task.id}?`)) {
-      void onDeleteTask(task.id).then(() => {
-        addToast(`Deleted ${task.id}`, "success");
-      }).catch((err) => {
-        addToast(`Failed to delete ${task.id}: ${getErrorMessage(err)}`, "error");
-      });
+    if (!window.confirm(`Delete ${task.id}?`)) {
+      return;
     }
+
+    void onDeleteTask(task.id).then(() => {
+      addToast(`Deleted ${task.id}`, "success");
+    }).catch((err) => {
+      const conflict = extractDependencyDeleteConflict(err);
+      if (!conflict || conflict.dependentIds.length === 0) {
+        addToast(`Failed to delete ${task.id}: ${getErrorMessage(err)}`, "error");
+        return;
+      }
+
+      const dependentList = conflict.dependentIds.join(", ");
+      const confirmed = window.confirm(
+        `${task.id} is a dependency of ${dependentList}.\n\n` +
+        "Delete anyway by removing these dependency references first?",
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      void onDeleteTask(task.id, { removeDependencyReferences: true }).then(() => {
+        addToast(`Deleted ${task.id} after removing dependency references`, "success");
+      }).catch((retryErr) => {
+        addToast(`Failed to delete ${task.id}: ${getErrorMessage(retryErr)}`, "error");
+      });
+    });
   }, [addToast, onDeleteTask, task.id]);
 
   const handleOpenFiles = useCallback((e: React.MouseEvent) => {

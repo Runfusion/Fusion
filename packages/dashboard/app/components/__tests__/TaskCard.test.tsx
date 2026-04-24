@@ -4151,6 +4151,112 @@ describe("TaskCard delete button", () => {
     expect(onDeleteTask).not.toHaveBeenCalled();
   });
 
+  it("prompts for dependency-removal confirmation and retries delete with explicit flag", async () => {
+    vi.spyOn(window, "confirm")
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true);
+    const task = makeTask({ column: "triage", id: "FN-DEP" });
+    const conflict = new Error("Cannot delete task FN-DEP: still referenced as a dependency by FN-200, FN-201.") as Error & {
+      status: number;
+      details: { code: string; dependentIds: string[] };
+    };
+    conflict.status = 409;
+    conflict.details = { code: "TASK_HAS_DEPENDENTS", dependentIds: ["FN-200", "FN-201"] };
+
+    const onDeleteTask = vi.fn()
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce(task);
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onDeleteTask={onDeleteTask}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Delete task/i }));
+
+    await waitFor(() => {
+      expect(window.confirm).toHaveBeenNthCalledWith(1, "Delete FN-DEP?");
+      expect(window.confirm).toHaveBeenNthCalledWith(
+        2,
+        "FN-DEP is a dependency of FN-200, FN-201.\n\nDelete anyway by removing these dependency references first?",
+      );
+    });
+
+    await waitFor(() => {
+      expect(onDeleteTask).toHaveBeenNthCalledWith(1, "FN-DEP");
+      expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-DEP", { removeDependencyReferences: true });
+      expect(noopToast).toHaveBeenCalledWith("Deleted FN-DEP after removing dependency references", "success");
+    });
+  });
+
+  it("does not retry delete when dependency-removal confirmation is canceled", async () => {
+    vi.spyOn(window, "confirm")
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+    const task = makeTask({ column: "triage", id: "FN-CANCEL" });
+    const conflict = new Error("Cannot delete task FN-CANCEL: still referenced as a dependency by FN-300.") as Error & {
+      status: number;
+      details: { code: string; dependentIds: string[] };
+    };
+    conflict.status = 409;
+    conflict.details = { code: "TASK_HAS_DEPENDENTS", dependentIds: ["FN-300"] };
+
+    const onDeleteTask = vi.fn().mockRejectedValue(conflict);
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onDeleteTask={onDeleteTask}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Delete task/i }));
+
+    await waitFor(() => {
+      expect(onDeleteTask).toHaveBeenCalledTimes(1);
+      expect(window.confirm).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("shows error toast when retrying dependency-removal delete fails", async () => {
+    vi.spyOn(window, "confirm")
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true);
+    const task = makeTask({ column: "triage", id: "FN-RETRY-FAIL" });
+    const conflict = new Error("Cannot delete task FN-RETRY-FAIL: still referenced as a dependency by FN-301.") as Error & {
+      status: number;
+      details: { code: string; dependentIds: string[] };
+    };
+    conflict.status = 409;
+    conflict.details = { code: "TASK_HAS_DEPENDENTS", dependentIds: ["FN-301"] };
+
+    const onDeleteTask = vi.fn()
+      .mockRejectedValueOnce(conflict)
+      .mockRejectedValueOnce(new Error("Retry failed"));
+
+    render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={noopToast}
+        onDeleteTask={onDeleteTask}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Delete task/i }));
+
+    await waitFor(() => {
+      expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-RETRY-FAIL", { removeDependencyReferences: true });
+      expect(noopToast).toHaveBeenCalledWith("Failed to delete FN-RETRY-FAIL: Retry failed", "error");
+    });
+  });
+
   it("delete button click does not propagate to card click (does not open detail)", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const task = makeTask({ column: "triage", id: "FN-789" });

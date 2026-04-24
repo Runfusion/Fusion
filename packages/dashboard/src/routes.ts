@@ -5637,12 +5637,28 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.delete("/tasks/:id", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const task = await scopedStore.deleteTask(req.params.id);
+      const removeDependencyReferences = req.query.removeDependencyReferences === "1"
+        || req.query.removeDependencyReferences === "true";
+      const task = await scopedStore.deleteTask(req.params.id, { removeDependencyReferences });
       res.json(task);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
       }
+      const isTaskHasDependentsError =
+        err instanceof Error
+        && err.name === "TaskHasDependentsError"
+        && Array.isArray((err as { dependentIds?: unknown }).dependentIds);
+
+      if (isTaskHasDependentsError) {
+        const dependentIds = (err as unknown as { dependentIds: string[] }).dependentIds;
+        throw new ApiError(409, err instanceof Error ? err.message : "Task has dependents", {
+          code: "TASK_HAS_DEPENDENTS",
+          taskId: req.params.id,
+          dependentIds,
+        });
+      }
+
       rethrowAsApiError(err);
     }
   });

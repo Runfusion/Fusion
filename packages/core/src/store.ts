@@ -3098,7 +3098,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return paths;
   }
 
-  async deleteTask(id: string): Promise<Task> {
+  async deleteTask(id: string, options?: { removeDependencyReferences?: boolean }): Promise<Task> {
     return this.withTaskLock(id, async () => {
       const task = this.readTaskFromDb(id);
       if (!task) {
@@ -3106,12 +3106,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
 
       // Refuse to delete a task that is still referenced as a dependency
-      // by another live task. Scheduler treats missing-dep ids as unmet,
-      // so silently deleting a task with live dependents would permanently
-      // block them. Callers that want to split/replace a task must rewrite
-      // or drop the incoming references first.
+      // by another live task unless the caller explicitly opts into
+      // removing those incoming references as part of this delete.
       const dependentIds = this.findLiveDependents(id);
-      if (dependentIds.length > 0) {
+      if (dependentIds.length > 0 && !options?.removeDependencyReferences) {
         throw new TaskHasDependentsError(id, dependentIds);
       }
 
@@ -3125,9 +3123,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         });
       }
 
-      // Delete from SQLite
-      this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
-      this.db.bumpLastModified();
+      const rewrittenDependents = this.rewriteDependentsAndDeleteTask(id, dependentIds);
 
       // Remove from cache if watcher is active
       if (this.isWatching) this.taskCache.delete(id);
@@ -3139,9 +3135,50 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         await rm(dir, { recursive: true });
       }
 
+      for (const dependentTask of rewrittenDependents) {
+        this.emit("task:updated", dependentTask);
+      }
+
       this.emit("task:deleted", task);
       return task;
     });
+  }
+
+  private rewriteDependentsAndDeleteTask(taskId: string, dependentIds: string[]): Task[] {
+    const rewrittenDependents: Task[] = [];
+
+    this.db.transaction(() => {
+      for (const dependentId of dependentIds) {
+        const dependentTask = this.readTaskFromDb(dependentId);
+        if (!dependentTask) continue;
+
+        const nextDependencies = dependentTask.dependencies.filter((dependencyId) => dependencyId !== taskId);
+        if (nextDependencies.length === dependentTask.dependencies.length) {
+          continue;
+        }
+
+        const updatedDependent = {
+          ...dependentTask,
+          dependencies: nextDependencies,
+          updatedAt: new Date().toISOString(),
+        };
+
+        this.db.prepare("UPDATE tasks SET dependencies = ?, updatedAt = ? WHERE id = ?").run(
+          toJson(updatedDependent.dependencies),
+          updatedDependent.updatedAt,
+          updatedDependent.id,
+        );
+        if (this.isWatching) {
+          this.taskCache.set(updatedDependent.id, updatedDependent);
+        }
+        rewrittenDependents.push(updatedDependent);
+      }
+
+      this.db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
+      this.db.bumpLastModified();
+    });
+
+    return rewrittenDependents;
   }
 
   /**
