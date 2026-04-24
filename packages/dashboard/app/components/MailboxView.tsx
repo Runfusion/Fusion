@@ -450,7 +450,7 @@ export function MailboxView({
       {/* Tabs */}
       <div className="mailbox-tabs" data-testid="mailbox-tabs">
         <button
-          className={`mailbox-tab ${activeTab === "inbox" ? "active" : ""}`}
+          className={`btn btn-sm btn-secondary mailbox-tab ${activeTab === "inbox" ? "active" : ""}`}
           onClick={() => { setActiveTab("inbox"); setSelectedMessage(null); }}
           data-testid="mailbox-tab-inbox"
         >
@@ -459,7 +459,7 @@ export function MailboxView({
           {unreadCount > 0 && <span className="mailbox-tab-badge">{unreadCount}</span>}
         </button>
         <button
-          className={`mailbox-tab ${activeTab === "outbox" ? "active" : ""}`}
+          className={`btn btn-sm btn-secondary mailbox-tab ${activeTab === "outbox" ? "active" : ""}`}
           onClick={() => { setActiveTab("outbox"); setSelectedMessage(null); }}
           data-testid="mailbox-tab-outbox"
         >
@@ -467,7 +467,7 @@ export function MailboxView({
           <span>Outbox</span>
         </button>
         <button
-          className={`mailbox-tab ${activeTab === "agents" ? "active" : ""}`}
+          className={`btn btn-sm btn-secondary mailbox-tab ${activeTab === "agents" ? "active" : ""}`}
           onClick={() => { setActiveTab("agents"); setSelectedMessage(null); }}
           data-testid="mailbox-tab-agents"
         >
@@ -714,7 +714,7 @@ export function MailboxView({
                     {selectedAgentId && (
                       <div className="mailbox-agent-subtabs" data-testid="mailbox-agent-subtabs">
                         <button
-                          className={`mailbox-agent-subtab ${agentSubTab === "inbox" ? "active" : ""}`}
+                          className={`btn btn-sm btn-secondary mailbox-agent-subtab ${agentSubTab === "inbox" ? "active" : ""}`}
                           onClick={() => setAgentSubTab("inbox")}
                           data-testid="mailbox-agent-subtab-inbox"
                         >
@@ -725,7 +725,7 @@ export function MailboxView({
                           )}
                         </button>
                         <button
-                          className={`mailbox-agent-subtab ${agentSubTab === "outbox" ? "active" : ""}`}
+                          className={`btn btn-sm btn-secondary mailbox-agent-subtab ${agentSubTab === "outbox" ? "active" : ""}`}
                           onClick={() => setAgentSubTab("outbox")}
                           data-testid="mailbox-agent-subtab-outbox"
                         >

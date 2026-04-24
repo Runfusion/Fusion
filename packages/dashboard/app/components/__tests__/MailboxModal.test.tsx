@@ -306,7 +306,11 @@ describe("MailboxModal", () => {
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-back-to-list")).toBeDefined();
     });
-    fireEvent.click(screen.getByTestId("mailbox-back-to-list"));
+
+    const backToListButton = screen.getByTestId("mailbox-back-to-list");
+    expect(backToListButton).toHaveClass("btn", "btn-sm", "btn-secondary");
+
+    fireEvent.click(backToListButton);
     await waitFor(() => {
       expect(screen.queryByTestId("mailbox-message-detail")).toBeNull();
       expect(screen.getByTestId("mailbox-inbox-list")).toBeDefined();
@@ -325,7 +329,11 @@ describe("MailboxModal", () => {
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-mark-all-read")).toBeDefined();
     });
-    fireEvent.click(screen.getByTestId("mailbox-mark-all-read"));
+
+    const markAllReadButton = screen.getByTestId("mailbox-mark-all-read");
+    expect(markAllReadButton).toHaveClass("btn", "btn-sm", "btn-secondary");
+
+    fireEvent.click(markAllReadButton);
     await waitFor(() => {
       expect(mockMarkAllMessagesRead).toHaveBeenCalledWith(undefined);
     });
@@ -340,7 +348,11 @@ describe("MailboxModal", () => {
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-delete")).toBeDefined();
     });
-    fireEvent.click(screen.getByTestId("mailbox-delete"));
+
+    const deleteButton = screen.getByTestId("mailbox-delete");
+    expect(deleteButton).toHaveClass("btn", "btn-sm", "btn-secondary");
+
+    fireEvent.click(deleteButton);
     await waitFor(() => {
       expect(mockDeleteMessage).toHaveBeenCalledWith("msg-001", undefined);
     });
@@ -359,7 +371,10 @@ describe("MailboxModal", () => {
       expect(screen.getByTestId("mailbox-reply")).toBeDefined();
     });
 
-    fireEvent.click(screen.getByTestId("mailbox-reply"));
+    const replyButton = screen.getByTestId("mailbox-reply");
+    expect(replyButton).toHaveClass("btn", "btn-sm", "btn-secondary");
+
+    fireEvent.click(replyButton);
 
     await waitFor(() => {
       expect(screen.getByTestId("message-composer")).toBeDefined();
@@ -438,6 +453,38 @@ describe("MailboxModal", () => {
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-header-compose")).toBeDefined();
     });
+  });
+
+  it("renders mailbox tabs and agent subtabs with shared button classes", async () => {
+    mockFetchAgentMailbox.mockResolvedValue({
+      ownerId: "agent-001",
+      ownerType: "agent",
+      unreadCount: 0,
+      messages: [],
+      inbox: [],
+      outbox: [],
+    });
+
+    render(<MailboxModal {...defaultProps} />);
+
+    expect(screen.getByTestId("mailbox-tab-inbox")).toHaveClass("btn", "btn-sm", "btn-secondary", "mailbox-tab");
+    expect(screen.getByTestId("mailbox-tab-outbox")).toHaveClass("btn", "btn-sm", "btn-secondary", "mailbox-tab");
+    expect(screen.getByTestId("mailbox-tab-agents")).toHaveClass("btn", "btn-sm", "btn-secondary", "mailbox-tab");
+
+    fireEvent.click(screen.getByTestId("mailbox-tab-agents"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mailbox-agent-select")).toBeDefined();
+    });
+
+    fireEvent.change(screen.getByTestId("mailbox-agent-select"), { target: { value: "agent-001" } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mailbox-agent-subtabs")).toBeDefined();
+    });
+
+    expect(screen.getByTestId("mailbox-agent-subtab-inbox")).toHaveClass("btn", "btn-sm", "btn-secondary", "mailbox-agent-subtab");
+    expect(screen.getByTestId("mailbox-agent-subtab-outbox")).toHaveClass("btn", "btn-sm", "btn-secondary", "mailbox-agent-subtab");
   });
 
   it("shows compose button in Agents tab", async () => {
@@ -864,6 +911,24 @@ describe("MailboxModal", () => {
       expect(blockMatch).toBeTruthy();
       expect(blockMatch![1]).toContain("var(--fab-text)");
       expect(blockMatch![1]).not.toContain("color: white");
+    });
+
+    it("mailbox tabs and subtabs do not force square-edge defaults", () => {
+      const tabBlockMatch = css.match(/\.mailbox-tab\s*\{([^}]*)\}/);
+      expect(tabBlockMatch).toBeTruthy();
+      expect(tabBlockMatch![1]).toContain("border-color: var(--border)");
+      expect(tabBlockMatch![1]).toContain("background: var(--surface)");
+      expect(tabBlockMatch![1]).not.toContain("border: none");
+      expect(tabBlockMatch![1]).not.toContain("background: none");
+      expect(tabBlockMatch![1]).not.toContain("border-bottom: 2px solid transparent");
+
+      const subtabBlockMatch = css.match(/\.mailbox-agent-subtab\s*\{([^}]*)\}/);
+      expect(subtabBlockMatch).toBeTruthy();
+      expect(subtabBlockMatch![1]).toContain("border-color: var(--border)");
+      expect(subtabBlockMatch![1]).toContain("background: var(--surface)");
+      expect(subtabBlockMatch![1]).not.toContain("border-radius: 0");
+      expect(subtabBlockMatch![1]).not.toContain("border: none");
+      expect(subtabBlockMatch![1]).not.toContain("background: transparent");
     });
 
     it("mission event type error uses CSS custom properties", () => {

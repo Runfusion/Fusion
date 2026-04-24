@@ -30008,23 +30008,19 @@ html .column.drag-over * {
 
 .mailbox-tabs {
   display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  padding: 0 var(--space-lg) var(--space-sm);
   border-bottom: 1px solid var(--border);
-  padding: 0 16px;
-  gap: 0;
 }
 
 .mailbox-tab {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 16px;
-  border: none;
-  background: none;
+  justify-content: center;
+  min-height: 32px;
+  padding: var(--space-sm) var(--space-md);
   color: var(--text-muted);
-  font-size: 0.85rem;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: color 0.15s, border-color 0.15s;
+  border-color: var(--border);
+  background: var(--surface);
 }
 
 .mailbox-tab:hover {
@@ -30033,7 +30029,9 @@ html .column.drag-over * {
 
 .mailbox-tab.active {
   color: var(--text);
-  border-bottom-color: var(--todo);
+  border-color: var(--todo);
+  background: var(--card-hover);
+  box-shadow: var(--focus-ring);
   font-weight: 600;
 }
 
@@ -30379,18 +30377,13 @@ html .column.drag-over * {
 }
 
 .mailbox-agent-subtab {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
+  justify-content: center;
+  min-height: 30px;
+  padding: var(--space-xs) var(--space-md);
   font-size: 0.8rem;
   color: var(--text-muted);
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  cursor: pointer;
-  transition: color var(--transition-fast), border-color var(--transition-fast);
+  border-color: var(--border);
+  background: var(--surface);
 }
 
 .mailbox-agent-subtab:hover {
@@ -30399,7 +30392,9 @@ html .column.drag-over * {
 
 .mailbox-agent-subtab.active {
   color: var(--text);
-  border-bottom-color: var(--in-progress);
+  border-color: var(--in-progress);
+  background: var(--card-hover);
+  box-shadow: var(--focus-ring);
 }
 
 .mailbox-agent-subtab .mailbox-tab-badge {
