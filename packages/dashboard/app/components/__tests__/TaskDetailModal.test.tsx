@@ -4917,8 +4917,8 @@ describe("TaskDetailModal", () => {
         expect(mockFetch).toHaveBeenCalledWith("FN-099", undefined);
       });
 
-      // Should render the workflow results
-      expect(screen.getByText("QA Check")).toBeTruthy();
+      // Should render the workflow results after async tab load completes
+      expect(await screen.findByText("QA Check", {}, { timeout: 15_000 })).toBeTruthy();
     });
 
     it("shows loading state when workflow results are being fetched", async () => {

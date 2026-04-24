@@ -80,6 +80,14 @@ describe("Status color CSS custom properties", () => {
   it("uses --surface-hover without per-rule fallback overrides", () => {
     expect(css).toContain("var(--surface-hover)");
     expect(css).not.toContain("var(--surface-hover,");
+    expect(css).not.toMatch(/var\(--surface-hover,\s*rgba\(/);
+  });
+
+  it("defines --surface-hover with tokenized color-mix (no raw rgba/hex)", () => {
+    expect(css).toMatch(/--surface-hover:\s*color-mix\(in\s+srgb,\s*var\(--surface\)\s+90%,\s*var\(--text\)\s+10%\)/);
+    expect(css).toMatch(/\[data-theme="light"\]\s*\{[^}]*--surface-hover:\s*color-mix\(in\s+srgb,\s*var\(--surface\)\s+92%,\s*var\(--text\)\s+8%\)/s);
+    expect(css).not.toMatch(/--surface-hover:\s*rgba\(/);
+    expect(css).not.toMatch(/--surface-hover:\s*#[0-9a-fA-F]{3,8}/);
   });
 
   it("defines light theme override for --status-error-bg", () => {
@@ -392,6 +400,54 @@ describe("Accent color per color theme", () => {
 
     expect(darkAccentCount).toBe(darkBlocks.size);
     expect(lightAccentCount).toBe(lightBlocks.size);
+  });
+
+  it("every dark color theme block defines --surface-hover using tokenized color-mix", () => {
+    const blocks = getDarkColorThemeBlocks();
+    expect(blocks.size).toBeGreaterThanOrEqual(34);
+
+    const missing: string[] = [];
+    const invalid: string[] = [];
+
+    for (const [theme, block] of blocks) {
+      if (!block.includes("--surface-hover:")) {
+        missing.push(theme);
+        continue;
+      }
+      if (
+        !block.includes("--surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%)") ||
+        /--surface-hover:\s*(rgba\(|#[0-9a-fA-F]{3,8})/.test(block)
+      ) {
+        invalid.push(theme);
+      }
+    }
+
+    expect(missing, `Dark themes missing --surface-hover: ${missing.join(", ")}`).toEqual([]);
+    expect(invalid, `Dark themes with non-tokenized --surface-hover: ${invalid.join(", ")}`).toEqual([]);
+  });
+
+  it("every light color theme block defines --surface-hover using tokenized color-mix", () => {
+    const blocks = getLightColorThemeBlocks();
+    expect(blocks.size).toBeGreaterThanOrEqual(34);
+
+    const missing: string[] = [];
+    const invalid: string[] = [];
+
+    for (const [theme, block] of blocks) {
+      if (!block.includes("--surface-hover:")) {
+        missing.push(theme);
+        continue;
+      }
+      if (
+        !block.includes("--surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%)") ||
+        /--surface-hover:\s*(rgba\(|#[0-9a-fA-F]{3,8})/.test(block)
+      ) {
+        invalid.push(theme);
+      }
+    }
+
+    expect(missing, `Light themes missing --surface-hover: ${missing.join(", ")}`).toEqual([]);
+    expect(invalid, `Light themes with non-tokenized --surface-hover: ${invalid.join(", ")}`).toEqual([]);
   });
 });
 

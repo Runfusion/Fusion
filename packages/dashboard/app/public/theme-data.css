@@ -1,9 +1,13 @@
 /* ============================================================
    COLOR THEMES (data-color-theme="...")
+   Contract: every dark/light theme block defines --surface-hover
+   so component hover states can use var(--surface-hover) without
+   per-selector fallbacks or mode-specific overrides.
    ============================================================ */
 
 /* OCEAN - Deep blues and cyans */
 [data-color-theme="ocean"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --todo: #00b8d4;
   --in-progress: #00e5ff;
   --in-progress-rgb: 0, 229, 255;
@@ -25,6 +29,7 @@
 }
 
 [data-color-theme="ocean"][data-theme="light"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --todo: #0097a7;
   --in-progress: #00bcd4;
   --in-progress-rgb: 0, 188, 212;
@@ -47,6 +52,7 @@
 
 /* FOREST - Deep greens and emeralds */
 [data-color-theme="forest"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --todo: #34d399;
   --in-progress: #10b981;
   --in-progress-rgb: 16, 185, 129;
@@ -68,6 +74,7 @@
 }
 
 [data-color-theme="forest"][data-theme="light"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --todo: #059669;
   --in-progress: #047857;
   --in-progress-rgb: 4, 120, 87;
@@ -90,6 +97,7 @@
 
 /* SUNSET - Warm oranges and reds */
 [data-color-theme="sunset"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --todo: #ffab00;
   --in-progress: #ff6d00;
   --in-progress-rgb: 255, 109, 0;
@@ -111,6 +119,7 @@
 }
 
 [data-color-theme="sunset"][data-theme="light"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --todo: #e65100;
   --in-progress: #ef6c00;
   --in-progress-rgb: 239, 108, 0;
@@ -133,6 +142,7 @@
 
 /* BERRY - Purple/pink tones */
 [data-color-theme="berry"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --todo: #e040fb;
   --in-progress: #00e5ff;
   --in-progress-rgb: 0, 229, 255;
@@ -154,6 +164,7 @@
 }
 
 [data-color-theme="berry"][data-theme="light"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --todo: #7b1fa2;
   --in-progress: #00bcd4;
   --in-progress-rgb: 0, 188, 212;
@@ -176,6 +187,7 @@
 
 /* MONOCHROME - Pure grays */
 [data-color-theme="monochrome"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --todo: #9e9e9e;
   --in-progress: #bdbdbd;
   --in-progress-rgb: 189, 189, 189;
@@ -197,6 +209,7 @@
 }
 
 [data-color-theme="monochrome"][data-theme="light"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --todo: #616161;
   --in-progress: #757575;
   --in-progress-rgb: 117, 117, 117;
@@ -219,6 +232,7 @@
 
 /* SLATE - Cool blue-gray tones */
 [data-color-theme="slate"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --todo: #7c8fa4;
   --in-progress: #94a3b8;
   --in-progress-rgb: 148, 163, 184;
@@ -239,6 +253,7 @@
 }
 
 [data-color-theme="slate"][data-theme="light"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --todo: #475569;
   --in-progress: #64748b;
   --in-progress-rgb: 100, 116, 139;
@@ -260,6 +275,7 @@
 
 /* ASH - Warm medium grays */
 [data-color-theme="ash"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --todo: #9ca3af;
   --in-progress: #a8a29e;
   --in-progress-rgb: 168, 162, 158;
@@ -280,6 +296,7 @@
 }
 
 [data-color-theme="ash"][data-theme="light"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --todo: #57534e;
   --in-progress: #78716c;
   --in-progress-rgb: 120, 113, 108;
@@ -301,6 +318,7 @@
 
 /* GRAPHITE - Dark graphite blacks */
 [data-color-theme="graphite"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --todo: #a0a0a0;
   --in-progress: #b8b8b8;
   --in-progress-rgb: 184, 184, 184;
@@ -321,6 +339,7 @@
 }
 
 [data-color-theme="graphite"][data-theme="light"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --todo: #404040;
   --in-progress: #606060;
   --in-progress-rgb: 96, 96, 96;
@@ -342,6 +361,7 @@
 
 /* EMBER - Dark graphite with orange accent */
 [data-color-theme="ember"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --todo: #a0a0a0;
   --in-progress: #b8b8b8;
   --in-progress-rgb: 184, 184, 184;
@@ -362,6 +382,7 @@
 }
 
 [data-color-theme="ember"][data-theme="light"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --todo: #404040;
   --in-progress: #606060;
   --in-progress-rgb: 96, 96, 96;
@@ -383,6 +404,7 @@
 
 /* SILVER - Light silvery grays */
 [data-color-theme="silver"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --todo: #b0b0b0;
   --in-progress: #c0c0c0;
   --in-progress-rgb: 192, 192, 192;
@@ -403,6 +425,7 @@
 }
 
 [data-color-theme="silver"][data-theme="light"] {
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --todo: #525252;
   --in-progress: #737373;
   --in-progress-rgb: 115, 115, 115;
@@ -428,6 +451,7 @@
   --surface: #111111;
   --card: #1a1a1a;
   --card-hover: #222222;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #2a2a2a;
   --text: #e0e0e0;
   --text-muted: #808080;
@@ -466,6 +490,7 @@
   --surface: #fafafa;
   --card: #ffffff;
   --card-hover: #f0f0f0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #e0e0e0;
   --text: #333333;
   --text-muted: #777777;
@@ -505,6 +530,7 @@
   --surface: #0a0a0a;
   --card: #141414;
   --card-hover: #1f1f1f;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #ffffff;
   --text: #ffffff;
   --text-muted: #cccccc;
@@ -535,6 +561,7 @@
   --surface: #ffffff;
   --card: #ffffff;
   --card-hover: #f0f0f0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #000000;
   --text: #000000;
   --text-muted: #333333;
@@ -566,6 +593,7 @@
   --surface: #141414;
   --card: #1a1a1a;
   --card-hover: #222222;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #333333;
   --text: #e8e8e8;
   --text-muted: #888888;
@@ -596,6 +624,7 @@
   --surface: #fafafa;
   --card: #ffffff;
   --card-hover: #f5f5f5;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #d0d0d0;
   --text: #1a1a1a;
   --text-muted: #666666;
@@ -627,6 +656,7 @@
   --surface: #073642;
   --card: #083c4a;
   --card-hover: #094c5e;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #586e75;
   --text: #839496;
   --text-muted: #657b83;
@@ -657,6 +687,7 @@
   --surface: #eee8d5;
   --card: #f5efdc;
   --card-hover: #e8e2d0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #93a1a1;
   --text: #586e75;
   --text-muted: #657b83;
@@ -691,6 +722,7 @@
   --surface: #111111;
   --card: #1a1a1a;
   --card-hover: #222222;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #333333;
 
   --text: #e5e5e5;
@@ -764,6 +796,7 @@
   --surface: #ffffff;
   --card: #fafafa;
   --card-hover: #f0f0f0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #d4d4d4;
 
   --text: #1a1a1a;
@@ -890,6 +923,7 @@
   --surface: #131d27;
   --card: #1a2634;
   --card-hover: #232d3b;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #304357;
   --text: #bfbdb6;
   --text-muted: #565b66;
@@ -922,6 +956,7 @@
   --surface: #f3f3f3;
   --card: #ffffff;
   --card-hover: #f0f0f0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #e0e0e0;
   --text: #5c6166;
   --text-muted: #8a9199;
@@ -955,6 +990,7 @@
   --surface: #21252b;
   --card: #2c313a;
   --card-hover: #353b45;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #3e4451;
   --text: #abb2bf;
   --text-muted: #636d83;
@@ -988,6 +1024,7 @@
   --surface: #f0f0f0;
   --card: #ffffff;
   --card-hover: #f5f5f5;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #d4d4d4;
   --text: #383a42;
   --text-muted: #636d83;
@@ -1021,6 +1058,7 @@
   --surface: #3b4252;
   --card: #434c5e;
   --card-hover: #4c566a;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #4c566a;
   --text: #eceff4;
   --text-muted: #d8dee9;
@@ -1053,6 +1091,7 @@
   --surface: #e5e9f0;
   --card: #d8dee9;
   --card-hover: #cdd3e0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #b0b8c9;
   --text: #2e3440;
   --text-muted: #4c566a;
@@ -1086,6 +1125,7 @@
   --surface: #21222c;
   --card: #2c2e3a;
   --card-hover: #363848;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #44475a;
   --text: #f8f8f2;
   --text-muted: #bd93f9;
@@ -1118,6 +1158,7 @@
   --surface: #efeefa;
   --card: #e8e8f4;
   --card-hover: #dddde8;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #b0b0c0;
   --text: #282a36;
   --text-muted: #5a5a72;
@@ -1151,6 +1192,7 @@
   --surface: #1d2021;
   --card: #32302f;
   --card-hover: #3c3836;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #504945;
   --text: #ebdbb2;
   --text-muted: #bdae93;
@@ -1183,6 +1225,7 @@
   --surface: #f2e5bc;
   --card: #ebdbb2;
   --card-hover: #e0d0a0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #bdae93;
   --text: #3c3836;
   --text-muted: #504945;
@@ -1216,6 +1259,7 @@
   --surface: #16161e;
   --card: #24283b;
   --card-hover: #2e324e;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #3b4261;
   --text: #c0caf5;
   --text-muted: #a9b1d6;
@@ -1248,6 +1292,7 @@
   --surface: #d5d6db;
   --card: #e1e2e7;
   --card-hover: #d0d1d8;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #b4b5bc;
   --text: #1a1b26;
   --text-muted: #414868;
@@ -1281,6 +1326,7 @@
   --surface: #181825;
   --card: #1e1e2e;
   --card-hover: #262637;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #313244;
   --text: #cdd6f4;
   --text-muted: #a6adc8;
@@ -1313,6 +1359,7 @@
   --surface: #e6e9ef;
   --card: #eff1f5;
   --card-hover: #dce0e8;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #bcc0cc;
   --text: #4c4f69;
   --text-muted: #5c5f77;
@@ -1346,6 +1393,7 @@
   --surface: #010409;
   --card: #0d1117;
   --card-hover: #161b22;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #30363d;
   --text: #e6edf3;
   --text-muted: #8b949e;
@@ -1378,6 +1426,7 @@
   --surface: #f6f8fa;
   --card: #ffffff;
   --card-hover: #f3f4f6;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #d0d7de;
   --text: #1f2328;
   --text-muted: #656d76;
@@ -1411,6 +1460,7 @@
   --surface: #272e33;
   --card: #2d353b;
   --card-hover: #343f44;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #414b50;
   --text: #d3c6aa;
   --text-muted: #a7c080;
@@ -1443,6 +1493,7 @@
   --surface: #f4f0d9;
   --card: #fdf6e3;
   --card-hover: #eee8c9;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #c9ccae;
   --text: #5c6a72;
   --text-muted: #657b69;
@@ -1476,6 +1527,7 @@
   --surface: #1f1d2e;
   --card: #191724;
   --card-hover: #26233a;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #26233a;
   --text: #e0def4;
   --text-muted: #908caa;
@@ -1508,6 +1560,7 @@
   --surface: #fffaf3;
   --card: #faf4ed;
   --card-hover: #f2e9de;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #dfdad0;
   --text: #575279;
   --text-muted: #797593;
@@ -1541,6 +1594,7 @@
   --surface: #16161d;
   --card: #1f1f28;
   --card-hover: #2a2a37;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #363646;
   --text: #dcd7ba;
   --text-muted: #c8c093;
@@ -1573,6 +1627,7 @@
   --surface: #e1ddd4;
   --card: #edeadd;
   --card-hover: #ddd8cc;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #c5c1b6;
   --text: #434350;
   --text-muted: #5e5e6a;
@@ -1606,6 +1661,7 @@
   --surface: #01111d;
   --card: #0a192f;
   --card-hover: #112240;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #1d3557;
   --text: #d6deeb;
   --text-muted: #8da6c2;
@@ -1638,6 +1694,7 @@
   --surface: #eef0f4;
   --card: #ffffff;
   --card-hover: #f0f2f5;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #c8cdd5;
   --text: #2d3549;
   --text-muted: #5c6a7e;
@@ -1671,6 +1728,7 @@
   --surface: #1e2235;
   --card: #2c3044;
   --card-hover: #353a50;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #3e445e;
   --text: #bfc7d5;
   --text-muted: #8394a5;
@@ -1703,6 +1761,7 @@
   --surface: #ebeef5;
   --card: #ffffff;
   --card-hover: #f0f2f6;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #c5cae0;
   --text: #2c3044;
   --text-muted: #5c6370;
@@ -1736,6 +1795,7 @@
   --surface: #252229;
   --card: #353036;
   --card-hover: #3f3a40;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #4a434a;
   --text: #fcfcfa;
   --text-muted: #939293;
@@ -1768,6 +1828,7 @@
   --surface: #f0ece5;
   --card: #ffffff;
   --card-hover: #f5f2ed;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #c9c3b8;
   --text: #3a3632;
   --text-muted: #6b6460;
@@ -1801,6 +1862,7 @@
   --surface: #0f150d;
   --card: #141c12;
   --card-hover: #1a2418;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #2a3a24;
   --text: #c8e6a0;
   --text-muted: #8ab860;
@@ -1833,6 +1895,7 @@
   --surface: #e6efda;
   --card: #ffffff;
   --card-hover: #f0f5e6;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #b8ccaa;
   --text: #2a3a20;
   --text-muted: #4a6040;
@@ -1866,6 +1929,7 @@
   --surface: #171717;
   --card: #1d1d1d;
   --card-hover: #232323;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #f5f5f5;
   --text: #f7f7f7;
   --text-muted: #b8b8b8;
@@ -1934,6 +1998,7 @@
   --surface: #f7f4ef;
   --card: #ffffff;
   --card-hover: #f0ece6;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #161616;
   --text: #121212;
   --text-muted: #424242;
@@ -2007,6 +2072,7 @@
   --surface: #121326;
   --card: #171933;
   --card-hover: #1d2040;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #3d2466;
   --text: #f2edff;
   --text-muted: #a89dc9;
@@ -2074,6 +2140,7 @@
   --surface: #f1edff;
   --card: #ffffff;
   --card-hover: #f8f3ff;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #cbbee8;
   --text: #22163c;
   --text-muted: #6b5f85;
@@ -2187,6 +2254,7 @@
   --surface: #252019;
   --card: #2f281f;
   --card-hover: #392f24;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #5a4632;
   --text: #efe0c8;
   --text-muted: #b89f7e;
@@ -2248,6 +2316,7 @@
   --surface: #efe7dc;
   --card: #fffaf2;
   --card-hover: #f6eee2;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #d1bda6;
   --text: #3a2f23;
   --text-muted: #6a5844;
@@ -2322,6 +2391,7 @@
   --surface: #0f120d;
   --card: #121712;
   --card-hover: #171e16;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #2e5c1f;
   --text: #8dff6f;
   --text-muted: #61b74b;
@@ -2386,6 +2456,7 @@
   --surface: #deefd2;
   --card: #f4fbef;
   --card-hover: #e8f4e0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #6a8e59;
   --text: #19420f;
   --text-muted: #2f6a21;
@@ -2492,6 +2563,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: rgba(34, 27, 52, 0.78);
   --card: rgba(54, 44, 82, 0.55);
   --card-hover: rgba(66, 56, 99, 0.65);
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: rgba(255, 255, 255, 0.22);
   --text: #f2effa;
   --text-muted: #b8b0d2;
@@ -2557,6 +2629,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: rgba(255, 255, 255, 0.75);
   --card: rgba(255, 255, 255, 0.6);
   --card-hover: rgba(255, 255, 255, 0.75);
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: rgba(114, 91, 156, 0.22);
   --text: #2f2448;
   --text-muted: #66597f;
@@ -2638,6 +2711,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #16161c;
   --card: #1c1e26;
   --card-hover: #252731;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #3b3d4f;
   --text: #faf0ef;
   --text-muted: #c9cbd1;
@@ -2670,6 +2744,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #f9cec0;
   --card: #fceee7;
   --card-hover: #f5e2d8;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #e8c8b8;
   --text: #3a2a26;
   --text-muted: #6a5a52;
@@ -2703,6 +2778,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #0d1210;
   --card: #1b2321;
   --card-hover: #232e2a;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #2a3832;
   --text: #d9d4cc;
   --text-muted: #8a857a;
@@ -2735,6 +2811,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #efe9e0;
   --card: #faf7f2;
   --card-hover: #f0ebe2;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #d9d0c0;
   --text: #2a2820;
   --text-muted: #6a6860;
@@ -2768,6 +2845,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #0d0d1a;
   --card: #14142b;
   --card-hover: #1e1e3f;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #2a2a5a;
   --text: #f0e8ff;
   --text-muted: #a090c8;
@@ -2800,6 +2878,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #e8e8ef;
   --card: #f5f5fa;
   --card-hover: #ececf0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #c8c8d8;
   --text: #2a2a40;
   --text-muted: #606080;
@@ -2833,6 +2912,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #1e1f29;
   --card: #343746;
   --card-hover: #404455;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #44475a;
   --text: #f8f8f2;
   --text-muted: #a8a8b8;
@@ -2865,6 +2945,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #f0f0f2;
   --card: #ffffff;
   --card-hover: #f5f5f8;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #dcdce0;
   --text: #2a2a32;
   --text-muted: #606070;
@@ -2898,6 +2979,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #1e2030;
   --card: #333751;
   --card-hover: #3e4265;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #4a4e6a;
   --text: #d0d4e8;
   --text-muted: #9094b0;
@@ -2930,6 +3012,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #eae7ef;
   --card: #ffffff;
   --card-hover: #f0eef5;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #c8c4d0;
   --text: #2a2840;
   --text-muted: #606080;
@@ -2963,6 +3046,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #231813;
   --card: #3d2b22;
   --card-hover: #4a352c;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #5a453a;
   --text: #e8ddd5;
   --text-muted: #a09080;
@@ -2995,6 +3079,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #ebe1d6;
   --card: #fff8f0;
   --card-hover: #f0e8e0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #d0c0b0;
   --text: #2a2018;
   --text-muted: #6a5a4a;
@@ -3028,6 +3113,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #140e0c;
   --card: #2a1e18;
   --card-hover: #352820;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #4a3828;
   --text: #e8ddd0;
   --text-muted: #a09080;
@@ -3060,6 +3146,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #ebe0d4;
   --card: #fff5ee;
   --card-hover: #f0e8e0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #d0c0b0;
   --text: #2a2018;
   --text-muted: #6a5a4a;
@@ -3093,6 +3180,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #14151f;
   --card: #252736;
   --card-hover: #303245;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #3d3e50;
   --text: #d4d7e5;
   --text-muted: #8b8fa8;
@@ -3125,6 +3213,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #e6e6ee;
   --card: #f5f5fa;
   --card-hover: #ececf0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #c8c8d8;
   --text: #2a2b40;
   --text-muted: #606080;
@@ -3158,6 +3247,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #1a1410;
   --card: #231b14;
   --card-hover: #2e241c;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #4a3528;
   --text: #f0e8e0;
   --text-muted: #a09080;
@@ -3188,6 +3278,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #ebe3d8;
   --card: #fdfaf6;
   --card-hover: #f5efe8;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #d8d0c0;
   --text: #1a1510;
   --text-muted: #685a48;
@@ -3219,6 +3310,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #181410;
   --card: #211c16;
   --card-hover: #2c251c;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #4d3d2e;
   --text: #f0e8e0;
   --text-muted: #a09080;
@@ -3249,6 +3341,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #e8e0d6;
   --card: #fdfaf7;
   --card-hover: #f5efe8;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #d8d0c0;
   --text: #1a1512;
   --text-muted: #665a50;
@@ -3280,6 +3373,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #15100c;
   --card: #1e1610;
   --card-hover: #28201a;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #40301e;
   --text: #f0e8e0;
   --text-muted: #a09080;
@@ -3310,6 +3404,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #ebe4d6;
   --card: #fdfaf5;
   --card-hover: #f5f0e8;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #d0c4b0;
   --text: #1a1510;
   --text-muted: #685a48;
@@ -3341,6 +3436,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #111318;
   --card: #181b22;
   --card-hover: #222630;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #2a3040;
   --text: #e8ecf0;
   --text-muted: #8090a0;
@@ -3371,6 +3467,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #e2e6ec;
   --card: #f5f7fa;
   --card-hover: #eef2f6;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #c0c8d0;
   --text: #1a2028;
   --text-muted: #586070;
@@ -3402,6 +3499,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #241f18;
   --card: #2e2820;
   --card-hover: #38322a;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #4a4035;
   --text: #f0e8dc;
   --text-muted: #a09080;
@@ -3432,6 +3530,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #ebe4d8;
   --card: #faf6ee;
   --card-hover: #f0e8e0;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #d0c8b8;
   --text: #2a2418;
   --text-muted: #605848;
@@ -3463,6 +3562,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #101c1f;
   --card: #162628;
   --card-hover: #1c3034;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #2a4045;
   --text: #e0f0f0;
   --text-muted: #80a0a8;
@@ -3493,6 +3593,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #e0ebe8;
   --card: #f0f8f5;
   --card-hover: #e4f0ec;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #b0c8c0;
   --text: #102420;
   --text-muted: #486058;
@@ -3524,6 +3625,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #121520;
   --card: #1a1e2c;
   --card-hover: #222638;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #2a3048;
   --text: #e8f0f8;
   --text-muted: #8098b0;
@@ -3554,6 +3656,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #e4eaf0;
   --card: #f8fafc;
   --card-hover: #ecf2f8;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #b0c0d0;
   --text: #101828;
   --text-muted: #485868;
@@ -3585,6 +3688,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #1c1624;
   --card: #241e30;
   --card-hover: #2c2838;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #3a3050;
   --text: #f0e8f8;
   --text-muted: #a090b8;
@@ -3615,6 +3719,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #e8e2f0;
   --card: #faf8fc;
   --card-hover: #f2eef8;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #c8c0d8;
   --text: #18101c;
   --text-muted: #504858;
@@ -3646,6 +3751,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #1a1024;
   --card: #241630;
   --card-hover: #2c1e3c;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #3a2850;
   --text: #f8e8f8;
   --text-muted: #b090b8;
@@ -3676,6 +3782,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #f0e4f0;
   --card: #fcf8fc;
   --card-hover: #f8f0f8;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #d8d0e0;
   --text: #18081c;
   --text-muted: #584868;
@@ -3707,6 +3814,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #201a16;
   --card: #2a2420;
   --card-hover: #342e28;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --border: #4a4038;
   --text: #f0e8d8;
   --text-muted: #a09078;
@@ -3737,6 +3845,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --surface: #ece4d4;
   --card: #faf8f0;
   --card-hover: #f4eedc;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --border: #d0c8b8;
   --text: #201810;
   --text-muted: #584838;

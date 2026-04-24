@@ -103,6 +103,7 @@
   --surface: #161b22;
   --card: #21262d;
   --card-hover: #282e36;
+  /* Neutral transient hover/press surface. Theme contract: defined in :root, light mode, and every color-theme block. */
   --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
   --bg-secondary: color-mix(in srgb, var(--surface) 70%, var(--card));
   --bg-tertiary: color-mix(in srgb, var(--surface) 40%, var(--card));
@@ -11205,6 +11206,7 @@ html .column.drag-over * {
   --surface: #f6f8fa;
   --card: #ffffff;
   --card-hover: #f3f4f6;
+  /* Light mode keeps the same semantic role with slightly softer contrast. */
   --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
   --bg-secondary: #f6f8fa;
   --bg-tertiary: #eaeef2;
@@ -37018,7 +37020,7 @@ html .column.drag-over * {
 }
 
 .roadmaps-view__sidebar-item--active {
-  background: var(--surface-hover);
+  background: var(--card-hover);
 }
 
 .roadmaps-view__sidebar-item-content {
