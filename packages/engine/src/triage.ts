@@ -6,7 +6,11 @@ import type {
   TaskAttachment,
   Settings,
 } from "@fusion/core";
-import { buildTriageMemoryInstructions, resolveAgentPrompt } from "@fusion/core";
+import {
+  buildTriageMemoryInstructions,
+  resolveAgentPrompt,
+  sortTasksByPriorityThenAgeAndId,
+} from "@fusion/core";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import type {
@@ -577,7 +581,7 @@ export class TriageProcessor {
       // Fetch all tasks (not just triage) to count active agents across columns.
       const allTasks = await this.store.listTasks({ slim: true, includeArchived: false });
       const now = Date.now();
-      const triageTasks = allTasks.filter(
+      const eligibleTriageTasks = allTasks.filter(
         (t) => t.column === "triage" && !this.processing.has(t.id) && !t.paused
           // Skip tasks awaiting manual plan approval — they should not be auto-discovered
           && t.status !== "awaiting-approval"
@@ -587,6 +591,7 @@ export class TriageProcessor {
           // Skip tasks with a recovery backoff that hasn't elapsed yet
           && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
       );
+      const triageTasks = sortTasksByPriorityThenAgeAndId(eligibleTriageTasks);
 
       // Respect both per-project maxTriageConcurrent and the global semaphore.
       // Only specifying tasks count against the triage limit; execution is governed by maxConcurrent.

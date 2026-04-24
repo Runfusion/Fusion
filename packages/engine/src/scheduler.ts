@@ -1,4 +1,13 @@
-import { getCurrentRepo, resolveDependencyOrder, type TaskStore, type Task, type MissionStore, type MissionFeature, type PrInfo } from "@fusion/core";
+import {
+  getCurrentRepo,
+  resolveDependencyOrder,
+  sortTasksByPriorityThenAgeAndId,
+  type TaskStore,
+  type Task,
+  type MissionStore,
+  type MissionFeature,
+  type PrInfo,
+} from "@fusion/core";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -562,6 +571,8 @@ export class Scheduler {
       }
 
       if (todo.length === 0) return;
+
+      todo = sortTasksByPriorityThenAgeAndId(todo);
 
       /**
        * Pre-compute file scopes for all currently active tasks (in-progress

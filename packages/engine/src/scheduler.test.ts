@@ -557,6 +557,102 @@ describe("Scheduler", () => {
     });
   });
 
+  describe("priority-aware todo dispatch", () => {
+    it("schedules eligible todo tasks by priority desc then createdAt asc", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const tasks = [
+        createMockTask({ id: "FN-010", column: "todo", priority: "normal", createdAt: "2026-01-01T00:02:00.000Z" }),
+        createMockTask({ id: "FN-011", column: "todo", priority: "urgent", createdAt: "2026-01-01T00:10:00.000Z" }),
+        createMockTask({ id: "FN-012", column: "todo", priority: "high", createdAt: "2026-01-01T00:03:00.000Z" }),
+        createMockTask({ id: "FN-013", column: "todo", priority: "high", createdAt: "2026-01-01T00:01:00.000Z" }),
+      ];
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 10,
+          maxWorktrees: 10,
+          groupOverlappingFiles: false,
+        }),
+        updateTask: vi.fn().mockResolvedValue(undefined),
+        moveTask: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect((store.moveTask as ReturnType<typeof vi.fn>).mock.calls.map((call: unknown[]) => call[0])).toEqual([
+        "FN-011",
+        "FN-013",
+        "FN-012",
+        "FN-010",
+      ]);
+    });
+
+    it("keeps blocked high-priority todo tasks unscheduled while scheduling ready lower-priority work", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const future = new Date(Date.now() + 60_000).toISOString();
+      const tasks = [
+        createMockTask({ id: "FN-001", column: "in-progress" }),
+        createMockTask({ id: "FN-100", column: "todo", priority: "urgent", dependencies: ["FN-900"] }),
+        createMockTask({ id: "FN-900", column: "todo", priority: "low" }),
+        createMockTask({ id: "FN-101", column: "todo", priority: "urgent", paused: true }),
+        createMockTask({ id: "FN-102", column: "todo", priority: "urgent", nextRecoveryAt: future }),
+        createMockTask({ id: "FN-103", column: "todo", priority: "urgent" }),
+        createMockTask({ id: "FN-104", column: "todo", priority: "normal" }),
+      ];
+
+      const parseScopeMock = vi.fn(async (taskId: string): Promise<string[]> => {
+        if (taskId === "FN-001" || taskId === "FN-103") {
+          return ["packages/engine/src/scheduler.ts"];
+        }
+        if (taskId === "FN-900") {
+          return ["packages/core/src/store.ts"];
+        }
+        if (taskId === "FN-104") {
+          return ["packages/engine/src/triage.ts"];
+        }
+        return ["packages/engine/src/logger.ts"];
+      });
+
+      const updateTask = vi.fn().mockResolvedValue(undefined);
+      const moveTask = vi.fn().mockResolvedValue(undefined);
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 10,
+          maxWorktrees: 10,
+          groupOverlappingFiles: true,
+        }),
+        parseFileScopeFromPrompt: parseScopeMock,
+        updateTask,
+        moveTask,
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      // Dependency-blocked urgent task should be queued, not started.
+      expect(updateTask).toHaveBeenCalledWith("FN-100", { status: "queued" });
+      // Overlap-blocked urgent task should be queued with blocker id.
+      expect(updateTask).toHaveBeenCalledWith("FN-103", { status: "queued", blockedBy: "FN-001" });
+      // Paused and recovery-gated urgent tasks never enter scheduling.
+      expect(moveTask).not.toHaveBeenCalledWith("FN-101", "in-progress");
+      expect(moveTask).not.toHaveBeenCalledWith("FN-102", "in-progress");
+
+      // Lower-priority ready task still runs.
+      expect(moveTask).toHaveBeenCalledWith("FN-104", "in-progress");
+      // Overlap-blocked urgent task must not run.
+      expect(moveTask).not.toHaveBeenCalledWith("FN-103", "in-progress");
+    });
+  });
+
   describe("worktree reservation", () => {
     it("assigns a planned worktree path before moving a task to in-progress", async () => {
       vi.mocked(existsSync).mockReturnValue(true);

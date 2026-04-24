@@ -294,13 +294,13 @@ See [Memory Plugin Contract](./memory-plugin-contract.md) for the full specifica
 `@fusion/engine` executes the autonomous workflow.
 
 ### Agent roles
-- **Triage**: `TriageProcessor` (`triage.ts`) generates task specs (`PROMPT.md`)
+- **Triage**: `TriageProcessor` (`triage.ts`) generates task specs (`PROMPT.md`) and selects eligible triage tasks by priority first, then FIFO (`createdAt` ascending) within each priority tier.
 - **Executor**: `TaskExecutor` (`executor.ts`) implements tasks in worktrees
 - **Reviewer**: `reviewStep()` (`reviewer.ts`) performs plan/code reviews
 - **Merger**: `aiMergeTask()` (`merger.ts`) merges approved work
 
 ### Scheduling and execution
-- `Scheduler` (`scheduler.ts`) — dependency-aware task scheduling
+- `Scheduler` (`scheduler.ts`) — dependency-aware task scheduling that dispatches eligible todo tasks by priority first, then FIFO (`createdAt` ascending) within each priority tier.
 - `StepSessionExecutor` (`step-session-executor.ts`) — per-step sessions + parallel wave execution
 - `TaskCompletion` (`task-completion.ts`) — completion gate helpers
 - `SpecStaleness` (`spec-staleness.ts`) — stale spec detection utilities

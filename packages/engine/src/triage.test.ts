@@ -103,6 +103,21 @@ const mockTaskDetail: TaskDetail = {
   attachments: [],
 };
 
+function createTriageTask(overrides: Partial<Task> = {}): Task {
+  return {
+    id: "FN-001",
+    description: "Triage task",
+    column: "triage",
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 describe("buildSpecificationPrompt", () => {
   const baseTask: TaskDetail = {
     ...mockTaskDetail,
@@ -710,7 +725,93 @@ describe("TriageProcessor", () => {
     expect(store.on).toHaveBeenCalledWith("settings:updated", expect.any(Function));
   });
 
-  it("re-reads settings when fn_review_spec runs so reviewer uses the latest validator model", async () => {
+  describe("poll ordering", () => {
+    it("dispatches eligible triage tasks by priority desc then createdAt asc", async () => {
+      const tasks: Task[] = [
+        createTriageTask({
+          id: "FN-100",
+          priority: "normal",
+          createdAt: "2026-01-01T00:01:00.000Z",
+        }),
+        createTriageTask({
+          id: "FN-101",
+          priority: "urgent",
+          createdAt: "2026-01-01T00:10:00.000Z",
+        }),
+        createTriageTask({
+          id: "FN-102",
+          priority: "high",
+          createdAt: "2026-01-01T00:03:00.000Z",
+        }),
+        createTriageTask({
+          id: "FN-103",
+          priority: "high",
+          createdAt: "2026-01-01T00:02:00.000Z",
+        }),
+      ];
+
+      const triageStore = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 10,
+          maxTriageConcurrent: 10,
+          pollIntervalMs: 10_000,
+          groupOverlappingFiles: false,
+          autoMerge: true,
+        }),
+      });
+      const triageProcessor = new TriageProcessor(triageStore, rootDir);
+      const specifySpy = vi
+        .spyOn(triageProcessor, "specifyTask")
+        .mockResolvedValue(undefined);
+
+      (triageProcessor as any).running = true;
+      await (triageProcessor as any).poll();
+
+      expect(specifySpy).toHaveBeenCalledTimes(4);
+      expect(specifySpy.mock.calls.map(([task]) => task.id)).toEqual([
+        "FN-101",
+        "FN-103",
+        "FN-102",
+        "FN-100",
+      ]);
+    });
+
+    it("excludes paused, awaiting-approval, failed, stuck-killed, and recovery-gated tasks from ordered candidates", async () => {
+      const future = new Date(Date.now() + 60_000).toISOString();
+      const tasks: Task[] = [
+        createTriageTask({ id: "FN-200", priority: "urgent" }),
+        createTriageTask({ id: "FN-201", priority: "urgent", paused: true }),
+        createTriageTask({ id: "FN-202", priority: "urgent", status: "awaiting-approval" }),
+        createTriageTask({ id: "FN-203", priority: "urgent", status: "failed" }),
+        createTriageTask({ id: "FN-204", priority: "urgent", status: "stuck-killed" }),
+        createTriageTask({ id: "FN-205", priority: "urgent", nextRecoveryAt: future }),
+      ];
+
+      const triageStore = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 10,
+          maxTriageConcurrent: 10,
+          pollIntervalMs: 10_000,
+          groupOverlappingFiles: false,
+          autoMerge: true,
+        }),
+      });
+      const triageProcessor = new TriageProcessor(triageStore, rootDir);
+      const specifySpy = vi
+        .spyOn(triageProcessor, "specifyTask")
+        .mockResolvedValue(undefined);
+
+      (triageProcessor as any).running = true;
+      await (triageProcessor as any).poll();
+
+      expect(specifySpy).toHaveBeenCalledTimes(1);
+      expect(specifySpy).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-200" }));
+    });
+  });
+
+  it("re-reads settings when review_spec runs so reviewer uses the latest validator model", async () => {
     const taskId = "FN-001";
     const testRootDir = await createTriageFixtureRoot("fusion-triage-review-spec-");
     try {
