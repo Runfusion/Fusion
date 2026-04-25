@@ -1,6 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { subscribeSse } from "../sse-bus";
 
+// Render shows only the first 20 entries; keep a small buffer above that for
+// hot-reconnect/scrollback but never let the array grow unbounded — long-lived
+// active agents would otherwise leak hundreds of MB into React state.
+const MAX_TRANSCRIPT_ENTRIES = 200;
+
 /**
  * Log entry from an agent's execution stream.
  *
@@ -94,7 +99,12 @@ export function useLiveTranscript(taskId: string | undefined, projectId?: string
               timestamp: raw.timestamp,
               content: raw.content,
             };
-            setEntries(prev => [entry, ...prev]);
+            setEntries(prev => {
+              const next = [entry, ...prev];
+              return next.length > MAX_TRANSCRIPT_ENTRIES
+                ? next.slice(0, MAX_TRANSCRIPT_ENTRIES)
+                : next;
+            });
           } catch { /* skip malformed events */ }
         },
       },
