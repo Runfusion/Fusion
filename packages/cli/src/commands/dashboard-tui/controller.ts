@@ -61,7 +61,15 @@ export class DashboardTUI {
   private cachedSnapshot: DashboardState | null = null;
 
   // Ink instance — set when start() is called.
-  private inkInstance: { unmount: () => void; waitUntilExit: () => Promise<unknown> } | null = null;
+  // Loose type — the real Ink Instance has additional methods (clear,
+  // rerender, etc.) that we use defensively below.
+  private inkInstance: {
+    unmount: () => void;
+    waitUntilExit: () => Promise<unknown>;
+    clear?: () => void;
+  } & Record<string, unknown> | null = null;
+  // Resize listener attached at start(), detached at stop().
+  private resizeListener: (() => void) | null = null;
 
   // Uptime ticker to keep footer time live.
   private uptimeTimer: ReturnType<typeof setInterval> | null = null;
@@ -341,9 +349,36 @@ export class DashboardTUI {
     const { createElement } = await import("react");
     const { DashboardApp } = await import("./app.js");
 
+    // Enter the terminal's alternate-screen buffer before mounting Ink so
+    // the TUI gets a dedicated fullscreen surface that doesn't share
+    // scrollback with the user's shell history. Without this, Ink writes
+    // top-down and any frame taller than the terminal pushes the top
+    // (header) into scrollback. Especially noticeable under tmux/ssh
+    // where dimension reporting and status bars can leave the rendered
+    // frame a row or two too tall.
+    if (process.stdout?.isTTY && typeof process.stdout.write === "function") {
+      // \x1b[?1049h = enter alt-screen, \x1b[H = home cursor.
+      process.stdout.write("\x1b[?1049h\x1b[H");
+    }
+
     this.inkInstance = render(
       createElement(DashboardApp, { controller: this }),
     );
+
+    // Reset Ink's internal frame buffer (log-update line tracking) on every
+    // terminal resize. Without this Ink keeps treating the previous frame's
+    // line count as the clear region, leaving stale rows above/below the
+    // new render until another unrelated rerender happens.
+    this.resizeListener = () => {
+      try {
+        this.inkInstance?.clear?.();
+      } catch {
+        // Ignore — clear is best-effort.
+      }
+    };
+    if (process.stdout && typeof process.stdout.on === "function") {
+      process.stdout.on("resize", this.resizeListener);
+    }
 
     this.uptimeTimer = setInterval(() => {
       if (this.isRunning) this.notify();
@@ -372,9 +407,19 @@ export class DashboardTUI {
       this.systemStatsTimer = null;
     }
 
+    if (this.resizeListener && process.stdout && typeof process.stdout.off === "function") {
+      process.stdout.off("resize", this.resizeListener);
+      this.resizeListener = null;
+    }
+
     if (this.inkInstance) {
       this.inkInstance.unmount();
       this.inkInstance = null;
+    }
+    // Leave the alt-screen buffer last so the user's shell scrollback
+    // is restored cleanly. \x1b[?1049l = leave alt-screen.
+    if (process.stdout?.isTTY && typeof process.stdout.write === "function") {
+      process.stdout.write("\x1b[?1049l");
     }
   }
 

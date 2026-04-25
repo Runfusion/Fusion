@@ -598,7 +598,7 @@ function UtilitiesPanel({ isFocused }: { isFocused: boolean }) {
     { key: "?", label: "Help" },
   ];
   return (
-    <Panel title="Utilities" isFocused={isFocused} flexShrink={0}>
+    <Panel title="Utilities" isFocused={isFocused} flexGrow={1}>
       <Box flexDirection="column">
         {actions.map((action) => (
           <Box key={action.key} flexDirection="row" gap={1}>
@@ -776,10 +776,16 @@ function StatusBar({ state, controller: _controller }: { state: DashboardState; 
     statusParts.push(formatUptime(Date.now() - systemInfo.startTimeMs));
   }
 
+  // Truncate both halves so the StatusBar always fits in a single row.
+  // Without this, default wrap="wrap" lets long hotkey strings or URLs
+  // wrap to 2+ rows, throwing the layout's row budget off by 1-2 rows
+  // and pushing the header off the top of the alt-screen.
   return (
-    <Box justifyContent="space-between" paddingX={1}>
-      <Text dimColor>{hotkeys.join("  ·  ")}</Text>
-      {statusParts.length > 0 && <Text dimColor>{statusParts.join(" | ")}</Text>}
+    <Box justifyContent="space-between" paddingX={1} flexShrink={0}>
+      <Text dimColor wrap="truncate-end">{hotkeys.join("  ·  ")}</Text>
+      {statusParts.length > 0 && (
+        <Text dimColor wrap="truncate-end">{statusParts.join(" | ")}</Text>
+      )}
     </Box>
   );
 }
@@ -826,7 +832,7 @@ function MainHeader({ state }: { state: DashboardState }) {
     // Just FUSION + the active tab pill. Inactive shortcuts dropped here.
     const active = tabs.find(isActive);
     return (
-      <Box flexDirection="row" gap={1} paddingX={1}>
+      <Box flexDirection="row" gap={1} paddingX={1} flexShrink={0} overflow="hidden">
         <MiniLogo />
         {active && (
           <Box flexShrink={0}>
@@ -837,7 +843,7 @@ function MainHeader({ state }: { state: DashboardState }) {
     );
   }
   return (
-    <Box flexDirection="row" gap={1} paddingX={1} paddingY={0}>
+    <Box flexDirection="row" gap={1} paddingX={1} paddingY={0} flexShrink={0} overflow="hidden">
       <MiniLogo />
       <Box flexShrink={0}><Text dimColor>│</Text></Box>
       {tabs.map((t) => {
@@ -3412,6 +3418,20 @@ export function DashboardApp({ controller }: DashboardAppProps) {
   const { exit } = useApp();
   const { stdout } = useStdout();
 
+  // Bump a state counter on resize so React re-renders with the latest
+  // dimensions. (The controller separately calls inkInstance.clear() to
+  // reset Ink's log-update line tracking — manually writing clear escape
+  // codes here would desync that tracking and break subsequent renders.)
+  const [, setResizeTick] = useState(0);
+  useEffect(() => {
+    if (!stdout) return;
+    const onResize = () => setResizeTick((t) => t + 1);
+    stdout.on("resize", onResize);
+    return () => {
+      stdout.off("resize", onResize);
+    };
+  }, [stdout]);
+
   const cols = stdout?.columns ?? 80;
   const rows = stdout?.rows ?? 24;
 
@@ -3610,10 +3630,18 @@ export function DashboardApp({ controller }: DashboardAppProps) {
     }
   });
 
-  // Splash: show while systemInfo is not yet set
+  // The `key` keyed off live dimensions forces React to unmount and
+  // remount the entire tree whenever the terminal resizes. This is the
+  // hammer fix for Ink's stale-layout-on-resize: instead of trying to
+  // diff a layout that's still bound to old dimensions, we throw the
+  // tree away and rebuild from scratch with the new bounds. Cheap on
+  // every keystroke (resize is rare), avoids subtle Yoga caching bugs.
+  const layoutKey = `${cols}x${rows}`;
+
+  // Splash: show while systemInfo is not yet set.
   if (!state.systemInfo) {
     return (
-      <Box flexDirection="column" height={rows}>
+      <Box key={layoutKey} flexDirection="column" height={rows} width={cols} overflow="hidden">
         <SplashScreen loadingStatus={state.loadingStatus} />
       </Box>
     );
@@ -3622,7 +3650,7 @@ export function DashboardApp({ controller }: DashboardAppProps) {
   const isNarrow = cols < 80 || rows < 20;
 
   return (
-    <Box flexDirection="column" height={rows}>
+    <Box key={layoutKey} flexDirection="column" height={rows} width={cols} overflow="hidden">
       {state.mode === "interactive" ? (
         <InteractiveMode state={state} controller={controller} />
       ) : isNarrow ? (
