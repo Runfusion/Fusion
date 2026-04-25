@@ -118,6 +118,26 @@ describe("Agent runs routes (without HeartbeatMonitor)", () => {
     vi.restoreAllMocks();
   });
 
+  describe("POST /api/agents/:id/state", () => {
+    it("pausing with no active run remains successful", async () => {
+      mockGetActiveHeartbeatRun.mockResolvedValue(null);
+      mockUpdateAgentState.mockResolvedValue({ id: "agent-001", state: "paused" });
+
+      const response = await request(
+        app,
+        "POST",
+        "/api/agents/agent-001/state",
+        JSON.stringify({ state: "paused" }),
+        { "content-type": "application/json" },
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ id: "agent-001", state: "paused" });
+      expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-001", "paused");
+      expect(mockGetActiveHeartbeatRun).not.toHaveBeenCalled();
+    });
+  });
+
   describe("POST /api/agents/:id/runs", () => {
     it("returns 201 with run record (fallback behavior without HeartbeatMonitor)", async () => {
       const mockRun = createMockRun();
@@ -401,6 +421,56 @@ describe("Agent runs routes (with HeartbeatMonitor)", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  describe("POST /api/agents/:id/state", () => {
+    it("pauses by stopping active run before updating state", async () => {
+      mockGetActiveHeartbeatRun.mockResolvedValue(createMockRun({ id: "run-pause-1" }));
+      mockStopRun.mockResolvedValue(undefined);
+      mockUpdateAgentState.mockResolvedValue({ id: "agent-001", state: "paused" });
+
+      const response = await request(
+        app,
+        "POST",
+        "/api/agents/agent-001/state",
+        JSON.stringify({ state: "paused" }),
+        { "content-type": "application/json" },
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ id: "agent-001", state: "paused" });
+      expect(mockStopRun).toHaveBeenCalledWith("agent-001");
+      expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-001", "paused");
+      expect(mockStopRun.mock.invocationCallOrder[0]).toBeLessThan(mockUpdateAgentState.mock.invocationCallOrder[0]);
+    });
+
+    it("resuming to active triggers immediate on-demand heartbeat exactly once", async () => {
+      mockGetAgent.mockResolvedValue({ id: "agent-001", state: "paused" });
+      mockUpdateAgentState.mockResolvedValue({ id: "agent-001", state: "active" });
+      mockExecuteHeartbeat.mockResolvedValue(createMockRun({ id: "run-resume-1", status: "completed" }));
+
+      const response = await request(
+        app,
+        "POST",
+        "/api/agents/agent-001/state",
+        JSON.stringify({ state: "active" }),
+        { "content-type": "application/json" },
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ id: "agent-001", state: "active" });
+      expect(mockExecuteHeartbeat).toHaveBeenCalledTimes(1);
+      expect(mockExecuteHeartbeat).toHaveBeenCalledWith({
+        agentId: "agent-001",
+        source: "on_demand",
+        triggerDetail: "Triggered from state resume",
+        contextSnapshot: {
+          wakeReason: "on_demand",
+          triggerDetail: "Triggered from state resume",
+          triggerSource: "state-resume",
+        },
+      });
+    });
   });
 
   describe("POST /api/agents/:id/runs", () => {

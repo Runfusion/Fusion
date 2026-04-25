@@ -459,6 +459,27 @@ describe("InProcessRuntime", () => {
       expect(registeredAgents).toContain(createdAgent.id);
     });
 
+    it("does not register paused agents on startup", async () => {
+      await runtime.start();
+
+      const store = getAgentStore(runtime);
+      const pausedAgent = await store.createAgent({
+        name: "Paused Agent",
+        role: "executor",
+        runtimeConfig: { heartbeatIntervalMs: 30000, enabled: true },
+      });
+      await store.updateAgentState(pausedAgent.id, "active");
+      await store.updateAgentState(pausedAgent.id, "paused");
+
+      await runtime.stop();
+      runtime = new InProcessRuntime(buildTestConfig(testDir), mockCentralCore);
+      await runtime.start();
+
+      const scheduler = runtime.getTriggerScheduler();
+      expect(scheduler).toBeDefined();
+      expect(scheduler!.getRegisteredAgents()).not.toContain(pausedAgent.id);
+    });
+
     it("routes assignment triggers through executeHeartbeat", async () => {
       await runtime.start();
 
@@ -883,6 +904,59 @@ describe("InProcessRuntime", () => {
 
       // Verify the agent was unregistered
       expect(scheduler!.getRegisteredAgents()).not.toContain(agent.id);
+    });
+
+    it("clears timers on pause and re-arms from resume without stale pre-pause firing", async () => {
+      const store = getAgentStore(runtime);
+      const monitor = runtime.getHeartbeatMonitor();
+      expect(monitor).toBeDefined();
+
+      const executeHeartbeatSpy = vi
+        .spyOn(monitor!, "executeHeartbeat")
+        .mockResolvedValue({ id: "run-resume-test" } as any);
+
+      const agent = await store.createAgent({
+        name: "resume-timer-agent",
+        role: "executor",
+        runtimeConfig: {
+          enabled: true,
+          heartbeatIntervalMs: 1000,
+        },
+      });
+      await store.updateAgentState(agent.id, "active");
+
+      const scheduler = runtime.getTriggerScheduler();
+      expect(scheduler).toBeDefined();
+      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
+
+      await vi.advanceTimersByTimeAsync(400);
+      expect(executeHeartbeatSpy).not.toHaveBeenCalled();
+
+      await store.updateAgentState(agent.id, "paused");
+      expect(scheduler!.getRegisteredAgents()).not.toContain(agent.id);
+
+      // Advance beyond the original tick window; stale pre-pause timer must not fire.
+      await vi.advanceTimersByTimeAsync(800);
+      expect(executeHeartbeatSpy).not.toHaveBeenCalled();
+
+      await store.updateAgentState(agent.id, "active");
+      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
+
+      // Resume should start a fresh interval from now, not from pre-pause start.
+      await vi.advanceTimersByTimeAsync(900);
+      expect(executeHeartbeatSpy).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.waitFor(() => {
+        expect(executeHeartbeatSpy).toHaveBeenCalledTimes(1);
+      });
+
+      expect(executeHeartbeatSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId: agent.id,
+          source: "timer",
+        }),
+      );
     });
 
     it("removes event listeners when runtime is stopped", async () => {

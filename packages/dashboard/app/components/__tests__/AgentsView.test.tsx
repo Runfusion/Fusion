@@ -1078,9 +1078,9 @@ describe("AgentsView", () => {
 
       await waitFor(() => {
         expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-001", "active", undefined);
-        expect(mockStartAgentRun).toHaveBeenCalledWith("agent-001", undefined);
       });
 
+      expect(mockStartAgentRun).not.toHaveBeenCalled();
       expect(mockAddToast).toHaveBeenCalledWith(
         expect.stringContaining("active"),
         "success"
@@ -1114,7 +1114,7 @@ describe("AgentsView", () => {
       });
     });
 
-    it("can resume paused agent", async () => {
+    it("can resume paused agent without manual run trigger", async () => {
       render(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
@@ -1125,8 +1125,9 @@ describe("AgentsView", () => {
 
       await waitFor(() => {
         expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-003", "active", undefined);
-        expect(mockStartAgentRun).toHaveBeenCalledWith("agent-003", undefined);
       });
+
+      expect(mockStartAgentRun).not.toHaveBeenCalled();
     });
 
     it("handles state change error gracefully", async () => {
@@ -1143,27 +1144,6 @@ describe("AgentsView", () => {
       await waitFor(() => {
         expect(mockAddToast).toHaveBeenCalledWith(
           expect.stringContaining("State change failed"),
-          "error"
-        );
-      });
-    });
-
-    it("shows error toast when startAgentRun fails but still updates state", async () => {
-      mockStartAgentRun.mockRejectedValue(new Error("Run failed"));
-
-      render(<AgentsView addToast={mockAddToast} />);
-
-      await waitFor(() => {
-        expect(screen.getByTitle("Activate")).toBeTruthy();
-      });
-
-      fireEvent.click(screen.getByTitle("Activate"));
-
-      await waitFor(() => {
-        expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-001", "active", undefined);
-        expect(mockStartAgentRun).toHaveBeenCalledWith("agent-001", undefined);
-        expect(mockAddToast).toHaveBeenCalledWith(
-          expect.stringContaining("failed to start run"),
           "error"
         );
       });
