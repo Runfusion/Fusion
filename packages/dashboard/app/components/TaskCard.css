@@ -422,17 +422,26 @@
   margin-top: var(--space-sm);
 }
 
+.card-footer-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
 .card-session-files {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-top: var(--space-sm);
   padding: 0;
   border: none;
   background: transparent;
   color: var(--text-muted);
   font-size: 12px;
   cursor: pointer;
+  min-width: 0;
 }
 
 .card-session-files:hover {
@@ -444,16 +453,11 @@
   opacity: 0.7;
 }
 
-.card-time-row {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: var(--space-sm);
-}
-
 .card-time-indicator {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
+  margin-left: auto;
   padding: var(--space-xs) var(--space-sm);
   border: 1px solid color-mix(in srgb, var(--text-muted) 30%, transparent);
   border-radius: var(--radius-pill);
@@ -944,8 +948,9 @@
     padding: var(--space-xs) 0;
   }
 
-  .card-time-row {
+  .card-footer-row {
     margin-top: var(--space-xs);
+    gap: var(--space-xs);
   }
 
   .card-time-indicator {
