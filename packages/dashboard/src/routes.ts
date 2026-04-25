@@ -13419,13 +13419,48 @@ async function persistImportedSkills(
         throw badRequest("state is required");
       }
 
+      const nextState = state as import("@fusion/core").AgentState;
+      const agentId = req.params.id;
+
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
       const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
       await agentStore.init();
 
-      const agent = await agentStore.updateAgentState(req.params.id, state as import("@fusion/core").AgentState);
-      res.json(agent);
+      const currentAgent = await agentStore.getAgent(agentId);
+      if (!currentAgent) {
+        throw notFound("Agent not found");
+      }
+
+      const projectHeartbeatMonitor = hasHeartbeatExecutor
+        && heartbeatMonitor
+        && isHeartbeatMonitorForProject(scopedStore)
+        ? heartbeatMonitor
+        : null;
+
+      if (nextState === "paused" && projectHeartbeatMonitor) {
+        const activeRun = await agentStore.getActiveHeartbeatRun(agentId);
+        if (activeRun) {
+          await projectHeartbeatMonitor.stopRun(agentId);
+        }
+      }
+
+      const updatedAgent = await agentStore.updateAgentState(agentId, nextState);
+
+      if (nextState === "active" && projectHeartbeatMonitor) {
+        await projectHeartbeatMonitor.executeHeartbeat({
+          agentId,
+          source: "on_demand",
+          triggerDetail: "Triggered from state resume",
+          contextSnapshot: {
+            wakeReason: "on_demand",
+            triggerDetail: "Triggered from state resume",
+            triggerSource: "state-resume",
+          },
+        });
+      }
+
+      res.json(updatedAgent);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

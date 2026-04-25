@@ -1,5 +1,11 @@
 # @runfusion/fusion
 
+## Unreleased
+
+### Patch Changes
+
+- FN-2501: Agent pause/resume controls now act immediately. Pausing stops an active heartbeat run right away, and resuming to `active` triggers an immediate on-demand heartbeat instead of waiting for the next timer tick.
+
 ## 0.2.7
 
 ### Patch Changes

@@ -425,6 +425,9 @@ Heartbeat runs from the Agents panel run on a **separate control-plane lane** th
 - The `HeartbeatTriggerScheduler` and `HeartbeatMonitor` components do not receive the task-lane semaphore
 - Trigger scheduling remains responsive regardless of how busy the task pipeline is
 - Active-run 409 conflict semantics still apply — a new heartbeat run is rejected if the agent already has an active run
+- `POST /api/agents/:id/state` applies pause/resume immediately when monitor-bound:
+  - Transitioning to `paused` first stops any active run via `HeartbeatMonitor.stopRun(agentId)`
+  - Transitioning to `active` immediately calls `HeartbeatMonitor.executeHeartbeat(...)` (source: `on_demand`)
 
 **Architectural boundary:**
 

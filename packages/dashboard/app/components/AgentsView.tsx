@@ -444,13 +444,6 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
     try {
       await updateAgentState(agentId, newState, projectId);
       addToast(`Agent state updated to ${newState}`, "success");
-      if (newState === "active") {
-        try {
-          await startAgentRun(agentId, projectId);
-        } catch (runErr) {
-          addToast(`Agent activated, but failed to start run: ${getErrorMessage(runErr)}`, "error");
-        }
-      }
       void loadAgents();
     } catch (err) {
       addToast(`Failed to update state: ${getErrorMessage(err)}`, "error");

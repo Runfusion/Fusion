@@ -15740,6 +15740,27 @@ describe("Agent create/update routes", () => {
     expect(res.body.error).toContain("soul must be at most 10,000 characters");
   });
 
+  it("POST /api/agents/:id/state pauses successfully without heartbeat monitor wiring", async () => {
+    const { AgentStore } = await import("@fusion/core");
+    const agentStore = new AgentStore({ rootDir: fusionDir });
+    await agentStore.init();
+    await agentStore.updateAgentState(agentId, "active");
+
+    const res = await REQUEST(
+      buildAgentApp(),
+      "POST",
+      `/api/agents/${agentId}/state`,
+      JSON.stringify({ state: "paused" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: agentId, state: "paused" });
+
+    const updatedAgent = await agentStore.getAgent(agentId);
+    expect(updatedAgent?.state).toBe("paused");
+  });
+
   it("POST /api/agents/:id/state returns 400 for invalid state transitions", async () => {
     const res = await REQUEST(
       buildAgentApp(),
