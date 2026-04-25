@@ -151,9 +151,11 @@ function SplashScreen({ loadingStatus }: { loadingStatus: string }) {
 // ── Mini inline logo (header) ─────────────────────────────────────────────────
 
 function MiniLogo() {
+  // flexShrink={0} keeps FUSION from being squeezed (and wrapping) when the
+  // header row's other children push past the terminal width.
   return (
-    <Box flexDirection="row" gap={0}>
-      <Text color="cyanBright" bold>FUSION</Text>
+    <Box flexDirection="row" gap={0} flexShrink={0}>
+      <Text color="cyanBright" bold wrap="truncate-end">FUSION</Text>
     </Box>
   );
 }
@@ -815,10 +817,14 @@ function MainHeader({ state }: { state: DashboardState }) {
       <Box flexDirection="row" gap={1} paddingX={1}>
         <MiniLogo />
         {activeSectionLabel && (
-          <Text backgroundColor="cyan" color="black" bold>{` ${activeSectionIdx + 1} ${activeSectionLabel} `}</Text>
+          <Box flexShrink={0}>
+            <Text backgroundColor="cyan" color="black" bold>{` ${activeSectionIdx + 1} ${activeSectionLabel} `}</Text>
+          </Box>
         )}
         {activeInteractive && (
-          <Text backgroundColor="cyan" color="black" bold>{` ${activeInteractive.key} ${activeInteractive.label} `}</Text>
+          <Box flexShrink={0}>
+            <Text backgroundColor="cyan" color="black" bold>{` ${activeInteractive.key} ${activeInteractive.label} `}</Text>
+          </Box>
         )}
       </Box>
     );
@@ -826,13 +832,13 @@ function MainHeader({ state }: { state: DashboardState }) {
   return (
     <Box flexDirection="row" gap={1} paddingX={1} paddingY={0}>
       <MiniLogo />
-      {!minimal && <Text dimColor>│</Text>}
+      {!minimal && <Box flexShrink={0}><Text dimColor>│</Text></Box>}
       {SECTION_ORDER.map((section, i) => {
         const isActive = !inInteractive && section === focused;
         const label = section.charAt(0).toUpperCase() + section.slice(1);
         if (minimal && !isActive) return null;
         return (
-          <Box key={section} marginRight={1}>
+          <Box key={section} marginRight={1} flexShrink={0}>
             {isActive ? (
               <Text backgroundColor="cyan" color="black" bold>
                 {compactSections ? ` ${i + 1} ${label} ` : ` [${i + 1}] ${label} `}
@@ -845,12 +851,12 @@ function MainHeader({ state }: { state: DashboardState }) {
           </Box>
         );
       })}
-      {!minimal && <Text dimColor>│</Text>}
+      {!minimal && <Box flexShrink={0}><Text dimColor>│</Text></Box>}
       {interactiveTabs.map(({ key, label, view }) => {
         const isActive = inInteractive && view === interactiveView;
         if (minimal && !isActive) return null;
         return (
-          <Box key={view} marginRight={1}>
+          <Box key={view} marginRight={1} flexShrink={0}>
             {isActive ? (
               <Text backgroundColor="cyan" color="black" bold>
                 {compactInteractive ? ` ${key} ${label} ` : ` [${key}] ${label} `}
@@ -864,7 +870,7 @@ function MainHeader({ state }: { state: DashboardState }) {
         );
       })}
       <Box flexGrow={1} />
-      {showHelpHint && <Text dimColor>[?] help  [q] quit</Text>}
+      {showHelpHint && <Box flexShrink={0}><Text dimColor>[?] help  [q] quit</Text></Box>}
     </Box>
   );
 }
