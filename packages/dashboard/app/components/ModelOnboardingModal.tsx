@@ -1,4 +1,5 @@
 import "./ModelOnboardingModal.css";
+import "./SettingsModal.css";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { X, Loader2, CheckCircle, Key, Zap, GitPullRequest, Rocket, Plus, ChevronRight } from "lucide-react";
 import type { AuthProvider, ModelInfo } from "../api";

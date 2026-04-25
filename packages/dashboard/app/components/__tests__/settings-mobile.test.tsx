@@ -248,9 +248,9 @@ describe("SettingsModal mobile adaptations", () => {
     expectMobileRule(css, ".settings-nav-item", "gap: 4px;");
     expectMobileRule(css, ".settings-content textarea", "font-size: 16px;");
     expectMobileRule(css, ".settings-scope-icon", "margin-right: 0;");
-    expectMobileRule(css, ".settings-scope-banner", "padding: 8px 14px;");
+    expectMobileRule(css, ".settings-scope-banner", "padding: var(--space-sm) var(--space-lg);");
     expectMobileRule(css, ".settings-empty-state", "padding: 12px 14px;");
-    expectMobileRule(css, ".settings-description", "padding: 0 14px;");
+    expectMobileRule(css, ".settings-description", "padding: 0 var(--space-lg);");
     expectMobileRule(css, ".theme-selector", "padding: 0 14px 14px;");
     expectMobileRule(css, ".settings-preset-item", "flex-direction: column;");
     expectMobileRule(css, ".settings-preset-item-actions", "justify-content: flex-start;");

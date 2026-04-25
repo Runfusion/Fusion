@@ -16,6 +16,7 @@ import { PluginSlot } from "./PluginSlot";
 import { AgentPromptsManager } from "./AgentPromptsManager";
 import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPresets";
 import { appendTokenQuery } from "../auth";
+import "./SettingsModal.css";
 
 /**
  * Settings sections configuration.
