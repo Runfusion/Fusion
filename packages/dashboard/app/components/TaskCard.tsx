@@ -898,6 +898,86 @@ function TaskCardComponent({
 
   const cardClass = `card${dragging ? " dragging" : ""}${queued ? " queued" : ""}${isAgentActive ? " agent-active" : ""}${isFailed ? " failed" : ""}${isPaused ? " paused" : ""}${isStuck ? " stuck" : ""}${isAwaitingApproval ? " awaiting-approval" : ""}${fileDragOver ? " file-drop-target" : ""}${isEditing ? " card-editing" : ""}${isSaving ? " card-saving" : ""}`;
 
+  const filesChangedButton = (() => {
+    if (task.worktree && task.column === "in-progress") {
+      const activeCount = diffStats?.filesChanged;
+      if (activeCount == null || activeCount === 0) {
+        return null;
+      }
+
+      return (
+        <button
+          type="button"
+          className="card-session-files"
+          onClick={handleOpenFiles}
+          disabled={!onOpenDetailWithTab}
+        >
+          <Folder size={12} />
+          <span>{activeCount} {activeCount === 1 ? "file" : "files"} changed</span>
+        </button>
+      );
+    }
+
+    if (task.column === "in-review") {
+      const reviewDiffCount = diffStats?.filesChanged;
+      const fallbackCount = reviewDiffCount == null ? task.modifiedFiles?.length : undefined;
+      const displayCount = reviewDiffCount ?? fallbackCount;
+      if (displayCount == null || displayCount === 0) {
+        return null;
+      }
+
+      return (
+        <button
+          type="button"
+          className="card-session-files"
+          onClick={handleOpenFiles}
+          disabled={!onOpenDetailWithTab}
+        >
+          <Folder size={12} />
+          <span>{displayCount} {displayCount === 1 ? "file" : "files"} changed</span>
+        </button>
+      );
+    }
+
+    if (task.column === "done") {
+      // Prefer diff stats from the same endpoint the modal uses so the
+      // count is always consistent with the Changes tab.
+      const diffCount = diffStats?.filesChanged;
+      const mergedCount = task.mergeDetails?.filesChanged;
+      const displayCount = diffCount ?? mergedCount;
+      if (displayCount != null && displayCount > 0) {
+        return (
+          <button
+            type="button"
+            className="card-session-files"
+            onClick={handleOpenFiles}
+            disabled={!onOpenDetailWithTab}
+          >
+            <Folder size={12} />
+            <span>{displayCount} {displayCount === 1 ? "file" : "files"} changed</span>
+          </button>
+        );
+      }
+
+      const modifiedCount = task.modifiedFiles?.length;
+      if (modifiedCount != null && modifiedCount > 0) {
+        return (
+          <button
+            type="button"
+            className="card-session-files"
+            onClick={handleOpenFiles}
+            disabled={!onOpenDetailWithTab}
+          >
+            <Folder size={12} />
+            <span>{modifiedCount} {modifiedCount === 1 ? "file" : "files"} changed</span>
+          </button>
+        );
+      }
+    }
+
+    return null;
+  })();
+
   if (isEditing) {
     return (
       <div
@@ -1166,87 +1246,19 @@ function TaskCardComponent({
           </>
         );
       })()}
-      {task.worktree && task.column === "in-progress" && (() => {
-        const activeCount = diffStats?.filesChanged;
-        if (activeCount == null || activeCount === 0) {
-          return null;
-        }
-        return (
-          <button
-            type="button"
-            className="card-session-files"
-            onClick={handleOpenFiles}
-            disabled={!onOpenDetailWithTab}
-          >
-            <Folder size={12} />
-            <span>{activeCount} {activeCount === 1 ? "file" : "files"} changed</span>
-          </button>
-        );
-      })()}
-      {task.column === "in-review" && (() => {
-        const reviewDiffCount = diffStats?.filesChanged;
-        const fallbackCount = reviewDiffCount == null ? task.modifiedFiles?.length : undefined;
-        const displayCount = reviewDiffCount ?? fallbackCount;
-        if (displayCount == null || displayCount === 0) {
-          return null;
-        }
-        return (
-          <button
-            type="button"
-            className="card-session-files"
-            onClick={handleOpenFiles}
-            disabled={!onOpenDetailWithTab}
-          >
-            <Folder size={12} />
-            <span>{displayCount} {displayCount === 1 ? "file" : "files"} changed</span>
-          </button>
-        );
-      })()}
-      {task.column === "done" && (() => {
-        // Prefer diff stats from the same endpoint the modal uses so the
-        // count is always consistent with the Changes tab.
-        const diffCount = diffStats?.filesChanged;
-        const mergedCount = task.mergeDetails?.filesChanged;
-        const displayCount = diffCount ?? mergedCount;
-        if (displayCount != null && displayCount > 0) {
-          return (
-            <button
-              type="button"
-              className="card-session-files"
-              onClick={handleOpenFiles}
-              disabled={!onOpenDetailWithTab}
+      {(filesChangedButton || timeIndicator) && (
+        <div className="card-footer-row">
+          {filesChangedButton}
+          {timeIndicator && (
+            <span
+              className="card-time-indicator"
+              title={timeIndicator.title}
+              aria-label={`Elapsed time ${timeIndicator.label}. ${timeIndicator.title}`}
             >
-              <Folder size={12} />
-              <span>{displayCount} {displayCount === 1 ? "file" : "files"} changed</span>
-            </button>
-          );
-        }
-        const modifiedCount = task.modifiedFiles?.length;
-        if (modifiedCount != null && modifiedCount > 0) {
-          return (
-            <button
-              type="button"
-              className="card-session-files"
-              onClick={handleOpenFiles}
-              disabled={!onOpenDetailWithTab}
-            >
-              <Folder size={12} />
-              <span>{modifiedCount} {modifiedCount === 1 ? "file" : "files"} changed</span>
-            </button>
-          );
-        }
-        return null;
-      })()}
-      {timeIndicator && (
-        <div className="card-time-row">
-          <span
-            className="card-time-indicator"
-            title={timeIndicator.title}
-            aria-label={`Elapsed time ${timeIndicator.label}. ${timeIndicator.title}`}
-          >
-            <Clock size={12} />
-            <span>{timeIndicator.label}</span>
-          </span>
+              <Clock size={12} />
+              <span>{timeIndicator.label}</span>
+            </span>
+          )}
         </div>
       )}
       {((task.dependencies && task.dependencies.length > 0) || queued || task.status === "queued" || task.blockedBy) && (

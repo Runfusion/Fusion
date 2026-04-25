@@ -488,6 +488,42 @@ describe("TaskCard", () => {
     expect(timer?.textContent).toContain("3h");
   });
 
+  it("renders files-changed metadata and timer chip in the same footer row", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-25T18:00:00.000Z"));
+
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          column: "done",
+          columnMovedAt: "2026-04-25T15:00:00.000Z",
+          updatedAt: "2026-04-25T14:00:00.000Z",
+          createdAt: "2026-04-25T13:00:00.000Z",
+          mergeDetails: {
+            commitSha: "abc123",
+            filesChanged: 4,
+            insertions: 10,
+            deletions: 2,
+            mergedAt: "2026-04-25T15:00:00.000Z",
+            mergeConfirmed: true,
+          },
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onOpenDetailWithTab={vi.fn()}
+      />,
+    );
+
+    const footerRow = container.querySelector(".card-footer-row");
+    const filesChanged = container.querySelector(".card-session-files");
+    const timer = container.querySelector(".card-time-indicator");
+
+    expect(footerRow).not.toBeNull();
+    expect(filesChanged).not.toBeNull();
+    expect(timer).not.toBeNull();
+    expect(footerRow?.contains(filesChanged)).toBe(true);
+    expect(footerRow?.contains(timer)).toBe(true);
+  });
   it.each(["triage", "todo", "in-review", "archived"] as const)(
     "does not render timer chip for %s cards",
     (column) => {
