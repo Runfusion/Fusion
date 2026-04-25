@@ -2106,6 +2106,14 @@ export function ModelOnboardingModal({
                           Connect
                         </button>
                       )}
+                      {authActionInProgress === "github" && loginInstructions.github && (
+                        <p
+                          className="auth-login-instructions"
+                          data-testid="onboarding-login-instructions-github"
+                        >
+                          {loginInstructions.github}
+                        </p>
+                      )}
                     </div>
                   )}
 
