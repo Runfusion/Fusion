@@ -260,6 +260,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previousTask.createdAt === nextTask.createdAt &&
     previousTask.status === nextTask.status &&
     previousTask.priority === nextTask.priority &&
+    previousTask.executionMode === nextTask.executionMode &&
     previousTask.paused === nextTask.paused &&
     previousTask.error === nextTask.error &&
     previousTask.size === nextTask.size &&
@@ -901,6 +902,9 @@ function TaskCardComponent({
           <span className={`card-priority-badge card-priority-badge--${normalizedPriority}`}>
             {normalizedPriority}
           </span>
+        )}
+        {task.executionMode === "fast" && (
+          <span className="card-execution-mode-badge card-execution-mode-badge--fast">Fast</span>
         )}
         {task.missionId && (
           <span

@@ -856,6 +856,9 @@ export function ListView({
 
                               <div className="list-card-row">
                                 <span className="list-card-id">{task.id}</span>
+                                {task.executionMode === "fast" && (
+                                  <span className="list-execution-mode-badge list-execution-mode-badge--fast">Fast</span>
+                                )}
                                 <span className="list-card-spacer" />
                                 {isStuckState ? (
                                   <span className="list-status-badge stuck">Stuck</span>
@@ -1035,7 +1038,12 @@ export function ListView({
                                 )}
                                 {visibleColumns.has("title") && (
                                   <td className="list-cell list-cell-title">
-                                    {task.title || task.description}
+                                    <div className="list-title-content">
+                                      {task.executionMode === "fast" && (
+                                        <span className="list-execution-mode-badge list-execution-mode-badge--fast">Fast</span>
+                                      )}
+                                      <span className="list-title-text">{task.title || task.description}</span>
+                                    </div>
                                   </td>
                                 )}
                                 {visibleColumns.has("status") && (

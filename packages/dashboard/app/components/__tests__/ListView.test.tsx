@@ -122,6 +122,21 @@ describe("ListView", () => {
     expect(screen.getByText("Second Task")).toBeDefined();
   });
 
+  it("shows fast indicator in desktop rows only for fast-mode tasks", () => {
+    const tasks = [
+      createMockTask({ id: "FN-001", title: "Fast Task", executionMode: "fast" }),
+      createMockTask({ id: "FN-002", title: "Standard Task", executionMode: "standard" }),
+    ];
+
+    const { container } = renderListView({ tasks });
+
+    const fastRow = container.querySelector('tr[data-id="FN-001"]') as HTMLElement;
+    const standardRow = container.querySelector('tr[data-id="FN-002"]') as HTMLElement;
+
+    expect(fastRow.querySelector(".list-execution-mode-badge")?.textContent).toBe("Fast");
+    expect(standardRow.querySelector(".list-execution-mode-badge")).toBeNull();
+  });
+
   it("shows empty state when no tasks", () => {
     renderListView({ tasks: [] });
     expect(screen.getByText("No tasks yet")).toBeDefined();
@@ -2250,6 +2265,23 @@ describe("ListView - Bulk Selection", () => {
       expect(within(card as HTMLElement).getByText("FN-001")).toBeInTheDocument();
       expect(within(card as HTMLElement).getByText("Card title")).toBeInTheDocument();
       expect(within(card as HTMLElement).getByText("executing")).toBeInTheDocument();
+    });
+
+    it("shows fast indicator in mobile cards only for fast-mode tasks", () => {
+      mockMobileViewport();
+
+      const { container } = renderListView({
+        tasks: [
+          createMockTask({ id: "FN-001", title: "Fast mobile", executionMode: "fast", status: "pending" }),
+          createMockTask({ id: "FN-002", title: "Standard mobile", executionMode: "standard", status: "pending" }),
+        ],
+      });
+
+      const fastCard = container.querySelector('.list-card[data-id="FN-001"]') as HTMLElement;
+      const standardCard = container.querySelector('.list-card[data-id="FN-002"]') as HTMLElement;
+
+      expect(fastCard.querySelector(".list-execution-mode-badge")?.textContent).toBe("Fast");
+      expect(standardCard.querySelector(".list-execution-mode-badge")).toBeNull();
     });
 
     it("shows unified progress bar for executing mobile cards with steps and workflow checks", () => {

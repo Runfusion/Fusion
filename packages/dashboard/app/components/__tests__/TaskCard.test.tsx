@@ -82,6 +82,34 @@ describe("TaskCard", () => {
     expect(container.querySelector(".card-status-badge")).toBeNull();
   });
 
+  it("renders fast-mode indicator only when executionMode is fast", () => {
+    const { container, rerender } = render(
+      <TaskCard task={makeTask({ executionMode: "fast" })} onOpenDetail={noop} addToast={noop} />,
+    );
+
+    expect(container.querySelector(".card-execution-mode-badge")?.textContent).toBe("Fast");
+
+    rerender(
+      <TaskCard task={makeTask({ executionMode: "standard" })} onOpenDetail={noop} addToast={noop} />,
+    );
+
+    expect(container.querySelector(".card-execution-mode-badge")).toBeNull();
+  });
+
+  it("updates fast-mode indicator when executionMode changes", () => {
+    const { container, rerender } = render(
+      <TaskCard task={makeTask({ executionMode: "standard" })} onOpenDetail={noop} addToast={noop} />,
+    );
+
+    expect(container.querySelector(".card-execution-mode-badge")).toBeNull();
+
+    rerender(
+      <TaskCard task={makeTask({ executionMode: "fast" })} onOpenDetail={noop} addToast={noop} />,
+    );
+
+    expect(container.querySelector(".card-execution-mode-badge")?.textContent).toBe("Fast");
+  });
+
   it("renders unified progress counts for task steps + workflow checks", () => {
     render(
       <TaskCard

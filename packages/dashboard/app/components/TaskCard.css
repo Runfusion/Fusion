@@ -222,6 +222,22 @@
   color: var(--color-error-dark);
 }
 
+.card-execution-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+
+.card-execution-mode-badge--fast {
+  background: color-mix(in srgb, var(--color-warning) 20%, transparent);
+  color: var(--color-warning);
+}
+
 .card.failed {
   border-left: 3px solid var(--color-error-dark);
 }
