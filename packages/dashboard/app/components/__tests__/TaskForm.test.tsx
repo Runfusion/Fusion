@@ -169,6 +169,41 @@ describe("TaskForm", () => {
     expect(screen.getByText(/Model Configuration/i)).toBeTruthy();
   });
 
+  it("renders execution mode selector only when execution mode props are provided", () => {
+    const { rerender, props } = renderTaskForm();
+
+    fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
+    expect(screen.queryByTestId("task-form-execution-mode-select")).toBeNull();
+
+    rerender(
+      <TaskForm
+        {...props}
+        executionMode="standard"
+        onExecutionModeChange={vi.fn()}
+      />,
+    );
+
+    const executionModeSelect = screen.getByTestId("task-form-execution-mode-select") as HTMLSelectElement;
+    expect(executionModeSelect).toBeTruthy();
+
+    const options = Array.from(executionModeSelect.options).map((option) => option.value);
+    expect(options).toEqual(["standard", "fast"]);
+  });
+
+  it("calls onExecutionModeChange when execution mode selection changes", () => {
+    const onExecutionModeChange = vi.fn();
+
+    renderTaskForm({
+      executionMode: "standard",
+      onExecutionModeChange,
+    });
+
+    fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
+    fireEvent.change(screen.getByTestId("task-form-execution-mode-select"), { target: { value: "fast" } });
+
+    expect(onExecutionModeChange).toHaveBeenCalledWith("fast");
+  });
+
   it("renders priority select with default normal value when enabled", () => {
     renderTaskForm({ onPriorityChange: vi.fn() });
 

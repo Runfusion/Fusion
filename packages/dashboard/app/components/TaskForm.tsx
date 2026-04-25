@@ -26,6 +26,8 @@ export interface PendingImage {
   previewUrl: string;
 }
 
+type TaskExecutionModeSelection = "standard" | "fast";
+
 export interface TaskFormProps {
   mode: "create" | "edit";
 
@@ -78,6 +80,8 @@ export interface TaskFormProps {
   // Review level (0=None, 1=Plan Only, 2=Plan and Code, 3=Full)
   reviewLevel?: number;
   onReviewLevelChange?: (value: number) => void;
+  executionMode?: TaskExecutionModeSelection;
+  onExecutionModeChange?: (value: TaskExecutionModeSelection) => void;
 
   // AI-assisted creation callbacks (create mode only)
   onPlanningMode?: (initialPlan: string) => void;
@@ -133,6 +137,8 @@ export function TaskForm({
   autoExpandMoreOptionsOnSelection = true,
   reviewLevel,
   onReviewLevelChange,
+  executionMode,
+  onExecutionModeChange,
 }: TaskFormProps) {
   const hasInitialMoreOptions =
     (hideDependencies ? false : dependencies.length > 0) ||
@@ -144,7 +150,8 @@ export function TaskForm({
     validatorModel !== "" ||
     (planningModel || "") !== "" ||
     (thinkingLevel || "") !== "" ||
-    reviewLevel !== undefined;
+    reviewLevel !== undefined ||
+    executionMode === "fast";
 
   const [showDepDropdown, setShowDepDropdown] = useState(false);
   const [showMoreOptions, setShowMoreOptions] = useState(
@@ -208,7 +215,8 @@ export function TaskForm({
     validatorModel !== "" ||
     (planningModel || "") !== "" ||
     (thinkingLevel || "") !== "" ||
-    reviewLevel !== undefined;
+    reviewLevel !== undefined ||
+    executionMode === "fast";
 
   // Auto-select preset by size (create mode only)
   useEffect(() => {
@@ -873,6 +881,21 @@ export function TaskForm({
                   {taskPriority[0].toUpperCase() + taskPriority.slice(1)}
                 </option>
               ))}
+            </select>
+          </div>
+        )}
+        {onExecutionModeChange && executionMode !== undefined && (
+          <div className="model-select-row">
+            <label htmlFor="task-execution-mode" className="model-select-label">Execution mode</label>
+            <select
+              id="task-execution-mode"
+              data-testid="task-form-execution-mode-select"
+              value={executionMode}
+              onChange={(e) => onExecutionModeChange(e.target.value as TaskExecutionModeSelection)}
+              disabled={disabled}
+            >
+              <option value="standard">Standard</option>
+              <option value="fast">Fast</option>
             </select>
           </div>
         )}

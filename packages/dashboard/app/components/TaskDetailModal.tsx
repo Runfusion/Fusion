@@ -227,6 +227,10 @@ function normalizeTaskPriorityValue(priority: Task["priority"]): TaskPriority {
     : DEFAULT_TASK_PRIORITY;
 }
 
+function normalizeExecutionModeValue(executionMode: Task["executionMode"]): "standard" | "fast" {
+  return executionMode === "fast" ? "fast" : "standard";
+}
+
 const DESCRIPTION_TRUNCATE_LENGTH = 200;
 
 const EDITABLE_COLUMNS: Set<Column> = new Set(["triage", "todo"]);
@@ -342,6 +346,7 @@ export function TaskDetailModal({
   const [editPresetMode, setEditPresetMode] = useState<"default" | "preset" | "custom">("default");
   const [editReviewLevel, setEditReviewLevel] = useState<number | undefined>(undefined);
   const [editPriority, setEditPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
+  const [editExecutionMode, setEditExecutionMode] = useState<"standard" | "fast">(normalizeExecutionModeValue(task.executionMode));
   const [editSelectedPresetId, setEditSelectedPresetId] = useState("");
   const [editSelectedWorkflowSteps, setEditSelectedWorkflowSteps] = useState<string[]>(task.enabledWorkflowSteps || []);
   const [editSourceIssueProvider, setEditSourceIssueProvider] = useState(task.sourceIssue?.provider ?? "");
@@ -386,8 +391,9 @@ export function TaskDetailModal({
     setEditSourceIssueRepository(task.sourceIssue?.repository ?? "");
     setEditSourceIssueExternalId(task.sourceIssue?.externalIssueId ?? "");
     setEditSourceIssueUrl(task.sourceIssue?.url ?? "");
+    setEditExecutionMode(normalizeExecutionModeValue(task.executionMode));
     setIsEditing(false);
-  }, [task.id, task.title, task.description, task.sourceIssue]);
+  }, [task.id, task.title, task.description, task.sourceIssue, task.executionMode]);
 
   useEffect(() => {
     setWorkflowEnabledSteps(task.enabledWorkflowSteps || []);
@@ -554,6 +560,7 @@ export function TaskDetailModal({
     setEditPresetMode(execModel || valModel || planModel ? "custom" : "default");
     setEditSelectedPresetId("");
     setEditSelectedWorkflowSteps(task.enabledWorkflowSteps || []);
+    setEditExecutionMode(normalizeExecutionModeValue(task.executionMode));
     setEditSourceIssueProvider(task.sourceIssue?.provider ?? "");
     setEditSourceIssueRepository(task.sourceIssue?.repository ?? "");
     setEditSourceIssueExternalId(task.sourceIssue?.externalIssueId ?? "");
@@ -573,9 +580,10 @@ export function TaskDetailModal({
     setEditSourceIssueExternalId(task.sourceIssue?.externalIssueId ?? "");
     setEditSourceIssueUrl(task.sourceIssue?.url ?? "");
     setEditPriority(normalizeTaskPriorityValue(task.priority));
+    setEditExecutionMode(normalizeExecutionModeValue(task.executionMode));
     editPendingImages.forEach((img) => URL.revokeObjectURL(img.previewUrl));
     setEditPendingImages([]);
-  }, [task.title, task.description, task.dependencies, task.priority, editPendingImages]);
+  }, [task.title, task.description, task.dependencies, task.priority, task.executionMode, editPendingImages]);
 
   const handleSave = useCallback(async () => {
     setIsSaving(true);
@@ -631,6 +639,11 @@ export function TaskDetailModal({
       const currentPriority = normalizeTaskPriorityValue(task.priority);
       if (editPriority !== currentPriority) {
         updates.priority = editPriority;
+      }
+
+      const currentExecutionMode = normalizeExecutionModeValue(task.executionMode);
+      if (editExecutionMode !== currentExecutionMode) {
+        updates.executionMode = editExecutionMode === "fast" ? "fast" : null;
       }
 
       const normalizedProvider = normalizeSourceIssueText(editSourceIssueProvider);
@@ -718,7 +731,7 @@ export function TaskDetailModal({
         setIsSaving(false);
       }
     }
-  }, [task, editTitle, editDescription, editDependencies, editExecutorModel, editValidatorModel, editPlanningModel, editThinkingLevel, editReviewLevel, editPriority, editSelectedWorkflowSteps, editSourceIssueProvider, editSourceIssueRepository, editSourceIssueExternalId, editSourceIssueUrl, editPendingImages, addToast, projectId, onTaskUpdated]);
+  }, [task, editTitle, editDescription, editDependencies, editExecutorModel, editValidatorModel, editPlanningModel, editThinkingLevel, editReviewLevel, editPriority, editExecutionMode, editSelectedWorkflowSteps, editSourceIssueProvider, editSourceIssueRepository, editSourceIssueExternalId, editSourceIssueUrl, editPendingImages, addToast, projectId, onTaskUpdated]);
 
   const handleAutoSaveDescription = useCallback(async (description: string) => {
     try {
@@ -1274,6 +1287,8 @@ export function TaskDetailModal({
                 onReviewLevelChange={setEditReviewLevel}
                 priority={editPriority}
                 onPriorityChange={setEditPriority}
+                executionMode={editExecutionMode}
+                onExecutionModeChange={setEditExecutionMode}
                 renderBelowPrimary={(
                   <div className="form-group detail-source-edit-group">
                     <label>Source Issue</label>
