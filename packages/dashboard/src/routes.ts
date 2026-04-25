@@ -1746,12 +1746,63 @@ async function getGitWorkingDiff(cwd?: string): Promise<{ stat: string; patch: s
 }
 
 /**
+ * Validate a file path passed to git commands.
+ */
+function isValidGitFilePath(filePath: string): boolean {
+  if (!filePath || !filePath.trim()) return false;
+  if (filePath.startsWith("-")) return false;
+  if (isAbsolute(filePath)) return false;
+  if (filePath.includes("\0")) return false;
+  if (filePath.includes("..")) return false;
+  if (/[;&|`$(){}[\]\r\n]/.test(filePath)) return false;
+  return true;
+}
+
+async function runNoIndexDiff(args: string[], cwd?: string): Promise<string> {
+  try {
+    return await runGitCommand(args, cwd, 10000);
+  } catch (error) {
+    const commandError = error as NodeJS.ErrnoException & { stdout?: string };
+    if (typeof commandError.stdout === "string") {
+      return commandError.stdout;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Get staged or unstaged diff for a specific file path.
+ */
+async function getGitFileDiff(filePath: string, staged: boolean, cwd?: string): Promise<{ stat: string; patch: string }> {
+  if (!isValidGitFilePath(filePath)) {
+    throw new Error(`Invalid file path: ${filePath}`);
+  }
+
+  if (staged) {
+    const stat = (await runGitCommand(["diff", "--cached", "--stat", "--", filePath], cwd, 10000)).trim();
+    const patch = await runGitCommand(["diff", "--cached", "--", filePath], cwd, 10000);
+    return { stat, patch };
+  }
+
+  const untracked = (await runGitCommand(["ls-files", "--others", "--exclude-standard", "--", filePath], cwd, 5000)).trim();
+  if (untracked === filePath) {
+    const stat = (await runNoIndexDiff(["diff", "--no-index", "--stat", "/dev/null", filePath], cwd)).trim();
+    const patch = await runNoIndexDiff(["diff", "--no-index", "/dev/null", filePath], cwd);
+    return { stat, patch };
+  }
+
+  const stat = (await runGitCommand(["diff", "--stat", "--", filePath], cwd, 10000)).trim();
+  const patch = await runGitCommand(["diff", "--", filePath], cwd, 10000);
+  return { stat, patch };
+}
+
+/**
  * Stage specific files.
  */
 async function stageGitFiles(files: string[], cwd?: string): Promise<string[]> {
   if (!files.length) throw new Error("No files specified");
   for (const f of files) {
-    if (/[;&|`$(){}[\]\r\n]/.test(f)) {
+    if (!isValidGitFilePath(f)) {
       throw new Error(`Invalid file path: ${f}`);
     }
   }
@@ -1765,7 +1816,7 @@ async function stageGitFiles(files: string[], cwd?: string): Promise<string[]> {
 async function unstageGitFiles(files: string[], cwd?: string): Promise<string[]> {
   if (!files.length) throw new Error("No files specified");
   for (const f of files) {
-    if (/[;&|`$(){}[\]\r\n]/.test(f)) {
+    if (!isValidGitFilePath(f)) {
       throw new Error(`Invalid file path: ${f}`);
     }
   }
@@ -1791,7 +1842,7 @@ async function createGitCommit(message: string, cwd?: string): Promise<{ hash: s
 async function discardGitChanges(files: string[], cwd?: string): Promise<string[]> {
   if (!files.length) throw new Error("No files specified");
   for (const f of files) {
-    if (/[;&|`$(){}[\]\r\n]/.test(f)) {
+    if (!isValidGitFilePath(f)) {
       throw new Error(`Invalid file path: ${f}`);
     }
   }
@@ -6408,6 +6459,42 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw badRequest("Not a git repository");
       }
       const diff = await getGitWorkingDiff(rootDir);
+      res.json(diff);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /**
+   * GET /api/git/diff/file
+   * Returns staged or unstaged diff for a specific file.
+   * Query: path=<file-path>&staged=true|false
+   */
+  router.get("/git/diff/file", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const rootDir = scopedStore.getRootDir();
+      if (!(await isGitRepo(rootDir))) {
+        throw badRequest("Not a git repository");
+      }
+
+      const rawPath = req.query.path;
+      const rawStaged = req.query.staged;
+
+      if (typeof rawPath !== "string" || !rawPath.trim()) {
+        throw badRequest("path query parameter is required");
+      }
+      if (rawStaged !== "true" && rawStaged !== "false") {
+        throw badRequest("staged query parameter must be 'true' or 'false'");
+      }
+      if (!isValidGitFilePath(rawPath)) {
+        throw badRequest(`Invalid file path: ${rawPath}`);
+      }
+
+      const diff = await getGitFileDiff(rawPath, rawStaged === "true", rootDir);
       res.json(diff);
     } catch (err: unknown) {
       if (err instanceof ApiError) {

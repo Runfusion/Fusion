@@ -23,7 +23,7 @@ vi.mock("../../api", async () => {
     applyStash: vi.fn(),
     dropStash: vi.fn(),
     fetchFileChanges: vi.fn(),
-    fetchUnstagedDiff: vi.fn(),
+    fetchGitFileDiff: vi.fn(),
     stageFiles: vi.fn(),
     unstageFiles: vi.fn(),
     createCommit: vi.fn(),
@@ -56,7 +56,7 @@ import {
   applyStash,
   dropStash,
   fetchFileChanges,
-  fetchUnstagedDiff,
+  fetchGitFileDiff,
   stageFiles,
   unstageFiles,
   createCommit,
@@ -156,7 +156,7 @@ describe("GitManagerModal", () => {
       { file: "src/app.ts", status: "modified", staged: false },
       { file: "src/index.ts", status: "added", staged: true },
     ]);
-    (fetchUnstagedDiff as any).mockResolvedValue({
+    (fetchGitFileDiff as any).mockResolvedValue({
       stat: " src/app.ts | 5 ++---",
       patch: "diff --git a/src/app.ts b/src/app.ts\n-old\n+new",
     });
@@ -422,7 +422,7 @@ describe("GitManagerModal", () => {
     });
   });
 
-  it("views diff of unstaged changes", async () => {
+  it("fetches unstaged file diff when clicking an unstaged file", async () => {
     const user = userEvent.setup();
     render(
       <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
@@ -430,12 +430,86 @@ describe("GitManagerModal", () => {
     fireEvent.click(screen.getByRole("tab", { name: /changes/i }));
 
     await waitFor(() => {
-      expect(screen.getByText("View Diff")).toBeInTheDocument();
+      expect(screen.getByText("src/app.ts")).toBeInTheDocument();
     });
 
-    await user.click(screen.getByText("View Diff"));
+    await user.click(screen.getByText("src/app.ts"));
     await waitFor(() => {
-      expect(fetchUnstagedDiff).toHaveBeenCalled();
+      expectLatestCallStartsWith(fetchGitFileDiff as any, "src/app.ts", false);
+    });
+  });
+
+  it("fetches staged file diff when clicking a staged file", async () => {
+    const user = userEvent.setup();
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /changes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("src/index.ts")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("src/index.ts"));
+    await waitFor(() => {
+      expectLatestCallStartsWith(fetchGitFileDiff as any, "src/index.ts", true);
+    });
+  });
+
+  it("stage action button still stages file without triggering diff fetch", async () => {
+    const user = userEvent.setup();
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /changes/i }));
+
+    const stageButton = await screen.findByTitle("Stage file");
+    await user.click(stageButton);
+
+    await waitFor(() => {
+      expectLatestCallStartsWith(stageFiles as any, ["src/app.ts"]);
+      expect(fetchGitFileDiff).not.toHaveBeenCalled();
+    });
+  });
+
+  it("unstage action button still unstages file without triggering diff fetch", async () => {
+    const user = userEvent.setup();
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /changes/i }));
+
+    const unstageButton = await screen.findByTitle("Unstage file");
+    await user.click(unstageButton);
+
+    await waitFor(() => {
+      expectLatestCallStartsWith(unstageFiles as any, ["src/index.ts"]);
+      expect(fetchGitFileDiff).not.toHaveBeenCalled();
+    });
+  });
+
+  it("renders fetched file diff patch content", async () => {
+    const user = userEvent.setup();
+    (fetchGitFileDiff as any).mockResolvedValue({
+      stat: " src/app.ts | 2 +\\-",
+      patch: "diff --git a/src/app.ts b/src/app.ts\\n+line",
+    });
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /changes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("src/app.ts")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("src/app.ts"));
+
+    await waitFor(() => {
+      const patchBlock = document.querySelector(".gm-diff-patch");
+      expect(patchBlock?.textContent).toContain("diff --git a/src/app.ts b/src/app.ts");
+      expect(patchBlock?.textContent).toContain("+line");
     });
   });
 

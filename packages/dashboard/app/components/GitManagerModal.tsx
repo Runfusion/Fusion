@@ -35,7 +35,7 @@ import {
   unstageFiles,
   createCommit,
   discardChanges,
-  fetchUnstagedDiff,
+  fetchGitFileDiff,
   fetchGitRemotesDetailed,
   addGitRemote,
   removeGitRemote,
@@ -186,6 +186,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   const [committing, setCommitting] = useState(false);
   const [changeDiff, setChangeDiff] = useState<{ stat: string; patch: string } | null>(null);
   const [loadingChangeDiff, setLoadingChangeDiff] = useState(false);
+  const [changeDiffError, setChangeDiffError] = useState<string | null>(null);
+  const [selectedDiffTarget, setSelectedDiffTarget] = useState<{ file: string; staged: boolean } | null>(null);
+  const changeDiffRequestIdRef = useRef(0);
 
   // ── Commits state
   const [commits, setCommits] = useState<GitCommit[]>([]);
@@ -237,6 +240,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
           setStatus(statusData);
           setFileChanges(changes);
           setSelectedFiles(new Set());
+          setSelectedDiffTarget(null);
+          setChangeDiff(null);
+          setChangeDiffError(null);
           break;
         }
         case "commits": {
@@ -313,6 +319,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
       const changes = await fetchFileChanges(projectId);
       setFileChanges(changes);
       setSelectedFiles(new Set());
+      setSelectedDiffTarget(null);
+      setChangeDiff(null);
+      setChangeDiffError(null);
     } catch (err) {
       addToast(getErrorMessage(err) || "Failed to stage files", "error");
     }
@@ -325,6 +334,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
       const changes = await fetchFileChanges(projectId);
       setFileChanges(changes);
       setSelectedFiles(new Set());
+      setSelectedDiffTarget(null);
+      setChangeDiff(null);
+      setChangeDiffError(null);
     } catch (err) {
       addToast(getErrorMessage(err) || "Failed to unstage files", "error");
     }
@@ -339,6 +351,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
       setFileChanges(changes);
       setStatus(statusData);
       setSelectedFiles(new Set());
+      setSelectedDiffTarget(null);
+      setChangeDiff(null);
+      setChangeDiffError(null);
     } catch (err) {
       addToast(getErrorMessage(err) || "Failed to discard changes", "error");
     }
@@ -356,6 +371,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
       const [changes, statusData] = await Promise.all([fetchFileChanges(projectId), fetchGitStatus(projectId)]);
       setFileChanges(changes);
       setStatus(statusData);
+      setSelectedDiffTarget(null);
+      setChangeDiff(null);
+      setChangeDiffError(null);
     } catch (err) {
       addToast(getErrorMessage(err) || "Failed to commit", "error");
     } finally {
@@ -377,6 +395,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
       const [changes, statusData] = await Promise.all([fetchFileChanges(projectId), fetchGitStatus(projectId)]);
       setFileChanges(changes);
       setStatus(statusData);
+      setSelectedDiffTarget(null);
+      setChangeDiff(null);
+      setChangeDiffError(null);
     } catch (err) {
       addToast(getErrorMessage(err) || "Failed to commit", "error");
     } finally {
@@ -384,15 +405,31 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     }
   }, [commitMessage, fileChanges, addToast, projectId]);
 
-  const handleViewDiff = useCallback(async () => {
+  const handleSelectDiffFile = useCallback(async (file: string, staged: boolean) => {
+    setSelectedDiffTarget({ file, staged });
     setLoadingChangeDiff(true);
+    setChangeDiffError(null);
+    const requestId = changeDiffRequestIdRef.current + 1;
+    changeDiffRequestIdRef.current = requestId;
+
     try {
-      const diff = await fetchUnstagedDiff(projectId);
+      const diff = await fetchGitFileDiff(file, staged, projectId);
+      if (changeDiffRequestIdRef.current !== requestId) {
+        return;
+      }
       setChangeDiff(diff);
     } catch (err) {
-      addToast(getErrorMessage(err) || "Failed to load diff", "error");
+      if (changeDiffRequestIdRef.current !== requestId) {
+        return;
+      }
+      const errorMessage = getErrorMessage(err) || "Failed to load file diff";
+      setChangeDiff(null);
+      setChangeDiffError(errorMessage);
+      addToast(errorMessage, "error");
     } finally {
-      setLoadingChangeDiff(false);
+      if (changeDiffRequestIdRef.current === requestId) {
+        setLoadingChangeDiff(false);
+      }
     }
   }, [addToast, projectId]);
 
@@ -755,9 +792,11 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
                 onStageFiles={handleStageFiles}
                 onUnstageFiles={handleUnstageFiles}
                 onDiscardChanges={handleDiscardChanges}
-                onViewDiff={handleViewDiff}
+                onSelectDiffFile={handleSelectDiffFile}
+                selectedDiffTarget={selectedDiffTarget}
                 changeDiff={changeDiff}
                 loadingChangeDiff={loadingChangeDiff}
+                changeDiffError={changeDiffError}
                 commitMessage={commitMessage}
                 setCommitMessage={setCommitMessage}
                 onCommit={handleCommit}
@@ -938,9 +977,11 @@ function ChangesPanel({
   onStageFiles,
   onUnstageFiles,
   onDiscardChanges,
-  onViewDiff,
+  onSelectDiffFile,
+  selectedDiffTarget,
   changeDiff,
   loadingChangeDiff,
+  changeDiffError,
   commitMessage,
   setCommitMessage,
   onCommit,
@@ -955,9 +996,11 @@ function ChangesPanel({
   onStageFiles: (files: string[]) => void;
   onUnstageFiles: (files: string[]) => void;
   onDiscardChanges: (files: string[]) => void;
-  onViewDiff: () => void;
+  onSelectDiffFile: (file: string, staged: boolean) => void;
+  selectedDiffTarget: { file: string; staged: boolean } | null;
   changeDiff: { stat: string; patch: string } | null;
   loadingChangeDiff: boolean;
+  changeDiffError: string | null;
   commitMessage: string;
   setCommitMessage: (msg: string) => void;
   onCommit: (e: React.FormEvent) => void;
@@ -1020,27 +1063,45 @@ function ChangesPanel({
           {unstagedFiles.length === 0 ? (
             <div className="gm-empty">No unstaged changes</div>
           ) : (
-            unstagedFiles.map((f) => (
-              <div key={`unstaged:${f.file}`} className="gm-file-item">
-                <label className="gm-file-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={selectedFiles.has(`unstaged:${f.file}`)}
-                    onChange={() => toggleFileSelection(`unstaged:${f.file}`)}
-                  />
-                </label>
-                <FileStatusIcon status={f.status} />
-                <span className="gm-file-name" title={f.file}>{f.file}</span>
-                <FileStatusBadge status={f.status} />
-                <button
-                  className="gm-icon-btn"
-                  onClick={() => onStageFiles([f.file])}
-                  title="Stage file"
+            unstagedFiles.map((f) => {
+              const isActive = selectedDiffTarget?.file === f.file && selectedDiffTarget.staged === false;
+              return (
+                <div
+                  key={`unstaged:${f.file}`}
+                  className={`gm-file-item${isActive ? " active" : ""}`}
+                  onClick={() => onSelectDiffFile(f.file, false)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onSelectDiffFile(f.file, false);
+                    }
+                  }}
                 >
-                  <Plus size={12} />
-                </button>
-              </div>
-            ))
+                  <label className="gm-file-checkbox" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedFiles.has(`unstaged:${f.file}`)}
+                      onChange={() => toggleFileSelection(`unstaged:${f.file}`)}
+                    />
+                  </label>
+                  <FileStatusIcon status={f.status} />
+                  <span className="gm-file-name" title={f.file}>{f.file}</span>
+                  <FileStatusBadge status={f.status} />
+                  <button
+                    className="gm-icon-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onStageFiles([f.file]);
+                    }}
+                    title="Stage file"
+                  >
+                    <Plus size={12} />
+                  </button>
+                </div>
+              );
+            })
           )}
         </div>
       </div>
@@ -1074,43 +1135,69 @@ function ChangesPanel({
           {stagedFiles.length === 0 ? (
             <div className="gm-empty">No staged changes</div>
           ) : (
-            stagedFiles.map((f) => (
-              <div key={`staged:${f.file}`} className="gm-file-item staged">
-                <label className="gm-file-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={selectedFiles.has(`staged:${f.file}`)}
-                    onChange={() => toggleFileSelection(`staged:${f.file}`)}
-                  />
-                </label>
-                <FileStatusIcon status={f.status} />
-                <span className="gm-file-name" title={f.file}>{f.file}</span>
-                <FileStatusBadge status={f.status} />
-                <button
-                  className="gm-icon-btn"
-                  onClick={() => onUnstageFiles([f.file])}
-                  title="Unstage file"
+            stagedFiles.map((f) => {
+              const isActive = selectedDiffTarget?.file === f.file && selectedDiffTarget.staged === true;
+              return (
+                <div
+                  key={`staged:${f.file}`}
+                  className={`gm-file-item staged${isActive ? " active" : ""}`}
+                  onClick={() => onSelectDiffFile(f.file, true)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onSelectDiffFile(f.file, true);
+                    }
+                  }}
                 >
-                  <X size={12} />
-                </button>
-              </div>
-            ))
+                  <label className="gm-file-checkbox" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedFiles.has(`staged:${f.file}`)}
+                      onChange={() => toggleFileSelection(`staged:${f.file}`)}
+                    />
+                  </label>
+                  <FileStatusIcon status={f.status} />
+                  <span className="gm-file-name" title={f.file}>{f.file}</span>
+                  <FileStatusBadge status={f.status} />
+                  <button
+                    className="gm-icon-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onUnstageFiles([f.file]);
+                    }}
+                    title="Unstage file"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              );
+            })
           )}
         </div>
       </div>
 
       {/* Diff Viewer */}
-      {unstagedFiles.length > 0 && (
+      {(selectedDiffTarget || loadingChangeDiff || changeDiff || changeDiffError) && (
         <div className="gm-diff-section">
-          <button
-            className="btn btn-sm"
-            onClick={onViewDiff}
-            disabled={loadingChangeDiff}
-          >
-            {loadingChangeDiff ? <Loader2 size={14} className="spin" /> : <FileDiff size={14} />}
-            View Diff
-          </button>
-          {changeDiff && (
+          {selectedDiffTarget && (
+            <div className="gm-diff-target">
+              <FileDiff size={14} />
+              <span>{selectedDiffTarget.staged ? "Staged" : "Unstaged"} diff: </span>
+              <code>{selectedDiffTarget.file}</code>
+            </div>
+          )}
+          {loadingChangeDiff && (
+            <div className="gm-diff-loading">
+              <Loader2 size={16} className="spin" />
+              Loading diff...
+            </div>
+          )}
+          {changeDiffError && !loadingChangeDiff && (
+            <div className="gm-diff-error">{changeDiffError}</div>
+          )}
+          {changeDiff && !loadingChangeDiff && (
             <div className="gm-diff-viewer">
               {changeDiff.stat && <pre className="gm-diff-stat">{changeDiff.stat}</pre>}
               <pre className="gm-diff-patch">{changeDiff.patch}</pre>

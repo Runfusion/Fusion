@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } 
 import express from "express";
 import http from "node:http";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -7325,6 +7325,71 @@ describe("Git Management endpoints", () => {
         expect(res.body).toHaveProperty("stat");
         expect(res.body).toHaveProperty("patch");
       }
+    });
+  });
+
+  describe("GET /git/diff/file", () => {
+    const resetGitRepo = () => {
+      const { headSha } = getSharedGitTestRepo();
+      execFileSync("git", ["-C", gitRepoDir, "reset", "--hard", headSha], { stdio: "pipe" });
+      execFileSync("git", ["-C", gitRepoDir, "clean", "-fd"], { stdio: "pipe" });
+    };
+
+    beforeEach(() => {
+      resetGitRepo();
+    });
+
+    afterEach(() => {
+      resetGitRepo();
+    });
+
+    it("returns unstaged diff for a specific file", async () => {
+      const readmePath = join(gitRepoDir, "README.md");
+      const original = readFileSync(readmePath, "utf-8");
+      const marker = `\nunstaged-diff-${Date.now()}\n`;
+      writeFileSync(readmePath, `${original}${marker}`);
+
+      const res = await GET(buildApp(), "/api/git/diff/file?path=README.md&staged=false");
+
+      expect(res.status).toBe(200);
+      expect(res.body.patch).toContain(marker.trim());
+      expect(res.body.patch).toContain("diff --git a/README.md b/README.md");
+    });
+
+    it("returns synthetic unstaged diff for untracked files", async () => {
+      const untrackedFile = `untracked-${Date.now()}.txt`;
+      const untrackedPath = join(gitRepoDir, untrackedFile);
+      writeFileSync(untrackedPath, "hello untracked\n");
+
+      const res = await GET(buildApp(), `/api/git/diff/file?path=${encodeURIComponent(untrackedFile)}&staged=false`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.patch).toContain(`diff --git a/${untrackedFile} b/${untrackedFile}`);
+      expect(res.body.patch).toContain("hello untracked");
+    });
+
+    it("returns staged diff for a specific file", async () => {
+      const readmePath = join(gitRepoDir, "README.md");
+      const original = readFileSync(readmePath, "utf-8");
+      const marker = `\nstaged-diff-${Date.now()}\n`;
+      writeFileSync(readmePath, `${original}${marker}`);
+      execFileSync("git", ["-C", gitRepoDir, "add", "README.md"], { stdio: "pipe" });
+
+      const res = await GET(buildApp(), "/api/git/diff/file?path=README.md&staged=true");
+
+      expect(res.status).toBe(200);
+      expect(res.body.patch).toContain(marker.trim());
+      expect(res.body.patch).toContain("diff --git a/README.md b/README.md");
+    });
+
+    it("returns 400 for missing or invalid query params", async () => {
+      const missingPath = await GET(buildApp(), "/api/git/diff/file?staged=false");
+      expect(missingPath.status).toBe(400);
+      expect(missingPath.body.error).toContain("path query parameter is required");
+
+      const invalidStaged = await GET(buildApp(), "/api/git/diff/file?path=README.md&staged=maybe");
+      expect(invalidStaged.status).toBe(400);
+      expect(invalidStaged.body.error).toContain("staged query parameter must be 'true' or 'false'");
     });
   });
 

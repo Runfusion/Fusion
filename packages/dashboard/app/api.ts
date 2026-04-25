@@ -1596,6 +1596,14 @@ export function fetchUnstagedDiff(projectId?: string): Promise<{ stat: string; p
   return api<{ stat: string; patch: string }>(withProjectId("/git/diff", projectId));
 }
 
+/** Fetch diff for a specific file in staged or unstaged mode */
+export function fetchGitFileDiff(path: string, staged: boolean, projectId?: string): Promise<{ stat: string; patch: string }> {
+  const params = new URLSearchParams();
+  params.set("path", path);
+  params.set("staged", String(staged));
+  return api<{ stat: string; patch: string }>(withProjectId(`/git/diff/file?${params.toString()}`, projectId));
+}
+
 /** Fetch file changes (staged and unstaged) */
 export function fetchFileChanges(projectId?: string): Promise<GitFileChange[]> {
   return api<GitFileChange[]>(withProjectId("/git/changes", projectId));

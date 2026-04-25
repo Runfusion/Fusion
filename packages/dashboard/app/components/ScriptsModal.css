@@ -2019,6 +2019,7 @@
   border-bottom: 1px solid rgba(255, 255, 255, 0.03);
   font-size: 13px;
   transition: background var(--transition-fast);
+  cursor: pointer;
 }
 
 .gm-file-item:last-child {
@@ -2031,6 +2032,15 @@
 
 .gm-file-item.staged {
   background: rgba(63, 185, 80, 0.03);
+}
+
+.gm-file-item.active {
+  background: var(--card-hover);
+}
+
+.gm-file-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
 }
 
 .gm-file-checkbox {
@@ -2103,6 +2113,20 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+}
+
+.gm-diff-target {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.gm-diff-target code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
 }
 
 .changed-files-diff-section {
