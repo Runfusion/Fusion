@@ -273,8 +273,8 @@
   color: var(--todo);
 }
 
-/* Mobile styles for mobile-project-switch */
-@media (max-width: 768px) {
+/* Compact styles for mobile-project-switch (mobile + tablet) */
+@media (max-width: 768px), (min-width: 769px) and (max-width: 1024px) {
   .mobile-project-switch {
     display: inline-flex;
     align-items: center;

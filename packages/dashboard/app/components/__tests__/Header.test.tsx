@@ -972,7 +972,7 @@ describe("Header", () => {
       expect(screen.queryByTestId("mobile-project-switch-trigger")).toBeNull();
     });
 
-    it("does not render mobile project switch trigger on tablet", () => {
+    it("renders mobile project switch trigger on tablet with 2+ projects", () => {
       const projects = [
         { id: "1", name: "Project One", path: "/path/one", status: "active" as const },
         { id: "2", name: "Project Two", path: "/path/two", status: "active" as const },
@@ -982,7 +982,7 @@ describe("Header", () => {
         currentProject: projects[0],
         onSelectProject: vi.fn(),
       }, "tablet");
-      expect(screen.queryByTestId("mobile-project-switch-trigger")).toBeNull();
+      expect(screen.getByTestId("mobile-project-switch-trigger")).toBeDefined();
     });
 
     it("renders mobile project switch trigger on mobile with 2+ projects", () => {
@@ -1008,6 +1008,69 @@ describe("Header", () => {
         onSelectProject: vi.fn(),
       }, "mobile");
       expect(screen.queryByTestId("mobile-project-switch-trigger")).toBeNull();
+    });
+
+    it("closes compact project switch dropdown on Escape in tablet mode", async () => {
+      const projects = [
+        { id: "1", name: "Project One", path: "/path/one", status: "active" as const },
+        { id: "2", name: "Project Two", path: "/path/two", status: "paused" as const },
+      ];
+      renderHeader({
+        projects,
+        currentProject: projects[0],
+        onSelectProject: vi.fn(),
+      }, "tablet");
+
+      fireEvent.click(screen.getByTestId("mobile-project-switch-trigger"));
+      expect(screen.getByTestId("mobile-project-switch-dropdown")).toBeDefined();
+
+      fireEvent.keyDown(document, { key: "Escape" });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("mobile-project-switch-dropdown")).toBeNull();
+      });
+    });
+
+    it("closes compact project switch dropdown on outside click in tablet mode", async () => {
+      const projects = [
+        { id: "1", name: "Project One", path: "/path/one", status: "active" as const },
+        { id: "2", name: "Project Two", path: "/path/two", status: "paused" as const },
+      ];
+      renderHeader({
+        projects,
+        currentProject: projects[0],
+        onSelectProject: vi.fn(),
+      }, "tablet");
+
+      fireEvent.click(screen.getByTestId("mobile-project-switch-trigger"));
+      expect(screen.getByTestId("mobile-project-switch-dropdown")).toBeDefined();
+
+      fireEvent.mouseDown(document.body);
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("mobile-project-switch-dropdown")).toBeNull();
+      });
+    });
+
+    it("closes compact project switch dropdown after selecting a project in tablet mode", async () => {
+      const projects = [
+        { id: "1", name: "Project One", path: "/path/one", status: "active" as const },
+        { id: "2", name: "Project Two", path: "/path/two", status: "paused" as const },
+      ];
+      const onSelectProject = vi.fn();
+      renderHeader({
+        projects,
+        currentProject: projects[0],
+        onSelectProject,
+      }, "tablet");
+
+      fireEvent.click(screen.getByTestId("mobile-project-switch-trigger"));
+      fireEvent.click(screen.getByTestId("mobile-project-switch-item-2"));
+
+      expect(onSelectProject).toHaveBeenCalledWith(projects[1]);
+      await waitFor(() => {
+        expect(screen.queryByTestId("mobile-project-switch-dropdown")).toBeNull();
+      });
     });
   });
 
