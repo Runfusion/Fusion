@@ -165,9 +165,12 @@ vi.mock("../../components/CustomModelDropdown", () => ({
 }));
 
 // Mock state holders for dynamic mocking
+const mockRefreshProjects = vi.fn(async () => {});
+
 const mockProjectsState = {
   projects: [] as any[],
   loading: false,
+  error: null as string | null,
 };
 
 const DEFAULT_PROJECT_ID = "proj_123";
@@ -185,8 +188,8 @@ vi.mock("../../hooks/useProjects", () => ({
   useProjects: () => ({
     projects: mockProjectsState.projects,
     loading: mockProjectsState.loading,
-    error: null,
-    refresh: vi.fn(),
+    error: mockProjectsState.error,
+    refresh: mockRefreshProjects,
     register: vi.fn(),
     update: vi.fn(),
     unregister: vi.fn(),
@@ -258,6 +261,9 @@ beforeEach(() => {
   // Reset mock states
   mockProjectsState.projects = [];
   mockProjectsState.loading = false;
+  mockProjectsState.error = null;
+  mockRefreshProjects.mockReset();
+  mockRefreshProjects.mockImplementation(async () => {});
   mockCurrentProjectState.currentProject = { id: DEFAULT_PROJECT_ID, name: "Test Project", path: "/test", status: "active", isolationMode: "in-process", createdAt: "", updatedAt: "" };
   mockCurrentProjectState.setCurrentProject.mockClear();
   mockCurrentProjectState.clearCurrentProject.mockClear();
@@ -290,6 +296,51 @@ beforeEach(() => {
   mockGetSkippedSteps.mockReturnValue([]);
   mockGetStepData.mockReset();
   mockGetStepData.mockReturnValue(null);
+});
+
+describe("App backend-unreachable first-run flow", () => {
+  it("renders backend connection error page instead of setup wizard when projects fetch fails during first-run", async () => {
+    mockProjectsState.projects = [];
+    mockProjectsState.error = "Backend unavailable";
+    mockCurrentProjectState.currentProject = null;
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Can't reach the Fusion backend")).toBeTruthy();
+    });
+
+    expect(screen.getByRole("button", { name: "Retry Connection" })).toBeTruthy();
+    expect(screen.queryByText("Welcome to Fusion")).toBeNull();
+  });
+
+  it("retries project loading and resumes setup wizard flow after connectivity recovers", async () => {
+    mockProjectsState.projects = [];
+    mockProjectsState.error = "Backend unavailable";
+    mockCurrentProjectState.currentProject = null;
+
+    mockRefreshProjects.mockImplementation(async () => {
+      mockProjectsState.error = null;
+    });
+
+    const { rerender } = render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Retry Connection" })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry Connection" }));
+
+    await waitFor(() => {
+      expect(mockRefreshProjects).toHaveBeenCalledTimes(1);
+    });
+
+    rerender(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Welcome to Fusion")).toBeTruthy();
+    });
+  });
 });
 
 describe("App mailbox unread count", () => {

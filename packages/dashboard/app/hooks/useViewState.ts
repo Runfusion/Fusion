@@ -32,6 +32,7 @@ function normalizeTaskView(value: TaskView): TaskView {
 
 interface UseViewStateOptions {
   projectsLoading: boolean;
+  projectsError: string | null;
   currentProjectLoading: boolean;
   currentProject: ProjectInfo | null;
   projectsLength: number;
@@ -53,6 +54,7 @@ export interface UseViewStateResult {
 export function useViewState(options: UseViewStateOptions): UseViewStateResult {
   const {
     projectsLoading,
+    projectsError,
     currentProjectLoading,
     currentProject,
     projectsLength,
@@ -112,6 +114,7 @@ export function useViewState(options: UseViewStateOptions): UseViewStateResult {
   useEffect(() => {
     if (projectsLoading || currentProjectLoading) return;
     if (setupWizardOpen) return;
+    if (projectsError) return;
     if (projectsLength > 0 || currentProject) return;
 
     const timer = window.setTimeout(() => {
@@ -121,6 +124,7 @@ export function useViewState(options: UseViewStateOptions): UseViewStateResult {
     return () => window.clearTimeout(timer);
   }, [
     projectsLoading,
+    projectsError,
     projectsLength,
     currentProjectLoading,
     currentProject,

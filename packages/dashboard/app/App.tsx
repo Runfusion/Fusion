@@ -8,6 +8,7 @@ import { MissionManager } from "./components/MissionManager";
 import { MailboxView } from "./components/MailboxView";
 import { PageErrorBoundary } from "./components/ErrorBoundary";
 import { AppModals } from "./components/AppModals";
+import { BackendConnectionErrorPage } from "./components/BackendConnectionErrorPage";
 import { DashboardLoader, type DashboardLoaderStage } from "./components/DashboardLoader";
 import { ExecutorStatusBar } from "./components/ExecutorStatusBar";
 import { SessionNotificationBanner } from "./components/SessionNotificationBanner";
@@ -95,7 +96,7 @@ function AppInner() {
   }, []);
 
   // Project management hooks - MUST be called before any conditional logic
-  const { projects, loading: projectsLoading, refresh: refreshProjects } = useProjects();
+  const { projects, loading: projectsLoading, error: projectsError, refresh: refreshProjects } = useProjects();
   const { nodes } = useNodes();
 
   // Node context for local/remote node switching - must be called before useCurrentProject
@@ -164,6 +165,7 @@ function AppInner() {
   // View state must be defined before useTasks since useTasks depends on taskView for SSE gating
   const { viewMode, setViewMode, taskView, handleChangeTaskView } = useViewState({
     projectsLoading,
+    projectsError,
     currentProjectLoading,
     currentProject,
     projectsLength: projects.length,
@@ -279,6 +281,7 @@ function AppInner() {
 
   // Nodes management is an overlay view (not a modal), so it stays local to App.
   const [nodesOpen, setNodesOpen] = useState(false);
+  const [retryingProjects, setRetryingProjects] = useState(false);
   const [missionResumeSessionId, setMissionResumeSessionId] = useState<string | undefined>(undefined);
   const [missionTargetId, setMissionTargetId] = useState<string | undefined>(undefined);
   const [milestoneSliceResumeSessionId, setMilestoneSliceResumeSessionId] = useState<string | undefined>(undefined);
@@ -431,6 +434,15 @@ function AppInner() {
     setNodesOpen((prev) => !prev);
   }, [nodesEnabled]);
 
+  const handleRetryProjects = useCallback(async () => {
+    setRetryingProjects(true);
+    try {
+      await refreshProjects();
+    } finally {
+      setRetryingProjects(false);
+    }
+  }, [refreshProjects]);
+
   const handleOpenMission = useCallback((missionId: string) => {
     setMissionTargetId(missionId);
     setMissionResumeSessionId(undefined);
@@ -463,8 +475,25 @@ function AppInner() {
     }
   }, [bgDismiss, sessionsNeedingInput]);
 
+  const showBackendConnectionErrorPage =
+    !projectsLoading &&
+    !currentProjectLoading &&
+    projects.length === 0 &&
+    !currentProject &&
+    Boolean(projectsError);
+
   // Render main content based on view mode
   const renderMainContent = () => {
+    if (showBackendConnectionErrorPage) {
+      return (
+        <BackendConnectionErrorPage
+          errorMessage={projectsError ?? "Failed to fetch projects"}
+          isRetrying={retryingProjects}
+          onRetry={handleRetryProjects}
+        />
+      );
+    }
+
     if (nodesOpen) {
       return (
         <div className="nodes-management-overlay">

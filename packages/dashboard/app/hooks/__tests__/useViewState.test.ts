@@ -17,6 +17,7 @@ const PROJECT: ProjectInfo = {
 function createOptions(overrides: Partial<Parameters<typeof useViewState>[0]> = {}): Parameters<typeof useViewState>[0] {
   return {
     projectsLoading: false,
+    projectsError: null,
     currentProjectLoading: false,
     currentProject: null,
     projectsLength: 1,
@@ -185,6 +186,29 @@ describe("useViewState", () => {
 
     // Should NOT open setup wizard when projects already exist
     // The dashboard should show overview mode to let user pick a project
+    expect(openSetupWizard).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("does NOT call openSetupWizard when the initial projects fetch failed", async () => {
+    vi.useFakeTimers();
+    const openSetupWizard = vi.fn();
+
+    renderHook(() =>
+      useViewState(
+        createOptions({
+          projectsLength: 0,
+          currentProject: null,
+          projectsError: "Failed to fetch projects",
+          openSetupWizard,
+        }),
+      ),
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+
     expect(openSetupWizard).not.toHaveBeenCalled();
     vi.useRealTimers();
   });

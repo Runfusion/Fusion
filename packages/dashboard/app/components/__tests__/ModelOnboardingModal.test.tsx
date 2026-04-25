@@ -2267,9 +2267,11 @@ describe("ModelOnboardingModal", () => {
         expect(screen.getByText("Set Up AI")).toBeTruthy();
       });
 
-      // The model dropdown should be pre-populated with the saved default
-      const dropdown = screen.getByTestId("mock-model-dropdown") as HTMLSelectElement;
-      expect(dropdown.value).toBe("anthropic/claude-sonnet-4-5");
+      // Wait for async model/settings hydration before asserting selected value
+      const dropdown = await screen.findByTestId("mock-model-dropdown") as HTMLSelectElement;
+      await waitFor(() => {
+        expect(dropdown.value).toBe("anthropic/claude-sonnet-4-5");
+      });
     });
 
     it("leaves selectedModel empty when no default is configured in global settings", async () => {
@@ -2285,7 +2287,7 @@ describe("ModelOnboardingModal", () => {
       });
 
       // The model dropdown should be empty
-      const dropdown = screen.getByTestId("mock-model-dropdown") as HTMLSelectElement;
+      const dropdown = await screen.findByTestId("mock-model-dropdown") as HTMLSelectElement;
       expect(dropdown.value).toBe("");
     });
 
@@ -2300,7 +2302,7 @@ describe("ModelOnboardingModal", () => {
       });
 
       // The modal should still render with empty dropdown
-      const dropdown = screen.getByTestId("mock-model-dropdown") as HTMLSelectElement;
+      const dropdown = await screen.findByTestId("mock-model-dropdown") as HTMLSelectElement;
       expect(dropdown.value).toBe("");
     });
 
