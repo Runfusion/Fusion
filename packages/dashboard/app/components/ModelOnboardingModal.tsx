@@ -577,6 +577,7 @@ export function ModelOnboardingModal({
   const [ghCliStatus, setGhCliStatus] = useState<GhCliStatus | undefined>(undefined);
   const [authLoading, setAuthLoading] = useState(true);
   const [authActionInProgress, setAuthActionInProgress] = useState<string | null>(null);
+  const [loginInstructions, setLoginInstructions] = useState<Record<string, string>>({});
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [saving, setSaving] = useState(false);
@@ -685,6 +686,16 @@ export function ModelOnboardingModal({
       const { providers, ghCli } = await fetchAuthStatus();
       setAuthProviders(providers);
       setGhCliStatus(ghCli);
+      setLoginInstructions((prev) => {
+        const next: Record<string, string> = {};
+        for (const [providerId, instructions] of Object.entries(prev)) {
+          const provider = providers.find((candidate) => candidate.id === providerId);
+          if (provider && !provider.authenticated) {
+            next[providerId] = instructions;
+          }
+        }
+        return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+      });
       // Remove from skippedProviders when a provider becomes authenticated
       setSkippedProviders((prev) => {
         const updated = { ...prev };
@@ -961,13 +972,25 @@ export function ModelOnboardingModal({
         return prev;
       });
 
+      setLoginInstructions((prev) => {
+        if (!(providerId in prev)) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
+
       // Set outcome to pending
       setLoginOutcomes((prev) => ({ ...prev, [providerId]: "pending" }));
       setAuthActionInProgress(providerId);
       pollCountRef.current = 0;
 
       try {
-        const { url } = await loginProvider(providerId);
+        const { url, instructions } = await loginProvider(providerId);
+        if (instructions?.trim()) {
+          setLoginInstructions((prev) => ({ ...prev, [providerId]: instructions }));
+        }
         window.open(appendTokenQuery(url), "_blank");
 
         // Poll for auth completion
@@ -982,6 +1005,14 @@ export function ModelOnboardingModal({
             }
             setAuthActionInProgress(null);
             setLoginOutcomes((prev) => ({ ...prev, [providerId]: "timeout" }));
+            setLoginInstructions((prev) => {
+              if (!(providerId in prev)) {
+                return prev;
+              }
+              const next = { ...prev };
+              delete next[providerId];
+              return next;
+            });
             addToast("Login timed out. Please try again.", "warning");
             return;
           }
@@ -998,6 +1029,14 @@ export function ModelOnboardingModal({
               }
               setAuthActionInProgress(null);
               setLoginOutcomes((prev) => ({ ...prev, [providerId]: "success" }));
+              setLoginInstructions((prev) => {
+                if (!(providerId in prev)) {
+                  return prev;
+                }
+                const next = { ...prev };
+                delete next[providerId];
+                return next;
+              });
               if (providerId === "github") {
                 setGitHubSkippedState(false);
               }
@@ -1021,6 +1060,14 @@ export function ModelOnboardingModal({
           setLoginOutcomes((prev) => ({ ...prev, [providerId]: "failed" }));
         }
         setAuthActionInProgress(null);
+        setLoginInstructions((prev) => {
+          if (!(providerId in prev)) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[providerId];
+          return next;
+        });
       }
     },
     [addToast, setGitHubSkippedState],
@@ -1035,6 +1082,14 @@ export function ModelOnboardingModal({
     setAuthActionInProgress(null);
     pollCountRef.current = 0;
     setLoginOutcomes((prev) => ({ ...prev, [providerId]: "cancelled" }));
+    setLoginInstructions((prev) => {
+      if (!(providerId in prev)) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[providerId];
+      return next;
+    });
   }, []);
 
   // API key input update handler
@@ -1633,6 +1688,14 @@ export function ModelOnboardingModal({
             </button>
           )}
         </div>
+        {authActionInProgress === provider.id && loginInstructions[provider.id] && (
+          <p
+            className="auth-login-instructions"
+            data-testid={`onboarding-login-instructions-${provider.id}`}
+          >
+            {loginInstructions[provider.id]}
+          </p>
+        )}
         {loginOutcomes[provider.id] === "timeout" && authActionInProgress !== provider.id && (
           <p className="onboarding-helper-text onboarding-inline-feedback">
             Login timed out. Please try again.

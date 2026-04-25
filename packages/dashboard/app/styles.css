@@ -1942,6 +1942,17 @@ input[type="range"]:focus-visible {
   border-top: 1px solid var(--border);
   margin-top: 8px;
 }
+.auth-login-instructions {
+  margin-top: var(--space-sm);
+  margin-bottom: 0;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid color-mix(in srgb, var(--color-info) 35%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-info) 8%, transparent);
+  color: var(--text);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
 .auth-apikey-section {
   display: flex;
   flex-direction: column;

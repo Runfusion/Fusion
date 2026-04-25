@@ -2928,6 +2928,64 @@ describe("ModelOnboardingModal", () => {
       });
     });
 
+    it("shows OAuth login instructions during pending auth and clears them on cancel", async () => {
+      mockLoginProvider.mockResolvedValueOnce({
+        url: "https://auth.example.com/login",
+        instructions: "Use code WXYZ-9876 to finish authentication.",
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Login")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByText("Login"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("onboarding-login-instructions-anthropic").textContent).toContain("WXYZ-9876");
+      });
+
+      fireEvent.click(screen.getByText("Cancel"));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("onboarding-login-instructions-anthropic")).toBeNull();
+      });
+    });
+
+    it("shows GitHub login instructions during connect attempts", async () => {
+      mockFetchAuthStatus.mockImplementation(() => Promise.resolve({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+          { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+        ],
+      }));
+      mockLoginProvider.mockImplementation((providerId: string) => {
+        if (providerId === "github") {
+          return Promise.resolve({
+            url: "https://github.com/login/device",
+            instructions: "Enter device code GH-2469 on github.com/login/device.",
+          });
+        }
+        return Promise.resolve({ url: "https://auth.example.com/login" });
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+      await navigateToGitHubStep();
+
+      fireEvent.click(screen.getByRole("button", { name: /Connect/ }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("onboarding-login-instructions-github").textContent).toContain("GH-2469");
+      });
+
+      fireEvent.click(screen.getByText("Cancel"));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("onboarding-login-instructions-github")).toBeNull();
+      });
+    });
+
     it("login failure shows error toast and sets outcome to failed", async () => {
       mockLoginProvider.mockRejectedValueOnce(new Error("Login failed: Invalid credentials"));
 

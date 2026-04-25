@@ -176,6 +176,7 @@ export function SettingsModal({
   const [authProviders, setAuthProviders] = useState<AuthProvider[]>([]);
   const [authLoading, setAuthLoading] = useState(false);
   const [authActionInProgress, setAuthActionInProgress] = useState<string | null>(null);
+  const [loginInstructions, setLoginInstructions] = useState<Record<string, string>>({});
   const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
   const [apiKeyErrors, setApiKeyErrors] = useState<Record<string, string>>({});
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -288,6 +289,16 @@ export function SettingsModal({
     try {
       const { providers } = await fetchAuthStatus();
       setAuthProviders(providers);
+      setLoginInstructions((prev) => {
+        const next: Record<string, string> = {};
+        for (const [providerId, instructions] of Object.entries(prev)) {
+          const provider = providers.find((candidate) => candidate.id === providerId);
+          if (provider && !provider.authenticated) {
+            next[providerId] = instructions;
+          }
+        }
+        return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+      });
     } catch {
       // Silently fail — auth may not be configured
     }
@@ -386,8 +397,20 @@ export function SettingsModal({
 
   const handleLogin = useCallback(async (providerId: string) => {
     setAuthActionInProgress(providerId);
+    setLoginInstructions((prev) => {
+      if (!(providerId in prev)) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[providerId];
+      return next;
+    });
+
     try {
-      const { url } = await loginProvider(providerId);
+      const { url, instructions } = await loginProvider(providerId);
+      if (instructions?.trim()) {
+        setLoginInstructions((prev) => ({ ...prev, [providerId]: instructions }));
+      }
       window.open(appendTokenQuery(url), "_blank");
 
       // Poll for auth completion every 2 seconds
@@ -402,6 +425,14 @@ export function SettingsModal({
               pollIntervalRef.current = null;
             }
             setAuthActionInProgress(null);
+            setLoginInstructions((prev) => {
+              if (!(providerId in prev)) {
+                return prev;
+              }
+              const next = { ...prev };
+              delete next[providerId];
+              return next;
+            });
             addToast("Login successful", "success");
           }
         } catch {
@@ -411,6 +442,14 @@ export function SettingsModal({
     } catch (err) {
       addToast(getErrorMessage(err) || "Login failed", "error");
       setAuthActionInProgress(null);
+      setLoginInstructions((prev) => {
+        if (!(providerId in prev)) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
     }
   }, [addToast]);
 
@@ -3256,6 +3295,14 @@ export function SettingsModal({
                               >
                                 Login
                               </button>
+                            )}
+                            {loginInstructions[provider.id] && (
+                              <p
+                                className="auth-login-instructions"
+                                data-testid={`auth-login-instructions-${provider.id}`}
+                              >
+                                {loginInstructions[provider.id]}
+                              </p>
                             )}
                           </div>
                         )}

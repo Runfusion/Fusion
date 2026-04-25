@@ -637,6 +637,12 @@
   color: var(--text-muted);
 }
 
+/* The mobile-only "New Chat" footer button is hidden on desktop; the
+   desktop layout uses the .chat-sidebar-header button instead. */
+.chat-sidebar-footer {
+  display: none;
+}
+
 /* === Mobile: one pane at a time =========================================
    Sidebar (session list) and thread are siblings of .chat-view. On mobile
    we show whichever one is "active" full-width: when the sidebar is
@@ -656,5 +662,26 @@
      viewport. Adjacent-sibling selector keeps logic in CSS only. */
   .chat-sidebar:not(.chat-sidebar--hidden) + .chat-thread {
     display: none;
+  }
+
+  /* On mobile, the "New Chat" affordance moves to a full-width pinned
+     footer. The desktop top-header button is hidden to free the screen
+     space for the search field and session list. */
+  .chat-sidebar-header {
+    display: none;
+  }
+
+  .chat-sidebar-footer {
+    display: block;
+    padding: var(--space-sm) var(--space-md);
+    padding-bottom: max(var(--space-sm), env(safe-area-inset-bottom, 0));
+    border-top: 1px solid var(--border);
+    background: var(--bg-secondary);
+  }
+
+  .chat-sidebar-footer .chat-sidebar-footer-btn {
+    width: 100%;
+    justify-content: center;
+    min-height: 40px;
   }
 }
