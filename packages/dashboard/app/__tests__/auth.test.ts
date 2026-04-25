@@ -73,8 +73,7 @@ describe("installAuthFetch", () => {
     window.localStorage.clear();
     window.history.replaceState({}, "", "/");
     window.fetch = originalFetch;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test cleanup for sentinel
-    delete (window as any).__fnAuthFetchInstalled;
+    delete (window as Window & { __fnAuthFetchInstalled?: boolean }).__fnAuthFetchInstalled;
   });
 
   it("injects Authorization only for same-origin /api requests", async () => {

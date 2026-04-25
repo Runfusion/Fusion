@@ -5,6 +5,7 @@ import type { LogEntry } from "./log-ring-buffer.js";
 // The engine's createLogger() prefixes messages with a null-byte-delimited
 // severity marker so we can recover the original intent when routed via
 // console.error (which is the transport it uses).
+// eslint-disable-next-line no-control-regex -- marker is NUL-delimited by design
 const LOG_LEVEL_MARKER_REGEX = /^\u0000fnlvl=(info|warn|error)\u0000\s*/;
 
 /**

@@ -8944,7 +8944,7 @@ describe("Planning Mode Routes", () => {
           question: "What is your preference?",
           description: "Please choose",
         };
-        // @ts-ignore - accessing internal state for testing
+        // @ts-expect-error - accessing internal state for testing
         session!.currentQuestion = mockQuestion;
 
         // Broadcast a complete event after a short delay so the stream ends

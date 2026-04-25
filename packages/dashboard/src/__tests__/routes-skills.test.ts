@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import type { Task } from "@fusion/core";
