@@ -100,7 +100,7 @@ function parseTimestampToMs(value?: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function getTimeIndicatorStartMs(task: Task): number | null {
+function getInProgressTimeIndicatorStartMs(task: Task): number | null {
   const timestamp = task.columnMovedAt ?? task.updatedAt ?? task.createdAt;
   const parsed = parseTimestampToMs(timestamp);
   if (parsed == null) return null;
@@ -109,6 +109,25 @@ function getTimeIndicatorStartMs(task: Task): number | null {
   if (parsed > now) return null;
 
   return parsed;
+}
+
+function getDoneCompletionMs(task: Task): number | null {
+  const completionMs = parseTimestampToMs(task.columnMovedAt ?? task.updatedAt);
+  if (completionMs == null) return null;
+
+  const now = Date.now();
+  if (completionMs > now) return null;
+
+  return completionMs;
+}
+
+function getDoneProcessingStartMs(task: Task, completionMs: number): number | null {
+  const startCandidates = [task.updatedAt, task.createdAt]
+    .map(parseTimestampToMs)
+    .filter((value): value is number => value != null);
+
+  const validStart = startCandidates.find((startMs) => startMs <= completionMs);
+  return validStart ?? null;
 }
 
 function formatElapsedDuration(elapsedMs: number): string {
@@ -604,7 +623,7 @@ function TaskCardComponent({
       return;
     }
 
-    const startMs = getTimeIndicatorStartMs(task);
+    const startMs = getInProgressTimeIndicatorStartMs(task);
     if (startMs == null) {
       return;
     }
@@ -622,20 +641,46 @@ function TaskCardComponent({
       return null;
     }
 
-    const startMs = getTimeIndicatorStartMs(task);
+    if (task.column === "in-progress") {
+      const startMs = getInProgressTimeIndicatorStartMs(task);
+      if (startMs == null) {
+        return null;
+      }
+
+      const elapsedLabel = formatElapsedDuration(timeIndicatorNowMs - startMs);
+      if (!elapsedLabel) {
+        return null;
+      }
+
+      return {
+        label: elapsedLabel,
+        title: `In progress since ${new Date(startMs).toLocaleString()}`,
+        ariaLabel: `Elapsed time ${elapsedLabel}. In progress since ${new Date(startMs).toLocaleString()}`,
+      };
+    }
+
+    // Done cards should report a fixed processing duration (start → completion),
+    // not elapsed time since the task entered the done column.
+    const completionMs = getDoneCompletionMs(task);
+    if (completionMs == null) {
+      return null;
+    }
+
+    const startMs = getDoneProcessingStartMs(task, completionMs);
     if (startMs == null) {
       return null;
     }
 
-    const referenceNowMs = task.column === "in-progress" ? timeIndicatorNowMs : Date.now();
-    const elapsedLabel = formatElapsedDuration(referenceNowMs - startMs);
+    const elapsedLabel = formatElapsedDuration(completionMs - startMs);
     if (!elapsedLabel) {
       return null;
     }
 
+    const completedAt = new Date(completionMs).toLocaleString();
     return {
       label: elapsedLabel,
-      title: `Since ${new Date(startMs).toLocaleString()}`,
+      title: `Processing took ${elapsedLabel}. Completed ${completedAt}`,
+      ariaLabel: `Completed processing duration ${elapsedLabel}. Completed ${completedAt}`,
     };
   }, [task.column, task.columnMovedAt, task.updatedAt, task.createdAt, timeIndicatorNowMs]);
 
@@ -1257,7 +1302,7 @@ function TaskCardComponent({
             <span
               className="card-time-indicator"
               title={timeIndicator.title}
-              aria-label={`Elapsed time ${timeIndicator.label}. ${timeIndicator.title}`}
+              aria-label={timeIndicator.ariaLabel}
             >
               <Clock size={12} />
               <span>{timeIndicator.label}</span>
