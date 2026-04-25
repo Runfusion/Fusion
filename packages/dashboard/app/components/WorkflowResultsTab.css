@@ -516,3 +516,11 @@
 [data-theme="light"] .workflow-output-modal-overlay {
   background: rgba(31, 35, 40, 0.5);
 }
+
+@media (max-width: 768px) {
+  /* Workflow results edit toggle: touch target on mobile */
+  .workflow-results-edit-toggle {
+    min-width: 36px;
+    min-height: 36px;
+  }
+}

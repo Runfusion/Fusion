@@ -711,3 +711,11 @@
 @keyframes quick-chat-cursor-blink {
   50% { opacity: 0; }
 }
+
+@media (max-width: 768px) {
+  /* Quick chat send button: touch target on mobile */
+  .quick-chat-panel-input button {
+    min-width: 36px;
+    min-height: 36px;
+  }
+}

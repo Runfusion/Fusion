@@ -4009,32 +4009,13 @@ input[type="range"]:focus-visible {
     min-height: 36px;
   }
 
-  /* Dropdown items and overflow menu actions */
-  .dep-dropdown-item,
-  .mobile-overflow-item,
-  .mobile-overflow-split-toggle,
-  .list-column-dropdown-item {
+  /* Dropdown items touch target — dep-dropdown-item desktop rule lives in styles.css */
+  .dep-dropdown-item {
     min-height: 36px;
   }
 
-  /* Small tappable controls — adequate touch sizing for mobile */
-  .view-toggle-btn,
-  .header-search-clear,
-  .inline-create-toggle,
-  .quick-entry-toggle,
-  .modal-edit-btn,
-  .gm-icon-btn,
-  .activity-log-clear,
-  .terminal-tab-close,
-  .workflow-results-edit-toggle,
-  .agent-tree__toggle,
-  .quick-chat-panel-input button {
-    min-width: 36px;
-    min-height: 36px;
-  }
-
-  /* Document mode toggle: ensure adequate touch target on mobile */
-  .document-mode-toggle {
+  /* Inline create toggle: desktop rule lives in styles.css */
+  .inline-create-toggle {
     min-width: 36px;
     min-height: 36px;
   }
@@ -4071,34 +4052,6 @@ input[type="range"]:focus-visible {
   /* Column count badge: slightly wider on mobile for tapping */
   .column-count {
     min-width: 28px;
-  }
-
-  /* Mobile header: collapsible search and overflow menu */
-  .mobile-search-trigger {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  /* Mobile search expanded - inside header-floating-search container */
-  .mobile-search-expanded {
-    width: 100%;
-  }
-
-  /* Mobile: compact node label, no dropdown */
-  .header-node-selector--mobile {
-    margin-right: var(--space-xs);
-    cursor: default;
-  }
-
-  .header-node-selector--mobile .node-status-indicator {
-    font-size: 11px;
-    padding: 2px var(--space-xs);
-  }
-
-  .header-node-selector--mobile .node-status-indicator__name {
-    max-width: 80px;
-    font-weight: 400;
   }
 
   /* Modal: full-screen on mobile (cross-cutting overlay/modal base chrome) */
@@ -4350,22 +4303,6 @@ input[type="range"]:focus-visible {
   }
 
   .card-delete-btn svg {
-    width: 16px;
-    height: 16px;
-  }
-
-  /* Git Manager remote edit buttons: always visible on mobile (no hover) */
-  .gm-remote-edit-btn {
-    opacity: 1;
-    width: 36px;
-    height: 36px;
-    margin-right: -8px;
-    margin-top: -8px;
-    margin-bottom: -8px;
-    border-radius: var(--radius-md);
-  }
-
-  .gm-remote-edit-btn svg {
     width: 16px;
     height: 16px;
   }

@@ -956,4 +956,10 @@
     height: 32px;
     align-items: center;
   }
+
+  /* Touch target for agent tree toggle */
+  .agent-tree__toggle {
+    min-width: 36px;
+    min-height: 36px;
+  }
 }

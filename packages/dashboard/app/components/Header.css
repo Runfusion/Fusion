@@ -843,6 +843,47 @@
     min-width: unset;
     min-height: unset;
   }
+
+  /* Touch targets for header controls */
+  .view-toggle-btn,
+  .header-search-clear {
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  /* Overflow menu and overflow split-toggle touch targets */
+  .mobile-overflow-item,
+  .mobile-overflow-split-toggle {
+    min-height: 36px;
+  }
+
+  /* Mobile header: collapsible search trigger */
+  .mobile-search-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Mobile search expanded — inside header-floating-search container */
+  .mobile-search-expanded {
+    width: 100%;
+  }
+
+  /* Mobile: compact node label, no dropdown */
+  .header-node-selector--mobile {
+    margin-right: var(--space-xs);
+    cursor: default;
+  }
+
+  .header-node-selector--mobile .node-status-indicator {
+    font-size: 11px;
+    padding: 2px var(--space-xs);
+  }
+
+  .header-node-selector--mobile .node-status-indicator__name {
+    max-width: 80px;
+    font-weight: 400;
+  }
 }
 
 @media (min-width: 769px) and (max-width: 1024px) {

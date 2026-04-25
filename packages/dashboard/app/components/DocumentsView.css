@@ -936,5 +936,11 @@
   .document-card-key-text {
     font-size: 12px;
   }
+
+  /* Document mode toggle: ensure adequate touch target on mobile */
+  .document-mode-toggle {
+    min-width: 36px;
+    min-height: 36px;
+  }
 }
 

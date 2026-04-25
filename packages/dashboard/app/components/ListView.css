@@ -852,5 +852,10 @@
     min-width: 140px;
     flex: 1;
   }
+
+  /* List column dropdown items: touch target on mobile */
+  .list-column-dropdown-item {
+    min-height: 36px;
+  }
 }
 

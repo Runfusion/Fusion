@@ -480,4 +480,12 @@
   }
 }
 
+@media (max-width: 768px) {
+  /* Quick entry toggle: touch target on mobile */
+  .quick-entry-toggle {
+    min-width: 36px;
+    min-height: 36px;
+  }
+}
+
 

@@ -883,6 +883,12 @@
        below the visible area while xterm re-fits. */
     overflow: hidden;
   }
+
+  /* Terminal tab close button: touch target on mobile */
+  .terminal-tab-close {
+    min-width: 36px;
+    min-height: 36px;
+  }
 }
 
 

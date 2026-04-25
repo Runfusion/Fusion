@@ -1357,4 +1357,10 @@
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
+
+  /* Modal edit button: touch target on mobile */
+  .modal-edit-btn {
+    min-width: 36px;
+    min-height: 36px;
+  }
 }
