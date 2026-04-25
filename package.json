@@ -18,6 +18,8 @@
     "dev:ui": "pnpm --filter @fusion/dashboard dev",
     "dev:hmr": "node scripts/dev-hmr.mjs",
     "lint": "eslint .",
+    "sync:fusion-skill": "node scripts/sync-fusion-skill-tools.mjs",
+    "sync:fusion-skill:check": "node scripts/sync-fusion-skill-tools.mjs --check",
     "build": "pnpm -r build",
     "verify:workspace": "pnpm lint && pnpm test && pnpm build",
     "build:exe": "pnpm build && pnpm --filter @runfusion/fusion build:exe",

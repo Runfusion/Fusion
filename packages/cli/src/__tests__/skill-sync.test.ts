@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve, dirname, relative, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const cliRoot = resolve(__dirname, "../..");
@@ -192,6 +193,19 @@ describe("Skill-Extension Sync", () => {
       "utf-8",
     );
     expect(dashboardCli).toContain("/fn");
+  });
+
+  it("SKILL.md tool-categories block matches the sync script output (no drift)", () => {
+    const repoRoot = resolve(cliRoot, "../..");
+    const script = resolve(repoRoot, "scripts/sync-fusion-skill-tools.mjs");
+    const result = spawnSync("node", [script, "--check"], {
+      encoding: "utf-8",
+    });
+    if (result.status !== 0) {
+      throw new Error(
+        `sync-fusion-skill-tools --check failed:\n${result.stderr || result.stdout}`,
+      );
+    }
   });
 
   it("package.json includes skills in pi config and files array", () => {

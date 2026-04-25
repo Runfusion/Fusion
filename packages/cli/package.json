@@ -39,6 +39,7 @@
   ],
   "scripts": {
     "dev": "tsx src/bin.ts",
+    "prebuild": "node ../../scripts/sync-fusion-skill-tools.mjs",
     "build": "tsup",
     "build:exe": "bun run build.ts",
     "build:exe:all": "bun run build.ts --all",

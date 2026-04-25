@@ -75,13 +75,21 @@ export function getCustomToolDefs(pi: PiInstance): McpToolDef[] {
  * 2. Config file: MCP config pointing to the schema-only server
  *
  * @param toolDefs - Array of custom tool definitions
+ * @param cacheKey - Optional suffix appended to filenames so that distinct
+ *   tool sets (e.g. session-scoped tool registrations) get distinct files
+ *   and don't race on a single shared path.
  * @returns Path to the MCP config file
  */
-export function writeMcpConfig(toolDefs: McpToolDef[]): string {
+export function writeMcpConfig(
+  toolDefs: McpToolDef[],
+  cacheKey?: string,
+): string {
+  const suffix = cacheKey ? `${process.pid}-${cacheKey}` : `${process.pid}`;
+
   // Write tool schemas to temp file
   const schemaFilePath = join(
     tmpdir(),
-    `pi-claude-mcp-schemas-${process.pid}.json`,
+    `pi-claude-mcp-schemas-${suffix}.json`,
   );
   writeFileSync(schemaFilePath, JSON.stringify(toolDefs));
 
@@ -103,7 +111,7 @@ export function writeMcpConfig(toolDefs: McpToolDef[]): string {
   // Write config to temp file
   const configFilePath = join(
     tmpdir(),
-    `pi-claude-mcp-config-${process.pid}.json`,
+    `pi-claude-mcp-config-${suffix}.json`,
   );
   writeFileSync(configFilePath, JSON.stringify(config));
 

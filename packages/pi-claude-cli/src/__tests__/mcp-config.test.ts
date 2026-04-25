@@ -269,4 +269,26 @@ describe("writeMcpConfig", () => {
     expect(result).toMatch(/pi-claude-mcp-config/);
     expect(result).toMatch(/\.json$/);
   });
+
+  it("includes cacheKey in filenames when provided so distinct tool sets do not collide", () => {
+    const toolDefs: McpToolDef[] = [
+      {
+        name: "search",
+        description: "Search",
+        inputSchema: { type: "object" },
+      },
+    ];
+
+    const pathA = writeMcpConfig(toolDefs, "aaaaaaaaaaaa");
+    const pathB = writeMcpConfig(toolDefs, "bbbbbbbbbbbb");
+
+    expect(pathA).toContain("aaaaaaaaaaaa");
+    expect(pathB).toContain("bbbbbbbbbbbb");
+    expect(pathA).not.toBe(pathB);
+
+    const schemaPathA = mocks.writeFileSync.mock.calls[0][0];
+    const schemaPathB = mocks.writeFileSync.mock.calls[2][0];
+    expect(schemaPathA).toContain("aaaaaaaaaaaa");
+    expect(schemaPathB).toContain("bbbbbbbbbbbb");
+  });
 });

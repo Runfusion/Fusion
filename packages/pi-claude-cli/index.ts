@@ -13,6 +13,7 @@ import {
   validateCliAuth,
   killAllProcesses,
 } from "./src/process-manager.js";
+import { createHash } from "node:crypto";
 import { getCustomToolDefs, writeMcpConfig } from "./src/mcp-config.js";
 
 // Kill all active Claude subprocesses on process exit to prevent orphans
@@ -20,49 +21,63 @@ process.on("exit", killAllProcesses);
 
 const PROVIDER_ID = "pi-claude-cli";
 
-let mcpConfigPath: string | undefined;
-let mcpConfigResolved = false;
+let cachedMcpConfig: { hash: string; configPath: string } | undefined;
 
 /**
- * Lazily generate MCP config on first request (not at load time).
- * pi.getAllTools() fails during extension loading; this defers it
- * until the pi runtime is fully initialized.
+ * Resolve the MCP config path for the current request, regenerating it when
+ * the set of custom tools changes.
  *
- * Only locks (sets mcpConfigResolved) when getAllTools() returns a
- * real array — if it returns undefined/null (registry not ready),
- * we retry on the next request. Once the registry is ready we
- * commit to the result even if there are zero custom tools.
+ * Why per-call instead of once-and-lock:
+ * - The engine registers session-scoped custom tools (e.g. `fn_review_spec`,
+ *   `fn_review_step`) when it spawns triage/executor sessions. These appear
+ *   in `pi.getAllTools()` only while that session is active.
+ * - A locked-on-first-call cache would freeze in the global tool set and
+ *   silently drop session tools, so the Claude CLI subprocess would refuse
+ *   to call them ("unknown tool fn_review_spec").
+ * - Hashing the tool defs lets us reuse the same temp files when the tool
+ *   set is unchanged across calls, and produce fresh files (with the hash
+ *   in the filename to avoid races) when it changes.
  *
- * Uses warn-don't-block: failure logs a warning but does not
- * prevent the provider from functioning (built-ins still work).
+ * Uses warn-don't-block: failure logs a warning but does not prevent the
+ * provider from functioning (built-ins still work).
  */
 function ensureMcpConfig(pi: ExtensionAPI): string | undefined {
-  if (mcpConfigResolved) return mcpConfigPath;
   try {
     const allTools = pi.getAllTools();
 
-    // Registry not ready yet — don't lock, retry on next call
+    // Registry not ready yet — fall back to whatever we last computed (if any)
     if (!Array.isArray(allTools)) {
-      return mcpConfigPath;
+      return cachedMcpConfig?.configPath;
     }
-
-    // Registry is ready — lock regardless of whether custom tools exist
-    mcpConfigResolved = true;
 
     const toolDefs = getCustomToolDefs(pi);
-    if (toolDefs.length > 0) {
-      mcpConfigPath = writeMcpConfig(toolDefs);
-      console.error(
-        `[pi-claude-cli] MCP config generated with ${toolDefs.length} custom tool(s)`,
-      );
+    if (toolDefs.length === 0) {
+      cachedMcpConfig = undefined;
+      return undefined;
     }
+
+    const hash = createHash("sha1")
+      .update(JSON.stringify(toolDefs))
+      .digest("hex")
+      .slice(0, 12);
+
+    if (cachedMcpConfig?.hash === hash) {
+      return cachedMcpConfig.configPath;
+    }
+
+    const configPath = writeMcpConfig(toolDefs, hash);
+    cachedMcpConfig = { hash, configPath };
+    console.error(
+      `[pi-claude-cli] MCP config refreshed with ${toolDefs.length} custom tool(s) (hash=${hash})`,
+    );
+    return configPath;
   } catch (err) {
     console.warn(
       "[pi-claude-cli] MCP config generation failed, custom tools unavailable:",
       err,
     );
+    return cachedMcpConfig?.configPath;
   }
-  return mcpConfigPath;
 }
 
 export default function (pi: ExtensionAPI) {
