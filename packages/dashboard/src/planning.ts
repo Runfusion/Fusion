@@ -922,8 +922,15 @@ async function createPlanningAgent(
       });
     },
     onText: (delta: string) => {
-      // Capture AI response text - will be parsed at end of turn
+      // Capture AI response text — will be parsed at end of turn. Also
+      // surface it through the same stream so non-thinking models (which
+      // never emit thinking_delta) still show streaming output in the UI.
       session.thinkingOutput += delta;
+      persistThinking(session.id, session.thinkingOutput);
+      planningStreamManager.broadcast(session.id, {
+        type: "thinking",
+        data: delta,
+      });
     },
   });
 }

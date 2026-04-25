@@ -246,32 +246,54 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         },
         onError: (message) => {
           const errorMessage = message || "Session failed while contacting the AI.";
-          setIsReconnecting(false);
-          setIsRetrying(false);
-          setError(null);
-          setView((prev) => {
-            if (prev.type === "question" || prev.type === "summary" || prev.type === "error") {
-              return { type: "error", session: prev.session, errorMessage };
-            }
-            return {
-              type: "error",
-              session: { sessionId, currentQuestion: null, summary: null },
-              errorMessage,
-            };
-          });
-          setStreamingOutput("");
-          currentSessionIdRef.current = sessionId;
 
-          broadcastUpdate({
-            sessionId,
-            status: "error",
-            needsInput: false,
-            owningTabId: sessionTabId,
-            type: "planning",
-            title: initialPlan.trim() || "Planning session",
-            projectId: projectId ?? null,
-          });
-          broadcastCompleted({ sessionId, status: "error" });
+          // A single transient stream error (e.g. tab was backgrounded long
+          // enough for the SSE to time out) should not bounce the user to a
+          // permanent error view. Refetch the session state — if the server
+          // still has it in a recoverable state, silently reconnect; only
+          // surface the error if the server actually persisted one.
+          setIsReconnecting(true);
+          (async () => {
+            try {
+              const session = await fetchAiSession(sessionId);
+              if (
+                session &&
+                (session.status === "generating" || session.status === "awaiting_input")
+              ) {
+                connectToPlanningStream(sessionId);
+                return;
+              }
+            } catch {
+              // fall through to error view below
+            }
+
+            setIsReconnecting(false);
+            setIsRetrying(false);
+            setError(null);
+            setView((prev) => {
+              if (prev.type === "question" || prev.type === "summary" || prev.type === "error") {
+                return { type: "error", session: prev.session, errorMessage };
+              }
+              return {
+                type: "error",
+                session: { sessionId, currentQuestion: null, summary: null },
+                errorMessage,
+              };
+            });
+            setStreamingOutput("");
+            currentSessionIdRef.current = sessionId;
+
+            broadcastUpdate({
+              sessionId,
+              status: "error",
+              needsInput: false,
+              owningTabId: sessionTabId,
+              type: "planning",
+              title: initialPlan.trim() || "Planning session",
+              projectId: projectId ?? null,
+            });
+            broadcastCompleted({ sessionId, status: "error" });
+          })();
         },
         onComplete: () => {
           setIsReconnecting(false);

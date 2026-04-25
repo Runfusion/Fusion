@@ -640,7 +640,7 @@ describe("PlanningModeModal", () => {
       expect(mockConnectPlanningStream).toHaveBeenCalledTimes(2);
     });
 
-    it("recovers retry from connection-loss when server session is still generating", async () => {
+    it("auto-recovers from a stream error when server session is still generating", async () => {
       let streamAttempt = 0;
       mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
         streamAttempt += 1;
@@ -654,7 +654,6 @@ describe("PlanningModeModal", () => {
         };
       });
 
-      mockRetryPlanningSession.mockRejectedValueOnce(new Error("Planning session session-123 is not in an error state"));
       mockFetchAiSession.mockResolvedValueOnce({
         id: "session-123",
         type: "planning",
@@ -688,22 +687,16 @@ describe("PlanningModeModal", () => {
       });
       fireEvent.click(screen.getByText("Start Planning"));
 
+      // No manual retry button — onError silently re-fetches the session,
+      // sees status="generating", and reconnects without surfacing the error.
       await waitFor(() => {
-        expect(screen.getByText("Connection lost")).toBeDefined();
-      });
-
-      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-
-      await waitFor(() => {
-        expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-123", undefined, expect.any(String));
         expect(mockFetchAiSession).toHaveBeenCalledWith("session-123");
+        expect(mockConnectPlanningStream).toHaveBeenCalledTimes(2);
       });
-      expect(await screen.findByText("AI is thinking...")).toBeDefined();
-      expect(screen.getByText("Still thinking...")).toBeDefined();
-      expect(mockConnectPlanningStream).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText("Connection lost")).toBeNull();
     });
 
-    it("recovers retry from connection-loss when server session is awaiting input", async () => {
+    it("auto-recovers from a stream error when server session is awaiting input", async () => {
       let streamAttempt = 0;
       mockConnectPlanningStream.mockImplementation((_sessionId: string, _projectId: string | undefined, handlers: any) => {
         streamAttempt += 1;
@@ -717,7 +710,6 @@ describe("PlanningModeModal", () => {
         };
       });
 
-      mockRetryPlanningSession.mockRejectedValueOnce(new Error("Planning session session-123 is not in an error state"));
       mockFetchAiSession.mockResolvedValueOnce({
         id: "session-123",
         type: "planning",
@@ -751,18 +743,13 @@ describe("PlanningModeModal", () => {
       });
       fireEvent.click(screen.getByText("Start Planning"));
 
+      // Silent recovery: onError re-fetches the session, sees status=
+      // "awaiting_input", and reconnects without surfacing the error.
       await waitFor(() => {
-        expect(screen.getByText("Connection lost")).toBeDefined();
-      });
-
-      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-
-      await waitFor(() => {
-        expect(mockRetryPlanningSession).toHaveBeenCalledWith("session-123", undefined, expect.any(String));
         expect(mockFetchAiSession).toHaveBeenCalledWith("session-123");
+        expect(mockConnectPlanningStream).toHaveBeenCalledTimes(2);
       });
-      expect(await screen.findByText("What is the scope?")).toBeDefined();
-      expect(mockConnectPlanningStream).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText("Connection lost")).toBeNull();
     });
   });
 
