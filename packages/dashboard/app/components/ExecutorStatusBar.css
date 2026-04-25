@@ -155,6 +155,7 @@
   color: var(--text-muted);
   cursor: pointer;
   line-height: 1;
+  transform: translate(-2px, -1px);
   transition: color var(--transition-fast);
 }
 
