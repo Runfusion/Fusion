@@ -46,6 +46,8 @@ describe("AgentsView", () => {
       name: "Test Agent 1",
       role: "executor" as AgentCapability,
       state: "idle" as AgentState,
+      totalInputTokens: 100,
+      totalOutputTokens: 20,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       metadata: {},
@@ -56,6 +58,8 @@ describe("AgentsView", () => {
       role: "triage" as AgentCapability,
       state: "active" as AgentState,
       taskId: "FN-001",
+      totalInputTokens: 10,
+      totalOutputTokens: 5,
       lastHeartbeatAt: new Date().toISOString(),
       runtimeConfig: { heartbeatIntervalMs: 30000 },
       createdAt: new Date(Date.now() - 86400000).toISOString(),
@@ -76,6 +80,8 @@ describe("AgentsView", () => {
       name: "Test Agent 4",
       role: "reviewer" as AgentCapability,
       state: "terminated" as AgentState,
+      totalInputTokens: 1,
+      totalOutputTokens: 1,
       createdAt: new Date(Date.now() - 259200000).toISOString(),
       updatedAt: new Date().toISOString(),
       metadata: {},
@@ -170,15 +176,18 @@ describe("AgentsView", () => {
       await waitFor(() => {
         expect(container.querySelector(".agent-list")).toBeTruthy();
         expect(container.querySelector(".agent-metrics-bar")).toBeTruthy();
+        expect(container.querySelector(".agent-token-stats-panel")).toBeTruthy();
         expect(container.querySelector(".active-agents-panel")).toBeTruthy();
       });
 
       const list = container.querySelector(".agent-list");
       const metrics = container.querySelector(".agent-metrics-bar");
+      const tokenPanel = container.querySelector(".agent-token-stats-panel");
       const activePanel = container.querySelector(".active-agents-panel");
-      expect(list && metrics && activePanel).toBeTruthy();
+      expect(list && metrics && tokenPanel && activePanel).toBeTruthy();
       expect(list!.compareDocumentPosition(metrics!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      expect(metrics!.compareDocumentPosition(activePanel!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(metrics!.compareDocumentPosition(tokenPanel!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(tokenPanel!.compareDocumentPosition(activePanel!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
     it("fetches agents only once on mount (regression: no duplicate initial load path)", async () => {
@@ -191,6 +200,25 @@ describe("AgentsView", () => {
 
       // Ensure the single-load path still powers dependent UI sections.
       expect(screen.getByText("Active Agents (1)")).toBeTruthy();
+    });
+
+    it("renders token stats derived from the currently displayed agents", async () => {
+      render(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Token Usage by Agent")).toBeTruthy();
+      });
+
+      expect(screen.getByText("Input Tokens")).toBeTruthy();
+      expect(screen.getByText("111")).toBeTruthy();
+      expect(screen.getByText("Output Tokens")).toBeTruthy();
+      expect(screen.getByText("26")).toBeTruthy();
+      expect(screen.getByText("Combined Tokens")).toBeTruthy();
+      expect(screen.getByText("137")).toBeTruthy();
+
+      const tokenRows = screen.getAllByRole("row");
+      expect(tokenRows[1]).toHaveTextContent("Test Agent 1");
+      expect(tokenRows[2]).toHaveTextContent("Test Agent 2");
     });
 
     it("passes projectId to agent fetches", async () => {
@@ -280,8 +308,13 @@ describe("AgentsView", () => {
     it("keeps clickable identity area behavior for opening detail view", async () => {
       render(<AgentsView addToast={mockAddToast} />);
 
-      const agentName = await screen.findByText("Test Agent 1");
-      const clickableIdentity = agentName.closest(".agent-info--clickable") as HTMLElement | null;
+      await waitFor(() => {
+        expect(screen.getAllByText("Test Agent 1").length).toBeGreaterThan(0);
+      });
+
+      const clickableIdentity = Array.from(document.querySelectorAll(".agent-info--clickable")).find((element) =>
+        element.textContent?.includes("Test Agent 1"),
+      ) as HTMLElement | undefined;
       expect(clickableIdentity).toBeTruthy();
 
       fireEvent.click(clickableIdentity!);
@@ -912,7 +945,7 @@ describe("AgentsView", () => {
       render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
 
       await waitFor(() => {
-        expect(screen.getByText("Test Agent 1")).toBeTruthy();
+        expect(screen.getAllByText("Test Agent 1").length).toBeGreaterThan(0);
       });
 
       expect(screen.queryByText("executor-FN-TEST")).toBeNull();
@@ -1220,7 +1253,7 @@ describe("AgentsView", () => {
         expect(deleteButtons.length).toBeGreaterThanOrEqual(2);
       });
 
-      expect(screen.getByText("Test Agent 4")).toBeTruthy();
+      expect(screen.getAllByText("Test Agent 4").length).toBeGreaterThan(0);
     });
 
     it("shows Delete button for terminated agents when explicitly filtered", async () => {
@@ -1232,7 +1265,7 @@ describe("AgentsView", () => {
       fireEvent.change(filterSelect, { target: { value: "terminated" } });
 
       await waitFor(() => {
-        expect(screen.getByText("Test Agent 4")).toBeTruthy();
+        expect(screen.getAllByText("Test Agent 4").length).toBeGreaterThan(0);
         // Now we should see the Delete button for terminated agent
         expect(screen.getAllByTitle("Delete").length).toBeGreaterThanOrEqual(1);
       });
@@ -1268,7 +1301,7 @@ describe("AgentsView", () => {
       fireEvent.change(filterSelect, { target: { value: "terminated" } });
 
       await waitFor(() => {
-        expect(screen.getByText("Test Agent 4")).toBeTruthy();
+        expect(screen.getAllByText("Test Agent 4").length).toBeGreaterThan(0);
         // Click the delete button for the terminated agent (agent-004)
         const agentCards = document.querySelectorAll(".agent-card");
         let terminatedCard: Element | null = null;
@@ -1299,7 +1332,7 @@ describe("AgentsView", () => {
       fireEvent.change(filterSelect, { target: { value: "terminated" } });
 
       await waitFor(() => {
-        expect(screen.getByText("Test Agent 4")).toBeTruthy();
+        expect(screen.getAllByText("Test Agent 4").length).toBeGreaterThan(0);
       });
 
       // Find the delete button for terminated agent (agent-004)

@@ -779,6 +779,7 @@ function MainHeader({ state }: { state: DashboardState }) {
   const interactiveView = state.interactiveView;
   const { stdout } = useStdout();
   const cols = stdout?.columns ?? 80;
+  const rows = stdout?.rows ?? 24;
   const interactiveTabs: Array<{ key: string; label: string; view: InteractiveView }> = [
     { key: "b", label: "Board", view: "board" },
     { key: "a", label: "Agents", view: "agents" },
@@ -791,20 +792,44 @@ function MainHeader({ state }: { state: DashboardState }) {
   //   * Help/quit (~20 chars) drops first.
   //   * Inactive interactive tabs collapse to a `[k]` glyph.
   //   * Inactive section tabs collapse to `[N]`.
-  //   * Final fallback shows just the active tab — but never abbreviates the
-  //     FUSION mark itself.
+  //   * Active-only mode hides every inactive tab.
+  //   * Tiny mode drops the whole header — the row is too precious to spend.
+  if (rows < 10) return null;
   const showHelpHint = cols >= 110;
   const compactInteractive = cols < 100;
   const compactSections = cols < 90;
   const minimal = cols < 70;
+  const tiny = cols < 50;
+  if (tiny) {
+    // Just FUSION + the single active tab. No dividers, no other tabs.
+    const activeSectionIdx = inInteractive
+      ? -1
+      : SECTION_ORDER.indexOf(focused);
+    const activeSectionLabel = activeSectionIdx >= 0
+      ? SECTION_ORDER[activeSectionIdx].charAt(0).toUpperCase() + SECTION_ORDER[activeSectionIdx].slice(1)
+      : null;
+    const activeInteractive = inInteractive
+      ? interactiveTabs.find((t) => t.view === interactiveView) ?? null
+      : null;
+    return (
+      <Box flexDirection="row" gap={1} paddingX={1}>
+        <MiniLogo />
+        {activeSectionLabel && (
+          <Text backgroundColor="cyan" color="black" bold>{` ${activeSectionIdx + 1} ${activeSectionLabel} `}</Text>
+        )}
+        {activeInteractive && (
+          <Text backgroundColor="cyan" color="black" bold>{` ${activeInteractive.key} ${activeInteractive.label} `}</Text>
+        )}
+      </Box>
+    );
+  }
   return (
     <Box flexDirection="row" gap={1} paddingX={1} paddingY={0}>
       <MiniLogo />
-      <Text dimColor>│</Text>
+      {!minimal && <Text dimColor>│</Text>}
       {SECTION_ORDER.map((section, i) => {
         const isActive = !inInteractive && section === focused;
         const label = section.charAt(0).toUpperCase() + section.slice(1);
-        // In minimal mode only show the active section tab.
         if (minimal && !isActive) return null;
         return (
           <Box key={section} marginRight={1}>
@@ -902,12 +927,14 @@ function KanbanColumnView({
   isFocused,
   selectedIndex,
   width,
+  availableRows,
 }: {
   column: KanbanColumn;
   tasks: TaskItem[];
   isFocused: boolean;
   selectedIndex: number;
   width: number;
+  availableRows: number;
 }) {
   const accent = COLUMN_COLORS[column];
   const headerColor = isFocused ? "whiteBright" : accent;
@@ -917,6 +944,21 @@ function KanbanColumnView({
   const headerText = ` ${label} `.length > innerHeaderWidth
     ? ` ${label} `.slice(0, innerHeaderWidth)
     : ` ${label} `.padEnd(innerHeaderWidth, " ");
+
+  // Each TaskCard takes ~4 rows (top border + id row + title row + bottom
+  // border + sometimes a wrapped title row). Reserve 2 rows for header +
+  // header spacer + 2 rows for "↑/↓ N more" hints, then floor(remaining/4).
+  const cardRowsBudget = Math.max(0, availableRows - 4);
+  const visibleCount = Math.max(1, Math.floor(cardRowsBudget / 4));
+  // Slide the window so the selected card is centered when possible.
+  const halfWindow = Math.floor(visibleCount / 2);
+  const maxStart = Math.max(0, tasks.length - visibleCount);
+  const windowStart = Math.max(0, Math.min(selectedIndex - halfWindow, maxStart));
+  const windowEnd = Math.min(tasks.length, windowStart + visibleCount);
+  const visibleTasks = tasks.slice(windowStart, windowEnd);
+  const hiddenAbove = windowStart;
+  const hiddenBelow = tasks.length - windowEnd;
+
   return (
     <Box
       flexDirection="column"
@@ -936,14 +978,20 @@ function KanbanColumnView({
         <Text dimColor>—</Text>
       ) : (
         <Box flexDirection="column" gap={0} flexShrink={1} overflow="hidden">
-          {tasks.map((task, i) => (
+          {hiddenAbove > 0 && (
+            <Text dimColor>↑ {hiddenAbove} more</Text>
+          )}
+          {visibleTasks.map((task, i) => (
             <TaskCard
               key={task.id}
               task={task}
-              selected={isFocused && i === selectedIndex}
+              selected={isFocused && (windowStart + i) === selectedIndex}
               width={cardWidth}
             />
           ))}
+          {hiddenBelow > 0 && (
+            <Text dimColor>↓ {hiddenBelow} more</Text>
+          )}
         </Box>
       )}
     </Box>
@@ -1357,12 +1405,17 @@ function groupTasksByColumn(tasks: TaskItem[]): Record<KanbanColumn, TaskItem[]>
 function BoardView({ state, controller }: { state: DashboardState; controller: DashboardTUI }) {
   const { stdout } = useStdout();
   const cols = stdout?.columns ?? 80;
+  const rows = stdout?.rows ?? 24;
   // Narrow mode: collapse 4-column kanban to a single full-width column so
   // columns don't overflow or overlap when the terminal is too slim.
   const isNarrow = cols < NARROW_THRESHOLD;
   const columnWidth = isNarrow
     ? Math.max(20, cols - 2)
     : Math.max(20, Math.floor((cols - 2) / KANBAN_COLUMNS.length));
+  // Reserve rows for header + project bar + spacer + footer hints. The
+  // kanban column then windows its cards based on what remains so cards
+  // beyond the visible area still scroll into view as the cursor moves.
+  const availableCardRows = Math.max(8, rows - 8);
 
   const [subView, setSubView] = useState<BoardSubView>("board");
   const [projectIndex, setProjectIndex] = useState(0);
@@ -1608,6 +1661,7 @@ function BoardView({ state, controller }: { state: DashboardState; controller: D
               isFocused={true}
               selectedIndex={focusedRow}
               width={columnWidth}
+              availableRows={availableCardRows}
             />
           ) : (
             KANBAN_COLUMNS.map((col, i) => (
@@ -1618,6 +1672,7 @@ function BoardView({ state, controller }: { state: DashboardState; controller: D
                 isFocused={i === colIndex}
                 selectedIndex={rowByColumn[col] ?? 0}
                 width={columnWidth}
+                availableRows={availableCardRows}
               />
             ))
           )}
@@ -3527,7 +3582,9 @@ export function DashboardApp({ controller }: DashboardAppProps) {
         return;
       }
 
-      if (key.end) {
+      // Vim-style "G" jumps to the newest log entry. "g" stays as the
+      // global Settings shortcut, so we don't bind it here.
+      if (key.end || input === "G") {
         controller.setSelectedLogIndex(Math.max(0, filteredEntries.length - 1));
         return;
       }
