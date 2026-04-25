@@ -1,6 +1,9 @@
 // ChatView.css is imported eagerly from App.tsx to avoid a flash of
 // unstyled content when the lazy chunk loads. Do not re-import here.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import type { Components } from "react-markdown";
 import {
   MessageSquare,
   Send,
@@ -215,6 +218,19 @@ function renderToolCalls(toolCalls?: ToolCallInfo[]): ReactNode {
     </div>
   );
 }
+
+const chatMarkdownComponents: Components = {
+  pre: ({ children, ...props }) => (
+    <pre {...props} className="chat-markdown-pre">
+      {children}
+    </pre>
+  ),
+  table: ({ children, ...props }) => (
+    <table {...props} className="chat-markdown-table">
+      {children}
+    </table>
+  ),
+};
 
 /**
  * Constant agent ID for the built-in fn agent.
@@ -464,6 +480,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
   const [mentionPopupVisible, setMentionPopupVisible] = useState(false);
   const [mentionHighlightIndex, setMentionHighlightIndex] = useState(0);
   const [mentionStartPos, setMentionStartPos] = useState(-1);
+  const [renderAssistantMarkdown, setRenderAssistantMarkdown] = useState(true);
 
   // File mention state and hook
   const [, setFileMentionPopupVisible] = useState(false);
@@ -1014,6 +1031,23 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     ? `${pendingMessage.slice(0, 50)}…`
     : pendingMessage;
 
+  const renderAssistantContent = useCallback(
+    (content: string) => {
+      if (!renderAssistantMarkdown) {
+        return <div className="chat-message-content chat-message-content--plain">{content}</div>;
+      }
+
+      return (
+        <div className="chat-message-content chat-message-content--markdown">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>
+            {content}
+          </ReactMarkdown>
+        </div>
+      );
+    },
+    [renderAssistantMarkdown],
+  );
+
   return (
     <div className="chat-view">
       {/* Sidebar */}
@@ -1169,6 +1203,30 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
             <Bot size={16} />
             <span className="chat-thread-header-title">{threadHeaderTitle}</span>
             {showThreadHeaderModelTag && <span className="chat-model-tag">{activeModelTag}</span>}
+            {activeSession && (
+              <div className="chat-render-mode-toggle" role="group" aria-label="Assistant response render mode">
+                <button
+                  type="button"
+                  className={`chat-render-mode-btn${renderAssistantMarkdown ? " chat-render-mode-btn--active" : ""}`}
+                  aria-pressed={renderAssistantMarkdown}
+                  aria-label="Render assistant responses as markdown"
+                  data-testid="chat-render-mode-markdown"
+                  onClick={() => setRenderAssistantMarkdown(true)}
+                >
+                  Markdown
+                </button>
+                <button
+                  type="button"
+                  className={`chat-render-mode-btn${!renderAssistantMarkdown ? " chat-render-mode-btn--active" : ""}`}
+                  aria-pressed={!renderAssistantMarkdown}
+                  aria-label="Render assistant responses as plain text"
+                  data-testid="chat-render-mode-plain"
+                  onClick={() => setRenderAssistantMarkdown(false)}
+                >
+                  Plain
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -1197,7 +1255,9 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                       {showAssistantModelTag && <span className="chat-model-tag">{activeModelTag}</span>}
                     </div>
                   )}
-                  <div className="chat-message-content">{renderMessageContent(message.content)}</div>
+                  {message.role === "assistant"
+                    ? renderAssistantContent(message.content)
+                    : <div className="chat-message-content">{renderMessageContent(message.content)}</div>}
                   {renderToolCalls(message.toolCalls)}
                   {message.thinkingOutput && (
                     <details className="chat-message-thinking">
@@ -1216,7 +1276,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                     {showAssistantModelTag && <span className="chat-model-tag">{activeModelTag}</span>}
                   </div>
                   {streamingText ? (
-                    <div className="chat-message-content">{renderMessageContent(streamingText)}</div>
+                    renderAssistantContent(streamingText)
                   ) : (
                     <div className="chat-message-content chat-message-content--waiting">
                       {streamingThinking ? "Thinking…" : "Connecting…"}

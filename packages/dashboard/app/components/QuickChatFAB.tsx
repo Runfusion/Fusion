@@ -8,6 +8,9 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import type { Components } from "react-markdown";
 import { MessageSquare, Send, Square, Wrench, X } from "lucide-react";
 import { fetchModels, type Agent, type ModelInfo } from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
@@ -203,6 +206,19 @@ function renderToolCalls(toolCalls?: ToolCallInfo[], compact = false): ReactNode
     </div>
   );
 }
+
+const quickChatMarkdownComponents: Components = {
+  pre: ({ children, ...props }) => (
+    <pre {...props} className="quick-chat-markdown-pre">
+      {children}
+    </pre>
+  ),
+  table: ({ children, ...props }) => (
+    <table {...props} className="quick-chat-markdown-table">
+      {children}
+    </table>
+  ),
+};
 
 function getMentionTriggerMatch(
   value: string,
@@ -436,6 +452,7 @@ export function QuickChatFAB({
   const [mentionPopupVisible, setMentionPopupVisible] = useState(false);
   const [mentionHighlightIndex, setMentionHighlightIndex] = useState(0);
   const [mentionStartPos, setMentionStartPos] = useState(-1);
+  const [renderAssistantMarkdown, setRenderAssistantMarkdown] = useState(true);
 
   // File mention state and hook
   const [, setFileMentionPopupVisible] = useState(false);
@@ -876,6 +893,23 @@ export function QuickChatFAB({
     [mentionAgentsByName],
   );
 
+  const renderAssistantMessageContent = useCallback(
+    (content: string) => {
+      if (!renderAssistantMarkdown) {
+        return <div className="quick-chat-message-content quick-chat-message-content--plain">{content}</div>;
+      }
+
+      return (
+        <div className="quick-chat-message-content quick-chat-message-content--markdown">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={quickChatMarkdownComponents}>
+            {content}
+          </ReactMarkdown>
+        </div>
+      );
+    },
+    [renderAssistantMarkdown],
+  );
+
   const handleInputKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
       mentionCursorPosRef.current = event.currentTarget.selectionStart ?? mentionCursorPosRef.current;
@@ -998,6 +1032,28 @@ export function QuickChatFAB({
               )}
             </div>
             <div className="quick-chat-panel-header-actions">
+              <div className="quick-chat-render-mode-toggle" role="group" aria-label="Assistant response render mode">
+                <button
+                  type="button"
+                  className={`quick-chat-render-mode-btn${renderAssistantMarkdown ? " quick-chat-render-mode-btn--active" : ""}`}
+                  data-testid="quick-chat-render-mode-markdown"
+                  aria-pressed={renderAssistantMarkdown}
+                  aria-label="Render assistant responses as markdown"
+                  onClick={() => setRenderAssistantMarkdown(true)}
+                >
+                  Markdown
+                </button>
+                <button
+                  type="button"
+                  className={`quick-chat-render-mode-btn${!renderAssistantMarkdown ? " quick-chat-render-mode-btn--active" : ""}`}
+                  data-testid="quick-chat-render-mode-plain"
+                  aria-pressed={!renderAssistantMarkdown}
+                  aria-label="Render assistant responses as plain text"
+                  onClick={() => setRenderAssistantMarkdown(false)}
+                >
+                  Plain
+                </button>
+              </div>
               <button
                 type="button"
                 className="btn btn-sm"
@@ -1098,7 +1154,9 @@ export function QuickChatFAB({
                       className={`quick-chat-panel-message ${isSent ? "quick-chat-panel-message--sent" : "quick-chat-panel-message--received"}`}
                       data-testid={`quick-chat-message-${message.id}`}
                     >
-                      <p>{renderMessageContent(message.content)}</p>
+                      {isSent
+                        ? <p>{renderMessageContent(message.content)}</p>
+                        : renderAssistantMessageContent(message.content)}
                       {renderToolCalls(message.toolCalls, true)}
                     </div>
                   );
@@ -1110,7 +1168,7 @@ export function QuickChatFAB({
                     data-testid="quick-chat-streaming-message"
                   >
                     {streamingText ? (
-                      <p data-testid="quick-chat-streaming-text">{renderMessageContent(streamingText)}</p>
+                      <div data-testid="quick-chat-streaming-text">{renderAssistantMessageContent(streamingText)}</div>
                     ) : (
                       <p className="quick-chat-panel-waiting" data-testid="quick-chat-waiting">
                         {streamingThinking ? "Thinking…" : "Connecting…"}

@@ -196,6 +196,97 @@ describe("QuickChatFAB", () => {
     });
   });
 
+  it("shows markdown/plain render toggle in quick chat header", async () => {
+    render(<QuickChatFAB addToast={addToast} />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-render-mode-markdown")).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByTestId("quick-chat-render-mode-plain")).toHaveAttribute("aria-pressed", "false");
+    });
+  });
+
+  it("renders persisted assistant messages as markdown and switches to raw plain text", async () => {
+    mockFetchChatMessages.mockResolvedValueOnce({
+      messages: [
+        {
+          id: "msg-001",
+          sessionId: "session-001",
+          role: "assistant",
+          content: "**Bold**\n\n- item",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    render(<QuickChatFAB addToast={addToast} />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const assistantBubble = await screen.findByTestId("quick-chat-message-msg-001");
+    expect(within(assistantBubble).getByText("Bold", { selector: "strong" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("quick-chat-render-mode-plain"));
+
+    expect(within(assistantBubble).getByText(/\*\*Bold\*\*/)).toBeInTheDocument();
+    expect(within(assistantBubble).queryByText("Bold", { selector: "strong" })).toBeNull();
+  });
+
+  it("keeps user message rendering unchanged when switching assistant render mode", async () => {
+    mockFetchChatMessages.mockResolvedValueOnce({
+      messages: [
+        {
+          id: "msg-001",
+          sessionId: "session-001",
+          role: "user",
+          content: "**User** plain",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    render(<QuickChatFAB addToast={addToast} />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const userBubble = await screen.findByTestId("quick-chat-message-msg-001");
+    expect(within(userBubble).getByText(/\*\*User\*\* plain/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("quick-chat-render-mode-plain"));
+
+    expect(within(userBubble).getByText(/\*\*User\*\* plain/)).toBeInTheDocument();
+    expect(within(userBubble).queryByText("User", { selector: "strong" })).toBeNull();
+  });
+
+  it("applies markdown/plain mode to streaming assistant text", async () => {
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      handlers.onText?.("**Live** stream");
+      return {
+        close: vi.fn(),
+        isConnected: vi.fn(() => true),
+      };
+    });
+
+    render(<QuickChatFAB addToast={addToast} projectId="proj-123" />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await waitFor(() => {
+      expect(mockFetchResumeChatSession).toHaveBeenCalled();
+    });
+
+    const input = await screen.findByTestId("quick-chat-input");
+    fireEvent.change(input, { target: { value: "Show stream" } });
+    fireEvent.click(screen.getByTestId("quick-chat-send"));
+
+    const streamingText = await screen.findByTestId("quick-chat-streaming-text");
+    expect(within(streamingText).getByText("Live", { selector: "strong" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("quick-chat-render-mode-plain"));
+    expect(within(streamingText).getByText(/\*\*Live\*\* stream/)).toBeInTheDocument();
+  });
+
   it("renders the model dropdown when panel is open in model mode", async () => {
     render(<QuickChatFAB addToast={addToast} />);
 

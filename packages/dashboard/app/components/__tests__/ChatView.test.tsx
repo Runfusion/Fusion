@@ -396,6 +396,81 @@ describe("ChatView", () => {
     expect(screen.getByText("Hi there!")).toBeInTheDocument();
   });
 
+  it("shows markdown/plain toggle in thread header for active sessions", () => {
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [{ id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hello", createdAt: "2026-04-08T00:00:00.000Z" }],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    expect(screen.getByTestId("chat-render-mode-markdown")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("chat-render-mode-plain")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("renders assistant messages as markdown by default and raw text in plain mode", async () => {
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [
+        {
+          id: "msg-002",
+          sessionId: "session-001",
+          role: "assistant",
+          content: "**Bold**\n\n- item",
+          createdAt: "2026-04-08T00:01:00.000Z",
+        },
+      ],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const assistantBubble = screen.getByTestId("chat-message-msg-002");
+    expect(within(assistantBubble).getByText("Bold", { selector: "strong" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId("chat-render-mode-plain"));
+
+    expect(within(assistantBubble).getByText(/\*\*Bold\*\*/)).toBeInTheDocument();
+    expect(within(assistantBubble).queryByText("Bold", { selector: "strong" })).toBeNull();
+  });
+
+  it("keeps user message rendering unchanged when toggling assistant render mode", async () => {
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [
+        { id: "msg-001", sessionId: "session-001", role: "user", content: "**User** plain", createdAt: "2026-04-08T00:00:00.000Z" },
+      ],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const userBubble = screen.getByTestId("chat-message-msg-001");
+    expect(within(userBubble).getByText(/\*\*User\*\* plain/)).toBeInTheDocument();
+    expect(within(userBubble).queryByText("User", { selector: "strong" })).toBeNull();
+
+    await userEvent.click(screen.getByTestId("chat-render-mode-plain"));
+
+    expect(within(userBubble).getByText(/\*\*User\*\* plain/)).toBeInTheDocument();
+    expect(within(userBubble).queryByText("User", { selector: "strong" })).toBeNull();
+  });
+
+  it("applies markdown/plain mode to streaming assistant text", async () => {
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [{ id: "msg-001", sessionId: "session-001", role: "user", content: "Hello", createdAt: "2026-04-08T00:00:00.000Z" }],
+      isStreaming: true,
+      streamingText: "**Live** stream",
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const streamingBubble = document.querySelector(".chat-message--streaming") as HTMLElement;
+    expect(within(streamingBubble).getByText("Live", { selector: "strong" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId("chat-render-mode-plain"));
+
+    expect(within(streamingBubble).getByText(/\*\*Live\*\* stream/)).toBeInTheDocument();
+  });
+
   it("renders tool calls from persisted messages", () => {
     setupMockChat({
       activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Tool Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
@@ -699,7 +774,7 @@ describe("ChatView", () => {
       expect(screen.queryByTestId("agent-mention-popup")).not.toBeInTheDocument();
     });
 
-    it("renders known @mentions as highlighted chips", async () => {
+    it("renders assistant mentions as plain text in markdown mode", async () => {
       setupMockChat({
         activeSession: activeSessionFixture,
         messages: [
@@ -716,9 +791,10 @@ describe("ChatView", () => {
       render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       await waitFor(() => {
-        expect(screen.getByText("@Alpha")).toHaveClass("chat-mention-chip");
+        expect(screen.getByText(/Talk to @Alpha and @Unknown next\./)).toBeInTheDocument();
       });
-      expect(screen.getByText(/@Unknown/)).not.toHaveClass("chat-mention-chip");
+      expect(screen.queryByText("@Alpha", { selector: ".chat-mention-chip" })).toBeNull();
+      expect(screen.queryByText("@Unknown", { selector: ".chat-mention-chip" })).toBeNull();
     });
   });
 
@@ -1017,7 +1093,8 @@ describe("ChatView", () => {
 
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-    const details = screen.getByText("Here's my response").parentElement?.querySelector("details");
+    const message = screen.getByTestId("chat-message-msg-001");
+    const details = message.querySelector("details");
     expect(details).toBeInTheDocument();
     expect(details).toHaveProperty("open", false);
   });
