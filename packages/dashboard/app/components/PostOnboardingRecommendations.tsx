@@ -1,3 +1,4 @@
+import "./PostOnboardingRecommendations.css";
 import { useCallback, useEffect, useMemo, useState, type ComponentType } from "react";
 import { AlertCircle, GitPullRequest, Key, Lightbulb, X, Zap } from "lucide-react";
 import { fetchAuthStatus, fetchGlobalSettings } from "../api";

@@ -1,5 +1,6 @@
 import { Activity } from "lucide-react";
 import type { Agent } from "../api";
+import "./ActiveAgentsPanel.css";
 import { useLiveTranscript } from "../hooks/useLiveTranscript";
 
 interface LiveAgentCardProps {

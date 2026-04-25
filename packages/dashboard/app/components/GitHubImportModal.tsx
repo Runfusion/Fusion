@@ -1,3 +1,4 @@
+import "./GitHubImportModal.css";
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { Task } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";

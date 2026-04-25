@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Loader2, Maximize2, Minimize2, Search } from "lucide-react";
+import "./DevServerLogViewer.css";
 import type { DevServerLogEntry } from "../hooks/useDevServerLogs";
 
 interface DevServerLogViewerProps {

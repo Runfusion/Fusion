@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { ChevronDown, Download, Upload } from "lucide-react";
+import "./SettingsSyncLog.css";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

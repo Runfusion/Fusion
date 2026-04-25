@@ -12,6 +12,7 @@
  * - Loading and empty states
  */
 
+import "./PiExtensionsManager.css";
 import { useState, useEffect, useCallback } from "react";
 import {
   Package,

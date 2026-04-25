@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { loadAllAppCss } from "../test/cssFixture";
 import fs from "fs";
 import path from "path";
 
 describe("Git Manager light-theme tokenization", () => {
-  const stylesPath = path.resolve(__dirname, "../styles.css");
   let css: string;
 
   beforeAll(() => {
-    css = fs.readFileSync(stylesPath, "utf-8");
+    css = loadAllAppCss();
   });
 
   function getGitManagerLightBlock(): string {

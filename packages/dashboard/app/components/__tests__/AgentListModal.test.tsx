@@ -20,8 +20,8 @@ const mockCreateAgent = vi.mocked(apiModule.createAgent);
 const mockUpdateAgentState = vi.mocked(apiModule.updateAgentState);
 const mockDeleteAgent = vi.mocked(apiModule.deleteAgent);
 
-const stylesPath = path.join(__dirname, "../../styles.css");
-const readStyles = () => fs.readFileSync(stylesPath, "utf-8");
+import { loadAllAppCss } from "../../test/cssFixture";
+const readStyles = () => loadAllAppCss();
 
 describe("AgentListModal", () => {
   const mockOnClose = vi.fn();

@@ -1,3 +1,4 @@
+import "./BackgroundTasksIndicator.css";
 import { useState, useRef, useEffect, useMemo } from "react";
 import { Lightbulb, Layers, Target, Loader2, HelpCircle, X, Lock, AlertCircle } from "lucide-react";
 import type { AiSessionSummary } from "../api";

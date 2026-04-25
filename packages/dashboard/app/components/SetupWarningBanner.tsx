@@ -1,3 +1,4 @@
+import "./SetupWarningBanner.css";
 import { X } from "lucide-react";
 
 interface SetupWarningBannerProps {

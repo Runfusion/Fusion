@@ -1,3 +1,8 @@
+import "./AgentListModal.css";
+// AgentListModal renders agent cards using .agent-board-*, .agent-icon, .agent-state-filter
+// rules that live in AgentsView.css. The modal is eager but AgentsView is lazy, so we
+// import the styles eagerly here to avoid the modal rendering unstyled.
+import "./AgentsView.css";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Plus, Play, Pause, Square, Trash2, RefreshCw, Bot, LayoutGrid, List, Filter } from "lucide-react";
 import type { Agent, AgentCapability, AgentState } from "../api";

@@ -1,0 +1,197 @@
+/* === Session Notification Banner === */
+
+.session-notification-banner {
+  position: sticky;
+  top: 0;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: 1px solid var(--border);
+  border-left: 4px solid var(--triage);
+  background: var(--surface);
+  box-sizing: border-box;
+  max-height: 420px;
+  opacity: 1;
+  transition: opacity var(--transition-fast), max-height var(--transition-fast);
+  animation: session-notification-banner-enter 180ms ease-out;
+}
+
+@keyframes session-notification-banner-enter {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 420px;
+  }
+}
+
+.session-notification-banner__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.session-notification-banner__headline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.session-notification-banner__headline svg {
+  color: var(--triage);
+  flex-shrink: 0;
+}
+
+.session-notification-banner__dismiss-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.session-notification-banner__dismiss-all:hover {
+  color: var(--text);
+  background: var(--card-hover);
+  border-color: var(--border);
+}
+
+.session-notification-banner__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  max-height: 300px;
+}
+
+.session-notification-banner__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--triage) 8%, var(--surface));
+}
+
+.session-notification-banner__item-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.session-notification-banner__type-icon {
+  color: var(--triage);
+  flex-shrink: 0;
+}
+
+.session-notification-banner__text {
+  min-width: 0;
+}
+
+.session-notification-banner__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-notification-banner__meta {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.session-notification-banner__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.session-notification-banner__resume {
+  border: 1px solid color-mix(in srgb, var(--triage) 60%, var(--border));
+  background: transparent;
+  color: var(--triage);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.session-notification-banner__resume:hover {
+  background: color-mix(in srgb, var(--triage) 14%, transparent);
+  border-color: var(--triage);
+}
+
+.session-notification-banner__dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.session-notification-banner__dismiss:hover {
+  color: var(--text);
+  background: var(--card-hover);
+  border-color: var(--border);
+}
+
+@media (max-width: 768px) {
+  .session-notification-banner {
+    padding: var(--space-sm) var(--space-md);
+    gap: 8px;
+  }
+
+  .session-notification-banner__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .session-notification-banner__item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .session-notification-banner__item-main {
+    width: 100%;
+  }
+
+  .session-notification-banner__title {
+    max-width: 100%;
+  }
+
+  .session-notification-banner__actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+

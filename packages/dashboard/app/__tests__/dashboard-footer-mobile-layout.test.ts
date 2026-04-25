@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { loadAllAppCss } from "../test/cssFixture";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
@@ -23,8 +24,7 @@ import { resolve } from "path";
  */
 
 describe("dashboard-footer-mobile-layout", () => {
-  const cssPath = resolve(__dirname, "../styles.css");
-  const cssContent = readFileSync(cssPath, "utf-8");
+  const cssContent = loadAllAppCss();
 
   /** Extract all content inside @media (max-width: 768px) blocks. */
   function extractMobileMediaBlocks(content: string): string {

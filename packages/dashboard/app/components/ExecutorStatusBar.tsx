@@ -1,3 +1,4 @@
+import "./ExecutorStatusBar.css";
 import { useMemo } from "react";
 import type { Task } from "@fusion/core";
 import { AlertTriangle, Clock, Pause, Play, Zap } from "lucide-react";

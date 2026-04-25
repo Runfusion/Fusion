@@ -1,0 +1,226 @@
+/* === ProjectCard Component === */
+.project-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  cursor: pointer;
+  transition:
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast),
+    border-color var(--transition-fast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 280px;
+}
+
+.project-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--text-dim);
+}
+
+.project-card:active {
+  transform: translateY(0);
+}
+
+.project-card-loading {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.project-card-errored {
+  border-color: var(--color-error);
+  box-shadow: 0 0 0 1px var(--color-error);
+}
+
+.project-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+}
+
+.project-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  color: var(--todo);
+  flex-shrink: 0;
+}
+
+.project-card-title-section {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.project-card-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-card-path {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-card-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border: 1px solid currentColor;
+  flex-shrink: 0;
+}
+
+.project-card-health {
+  display: flex;
+  gap: var(--space-lg);
+  padding: var(--space-md) 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.project-card-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.project-card-metric-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.project-card-metric-label {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.project-card-metric-empty {
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+}
+
+.project-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.project-card-activity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.project-card-activity-label {
+  color: var(--text-dim);
+}
+
+.project-card-activity-time {
+  color: var(--text-muted);
+}
+
+.project-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.project-card-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.project-card-action:hover:not(:disabled) {
+  background: var(--card-hover);
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
+.project-card-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.project-card-action-resume {
+  color: var(--color-success);
+}
+
+.project-card-action-resume:hover:not(:disabled) {
+  background: rgba(63, 185, 80, 0.1);
+  border-color: var(--color-success);
+}
+
+.project-card-action-pause {
+  color: var(--warning, #e3b341);
+}
+
+.project-card-action-pause:hover:not(:disabled) {
+  background: rgba(227, 179, 65, 0.1);
+  border-color: var(--warning, #e3b341);
+}
+
+.project-card-action-open {
+  color: var(--todo);
+}
+
+.project-card-action-open:hover:not(:disabled) {
+  background: rgba(88, 166, 255, 0.1);
+  border-color: var(--todo);
+}
+
+.project-card-action-remove {
+  padding: 6px;
+  color: var(--color-error);
+}
+
+.project-card-action-remove:hover:not(:disabled) {
+  background: rgba(248, 81, 73, 0.1);
+  border-color: var(--color-error);
+}
+
+.project-card-action-remove.is-armed {
+  background: color-mix(in srgb, var(--color-error) 14%, transparent);
+}

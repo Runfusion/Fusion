@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { loadAllAppCss } from "../test/cssFixture";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
-const css = readFileSync(resolve(__dirname, "../styles.css"), "utf-8");
+const css = loadAllAppCss();
 
 function extractMaxWidthMediaBlocks(maxWidthPx: number): string[] {
   const marker = `@media (max-width: ${maxWidthPx}px)`;

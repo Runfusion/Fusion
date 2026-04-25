@@ -1,3 +1,4 @@
+import "./ListView.css";
 import { useState, useCallback, useMemo, Fragment, useEffect, useRef } from "react";
 import { ArrowUpDown, ArrowUp, ArrowDown, Link, Columns3, EyeOff, Eye, ChevronRight } from "lucide-react";
 import type { Task, TaskDetail, Column, TaskCreateInput } from "@fusion/core";

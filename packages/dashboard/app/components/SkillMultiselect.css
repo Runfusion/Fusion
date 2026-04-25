@@ -1,0 +1,180 @@
+/* === Skill Multiselect === */
+.skill-multiselect {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.skill-multiselect-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.skill-multiselect-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.skill-chip-name {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 2px;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.skill-chip-remove:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.skill-chip-remove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.skill-multiselect-add {
+  min-height: 32px;
+}
+
+.skill-multiselect-loading,
+.skill-multiselect-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.skill-multiselect-dropdown {
+  width: 100%;
+  font-size: 13px;
+}
+
+.agent-dialog-skills-hint {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+/* Agent detail divider */
+
+/* Skill badge row for Dashboard tab */
+.skill-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.skill-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* Skill badges in AgentsView */
+.badge-skill {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.agent-board-skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 8px;
+}
+
+.skill-badge-sm {
+  display: inline-block;
+  padding: 1px 5px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.skill-badge-extra {
+  background: var(--bg-secondary);
+}
+
+/* Tree view skill badge */
+.agent-tree__skill {
+  display: inline-block;
+  padding: 1px 5px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 1.4;
+  margin-left: 6px;
+}
+
+/* Org chart skill badge */
+.org-chart-node__skill {
+  display: inline-block;
+  padding: 1px 5px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+.divider {
+  color: var(--border);
+}
+
+/* Agent detail text-muted */
+.text-muted {
+  color: var(--text-muted);
+}
+
+/* Agent detail link */
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--todo);
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+/* Text secondary helper */
+.text-secondary {
+  color: var(--text-muted);
+}

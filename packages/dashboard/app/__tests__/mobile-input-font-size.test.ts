@@ -1,11 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { loadAllAppCss } from "../test/cssFixture";
 
-const css = readFileSync(
-  resolve(__dirname, "../styles.css"),
-  "utf-8",
-);
+const css = loadAllAppCss();
 
 describe("mobile input font size CSS", () => {
   describe("base (desktop) styles", () => {

@@ -1,0 +1,1251 @@
+/* === Model Combobox Component === */
+
+.model-combobox {
+  position: relative;
+  width: 100%;
+}
+
+.model-combobox-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.model-combobox-trigger:hover:not(:disabled) {
+  border-color: var(--text-dim);
+}
+
+.model-combobox-trigger:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.model-combobox-trigger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.model-combobox-trigger-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.model-combobox-trigger-icon {
+  display: inline-flex;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.model-combobox-trigger-arrow {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: 8px;
+  transition: transform 0.15s;
+}
+
+.model-combobox-trigger[aria-expanded="true"] .model-combobox-trigger-arrow {
+  transform: rotate(180deg);
+}
+
+.model-combobox-dropdown {
+  position: fixed;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  /* Must sit above QuickChatFAB mobile full-screen panel (z-index 1100). */
+  z-index: 1200;
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.model-combobox-search-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.model-combobox-search {
+  width: 100%;
+  padding: 10px 36px 10px 12px;
+  background: var(--bg);
+  border: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+}
+
+.model-combobox-search::placeholder {
+  color: var(--text-dim);
+}
+
+.model-combobox-search:focus {
+  background: var(--card);
+}
+
+.model-combobox-clear {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  transition: color var(--transition-fast);
+}
+
+.model-combobox-clear:hover {
+  color: var(--text);
+}
+
+.model-combobox-results-count {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.model-combobox-list {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 0;
+}
+
+.model-combobox-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  transition: background 0.1s;
+  overflow: hidden;
+}
+
+.model-combobox-option:hover,
+.model-combobox-option--highlighted {
+  background: var(--card-hover);
+}
+
+.model-combobox-option--selected {
+  background: rgba(88, 166, 255, 0.15);
+}
+
+.model-combobox-option--selected:hover,
+.model-combobox-option--selected.model-combobox-option--highlighted {
+  background: rgba(88, 166, 255, 0.25);
+}
+
+.model-combobox-option-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.model-combobox-option-text--default {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.model-combobox-option-id {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  margin-left: 8px;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+}
+
+.model-combobox-group {
+  border-bottom: 1px solid var(--border);
+}
+
+.model-combobox-group:last-child {
+  border-bottom: none;
+}
+
+.model-combobox-optgroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  background: var(--bg);
+  cursor: default;
+  overflow: hidden;
+}
+
+.model-combobox-optgroup-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Provider favorite star (in optgroup header) */
+.model-combobox-optgroup-favorite {
+  padding: 2px 4px;
+  font-size: 14px;
+  color: var(--star-idle);
+  background: none;
+  border: none;
+  cursor: pointer;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.model-combobox-optgroup-favorite:hover {
+  color: var(--star-active);
+}
+.model-combobox-optgroup-favorite--active {
+  color: var(--star-active);
+}
+
+/* Model favorite star (inside option row) */
+.model-combobox-option-favorite {
+  padding: 2px 4px;
+  font-size: 12px;
+  color: var(--star-idle);
+  background: none;
+  border: none;
+  cursor: pointer;
+  line-height: 1;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.model-combobox-option-favorite:hover {
+  color: var(--star-active);
+}
+.model-combobox-option-favorite--active {
+  color: var(--star-active);
+}
+
+/* Favorited model pinned row */
+.model-combobox-option--favorite {
+  padding-left: 12px;
+  background: var(--bg-secondary);
+}
+
+.model-combobox-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.model-combobox-no-results {
+  padding: 16px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Mobile responsive model dropdown */
+@media (max-width: 768px) {
+  .model-combobox-dropdown {
+    max-height: 50vh;
+    max-height: 50dvh; /* Use dynamic viewport height where supported */
+    width: min(360px, calc(100vw - 32px));
+  }
+
+  .model-combobox-search {
+    font-size: 16px;
+  }
+
+  .model-combobox-option {
+    min-height: 36px;
+  }
+}
+
+@media (max-width: 640px) {
+  .model-combobox-dropdown {
+    max-height: 50vh;
+    max-height: 50dvh;
+    width: min(360px, calc(100vw - 32px));
+  }
+}
+
+/* ============================================================
+   THEME SYSTEM
+   ============================================================ */
+
+/* Smooth transitions for theme changes */
+html,
+html *,
+html *::before,
+html *::after {
+  transition:
+    background-color var(--transition-normal),
+    color var(--transition-normal),
+    border-color var(--transition-normal),
+    box-shadow var(--transition-normal);
+}
+
+/* Disable transitions on specific elements that shouldn't animate */
+html .card.dragging,
+html .card.dragging *,
+html .list-row.dragging,
+html .list-row.dragging *,
+html .column.drag-over,
+html .column.drag-over * {
+  transition: none !important;
+}
+
+/* ============================================================
+   LIGHT THEME (data-theme="light")
+   ============================================================ */
+[data-theme="light"] {
+  /* Backgrounds */
+  --bg: #ffffff;
+  --surface: #f6f8fa;
+  --card: #ffffff;
+  --card-hover: #f3f4f6;
+  /* Light mode keeps the same semantic role with slightly softer contrast. */
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --surface-subtle: color-mix(in srgb, var(--surface) 98%, var(--text) 2%);
+  --surface-muted: color-mix(in srgb, var(--surface) 97%, var(--text) 3%);
+  --surface-emphasis: color-mix(in srgb, var(--surface) 95%, var(--text) 5%);
+  --surface-hover-strong: color-mix(in srgb, var(--surface) 94%, var(--text) 6%);
+  --bg-secondary: #f6f8fa;
+  --bg-tertiary: #eaeef2;
+  --border: #d0d7de;
+
+  /* Text */
+  --text: #1f2328;
+  --text-muted: #656d76;
+  --text-dim: #8c959f;
+
+  /* Status colors (adjusted for light backgrounds) */
+  --triage: #9a6700;
+  --todo: #0969da;
+  --in-progress: #00bcd4;
+  --in-progress-rgb: 0, 188, 212;
+  --in-review: #1a7f37;
+  --done: #6e7781;
+
+  /* Feedback colors */
+  --color-success: #1a7f37;
+  --color-error: #cf222e;
+  --color-muted: #6e7781;
+  --color-warning: #9a6700;
+
+  /* Executor status bar state accents (lower intensity for light backgrounds) */
+  --executor-status-error-bg: color-mix(in srgb, var(--color-error) 6%, transparent);
+
+  /* Changed-file status colors (adjusted for light backgrounds) */
+  --status-color-added: #1a7f37;
+  --status-color-modified: #0969da;
+  --status-color-deleted: #cf222e;
+  --status-color-unknown: #6e7781;
+
+  /* Shadow for light mode */
+  --shadow-sm: 0 1px 2px rgba(31, 35, 40, 0.08);
+  --shadow-md: 0 4px 6px rgba(31, 35, 40, 0.12);
+  --shadow-lg: 0 4px 24px rgba(31, 35, 40, 0.15);
+  --shadow-glow: 0 0 8px rgba(9, 105, 218, 0.18);
+  --glow-success: 0 0 8px rgba(26, 127, 55, 0.3);
+  --glow-warning: 0 0 8px rgba(154, 103, 0, 0.3);
+  --glow-danger: 0 0 8px rgba(207, 34, 46, 0.3);
+  --focus-ring: 0 0 0 2px rgba(9, 105, 218, 0.12);
+  --focus-ring-strong: 0 0 0 2px rgba(9, 105, 218, 0.24);
+  /* CTA tokens for light mode */
+  --cta-bg: #1a7f37;
+  --cta-border: #1f883d;
+  --cta-text: #fff;
+  --cta-bg-hover: #1f883d;
+  --cta-border-hover: #2ea043;
+  --cta-glow: 0 0 8px rgba(26, 127, 55, 0.3);
+
+  /* Info color for light mode */
+  --color-info: #0969da;
+
+  /* Workflow Step colors for light mode */
+  --ws-pre-merge: #2563eb;
+  --ws-post-merge: #0d9488;
+  --ws-info: #0891b2;
+  --ws-warning: #a16207;
+  --ws-success: #16a34a;
+  --ws-error: #dc2626;
+  --ws-error-dark: #b91c1c;
+  --ws-teal: #0d9488;
+  --ws-quality: #2563eb;
+  --ws-security: #dc2626;
+
+  /* Status error colors for light mode */
+  --color-error-dark: #a40e26;
+  --status-error-bg: color-mix(in srgb, var(--color-error-dark, #a40e26) 15%, transparent);
+  --status-error-bg-deep: color-mix(in srgb, var(--color-error-dark, #a40e26) 20%, transparent);
+
+  /* Logo accent for light mode */
+  --logo-accent: var(--todo);
+
+  /* Accent color for light mode */
+  --accent: #6a4fa0;
+
+  /* Log entry backgrounds (lower intensity for light backgrounds) */
+  --log-tool-bg: color-mix(in srgb, var(--accent) 6%, transparent);
+  --log-success-bg: color-mix(in srgb, var(--color-success) 5%, transparent);
+  --log-error-bg: color-mix(in srgb, var(--color-error) 5%, transparent);
+
+  --shadow: var(--shadow-lg);
+
+  /* Mailbox FAB & badge text — ensure contrast on light backgrounds */
+  --fab-text: #fff;
+
+  /* Mission autopilot — darker for light backgrounds */
+  --autopilot-icon: #ca8a04;
+  --autopilot-shadow: rgba(34, 197, 94, 0.4);
+
+  /* Terminal background */
+  --terminal-bg: #f6f8fa;
+
+  /* Card mission badge — darker purple for light bg */
+  --badge-mission-text: #7c3aed;
+  --badge-mission-text-hover: #8b5cf6;
+  --badge-mission-bg: rgba(124, 58, 237, 0.12);
+  --badge-mission-bg-hover: rgba(124, 58, 237, 0.22);
+
+  /* Mission event type colors — darker/more saturated for light readability */
+  --event-error-text: #dc2626;
+  --event-state-text: #2563eb;
+  --event-task-text: #059669;
+  --event-slice-text: #d97706;
+  --event-autopilot-text: #9333ea;
+  --event-error-bg: rgba(220, 38, 38, 0.12);
+  --event-state-bg: rgba(37, 99, 235, 0.12);
+  --event-task-bg: rgba(5, 150, 105, 0.12);
+  --event-slice-bg: rgba(217, 119, 6, 0.12);
+  --event-autopilot-bg: rgba(147, 51, 234, 0.12);
+
+  /* Mission toggle & badge backgrounds */
+  --toggle-checked-bg: rgba(34, 197, 94, 0.15);
+  --meta-badge-bg: rgba(63, 185, 80, 0.08);
+
+  /* Star favorites */
+  --star-idle: #9ca3af;
+  --star-active: #d97706;
+}
+
+/* Light theme specific overrides */
+[data-theme="light"] .modal-overlay,
+[data-theme="light"] .agent-detail-overlay,
+[data-theme="light"] .agent-dialog-overlay,
+[data-theme="light"] .chat-new-dialog-backdrop {
+  background: rgba(31, 35, 40, 0.5);
+}
+
+[data-theme="light"] .modal-header {
+  background: rgba(246, 248, 250, 0.8);
+}
+
+[data-theme="light"] .modal-actions {
+  background: rgba(246, 248, 250, 0.6);
+}
+
+[data-theme="light"] .settings-sidebar {
+  background: rgba(246, 248, 250, 0.6);
+}
+
+[data-theme="light"] .toast-success {
+  background: var(--cta-bg);
+}
+
+[data-theme="light"] .toast-error {
+  background: var(--color-error-dark);
+}
+
+[data-theme="light"] .toast-info {
+  background: var(--color-info);
+}
+
+[data-theme="light"] .btn-task-create {
+  background: var(--cta-bg);
+  border-color: var(--cta-border);
+}
+
+[data-theme="light"] .btn-task-create:hover {
+  background: var(--cta-bg-hover);
+  border-color: var(--cta-border-hover);
+  box-shadow: var(--cta-glow);
+}
+
+[data-theme="light"] .btn-primary {
+  background: var(--cta-bg);
+  border-color: var(--cta-border);
+}
+
+[data-theme="light"] .btn-primary:hover {
+  background: var(--cta-bg-hover);
+  border-color: var(--cta-border-hover);
+  box-shadow: var(--cta-glow);
+}
+
+[data-theme="light"] .btn-danger {
+  background: #cf222e;
+  border-color: #a40e26;
+}
+
+[data-theme="light"] .btn-danger:hover {
+  background: #a40e26;
+  box-shadow: var(--glow-danger);
+}
+
+[data-theme="light"] .btn-warning {
+  background: var(--triage);
+  border-color: color-mix(in srgb, var(--triage) 70%, black);
+}
+
+[data-theme="light"] .btn-warning:hover {
+  background: color-mix(in srgb, var(--triage) 70%, black);
+  box-shadow: var(--glow-warning);
+}
+
+[data-theme="light"] .btn-secondary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+[data-theme="light"] .btn-secondary:hover {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+[data-theme="light"] .btn-secondary:active {
+  transform: scale(0.97);
+}
+[data-theme="light"] .btn-secondary:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  border-color: var(--todo);
+}
+
+/* ============================================================
+   THEME SELECTOR COMPONENT STYLES
+   ============================================================ */
+
+.theme-selector {
+  padding: 0 20px 20px;
+}
+
+.theme-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-xs);
+  margin-bottom: 20px;
+}
+
+.theme-mode-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: var(--space-sm) var(--space-lg);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex: 1;
+}
+
+.theme-mode-btn:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.theme-mode-btn.active {
+  background: var(--todo);
+  color: var(--bg);
+}
+
+.theme-mode-btn.active:hover {
+  background: var(--todo);
+  color: var(--bg);
+}
+
+.theme-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: var(--space-md);
+}
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-md);
+}
+
+@media (max-width: 768px) {
+  .theme-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.theme-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--card);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.theme-option:hover {
+  border-color: var(--todo);
+  background: var(--card-hover);
+}
+
+.theme-option.active {
+  border-color: var(--todo);
+  background: rgba(88, 166, 255, 0.1);
+}
+
+.theme-option-swatch {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius);
+  border: 2px solid var(--border);
+  position: relative;
+  overflow: hidden;
+}
+
+.theme-option-swatch::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, var(--bg) 50%, var(--surface) 50%);
+}
+
+.theme-option-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: center;
+}
+
+/* Theme preview swatch colors */
+.theme-swatch-default {
+  --bg: #0d1117;
+  --surface: #161b22;
+}
+
+.theme-swatch-ocean {
+  --bg: #0a1929;
+  --surface: #132f4c;
+}
+
+.theme-swatch-forest {
+  --bg: #0d2818;
+  --surface: #1a472a;
+}
+
+.theme-swatch-sunset {
+  --bg: #2d1f1f;
+  --surface: #4a2c2c;
+}
+
+.theme-swatch-zen {
+  --bg: #0c0c0c;
+  --surface: #111111;
+}
+
+.theme-swatch-berry {
+  --bg: #1a0b2e;
+  --surface: #2d1b4e;
+}
+
+.theme-swatch-monochrome {
+  --bg: #0d0d0d;
+  --surface: #1a1a1a;
+}
+
+.theme-swatch-slate {
+  --bg: #1e293b;
+  --surface: #334155;
+}
+
+.theme-swatch-ash {
+  --bg: #292524;
+  --surface: #44403c;
+}
+
+.theme-swatch-graphite {
+  --bg: #18181b;
+  --surface: #27272a;
+}
+
+.theme-swatch-ember {
+  --bg: #18181b;
+  --surface: #27272a;
+}
+
+.theme-swatch-rust {
+  --bg: #0f0b09;
+  --surface: #1a1410;
+}
+
+.theme-swatch-copper {
+  --bg: #0e0c0a;
+  --surface: #181410;
+}
+
+.theme-swatch-foundry {
+  --bg: #0c0806;
+  --surface: #15100c;
+}
+
+.theme-swatch-carbon {
+  --bg: #0a0b0d;
+  --surface: #111318;
+}
+
+.theme-swatch-sandstone {
+  --bg: #1a1712;
+  --surface: #241f18;
+}
+
+.theme-swatch-lagoon {
+  --bg: #0a1214;
+  --surface: #101c1f;
+}
+
+.theme-swatch-frost {
+  --bg: #0c0e14;
+  --surface: #121520;
+}
+
+.theme-swatch-lavender {
+  --bg: #14101a;
+  --surface: #1c1624;
+}
+
+.theme-swatch-neon-bloom {
+  --bg: #120a18;
+  --surface: #1a1024;
+}
+
+.theme-swatch-sepia {
+  --bg: #161210;
+  --surface: #201a16;
+}
+
+.theme-swatch-silver {
+  --bg: #27272a;
+  --surface: #3f3f46;
+}
+
+.theme-swatch-high-contrast {
+  --bg: #000000;
+  --surface: #0a0a0a;
+}
+
+.theme-swatch-industrial {
+  --bg: #0c0c0c;
+  --surface: #1a1a1a;
+}
+
+.theme-swatch-solarized {
+  --bg: #002b36;
+  --surface: #073642;
+}
+
+.theme-swatch-factory {
+  --bg: #0a0a0a;
+  --surface: #111111;
+}
+
+.theme-swatch-ayu {
+  --bg: #0f1419;
+  --surface: #131d27;
+}
+
+.theme-swatch-one-dark {
+  --bg: #282c34;
+  --surface: #21252b;
+}
+
+.theme-swatch-nord {
+  --bg: #2e3440;
+  --surface: #3b4252;
+}
+
+.theme-swatch-dracula {
+  --bg: #282a36;
+  --surface: #21222c;
+}
+
+.theme-swatch-gruvbox {
+  --bg: #282828;
+  --surface: #1d2021;
+}
+
+.theme-swatch-tokyo-night {
+  --bg: #1a1b26;
+  --surface: #16161e;
+}
+
+.theme-swatch-catppuccin-mocha {
+  --bg: #1e1e2e;
+  --surface: #181825;
+}
+
+.theme-swatch-github-dark {
+  --bg: #0d1117;
+  --surface: #010409;
+}
+
+.theme-swatch-everforest {
+  --bg: #2d353b;
+  --surface: #272e33;
+}
+
+.theme-swatch-rose-pine {
+  --bg: #191724;
+  --surface: #1f1d2e;
+}
+
+.theme-swatch-kanagawa {
+  --bg: #1f1f28;
+  --surface: #16161d;
+}
+
+.theme-swatch-night-owl {
+  --bg: #011627;
+  --surface: #01111d;
+}
+
+.theme-swatch-palenight {
+  --bg: #292d3e;
+  --surface: #1e2235;
+}
+
+.theme-swatch-monokai-pro {
+  --bg: #2d2a2e;
+  --surface: #252229;
+}
+
+.theme-swatch-slime {
+  --bg: #0a0e09;
+  --surface: #0f150d;
+}
+
+.theme-swatch-brutalist {
+  --bg: #101010;
+  --surface: #1d1d1d;
+}
+
+.theme-swatch-neon-city {
+  --bg: #0d0d15;
+  --surface: #171933;
+}
+
+.theme-swatch-parchment {
+  --bg: #1b1712;
+  --surface: #2f281f;
+}
+
+.theme-swatch-terminal {
+  --bg: #0a0a0a;
+  --surface: #121712;
+}
+
+.theme-swatch-glass {
+  --bg: #13111f;
+  --surface: #362c52;
+}
+
+.theme-swatch-horizon {
+  --bg: #1c1e26;
+  --surface: #16161c;
+}
+
+.theme-swatch-vitesse {
+  --bg: #121817;
+  --surface: #0d1210;
+}
+
+.theme-swatch-outrun {
+  --bg: #0a0a14;
+  --surface: #0d0d1a;
+}
+
+.theme-swatch-snazzy {
+  --bg: #282a36;
+  --surface: #1e1f29;
+}
+
+.theme-swatch-porple {
+  --bg: #292d3e;
+  --surface: #1e2030;
+}
+
+.theme-swatch-espresso {
+  --bg: #2c1f1a;
+  --surface: #231813;
+}
+
+.theme-swatch-mars {
+  --bg: #1a1210;
+  --surface: #140e0c;
+}
+
+.theme-swatch-poimandres {
+  --bg: #1a1b26;
+  --surface: #14151f;
+}
+
+/* Light mode swatch overrides */
+[data-theme="light"] .theme-swatch-factory {
+  --bg: #f5f5f5;
+  --surface: #ffffff;
+}
+
+[data-theme="light"] .theme-swatch-ayu {
+  --bg: #fafafa;
+  --surface: #f3f3f3;
+}
+
+[data-theme="light"] .theme-swatch-zen {
+  --bg: #f5f5f5;
+  --surface: #fafafa;
+}
+
+[data-theme="light"] .theme-swatch-nord {
+  --bg: #eceff4;
+  --surface: #e5e9f0;
+}
+
+[data-theme="light"] .theme-swatch-dracula {
+  --bg: #f8f8f2;
+  --surface: #efeefa;
+}
+
+[data-theme="light"] .theme-swatch-gruvbox {
+  --bg: #fbf1c7;
+  --surface: #f2e5bc;
+}
+
+[data-theme="light"] .theme-swatch-tokyo-night {
+  --bg: #e1e2e7;
+  --surface: #d5d6db;
+}
+
+[data-theme="light"] .theme-swatch-catppuccin-mocha {
+  --bg: #eff1f5;
+  --surface: #e6e9ef;
+}
+
+[data-theme="light"] .theme-swatch-github-dark {
+  --bg: #ffffff;
+  --surface: #f6f8fa;
+}
+
+[data-theme="light"] .theme-swatch-everforest {
+  --bg: #fdf6e3;
+  --surface: #f4f0d9;
+}
+
+[data-theme="light"] .theme-swatch-rose-pine {
+  --bg: #faf4ed;
+  --surface: #fffaf3;
+}
+
+[data-theme="light"] .theme-swatch-kanagawa {
+  --bg: #edeadd;
+  --surface: #e1ddd4;
+}
+
+[data-theme="light"] .theme-swatch-one-dark {
+  --bg: #fafafa;
+  --surface: #f0f0f0;
+}
+
+[data-theme="light"] .theme-swatch-night-owl {
+  --bg: #f6f7f9;
+  --surface: #eef0f4;
+}
+
+[data-theme="light"] .theme-swatch-palenight {
+  --bg: #f5f7fa;
+  --surface: #ebeef5;
+}
+
+[data-theme="light"] .theme-swatch-monokai-pro {
+  --bg: #faf8f5;
+  --surface: #f0ece5;
+}
+
+[data-theme="light"] .theme-swatch-slime {
+  --bg: #f2f7ea;
+  --surface: #e6efda;
+}
+
+[data-theme="light"] .theme-swatch-brutalist {
+  --bg: #ece9e4;
+  --surface: #f7f4ef;
+}
+
+[data-theme="light"] .theme-swatch-neon-city {
+  --bg: #f7f5ff;
+  --surface: #f1edff;
+}
+
+[data-theme="light"] .theme-swatch-parchment {
+  --bg: #f5f0e8;
+  --surface: #efe7dc;
+}
+
+[data-theme="light"] .theme-swatch-terminal {
+  --bg: #e7f5dd;
+  --surface: #deefd2;
+}
+
+[data-theme="light"] .theme-swatch-glass {
+  --bg: #eceaf5;
+  --surface: #ffffff;
+}
+
+[data-theme="light"] .theme-swatch-slate {
+  --bg: #f1f5f9;
+  --surface: #e2e8f0;
+}
+
+[data-theme="light"] .theme-swatch-ash {
+  --bg: #fafaf9;
+  --surface: #f5f5f4;
+}
+
+[data-theme="light"] .theme-swatch-graphite {
+  --bg: #fafafa;
+  --surface: #f4f4f5;
+}
+
+[data-theme="light"] .theme-swatch-ember {
+  --bg: #fafafa;
+  --surface: #f4f4f5;
+}
+
+[data-theme="light"] .theme-swatch-rust {
+  --bg: #f5efe8;
+  --surface: #ebe3d8;
+}
+
+[data-theme="light"] .theme-swatch-copper {
+  --bg: #f3ede6;
+  --surface: #e8e0d6;
+}
+
+[data-theme="light"] .theme-swatch-foundry {
+  --bg: #f5f0e6;
+  --surface: #ebe4d6;
+}
+
+[data-theme="light"] .theme-swatch-carbon {
+  --bg: #eef0f4;
+  --surface: #e2e6ec;
+}
+
+[data-theme="light"] .theme-swatch-sandstone {
+  --bg: #f5f0e8;
+  --surface: #ebe4d8;
+}
+
+[data-theme="light"] .theme-swatch-lagoon {
+  --bg: #eef5f3;
+  --surface: #e0ebe8;
+}
+
+[data-theme="light"] .theme-swatch-frost {
+  --bg: #f0f4f8;
+  --surface: #e4eaf0;
+}
+
+[data-theme="light"] .theme-swatch-lavender {
+  --bg: #f4f0f8;
+  --surface: #e8e2f0;
+}
+
+[data-theme="light"] .theme-swatch-neon-bloom {
+  --bg: #f8f0f8;
+  --surface: #f0e4f0;
+}
+
+[data-theme="light"] .theme-swatch-sepia {
+  --bg: #f5f0e4;
+  --surface: #ece4d4;
+}
+
+[data-theme="light"] .theme-swatch-silver {
+  --bg: #fafafa;
+  --surface: #f4f4f5;
+}
+
+[data-theme="light"] .theme-swatch-horizon {
+  --bg: #fdf0ed;
+  --surface: #f9cec0;
+}
+
+[data-theme="light"] .theme-swatch-vitesse {
+  --bg: #f8f5f0;
+  --surface: #efe9e0;
+}
+
+[data-theme="light"] .theme-swatch-outrun {
+  --bg: #f0f0f5;
+  --surface: #e8e8ef;
+}
+
+[data-theme="light"] .theme-swatch-snazzy {
+  --bg: #fafafa;
+  --surface: #f0f0f2;
+}
+
+[data-theme="light"] .theme-swatch-porple {
+  --bg: #f5f3f7;
+  --surface: #eae7ef;
+}
+
+[data-theme="light"] .theme-swatch-espresso {
+  --bg: #f5ece4;
+  --surface: #ebe1d6;
+}
+
+[data-theme="light"] .theme-swatch-mars {
+  --bg: #f5ece6;
+  --surface: #ebe0d4;
+}
+
+[data-theme="light"] .theme-swatch-poimandres {
+  --bg: #f0f0f5;
+  --surface: #e6e6ee;
+}
+
+/* Reset to defaults button */
+.theme-reset-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  margin-top: 20px;
+  padding: 10px 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  width: 100%;
+}
+
+.theme-reset-btn:hover {
+  background: var(--card-hover);
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+
+/* Theme current preview in settings */
+.theme-current-preview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 20px;
+}
+
+.theme-preview-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  color: var(--todo);
+}
+
+.theme-preview-info {
+  flex: 1;
+}
+
+.theme-preview-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.theme-preview-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: capitalize;
+}
+
+@media (max-width: 768px) {
+  /* Model combobox dropdown: mobile-friendly sizing */
+  .model-combobox-dropdown {
+    max-height: 50vh;
+    width: min(360px, calc(100vw - 32px));
+  }
+
+  .model-combobox-search {
+    font-size: 16px;
+  }
+
+  .model-combobox-option {
+    min-height: 36px;
+  }
+
+  .theme-selector {
+    padding: 0 14px 14px;
+  }
+}

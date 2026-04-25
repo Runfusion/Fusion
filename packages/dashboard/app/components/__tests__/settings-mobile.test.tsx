@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { loadAllAppCss } from "../../test/cssFixture";
 import path from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, waitFor } from "@testing-library/react";
@@ -6,7 +7,6 @@ import userEvent from "@testing-library/user-event";
 import { SettingsModal } from "../SettingsModal";
 import type { Settings } from "@fusion/core";
 
-const stylesPath = path.resolve(__dirname, "../../styles.css");
 
 const defaultSettings = {
   maxConcurrent: 2,
@@ -230,7 +230,7 @@ describe("SettingsModal mobile adaptations", () => {
   });
 
   it("contains required mobile settings CSS overrides", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
 
     expectMobileRule(css, ".settings-layout", "flex-direction: column;");
     expectMobileRule(css, ".settings-mobile-section-picker", "display: flex;");

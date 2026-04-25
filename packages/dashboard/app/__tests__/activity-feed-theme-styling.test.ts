@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import fs from "fs";
 import path from "path";
 
@@ -10,29 +10,17 @@ import path from "path";
  * color themes and light/dark modes.
  */
 describe("ActivityFeed theme styling", () => {
-  const stylesPath = path.resolve(__dirname, "../styles.css");
-  let css: string;
+  let activityFeedCss: string;
 
   beforeAll(() => {
-    css = fs.readFileSync(stylesPath, "utf-8");
+    activityFeedCss = fs.readFileSync(
+      path.resolve(__dirname, "../components/ActivityFeed.css"),
+      "utf-8",
+    );
   });
 
-  /**
-   * Extract the ActivityFeed CSS block from the full stylesheet.
-   * The block starts at ".activity-feed {" and ends before the next
-   * top-level section comment (e.g., "Modals").
-   */
   function getActivityFeedBlock(): string {
-    const startMatch = css.match(/\/\* === ActivityFeed Component === \*\//);
-    const endMatch = css.match(/\/\* === Modals === \*\//);
-
-    if (!startMatch || !endMatch) {
-      throw new Error("Could not locate ActivityFeed CSS block boundaries");
-    }
-
-    const startIdx = startMatch.index!;
-    const endIdx = endMatch.index!;
-    return css.slice(startIdx, endIdx);
+    return activityFeedCss;
   }
 
   it("does not use hardcoded rgba(88, 166, 255) in the project badge background", () => {

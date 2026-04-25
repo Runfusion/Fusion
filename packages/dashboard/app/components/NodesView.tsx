@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Server, Wifi, WifiOff, Globe, RefreshCw, X } from "lucide-react";
+import "./NodesView.css";
 import { useNodes } from "../hooks/useNodes";
 import { useProjects } from "../hooks/useProjects";
 import { useNodeSettingsSync, computeSyncState } from "../hooks/useNodeSettingsSync";

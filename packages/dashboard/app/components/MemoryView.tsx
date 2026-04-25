@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { Loader2 } from "lucide-react";
+import "./MemoryView.css";
 import type { MemoryFileInfo, MemoryRetrievalTestResult } from "../api";
 import { FileEditor } from "./FileEditor";
 import { useMemoryData } from "../hooks/useMemoryData";

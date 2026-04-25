@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { loadAllAppCss } from "../../test/cssFixture";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ChangesDiffModal, type NormalizedFile } from "../ChangesDiffModal";
 import type { MergeDetails } from "@fusion/core";
@@ -534,13 +535,7 @@ describe("ChangesDiffModal", () => {
       // Load the stylesheet and verify the .changes-diff-modal rule contains
       // a calc()-based max-height that accounts for overlay padding.
       // This prevents the modal from extending past the viewport bottom.
-      const fs = await import("fs");
-      const path = await import("path");
-      const cssPath = path.resolve(
-        __dirname,
-        "../../styles.css",
-      );
-      const css = fs.readFileSync(cssPath, "utf-8");
+      const css = loadAllAppCss();
 
       // Extract the .changes-diff-modal block (not the mobile override)
       // Match from ".changes-diff-modal {" to its closing "}"
@@ -560,8 +555,7 @@ describe("ChangesDiffModal", () => {
     it("height and max-height together do not exceed viewport with default padding", async () => {
       const fs = await import("fs");
       const path = await import("path");
-      const cssPath = path.resolve(__dirname, "../../styles.css");
-      const css = fs.readFileSync(cssPath, "utf-8");
+      const css = loadAllAppCss();
 
       const blockMatch = css.match(
         /\.changes-diff-modal\s*\{([^}]*)\}/,

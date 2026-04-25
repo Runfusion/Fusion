@@ -1,3 +1,4 @@
+import "./CustomModelDropdown.css";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { ModelInfo } from "../api";

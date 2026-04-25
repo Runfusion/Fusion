@@ -437,8 +437,13 @@ describe("useTheme", () => {
   });
 
   it("applies factory-specific design tokens from the stylesheet", () => {
-    // Load both base styles and theme data (theme blocks are in a separate file)
+    // Load only base styles (the design tokens this test asserts on live in
+    // styles.css :root) plus theme-data.css for the factory-theme overrides.
+    // Loading the full app CSS bundle would re-declare :root tokens after the
+    // theme overrides via cascade order quirks; the assertion only cares about
+    // the base→theme cascade, not the full app stylesheet.
     const style = document.createElement("style");
+    // eslint-disable-next-line no-restricted-syntax -- intentional read of base styles for cascade test
     const baseCss = readFileSync(resolve(PACKAGE_ROOT, "app/styles.css"), "utf8");
     const themeDataCss = readFileSync(resolve(PACKAGE_ROOT, "app/public/theme-data.css"), "utf8");
     style.textContent = baseCss + "\n" + themeDataCss;

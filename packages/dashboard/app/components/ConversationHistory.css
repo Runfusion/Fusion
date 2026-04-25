@@ -1,0 +1,127 @@
+/* === Conversation History Timeline === */
+.conversation-history {
+  border-left: 2px solid var(--border-primary);
+  padding: 0 0 0 12px;
+  margin: 0 0 16px;
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.conversation-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.conversation-entry-question {
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.conversation-entry-question-label {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-secondary) 80%, transparent);
+  border: 1px solid var(--border-primary);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.conversation-entry-response {
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  padding: 8px 10px;
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.conversation-entry-thinking {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.conversation-entry-thinking pre {
+  margin: 0;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
+  padding: 10px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.conversation-thinking-toggle {
+  min-height: 44px;
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.conversation-thinking-toggle:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.conversation-thinking-toggle:focus-visible {
+  outline: 2px solid var(--todo);
+  outline-offset: 2px;
+}
+
+.conversation-separator {
+  border-top: 1px solid var(--border-primary);
+  margin: 4px 0 16px;
+}
+
+@media (max-width: 768px) {
+  .conversation-history {
+    max-height: 220px;
+    margin-bottom: 12px;
+    padding-left: 10px;
+  }
+
+  .conversation-entry-question,
+  .conversation-entry-response {
+    font-size: 14px;
+  }
+
+  .conversation-thinking-toggle {
+    width: 100%;
+    justify-content: center;
+    min-height: 36px;
+  }
+}
+

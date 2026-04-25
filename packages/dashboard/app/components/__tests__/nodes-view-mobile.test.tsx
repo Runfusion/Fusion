@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { loadAllAppCss } from "../../test/cssFixture";
 
 function extractRuleBlock(css: string, selector: string): string {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -33,8 +32,7 @@ function extractMobileMediaBlocks(content: string): string {
 }
 
 describe("nodes-view mobile CSS", () => {
-  const cssPath = resolve(__dirname, "../../styles.css");
-  const cssContent = readFileSync(cssPath, "utf-8");
+  const cssContent = loadAllAppCss();
   const mobileMediaBlock = extractMobileMediaBlocks(cssContent);
 
   it("defines .nodes-view-header with compact padding on mobile", () => {

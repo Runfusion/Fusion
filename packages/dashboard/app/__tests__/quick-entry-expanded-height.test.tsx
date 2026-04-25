@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { loadAllAppCss } from "../test/cssFixture";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { QuickEntryBox } from "../components/QuickEntryBox";
 import type { Task } from "@fusion/core";
@@ -174,8 +175,7 @@ describe("quick-entry-expanded-height CSS contract (FN-1631)", () => {
    */
   it("CSS uses :not() to prevent container selectors from overriding expanded min-height", () => {
     // Read the CSS file
-    const cssPath = resolve(__dirname, "../styles.css");
-    const cssContent = readFileSync(cssPath, "utf-8");
+    const cssContent = loadAllAppCss();
 
     // Find the quick-entry-box--expanded rule
     const expandedRuleMatch = cssContent.match(
@@ -207,8 +207,7 @@ describe("quick-entry-expanded-height CSS contract (FN-1631)", () => {
    * This ensures the fix is using the correct approach.
    */
   it("CSS container selectors use :not(.quick-entry-input--expanded) pattern", () => {
-    const cssPath = resolve(__dirname, "../styles.css");
-    const cssContent = readFileSync(cssPath, "utf-8");
+    const cssContent = loadAllAppCss();
 
     // Check that .quick-entry-box--expanded uses :not() to avoid overriding expanded input
     expect(cssContent).toMatch(
@@ -255,8 +254,7 @@ describe("quick-entry-expanded-height CSS contract (FN-1631)", () => {
     expect(textarea.classList.contains("quick-entry-input--expanded")).toBe(false);
 
     // Verify the CSS has collapsed min-height of 32px
-    const cssPath = resolve(__dirname, "../styles.css");
-    const cssContent = readFileSync(cssPath, "utf-8");
+    const cssContent = loadAllAppCss();
     const collapsedRuleMatch = cssContent.match(
       /\.quick-entry-box--collapsed\s+\.quick-entry-input:not\(\.quick-entry-input--expanded\)\s*\{[^}]*min-height:\s*(\d+)px/,
     );
@@ -284,8 +282,7 @@ describe("quick-entry-expanded-height CSS contract (FN-1631)", () => {
     // In practice, the toggle always expands both, but the CSS still needs
     // to handle this case correctly.
 
-    const cssPath = resolve(__dirname, "../styles.css");
-    const cssContent = readFileSync(cssPath, "utf-8");
+    const cssContent = loadAllAppCss();
 
     // Check that the expanded box without expanded input uses 36px
     const expandedNonExpandedMatch = cssContent.match(

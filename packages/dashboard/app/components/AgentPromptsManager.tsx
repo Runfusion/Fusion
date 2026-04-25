@@ -1,3 +1,4 @@
+import "./AgentPromptsManager.css";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { BUILTIN_AGENT_PROMPTS, PROMPT_KEY_CATALOG } from "../utils/builtinPrompts";
 import type { AgentPromptTemplate, AgentPromptsConfig, AgentCapability } from "@fusion/core";

@@ -1,0 +1,507 @@
+/* ── Pi Extensions Manager ──────────────────────────────────── */
+
+.pi-ext-manager {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.pi-ext-manager-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+.pi-ext-manager-header .settings-section-heading {
+  margin: 0;
+}
+
+.pi-ext-manager-actions {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.pi-ext-description {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin: 0;
+}
+
+.pi-ext-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.pi-ext-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast);
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.pi-ext-item:hover {
+  border-color: var(--text-dim);
+}
+
+.pi-ext-item-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+  flex: 1;
+}
+
+.pi-ext-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.pi-ext-name {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pi-ext-source-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-pill);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.pi-ext-source-badge--global {
+  color: var(--color-info);
+}
+
+.pi-ext-source-badge--project {
+  color: var(--color-success);
+}
+
+.pi-ext-path {
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.pi-ext-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+/* Pi Extensions Manager empty and loading states */
+.pi-ext-manager .empty-state,
+.pi-ext-manager .loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-2xl);
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* Pi Extensions Manager package UI — base styles */
+.pi-ext-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.pi-ext-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.pi-ext-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.pi-ext-add-form-row {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.pi-ext-add-form-row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.pi-ext-package-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.pi-ext-package-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.pi-ext-package-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: calc(var(--space-sm) + 2px) var(--space-md);
+  flex-wrap: wrap;
+}
+
+.pi-ext-expand-btn {
+  background: none;
+  border: none;
+  padding: var(--space-xs);
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast);
+}
+
+.pi-ext-expand-btn:hover {
+  color: var(--text);
+}
+
+.pi-ext-expand-btn:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+
+.pi-ext-expand-placeholder {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.pi-ext-source-badge--npm {
+  color: var(--color-info);
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+}
+
+.pi-ext-source-badge--git {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+
+.pi-ext-source-badge--local {
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+}
+
+.pi-ext-package-source {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.pi-ext-filter-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.pi-ext-package-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.pi-ext-remove-btn {
+  background: none;
+  border: none;
+  padding: var(--space-xs);
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast);
+}
+
+.pi-ext-remove-btn:hover {
+  color: var(--color-error);
+}
+
+.pi-ext-remove-btn:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+
+.pi-ext-filter-list {
+  padding: var(--space-sm) var(--space-md);
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.pi-ext-filter-section {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+  color: var(--text-muted);
+}
+
+.pi-ext-filter-label {
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.pi-ext-filter-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.pi-ext-top-level {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+}
+
+.pi-ext-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.pi-ext-section-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.pi-ext-section-header span:first-of-type {
+  font-weight: 500;
+}
+
+.pi-ext-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 var(--space-xs);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font-size: 0.68rem;
+  color: var(--text-dim);
+}
+
+.pi-ext-resource-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.pi-ext-resource-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.pi-ext-resource-path {
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pi-ext-resource-remove {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast);
+}
+
+.pi-ext-resource-remove:hover {
+  color: var(--color-error);
+}
+
+.pi-ext-resource-remove:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+
+/* Mobile responsive overrides */
+@media (max-width: 768px) {
+  /* Detail view header */
+  .plugin-manager-detail-header {
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+  }
+
+  .plugin-detail-title {
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  /* Detail cards */
+  .plugin-detail-card {
+    padding: var(--space-md);
+    gap: var(--space-sm);
+  }
+
+  /* Plugin list items */
+  .plugin-list {
+    gap: var(--space-xs);
+  }
+
+  .plugin-item {
+    padding: var(--space-md);
+  }
+
+  /* Action buttons inside list items */
+  .plugin-actions {
+    gap: var(--space-xs);
+  }
+
+  /* Detail actions footer — buttons stack on narrow screens */
+  .plugin-detail-actions {
+    flex-wrap: wrap;
+    justify-content: stretch;
+  }
+
+  .plugin-detail-actions button {
+    flex: 1 1 auto;
+    min-height: 36px;
+  }
+
+  /* Pi Extensions list items - mobile adjustments */
+  .pi-ext-list {
+    gap: var(--space-xs);
+  }
+
+  .pi-ext-item {
+    padding: var(--space-sm);
+  }
+
+  /* Pi Extensions Manager - mobile-specific layout */
+  .pi-ext-add-form-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pi-ext-add-form-row .btn,
+  .pi-ext-add-form-row .btn-primary {
+    width: 100%;
+  }
+
+  .pi-ext-package-header {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .pi-ext-resource-path {
+    max-width: 120px;
+  }
+}
+
+/* Discovered Extensions Section */
+.pi-ext-discovered-section {
+  margin-top: var(--space-lg);
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--border);
+}
+
+.pi-ext-discovered-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-sm);
+}
+
+.pi-ext-discovered-header h4 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+/* Pi Extensions source badge variants */
+.pi-ext-source-badge--fusion-global {
+  color: var(--color-info);
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+}
+
+.pi-ext-source-badge--pi-global {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+}
+
+.pi-ext-source-badge--fusion-project {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+
+.pi-ext-source-badge--pi-project {
+  color: var(--color-muted);
+  background: color-mix(in srgb, var(--color-muted) 12%, transparent);
+}
+
+.pi-ext-source-badge--package {
+  color: var(--in-progress);
+  background: color-mix(in srgb, var(--in-progress) 12%, transparent);
+}

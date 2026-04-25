@@ -1,8 +1,7 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { loadAllAppCss } from "../test/cssFixture";
 
-const css = readFileSync(resolve(__dirname, "../styles.css"), "utf-8");
+const css = loadAllAppCss();
 
 function getRule(selector: string, options: { last?: boolean } = {}): string {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

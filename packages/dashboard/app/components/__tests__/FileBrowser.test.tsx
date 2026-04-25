@@ -1,15 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup, act } from "@testing-library/react";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { loadAllAppCss } from "../../test/cssFixture";
 import { FileBrowser } from "../FileBrowser";
 import type { FileNode } from "../../api";
 import { clearAuthToken } from "../../auth";
-
-// Resolve paths relative to this test file so tests pass regardless of cwd
-// (a global test safety guard may change cwd to a per-worker temp dir).
-const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 // ── Mocks ───────────────────────────────────────────────────────────────
 
@@ -390,8 +384,7 @@ describe("FileBrowser", () => {
   });
 
   it("defines mobile-friendly touch targets for context menu items", () => {
-    const cssPath = resolve(PACKAGE_ROOT, "app/styles.css");
-    const css = readFileSync(cssPath, "utf8");
+    const css = loadAllAppCss();
     expect(css).toMatch(/\.file-browser-context-menu__item\s*\{[^}]*min-height:\s*36px;/);
   });
 

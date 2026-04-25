@@ -1,3 +1,6 @@
+// ActivityLogModal styles (.activity-log-*, .activity-icon, etc.) currently live
+// in ScriptsModal.css. Until extracted, import that file so this eager modal is styled.
+import "./ScriptsModal.css";
 import { useState, useEffect } from "react";
 import { X, History, Trash2, Filter, RefreshCw, CheckCircle, XCircle, ArrowRight, Plus, Settings, AlertCircle, Loader2, Folder } from "lucide-react";
 import { clearActivityLog, type ActivityLogEntry, type ActivityEventType, type ActivityFeedEntry } from "../api";

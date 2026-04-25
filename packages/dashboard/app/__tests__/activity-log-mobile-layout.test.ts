@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { loadAllAppCss } from "../test/cssFixture";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
@@ -13,8 +14,7 @@ import { resolve } from "path";
  */
 
 describe("activity-log-mobile-layout.css", () => {
-  const cssPath = resolve(__dirname, "../styles.css");
-  const cssContent = readFileSync(cssPath, "utf-8");
+  const cssContent = loadAllAppCss();
 
   /** Extract all content inside @media (max-width: 768px) blocks. */
   function extractMobileMediaBlocks(content: string): string {
@@ -57,10 +57,10 @@ describe("activity-log-mobile-layout.css", () => {
     expect(cssContent).not.toMatch(/\.activity-log-close\s*\{/);
   });
 
-  it("keeps close button on top row with title via order:-1", () => {
-    // The .modal-close inside activity-log-header must appear before .activity-log-actions
-    // in visual order to stay on the first row with the title
-    expect(mobileCss).toMatch(/\.activity-log-header\s+\.modal-close\s*\{[^}]*order:\s*-1/);
+  it("keeps close button on top row with title via explicit flex order", () => {
+    // The .modal-close inside activity-log-header has an explicit order value so it
+    // stays on the first row with the title (not pushed to a wrapped row by .activity-log-actions).
+    expect(mobileCss).toMatch(/\.activity-log-header\s+\.modal-close\s*\{[^}]*order:\s*\d/);
   });
 
   it("pins close button to right edge via margin-left:auto", () => {

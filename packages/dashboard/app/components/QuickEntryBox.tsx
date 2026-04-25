@@ -1,3 +1,4 @@
+import "./QuickEntryBox.css";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import type { ToastType } from "../hooks/useToast";

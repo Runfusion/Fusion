@@ -1,27 +1,38 @@
 import fs from "node:fs";
+import { loadAllAppCss } from "../../test/cssFixture";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const stylesPath = path.resolve(__dirname, "../../styles.css");
 
 function getMainMobileBlock(css: string): string {
-  const mobileSectionStart = css.indexOf("/* === Mobile Responsive Overrides ===");
-  const tabletSectionStart = css.indexOf("/* === Tablet Responsive Tier", mobileSectionStart);
+  // Mobile rules now live both in styles.css (cross-cutting) and in
+  // co-located @media (max-width: 768px) blocks at the bottom of each
+  // component CSS file. Aggregate all such media-query blocks.
+  const matches = [...css.matchAll(/@media\s*\(max-width:\s*768px\)\s*\{/g)];
+  expect(matches.length).toBeGreaterThan(0);
 
-  expect(mobileSectionStart).toBeGreaterThan(-1);
-  expect(tabletSectionStart).toBeGreaterThan(mobileSectionStart);
-
-  const block = css.slice(mobileSectionStart, tabletSectionStart);
-  expect(block).toContain("@media (max-width: 768px)");
+  const parts: string[] = [];
+  for (const match of matches) {
+    const start = match.index!;
+    const open = css.indexOf("{", start);
+    let depth = 1;
+    let i = open + 1;
+    while (i < css.length && depth > 0) {
+      if (css[i] === "{") depth++;
+      else if (css[i] === "}") depth--;
+      i++;
+    }
+    parts.push(css.slice(start, i));
+  }
+  const block = parts.join("\n");
   expect(block).toContain(".modal-overlay");
   expect(block).toContain(".detail-tabs");
-
   return block;
 }
 
 describe("core modals mobile css coverage", () => {
   it("TaskDetailModal: modal-actions uses safe-area inset bottom padding", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
 
     expect(mobileBlock).toContain(".modal-actions {");
@@ -29,7 +40,7 @@ describe("core modals mobile css coverage", () => {
   });
 
   it("TaskDetailModal: detail tabs are horizontally scrollable and tabs do not shrink", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
 
     expect(mobileBlock).toContain(".detail-tabs {");
@@ -39,7 +50,7 @@ describe("core modals mobile css coverage", () => {
   });
 
   it("TaskDetailModal: refine modal goes full-screen on mobile", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
 
     expect(mobileBlock).toContain(".detail-refine-modal {");
@@ -48,7 +59,7 @@ describe("core modals mobile css coverage", () => {
   });
 
   it("NewTaskModal: modal body unsets desktop max-height for mobile", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
 
     expect(mobileBlock).toContain(".new-task-modal .modal-body {");
@@ -57,7 +68,7 @@ describe("core modals mobile css coverage", () => {
   });
 
   it("TaskForm: model selection rows stack vertically on mobile", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
 
     expect(mobileBlock).toContain(".model-select-row {");
@@ -68,7 +79,7 @@ describe("core modals mobile css coverage", () => {
   });
 
   it("SettingsModal: layout stacks and sidebar becomes horizontal scroll row", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
 
     expect(mobileBlock).toContain(".settings-layout {");
@@ -85,7 +96,7 @@ describe("core modals mobile css coverage", () => {
   });
 
   it("GitManagerModal: 768px mobile block includes stacked layout rules", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
 
     expect(mobileBlock).toContain(".gm-layout {");
@@ -95,7 +106,7 @@ describe("core modals mobile css coverage", () => {
   });
 
   it("GitManagerModal: nav items keep 36px touch target on mobile", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
 
     expect(mobileBlock).toContain(".gm-nav-item {");
@@ -103,7 +114,7 @@ describe("core modals mobile css coverage", () => {
   });
 
   it("GitManagerModal: panel allows content scrolling on mobile", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
 
     expect(mobileBlock).toContain(".gm-panel {");
@@ -111,7 +122,7 @@ describe("core modals mobile css coverage", () => {
   });
 
   it("GitManagerModal: modal uses full-screen viewport sizing on mobile (641-768px range)", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
 
     // Verify .gm-modal is included in the modal sizing rule block
@@ -130,7 +141,7 @@ describe("core modals mobile css coverage", () => {
   });
 
   it("TaskDetailModal: action dropdown menus have max-height constraint on mobile", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
 
     // Verify dropdown menu selectors are in mobile block (selectors share the same line)
@@ -150,7 +161,7 @@ describe("core modals mobile css coverage", () => {
   });
 
   it("TaskDetailModal: footer dropdown menus anchor toward available horizontal space", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
 
     const actionsMenuAnchorMatch = css.match(/^\.detail-actions-menu\s*\{\s*left: 0;\s*\}/m);
     const moveMenuAnchorMatch = css.match(/^\.detail-move-menu\s*\{\s*right: 0;\s*\}/m);
@@ -159,7 +170,7 @@ describe("core modals mobile css coverage", () => {
   });
 
   it("TaskForm / TaskEditModal: description textarea capped at 200px height with scroll on mobile", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
 
     // Modal edit form textarea (TaskEditModal)
@@ -188,7 +199,7 @@ describe("core modals mobile css coverage", () => {
   });
 
   it("NewTaskModal: quick fields buttons meet 36px touch target on mobile", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
 
     // Verify the quick-fields dep-trigger rule exists with min-height: 36px
@@ -200,7 +211,7 @@ describe("core modals mobile css coverage", () => {
   });
 
   it("NewTaskModal: modal body uses token-based padding on mobile", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
 
     // Extract the new-task-modal .modal-body rule
@@ -214,7 +225,7 @@ describe("core modals mobile css coverage", () => {
   });
 
   it("NewTaskModal: more options toggle uses token-based margin on mobile", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
 
     // Extract the more-options-toggle rule

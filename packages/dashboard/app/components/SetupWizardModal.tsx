@@ -1,3 +1,4 @@
+import "./SetupWizardModal.css";
 import { useState, useCallback } from "react";
 import { X, Loader2, Sparkles, CheckCircle, ChevronRight } from "lucide-react";
 import type { ProjectInfo, ProjectCreateInput } from "../api";

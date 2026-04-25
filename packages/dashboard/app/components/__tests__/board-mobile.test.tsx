@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { loadAllAppCss } from "../../test/cssFixture";
 import path from "node:path";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { Task, TaskDetail, Settings } from "@fusion/core";
@@ -44,7 +45,6 @@ vi.mock("../../hooks/useTaskDiffStats", () => ({
   useTaskDiffStats: () => ({ stats: null, loading: false }),
 }));
 
-const stylesPath = path.resolve(__dirname, "../../styles.css");
 
 function getMainMobileSection(css: string): string {
   const sectionStart = css.indexOf("/* === Mobile Responsive Overrides ===");
@@ -105,35 +105,35 @@ beforeEach(() => {
 
 describe("Board and Column mobile CSS", () => {
   it("contains .board scroll-snap-type: x mandatory in the mobile media block", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     expectRuleToContain(mobileSection, ".board", "scroll-snap-type: x mandatory;");
   });
 
   it("contains .board scroll-behavior: smooth in the mobile media block", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     expectRuleToContain(mobileSection, ".board", "scroll-behavior: smooth;");
   });
 
   it("contains .board > .column width: 280px in the mobile media block", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     expectRuleToContain(mobileSection, ".board > .column", "width: 280px;");
   });
 
   it("contains .board > .column min-width: 280px in the mobile media block", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     expectRuleToContain(mobileSection, ".board > .column", "min-width: 280px;");
   });
 
   it("does not force .column-header min-height in the mobile media block", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     // Column headers use natural height from padding/font — no forced min-height
@@ -149,7 +149,7 @@ describe("Board and Column mobile CSS", () => {
   });
 
   it("hides board scrollbars in the mobile media block", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     expectRuleToContain(mobileSection, ".board", "scrollbar-width: none;");
@@ -157,7 +157,7 @@ describe("Board and Column mobile CSS", () => {
   });
 
   it("uses simple padding-bottom on .board (safe-area handled by parent)", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     // Board padding-bottom is just var(--space-md) to avoid double-counting safe-area-inset-bottom
@@ -168,14 +168,14 @@ describe("Board and Column mobile CSS", () => {
 
 describe("TaskCard mobile", () => {
   it("sets .card-archive-btn opacity: 1 in the mobile media block", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     expectRuleToContain(mobileSection, ".card-archive-btn", "opacity: 1;");
   });
 
   it("does not force .card-archive-btn min-height in the mobile media block", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     // Archive buttons use natural height from padding — no forced min-height
@@ -190,7 +190,7 @@ describe("TaskCard mobile", () => {
   });
 
   it("does not force .card-steps-toggle min-height in the mobile media block", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     // Steps toggle uses natural height from content and padding
@@ -204,7 +204,7 @@ describe("TaskCard mobile", () => {
   });
 
   it("does not force .card-session-files min-height in the mobile media block", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     // Session files button uses natural height
@@ -218,7 +218,7 @@ describe("TaskCard mobile", () => {
   });
 
   it("sets .card-edit-btn width and height to 32px in the mobile media block", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     expectRuleToContain(mobileSection, ".card-edit-btn", "width: 32px;");
@@ -411,28 +411,28 @@ describe("TaskCard mobile", () => {
 
 describe("InlineCreateCard mobile", () => {
   it("contains .inline-create-input font-size: 16px in the mobile media block", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     expectRuleToContain(mobileSection, ".inline-create-input", "font-size: 16px;");
   });
 
   it("contains .inline-create-toggle min-height: 36px in the mobile media block", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     expectRuleToContain(mobileSection, ".inline-create-toggle", "min-height: 36px;");
   });
 
   it("contains .inline-create-controls .btn min-height: 36px in the mobile media block", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     expectRuleToContain(mobileSection, ".inline-create-controls .btn", "min-height: 36px;");
   });
 
   it("contains .inline-create-priority-select min-height: 36px in the mobile media block", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     expectRuleToContain(mobileSection, ".inline-create-priority-select", "min-height: 36px;");

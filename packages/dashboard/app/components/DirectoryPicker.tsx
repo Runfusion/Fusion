@@ -1,3 +1,4 @@
+import "./DirectoryPicker.css";
 import { useState, useCallback, useEffect } from "react";
 import { Folder, FolderOpen, ChevronRight, ChevronUp, Loader2, Eye, EyeOff, AlertCircle } from "lucide-react";
 import { browseDirectory, type BrowseDirectoryResult } from "../api";

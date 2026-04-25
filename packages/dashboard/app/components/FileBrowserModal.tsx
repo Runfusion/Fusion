@@ -1,3 +1,4 @@
+import "./FileBrowser.css";
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { X, Save, RotateCcw, Folder, FileType, ArrowLeft } from "lucide-react";
 import { useWorkspaceFileBrowser } from "../hooks/useWorkspaceFileBrowser";

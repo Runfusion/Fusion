@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { loadAllAppCss } from "../test/cssFixture";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
@@ -17,8 +18,7 @@ import { resolve } from "path";
  * validates the layout contract (fixed positioning, height tokens, padding).
  */
 
-const cssPath = resolve(__dirname, "../styles.css");
-const css = readFileSync(cssPath, "utf-8");
+const css = loadAllAppCss();
 
 /** Extract a CSS rule block by selector (handles multiline). */
 function extractRule(content: string, selector: string): string | null {

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { loadAllAppCss } from "../../test/cssFixture";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { MailboxModal } from "../MailboxModal";
 import * as apiModule from "../../api";
@@ -811,8 +812,7 @@ describe("MailboxModal", () => {
     it("defines mailbox base flex layout for modal and content containers", async () => {
       const fs = await import("fs");
       const path = await import("path");
-      const cssPath = path.resolve(__dirname, "../../styles.css");
-      const css = fs.readFileSync(cssPath, "utf-8");
+      const css = loadAllAppCss();
 
       const modalBlockMatch = css.match(/\.mailbox-modal\s*\{([^}]*)\}/);
       expect(modalBlockMatch).toBeTruthy();
@@ -830,8 +830,7 @@ describe("MailboxModal", () => {
     it("keeps mobile mailbox overrides in the dedicated media-query section", async () => {
       const fs = await import("fs");
       const path = await import("path");
-      const cssPath = path.resolve(__dirname, "../../styles.css");
-      const css = fs.readFileSync(cssPath, "utf-8");
+      const css = loadAllAppCss();
 
       const sectionStart = css.indexOf("/* ── Mailbox — Mobile");
       expect(sectionStart).toBeGreaterThan(-1);
@@ -895,8 +894,7 @@ describe("MailboxModal", () => {
     beforeAll(async () => {
       const fs = await import("fs");
       const path = await import("path");
-      const cssPath = path.resolve(__dirname, "../../styles.css");
-      css = fs.readFileSync(cssPath, "utf-8");
+      css = loadAllAppCss();
     });
 
     it("mailbox unread badge uses theme-aware text token", () => {

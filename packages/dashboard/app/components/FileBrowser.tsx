@@ -1,3 +1,4 @@
+import "./FileBrowser.css";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Folder, File, ChevronRight, Loader2, Copy, Move, Trash2, Pencil, Download, Archive } from "lucide-react";
 import type { FileNode } from "../api";

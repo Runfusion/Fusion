@@ -1,8 +1,10 @@
-import { useState, useEffect, useCallback, useRef, useMemo, useId } from "react";
+import "./AgentsView.css";
+import { useState, useEffect, useCallback, useRef, useMemo, useId, lazy, Suspense } from "react";
 import { Plus, Play, Pause, Activity, Trash2, RefreshCw, Bot, List, ChevronRight, ChevronDown, GitBranch, Filter, Upload, Network, SlidersHorizontal } from "lucide-react";
 import type { Agent, AgentCapability, AgentState, OrgTreeNode } from "../api";
 import { updateAgent, updateAgentState, deleteAgent, startAgentRun, fetchOrgTree, fetchSettings, updateSettings } from "../api";
-import { AgentDetailView } from "./AgentDetailView";
+
+const AgentDetailView = lazy(() => import("./AgentDetailView").then((m) => ({ default: m.AgentDetailView })));
 import { ActiveAgentsPanel } from "./ActiveAgentsPanel";
 import { AgentMetricsBar } from "./AgentMetricsBar";
 import { AgentEmptyState } from "./AgentEmptyState";
@@ -1268,13 +1270,15 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
 
       {/* Agent Detail Modal */}
       {selectedAgentId && (
-        <AgentDetailView
-          agentId={selectedAgentId}
-          projectId={projectId}
-          onClose={handleCloseDetail}
-          addToast={addToast}
-          onChildClick={handleChildClick}
-        />
+        <Suspense fallback={null}>
+          <AgentDetailView
+            agentId={selectedAgentId}
+            projectId={projectId}
+            onClose={handleCloseDetail}
+            addToast={addToast}
+            onChildClick={handleChildClick}
+          />
+        </Suspense>
       )}
 
 

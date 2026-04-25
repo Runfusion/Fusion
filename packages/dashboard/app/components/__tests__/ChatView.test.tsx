@@ -3,15 +3,12 @@
  * new chat dialog, and input handling.
  */
 
-import fs from "node:fs";
-import path from "node:path";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "@testing-library/user-event";
 import { ChatView } from "../ChatView";
 import type { DiscoveredSkill } from "@fusion/dashboard";
-
-const stylesPath = path.resolve(__dirname, "../../styles.css");
+import { loadAllAppCss } from "../../test/cssFixture";
 
 // Mock scrollIntoView for JSDOM
 Element.prototype.scrollIntoView = vi.fn();
@@ -1551,7 +1548,7 @@ describe("Chat Session Delete Button", () => {
 });
 
 describe("Chat Session Delete Button CSS", () => {
-  const css = fs.readFileSync(stylesPath, "utf-8");
+  const css = loadAllAppCss();
 
   it(".chat-session-delete-btn exists with opacity: 0", () => {
     const match = css.match(/\.chat-session-delete-btn\s*\{([^}]*)\}/);
@@ -1585,7 +1582,7 @@ describe("Chat Session Delete Button CSS", () => {
 });
 
 describe("ChatView CSS — nested flexbox scrolling fix", () => {
-  const css = fs.readFileSync(stylesPath, "utf-8");
+  const css = loadAllAppCss();
 
   it(".chat-session-list has min-height: 0 for proper vertical scrolling", () => {
     const match = css.match(/\.chat-session-list\s*\{([^}]*)\}/);
@@ -1888,7 +1885,7 @@ describe("ChatView mobile behavior", () => {
 });
 
 describe("ChatView mobile CSS contract", () => {
-  const css = fs.readFileSync(stylesPath, "utf-8");
+  const css = loadAllAppCss();
 
   // Helper to find a selector rule within any mobile media query block
   function findMobileRule(selector: string): string | null {

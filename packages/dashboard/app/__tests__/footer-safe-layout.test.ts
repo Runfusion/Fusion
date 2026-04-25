@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { loadAllAppCss, loadAllAppCssBaseOnly } from "../test/cssFixture";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
@@ -11,8 +12,7 @@ import { resolve } from "path";
  * wrapper's padding-bottom to avoid rendering content beneath the fixed footer.
  */
 
-const cssPath = resolve(__dirname, "../styles.css");
-const css = readFileSync(cssPath, "utf-8");
+const css = loadAllAppCss();
 
 /** Extract all content inside @media (max-width: 768px) blocks. */
 function extractMobileMediaBlocks(content: string): string {
@@ -56,7 +56,7 @@ describe("footer-safe project workspace layout", () => {
   // ── .project-content--with-footer (desktop) ────────────────────────
 
   describe(".project-content--with-footer desktop", () => {
-    const footerBlock = css.match(
+    const footerBlock = loadAllAppCssBaseOnly().match(
       /\.project-content--with-footer\s*\{[^}]*\}/,
     )?.[0];
 

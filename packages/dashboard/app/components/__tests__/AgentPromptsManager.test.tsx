@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { loadAllAppCss } from "../../test/cssFixture";
 import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -66,8 +67,7 @@ const defaultConfig: AgentPromptsConfig = {};
 const onChange = vi.fn();
 const onPromptOverridesChange = vi.fn();
 
-const stylesPath = resolve(__dirname, "../../styles.css");
-const stylesContent = readFileSync(stylesPath, "utf8");
+const stylesContent = loadAllAppCss();
 const testStylesId = "agent-prompts-manager-test-styles";
 
 beforeEach(() => {

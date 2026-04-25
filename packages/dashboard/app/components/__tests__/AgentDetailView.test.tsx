@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { loadAllAppCss } from "../../test/cssFixture";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
@@ -237,8 +238,7 @@ describe("AgentDetailView", () => {
     // (previously these were in inline style blocks, now they're in the global :root)
     const fs = await import("fs");
     const path = await import("path");
-    const stylesPath = path.join(__dirname, "../../styles.css");
-    const stylesContent = fs.readFileSync(stylesPath, "utf-8");
+    const stylesContent = loadAllAppCss();
     expect(stylesContent).toContain("--state-idle-bg:");
     expect(stylesContent).toContain("--state-active-bg:");
     expect(stylesContent).toContain("--state-paused-bg:");
@@ -321,8 +321,7 @@ describe("AgentDetailView", () => {
     // (previously checked in inline style blocks, now verified by reading styles.css)
     const fs = await import("fs");
     const path = await import("path");
-    const stylesPath = path.join(__dirname, "../../styles.css");
-    const stylesContent = fs.readFileSync(stylesPath, "utf-8");
+    const stylesContent = loadAllAppCss();
     expect(stylesContent).toMatch(/--color-success:/);
     expect(stylesContent).toMatch(/--color-error:/);
   });
@@ -345,8 +344,7 @@ describe("AgentDetailView", () => {
     // Verify the global stylesheet defines the real tokens that the component uses.
     const fs = await import("fs");
     const path = await import("path");
-    const stylesPath = path.join(__dirname, "../../styles.css");
-    const stylesContent = fs.readFileSync(stylesPath, "utf-8");
+    const stylesContent = loadAllAppCss();
     // The component classes now use --surface, --todo, --text, --card-hover directly
     expect(stylesContent).toMatch(/--surface:/);
     expect(stylesContent).toMatch(/--todo:/);
