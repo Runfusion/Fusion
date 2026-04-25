@@ -313,16 +313,18 @@ export function AgentLogViewer({
 
         if (entry.type === "thinking") {
           return (
-            <span key={rowKey} className="agent-log-thinking">
+            <div key={rowKey} className="agent-log-thinking">
               {agentBadge}
               {renderMarkdown ? (
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                  {entry.text}
-                </ReactMarkdown>
+                <div className="markdown-body">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                    {entry.text}
+                  </ReactMarkdown>
+                </div>
               ) : (
                 entry.text
               )}
-            </span>
+            </div>
           );
         }
 
@@ -346,16 +348,18 @@ export function AgentLogViewer({
 
         // Default: text entries
         return (
-          <span key={rowKey} className="agent-log-text">
+          <div key={rowKey} className="agent-log-text">
             {agentBadge}
             {renderMarkdown ? (
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                {entry.text}
-              </ReactMarkdown>
+              <div className="markdown-body">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                  {entry.text}
+                </ReactMarkdown>
+              </div>
             ) : (
               entry.text
             )}
-          </span>
+          </div>
         );
       })}
 

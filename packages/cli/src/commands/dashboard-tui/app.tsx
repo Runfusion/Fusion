@@ -589,11 +589,14 @@ function ExpandedLog({ entry, index, total }: { entry: LogEntry; index: number; 
 
 // ── Utilities panel ───────────────────────────────────────────────────────────
 
-function UtilitiesPanel({ isFocused }: { isFocused: boolean }) {
-  const actions = [
+function UtilitiesPanel({ state, isFocused }: { state: DashboardState; isFocused: boolean }) {
+  const autoKill = state.autoKillVitestOnPressure;
+  const actions: Array<{ key: string; label: string }> = [
     { key: "r", label: "Refresh Stats" },
     { key: "c", label: "Clear Logs" },
     { key: "t", label: "Toggle Engine Pause" },
+    { key: "k", label: "Kill Vitest Processes" },
+    { key: "v", label: `Auto-Kill Vitest >90% Mem: ${autoKill ? "ON" : "OFF"}` },
     { key: "?", label: "Help" },
   ];
   return (
@@ -628,6 +631,8 @@ function HelpOverlay() {
     ["[←] / [p]", "Previous panel (Main)"],
     ["[r]", "Refresh stats (Utilities)"],
     ["[c]", "Clear logs (Utilities)"],
+    ["[k]", "Kill all vitest processes (Utilities)"],
+    ["[v]", "Toggle auto-kill vitest >90% mem (Utilities)"],
     ["[↑/↓/k/j]", "Navigate list / log entries"],
     ["[Home / G]", "First / last log entry (Logs)"],
     ["[Enter/Space]", "Expand log entry (Logs)"],
@@ -707,7 +712,7 @@ function StatusModeGrid({
           />
           <Box flexDirection="row" overflow="hidden">
             <Box flexDirection="column" flexGrow={1} overflow="hidden">
-              <UtilitiesPanel isFocused={focused === "utilities"} />
+              <UtilitiesPanel state={state} isFocused={focused === "utilities"} />
             </Box>
             <Box flexDirection="column" flexGrow={1} overflow="hidden">
               <SettingsPanel state={state} isFocused={focused === "settings"} />
@@ -736,7 +741,7 @@ function StatusModeSingle({
     switch (focused) {
       case "system": return <SystemPanel state={state} isFocused />;
       case "logs": return <LogsPanel state={state} isFocused availableRows={Math.max(4, (process.stdout.rows ?? 24) - 8)} />;
-      case "utilities": return <UtilitiesPanel isFocused />;
+      case "utilities": return <UtilitiesPanel state={state} isFocused />;
       case "stats": return <StatsPanel state={state} isFocused />;
       case "settings": return <SettingsPanel state={state} isFocused />;
     }
@@ -764,7 +769,7 @@ function StatusBar({ state, controller: _controller }: { state: DashboardState; 
   if (activeSection === "logs") {
     hotkeys.push("↑↓ navigate", "w wrap", "f filter", "Enter expand");
   } else if (activeSection === "utilities") {
-    hotkeys.push("r refresh", "c clear logs", "t toggle pause");
+    hotkeys.push("r refresh", "c clear logs", "t toggle pause", "k kill vitest", "v auto-kill");
   } else {
     hotkeys.push("Tab cycle panel", "1-5 jump");
   }

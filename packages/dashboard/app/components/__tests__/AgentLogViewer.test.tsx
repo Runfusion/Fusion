@@ -876,6 +876,32 @@ describe("AgentLogViewer", () => {
       expect(textSpans[0].textContent).toContain("Hello world, this is plain text.");
     });
 
+    it("renders text entries inside markdown-body in markdown mode", () => {
+      const entries = [
+        makeEntry({ text: "Paragraph one\n\nParagraph two" }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const textRow = container.querySelector(".agent-log-text") as HTMLElement;
+      expect(textRow).toBeTruthy();
+
+      const proseContainer = textRow.querySelector(".markdown-body") as HTMLElement;
+      expect(proseContainer).toBeTruthy();
+      expect(proseContainer.querySelectorAll("p")).toHaveLength(2);
+    });
+
+    it("renders thinking entries inside markdown-body in markdown mode", () => {
+      const entries = [
+        makeEntry({ text: "Considering:\n\n- option A\n- option B", type: "thinking" }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const thinkingRow = container.querySelector(".agent-log-thinking") as HTMLElement;
+      expect(thinkingRow).toBeTruthy();
+
+      const proseContainer = thinkingRow.querySelector(".markdown-body") as HTMLElement;
+      expect(proseContainer).toBeTruthy();
+      expect(proseContainer.querySelector("ul")).toBeTruthy();
+    });
+
     it("renders inline markdown elements (bold, italic, inline code)", () => {
       const entries = [
         makeEntry({ text: "This is **bold** and *italic* with `inline code`." }),
@@ -1002,6 +1028,11 @@ describe("AgentLogViewer", () => {
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       const toggle = container.querySelector("[data-testid='agent-log-mode-toggle']") as HTMLButtonElement;
 
+      // Markdown mode starts with prose container + rendered markdown
+      const markdownModeTextRow = container.querySelector(".agent-log-text") as HTMLElement;
+      expect(markdownModeTextRow.querySelector(".markdown-body")).toBeTruthy();
+      expect(markdownModeTextRow.querySelector("strong")?.textContent).toBe("bold");
+
       // Click to switch to plain text mode
       fireEvent.click(toggle);
 
@@ -1014,7 +1045,8 @@ describe("AgentLogViewer", () => {
       const textSpans = container.querySelectorAll(".agent-log-text");
       expect(textSpans).toHaveLength(1);
       expect(textSpans[0].textContent).toContain("**bold** and *italic*");
-      // No markdown elements should be present
+      // Plain mode should remove markdown rendering/prose container
+      expect(textSpans[0].querySelector(".markdown-body")).toBeNull();
       expect(textSpans[0].querySelector("strong")).toBeNull();
       expect(textSpans[0].querySelector("em")).toBeNull();
     });

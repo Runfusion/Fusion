@@ -279,6 +279,7 @@ export interface DashboardState {
   mode: AppMode;
   interactiveData: InteractiveData | null;
   interactiveView: InteractiveView;
+  autoKillVitestOnPressure: boolean;
 }
 
 export const SECTION_ORDER: SectionId[] = ["system", "logs", "utilities", "stats", "settings"];
@@ -302,5 +303,6 @@ export function createInitialState(): DashboardState {
     mode: "status",
     interactiveData: null,
     interactiveView: "board",
+    autoKillVitestOnPressure: true,
   };
 }

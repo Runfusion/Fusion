@@ -50,6 +50,12 @@ export class DashboardTUI {
   logsViewportStart = 0;
   loadingStatus = "Starting…";
   mode: "status" | "interactive" = "status";
+  // When true, sampleSystemStats() kills any running vitest processes if
+  // system memory usage crosses 90%. Toggled by [v] in the Utilities panel.
+  autoKillVitestOnPressure = true;
+  // Throttle so we don't spam kills while the sampler keeps firing during
+  // sustained pressure (sampler runs every 2s).
+  private lastAutoKillAt = 0;
   interactiveData: InteractiveData | null = null;
   interactiveView: InteractiveView = "board";
 
@@ -110,6 +116,7 @@ export class DashboardTUI {
       mode: this.mode,
       interactiveData: this.interactiveData,
       interactiveView: this.interactiveView,
+      autoKillVitestOnPressure: this.autoKillVitestOnPressure,
     };
     return this.cachedSnapshot;
   }
@@ -195,6 +202,68 @@ export class DashboardTUI {
       nodeVersion: process.version,
       platform: `${process.platform}/${process.arch}`,
     });
+
+    if (this.autoKillVitestOnPressure) {
+      const total = os.totalmem();
+      const free = os.freemem();
+      if (total > 0) {
+        const usedRatio = (total - free) / total;
+        // 30s minimum gap between auto-kills — vitest restart and OS reclaim
+        // both take a few seconds; firing every 2s would flap.
+        if (usedRatio > 0.9 && now - this.lastAutoKillAt > 30_000) {
+          this.lastAutoKillAt = now;
+          const result = this.killVitestProcesses();
+          if (result.killed > 0) {
+            this.warn(
+              `Auto-killed ${result.killed} vitest process${result.killed === 1 ? "" : "es"} (system memory at ${Math.round(usedRatio * 100)}%)`,
+              "memory-guard",
+            );
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Find and SIGKILL any running vitest processes, excluding this dashboard
+   * itself. Returns a count of pids signalled (best-effort — a pid may be
+   * gone by the time we send the signal).
+   */
+  killVitestProcesses(): { killed: number; pids: number[] } {
+    const selfPid = process.pid;
+    let pids: number[] = [];
+    try {
+      // pgrep -f matches against the full command line. -a would include the
+      // command, but we only need pids. macOS and Linux both support -f.
+      const out = execSync("pgrep -f vitest", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+      pids = out
+        .split("\n")
+        .map((s) => Number.parseInt(s.trim(), 10))
+        .filter((n) => Number.isFinite(n) && n > 0 && n !== selfPid);
+    } catch {
+      // pgrep exits non-zero when no matches — treat as "nothing to kill".
+      return { killed: 0, pids: [] };
+    }
+
+    let killed = 0;
+    for (const pid of pids) {
+      try {
+        process.kill(pid, "SIGKILL");
+        killed += 1;
+      } catch {
+        // Process already exited or we lack permission — skip.
+      }
+    }
+    return { killed, pids };
+  }
+
+  toggleAutoKillVitest(): boolean {
+    this.autoKillVitestOnPressure = !this.autoKillVitestOnPressure;
+    if (!this.autoKillVitestOnPressure) {
+      this.lastAutoKillAt = 0;
+    }
+    this.notify();
+    return this.autoKillVitestOnPressure;
   }
 
   setSettings(settings: SettingsValues): void {
@@ -335,6 +404,26 @@ export class DashboardTUI {
           this.setSettings(newSettings);
         }
         break;
+      case "k": {
+        const result = this.killVitestProcesses();
+        if (result.killed === 0) {
+          this.log("No vitest processes found.", "kill-vitest");
+        } else {
+          this.warn(
+            `Killed ${result.killed} vitest process${result.killed === 1 ? "" : "es"}: ${result.pids.join(", ")}`,
+            "kill-vitest",
+          );
+        }
+        break;
+      }
+      case "v": {
+        const enabled = this.toggleAutoKillVitest();
+        this.log(
+          `Auto-kill vitest on memory pressure (>90%): ${enabled ? "ON" : "OFF"}`,
+          "memory-guard",
+        );
+        break;
+      }
     }
   }
 
