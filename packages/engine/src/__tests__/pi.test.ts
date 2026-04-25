@@ -35,6 +35,13 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   })),
   createCodingTools: vi.fn(() => []),
   createReadOnlyTools: vi.fn(() => []),
+  createReadTool: vi.fn(() => ({ name: "read" })),
+  createBashTool: vi.fn(() => ({ name: "bash" })),
+  createEditTool: vi.fn(() => ({ name: "edit" })),
+  createWriteTool: vi.fn(() => ({ name: "write" })),
+  createGrepTool: vi.fn(() => ({ name: "grep" })),
+  createFindTool: vi.fn(() => ({ name: "find" })),
+  createLsTool: vi.fn(() => ({ name: "ls" })),
   createExtensionRuntime: vi.fn(),
   DefaultResourceLoader: vi.fn().mockImplementation(() => ({
     reload: vi.fn().mockResolvedValue(undefined),

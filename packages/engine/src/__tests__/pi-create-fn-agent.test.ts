@@ -75,9 +75,16 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
     }),
   },
   createAgentSession: createAgentSessionMock,
+  createBashTool: () => ({ name: "bash" }),
   createCodingTools: createCodingToolsMock,
+  createEditTool: () => ({ name: "edit" }),
   createExtensionRuntime: createExtensionRuntimeMock,
+  createFindTool: () => ({ name: "find" }),
+  createGrepTool: () => ({ name: "grep" }),
+  createLsTool: () => ({ name: "ls" }),
   createReadOnlyTools: createReadOnlyToolsMock,
+  createReadTool: () => ({ name: "read" }),
+  createWriteTool: () => ({ name: "write" }),
   DefaultResourceLoader: class {
     async reload() {
       await reloadMock();
@@ -815,9 +822,16 @@ describe("createFnAgent", () => {
           }),
         },
         createAgentSession: createAgentSessionMock,
+        createBashTool: () => ({ name: "bash" }),
         createCodingTools: createCodingToolsMock,
+        createEditTool: () => ({ name: "edit" }),
         createExtensionRuntime: createExtensionRuntimeMock,
+        createFindTool: () => ({ name: "find" }),
+        createGrepTool: () => ({ name: "grep" }),
+        createLsTool: () => ({ name: "ls" }),
         createReadOnlyTools: createReadOnlyToolsMock,
+        createReadTool: () => ({ name: "read" }),
+        createWriteTool: () => ({ name: "write" }),
         DefaultResourceLoader: class {
           constructor(options: any) {
             capturedResourceLoaderOptions = options;
@@ -893,9 +907,16 @@ describe("createFnAgent", () => {
           }),
         },
         createAgentSession: createAgentSessionMock,
+        createBashTool: () => ({ name: "bash" }),
         createCodingTools: createCodingToolsMock,
+        createEditTool: () => ({ name: "edit" }),
         createExtensionRuntime: createExtensionRuntimeMock,
+        createFindTool: () => ({ name: "find" }),
+        createGrepTool: () => ({ name: "grep" }),
+        createLsTool: () => ({ name: "ls" }),
         createReadOnlyTools: createReadOnlyToolsMock,
+        createReadTool: () => ({ name: "read" }),
+        createWriteTool: () => ({ name: "write" }),
         DefaultResourceLoader: class {
           constructor(options: any) {
             capturedResourceLoaderOptions = options;
@@ -968,9 +989,16 @@ describe("createFnAgent", () => {
           }),
         },
         createAgentSession: createAgentSessionMock,
+        createBashTool: () => ({ name: "bash" }),
         createCodingTools: createCodingToolsMock,
+        createEditTool: () => ({ name: "edit" }),
         createExtensionRuntime: createExtensionRuntimeMock,
+        createFindTool: () => ({ name: "find" }),
+        createGrepTool: () => ({ name: "grep" }),
+        createLsTool: () => ({ name: "ls" }),
         createReadOnlyTools: createReadOnlyToolsMock,
+        createReadTool: () => ({ name: "read" }),
+        createWriteTool: () => ({ name: "write" }),
         DefaultResourceLoader: class {
           constructor(options: any) {
             capturedResourceLoaderOptions = options;
