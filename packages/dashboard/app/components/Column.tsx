@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, useCallback, useEffect } from "react";
+import { memo, useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useFlashOnIncrease } from "../hooks/useFlashOnIncrease";
 import type { Task, TaskDetail, Column as ColumnType, TaskCreateInput } from "@fusion/core";
 import { COLUMN_LABELS, COLUMN_DESCRIPTIONS, getErrorMessage } from "@fusion/core";
@@ -8,7 +8,7 @@ import { QuickEntryBox } from "./QuickEntryBox";
 import { PluginSlot } from "./PluginSlot";
 import { groupByWorktree } from "../utils/worktreeGrouping";
 import type { ToastType } from "../hooks/useToast";
-import { ChevronDown, ChevronUp, Archive } from "lucide-react";
+import { ChevronDown, ChevronUp, Archive, MoreVertical } from "lucide-react";
 import type { ModelInfo } from "../api";
 
 const PAGINATED_COLUMN_THRESHOLD = 100;
@@ -68,7 +68,29 @@ interface ColumnProps {
 function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, onOpenDetail, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onArchiveTask, onUnarchiveTask, onDeleteTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs, workflowStepNameLookup }: ColumnProps) {
   const [dragOver, setDragOver] = useState(false);
   const [visibleTaskCount, setVisibleTaskCount] = useState(VISIBLE_TASKS_INITIAL);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isRespecifying, setIsRespecifying] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const countFlashing = useFlashOnIncrease(tasks.length);
+
+  // Close the column dropdown menu when the user clicks anywhere else.
+  useEffect(() => {
+    if (!isMenuOpen) return;
+    function onDocClick(e: MouseEvent) {
+      if (!menuRef.current?.contains(e.target as Node)) {
+        setIsMenuOpen(false);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setIsMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [isMenuOpen]);
 
   // Archived column is collapsed by default - don't show drag state when collapsed
   const isArchived = column === "archived";
@@ -136,6 +158,33 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
     setVisibleTaskCount((current) => Math.min(current + VISIBLE_TASKS_INCREMENT, tasks.length));
   }, [tasks.length]);
 
+  const handleRespecifyAll = useCallback(async () => {
+    setIsMenuOpen(false);
+    if (tasks.length === 0) return;
+
+    const confirmed = window.confirm(
+      `Move all ${tasks.length} todo task${tasks.length === 1 ? "" : "s"} back to triage to be respecified?`,
+    );
+    if (!confirmed) return;
+
+    setIsRespecifying(true);
+    try {
+      // Issue moves in parallel — onMoveTask is per-task, no bulk endpoint.
+      const results = await Promise.allSettled(
+        tasks.map((task) => onMoveTask(task.id, "triage" as ColumnType)),
+      );
+      const failed = results.filter((r) => r.status === "rejected").length;
+      const moved = results.length - failed;
+      if (failed === 0) {
+        addToast(`Moved ${moved} task${moved === 1 ? "" : "s"} to triage for respec`, "success");
+      } else {
+        addToast(`Moved ${moved} of ${results.length} tasks; ${failed} failed`, "error");
+      }
+    } finally {
+      setIsRespecifying(false);
+    }
+  }, [tasks, onMoveTask, addToast]);
+
   const handleArchiveAll = useCallback(async () => {
     if (!onArchiveAllDone) return;
     if (tasks.length === 0) return;
@@ -199,6 +248,38 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
           >
             {collapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
           </button>
+        )}
+        {column === "todo" && (
+          <div className="column-menu" ref={menuRef}>
+            <button
+              type="button"
+              className="btn btn-icon btn-sm"
+              onClick={() => setIsMenuOpen((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={isMenuOpen}
+              aria-label="Todo column actions"
+              title="Column actions"
+              disabled={isRespecifying}
+            >
+              <MoreVertical size={16} />
+            </button>
+            {isMenuOpen && (
+              <div className="column-menu-popover" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="column-menu-item"
+                  onClick={() => void handleRespecifyAll()}
+                  disabled={tasks.length === 0 || isRespecifying}
+                >
+                  Respecify All
+                  <span className="column-menu-item-hint">
+                    Move {tasks.length} task{tasks.length === 1 ? "" : "s"} to Triage
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </div>
       {!isCollapsed && <p className="column-desc">{COLUMN_DESCRIPTIONS[column]}</p>}

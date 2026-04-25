@@ -2507,3 +2507,55 @@ input[type="range"]:focus-visible {
 .text-muted { color: var(--text-muted); }
 .text-secondary { color: var(--text-secondary, var(--text-muted)); }
 .text-dim { color: var(--text-dim, var(--text-muted)); }
+
+/* === Column header dropdown menu (todo column "Respecify All", etc.) ====== */
+.column-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.column-menu-popover {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  min-width: calc(var(--space-2xl) * 6);
+  padding: var(--space-xs);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+}
+
+.column-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--space-xs) / 2);
+  padding: var(--space-sm) var(--space-md);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.column-menu-item:hover:not(:disabled),
+.column-menu-item:focus-visible {
+  background: var(--card-hover);
+}
+
+.column-menu-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.column-menu-item-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
