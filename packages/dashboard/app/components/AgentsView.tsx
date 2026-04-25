@@ -723,6 +723,14 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
               <SlidersHorizontal size={16} />
             </button>
             <button
+              className="btn-icon"
+              onClick={() => void loadAgents()}
+              title="Refresh"
+              aria-label="Refresh"
+            >
+              <RefreshCw size={16} className={isLoading ? "spin" : undefined} />
+            </button>
+            <button
               className="btn btn--primary"
               onClick={() => {
                 setIsCreating(true);
@@ -855,9 +863,6 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
           onImported={() => void loadAgents()}
           projectId={projectId}
         />
-
-        {/* Stats cards — shown above the agent list */}
-        <AgentMetricsBar stats={stats} />
 
         {/* Agent Collection */}
         {agentView === "tree" ? (
@@ -1260,6 +1265,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
         )}
 
         {/* Secondary sections */}
+        <AgentMetricsBar stats={stats} />
         <ActiveAgentsPanel agents={activeAgents} projectId={projectId} onAgentSelect={setSelectedAgentId} />
       </div>
 

@@ -163,6 +163,8 @@ function getProviderDisplayName(providerId: string): string {
     .join(" ");
 }
 
+const QUICK_START_PROVIDER_IDS = ["anthropic", "openai", "google", "gemini", "ollama"] as const;
+
 const ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER = [
   "anthropic",
   "claude-cli",
@@ -398,6 +400,28 @@ function ApiKeyEntryForm({
     error ? " onboarding-apikey-input--error" : ""
   }${success ? " onboarding-apikey-input--success" : ""}`;
 
+  const advancedSetupDetails = (
+    <>
+      {providerKeyHint && (
+        <small className="onboarding-apikey-hint">
+          Format: {providerKeyHint.hint}
+        </small>
+      )}
+      <p className="onboarding-apikey-instructions">{apiKeyInfo.setupInstructions}</p>
+      {apiKeyInfo.dashboardUrl && (
+        <a
+          href={apiKeyInfo.dashboardUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="onboarding-apikey-dashboard-link"
+        >
+          Get your API key →
+        </a>
+      )}
+      <p className="onboarding-apikey-usage">{apiKeyInfo.usageDescription}</p>
+    </>
+  );
+
   if (isConnected) {
     return (
       <div className="onboarding-apikey-form" data-testid={`onboarding-apikey-form-${provider.id}`}>
@@ -412,7 +436,9 @@ function ApiKeyEntryForm({
         >
           {isSaving ? "Removing…" : "Remove Key"}
         </button>
-        <p className="onboarding-apikey-usage">{apiKeyInfo.usageDescription}</p>
+        <OnboardingDisclosure summary="Advanced setup details">
+          {advancedSetupDetails}
+        </OnboardingDisclosure>
         {error && <small className="field-error">{error}</small>}
       </div>
     );
@@ -447,11 +473,6 @@ function ApiKeyEntryForm({
           {isSaving ? "Saving…" : "Save"}
         </button>
       </div>
-      {providerKeyHint && (
-        <small className="onboarding-apikey-hint">
-          Format: {providerKeyHint.hint}
-        </small>
-      )}
       {error && <small className="field-error">{error}</small>}
       {success && !error && (
         <small
@@ -461,19 +482,8 @@ function ApiKeyEntryForm({
           {success}
         </small>
       )}
-      <p className="onboarding-apikey-instructions">{apiKeyInfo.setupInstructions}</p>
-      {apiKeyInfo.dashboardUrl && (
-        <a
-          href={apiKeyInfo.dashboardUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="onboarding-apikey-dashboard-link"
-        >
-          Get your API key →
-        </a>
-      )}
-      <OnboardingDisclosure summary="Where is this key used?">
-        <p className="onboarding-apikey-usage">{apiKeyInfo.usageDescription}</p>
+      <OnboardingDisclosure summary="Advanced setup details">
+        {advancedSetupDetails}
       </OnboardingDisclosure>
     </div>
   );
@@ -1501,6 +1511,142 @@ export function ModelOnboardingModal({
     createdTaskForDisplay?.title ||
     "";
 
+  const quickStartSet = new Set<string>(QUICK_START_PROVIDER_IDS);
+  const quickStartProviders = orderedAiProviders
+    .filter((provider) => quickStartSet.has(provider.id))
+    .sort((a, b) => {
+      const rankA = QUICK_START_PROVIDER_IDS.indexOf(a.id as (typeof QUICK_START_PROVIDER_IDS)[number]);
+      const rankB = QUICK_START_PROVIDER_IDS.indexOf(b.id as (typeof QUICK_START_PROVIDER_IDS)[number]);
+      if (rankA !== rankB) {
+        return rankA - rankB;
+      }
+      return compareOnboardingProviders(a, b);
+    });
+  const connectedNonQuickStartProviders = orderedAiProviders.filter(
+    (provider) => provider.authenticated && !quickStartSet.has(provider.id),
+  );
+  const advancedProviders = orderedAiProviders.filter(
+    (provider) => !provider.authenticated && !quickStartSet.has(provider.id),
+  );
+
+  const renderAiProviderCard = (provider: AuthProvider) => {
+    if (provider.id === "claude-cli" && provider.type === "cli") {
+      return (
+        <ClaudeCliProviderCard
+          key={provider.id}
+          authenticated={provider.authenticated}
+          onToggled={() => {
+            void loadAuthStatus();
+          }}
+        />
+      );
+    }
+
+    if (provider.type === "api_key") {
+      const providerInfo = getProviderInfo(provider.id);
+      const apiKeyInfo = getApiKeyInfo(provider);
+
+      return (
+        <div
+          key={provider.id}
+          data-testid={`onboarding-provider-card-${provider.id}`}
+          className={`onboarding-provider-card${provider.authenticated ? " onboarding-provider-card--connected" : ""}`}
+        >
+          <div className="onboarding-provider-card__icon">
+            <ProviderIcon provider={provider.id} size="md" />
+          </div>
+          <div className="onboarding-provider-card__body">
+            <strong className="onboarding-provider-card__name">
+              <Key size={14} className="onboarding-provider-key-icon" />
+              {provider.name}
+            </strong>
+            <span className="onboarding-provider-card__description">
+              {providerInfo.description}
+            </span>
+            <ProviderStatusBadge status={getProviderStatus(provider)} />
+            {provider.authenticated && provider.keyHint && (
+              <span className="auth-key-hint">Key: {provider.keyHint}</span>
+            )}
+          </div>
+          <div className="onboarding-provider-card__actions onboarding-provider-card__actions--api-key">
+            <ApiKeyEntryForm
+              provider={provider}
+              apiKeyInfo={apiKeyInfo}
+              inputValue={apiKeyInputs[provider.id] ?? ""}
+              isSaving={authActionInProgress === provider.id}
+              error={apiKeyErrors[provider.id]}
+              success={apiKeySuccess[provider.id]}
+              isConnected={provider.authenticated}
+              onInputChange={handleApiKeyInputChange}
+              onSave={handleSaveApiKey}
+              onClear={handleClearApiKey}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        key={provider.id}
+        data-testid={`onboarding-provider-card-${provider.id}`}
+        className={`onboarding-provider-card${provider.authenticated ? " onboarding-provider-card--connected" : ""}`}
+      >
+        <div className="onboarding-provider-card__icon">
+          <ProviderIcon provider={provider.id} size="md" />
+        </div>
+        <div className="onboarding-provider-card__body">
+          <strong className="onboarding-provider-card__name">{provider.name}</strong>
+          <span className="onboarding-provider-card__description">
+            {getProviderInfo(provider.id).description}
+          </span>
+          <ProviderStatusBadge status={getProviderStatus(provider)} />
+        </div>
+        <div className="onboarding-provider-card__actions">
+          {authActionInProgress === provider.id ? (
+            <>
+              <button className="btn btn-sm" disabled>
+                {provider.authenticated
+                  ? "Logging out…"
+                  : "Waiting for login…"}
+              </button>
+              <button
+                className="btn btn-sm"
+                onClick={() => handleCancelLogin(provider.id)}
+              >
+                Cancel
+              </button>
+            </>
+          ) : provider.authenticated ? (
+            <button
+              className="btn btn-sm"
+              onClick={() => handleLogout(provider.id)}
+            >
+              Logout
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => handleLogin(provider.id)}
+            >
+              Login
+            </button>
+          )}
+        </div>
+        {loginOutcomes[provider.id] === "timeout" && authActionInProgress !== provider.id && (
+          <p className="onboarding-helper-text onboarding-inline-feedback">
+            Login timed out. Please try again.
+          </p>
+        )}
+        {loginOutcomes[provider.id] === "failed" && authActionInProgress !== provider.id && (
+          <p className="field-error onboarding-inline-feedback">
+            Login failed. Please try again.
+          </p>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div
       className="modal-overlay open"
@@ -1614,6 +1760,9 @@ export function ModelOnboardingModal({
                 Connect an AI provider below to get started — you can use a hosted
                 service or enter an API key.
               </p>
+              <p className="onboarding-helper-text model-onboarding-primary-helper">
+                You only need one provider to get started.
+              </p>
 
               {/* Provider connection status summary */}
               {!authLoading && authProviders.length > 0 && (
@@ -1651,7 +1800,6 @@ export function ModelOnboardingModal({
                 <p className="onboarding-helper-text">
                   AI providers like OpenAI and Anthropic power the AI capabilities in Fusion.
                   Connecting a provider lets Fusion's agents use AI models to help with your tasks.
-                  You only need one provider to get started.
                 </p>
               </OnboardingDisclosure>
 
@@ -1674,125 +1822,41 @@ export function ModelOnboardingModal({
                 </div>
               ) : (
                 <>
-                  {orderedAiProviders.map((provider) => {
-                    if (provider.id === "claude-cli" && provider.type === "cli") {
-                      return (
-                        <ClaudeCliProviderCard
-                          key={provider.id}
-                          authenticated={provider.authenticated}
-                          onToggled={() => {
-                            // Refetch auth status so the parent provider list
-                            // reflects the new authenticated state.
-                            void loadAuthStatus();
-                          }}
-                        />
-                      );
-                    }
-
-                    if (provider.type === "api_key") {
-                      const providerInfo = getProviderInfo(provider.id);
-                      const apiKeyInfo = getApiKeyInfo(provider);
-
-                      return (
-                        <div
-                          key={provider.id}
-                          data-testid={`onboarding-provider-card-${provider.id}`}
-                          className={`onboarding-provider-card${provider.authenticated ? " onboarding-provider-card--connected" : ""}`}
-                        >
-                          <div className="onboarding-provider-card__icon">
-                            <ProviderIcon provider={provider.id} size="md" />
-                          </div>
-                          <div className="onboarding-provider-card__body">
-                            <strong className="onboarding-provider-card__name">
-                              <Key size={14} className="onboarding-provider-key-icon" />
-                              {provider.name}
-                            </strong>
-                            <span className="onboarding-provider-card__description">
-                              {providerInfo.description}
-                            </span>
-                            <ProviderStatusBadge status={getProviderStatus(provider)} />
-                            {provider.authenticated && provider.keyHint && (
-                              <span className="auth-key-hint">Key: {provider.keyHint}</span>
-                            )}
-                          </div>
-                          <div className="onboarding-provider-card__actions onboarding-provider-card__actions--api-key">
-                            <ApiKeyEntryForm
-                              provider={provider}
-                              apiKeyInfo={apiKeyInfo}
-                              inputValue={apiKeyInputs[provider.id] ?? ""}
-                              isSaving={authActionInProgress === provider.id}
-                              error={apiKeyErrors[provider.id]}
-                              success={apiKeySuccess[provider.id]}
-                              isConnected={provider.authenticated}
-                              onInputChange={handleApiKeyInputChange}
-                              onSave={handleSaveApiKey}
-                              onClear={handleClearApiKey}
-                            />
-                          </div>
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <div
-                        key={provider.id}
-                        data-testid={`onboarding-provider-card-${provider.id}`}
-                        className={`onboarding-provider-card${provider.authenticated ? " onboarding-provider-card--connected" : ""}`}
-                      >
-                        <div className="onboarding-provider-card__icon">
-                          <ProviderIcon provider={provider.id} size="md" />
-                        </div>
-                        <div className="onboarding-provider-card__body">
-                          <strong className="onboarding-provider-card__name">{provider.name}</strong>
-                          <span className="onboarding-provider-card__description">
-                            {getProviderInfo(provider.id).description}
-                          </span>
-                          <ProviderStatusBadge status={getProviderStatus(provider)} />
-                        </div>
-                        <div className="onboarding-provider-card__actions">
-                          {authActionInProgress === provider.id ? (
-                            <>
-                              <button className="btn btn-sm" disabled>
-                                {provider.authenticated
-                                  ? "Logging out…"
-                                  : "Waiting for login…"}
-                              </button>
-                              <button
-                                className="btn btn-sm"
-                                onClick={() => handleCancelLogin(provider.id)}
-                              >
-                                Cancel
-                              </button>
-                            </>
-                          ) : provider.authenticated ? (
-                            <button
-                              className="btn btn-sm"
-                              onClick={() => handleLogout(provider.id)}
-                            >
-                              Logout
-                            </button>
-                          ) : (
-                            <button
-                              className="btn btn-primary btn-sm"
-                              onClick={() => handleLogin(provider.id)}
-                            >
-                              Login
-                            </button>
-                          )}
-                        </div>
-                        {loginOutcomes[provider.id] === "timeout" && authActionInProgress !== provider.id && (
-                          <p className="onboarding-helper-text" style={{ marginTop: 4 }}>
-                            Login timed out. Please try again.
-                          </p>
-                        )}
-                        {loginOutcomes[provider.id] === "failed" && authActionInProgress !== provider.id && (
-                          <p className="field-error" style={{ marginTop: 4 }}>
-                            Login failed. Please try again.
-                          </p>
-                        )}
+                  <section className="onboarding-provider-section" data-testid="onboarding-quick-start-providers">
+                    <h3 className="onboarding-section-title">Quick start providers</h3>
+                    {quickStartProviders.length > 0 ? (
+                      <div className="model-onboarding-providers">
+                        {quickStartProviders.map((provider) => renderAiProviderCard(provider))}
                       </div>
-                    );
-                  })}
+                    ) : (
+                      <p className="onboarding-helper-text">
+                        No quick-start providers are available in this environment.
+                      </p>
+                    )}
+                  </section>
+
+                  {connectedNonQuickStartProviders.length > 0 && (
+                    <section className="onboarding-provider-section" data-testid="onboarding-connected-providers">
+                      <h3 className="onboarding-section-title">Connected providers</h3>
+                      <div className="model-onboarding-providers">
+                        {connectedNonQuickStartProviders.map((provider) => renderAiProviderCard(provider))}
+                      </div>
+                    </section>
+                  )}
+
+                  <OnboardingDisclosure summary="Advanced provider settings" className="onboarding-provider-advanced">
+                    <div data-testid="onboarding-advanced-provider-settings">
+                      {advancedProviders.length > 0 ? (
+                        <div className="model-onboarding-providers">
+                          {advancedProviders.map((provider) => renderAiProviderCard(provider))}
+                        </div>
+                      ) : (
+                        <p className="onboarding-helper-text">
+                          All currently available providers are already shown above.
+                        </p>
+                      )}
+                    </div>
+                  </OnboardingDisclosure>
 
                   {/* OAuth login disclosure */}
                   {hasOauthProviders && (
@@ -1933,7 +1997,7 @@ export function ModelOnboardingModal({
                   <div className="onboarding-provider-row">
                     <div className="onboarding-provider-info">
                       <strong>
-                        <GitPullRequest size={16} style={{ marginRight: 8 }} />
+                        <GitPullRequest size={16} className="onboarding-provider-title-icon" />
                         GitHub
                       </strong>
                       <span data-testid="onboarding-auth-status-github">

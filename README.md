@@ -275,7 +275,7 @@ for full precedence and reset/revocation options.
 
 On first launch, Fusion opens the **onboarding wizard** with three guided steps:
 
-1. **AI Setup** — Connect an AI provider and choose a default model
+1. **AI Setup** — Use a simplified quick-start provider list (recommended providers plus any already-connected providers), then expand **Advanced provider settings** only if you need additional providers or setup details. You only need one provider to get started.
 2. **GitHub (Optional)** — Connect GitHub for issue import and PR management
 3. **First Task** — Create your first task or import from GitHub (if no project is active, onboarding first prompts you to register/select a project directory)
 

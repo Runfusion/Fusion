@@ -247,22 +247,21 @@ function hasSavedStateCall(
   });
 }
 
-function getAiSetupProviderOrder(): string[] {
-  const aiSetup = document.querySelector(".model-onboarding-ai-setup");
-  if (!aiSetup) {
+function getProviderOrderInSection(container: HTMLElement | null): string[] {
+  if (!container) {
     return [];
   }
 
-  return Array.from(aiSetup.children)
+  return Array.from(container.querySelectorAll("[data-testid^='onboarding-provider-card-'], [data-testid='claude-cli-provider-card']"))
     .map((element) => {
       const testId = element.getAttribute("data-testid");
-      if (testId?.startsWith("onboarding-provider-card-")) {
+      if (!testId) {
+        return null;
+      }
+      if (testId.startsWith("onboarding-provider-card-")) {
         return testId.replace("onboarding-provider-card-", "");
       }
-      if (testId === "claude-cli-provider-card") {
-        return "claude-cli";
-      }
-      return null;
+      return testId === "claude-cli-provider-card" ? "claude-cli" : null;
     })
     .filter((providerId): providerId is string => providerId !== null);
 }
@@ -413,19 +412,16 @@ describe("onboarding flow integration", () => {
     });
   });
 
-  describe("AI setup provider ordering", () => {
-    it("renders providers in curated onboarding order with connected-first priority and claude-cli near top", async () => {
+  describe("AI setup provider layout", () => {
+    it("shows quick-start providers by default, keeps advanced providers collapsed, and surfaces connected advanced providers", async () => {
       mockFetchAuthStatus.mockResolvedValue({
         providers: [
           { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
           { id: "moonshot", name: "Moonshot", authenticated: false, type: "oauth" },
           { id: "claude-cli", name: "Anthropic — via Claude CLI", authenticated: false, type: "cli" },
-          { id: "openai-codex", name: "OpenAI Codex", authenticated: false, type: "oauth" },
           { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
-          { id: "zai", name: "Zhipu AI", authenticated: false, type: "api_key" },
-          { id: "minimax", name: "MiniMax", authenticated: false, type: "api_key" },
           { id: "google", name: "Google", authenticated: false, type: "oauth" },
-          { id: "gemini", name: "Gemini", authenticated: true, type: "oauth" },
+          { id: "minimax", name: "MiniMax", authenticated: false, type: "api_key" },
           { id: "openrouter", name: "OpenRouter", authenticated: true, type: "api_key" },
           { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
         ],
@@ -437,37 +433,55 @@ describe("onboarding flow integration", () => {
         expect(screen.getByText("Set Up AI")).toBeInTheDocument();
       });
 
-      const providerOrder = getAiSetupProviderOrder();
+      expect(screen.getByText("You only need one provider to get started.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Advanced provider settings/ })).toHaveAttribute("aria-expanded", "false");
 
-      expect(providerOrder).toEqual([
-        "anthropic",
-        "gemini",
-        "openrouter",
-        "claude-cli",
-        "openai-codex",
-        "google",
-        "minimax",
-        "moonshot",
-        "zai",
-        "openai",
-      ]);
+      const quickStartSection = screen.getByTestId("onboarding-quick-start-providers");
+      expect(getProviderOrderInSection(quickStartSection)).toEqual(["anthropic", "openai", "google"]);
 
-      expect(providerOrder).not.toContain("github");
-      expect(providerOrder.indexOf("openrouter")).toBeLessThan(providerOrder.indexOf("claude-cli"));
-      expect(providerOrder.indexOf("claude-cli")).toBeLessThan(providerOrder.indexOf("openai-codex"));
-      expect(providerOrder.indexOf("openrouter")).toBeLessThan(providerOrder.indexOf("openai"));
+      const connectedSection = screen.getByTestId("onboarding-connected-providers");
+      expect(getProviderOrderInSection(connectedSection)).toEqual(["openrouter"]);
+
+      expect(screen.queryByTestId("onboarding-provider-card-minimax")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("onboarding-provider-card-moonshot")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("claude-cli-provider-card")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("onboarding-advanced-provider-settings")).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /Advanced provider settings/ }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("onboarding-advanced-provider-settings")).toBeInTheDocument();
+      });
+
+      expect(screen.getByTestId("onboarding-provider-card-minimax")).toBeInTheDocument();
+      expect(screen.getByTestId("onboarding-provider-card-moonshot")).toBeInTheDocument();
+      expect(screen.getByTestId("claude-cli-provider-card")).toBeInTheDocument();
+      expect(screen.queryByTestId("onboarding-provider-card-github")).not.toBeInTheDocument();
     });
 
-    it("preserves provider-specific controls and status badges after reordering", async () => {
+    it("keeps provider controls functional across quick-start, connected, and advanced sections", async () => {
       mockFetchAuthStatus.mockResolvedValue({
         providers: [
+          { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
+          { id: "openrouter", name: "OpenRouter", authenticated: true, type: "api_key" },
           { id: "openai-codex", name: "OpenAI Codex", authenticated: false, type: "oauth" },
           { id: "claude-cli", name: "Anthropic — via Claude CLI", authenticated: false, type: "cli" },
-          { id: "minimax", name: "MiniMax", authenticated: false, type: "api_key" },
         ],
       });
 
       renderModal();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("onboarding-apikey-input-openai")).toBeInTheDocument();
+      });
+
+      expect(screen.getByTestId("onboarding-apikey-save-openai")).toBeInTheDocument();
+
+      const connectedSection = screen.getByTestId("onboarding-connected-providers");
+      expect(within(connectedSection).getByText("OpenRouter")).toBeInTheDocument();
+      expect(within(connectedSection).getByRole("button", { name: "Remove Key" })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /Advanced provider settings/ }));
 
       await waitFor(() => {
         expect(screen.getByTestId("onboarding-provider-card-openai-codex")).toBeInTheDocument();
@@ -475,14 +489,47 @@ describe("onboarding flow integration", () => {
 
       const codexCard = screen.getByTestId("onboarding-provider-card-openai-codex");
       expect(within(codexCard).getByRole("button", { name: "Login" })).toBeInTheDocument();
-      expect(within(codexCard).getByTestId("provider-status-badge")).toHaveTextContent("Not connected");
-
       expect(screen.getByTestId("claude-cli-provider-card")).toHaveAttribute("data-authenticated", "false");
+    });
 
-      const minimaxCard = screen.getByTestId("onboarding-provider-card-minimax");
-      expect(within(minimaxCard).getByTestId("onboarding-apikey-input-minimax")).toBeInTheDocument();
-      expect(within(minimaxCard).getByTestId("onboarding-apikey-save-minimax")).toBeInTheDocument();
-      expect(within(minimaxCard).getByTestId("provider-status-badge")).toHaveTextContent("Not connected");
+    it("still progresses to later onboarding steps after interacting with the sectioned provider UI", async () => {
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [
+          { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
+          { id: "minimax", name: "MiniMax", authenticated: false, type: "api_key" },
+          { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+        ],
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("onboarding-apikey-input-openai")).toBeInTheDocument();
+      });
+
+      fireEvent.change(screen.getByTestId("onboarding-apikey-input-openai"), {
+        target: { value: "sk-flow-test" },
+      });
+      fireEvent.click(screen.getByTestId("onboarding-apikey-save-openai"));
+
+      await waitFor(() => {
+        expect(mockSaveApiKey).toHaveBeenCalledWith("openai", "sk-flow-test");
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: /Advanced provider settings/ }));
+      await waitFor(() => {
+        expect(screen.getByTestId("onboarding-provider-card-minimax")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Next →" }));
+      await waitFor(() => {
+        expect(screen.getByText("Connect GitHub")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Next →" }));
+      await waitFor(() => {
+        expect(screen.getByText("Create Your First Task")).toBeInTheDocument();
+      });
     });
   });
 

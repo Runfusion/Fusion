@@ -874,14 +874,13 @@
   }
 
   .agents-view-title {
-    /* Hide the title text on mobile to free up horizontal space; the page
-       context already makes it obvious. The Bot icon stays. */
-    flex: 0 0 auto;
-    gap: 0;
+    flex: 0 1 auto;
+    gap: var(--space-xs);
+    flex-wrap: wrap;
   }
 
   .agents-view-title h2 {
-    display: none;
+    font-size: 16px;
   }
 
   /* Layout: title (Bot) on the left, view-toggle right after it, then the
@@ -891,7 +890,7 @@
   .agents-view-controls {
     flex: 1 1 auto;
     display: flex;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: var(--space-xs);
