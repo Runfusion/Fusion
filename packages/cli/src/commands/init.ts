@@ -149,6 +149,12 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
  * Detect a project name from git remote or directory name.
  */
 async function detectProjectName(dir: string): Promise<string> {
+  // Fast-path for non-git directories to avoid spawning git unnecessarily.
+  // (This also prevents occasional command stalls in constrained CI envs.)
+  if (!existsSync(join(dir, ".git"))) {
+    return basename(dir) || "my-project";
+  }
+
   // Try git remote first
   try {
     const { stdout: remoteUrl } = await execAsync("git remote get-url origin", {
