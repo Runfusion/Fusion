@@ -1,3 +1,4 @@
+import "./InlineCreateCard.css";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Brain, Link, Lightbulb, ListTree, Zap, ChevronDown, ChevronUp, Bot, Maximize2, Minimize2 } from "lucide-react";

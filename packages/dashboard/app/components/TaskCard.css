@@ -1,0 +1,926 @@
+/* === Cards === */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--card-padding);
+  cursor: grab;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    transform var(--transition-fast),
+    opacity var(--transition-normal);
+  user-select: none;
+  touch-action: pan-x pan-y;
+}
+.card:hover {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+.card:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  border-color: var(--todo);
+  outline: none;
+}
+.card:active {
+  cursor: grabbing;
+}
+.card.dragging {
+  opacity: 0.4;
+  transform: scale(0.98);
+}
+.card.file-drop-target {
+  border: 2px dashed var(--todo);
+  background: rgba(88, 166, 255, 0.08);
+}
+
+/* Agent-active glow: animated border glow when an agent is actively working on a task.
+   Uses the in-progress column color to stay consistent with the theme. */
+.card.agent-active {
+  border-color: var(--in-progress);
+  box-shadow:
+    0 0 8px rgba(var(--in-progress-rgb), 0.4),
+    0 0 20px rgba(var(--in-progress-rgb), 0.15);
+  animation: agent-glow 2.5s ease-in-out infinite;
+}
+
+@keyframes agent-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 8px rgba(var(--in-progress-rgb), 0.4),
+      0 0 20px rgba(var(--in-progress-rgb), 0.15);
+  }
+  50% {
+    box-shadow:
+      0 0 12px rgba(var(--in-progress-rgb), 0.6),
+      0 0 28px rgba(var(--in-progress-rgb), 0.25);
+  }
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: var(--space-xs);
+}
+
+.card-id {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.card-title {
+  font-size: 13px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+/* z-index + position: relative so .card-dep-badge tooltip renders above .card-title */
+.card-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  font-size: 11px;
+  color: var(--text-dim);
+  position: relative;
+  z-index: 1;
+}
+
+.card-status-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+
+.card-status-badge.pulsing {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.card-status-badge.failed {
+  background: var(--status-error-bg);
+  color: var(--color-error-dark);
+}
+
+.card-status-badge.stuck {
+  background: var(--status-triage-bg-deep);
+  color: var(--triage);
+  animation: stuck-pulse 2s ease-in-out infinite;
+}
+
+.card-status-badge.paused {
+  background: var(--status-done-bg-deep);
+  color: var(--text-muted, #8b949e);
+}
+
+.card-status-badge.awaiting-approval {
+  background: var(--status-triage-bg-deep);
+  color: var(--triage);
+}
+
+.card-status-badge--triage {
+  background: var(--status-triage-bg);
+  color: var(--triage);
+}
+.card-status-badge--todo {
+  background: var(--status-todo-bg);
+  color: var(--todo);
+}
+.card-status-badge--in-progress {
+  background: var(--status-in-progress-bg);
+  color: var(--in-progress);
+}
+.card-status-badge--in-review {
+  background: var(--status-in-review-bg);
+  color: var(--in-review);
+}
+.card-status-badge--done {
+  background: var(--status-done-bg);
+  color: var(--done);
+}
+.card-status-badge--archived {
+  background: var(--status-archived-bg);
+  color: var(--text-muted, #8b949e);
+}
+
+.card.stuck {
+  border-left: 3px solid var(--triage);
+  background: color-mix(in srgb, var(--triage) 6%, transparent);
+}
+
+@keyframes stuck-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.65;
+  }
+}
+
+/* Size badge: positioned in card header, subtle color coding for effort estimation */
+.card-size-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+
+/* Size S: subtle green tint (low effort) */
+.card-size-badge.size-s {
+  background: color-mix(in srgb, var(--color-success) 15%, transparent);
+  color: var(--color-success);
+}
+
+/* Size M: neutral tint (medium effort) */
+.card-size-badge.size-m {
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  color: var(--text-muted);
+}
+
+/* Size L: subtle amber tint (higher effort) */
+.card-size-badge.size-l {
+  background: color-mix(in srgb, var(--triage) 15%, transparent);
+  color: var(--triage);
+}
+
+.card-priority-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+
+.card-priority-badge--low {
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
+}
+
+.card-priority-badge--high {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+}
+
+.card-priority-badge--urgent {
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  color: var(--color-error-dark);
+}
+
+.card.failed {
+  border-left: 3px solid var(--color-error-dark);
+}
+
+/* Error display on failed task cards */
+.card-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 6px 0;
+  padding: 6px var(--space-sm);
+  background: rgba(218, 54, 51, 0.1);
+  border: 1px solid rgba(218, 54, 51, 0.3);
+  border-radius: var(--radius);
+  font-size: 11px;
+  color: var(--color-error-dark);
+  line-height: 1.4;
+}
+
+.card-error-icon {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.card-error-text {
+  word-break: break-word;
+}
+
+/* Awaiting manual plan approval: amber left border + subtle pulsing background to signal human review needed.
+   Distinct from agent-active (purple glow), failed (red left border + error block), and paused (dimmed opacity). */
+.card.awaiting-approval {
+  border-left: 3px solid var(--triage);
+  background: rgba(210, 153, 34, 0.06);
+  animation: approval-pulse 3s ease-in-out infinite;
+}
+
+@keyframes approval-pulse {
+  0%,
+  100% {
+    background: rgba(210, 153, 34, 0.06);
+  }
+  50% {
+    background: rgba(210, 153, 34, 0.12);
+  }
+}
+
+.card.paused {
+  opacity: 0.55;
+  border-left: 3px solid var(--text-secondary, #888);
+  cursor: default;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.card-dep-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--triage);
+  position: relative;
+  cursor: default;
+}
+
+.card-dep-badge.clickable {
+  cursor: pointer;
+  transition: color var(--transition-fast), text-decoration var(--transition-fast);
+}
+
+.card-dep-badge.clickable:hover {
+  color: var(--todo);
+  text-decoration: underline;
+}
+
+.card-dep-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.card-scope-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--in-progress);
+  position: relative;
+  cursor: default;
+}
+
+.card-scope-badge[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 10;
+  pointer-events: none;
+  margin-bottom: var(--space-xs);
+  box-shadow: var(--shadow-md);
+}
+
+/* Mission badge: clickable link to mission from task card */
+.card-mission-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--badge-mission-text);
+  background: var(--badge-mission-bg);
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-mission-badge:hover {
+  color: var(--badge-mission-text-hover);
+  background: var(--badge-mission-bg-hover);
+}
+
+.card-agent-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.card-agent-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-muted) 35%, transparent);
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-agent-badge-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-agent-badge--loading {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.card-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.card-session-files {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--space-sm);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.card-session-files:hover {
+  color: var(--text);
+}
+
+.card-session-files:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.card-progress-bar {
+  flex: 1;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.card-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.card-progress-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+/* Steps toggle and list */
+.card-steps-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: 6px;
+  min-height: calc(var(--space-xl) + var(--space-md));
+  padding: var(--space-xs) 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  transition: color var(--transition-fast);
+}
+
+.card-steps-toggle:hover {
+  color: var(--text);
+}
+
+.card-steps-toggle:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
+.card-steps-toggle-icon {
+  transition: transform var(--transition-normal);
+}
+
+.card-steps-toggle-icon.expanded {
+  transform: rotate(180deg);
+}
+
+.card-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.card-step-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.card-step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.card-step-dot--pending {
+  background: var(--border);
+}
+
+.card-step-dot--in-progress {
+  background: var(--todo);
+}
+
+.card-step-dot--done {
+  background: var(--color-success);
+}
+
+.card-step-dot--skipped {
+  background: var(--text-dim);
+}
+
+.card-step-dot--failed {
+  background: var(--color-error-dark);
+}
+
+.card-step-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-step-name.completed {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.card-step-workflow-badge {
+  margin-left: auto;
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.25);
+  color: var(--text-muted);
+  background: var(--surface);
+  white-space: nowrap;
+}
+
+.card-step-workflow-badge--pre-merge {
+  color: var(--in-review);
+  background: var(--status-in-review-bg);
+  border-color: color-mix(in srgb, var(--in-review) 35%, var(--border));
+}
+
+.card-step-workflow-badge--post-merge {
+  color: var(--done);
+  background: var(--status-done-bg);
+  border-color: color-mix(in srgb, var(--done) 35%, var(--border));
+}
+
+
+/* Animation for initializing spinner */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+
+
+/* === Card Inline Editing === */
+
+/* Card in edit mode - highlighted border matching column theme */
+.card.card-editing {
+  border: 1px solid var(--todo);
+  border-left: 3px solid var(--todo);
+  background: var(--card);
+  cursor: default;
+}
+
+.card.card-editing[data-column="triage"] {
+  border-color: var(--triage);
+  border-left-color: var(--triage);
+}
+
+.card.card-editing[data-column="todo"] {
+  border-color: var(--todo);
+  border-left-color: var(--todo);
+}
+
+/* Edit content container */
+.card-editing-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* Description textarea in edit mode - follows InlineCreateCard patterns */
+.card-edit-desc-textarea {
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.4;
+  min-height: 80px;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.card-edit-desc-textarea:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius);
+}
+
+.card-edit-desc-textarea::placeholder {
+  color: var(--text-dim);
+}
+
+.card-edit-desc-textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Card header actions container - groups size badge and buttons on the right */
+.card-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* Edit button - visible on hover */
+.card-edit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.card:hover .card-edit-btn {
+  opacity: 1;
+}
+
+.card-edit-btn:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.card-edit-btn:focus {
+  opacity: 1;
+  outline: 1px solid var(--todo);
+  outline-offset: 1px;
+}
+
+/* Delete button - visible on hover for triage column */
+.card-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.card:hover .card-delete-btn {
+  opacity: 1;
+}
+
+.card-delete-btn:hover {
+  color: var(--color-error, #f85149);
+}
+
+.card-delete-btn:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  opacity: 1;
+}
+
+/* Archive/Unarchive buttons */
+.card-archive-btn,
+.card-unarchive-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.card:hover .card-archive-btn,
+.card:hover .card-unarchive-btn {
+  opacity: 1;
+}
+
+.card-archive-btn:hover,
+.card-unarchive-btn:hover {
+  background: var(--card-hover);
+  color: var(--text);
+  border-color: var(--border-hover);
+}
+
+.card-archive-btn:focus,
+.card-unarchive-btn:focus {
+  opacity: 1;
+  outline: 1px solid var(--todo);
+  outline-offset: 1px;
+}
+
+/* Send Back button and dropdown */
+.card-send-back {
+  position: relative;
+}
+
+.card-send-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 8px;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.card:hover .card-send-back-btn {
+  opacity: 1;
+}
+
+.card-send-back-btn:hover {
+  background: var(--card-hover);
+  color: var(--text);
+  border-color: var(--border-hover);
+}
+
+.card-send-back-btn:focus {
+  opacity: 1;
+  outline: 1px solid var(--todo);
+  outline-offset: 1px;
+}
+
+.card-send-back-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  min-width: 100px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.card-send-back-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.card-send-back-menu-item:hover {
+  background: var(--surface-hover);
+}
+
+.card-send-back-menu-item:focus {
+  outline: none;
+  background: var(--surface-hover);
+}
+
+/* Loading state during save */
+.card-edit-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+}
+
+.card-edit-loading-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--todo);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.card-edit-loading-text {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+}
+
+/* === Mobile Responsive Overrides === */
+@media (max-width: 768px) {
+  /* Card edit button: always visible on mobile (no hover) */
+  .card-edit-btn {
+    opacity: 1;
+    width: 32px;
+    height: 32px;
+    margin-right: -8px;
+    margin-top: -8px;
+    margin-bottom: -8px;
+    border-radius: var(--radius-md);
+  }
+
+  .card-edit-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  /* Card delete button: always visible on mobile (no hover) */
+  .card-delete-btn {
+    opacity: 1;
+    width: 32px;
+    height: 32px;
+    margin-right: -8px;
+    margin-top: -8px;
+    margin-bottom: -8px;
+    border-radius: var(--radius-md);
+  }
+
+  .card-delete-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  /* Card: always show action buttons on mobile (no hover state) */
+  .card-header-actions {
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .card-archive-btn,
+  .card-unarchive-btn {
+    opacity: 1;
+    padding: 4px 10px;
+  }
+
+  /* Card: compact progress bar on narrow cards */
+  .card-progress {
+    gap: var(--space-xs);
+  }
+
+  .card-progress-label {
+    font-size: 10px;
+    min-width: 30px;
+  }
+
+  .card-steps-toggle {
+    padding: var(--space-xs) 0;
+  }
+
+  /* Card: smaller status badges for 280px width */
+  .card-status-badge {
+    font-size: 9px;
+    padding: 1px 6px;
+  }
+
+  .card-mission-badge {
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Card: wrap dependency badges */
+  .card-dep-list {
+    flex-wrap: wrap;
+  }
+}

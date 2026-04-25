@@ -1,3 +1,4 @@
+import "./TaskCard.css";
 import { memo, useCallback, useState, useRef, useEffect, useMemo } from "react";
 import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2 } from "lucide-react";
 import type { Task, TaskDetail, Column, PrInfo, IssueInfo, TaskPriority } from "@fusion/core";

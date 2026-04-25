@@ -1,0 +1,270 @@
+/* === Inline Create Card === */
+.inline-create-card {
+  background: var(--card);
+  border: 1px solid var(--todo);
+  border-left: 3px solid var(--todo);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.inline-create-input {
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.4;
+}
+.inline-create-input:focus {
+  border-bottom: 1px solid var(--todo);
+  box-shadow: 0 1px 0 0 var(--todo);
+}
+
+.inline-create-input::placeholder {
+  color: var(--text-dim);
+}
+
+/* Inline Create Card textarea wrap for expand button positioning */
+.inline-create-textarea-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+/* Inline Create Card expand button - bottom-right of textarea */
+.inline-create-expand-btn {
+  position: absolute;
+  bottom: 6px;
+  right: 32px;
+  padding: 4px;
+  opacity: 0.6;
+  transition: opacity var(--transition-fast);
+  z-index: 1;
+}
+
+.inline-create-expand-btn:hover {
+  opacity: 1;
+}
+
+/* Inline Create Card fullscreen mode */
+.inline-create-input--fullscreen {
+  flex: 1;
+  padding-right: 70px;
+  min-height: unset;
+  resize: none;
+  border-radius: var(--radius-md);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+/* Inline Create Card Toggle Button */
+.inline-create-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xs);
+  height: 28px;
+  width: 28px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.inline-create-toggle:hover {
+  background: var(--card-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.inline-create-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Inline Create Card Main Row */
+.inline-create-main-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+}
+
+.inline-create-main-row .inline-create-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Collapsed state */
+.inline-create-card--collapsed {
+  padding: 8px 10px;
+}
+
+.inline-create-card--collapsed .inline-create-input {
+  min-height: 28px;
+}
+
+/* Expanded state */
+.inline-create-card--expanded {
+  padding: 10px 12px;
+}
+
+.inline-create-card--expanded .inline-create-input {
+  min-height: 32px;
+}
+
+.inline-create-footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.inline-create-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.inline-create-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-left: auto;
+}
+
+.inline-create-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
+.inline-create-previews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+  max-height: 120px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.inline-create-preview {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--card);
+  flex-shrink: 0;
+}
+
+.inline-create-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.inline-create-preview-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+  transition: background 0.15s ease;
+}
+
+.inline-create-preview-remove:hover {
+  background: rgba(248, 81, 73, 0.9);
+}
+
+.inline-create-model-wrap {
+  position: relative;
+}
+
+.inline-create-priority-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+.inline-create-priority-select {
+  max-width: 180px;
+}
+
+/* === Mobile Responsive Overrides === */
+@media (max-width: 768px) {
+  /* Dropdown items touch target */
+  .dep-dropdown-item {
+    min-height: 36px;
+  }
+
+  /* Inline create toggle touch target */
+  .inline-create-toggle {
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  /* Inline create: fit within 280px column */
+  .inline-create-card {
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .inline-create-main-row {
+    gap: var(--space-xs);
+  }
+
+  .inline-create-input {
+    font-size: 16px;
+  }
+
+  /* Inline create: mobile-friendly touch sizing */
+  .inline-create-toggle {
+    min-width: 36px;
+    min-height: 36px;
+    flex-shrink: 0;
+  }
+
+  /* Inline create: wrap footer controls at 280px */
+  .inline-create-controls {
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  .inline-create-controls .btn {
+    min-height: 36px;
+    font-size: 12px;
+  }
+
+  .inline-create-priority-select {
+    min-height: 36px;
+  }
+}
