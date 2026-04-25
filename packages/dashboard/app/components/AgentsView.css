@@ -114,6 +114,11 @@
   gap: var(--space-md);
 }
 
+.agent-controls-panel--scrollable {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
 .agent-controls-panel .agent-controls {
   margin-bottom: 0;
   align-items: stretch;

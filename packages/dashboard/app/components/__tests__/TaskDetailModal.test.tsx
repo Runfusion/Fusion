@@ -1532,13 +1532,14 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // For an in-progress task (no workflow steps, no merge commit),
-      // the top-level tabs are: Definition, Logs, Changes, Comments, Documents, Model, Workflow
-      const tabTexts = ["Definition", "Logs", "Changes", "Comments", "Documents", "Model", "Workflow"];
+      // For an in-progress task (no workflow steps, no merge commit), the
+      // top-level tabs are: Definition, Logs, Changes, Comments, Documents,
+      // Model, Workflow, Stats.
+      const tabTexts = ["Definition", "Logs", "Changes", "Comments", "Documents", "Model", "Workflow", "Stats"];
       const tabs = screen.getAllByRole("button").filter((b) =>
         tabTexts.includes(b.textContent || "")
       );
-      expect(tabs.length).toBe(7);
+      expect(tabs.length).toBe(8);
       expect(tabs[0].textContent).toBe("Definition");
       expect(tabs[1].textContent).toBe("Logs");
       expect(tabs[2].textContent).toBe("Changes");
@@ -1546,9 +1547,10 @@ describe("TaskDetailModal", () => {
       expect(tabs[4].textContent).toBe("Documents");
       expect(tabs[5].textContent).toBe("Model");
       expect(tabs[6].textContent).toBe("Workflow");
+      expect(tabs[7].textContent).toBe("Stats");
 
       // Activity and Agent Log are NOT top-level tabs (they are subviews inside Logs)
-      expect(container.querySelectorAll(".detail-tab").length).toBe(7);
+      expect(container.querySelectorAll(".detail-tab").length).toBe(8);
       // Workflow tab should always appear even when no workflow steps are configured
       expect(screen.getByText("Workflow")).toBeInTheDocument();
       // Commits tab should NOT appear for non-done tasks
@@ -2415,7 +2417,7 @@ describe("TaskDetailModal", () => {
       expect(container.querySelector(".modal-actions .modal-actions-spacer")).toBeTruthy();
       expect(container.querySelector(".detail-body")).toBeTruthy();
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(7);
+      expect(tabs.length).toBe(8);
       expect(tabs[0].classList.contains("detail-tab-active")).toBe(true);
       expect(Array.from(tabs).slice(1).every((t) => !t.classList.contains("detail-tab-active"))).toBe(true);
       // Responsive CSS controls sizing — no inline padding/fontSize/borderBottom leaks
@@ -3109,10 +3111,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // In-progress tasks show exactly 7 tabs:
-      // Definition, Logs, Changes, Comments, Documents, Model, Workflow
+      // In-progress tasks show exactly 8 tabs:
+      // Definition, Logs, Changes, Comments, Documents, Model, Workflow, Stats
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(7);
+      expect(tabs.length).toBe(8);
       expect(tabs[0].textContent).toBe("Definition");
       expect(tabs[1].textContent).toBe("Logs");
       expect(tabs[2].textContent).toBe("Changes");
@@ -3120,6 +3122,7 @@ describe("TaskDetailModal", () => {
       expect(tabs[4].textContent).toBe("Documents");
       expect(tabs[5].textContent).toBe("Model");
       expect(tabs[6].textContent).toBe("Workflow");
+      expect(tabs[7].textContent).toBe("Stats");
       // Commits tab should NOT be present for non-done tasks
       expect(screen.queryByText("Commits")).toBeNull();
     });
@@ -3137,9 +3140,9 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // In-progress task with workflow steps: 7 tabs (Workflow after Model)
+      // In-progress task with workflow steps: 8 tabs (Workflow after Model, Stats last)
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(7);
+      expect(tabs.length).toBe(8);
       expect(tabs[0].textContent).toBe("Definition");
       expect(tabs[1].textContent).toBe("Logs");
       expect(tabs[2].textContent).toBe("Changes");
@@ -3147,6 +3150,7 @@ describe("TaskDetailModal", () => {
       expect(tabs[4].textContent).toBe("Documents");
       expect(tabs[5].textContent).toBe("Model");
       expect(tabs[6].textContent).toBe("Workflow");
+      expect(tabs[7].textContent).toBe("Stats");
     });
 
     it("does NOT show Commits tab for done task with mergeDetails.commitSha (changes merged into Changes tab)", () => {
@@ -3165,9 +3169,9 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Done task with commit SHA: Definition, Logs, Changes, Comments, Documents, Model, Workflow (7 tabs, no Commits)
+      // Done task with commit SHA: Definition, Logs, Changes, Comments, Documents, Model, Workflow, Stats (8 tabs, no Commits)
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(7);
+      expect(tabs.length).toBe(8);
       expect(tabs[0].textContent).toBe("Definition");
       expect(tabs[1].textContent).toBe("Logs");
       expect(tabs[2].textContent).toBe("Changes");
@@ -3175,11 +3179,12 @@ describe("TaskDetailModal", () => {
       expect(tabs[4].textContent).toBe("Documents");
       expect(tabs[5].textContent).toBe("Model");
       expect(tabs[6].textContent).toBe("Workflow");
+      expect(tabs[7].textContent).toBe("Stats");
       // Commits tab should NOT be present
       expect(screen.queryByText("Commits")).toBeNull();
     });
 
-    it("shows 6 tabs for done task with workflow steps and commit SHA (Commits merged into Changes)", () => {
+    it("shows 8 tabs for done task with workflow steps and commit SHA (Commits merged into Changes)", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({
@@ -3196,9 +3201,9 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Done task with workflow steps and commit SHA: 7 tabs (no Commits)
+      // Done task with workflow steps and commit SHA: 8 tabs (no Commits)
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(7);
+      expect(tabs.length).toBe(8);
       expect(tabs[0].textContent).toBe("Definition");
       expect(tabs[1].textContent).toBe("Logs");
       expect(tabs[2].textContent).toBe("Changes");
@@ -3206,6 +3211,7 @@ describe("TaskDetailModal", () => {
       expect(tabs[4].textContent).toBe("Documents");
       expect(tabs[5].textContent).toBe("Model");
       expect(tabs[6].textContent).toBe("Workflow");
+      expect(tabs[7].textContent).toBe("Stats");
       // Commits tab should NOT be present
       expect(screen.queryByText("Commits")).toBeNull();
     });
@@ -3224,9 +3230,9 @@ describe("TaskDetailModal", () => {
       );
 
       const triageTabs = triageContainer.querySelectorAll(".detail-tab");
-      expect(triageTabs.length).toBe(6); // Definition, Logs, Comments, Documents, Model, Workflow
+      expect(triageTabs.length).toBe(7); // Definition, Logs, Comments, Documents, Model, Workflow, Stats
       expect(Array.from(triageTabs).map(t => t.textContent)).toEqual([
-        "Definition", "Logs", "Comments", "Documents", "Model", "Workflow",
+        "Definition", "Logs", "Comments", "Documents", "Model", "Workflow", "Stats",
       ]);
 
       const { container: todoContainer } = render(
@@ -3242,9 +3248,9 @@ describe("TaskDetailModal", () => {
       );
 
       const todoTabs = todoContainer.querySelectorAll(".detail-tab");
-      expect(todoTabs.length).toBe(6); // Definition, Logs, Comments, Documents, Model, Workflow
+      expect(todoTabs.length).toBe(7); // Definition, Logs, Comments, Documents, Model, Workflow, Stats
       expect(Array.from(todoTabs).map(t => t.textContent)).toEqual([
-        "Definition", "Logs", "Comments", "Documents", "Model", "Workflow",
+        "Definition", "Logs", "Comments", "Documents", "Model", "Workflow", "Stats",
       ]);
     });
 
@@ -5393,6 +5399,9 @@ describe("TaskDetailModal", () => {
       );
 
       expect(screen.getByText("Loading specification…")).toBeDefined();
+      // Token stats now live in their own Stats tab — switch to it before
+      // asserting on token-loading text.
+      fireEvent.click(screen.getByRole("button", { name: "Stats" }));
       expect(screen.getByText("Loading token statistics…")).toBeDefined();
     });
 
@@ -5451,6 +5460,9 @@ describe("TaskDetailModal", () => {
 
       // Loading indicator should be gone
       expect(screen.queryByText("Loading specification…")).toBeNull();
+
+      // Token stats live behind the Stats tab now.
+      fireEvent.click(screen.getByRole("button", { name: "Stats" }));
       expect(screen.queryByText("Loading token statistics…")).toBeNull();
       expect(screen.getByText((1200).toLocaleString())).toBeInTheDocument();
       expect(screen.getByText((450).toLocaleString())).toBeInTheDocument();
@@ -5496,6 +5508,12 @@ describe("TaskDetailModal", () => {
         />,
       );
 
+      // Token stats live behind the Stats tab now — wait for the modal to
+      // settle, then switch tabs and assert on the empty state.
+      await waitFor(() => {
+        expect(screen.queryByText("Loading specification…")).toBeNull();
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Stats" }));
       await waitFor(() => {
         expect(screen.getByText("No token usage recorded for this task yet.")).toBeInTheDocument();
       });

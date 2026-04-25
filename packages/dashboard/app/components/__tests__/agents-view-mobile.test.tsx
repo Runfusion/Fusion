@@ -136,6 +136,12 @@ describe("AgentsView mobile adaptations", () => {
     await waitFor(() => {
       expect(container.querySelector(".agent-list")).toBeTruthy();
       expect(container.querySelectorAll(".agent-card").length).toBeGreaterThan(0);
+    });
+
+    // Token-stats panel now lives in the controls popup; open it before
+    // asserting on the panel content.
+    fireEvent.click(screen.getByRole("button", { name: "Controls" }));
+    await waitFor(() => {
       expect(container.querySelector(".agent-token-stats-panel")).toBeTruthy();
       expect(screen.getByText("Combined Tokens")).toBeTruthy();
       expect(screen.getByText("100")).toBeTruthy();

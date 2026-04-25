@@ -34,6 +34,10 @@ vi.mock("../QuickEntryBox", () => ({
 vi.mock("lucide-react", () => ({
   Link: () => null,
   Clock: () => null,
+  ChevronDown: () => null,
+  ChevronUp: () => null,
+  Archive: () => null,
+  MoreVertical: () => null,
 }));
 
 // Mock usePluginUiSlots hook

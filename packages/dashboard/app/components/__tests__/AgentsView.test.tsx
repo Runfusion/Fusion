@@ -170,24 +170,23 @@ describe("AgentsView", () => {
       });
     });
 
-    it("renders secondary sections after the main collection", async () => {
+    it("renders metrics above the main collection and active panel after it", async () => {
       const { container } = render(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(container.querySelector(".agent-list")).toBeTruthy();
         expect(container.querySelector(".agent-metrics-bar")).toBeTruthy();
-        expect(container.querySelector(".agent-token-stats-panel")).toBeTruthy();
         expect(container.querySelector(".active-agents-panel")).toBeTruthy();
       });
 
       const list = container.querySelector(".agent-list");
       const metrics = container.querySelector(".agent-metrics-bar");
-      const tokenPanel = container.querySelector(".agent-token-stats-panel");
       const activePanel = container.querySelector(".active-agents-panel");
-      expect(list && metrics && tokenPanel && activePanel).toBeTruthy();
-      expect(list!.compareDocumentPosition(metrics!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      expect(metrics!.compareDocumentPosition(tokenPanel!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      expect(tokenPanel!.compareDocumentPosition(activePanel!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(list && metrics && activePanel).toBeTruthy();
+      // Metrics bar sits above the agent list (top-of-view stats placement).
+      expect(metrics!.compareDocumentPosition(list!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      // Active agents panel comes after the main agent collection.
+      expect(list!.compareDocumentPosition(activePanel!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
     it("fetches agents only once on mount (regression: no duplicate initial load path)", async () => {
@@ -204,6 +203,10 @@ describe("AgentsView", () => {
 
     it("renders token stats derived from the currently displayed agents", async () => {
       render(<AgentsView addToast={mockAddToast} />);
+
+      // Token-usage panel now lives inside the controls popup, not in the
+      // main view body — open the controls panel before asserting.
+      await openControlsPanel();
 
       await waitFor(() => {
         expect(screen.getByText("Token Usage by Agent")).toBeTruthy();

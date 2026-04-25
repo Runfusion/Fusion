@@ -47,13 +47,28 @@ vi.mock("../../hooks/useTaskDiffStats", () => ({
 
 
 function getMainMobileSection(css: string): string {
-  const sectionStart = css.indexOf("/* === Mobile Responsive Overrides ===");
-  const sectionEnd = css.indexOf("/* === Tablet Responsive Tier", sectionStart);
+  // Mobile rules now live across many co-located component CSS files (each
+  // owns its own @media (max-width: 768px) block) instead of one monolith
+  // section in styles.css. Concatenate every <=768px media block in the
+  // bundle so these assertions remain location-agnostic.
+  const re = /@media\s*\([^)]*max-width:\s*768px[^)]*\)\s*\{/g;
+  const blocks: string[] = [];
 
-  expect(sectionStart).toBeGreaterThan(-1);
-  expect(sectionEnd).toBeGreaterThan(sectionStart);
+  for (const match of css.matchAll(re)) {
+    const start = match.index! + match[0].length;
+    let depth = 1;
+    let i = start;
+    while (i < css.length && depth > 0) {
+      const ch = css[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      i++;
+    }
+    blocks.push(css.slice(start, i - 1));
+  }
 
-  return css.slice(sectionStart, sectionEnd);
+  expect(blocks.length).toBeGreaterThan(0);
+  return blocks.join("\n");
 }
 
 function expectRuleToContain(section: string, selectorFragment: string, declaration: string): void {

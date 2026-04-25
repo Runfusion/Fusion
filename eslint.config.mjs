@@ -32,6 +32,7 @@ export default tseslint.config(
       // Project metadata (fn data, worktrees, etc.)
       ".fusion/**",
       ".worktrees/**",
+      ".claude/**",
       // Lock files
       "*.lock",
       "pnpm-lock.yaml",

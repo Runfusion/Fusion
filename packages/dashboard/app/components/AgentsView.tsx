@@ -753,7 +753,6 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
           role="dialog"
           aria-label="Agent controls"
           aria-modal="false"
-          style={{ maxHeight: "70vh", overflowY: "auto" }}
         >
           <div className="agent-controls">
             <div className="agent-controls-filters">
