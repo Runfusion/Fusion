@@ -1491,8 +1491,9 @@ function BoardView({ state, controller }: { state: DashboardState; controller: D
     }
 
     // Cross-view shortcuts — explicit so they work regardless of any
-    // global-handler ordering quirks. p/n stay board-local.
-    if (input === "g" || input === "G") {
+    // global-handler ordering quirks. Lowercase only; uppercase G is
+    // reserved for "jump to end" semantics in scrollable panels.
+    if (input === "g") {
       controller.setInteractiveView("settings");
       return;
     }
@@ -1774,8 +1775,19 @@ function AgentsView({ state }: { state: DashboardState }) {
       return;
     }
 
+    // Tab cycles list ↔ detail. Left/right also switch — the list is the
+    // "left" pane and detail the "right" pane, so the arrow direction
+    // matches the visual layout.
     if (key.tab) {
       setDetailFocused((f) => !f);
+      return;
+    }
+    if (key.leftArrow) {
+      setDetailFocused(false);
+      return;
+    }
+    if (key.rightArrow) {
+      setDetailFocused(true);
       return;
     }
 
@@ -3425,7 +3437,9 @@ export function DashboardApp({ controller }: DashboardAppProps) {
       controller.setInteractiveView("agents");
       return;
     }
-    if (input === "g" || input === "G") {
+    // Lowercase only — uppercase G is reserved for vim-style "jump to end"
+    // in panels that opt-in (e.g. logs in status mode, file preview, etc.).
+    if (input === "g") {
       controller.setMode("interactive");
       controller.setInteractiveView("settings");
       return;
