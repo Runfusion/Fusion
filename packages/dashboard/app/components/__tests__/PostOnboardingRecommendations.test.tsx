@@ -18,6 +18,7 @@ vi.mock("../model-onboarding-state", () => ({
   isOnboardingCompleted: (...args: unknown[]) => mockIsOnboardingCompleted(...args),
   isPostOnboardingDismissed: (...args: unknown[]) => mockIsPostOnboardingDismissed(...args),
   dismissPostOnboardingRecommendations: (...args: unknown[]) => mockDismissPostOnboardingRecommendations(...args),
+  ONBOARDING_FLOW_STEPS: ["ai-setup", "github", "project-setup", "first-task"],
 }));
 
 vi.mock("lucide-react", async (importOriginal) => {

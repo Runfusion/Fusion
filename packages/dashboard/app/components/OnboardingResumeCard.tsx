@@ -1,6 +1,6 @@
 import "./OnboardingResumeCard.css";
 import { Play, Sparkles } from "lucide-react";
-import { getOnboardingResumeStep } from "./model-onboarding-state";
+import { getOnboardingResumeStep, ONBOARDING_FLOW_STEPS } from "./model-onboarding-state";
 import { trackOnboardingEvent } from "./onboarding-events";
 
 interface OnboardingResumeCardProps {
@@ -22,7 +22,7 @@ export function OnboardingResumeCard({ onResume }: OnboardingResumeCardProps) {
   }
 
   const completedCount = resumeStep.completedSteps.length;
-  const totalSteps = 3; // ai-setup, github, first-task
+  const totalSteps = ONBOARDING_FLOW_STEPS.length;
   const progressText = completedCount > 0
     ? `${completedCount} of ${totalSteps} step${completedCount !== 1 ? "s" : ""} complete — You're on the `
     : "You're on the ";

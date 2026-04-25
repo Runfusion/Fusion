@@ -803,7 +803,7 @@ describe("TaskForm preset selection (FN-819)", () => {
       expect(fetchSettings).toHaveBeenCalled();
     });
 
-    const overrideButton = screen.getByRole("button", { name: "Override" });
+    const overrideButton = await screen.findByRole("button", { name: "Override" });
     fireEvent.click(overrideButton);
 
     expect(onPresetModeChange).toHaveBeenCalledWith("custom");

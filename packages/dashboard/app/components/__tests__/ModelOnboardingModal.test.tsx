@@ -60,6 +60,7 @@ vi.mock("../model-onboarding-state", () => ({
   markStepSkipped: (...args: unknown[]) => mockMarkStepSkipped(...args),
   getSkippedSteps: (...args: unknown[]) => mockGetSkippedSteps(...args),
   getStepData: (...args: unknown[]) => mockGetStepData(...args),
+  ONBOARDING_FLOW_STEPS: ["ai-setup", "github", "project-setup", "first-task"],
 }));
 
 const mockTrackOnboardingEvent = vi.fn();
@@ -122,8 +123,16 @@ async function navigateToGitHubStep() {
   });
 }
 
-async function navigateToFirstTaskStep() {
+async function navigateToProjectSetupStep() {
   await navigateToGitHubStep();
+  fireEvent.click(screen.getByText("Next →"));
+  await waitFor(() => {
+    expect(screen.getByText("Set Up Your Project")).toBeTruthy();
+  });
+}
+
+async function navigateToFirstTaskStep() {
+  await navigateToProjectSetupStep();
   fireEvent.click(screen.getByText("Next →"));
   await waitFor(() => {
     expect(screen.getByText("Create Your First Task")).toBeTruthy();
@@ -1395,6 +1404,12 @@ describe("ModelOnboardingModal", () => {
       fireEvent.click(screen.getByText("Continue without GitHub →"));
 
       await waitFor(() => {
+        expect(screen.getByText("Set Up Your Project")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByText("Next →"));
+
+      await waitFor(() => {
         expect(screen.getByText("Create Your First Task")).toBeTruthy();
       });
     });
@@ -1462,10 +1477,10 @@ describe("ModelOnboardingModal", () => {
         />,
       );
 
-      await navigateToFirstTaskStep();
+      await navigateToProjectSetupStep();
 
       expect(screen.getByTestId("onboarding-project-prerequisite")).toBeTruthy();
-      expect(screen.getByText(/A project must be selected before you can create tasks or import from GitHub/)).toBeTruthy();
+      expect(screen.getByText(/A project is required before first-task actions are available/)).toBeTruthy();
       expect(screen.queryByTestId("onboarding-first-task-input")).toBeNull();
       expect(screen.queryByText("Create a New Task")).toBeNull();
       expect(screen.queryByText("Import from GitHub")).toBeNull();
@@ -1482,7 +1497,7 @@ describe("ModelOnboardingModal", () => {
         />,
       );
 
-      await navigateToFirstTaskStep();
+      await navigateToProjectSetupStep();
 
       fireEvent.click(screen.getByTestId("onboarding-open-setup-wizard"));
       expect(onOpenSetupWizard).toHaveBeenCalledTimes(1);
@@ -1976,6 +1991,12 @@ describe("ModelOnboardingModal", () => {
       fireEvent.click(screen.getByText("← Back"));
 
       await waitFor(() => {
+        expect(screen.getByText("Set Up Your Project")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByText("← Back"));
+
+      await waitFor(() => {
         expect(screen.getByText("Connect GitHub")).toBeTruthy();
       });
     });
@@ -2101,7 +2122,7 @@ describe("ModelOnboardingModal", () => {
       expect(aiSetupIndicator).toHaveClass("done");
       expect(githubIndicator).toHaveClass("done");
       expect(firstTaskIndicator).toHaveClass("done");
-      expect(document.querySelectorAll(".model-onboarding-step-connector.done")).toHaveLength(2);
+      expect(document.querySelectorAll(".model-onboarding-step-connector.done")).toHaveLength(3);
 
       // Click Get Started to close
       fireEvent.click(screen.getByText("Get Started"));
@@ -2394,6 +2415,12 @@ describe("ModelOnboardingModal", () => {
       expect(mockFetchGlobalSettings).toHaveBeenCalled();
 
       // Navigate back to see if the model dropdown has the saved value
+      fireEvent.click(screen.getByText("← Back"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Set Up Your Project")).toBeTruthy();
+      });
+
       fireEvent.click(screen.getByText("← Back"));
 
       await waitFor(() => {
@@ -2715,7 +2742,14 @@ describe("ModelOnboardingModal", () => {
       // Click Next without connecting GitHub
       fireEvent.click(screen.getByText("Next →"));
 
-      // Should advance to First Task step
+      // Should advance to Project Setup first
+      await waitFor(() => {
+        expect(screen.getByText("Set Up Your Project")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByText("Next →"));
+
+      // Then advance to First Task step
       await waitFor(() => {
         expect(screen.getByText("Create Your First Task")).toBeTruthy();
       });
@@ -2772,9 +2806,13 @@ describe("ModelOnboardingModal", () => {
         expect(screen.getByText("Optional")).toBeTruthy();
       });
 
-      // Navigate to First Task step
+      // Navigate through Project Setup to First Task step
       fireEvent.click(screen.getByText("Next →"));
+      await waitFor(() => {
+        expect(screen.getByText("Set Up Your Project")).toBeTruthy();
+      });
 
+      fireEvent.click(screen.getByText("Next →"));
       await waitFor(() => {
         expect(screen.getByText("Create Your First Task")).toBeTruthy();
       });
@@ -2815,7 +2853,14 @@ describe("ModelOnboardingModal", () => {
       // Click Skip GitHub
       fireEvent.click(screen.getByText("Skip GitHub →"));
 
-      // Should advance to First Task step
+      // Should advance to Project Setup first
+      await waitFor(() => {
+        expect(screen.getByText("Set Up Your Project")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByText("Next →"));
+
+      // Then advance to First Task step
       await waitFor(() => {
         expect(screen.getByText("Create Your First Task")).toBeTruthy();
       });

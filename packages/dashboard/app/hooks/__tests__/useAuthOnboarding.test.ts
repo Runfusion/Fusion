@@ -14,6 +14,7 @@ vi.mock("../../api", () => ({
 
 vi.mock("../../components/model-onboarding-state", () => ({
   isOnboardingCompleted: (...args: unknown[]) => mockIsOnboardingCompleted(...args),
+  ONBOARDING_FLOW_STEPS: ["ai-setup", "github", "project-setup", "first-task"],
 }));
 
 vi.mock("../../components/onboarding-events", () => ({

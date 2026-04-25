@@ -1,3 +1,4 @@
+import "./ModelOnboardingModal.css";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { X, Loader2, CheckCircle, Key, Zap, GitPullRequest, Rocket, Plus, ChevronRight } from "lucide-react";
 import type { AuthProvider, ModelInfo } from "../api";
@@ -496,6 +497,7 @@ import {
   markStepSkipped,
   getSkippedSteps,
   getStepData,
+  ONBOARDING_FLOW_STEPS,
   type OnboardingStep,
 } from "./model-onboarding-state";
 import { trackOnboardingEvent } from "./onboarding-events";
@@ -541,7 +543,8 @@ const MAX_POLL_CYCLES = 150;
  * Multi-step onboarding modal that guides users through:
  * 1. AI Setup - Provider credential setup (OAuth login or API key entry) and default model selection
  * 2. GitHub (Optional) - GitHub connection status and login
- * 3. First Task - CTA to create first task or import from GitHub
+ * 3. Project Setup - Register a project directory (or clone a repository URL via setup wizard)
+ * 4. First Task - CTA to create first task or import from GitHub
  *
  * Dismissing the modal marks onboarding as complete to prevent repeated popups.
  */
@@ -557,9 +560,13 @@ export function ModelOnboardingModal({
 }: ModelOnboardingModalProps) {
   // Initialize from persisted state if available (allows resume from last step)
   const persistedState = getOnboardingState();
-  const initialStep: OnboardingStep = persistedState && persistedState.currentStep !== "complete"
-    ? persistedState.currentStep as OnboardingStep
-    : "ai-setup";
+  const persistedStep = persistedState?.currentStep;
+  const initialStep: OnboardingStep =
+    persistedStep === "complete"
+      ? "ai-setup"
+      : ONBOARDING_FLOW_STEPS.includes(persistedStep as (typeof ONBOARDING_FLOW_STEPS)[number])
+        ? (persistedStep as OnboardingStep)
+        : "ai-setup";
   // Restore completed/skipped steps from persisted state
   const persistedCompletedSteps = persistedState?.completedSteps ?? [];
   const persistedSkippedSteps = persistedState?.skippedSteps ?? getSkippedSteps();
@@ -607,10 +614,12 @@ export function ModelOnboardingModal({
     }
   );
 
-  // Step definitions for progress indicator
+  // Step definitions for progress indicator.
+  // Keep labels aligned with the ordered ONBOARDING_FLOW_STEPS state contract.
   const steps = [
     { key: "ai-setup" as const, label: "AI Setup" },
     { key: "github" as const, label: "GitHub" },
+    { key: "project-setup" as const, label: "Project" },
     { key: "first-task" as const, label: "First Task" },
   ];
 
@@ -903,6 +912,13 @@ export function ModelOnboardingModal({
     });
   }, [step, completedSteps]);
 
+  const getFlowIndex = useCallback((value: OnboardingStep) => {
+    if (value === "complete") {
+      return -1;
+    }
+    return ONBOARDING_FLOW_STEPS.indexOf(value);
+  }, []);
+
   // Navigate to next step
   const handleNext = useCallback(() => {
     // Mark current step as completed before moving forward
@@ -915,12 +931,11 @@ export function ModelOnboardingModal({
       setGitHubSkippedState(false);
     }
 
-    if (step === "ai-setup") {
-      setStep("github");
-    } else if (step === "github") {
-      setStep("first-task");
+    const currentIndex = getFlowIndex(step);
+    if (currentIndex >= 0 && currentIndex < ONBOARDING_FLOW_STEPS.length - 1) {
+      setStep(ONBOARDING_FLOW_STEPS[currentIndex + 1]);
     }
-  }, [step, isGithubAuthenticated, setGitHubSkippedState]);
+  }, [step, isGithubAuthenticated, setGitHubSkippedState, getFlowIndex]);
 
   // Navigate forward without marking completion
   const handleSkip = useCallback(() => {
@@ -932,12 +947,11 @@ export function ModelOnboardingModal({
       setGitHubSkippedState(true);
     }
 
-    if (step === "ai-setup") {
-      setStep("github");
-    } else if (step === "github") {
-      setStep("first-task");
+    const currentIndex = getFlowIndex(step);
+    if (currentIndex >= 0 && currentIndex < ONBOARDING_FLOW_STEPS.length - 1) {
+      setStep(ONBOARDING_FLOW_STEPS[currentIndex + 1]);
     }
-  }, [step, isGithubAuthenticated, setGitHubSkippedState]);
+  }, [step, isGithubAuthenticated, setGitHubSkippedState, getFlowIndex]);
 
   // Navigate to previous step
   const handleBack = useCallback(() => {
@@ -950,12 +964,11 @@ export function ModelOnboardingModal({
       setGitHubSkippedState(false);
     }
 
-    if (step === "github") {
-      setStep("ai-setup");
-    } else if (step === "first-task") {
-      setStep("github");
+    const currentIndex = getFlowIndex(step);
+    if (currentIndex > 0) {
+      setStep(ONBOARDING_FLOW_STEPS[currentIndex - 1]);
     }
-  }, [step, isGithubAuthenticated, setGitHubSkippedState]);
+  }, [step, isGithubAuthenticated, setGitHubSkippedState, getFlowIndex]);
 
   const handleSkipGitHubStep = useCallback(() => {
     handleSkip();
@@ -1737,6 +1750,11 @@ export function ModelOnboardingModal({
                 <GitPullRequest size={24} /> Connect GitHub <span className="onboarding-optional-badge">Optional</span>
               </>
             )}
+            {step === "project-setup" && (
+              <>
+                <Rocket size={24} /> Set Up Your Project
+              </>
+            )}
             {step === "first-task" && (
               <>
                 <Rocket size={24} /> Create Your First Task
@@ -1760,7 +1778,7 @@ export function ModelOnboardingModal({
           )}
         </div>
 
-        {/* Step indicator - 3 progress steps + complete */}
+        {/* Step indicator - 4 progress steps + complete */}
         <div className="model-onboarding-steps">
           {steps.map((s, index) => {
             // A step is done/skipped only once we have progressed beyond it.
@@ -2057,7 +2075,7 @@ export function ModelOnboardingModal({
                   )}
                   <button
                     className="btn btn-primary btn-sm"
-                    onClick={() => setStep("first-task")}
+                    onClick={() => setStep("project-setup")}
                   >
                     Continue without GitHub →
                   </button>
@@ -2182,12 +2200,49 @@ export function ModelOnboardingModal({
             </div>
           )}
 
+          {step === "project-setup" && (
+            <div className="model-onboarding-project-setup">
+              <p className="model-onboarding-description">
+                Choose your first project before creating or importing tasks.
+                You can register an existing local directory or clone a GitHub repository URL through the setup wizard.
+              </p>
+
+              {!hasProjectSelected ? (
+                <div className="onboarding-project-prerequisite" data-testid="onboarding-project-prerequisite">
+                  <p className="onboarding-helper-text">
+                    A project is required before first-task actions are available.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={onOpenSetupWizard}
+                    data-testid="onboarding-open-setup-wizard"
+                  >
+                    Set Up Project
+                  </button>
+                  <p className="onboarding-helper-text">
+                    In the setup wizard, pick an existing directory or paste a GitHub clone URL.
+                  </p>
+                </div>
+              ) : (
+                <div className="onboarding-project-ready" data-testid="onboarding-project-ready" role="status">
+                  <p>Project selected — task creation and imports are available.</p>
+                </div>
+              )}
+
+              <OnboardingDisclosure summary="What does project setup do?">
+                <p className="onboarding-helper-text">
+                  Project setup registers a workspace so Fusion knows where to read files,
+                  run commands, and track task changes.
+                </p>
+              </OnboardingDisclosure>
+            </div>
+          )}
+
           {step === "first-task" && (
             <div className="model-onboarding-first-task">
               <p className="model-onboarding-description">
-                {hasProjectSelected
-                  ? "Your workspace is ready. Here's how to get started:"
-                  : "Before creating your first task, register a project directory."}
+                Create your first task to start the board and launch AI execution.
               </p>
 
               {showTaskCreated && createdTaskForDisplay ? (
@@ -2378,6 +2433,17 @@ export function ModelOnboardingModal({
                 Skip GitHub →
               </button>
               <button className="btn btn-primary" onClick={handleNext}>
+                Next →
+              </button>
+            </>
+          )}
+
+          {step === "project-setup" && (
+            <>
+              <button className="btn btn-sm" onClick={handleBack}>
+                ← Back
+              </button>
+              <button className="btn btn-primary" onClick={handleNext} disabled={!hasProjectSelected}>
                 Next →
               </button>
             </>

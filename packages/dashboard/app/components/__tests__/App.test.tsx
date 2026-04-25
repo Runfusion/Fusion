@@ -132,6 +132,7 @@ vi.mock("../../components/model-onboarding-state", () => ({
   getOnboardingCompletedAt: (...args: unknown[]) => mockGetOnboardingCompletedAt(...args),
   getSkippedSteps: (...args: unknown[]) => mockGetSkippedSteps(...args),
   getStepData: (...args: unknown[]) => mockGetStepData(...args),
+  ONBOARDING_FLOW_STEPS: ["ai-setup", "github", "project-setup", "first-task"],
 }));
 
 // Mock CustomModelDropdown for onboarding modal tests
