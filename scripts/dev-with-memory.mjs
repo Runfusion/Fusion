@@ -16,12 +16,11 @@ const MEMORY_MB = process.env.FUSION_DEV_MEMORY_MB || "8192";
 const { spawn } = await import("child_process");
 const rawArgs = process.argv.slice(2);
 
-// --inspect / --inspect-brk / --inspect=PORT enables the Node inspector and
-// auto-dumps a heap snapshot just before the heap limit is hit. Strip these
-// from forwarded args so they don't reach the dashboard CLI parser. We pass
-// them as CLI flags directly to node (NOT via NODE_OPTIONS), because
-// NODE_OPTIONS is inherited by every grandchild process — every vitest /
-// agent / claude subprocess would then try to bind 9229 and fail.
+// --inspect / --inspect-brk / --inspect=PORT enables the Node inspector.
+// Strip these from forwarded args so they don't reach the dashboard CLI
+// parser. We pass them as CLI flags directly to node (NOT via NODE_OPTIONS),
+// because NODE_OPTIONS is inherited by every grandchild process — every
+// vitest / agent / claude subprocess would then try to bind 9229 and fail.
 const inspectFlags = [];
 const args = [];
 for (const a of rawArgs) {
@@ -30,12 +29,6 @@ for (const a of rawArgs) {
   } else {
     args.push(a);
   }
-}
-if (inspectFlags.length > 0) {
-  // 3 = take up to 3 snapshots as we approach the heap limit. Files land in
-  // CWD as Heap.YYYYMMDD.HHMMSS.PID.NNN.heapsnapshot
-  inspectFlags.push("--heapsnapshot-near-heap-limit=3");
-  console.log(`[dev-with-memory] inspector flags: ${inspectFlags.join(" ")}`);
 }
 
 // NODE_OPTIONS is shared with every spawned node process (build + run +
