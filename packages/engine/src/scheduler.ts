@@ -51,6 +51,45 @@ export function pathsOverlap(a: string[], b: string[]): boolean {
   return false;
 }
 
+function normalizeOverlapPath(path: string): string {
+  return path.trim().replaceAll("\\", "/").replace(/^\.\//, "");
+}
+
+function isIgnoredOverlapPath(path: string, ignorePath: string): boolean {
+  const normalizedPath = normalizeOverlapPath(path);
+  const normalizedIgnore = normalizeOverlapPath(ignorePath);
+
+  if (normalizedIgnore.endsWith("/*")) {
+    const directory = normalizedIgnore.slice(0, -2);
+    return normalizedPath === directory || normalizedPath.startsWith(`${directory}/`);
+  }
+
+  if (normalizedIgnore.endsWith("/")) {
+    const directory = normalizedIgnore.slice(0, -1);
+    return normalizedPath === directory || normalizedPath.startsWith(normalizedIgnore);
+  }
+
+  return normalizedPath === normalizedIgnore || normalizedPath.startsWith(`${normalizedIgnore}/`);
+}
+
+/**
+ * Remove scope entries that match configured overlap-ignore paths.
+ * Used by scheduler overlap gating so shared safe paths (docs/generated/etc.)
+ * can bypass serialization while keeping overlap protection enabled globally.
+ */
+export function filterPathsByIgnoreList(paths: string[], ignorePaths?: string[]): string[] {
+  if (!ignorePaths || ignorePaths.length === 0) {
+    return paths;
+  }
+
+  const normalizedIgnorePaths = ignorePaths.map(normalizeOverlapPath).filter(Boolean);
+  if (normalizedIgnorePaths.length === 0) {
+    return paths;
+  }
+
+  return paths.filter((path) => !normalizedIgnorePaths.some((ignore) => isIgnoredOverlapPath(path, ignore)));
+}
+
 export interface SchedulerOptions {
   /** Max concurrent in-progress tasks. Default: 2 */
   maxConcurrent?: number;
@@ -592,10 +631,12 @@ export class Scheduler {
        */
       const activeScopes = new Map<string, string[]>();
       if (settings.groupOverlappingFiles) {
+        const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
         // In-progress tasks
         for (const t of inProgress) {
           const scope = await this.store.parseFileScopeFromPrompt(t.id);
-          if (scope.length > 0) activeScopes.set(t.id, scope);
+          const filteredScope = filterPathsByIgnoreList(scope, overlapIgnorePaths);
+          if (filteredScope.length > 0) activeScopes.set(t.id, filteredScope);
         }
         // In-review tasks with unmerged worktrees
         const inReviewWithWorktree = tasks.filter(
@@ -603,7 +644,8 @@ export class Scheduler {
         );
         for (const t of inReviewWithWorktree) {
           const scope = await this.store.parseFileScopeFromPrompt(t.id);
-          if (scope.length > 0) activeScopes.set(t.id, scope);
+          const filteredScope = filterPathsByIgnoreList(scope, overlapIgnorePaths);
+          if (filteredScope.length > 0) activeScopes.set(t.id, filteredScope);
         }
       }
 
@@ -658,7 +700,11 @@ export class Scheduler {
 
         // Check file scope overlap when enabled
         if (settings.groupOverlappingFiles) {
-          const taskScope = await this.store.parseFileScopeFromPrompt(task.id);
+          const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
+          const taskScope = filterPathsByIgnoreList(
+            await this.store.parseFileScopeFromPrompt(task.id),
+            overlapIgnorePaths,
+          );
           if (taskScope.length > 0) {
             let overlappingTaskId: string | null = null;
             for (const [ipId, ipScope] of activeScopes) {
@@ -716,7 +762,10 @@ export class Scheduler {
 
         // Track newly started task's file scope for overlap with remaining todo tasks
         if (settings.groupOverlappingFiles) {
-          const scope = await this.store.parseFileScopeFromPrompt(task.id);
+          const scope = filterPathsByIgnoreList(
+            await this.store.parseFileScopeFromPrompt(task.id),
+            settings.overlapIgnorePaths,
+          );
           if (scope.length > 0) activeScopes.set(task.id, scope);
         }
       }

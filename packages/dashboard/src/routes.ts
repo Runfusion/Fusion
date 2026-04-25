@@ -505,6 +505,36 @@ function validateModelPresets(value: unknown): ModelPreset[] | undefined {
   });
 }
 
+function sanitizeOverlapIgnorePaths(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) {
+    throw badRequest("overlapIgnorePaths must be an array of project-relative paths");
+  }
+
+  const normalized = value.map((entry, index) => {
+    if (typeof entry !== "string") {
+      throw badRequest(`overlapIgnorePaths[${index}] must be a string`);
+    }
+
+    const trimmed = entry.trim().replaceAll("\\", "/");
+    if (!trimmed) {
+      throw badRequest(`overlapIgnorePaths[${index}] cannot be empty`);
+    }
+
+    if (isAbsolute(trimmed) || /^[a-zA-Z]:\//.test(trimmed)) {
+      throw badRequest(`overlapIgnorePaths[${index}] must be a project-relative path`);
+    }
+
+    if (/^\.{1,2}(\/|$)/.test(trimmed) || /(^|\/)\.\.(\/|$)/.test(trimmed)) {
+      throw badRequest(`overlapIgnorePaths[${index}] cannot include '..' traversal`);
+    }
+
+    return trimmed;
+  });
+
+  return [...new Set(normalized)];
+}
+
 // ── Run-Audit Timeline Types & Helpers ─────────────────────────────────────
 
 /** Valid domain filters for run-audit queries. */
@@ -2670,6 +2700,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       if (Object.prototype.hasOwnProperty.call(clientSettings, "modelPresets")) {
         clientSettings.modelPresets = validateModelPresets(clientSettings.modelPresets);
+      }
+      if (Object.prototype.hasOwnProperty.call(clientSettings, "overlapIgnorePaths")) {
+        clientSettings.overlapIgnorePaths = sanitizeOverlapIgnorePaths(clientSettings.overlapIgnorePaths);
       }
 
       // Validate backup settings if provided

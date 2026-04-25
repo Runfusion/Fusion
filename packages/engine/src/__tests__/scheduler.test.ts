@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { PrMonitor } from "../pr-monitor.js";
-import { Scheduler, pathsOverlap } from "../scheduler.js";
+import { Scheduler, pathsOverlap, filterPathsByIgnoreList } from "../scheduler.js";
 import { AgentSemaphore } from "../concurrency.js";
 import type { TaskStore, Task, TaskDetail } from "@fusion/core";
 import { existsSync } from "node:fs";
@@ -123,6 +123,25 @@ describe("pathsOverlap", () => {
   it("handles both having globs with overlapping prefixes", () => {
     expect(pathsOverlap(["src/*"], ["src/components/*"])).toBe(true);
     expect(pathsOverlap(["src/components/*"], ["src/*"])).toBe(true);
+  });
+});
+
+describe("filterPathsByIgnoreList", () => {
+  it("filters exact ignored file paths", () => {
+    expect(filterPathsByIgnoreList(["docs/README.md", "src/index.ts"], ["docs/README.md"]))
+      .toEqual(["src/index.ts"]);
+  });
+
+  it("filters ignored directories with and without trailing slash", () => {
+    expect(filterPathsByIgnoreList(["docs/guide.md", "docs/api/types.md", "src/index.ts"], ["docs"]))
+      .toEqual(["src/index.ts"]);
+    expect(filterPathsByIgnoreList(["docs/guide.md", "src/index.ts"], ["docs/"]))
+      .toEqual(["src/index.ts"]);
+  });
+
+  it("filters ignored glob-style directories", () => {
+    expect(filterPathsByIgnoreList(["generated/*", "generated/client.ts", "src/index.ts"], ["generated/*"]))
+      .toEqual(["src/index.ts"]);
   });
 });
 
@@ -656,6 +675,122 @@ describe("Scheduler", () => {
       expect(moveTask).toHaveBeenCalledWith("FN-104", "in-progress");
       // Overlap-blocked urgent task must not run.
       expect(moveTask).not.toHaveBeenCalledWith("FN-103", "in-progress");
+    });
+  });
+
+  describe("overlap ignore paths", () => {
+    it("allows scheduling when overlap is only on ignored files", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const tasks = [
+        createMockTask({ id: "FN-001", column: "in-progress" }),
+        createMockTask({ id: "FN-002", column: "todo" }),
+      ];
+
+      const parseScopeMock = vi.fn(async (taskId: string): Promise<string[]> => {
+        if (taskId === "FN-001") return ["docs/README.md"];
+        if (taskId === "FN-002") return ["docs/README.md"];
+        return [];
+      });
+
+      const updateTask = vi.fn().mockResolvedValue(undefined);
+      const moveTask = vi.fn().mockResolvedValue(undefined);
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          groupOverlappingFiles: true,
+          overlapIgnorePaths: ["docs/README.md"],
+        }),
+        parseFileScopeFromPrompt: parseScopeMock,
+        updateTask,
+        moveTask,
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect(moveTask).toHaveBeenCalledWith("FN-002", "in-progress");
+      expect(updateTask).not.toHaveBeenCalledWith("FN-002", { status: "queued", blockedBy: "FN-001" });
+    });
+
+    it("allows scheduling when overlap is only within ignored directories", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const tasks = [
+        createMockTask({ id: "FN-001", column: "in-review", worktree: "/test/project/.worktrees/fn-001" }),
+        createMockTask({ id: "FN-002", column: "todo" }),
+      ];
+
+      const parseScopeMock = vi.fn(async (taskId: string): Promise<string[]> => {
+        if (taskId === "FN-001") return ["docs/guide.md"];
+        if (taskId === "FN-002") return ["docs/reference.md"];
+        return [];
+      });
+
+      const updateTask = vi.fn().mockResolvedValue(undefined);
+      const moveTask = vi.fn().mockResolvedValue(undefined);
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          groupOverlappingFiles: true,
+          overlapIgnorePaths: ["docs/"],
+        }),
+        parseFileScopeFromPrompt: parseScopeMock,
+        updateTask,
+        moveTask,
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect(moveTask).toHaveBeenCalledWith("FN-002", "in-progress");
+      expect(updateTask).not.toHaveBeenCalledWith("FN-002", { status: "queued", blockedBy: "FN-001" });
+    });
+
+    it("still blocks overlap for non-ignored paths", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const tasks = [
+        createMockTask({ id: "FN-001", column: "in-progress" }),
+        createMockTask({ id: "FN-002", column: "todo" }),
+      ];
+
+      const parseScopeMock = vi.fn(async (taskId: string): Promise<string[]> => {
+        if (taskId === "FN-001") return ["src/scheduler.ts"];
+        if (taskId === "FN-002") return ["src/scheduler.ts"];
+        return [];
+      });
+
+      const updateTask = vi.fn().mockResolvedValue(undefined);
+      const moveTask = vi.fn().mockResolvedValue(undefined);
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          groupOverlappingFiles: true,
+          overlapIgnorePaths: ["docs/"],
+        }),
+        parseFileScopeFromPrompt: parseScopeMock,
+        updateTask,
+        moveTask,
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect(updateTask).toHaveBeenCalledWith("FN-002", { status: "queued", blockedBy: "FN-001" });
+      expect(moveTask).not.toHaveBeenCalledWith("FN-002", "in-progress");
     });
   });
 

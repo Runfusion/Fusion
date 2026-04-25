@@ -254,9 +254,73 @@
   color: var(--text-muted);
 }
 
+.settings-overlap-ignore-group code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.settings-overlap-ignore-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin: var(--space-sm) 0;
+}
+
+.settings-overlap-ignore-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.settings-overlap-ignore-path-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.settings-overlap-path-picker-modal {
+  max-width: min(960px, calc(100vw - var(--space-2xl)));
+}
+
+.settings-overlap-path-picker-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  max-height: min(70vh, 720px);
+}
+
+.settings-overlap-path-picker-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.settings-section-divider {
+  border-top: 1px solid var(--border);
+  margin: var(--space-lg) var(--space-xl);
+}
+
 @media (max-width: 768px) {
   .settings-note {
     padding: 0 var(--space-lg);
+  }
+
+  .settings-overlap-ignore-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-overlap-ignore-path-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-overlap-ignore-row > .btn {
+    justify-self: start;
+  }
+
+  .settings-overlap-path-picker-modal {
+    max-width: calc(100vw - var(--space-md));
   }
 }
 

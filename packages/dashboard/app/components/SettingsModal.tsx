@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, lazy, Suspense, type MouseEvent } from "react";
 import { Globe, Folder } from "lucide-react";
 import { THINKING_LEVELS, isGlobalSettingsKey, isProjectSettingsKey, getErrorMessage } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, AgentPromptsConfig, ThinkingLevel } from "@fusion/core";
@@ -10,6 +10,8 @@ import { ThemeSelector } from "./ThemeSelector";
 import "./SettingsModal.css";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { FileEditor } from "./FileEditor";
+import { FileBrowser } from "./FileBrowser";
+import { useWorkspaceFileBrowser } from "../hooks/useWorkspaceFileBrowser";
 const PluginManager = lazy(() => import("./PluginManager").then((m) => ({ default: m.PluginManager })));
 const PiExtensionsManager = lazy(() => import("./PiExtensionsManager").then((m) => ({ default: m.PiExtensionsManager })));
 import { ClaudeCliProviderCard } from "./ClaudeCliProviderCard";
@@ -146,6 +148,7 @@ export function SettingsModal({
     pollIntervalMs: 15000,
     heartbeatMultiplier: 1,
     groupOverlappingFiles: true,
+    overlapIgnorePaths: [],
     autoMerge: true,
     mergeStrategy: "direct",
     recycleWorktrees: false,
@@ -183,6 +186,16 @@ export function SettingsModal({
   );
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [prefixError, setPrefixError] = useState<string | null>(null);
+  const [overlapPathPickerIndex, setOverlapPathPickerIndex] = useState<number | null>(null);
+
+  const {
+    entries: overlapPathPickerEntries,
+    currentPath: overlapPathPickerCurrentPath,
+    setPath: setOverlapPathPickerPath,
+    loading: overlapPathPickerLoading,
+    error: overlapPathPickerError,
+    refresh: refreshOverlapPathPicker,
+  } = useWorkspaceFileBrowser("project", overlapPathPickerIndex !== null, projectId);
 
   /** Get the scope of the currently active section */
   const activeSectionScope = SETTINGS_SECTIONS.find((s) => s.id === activeSection)?.scope;
@@ -863,6 +876,85 @@ export function SettingsModal({
     }));
   }
 
+  const openOverlapPathPicker = useCallback((index: number) => {
+    setOverlapPathPickerIndex(index);
+    setOverlapPathPickerPath(".");
+  }, [setOverlapPathPickerPath]);
+
+  const closeOverlapPathPicker = useCallback(() => {
+    setOverlapPathPickerIndex(null);
+  }, []);
+
+  const selectOverlapIgnorePath = useCallback((path: string) => {
+    if (overlapPathPickerIndex === null) return;
+
+    setForm((f) => {
+      const currentPaths = f.overlapIgnorePaths && f.overlapIgnorePaths.length > 0
+        ? [...f.overlapIgnorePaths]
+        : [""];
+      currentPaths[overlapPathPickerIndex] = path;
+      return { ...f, overlapIgnorePaths: currentPaths };
+    });
+
+    closeOverlapPathPicker();
+  }, [overlapPathPickerIndex, closeOverlapPathPicker]);
+
+  const handleSelectCurrentDirectoryForOverlapIgnore = useCallback(() => {
+    if (overlapPathPickerCurrentPath === ".") {
+      return;
+    }
+
+    const directoryPath = overlapPathPickerCurrentPath.endsWith("/")
+      ? overlapPathPickerCurrentPath
+      : `${overlapPathPickerCurrentPath}/`;
+
+    selectOverlapIgnorePath(directoryPath);
+  }, [overlapPathPickerCurrentPath, selectOverlapIgnorePath]);
+
+  const handleOverlapPathPickerOverlayClick = useCallback((event: MouseEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) {
+      closeOverlapPathPicker();
+    }
+  }, [closeOverlapPathPicker]);
+
+  const handleOverlapIgnorePathChange = useCallback((index: number, value: string) => {
+    setForm((f) => {
+      const currentPaths = f.overlapIgnorePaths && f.overlapIgnorePaths.length > 0
+        ? [...f.overlapIgnorePaths]
+        : [""];
+      currentPaths[index] = value;
+      return { ...f, overlapIgnorePaths: currentPaths };
+    });
+  }, []);
+
+  const handleRemoveOverlapIgnorePath = useCallback((index: number) => {
+    setForm((f) => {
+      const currentPaths = f.overlapIgnorePaths && f.overlapIgnorePaths.length > 0
+        ? [...f.overlapIgnorePaths]
+        : [""];
+      const nextPaths = currentPaths.filter((_, i) => i !== index);
+      return { ...f, overlapIgnorePaths: nextPaths.length > 0 ? nextPaths : [] };
+    });
+
+    if (overlapPathPickerIndex === index) {
+      closeOverlapPathPicker();
+      return;
+    }
+
+    if (overlapPathPickerIndex !== null && overlapPathPickerIndex > index) {
+      setOverlapPathPickerIndex(overlapPathPickerIndex - 1);
+    }
+  }, [overlapPathPickerIndex, closeOverlapPathPicker]);
+
+  const handleAddOverlapIgnorePath = useCallback(() => {
+    setForm((f) => {
+      const currentPaths = f.overlapIgnorePaths && f.overlapIgnorePaths.length > 0
+        ? f.overlapIgnorePaths
+        : [""];
+      return { ...f, overlapIgnorePaths: [...currentPaths, ""] };
+    });
+  }, []);
+
   const handleSave = useCallback(async () => {
     if (prefixError || presetDraft) return;
     try {
@@ -870,6 +962,7 @@ export function SettingsModal({
         ...form,
         worktreeInitCommand: form.worktreeInitCommand?.trim() || undefined,
         taskPrefix: form.taskPrefix?.trim() || undefined,
+        overlapIgnorePaths: (form.overlapIgnorePaths ?? []).map((path) => path.trim()).filter((path) => path.length > 0),
       };
 
       // Always save both global and project settings with strict scope separation.
@@ -2018,7 +2111,52 @@ export function SettingsModal({
               <small>When enabled, tasks that modify the same files are queued serially to avoid merge conflicts</small>
             </div>
 
-            <div style={{ borderTop: "1px solid var(--border)", margin: "var(--space-lg) 0" }} />
+            <div className="form-group settings-overlap-ignore-group">
+              <label>Ignored overlap paths</label>
+              <small>
+                Optional file or directory paths to ignore when overlap serialization is enabled.
+                Paths are project-relative (for example <code>docs/</code> or <code>generated/*</code>).
+              </small>
+              <div className="settings-overlap-ignore-list">
+                {(form.overlapIgnorePaths && form.overlapIgnorePaths.length > 0 ? form.overlapIgnorePaths : [""]).map((path, index) => (
+                  <div key={`overlap-ignore-${index}`} className="settings-overlap-ignore-row">
+                    <div className="settings-overlap-ignore-path-controls">
+                      <input
+                        type="text"
+                        value={path}
+                        placeholder="docs/"
+                        onChange={(e) => handleOverlapIgnorePathChange(index, e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => openOverlapPathPicker(index)}
+                        aria-label={`Browse path for ignored overlap entry ${index + 1}`}
+                      >
+                        Browse
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => handleRemoveOverlapIgnorePath(index)}
+                      disabled={(form.overlapIgnorePaths ?? []).length === 0 && index === 0}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={handleAddOverlapIgnorePath}
+              >
+                Add ignored path
+              </button>
+            </div>
+
+            <div className="settings-section-divider" />
 
             <h5 className="settings-section-heading">Step Execution</h5>
             <div className="form-group">
@@ -3527,6 +3665,60 @@ export function SettingsModal({
           </div>
         </div>
       </div>
+
+      {overlapPathPickerIndex !== null && (
+        <div
+          className="modal-overlay open"
+          onClick={handleOverlapPathPickerOverlayClick}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Browse workspace path"
+        >
+          <div className="modal modal-lg settings-overlap-path-picker-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Select ignored overlap path</h3>
+              <button className="modal-close" onClick={closeOverlapPathPicker} aria-label="Close">
+                &times;
+              </button>
+            </div>
+            <div className="modal-body settings-overlap-path-picker-body">
+              <p className="settings-overlap-path-picker-note">
+                Choose a file to ignore directly, or navigate into a folder and select the current directory.
+              </p>
+              <FileBrowser
+                entries={overlapPathPickerEntries}
+                currentPath={overlapPathPickerCurrentPath}
+                onSelectFile={selectOverlapIgnorePath}
+                onNavigate={setOverlapPathPickerPath}
+                loading={overlapPathPickerLoading}
+                error={overlapPathPickerError}
+                onRetry={refreshOverlapPathPicker}
+                workspace="project"
+                projectId={projectId}
+              />
+            </div>
+            <div className="modal-actions">
+              <div className="modal-actions-left">
+                <small>
+                  Current directory: <code>{overlapPathPickerCurrentPath === "." ? "(project root)" : overlapPathPickerCurrentPath}</code>
+                </small>
+              </div>
+              <div className="modal-actions-right">
+                <button className="btn btn-sm" onClick={closeOverlapPathPicker}>
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={handleSelectCurrentDirectoryForOverlapIgnore}
+                  disabled={overlapPathPickerCurrentPath === "."}
+                >
+                  Select current directory
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Import Confirmation Dialog */}
       {importDialogOpen && importPreview && (

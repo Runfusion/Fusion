@@ -96,6 +96,7 @@ API endpoints reviewed:
 | `maxWorktrees` | Project | `GET/PUT /api/settings` | Worktree cap |
 | `pollIntervalMs` | Project | `GET/PUT /api/settings` | Scheduler poll interval |
 | `groupOverlappingFiles` | Project | `GET/PUT /api/settings` | Serialize overlapping file work |
+| `overlapIgnorePaths` | Project | `GET/PUT /api/settings` | Project-relative file/directory paths ignored by overlap blocking |
 | `autoMerge` | Project | `GET/PUT /api/settings` | Enable auto merge |
 | `mergeStrategy` | Project | `GET/PUT /api/settings` | Direct vs PR merge strategy |
 | `worktreeInitCommand` | Project | `GET/PUT /api/settings` | Command run on worktree init |

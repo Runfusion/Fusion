@@ -1180,6 +1180,12 @@ export interface ProjectSettings {
    *  Must be > 0. Default: 1 (no change). */
   heartbeatMultiplier?: number;
   groupOverlappingFiles: boolean;
+  /** File/directory paths to ignore when evaluating overlap serialization.
+   *  Entries are project-relative paths (for example: `docs/README.md`, `docs/`, `generated/*`).
+   *  Absolute paths and `..` traversal are not allowed.
+   *  When set, matching paths are excluded from overlap checks for both
+   *  active in-progress tasks and in-review tasks with unmerged worktrees. */
+  overlapIgnorePaths?: string[];
   autoMerge: boolean;
   /** How completed in-review tasks should be finalized when autoMerge is enabled.
    *  - "direct": preserve the existing local squash-merge flow into the current branch

@@ -29,6 +29,7 @@ const mockTestMemoryRetrieval = vi.fn();
 const mockInstallQmd = vi.fn();
 const mockFetchGitRemotesDetailed = vi.fn();
 const mockFetchDashboardHealth = vi.fn();
+const mockUseWorkspaceFileBrowser = vi.fn();
 
 vi.mock("../../api", () => ({
   fetchSettings: (...args: unknown[]) => mockFetchSettings(...args),
@@ -75,6 +76,18 @@ vi.mock("../PluginSlot", () => ({
   PluginSlot: () => <div data-testid="plugin-slot">Plugin slot content</div>,
 }));
 
+vi.mock("../../hooks/useWorkspaceFileBrowser", () => ({
+  useWorkspaceFileBrowser: (...args: unknown[]) => mockUseWorkspaceFileBrowser(...args),
+}));
+
+vi.mock("../FileBrowser", () => ({
+  FileBrowser: ({ onSelectFile }: { onSelectFile: (path: string) => void }) => (
+    <div data-testid="mock-overlap-file-browser">
+      <button type="button" onClick={() => onSelectFile("README.md")}>Select README.md</button>
+    </div>
+  ),
+}));
+
 const noop = () => {};
 
 const defaultSettings = {
@@ -82,6 +95,7 @@ const defaultSettings = {
   maxWorktrees: 4,
   pollIntervalMs: 15000,
   groupOverlappingFiles: true,
+  overlapIgnorePaths: [],
   autoMerge: true,
   mergeStrategy: "direct",
   pushAfterMerge: false,
@@ -164,6 +178,14 @@ describe("SettingsModal", () => {
     });
     mockFetchGitRemotesDetailed.mockResolvedValue([]);
     mockFetchDashboardHealth.mockResolvedValue({ status: "ok", version: "1.2.3", uptime: 123 });
+    mockUseWorkspaceFileBrowser.mockReturnValue({
+      entries: [],
+      currentPath: ".",
+      setPath: vi.fn(),
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+    });
     mockImportSettings.mockResolvedValue({ success: true, globalCount: 0, projectCount: 0 });
     mockFetchGlobalConcurrency.mockResolvedValue({ globalMaxConcurrent: 4, currentlyActive: 0, queuedCount: 0, projectsActive: {} });
     mockUpdateGlobalConcurrency.mockResolvedValue({ globalMaxConcurrent: 4, currentlyActive: 0, queuedCount: 0, projectsActive: {} });
@@ -409,6 +431,60 @@ describe("SettingsModal", () => {
       expect(screen.queryByTestId("plugin-slot")).not.toBeInTheDocument();
       expect(screen.getByRole("tabpanel", { name: "Pi Extensions" })).toBeVisible();
       expect(document.getElementById("plugins-panel-fusion-plugins")).toHaveAttribute("hidden");
+    });
+  });
+
+  describe("Scheduling overlap ignore paths", () => {
+    it("renders existing overlap ignore paths from settings", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        overlapIgnorePaths: ["docs/", "generated/*"],
+      });
+
+      renderModal();
+      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByText("Scheduling"));
+
+      expect(screen.getByDisplayValue("docs/")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("generated/*")).toBeInTheDocument();
+    });
+
+    it("supports selecting ignore paths through the browse picker", async () => {
+      renderModal();
+      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByText("Scheduling"));
+
+      await userEvent.click(screen.getByRole("button", { name: /browse path for ignored overlap entry 1/i }));
+
+      expect(await screen.findByRole("dialog", { name: /browse workspace path/i })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Select README.md" }));
+
+      expect(screen.getByDisplayValue("README.md")).toBeInTheDocument();
+    });
+
+    it("includes overlapIgnorePaths in save payload", async () => {
+      renderModal();
+      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
+
+      fireEvent.click(screen.getByText("Scheduling"));
+
+      await userEvent.click(screen.getByRole("button", { name: /browse path for ignored overlap entry 1/i }));
+      await userEvent.click(await screen.findByRole("button", { name: "Select README.md" }));
+
+      await userEvent.click(screen.getByRole("button", { name: /add ignored path/i }));
+      const inputs = screen.getAllByPlaceholderText("docs/");
+      await userEvent.type(inputs[1], "generated/*");
+
+      await userEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+      });
+
+      const payload = mockUpdateSettings.mock.calls[0][0];
+      expect(payload.overlapIgnorePaths).toEqual(["README.md", "generated/*"]);
     });
   });
 

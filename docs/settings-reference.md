@@ -85,6 +85,7 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `pollIntervalMs` | `number` | `15000` | Scheduler poll interval (ms). |
 | `heartbeatMultiplier` | `number` | `1` | Global multiplier applied to all agent heartbeat intervals. Configured from the Agents screen (not Settings). |
 | `groupOverlappingFiles` | `boolean` | `true` | Serialize execution when file scopes overlap. |
+| `overlapIgnorePaths` | `string[]` | `[]` | Optional project-relative file or directory paths to exclude from overlap blocking (for example `docs` or `generated/openapi.json`). Entries are trimmed, deduplicated, and must not be absolute or contain `..` traversal. |
 | `autoMerge` | `boolean` | `true` | Auto-finalize tasks from `in-review`. |
 | `mergeStrategy` | `"direct" \| "pull-request"` | `"direct"` | Completion mode (local direct merge vs PR-first). |
 | `pushAfterMerge` | `boolean` | `false` | Auto-push to remote after successful direct merge. Includes pulling latest and AI conflict resolution. |
