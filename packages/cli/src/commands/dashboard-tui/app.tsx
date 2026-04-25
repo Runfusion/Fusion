@@ -1867,7 +1867,8 @@ function AgentsView({ state }: { state: DashboardState }) {
       return;
     }
 
-    if ((key.return || input === "l") && selectedRun) {
+    const isEnterKey = key.return || input === "\r" || input === "\n";
+    if ((isEnterKey || input === "l") && selectedRun) {
       setDetailFocused(true);
       setShowRunLogs(true);
       return;
