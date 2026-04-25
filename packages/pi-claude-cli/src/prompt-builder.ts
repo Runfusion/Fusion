@@ -23,7 +23,20 @@ export interface PiMessage {
   content: string | unknown[];
   toolName?: string;
 }
-export type PiContext = { systemPrompt?: string; messages: PiMessage[] };
+/**
+ * Minimal pi-ai Tool shape — the subset we read from `Context.tools` to build
+ * the deferred-tools system-prompt addendum.
+ */
+export interface PiToolLike {
+  name: string;
+  description?: string;
+}
+
+export type PiContext = {
+  systemPrompt?: string;
+  messages: PiMessage[];
+  tools?: ReadonlyArray<PiToolLike>;
+};
 import {
   mapPiToolNameToClaude,
   translatePiArgsToClaude,
@@ -396,7 +409,58 @@ export function buildSystemPrompt(
     );
   }
 
+  const customToolsAddendum = buildCustomToolsAddendum(context.tools);
+  if (customToolsAddendum) {
+    parts.push(customToolsAddendum);
+  }
+
   return parts.join("\n\n");
+}
+
+/** Pi built-in tool names — these go through pi's wrapped built-ins, not MCP. */
+const BUILT_IN_PI_TOOLS = new Set([
+  "read",
+  "write",
+  "edit",
+  "bash",
+  "grep",
+  "find",
+]);
+
+/**
+ * Build a system-prompt addendum that maps each custom pi tool to its
+ * MCP-exposed name (`mcp__custom-tools__<name>`) and explains Claude Code's
+ * deferred-tool protocol. Without this, the model sees instructions like
+ * "call fn_review_spec()" but only finds `mcp__custom-tools__fn_review_spec`
+ * via ToolSearch — and may report "tool not found" or skip the call.
+ *
+ * Returns an empty string when there are no custom tools so the addendum
+ * doesn't pollute prompts on plain chat sessions with only built-ins.
+ */
+function buildCustomToolsAddendum(
+  tools: ReadonlyArray<PiToolLike> | undefined,
+): string {
+  if (!tools || tools.length === 0) return "";
+  const customNames = tools
+    .map((t) => t.name)
+    .filter((name) => !BUILT_IN_PI_TOOLS.has(name));
+  if (customNames.length === 0) return "";
+
+  const lines = customNames
+    .sort()
+    .map((name) => `- \`${name}\` is exposed as \`mcp__custom-tools__${name}\``);
+
+  return [
+    "## Custom tool naming (Claude Code deferred-tools protocol)",
+    "",
+    "The following pi extension tools are available, but Claude Code exposes",
+    "them under MCP-prefixed names. When a system prompt or task instruction",
+    "asks you to call one of these by its short name, use the MCP-prefixed",
+    "name instead. Their schemas are deferred — call `ToolSearch` with",
+    '`select:mcp__custom-tools__<name>` first, then call the tool directly.',
+    "",
+    ...lines,
+  ].join("\n");
 }
 
 /**
