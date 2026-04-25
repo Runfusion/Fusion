@@ -1,7 +1,0 @@
-=== RUN 1 start: 2026-04-24T15:39:53Z ===
-RUN 1 duration=151s exit=1
-=== RUN 2 start: 2026-04-24T15:42:24Z ===
-RUN 2 duration=137s exit=0
-=== RUN 3 start: 2026-04-24T15:44:41Z ===
-RUN 3 duration=95s exit=0
-=== ALL RUNS DONE ===
