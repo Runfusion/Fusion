@@ -15,9 +15,16 @@ import { basename, dirname, join, relative, isAbsolute, resolve } from "node:pat
 const execAsync = promisify(exec);
 import {
   createAgentSession,
+  createBashTool,
   createCodingTools,
+  createEditTool,
   createExtensionRuntime,
+  createFindTool,
+  createGrepTool,
+  createLsTool,
   createReadOnlyTools,
+  createReadTool,
+  createWriteTool,
   DefaultResourceLoader,
   DefaultPackageManager,
   discoverAndLoadExtensions,
@@ -967,10 +974,32 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
   const modelRegistry = ModelRegistry.create(authStorage, getModelRegistryModelsPath());
   await registerExtensionProviders(options.cwd, modelRegistry);
 
+  // Build the pi built-in tool set. We deliberately do NOT use the bundled
+  // `createCodingTools` / `createReadOnlyTools` presets — they're missing
+  // tools that pi-claude-cli's Claude→pi name mapping depends on (Glob→find,
+  // Grep→grep). When a coding session ran via Claude CLI tried `Glob`, pi
+  // returned "Tool find not found" and the agent looped. Compose explicitly
+  // so every tool referenced by tool-mapping.ts is registered.
   const tools =
     options.tools === "readonly"
-      ? createReadOnlyTools(options.cwd)
-      : createCodingTools(options.cwd);
+      ? [
+          createReadTool(options.cwd),
+          createGrepTool(options.cwd),
+          createFindTool(options.cwd),
+          createLsTool(options.cwd),
+        ]
+      : [
+          createReadTool(options.cwd),
+          createBashTool(options.cwd),
+          createEditTool(options.cwd),
+          createWriteTool(options.cwd),
+          createGrepTool(options.cwd),
+          createFindTool(options.cwd),
+          createLsTool(options.cwd),
+        ];
+  // Suppress lint about unused presets — kept in scope for incremental migration.
+  void createCodingTools;
+  void createReadOnlyTools;
 
   // Detect if this is a worktree session and apply path boundaries
   const worktreePath = options.cwd;
