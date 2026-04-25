@@ -667,7 +667,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
     <div className="agents-view">
       <div className="agents-view-header">
         <div className="agents-view-title">
-          <Bot size={20} />
+          <Bot size={24} />
           <h2>Agents</h2>
         </div>
         <div className="agents-view-controls">
@@ -712,14 +712,15 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
           <div className="agents-view-primary-actions">
             <button
               ref={controlsTriggerRef}
-              className={`btn agent-controls-trigger${isControlsPanelOpen ? " agent-controls-trigger--active" : ""}`}
+              className={`btn-icon agent-controls-trigger${isControlsPanelOpen ? " agent-controls-trigger--active" : ""}`}
               onClick={() => setIsControlsPanelOpen((open) => !open)}
+              title="Controls"
+              aria-label="Controls"
               aria-haspopup="dialog"
               aria-expanded={isControlsPanelOpen}
               aria-controls={controlsPanelId}
             >
               <SlidersHorizontal size={16} />
-              Controls
             </button>
             <button
               className="btn btn--primary"
@@ -730,14 +731,6 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
             >
               <Plus size={16} />
               New Agent
-            </button>
-            <button
-              className="btn-icon"
-              onClick={() => void loadAgents()}
-              title="Refresh"
-              disabled={isLoading}
-            >
-              <RefreshCw size={16} className={isLoading ? "spin" : ""} />
             </button>
           </div>
         </div>
@@ -862,6 +855,9 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
           onImported={() => void loadAgents()}
           projectId={projectId}
         />
+
+        {/* Stats cards — shown above the agent list */}
+        <AgentMetricsBar stats={stats} />
 
         {/* Agent Collection */}
         {agentView === "tree" ? (
@@ -1264,7 +1260,6 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
         )}
 
         {/* Secondary sections */}
-        <AgentMetricsBar stats={stats} />
         <ActiveAgentsPanel agents={activeAgents} projectId={projectId} onAgentSelect={setSelectedAgentId} />
       </div>
 

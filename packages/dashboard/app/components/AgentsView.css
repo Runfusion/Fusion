@@ -868,6 +868,7 @@
     flex-direction: row;
     align-items: center;
     flex-wrap: nowrap;
+    justify-content: flex-start;
     gap: var(--space-xs);
     padding: var(--space-sm) var(--space-md);
   }
@@ -883,31 +884,27 @@
     display: none;
   }
 
+  /* Layout: title (Bot) on the left, view-toggle right after it, then the
+     primary-actions group pinned to the far right of the row. The flex
+     container grows to fill remaining space, and `space-between` separates
+     the toggle (left side) from primary-actions (right side). */
   .agents-view-controls {
     flex: 1 1 auto;
     display: flex;
     flex-wrap: nowrap;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: space-between;
     gap: var(--space-xs);
     min-width: 0;
   }
 
-  /* View toggle (List/Board/Tree/Org) — compact icon-only group */
+  /* View toggle (List/Board/Tree/Org) — keep the 32px pill chrome from the
+     base styles. Inner buttons stay at the base 28×28 (centered in the 2px
+     pill padding). All surrounding header icons below are sized to match
+     that 28×28 inner footprint so every icon lines up with the view-toggle
+     buttons. */
   .agents-view-controls .view-toggle {
-    display: inline-flex;
     flex: 0 0 auto;
-    gap: 0;
-  }
-
-  .agents-view-controls .view-toggle-btn {
-    width: 32px;
-    height: 32px;
-    min-width: 32px;
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
   }
 
   .agents-view-primary-actions {
@@ -918,30 +915,46 @@
     flex: 0 0 auto;
   }
 
-  /* Controls button: icon-only on mobile to save horizontal space */
+  /* Controls button: icon-only on mobile, sized to match view-toggle buttons */
   .agent-controls-trigger {
     padding: 0;
-    width: 32px;
-    height: 32px;
-    min-width: 32px;
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
     font-size: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
   }
 
-  /* New Agent: icon + short label, tightened */
+  /* New Agent: icon-only on mobile, sized to match view-toggle buttons.
+     Text is visually hidden via font-size: 0 (the SVG icon keeps its size). */
   .agents-view-primary-actions .btn--primary {
-    height: 32px;
-    padding: 0 var(--space-sm);
-    font-size: 12px;
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    padding: 0;
+    font-size: 0;
+    gap: 0;
     white-space: nowrap;
-    gap: var(--space-xs);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .agents-view-primary-actions .btn-icon {
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+  }
+
+  /* Title's Bot icon: 32×32 footprint so it sits at the same outer height
+     as the view-toggle pill. The icon itself is 24px (set in JSX), giving
+     it more visual weight than the surrounding 16px button icons. */
+  .agents-view-title {
     width: 32px;
     height: 32px;
-    min-width: 32px;
+    align-items: center;
+    justify-content: center;
   }
 }

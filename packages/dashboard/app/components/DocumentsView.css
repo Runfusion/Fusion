@@ -622,16 +622,6 @@
     margin-left: auto;
   }
 
-  .agents-view-primary-actions {
-    width: 100%;
-    justify-content: space-between;
-  }
-
-  .agents-view-primary-actions .btn,
-  .agents-view-primary-actions .btn-icon {
-    min-height: calc(var(--space-2xl) + var(--space-xs));
-  }
-
   .agent-controls-panel {
     left: var(--space-md);
     right: var(--space-md);
@@ -704,26 +694,8 @@
     margin-bottom: var(--space-sm);
   }
 
-  .agents-view-header {
-    padding: var(--space-sm) var(--space-md);
-    flex-wrap: wrap;
-    gap: var(--space-sm);
-  }
-
-  .agents-view-title h2 {
-    font-size: 16px;
-  }
-
   .agents-view-content {
     padding: var(--space-md);
-  }
-
-  .agents-view-controls {
-    flex-wrap: wrap;
-  }
-
-  .agents-view-title {
-    flex-wrap: wrap;
   }
 
 
