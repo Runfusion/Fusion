@@ -615,30 +615,32 @@ function UtilitiesPanel({ isFocused }: { isFocused: boolean }) {
 
 function HelpOverlay() {
   const shortcuts: Array<[string, string]> = [
-    ["[b]", "Board view (interactive mode)"],
+    ["[m] / [s]", "Main (status mode)"],
+    ["[b]", "Board view"],
     ["[a]", "Agents view"],
     ["[g]", "Settings view"],
     ["[t]", "Git view"],
-    ["[s]", "Status mode"],
-    ["[1] / [2] / [3]", "Board / Agents / Settings (interactive)"],
-    ["[Tab]", "Cycle focused panel forward"],
-    ["[Shift+Tab]", "Cycle focused panel backward"],
-    ["[1-5]", "Jump to panel by number (status mode)"],
-    ["[→] / [n]", "Next panel (status mode)"],
-    ["[←] / [p]", "Previous panel (status mode)"],
+    ["[e]", "Explorer (file browser)"],
+    ["[Tab]", "Cycle focused panel / pane forward"],
+    ["[Shift+Tab]", "Cycle focused panel / pane backward"],
+    ["[1-5]", "Jump to panel (Main: System/Logs/Utilities/Stats/Settings)"],
+    ["[← / →]", "Switch pane (Agents, Settings, Files, Git)"],
+    ["[→] / [n]", "Next panel (Main)"],
+    ["[←] / [p]", "Previous panel (Main)"],
     ["[r]", "Refresh stats (Utilities)"],
     ["[c]", "Clear logs (Utilities)"],
-    ["[t]", "Toggle engine pause (Utilities)"],
-    ["[↑/↓/k/j]", "Navigate log entries (Logs)"],
-    ["[Home/End]", "First/last log entry (Logs)"],
-    ["[Enter/Space/e]", "Expand log entry (Logs)"],
-    ["[w]", "Toggle word wrap (Logs)"],
-    ["[f]", "Cycle severity filter (Logs)"],
-    ["[s/x]", "Start/stop agent (Agents view)"],
-    ["[D]", "Delete agent — requires confirm (Agents view)"],
-    ["[r]", "Refresh agent detail (Agents view)"],
-    ["[Space]", "Toggle boolean (Settings view)"],
-    ["[+/-]", "Adjust number (Settings view)"],
+    ["[↑/↓/k/j]", "Navigate list / log entries"],
+    ["[Home / G]", "First / last log entry (Logs)"],
+    ["[Enter/Space]", "Expand log entry (Logs)"],
+    ["[w]", "Toggle word wrap (Logs / Files)"],
+    ["[f]", "Cycle severity filter (Main, any panel)"],
+    ["[Space]", "Toggle boolean (Settings)"],
+    ["[+/-]", "Adjust number (Settings)"],
+    ["[p]", "Project picker (Board, Files)"],
+    ["[n]", "New task (Board)"],
+    ["[D]", "Delete agent — requires confirm (Agents)"],
+    ["[P] / [F]", "Push / fetch (Git)"],
+    ["[.]", "Toggle hidden files (Files)"],
     ["[?] / [h]", "Toggle help"],
     ["[q]", "Quit"],
     ["[Ctrl+C]", "Force quit"],
@@ -653,11 +655,14 @@ function HelpOverlay() {
     <Box borderStyle="round" borderColor="cyanBright" flexDirection="column" backgroundColor="black">
       <Text backgroundColor="black" bold color="white">{titleRow}</Text>
       <Text backgroundColor="black"> </Text>
-      {shortcuts.map(([key, desc]) => {
+      {shortcuts.map(([key, desc], i) => {
         const keyCell = ` ${key.padEnd(rowKeyWidth - 1)} `;
         const descCell = ` ${desc.padEnd(rowDescWidth)} `;
+        // Some shortcut keys repeat across contexts (e.g. [t] for Git view
+        // and [t] for Toggle engine pause), so index-based keys are correct
+        // here — each row is genuinely unique by position, not by key char.
         return (
-          <Box key={key} flexDirection="row">
+          <Box key={i} flexDirection="row">
             <Text backgroundColor="black" color="yellow">{keyCell}</Text>
             <Text backgroundColor="black" color="white">{descCell}</Text>
           </Box>
@@ -686,7 +691,9 @@ function StatusModeGrid({
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      <MainHeader state={state} />
+      <Box flexShrink={0}>
+        <MainHeader state={state} />
+      </Box>
 
       <Box flexDirection="row" flexGrow={1} overflow="hidden">
         <Box flexDirection="column" flexGrow={5} overflow="hidden">
@@ -710,7 +717,9 @@ function StatusModeGrid({
         </Box>
       </Box>
 
-      <StatusBar state={state} controller={controller} />
+      <Box flexShrink={0}>
+        <StatusBar state={state} controller={controller} />
+      </Box>
     </Box>
   );
 }
@@ -736,11 +745,15 @@ function StatusModeSingle({
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      <MainHeader state={state} />
+      <Box flexShrink={0}>
+        <MainHeader state={state} />
+      </Box>
       <Box flexGrow={1} flexDirection="column" overflow="hidden">
         {activePanel()}
       </Box>
-      <StatusBar state={state} controller={controller} />
+      <Box flexShrink={0}>
+        <StatusBar state={state} controller={controller} />
+      </Box>
     </Box>
   );
 }
@@ -780,7 +793,6 @@ function MainHeader({ state }: { state: DashboardState }) {
   const interactiveView = state.interactiveView;
   const { stdout } = useStdout();
   const cols = stdout?.columns ?? 80;
-  const rows = stdout?.rows ?? 24;
   // Single unified tab strip. "Main" is the status mode; the rest are
   // interactive views. Active key matches the current mode/view.
   type Tab =
@@ -794,7 +806,10 @@ function MainHeader({ state }: { state: DashboardState }) {
     { key: "t", label: "Git", kind: "interactive", view: "git" },
     { key: "e", label: "Explorer", kind: "interactive", view: "files" },
   ];
-  if (rows < 10) return null;
+  // Don't gate header rendering on stdout.rows — tmux pane switches and
+  // other resize events can briefly report stale or zero dimensions, and a
+  // transient `return null` orphans the header on the next layout pass.
+  // Always render; Yoga/overflow:hidden handles the extreme cases.
   // Width tiers, measured against actual rendered content with 6 tabs:
   //   * Full + help (cols >= 110): "[k] Label" tabs + help/quit hint.
   //   * Full (90-109): "[k] Label" tabs, no help hint (~85 chars).
