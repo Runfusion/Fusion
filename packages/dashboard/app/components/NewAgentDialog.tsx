@@ -1,3 +1,4 @@
+import "./NewAgentDialog.css";
 import { useState, useEffect, useCallback } from "react";
 import type { Agent, AgentCapability, ModelInfo, AgentGenerationSpec } from "../api";
 import { createAgent, fetchAgents, fetchModels, updateGlobalSettings } from "../api";

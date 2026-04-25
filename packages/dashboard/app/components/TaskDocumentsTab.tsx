@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { FileText, ChevronDown, ChevronUp, Plus, Trash2, History } from "lucide-react";
+import "./TaskDocumentsTab.css";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Task, TaskDocument, TaskDocumentRevision } from "@fusion/core";

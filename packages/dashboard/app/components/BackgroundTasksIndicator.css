@@ -1,0 +1,124 @@
+/* === Background Tasks Indicator === */
+.background-tasks-indicator {
+  position: relative;
+}
+
+.background-tasks-indicator__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+  transition: background var(--transition-fast);
+}
+
+.background-tasks-indicator__pill:hover:not(.background-tasks-indicator__pill--attention) {
+  background: color-mix(in srgb, var(--surface) 85%, var(--text-muted));
+}
+
+.background-tasks-indicator__pill--attention {
+  background: var(--triage);
+  color: #fff;
+  border-color: var(--triage);
+}
+
+.background-tasks-indicator__pill--attention:hover {
+  background: color-mix(in srgb, var(--triage) 85%, #000);
+}
+
+.background-tasks-indicator__popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  min-width: 280px;
+  max-width: 360px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  overflow: hidden;
+}
+
+.background-tasks-indicator__popover-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.background-tasks-indicator__popover-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.background-tasks-indicator__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.background-tasks-indicator__item:last-child {
+  border-bottom: none;
+}
+
+.background-tasks-indicator__session-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.background-tasks-indicator__session-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.background-tasks-indicator__session-title {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.background-tasks-indicator__session-meta {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+}
+
+.background-tasks-indicator__item-dismiss {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  color: var(--text-muted);
+  border-radius: 4px;
+}
+
+@media (max-width: 768px) {
+  .background-tasks-indicator__popover {
+    position: fixed;
+    bottom: 40px;
+    left: 8px;
+    right: 8px;
+    min-width: auto;
+    max-width: none;
+  }
+
+  .background-tasks-indicator__pill {
+    min-height: 36px;
+  }
+}
+

@@ -1,0 +1,322 @@
+/* === Split Project Button === */
+/* === Project Selector === */
+.project-selector {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  overflow: visible;
+}
+
+.project-selector-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.project-selector-trigger:hover {
+  background: var(--card-hover);
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.project-selector-trigger--open {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.project-selector-chevron {
+  transition: transform var(--transition-fast);
+}
+
+.project-selector-chevron--open {
+  transform: rotate(180deg);
+}
+
+.project-selector-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 100;
+  min-width: 240px;
+  max-width: 360px;
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.project-selector-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.project-selector-item:hover {
+  background: var(--card-hover);
+}
+
+.project-selector-item--current {
+  background: var(--card-hover);
+}
+
+.project-selector-divider {
+  height: 1px;
+  margin: var(--space-xs) var(--space-sm);
+  background: var(--border);
+}
+
+.project-selector-manage {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: var(--space-sm) calc(var(--space-sm) + var(--space-xs));
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.project-selector-manage:hover {
+  background: var(--card-hover);
+}
+
+.project-selector-manage:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.project-selector-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.project-selector-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.project-selector-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.project-selector-path {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-selector-check {
+  flex-shrink: 0;
+  color: var(--todo);
+}
+
+/* Light theme overrides for project selector */
+[data-theme="light"] .project-selector-trigger:hover {
+  background: var(--card-hover);
+}
+
+[data-theme="light"] .project-selector-dropdown {
+  background: var(--surface);
+}
+
+[data-theme="light"] .project-selector-item:hover {
+  background: var(--card-hover);
+}
+
+[data-theme="light"] .project-selector-item--current {
+  background: rgba(88, 166, 255, 0.1);
+}
+
+/* === Mobile Project Switch (logo-adjacent dropdown) === */
+.mobile-project-switch {
+  position: relative;
+  display: none; /* Hidden by default, shown on mobile via media query */
+}
+
+.mobile-project-switch-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 6px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.mobile-project-switch-trigger:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.mobile-project-switch-trigger--open {
+  color: var(--todo);
+  background: var(--card-hover);
+}
+
+.mobile-project-switch-chevron {
+  transition: transform var(--transition-fast);
+}
+
+.mobile-project-switch-chevron--open {
+  transform: rotate(180deg);
+}
+
+.mobile-project-switch-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 100;
+  min-width: 200px;
+  max-width: 280px;
+  padding: var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.mobile-project-switch-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.mobile-project-switch-item:hover {
+  background: var(--card-hover);
+}
+
+.mobile-project-switch-item--current {
+  background: var(--card-hover);
+}
+
+.mobile-project-switch-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.mobile-project-switch-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mobile-project-switch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.mobile-project-switch-path {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-project-switch-check {
+  flex-shrink: 0;
+  color: var(--todo);
+}
+
+/* Mobile styles for mobile-project-switch */
+@media (max-width: 768px) {
+  .mobile-project-switch {
+    display: inline-flex;
+    align-items: center;
+  }
+}
+
+/* === Project Content Wrapper (footer-safe layout) === */
+
+/**
+ * Wrapper for project-view content (board, list, agents) that reserves space
+ * for the fixed ExecutorStatusBar footer. This wrapper is the single source of
+ * truth for the footer-safe content area — child views simply use height: 100%
+ * to fill the available space without needing to know about the footer.
+ *
+ * When the footer is present, --with-footer reserves space via padding-bottom
+ * equal to the footer height. Because the wrapper uses box-sizing: border-box,
+ * children with height: 100% resolve to the content area (wrapper height minus
+ * padding), which is exactly the safe zone above the fixed footer.
+ *
+ * On mobile the token is overridden to 32px to match the shorter footer.
+ */
+.project-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.project-content--with-footer {
+  --executor-footer-height: 36px;
+  padding-bottom: var(--executor-footer-height);
+}
+
+@media (max-width: 768px) {
+  /* Hide project selector on mobile (belt-and-suspenders with conditional rendering) */
+  .project-selector {
+    display: none;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  /* Hide project selector on tablet (controlled by React rendering too) */
+  .project-selector {
+    display: none;
+  }
+}

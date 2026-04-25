@@ -1,0 +1,223 @@
+/* ── Plugin Manager ─────────────────────────────────────────── */
+
+.plugin-manager,
+.plugin-manager-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.plugin-manager-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+.plugin-manager-actions {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.plugin-install-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.plugin-install-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary, var(--text-muted));
+  line-height: 1.45;
+}
+
+.plugin-install-hint code {
+  padding: 1px var(--space-xs);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary, rgba(127, 127, 127, 0.12));
+  font-size: 0.85em;
+}
+
+.plugin-install-actions {
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: flex-end;
+}
+
+.plugin-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.plugin-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md) var(--space-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast);
+}
+
+.plugin-item:hover {
+  border-color: var(--text-dim);
+}
+
+.plugin-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.plugin-name {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plugin-version {
+  font-size: 0.85rem;
+}
+
+.plugin-state-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-pill);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.plugin-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+/* Detail view */
+
+.plugin-manager-detail-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.plugin-detail-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.plugin-detail-title h3 {
+  margin: 0;
+}
+
+.plugin-detail-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.plugin-detail-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.plugin-description {
+  font-size: 0.95rem;
+  color: var(--text-secondary, var(--text-muted));
+  line-height: 1.5;
+}
+
+.plugin-detail-meta-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.plugin-homepage a {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--color-info);
+  font-size: 0.85rem;
+}
+
+/* Plugin detail headings don't need extra margin (they're inside a tight card layout) */
+.plugin-settings-form .settings-section-heading {
+  margin: 0;
+}
+
+.plugin-settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  margin-top: var(--space-xs);
+}
+
+.plugin-settings-form .form-group {
+  padding: 0;
+  margin-bottom: 0;
+}
+
+.plugin-settings-array {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.plugin-settings-array-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.plugin-settings-array-item input {
+  flex: 1;
+}
+
+.plugin-detail-actions {
+  display: flex;
+  gap: var(--space-sm);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+  justify-content: flex-end;
+}
+
+/* Empty and loading states */
+.plugin-manager .empty-state,
+.plugin-manager .loading-state,
+.plugin-manager .settings-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-2xl);
+  text-align: center;
+  color: var(--text-muted);
+}

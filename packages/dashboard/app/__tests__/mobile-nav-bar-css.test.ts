@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { loadAllAppCss } from "../test/cssFixture";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
@@ -33,8 +34,7 @@ function extractMobileMediaBlocks(content: string): string {
 }
 
 describe("mobile-nav-bar.css", () => {
-  const cssPath = resolve(__dirname, "../styles.css");
-  const cssContent = readFileSync(cssPath, "utf-8");
+  const cssContent = loadAllAppCss();
   const mobileMediaBlock = extractMobileMediaBlocks(cssContent);
 
   it("tab bar has fixed position", () => {

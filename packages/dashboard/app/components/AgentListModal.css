@@ -1,0 +1,220 @@
+/* === Agent List Modal === */
+.agent-list-modal {
+  width: 90vw;
+  max-width: 900px;
+  max-height: 80vh;
+}
+
+.agent-list-modal .modal-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.75);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin: 0;
+}
+
+.agent-list-modal .agent-modal-content {
+  padding: var(--space-xl) calc(var(--space-lg) + var(--space-xs));
+  overflow-y: auto;
+}
+
+.agent-list-modal .agent-controls {
+  justify-content: space-between;
+}
+
+.agent-list-modal .agent-create-form {
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.agent-list-modal .agent-create-form .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-list-modal .agent-board {
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--space-xl) * 9 + var(--space-xs)), 1fr));
+}
+
+.agent-list-modal .agent-board-card {
+  box-shadow: none;
+  transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.agent-list-modal .agent-board-card:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.agent-list-modal .agent-board-card:focus-within {
+  box-shadow: var(--focus-ring);
+}
+
+.agent-list-modal .agent-board-badge {
+  letter-spacing: 0.04em;
+}
+
+.agent-list-modal .agent-board-name,
+.agent-list-modal .agent-board-id,
+.agent-list-modal .agent-name,
+.agent-list-modal .agent-id {
+  line-height: 1.3;
+}
+
+.agent-list-modal .agent-empty {
+  padding: var(--space-2xl) calc(var(--space-lg) + var(--space-xs));
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.agent-list-modal .agent-empty p {
+  margin: 0;
+}
+
+.agent-list-modal .agent-card {
+  transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.agent-list-modal .agent-card:hover {
+  background: var(--card-hover);
+}
+
+.agent-list-modal .agent-card:focus-within {
+  box-shadow: var(--focus-ring);
+}
+
+.agent-list-modal .agent-card-header {
+  gap: var(--space-md);
+}
+
+.agent-list-modal .agent-info {
+  min-width: 0;
+}
+
+.agent-list-modal .agent-icon--clickable {
+  transition: opacity var(--transition-normal), transform var(--transition-normal);
+  user-select: none;
+}
+
+.agent-list-modal .agent-icon--clickable:hover {
+  opacity: 0.7;
+  transform: scale(1.1);
+}
+
+.agent-list-modal .agent-icon--clickable:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
+.agent-list-modal .agent-role-select {
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+  min-width: calc(var(--space-xl) * 5);
+  width: auto;
+  cursor: pointer;
+}
+
+.agent-list-modal .agent-meta {
+  gap: calc(var(--space-xs) * 0.5);
+  min-width: 0;
+}
+
+.agent-list-modal .agent-badges {
+  flex-shrink: 0;
+}
+
+.agent-list-modal .agent-badges .badge {
+  white-space: nowrap;
+}
+
+.agent-list-modal .agent-card-body {
+  gap: var(--space-xs);
+  background: var(--bg-secondary);
+  line-height: 1.4;
+}
+
+.agent-list-modal .agent-task,
+.agent-list-modal .agent-heartbeat {
+  align-items: baseline;
+}
+
+.agent-list-modal .agent-card-actions .btn {
+  transition: transform var(--transition-fast);
+}
+
+.agent-list-modal .agent-card-actions .btn:active {
+  transform: scale(0.97);
+}
+
+.agent-list-modal .agent-board-card[data-state="idle"] { border-top-color: var(--state-idle-border); }
+.agent-list-modal .agent-board-card[data-state="active"],
+.agent-list-modal .agent-board-card[data-state="running"] { border-top-color: var(--state-active-border); }
+.agent-list-modal .agent-board-card[data-state="paused"] { border-top-color: var(--state-paused-border); }
+.agent-list-modal .agent-board-card[data-state="error"],
+.agent-list-modal .agent-board-card[data-state="terminated"] { border-top-color: var(--state-error-border); }
+
+.agent-list-modal .agent-board-badge[data-state="idle"],
+.agent-list-modal .agent-list-state-badge[data-state="idle"] {
+  background: var(--state-idle-bg);
+  color: var(--state-idle-text);
+  border: 1px solid var(--state-idle-border);
+}
+
+.agent-list-modal .agent-board-badge[data-state="active"],
+.agent-list-modal .agent-board-badge[data-state="running"],
+.agent-list-modal .agent-list-state-badge[data-state="active"],
+.agent-list-modal .agent-list-state-badge[data-state="running"] {
+  background: var(--state-active-bg);
+  color: var(--state-active-text);
+  border: 1px solid var(--state-active-border);
+}
+
+.agent-list-modal .agent-board-badge[data-state="paused"],
+.agent-list-modal .agent-list-state-badge[data-state="paused"] {
+  background: var(--state-paused-bg);
+  color: var(--state-paused-text);
+  border: 1px solid var(--state-paused-border);
+}
+
+.agent-list-modal .agent-board-badge[data-state="error"],
+.agent-list-modal .agent-board-badge[data-state="terminated"],
+.agent-list-modal .agent-list-state-badge[data-state="error"],
+.agent-list-modal .agent-list-state-badge[data-state="terminated"] {
+  background: var(--state-error-bg);
+  color: var(--state-error-text);
+  border: 1px solid var(--state-error-border);
+}
+
+.agent-list-modal .agent-board-health[data-health],
+.agent-list-modal .agent-list-health-badge[data-health] {
+  color: var(--text-muted);
+}
+
+.agent-list-modal .agent-board-health[data-health="active"],
+.agent-list-modal .agent-list-health-badge[data-health="active"] {
+  color: var(--state-active-text);
+}
+
+.agent-list-modal .agent-board-health[data-health="paused"],
+.agent-list-modal .agent-list-health-badge[data-health="paused"] {
+  color: var(--state-paused-text);
+}
+
+.agent-list-modal .agent-board-health[data-health="error"],
+.agent-list-modal .agent-list-health-badge[data-health="error"] {
+  color: var(--state-error-text);
+}
+
+.agent-list-modal .agent-card[data-state="idle"] { border-left-color: var(--state-idle-border); }
+.agent-list-modal .agent-card[data-state="active"],
+.agent-list-modal .agent-card[data-state="running"] { border-left-color: var(--state-active-border); }
+.agent-list-modal .agent-card[data-state="paused"] { border-left-color: var(--state-paused-border); }
+.agent-list-modal .agent-card[data-state="error"],
+.agent-list-modal .agent-card[data-state="terminated"] { border-left-color: var(--state-error-border); }
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+

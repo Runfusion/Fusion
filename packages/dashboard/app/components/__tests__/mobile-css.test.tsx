@@ -1,18 +1,32 @@
 import fs from "node:fs";
+import { loadAllAppCss } from "../../test/cssFixture";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const stylesPath = path.resolve(__dirname, "../../styles.css");
 const indexHtmlPath = path.resolve(__dirname, "../../index.html");
 
 function getMainMobileSection(css: string): string {
-  const sectionStart = css.indexOf("/* === Mobile Responsive Overrides ===");
-  const sectionEnd = css.indexOf("/* === Tablet Responsive Tier", sectionStart);
+  // After CSS extraction, mobile rules live both in styles.css's
+  // "Mobile Responsive Overrides" section AND in @media (max-width: 768px)
+  // blocks at the bottom of each co-located component CSS file. Treat the
+  // union of all 768px-and-below media blocks as the "main mobile section".
+  const matches = [...css.matchAll(/@media\s*\(max-width:\s*768px\)\s*\{/g)];
+  expect(matches.length).toBeGreaterThan(0);
 
-  expect(sectionStart).toBeGreaterThan(-1);
-  expect(sectionEnd).toBeGreaterThan(sectionStart);
-
-  return css.slice(sectionStart, sectionEnd);
+  const parts: string[] = [];
+  for (const match of matches) {
+    const start = match.index!;
+    const open = css.indexOf("{", start);
+    let depth = 1;
+    let i = open + 1;
+    while (i < css.length && depth > 0) {
+      if (css[i] === "{") depth++;
+      else if (css[i] === "}") depth--;
+      i++;
+    }
+    parts.push(css.slice(start, i));
+  }
+  return parts.join("\n");
 }
 
 function getFirstRootBlock(css: string): string {
@@ -23,7 +37,7 @@ function getFirstRootBlock(css: string): string {
 
 describe("mobile CSS foundation", () => {
   it("defines canonical mobile breakpoint custom properties in the first :root block", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const firstRoot = getFirstRootBlock(css);
 
     expect(firstRoot).toContain("--mobile-breakpoint: 768px;");
@@ -33,7 +47,7 @@ describe("mobile CSS foundation", () => {
   });
 
   it("provides a touch-target utility class with 44px minimum dimensions", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const touchTargetMatch = css.match(/\.touch-target\s*\{([\s\S]*?)\}/);
 
     expect(touchTargetMatch).toBeTruthy();
@@ -42,7 +56,7 @@ describe("mobile CSS foundation", () => {
   });
 
   it("enforces 16px font size for text inputs in the main mobile media query", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     expect(mobileSection).toContain("@media (max-width: 768px)");
@@ -55,7 +69,7 @@ describe("mobile CSS foundation", () => {
   });
 
   it("applies safe-area inset handling in the main mobile section", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     expect(mobileSection).toContain("#root {");
@@ -70,7 +84,7 @@ describe("mobile CSS foundation", () => {
   });
 
   it("adds mobile overflow guards for wide content", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
     expect(mobileSection).toContain("* {");
@@ -100,7 +114,7 @@ describe("mobile CSS foundation", () => {
   });
 
   it("uses only approved max-width breakpoint values", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const matches = [...css.matchAll(/@media\s*\(max-width:\s*(\d+)px\)/g)];
     const foundValues = new Set(matches.map((match) => Number(match[1])));
     const allowedValues = new Set([480, 640, 768, 860]);

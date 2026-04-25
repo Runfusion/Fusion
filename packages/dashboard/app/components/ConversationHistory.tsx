@@ -1,3 +1,4 @@
+import "./ConversationHistory.css";
 import type { PlanningQuestion } from "@fusion/core";
 import { useState } from "react";
 import type { ConversationHistoryEntry } from "../api";

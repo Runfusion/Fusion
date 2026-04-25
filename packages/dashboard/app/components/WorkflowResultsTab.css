@@ -1,0 +1,518 @@
+/* ── Workflow Results ── */
+.workflow-results-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+  padding: var(--space-md, 16px);
+  color: var(--text-muted, #8b949e);
+  font-size: 14px;
+}
+
+.workflow-results-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border, #30363d);
+  border-top-color: var(--todo, #58a6ff);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.workflow-results-empty {
+  padding: var(--space-md, 16px);
+  text-align: center;
+  color: var(--text-muted, #8b949e);
+}
+
+.workflow-results-empty-hint {
+  font-size: 12px;
+  margin-top: var(--space-xs, 4px);
+  opacity: 0.7;
+}
+
+.workflow-results-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md, 16px);
+}
+
+.workflow-results-edit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm, 8px);
+}
+
+.workflow-results-edit-header h4 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-primary, #e6edf3);
+}
+
+.workflow-results-edit-toggle {
+  width: auto;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  background: var(--surface-elevated, #161b22);
+  color: var(--text-muted, #8b949e);
+  font-size: 12px;
+  font-weight: 500;
+  gap: 6px;
+}
+
+.workflow-results-edit-toggle:hover {
+  background: var(--surface, #21262d);
+  color: var(--text-primary, #e6edf3);
+}
+
+.workflow-results-edit-toggle svg {
+  flex-shrink: 0;
+}
+
+.workflow-configured-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm, 8px);
+}
+
+.workflow-configured-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm, 8px);
+}
+
+.workflow-configured-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+}
+
+.workflow-configured-title-row h4 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-primary, #e6edf3);
+}
+
+.workflow-configured-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #30363d);
+  color: var(--text-muted, #8b949e);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.workflow-configured-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm, 8px);
+}
+
+.workflow-configured-item {
+  border: 1px solid var(--border, #30363d);
+  border-radius: 8px;
+  padding: var(--space-md, 16px);
+  background: var(--surface-elevated, #161b22);
+}
+
+.workflow-configured-name {
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary, #e6edf3);
+}
+
+.workflow-configured-description {
+  margin: var(--space-xs, 4px) 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary, #c9d1d9);
+}
+
+.workflow-results-editor {
+  border: 1px solid var(--border, #30363d);
+  border-radius: 8px;
+  background: var(--surface-elevated, #161b22);
+  padding: var(--space-md, 16px);
+}
+
+.workflow-results-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md, 16px);
+}
+
+.workflow-result-item {
+  border: 1px solid var(--border, #30363d);
+  border-radius: 8px;
+  padding: var(--space-md, 16px);
+  background: var(--surface-elevated, #161b22);
+}
+
+.workflow-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-sm, 8px);
+  margin-bottom: var(--space-xs, 4px);
+}
+
+.workflow-result-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs, 4px);
+  min-width: 0;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary, #e6edf3);
+}
+
+.workflow-result-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Status modifier classes for workflow result badges */
+.workflow-result-badge--passed {
+  background-color: var(--color-success, #3fb950);
+  color: #fff;
+}
+
+.workflow-result-badge--failed {
+  background-color: var(--color-error, #f85149);
+  color: #fff;
+}
+
+.workflow-result-badge--skipped {
+  background-color: var(--text-dim, #484f58);
+  color: var(--text-muted, #8b949e);
+}
+
+.workflow-result-badge--pending {
+  background-color: var(--todo, #58a6ff);
+  color: #fff;
+}
+
+/* Phase badge base and modifier classes */
+.phase-badge {
+  margin-inline-start: var(--space-xs, 4px);
+  font-size: 11px;
+  padding: var(--space-xs, 4px) var(--space-sm, 8px);
+  border-radius: var(--radius-sm, 4px);
+}
+
+.phase-badge--pre-merge {
+  background-color: color-mix(in srgb, var(--ws-pre-merge) 15%, transparent);
+  color: var(--ws-pre-merge);
+}
+
+.phase-badge--post-merge {
+  background-color: color-mix(in srgb, var(--ws-post-merge) 15%, transparent);
+  color: var(--ws-post-merge);
+}
+
+.workflow-result-meta {
+  display: flex;
+  gap: var(--space-sm, 8px);
+  font-size: 12px;
+  color: var(--text-muted, #8b949e);
+  margin-bottom: var(--space-xs, 4px);
+}
+
+.workflow-result-output-section {
+  margin-top: var(--space-sm, 8px);
+}
+
+.workflow-result-output-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted, #8b949e);
+  margin-bottom: var(--space-xs, 4px);
+}
+
+.workflow-result-output {
+  background: var(--surface-dimmed, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  padding: var(--space-sm, 8px) var(--space-md, 16px);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary, #e6edf3);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.workflow-results-summary-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs, 4px);
+  padding: var(--space-sm, 8px) var(--space-md, 16px);
+  font-size: 13px;
+  color: var(--text-muted, #8b949e);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 8px;
+  background: var(--surface-elevated, #161b22);
+}
+
+.workflow-result-output-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+  margin-bottom: var(--space-xs, 4px);
+}
+
+.workflow-result-toggle {
+  background: none;
+  border: none;
+  color: var(--todo, #58a6ff);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+  font-family: inherit;
+}
+
+.workflow-result-toggle:hover {
+  text-decoration: underline;
+}
+
+.workflow-result-output-preview {
+  font-size: 11px;
+  color: var(--text-dim, #484f58);
+  font-style: italic;
+}
+
+.workflow-result-mode-toggle {
+  background: none;
+  border: 1px solid var(--border, #30363d);
+  color: var(--text-muted, #8b949e);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: inherit;
+  margin-left: auto;
+}
+
+.workflow-result-mode-toggle:hover {
+  background: var(--card-hover, #282e36);
+  color: var(--text, #e6edf3);
+}
+
+.workflow-result-output {
+  background: var(--surface-dimmed, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  padding: var(--space-sm, 8px) var(--space-md, 16px);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary, #e6edf3);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.workflow-result-output--markdown {
+  padding: var(--space-md, 12px) var(--space-lg, 16px);
+  font-family: var(--font-primary);
+  white-space: normal;
+}
+
+.workflow-result-output--markdown .workflow-result-output-text {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary, #e6edf3);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.workflow-result-output--markdown .markdown-body {
+  font-family: var(--font-primary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.workflow-result-output--markdown .workflow-markdown-pre {
+  overflow-x: auto;
+  max-width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.workflow-result-output--markdown .workflow-markdown-table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+/* ===== Expanded Workflow Output Modal ===== */
+.workflow-output-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: var(--space-lg, 16px);
+}
+
+.workflow-output-modal {
+  background: var(--surface, #161b22);
+  border: 1px solid var(--border, #30363d);
+  border-radius: var(--radius-lg, 12px);
+  width: 100%;
+  max-width: 900px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-lg);
+}
+
+.workflow-output-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md, 12px) var(--space-lg, 16px);
+  border-bottom: 1px solid var(--border, #30363d);
+  flex-shrink: 0;
+}
+
+.workflow-output-modal-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+}
+
+.workflow-output-modal-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary, #e6edf3);
+}
+
+.workflow-output-modal-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+}
+
+.workflow-output-modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: 1px solid var(--border, #30363d);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text-muted, #8b949e);
+  cursor: pointer;
+  padding: 0;
+  transition: all var(--transition-fast);
+}
+
+.workflow-output-modal-close:hover {
+  background: var(--card-hover, #282e36);
+  color: var(--text, #e6edf3);
+}
+
+.workflow-output-modal-body {
+  flex: 1;
+  overflow: hidden;
+  padding: var(--space-md, 12px) var(--space-lg, 16px);
+}
+
+.workflow-result-output--expanded {
+  max-height: none;
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* ===== Workflow Live Log ===== */
+
+.workflow-live-log {
+  margin-top: var(--space-sm, 8px);
+  padding: var(--space-sm, 8px);
+  background: var(--surface-elevated, #161b22);
+  border: 1px solid var(--border, #30363d);
+  border-radius: var(--radius-sm, 4px);
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.workflow-live-log-empty {
+  color: var(--text-muted, #8b949e);
+  font-style: italic;
+}
+
+.workflow-live-log-text {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text, #e6edf3);
+}
+
+.workflow-live-log-tool {
+  color: var(--accent, #58a6ff);
+  padding: 2px 0;
+}
+
+.workflow-live-log-tool-result {
+  color: var(--success, #3fb950);
+  padding: 2px 0 2px 8px;
+}
+
+.workflow-live-log-tool-error {
+  color: var(--error, #f85149);
+  padding: 2px 0 2px 8px;
+}
+
+.workflow-live-log-thinking {
+  color: var(--text-muted, #8b949e);
+  font-style: italic;
+  padding: 2px 0;
+}
+
+.workflow-live-log-detail {
+  color: var(--text-muted, #8b949e);
+}
+
+
+/* Light theme overrides (moved from CustomModelDropdown.css) */
+[data-theme="light"] .workflow-output-modal-overlay {
+  background: rgba(31, 35, 40, 0.5);
+}

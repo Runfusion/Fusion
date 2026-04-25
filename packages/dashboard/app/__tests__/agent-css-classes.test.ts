@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
+import { loadAllAppCss } from "../test/cssFixture";
 
-const stylesPath = path.join(__dirname, "../styles.css");
-const stylesContent = fs.readFileSync(stylesPath, "utf-8");
+const stylesContent = loadAllAppCss();
 
 // Agent component file paths to verify inline <style> blocks are removed
 const agentsViewContent = fs.readFileSync(path.join(__dirname, "../components/AgentsView.tsx"), "utf-8");
@@ -169,7 +169,9 @@ describe("Agent CSS classes", () => {
   });
 
   it("should use dashboard tokens in the updated org chart styles", () => {
-    const orgChartSection = extractSection("/* === FN-1167: Agent Org Chart + Chain of Command === */", "/* === Agent Dialog Mobile Responsive === */");
+    const agentsViewCss = fs.readFileSync(path.join(__dirname, "../components/AgentsView.css"), "utf-8");
+    const orgChartStart = agentsViewCss.indexOf("/* === FN-1167: Agent Org Chart + Chain of Command === */");
+    const orgChartSection = orgChartStart >= 0 ? agentsViewCss.slice(orgChartStart) : "";
     expect(orgChartSection).toContain("gap: var(--space-xl)");
     expect(orgChartSection).toContain("padding: var(--space-lg)");
     expect(orgChartSection).toContain("min-height: calc(var(--space-xl) * 9 + var(--space-xs))");

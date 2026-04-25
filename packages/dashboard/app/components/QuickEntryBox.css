@@ -1,0 +1,483 @@
+/* === Quick Entry Box === */
+.quick-entry-box {
+  padding: 8px 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: var(--space-sm);
+}
+
+.quick-entry-box:focus-within {
+  border-color: var(--todo);
+}
+
+.quick-entry-input {
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+  font-family: inherit;
+  outline: none;
+  resize: none;
+  min-height: 36px;
+  max-height: 200px;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), min-height 0.2s ease;
+}
+
+.quick-entry-input--expanded {
+  min-height: 80px;
+}
+
+@media (max-width: 768px) {
+  .quick-entry-input--expanded {
+    min-height: 60px;
+  }
+}
+
+.quick-entry-input:focus {
+  border-bottom-color: var(--triage);
+  box-shadow: 0 1px 0 0 var(--triage);
+}
+
+.quick-entry-input::placeholder {
+  color: var(--text-dim);
+}
+
+.quick-entry-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Quick Entry Box textarea wrap for expand button positioning */
+.quick-entry-textarea-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+/* Override padding from .description-with-refine textarea to fill available width */
+/* The refine button is in the controls panel, not overlaid on textarea */
+.quick-entry-textarea-wrap textarea {
+  padding-right: 8px;
+}
+
+/* Quick Entry Box expand button - bottom-right of textarea */
+.quick-entry-expand-btn {
+  position: absolute;
+  bottom: 6px;
+  right: 32px;
+  padding: 4px;
+  opacity: 0.6;
+  transition: opacity var(--transition-fast);
+  z-index: 1;
+}
+
+.quick-entry-expand-btn:hover {
+  opacity: 1;
+}
+
+/* Quick Entry Box fullscreen mode */
+.quick-entry-input--fullscreen {
+  flex: 1;
+  padding-right: 70px;
+  min-height: unset;
+  resize: none;
+  border-radius: var(--radius-md);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+/* Quick Entry Box expanded controls */
+.quick-entry-controls {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+/* Consolidated action buttons in disclosure panel */
+.quick-entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+}
+
+.quick-entry-model-wrap {
+  position: relative;
+}
+
+.quick-entry-subtasks-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  margin-left: 8px;
+}
+
+.quick-entry-subtasks-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--todo);
+  cursor: pointer;
+}
+
+.quick-entry-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.quick-entry-model-trigger {
+  font-size: 12px;
+  padding: 3px 8px;
+}
+
+/* Nested model menu (replaces ModelSelectionModal in quick entry) */
+.model-nested-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  z-index: 100;
+  min-width: 240px;
+  max-width: 320px;
+  overflow: hidden;
+}
+
+/* Portaled variant — rendered via createPortal to escape column overflow clipping */
+.model-nested-menu--portal {
+  position: fixed;
+  margin-top: 0;
+  z-index: 1000;
+  max-width: 360px;
+}
+
+/* Mobile: portaled model menu uses wider viewport-clamped width set via inline styles */
+
+.model-menu-items {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+}
+
+.model-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  transition: background-color 0.15s;
+}
+
+.model-menu-item:hover {
+  background: var(--bg-hover);
+}
+
+.model-menu-item--active {
+  color: var(--text-accent, var(--todo));
+}
+
+.model-menu-item-label {
+  display: flex;
+  align-items: center;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.model-menu-item-value {
+  flex: 1;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+
+.model-submenu {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 8px;
+}
+
+.model-submenu-back {
+  display: flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 0;
+  width: fit-content;
+}
+
+.model-submenu-back:hover {
+  color: var(--text-primary);
+}
+
+.model-submenu-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.model-submenu-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-error, #e53e3e);
+  padding-top: 4px;
+}
+
+/* Responsive: model menu on mobile */
+@media (max-width: 640px) {
+  .model-nested-menu {
+    left: 0;
+    right: 0;
+    min-width: unset;
+    max-width: unset;
+    width: calc(100vw - 32px);
+  }
+
+  /* Portaled variant on mobile: remove max-width constraint so JS-driven width takes full effect */
+  .model-nested-menu--portal {
+    max-width: none;
+  }
+}
+
+/* Responsive layout for quick entry controls */
+@media (max-width: 640px) {
+  .quick-entry-controls {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .quick-entry-hint {
+    margin-left: 0;
+    width: 100%;
+    text-align: center;
+  }
+}
+
+/* Quick Entry Box main row with toggle */
+.quick-entry-main-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+}
+
+.quick-entry-main-row .quick-entry-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.quick-entry-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  height: 32px;
+  width: 32px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.quick-entry-toggle:hover {
+  background: var(--card-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.quick-entry-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Expanded state - normal padding */
+.quick-entry-box--expanded {
+  padding: 8px 10px;
+}
+
+/* Only apply container-level min-height when input is NOT expanded.
+   This prevents container selectors from overriding the expanded min-height. */
+.quick-entry-box--expanded .quick-entry-input:not(.quick-entry-input--expanded) {
+  min-height: 36px;
+}
+
+/* Collapsed state - minimal padding */
+.quick-entry-box--collapsed {
+  padding: 6px 8px;
+}
+
+/* Only apply container-level min-height when input is NOT expanded.
+   When input is expanded (e.g., via focus), use the expanded min-height. */
+.quick-entry-box--collapsed .quick-entry-input:not(.quick-entry-input--expanded) {
+  min-height: 32px;
+  border-bottom-color: transparent;
+}
+
+.quick-entry-box--collapsed .quick-entry-input:focus {
+  border-bottom-color: var(--triage);
+}
+
+/* Responsive adjustments for quick entry */
+@media (max-width: 640px) {
+  .quick-entry-controls {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .quick-entry-hint {
+    margin-left: 0;
+    width: 100%;
+    text-align: center;
+  }
+
+  .quick-entry-toggle {
+    height: 28px;
+    width: 28px;
+    padding: var(--space-xs);
+  }
+}
+
+/* === Quick Entry Mobile Touch + Overflow Fixes (FN-1140) === */
+@media (max-width: 768px) {
+  .quick-entry-actions .btn {
+    min-height: 36px;
+  }
+
+  .quick-entry-box .dep-dropdown {
+    max-width: calc(100vw - 32px);
+  }
+}
+
+@media (max-width: 640px) {
+  .quick-entry-toggle {
+    min-height: 36px;
+    min-width: 36px;
+    padding: var(--space-xs);
+  }
+}
+
+@media (max-width: 768px) {
+  .agent-list-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 100vh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+
+  .agent-list-modal .agent-modal-content {
+    padding: var(--space-lg);
+    padding-bottom: max(var(--space-lg), env(safe-area-inset-bottom, 0px));
+  }
+
+  .agent-list-modal .agent-state-filter-select {
+    font-size: 16px;
+    min-height: 44px;
+  }
+
+  .agent-list-modal .agent-board-actions .btn,
+  .agent-list-modal .view-toggle-btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .agent-list-modal .modal-header .modal-actions {
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  .agent-list-modal .agent-board {
+    grid-template-columns: repeat(auto-fill, minmax(calc(var(--space-xl) * 6 + var(--space-lg)), 1fr));
+    gap: var(--space-md);
+  }
+
+  .agent-list-modal .agent-card-header {
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .agent-list-modal .agent-badges {
+    flex-shrink: initial;
+  }
+
+  .agent-list-modal .agent-empty {
+    padding: var(--space-xl) var(--space-lg);
+  }
+}
+
+@media (max-width: 640px) {
+  .agent-list-modal .agent-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .agent-list-modal .agent-create-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .agent-list-modal .agent-create-form .input,
+  .agent-list-modal .agent-create-form .select {
+    width: 100%;
+    font-size: 16px;
+    min-height: 44px;
+  }
+
+  .agent-list-modal .agent-create-form .btn {
+    min-height: 44px;
+  }
+
+  .agent-list-modal .agent-board {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-list-modal .agent-card-actions .btn {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+

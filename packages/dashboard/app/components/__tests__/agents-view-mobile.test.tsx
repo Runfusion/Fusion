@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { readFileSync } from "fs";
-import { resolve } from "path";
 import { AgentsView } from "../AgentsView";
+import { loadAllAppCss } from "../../test/cssFixture";
 import type { Agent, AgentCapability, AgentState } from "../../api";
 
 function extractRuleBlock(css: string, selector: string): string {
@@ -183,8 +182,7 @@ describe("AgentsView mobile adaptations", () => {
 });
 
 describe("agents-view mobile CSS", () => {
-  const cssPath = resolve(__dirname, "../../styles.css");
-  const cssContent = readFileSync(cssPath, "utf-8");
+  const cssContent = loadAllAppCss();
   const mobileMediaBlock = extractMobileMediaBlocks(cssContent);
 
   it("defines .agents-view-content with reduced padding on mobile", () => {

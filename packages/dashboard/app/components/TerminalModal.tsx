@@ -1,3 +1,4 @@
+import "./TerminalModal.css";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { getErrorMessage } from "@fusion/core";
 import { X, Trash2, Terminal as TerminalIcon, RefreshCw } from "lucide-react";

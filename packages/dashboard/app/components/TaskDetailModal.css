@@ -1,0 +1,1360 @@
+/* === Detail Modal === */
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.detail-id {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.detail-column-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.badge-triage {
+  background: rgba(210, 153, 34, 0.15);
+  color: var(--triage);
+}
+.badge-todo {
+  background: rgba(88, 166, 255, 0.15);
+  color: var(--todo);
+}
+.badge-in-progress {
+  background: rgba(188, 140, 255, 0.15);
+  color: var(--in-progress);
+}
+.badge-in-review {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--in-review);
+}
+.badge-done {
+  background: rgba(139, 148, 158, 0.15);
+  color: var(--done);
+}
+
+.detail-body {
+  padding: 20px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* When the Agent Log tab is active, switch to flex layout so the log section
+   can stretch to fill the remaining space above the action bar.
+   The detail-body itself should NOT scroll; the agent-log-viewer scrolls instead. */
+.detail-body--agent-log {
+  display: flex;
+  flex-direction: column;
+  overflow-y: hidden;
+}
+
+.detail-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: var(--space-md);
+}
+
+.detail-description-toggle {
+  display: block;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 2px 0;
+  margin-bottom: var(--space-md);
+  cursor: pointer;
+  text-align: left;
+}
+
+.detail-description-toggle:hover {
+  color: var(--text);
+}
+
+.detail-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: var(--space-lg);
+}
+
+.detail-priority-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--space-xs);
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  text-transform: capitalize;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.detail-priority-chip--low {
+  background: color-mix(in srgb, var(--color-info) 14%, transparent);
+  color: var(--color-info);
+}
+
+.detail-priority-chip--normal {
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+  color: var(--text-muted);
+}
+
+.detail-priority-chip--high {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+}
+
+.detail-priority-chip--urgent {
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  color: var(--color-error-dark);
+}
+
+/* Error alert in task detail modal */
+.detail-error-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  margin: var(--space-md) 0 var(--space-lg);
+  padding: 12px 14px;
+  background: rgba(218, 54, 51, 0.1);
+  border: 1px solid rgba(218, 54, 51, 0.3);
+  border-radius: var(--radius);
+}
+
+.detail-error-icon {
+  flex-shrink: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.detail-error-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.detail-error-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-error-dark);
+  margin-bottom: var(--space-xs);
+}
+
+.detail-error-message {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.detail-section {
+  margin-top: var(--space-lg);
+}
+
+/* Agent Log tab: stretch to fill the remaining modal body height
+   so the log viewer uses all available space above the action bar. */
+.detail-section--agent-log {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin-top: var(--space-lg);
+}
+
+.detail-section--agent-log .agent-log-viewer {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  padding: var(--space-md);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.agent-log-model-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  min-width: 0;
+  align-items: center;
+}
+
+.agent-log-model-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-log-model-label {
+  font-weight: 600;
+}
+
+.agent-log-model-value {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+.agent-log-model-header-toggle {
+  margin-left: auto;
+}
+
+.agent-log-badge-row {
+  display: inline-flex;
+  align-items: center;
+}
+
+.agent-log-tool {
+  color: var(--accent);
+  margin: 4px 0;
+  padding: 2px 6px;
+  border-left: 3px solid var(--accent);
+  background: var(--log-tool-bg);
+}
+
+.agent-log-tool-detail {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-left: 6px;
+}
+
+.agent-log-tool-result {
+  color: var(--color-success);
+  margin: 2px 0;
+  padding: 2px 6px;
+  border-left: 3px solid var(--color-success);
+  background: var(--log-success-bg);
+  font-size: 12px;
+}
+
+.agent-log-tool-error {
+  color: var(--color-error);
+  margin: 2px 0;
+  padding: 2px 6px;
+  border-left: 3px solid var(--color-error);
+  background: var(--log-error-bg);
+  font-size: 12px;
+}
+
+.agent-log-text {
+  display: block;
+  color: var(--text);
+}
+
+.agent-log-thinking {
+  display: block;
+  font-style: italic;
+  color: var(--text);
+}
+
+.agent-log-agent-badge {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-right: 6px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.agent-log-timestamp {
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-right: 6px;
+  opacity: 0.7;
+}
+
+/* Agent Log markdown/plain-text mode toggle */
+.agent-log-mode-toggle {
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1;
+}
+
+.agent-log-mode-toggle:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.agent-log-mode-toggle[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--text-on-accent, #fff);
+  border-color: var(--accent);
+}
+
+/* Agent log pagination summary */
+.agent-log-summary {
+  padding: var(--space-xs) var(--space-md);
+  font-size: var(--text-xs, 12px);
+  color: var(--text-muted, #8b949e);
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+}
+
+/* Agent log load more button */
+.agent-log-load-more {
+  padding: var(--space-md);
+  text-align: center;
+  border-top: 1px solid var(--border);
+}
+
+.agent-log-load-more .agent-log-mode-toggle {
+  min-width: 120px;
+}
+
+/* Fullscreen mode for agent log viewer */
+.agent-log-viewer--fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: var(--surface);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-lg);
+}
+
+.agent-log-viewer--fullscreen .agent-log-model-header {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+  padding-bottom: var(--space-md);
+  margin-bottom: var(--space-md);
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-spec-edit-trigger {
+  margin-bottom: var(--space-md);
+}
+
+.detail-attachments-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.detail-attachment-card {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs);
+  background: var(--card);
+}
+
+.detail-attachment-link {
+  display: block;
+}
+
+.detail-attachment-image {
+  display: block;
+  max-width: 150px;
+  max-height: 100px;
+  border-radius: var(--radius-sm);
+}
+
+.detail-attachment-meta {
+  margin-top: var(--space-xs);
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.detail-attachment-delete {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.detail-empty-inline {
+  margin-bottom: var(--space-sm);
+  opacity: 0.5;
+}
+
+.detail-hidden-file-input {
+  display: none;
+}
+
+.dep-remove-btn {
+  margin-left: 6px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+}
+
+.dep-trigger-wrap {
+  position: relative;
+}
+
+.modal-actions-spacer {
+  flex: 1;
+}
+
+/* Detail modal split-menu dropdowns */
+.detail-actions-dropdown,
+.detail-move-dropdown {
+  position: relative;
+}
+
+.detail-move-actions-in-review {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.detail-actions-menu,
+.detail-move-menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  z-index: 50;
+  min-width: 140px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.detail-actions-menu {
+  left: 0;
+}
+
+.detail-move-menu {
+  right: 0;
+}
+
+.detail-actions-menu-item,
+.detail-move-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.detail-actions-menu-item:hover,
+.detail-move-menu-item:hover {
+  background: var(--surface-hover);
+}
+
+.detail-actions-menu-item:focus,
+.detail-move-menu-item:focus {
+  outline: none;
+  background: var(--surface-hover);
+}
+
+.detail-actions-menu-item-danger {
+  color: var(--color-error, #dc3545);
+}
+
+.detail-actions-menu-item-danger:hover {
+  background: rgba(220, 53, 69, 0.08);
+}
+
+.detail-refine-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 100;
+}
+
+.detail-refine-modal {
+  max-width: 500px;
+  width: 90%;
+  margin: 0;
+}
+
+.detail-refine-title {
+  margin: 0;
+}
+
+.detail-refine-help {
+  margin-bottom: var(--space-md);
+  opacity: 0.8;
+}
+
+.detail-refine-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  resize: vertical;
+}
+
+.detail-refine-input-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-sm);
+  gap: var(--space-sm);
+}
+
+.detail-refine-char-count {
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+.task-changes-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl);
+  min-height: 180px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.task-changes-state--loading,
+.task-changes-state--error {
+  flex-direction: row;
+  min-height: auto;
+  padding: var(--space-md);
+  justify-content: flex-start;
+  border-style: solid;
+}
+
+.task-changes-state--error {
+  color: var(--color-error);
+  background: rgba(248, 81, 73, 0.08);
+  border-color: rgba(248, 81, 73, 0.25);
+}
+
+.task-changes-state-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  max-width: 440px;
+  line-height: 1.5;
+}
+
+.task-changes-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.changes-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.changes-header h4 {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0;
+}
+
+.changes-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.changes-header-actions-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-xs);
+}
+
+.changes-header-actions-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.changes-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.changes-nav-indicator {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  min-width: 32px;
+  text-align: center;
+}
+
+.changes-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.changes-file-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  overflow: hidden;
+}
+
+.changes-file-item.expanded {
+  border-color: var(--text-dim);
+  background: var(--surface);
+}
+
+.changes-file-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: transparent;
+  border: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.changes-file-header:hover {
+  background: var(--card-hover);
+}
+
+.changes-file-header:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.changes-file-header:active {
+  background: var(--border);
+}
+
+.changes-file-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.changes-file-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* Semantic status colors for changed-file entries — theme-aware via CSS variables */
+.changes-file-status--added {
+  color: var(--status-color-added, #3fb950);
+}
+
+.changes-file-status--modified {
+  color: var(--status-color-modified, #58a6ff);
+}
+
+.changes-file-status--deleted {
+  color: var(--status-color-deleted, #f85149);
+}
+
+.changes-file-status--unknown {
+  color: var(--status-color-unknown, #8b949e);
+}
+
+/* Stat summary in changes header */
+.changes-stat-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: var(--space-sm);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+.changes-stat-summary .diff-add {
+  color: var(--status-color-added, #3fb950);
+}
+
+.changes-stat-summary .diff-del {
+  color: var(--status-color-deleted, #f85149);
+}
+
+/* Task-specific changes header: stacked title + stats layout */
+.task-changes-tab .task-changes-header-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.task-changes-tab .task-changes-header-title h4 {
+  margin: 0;
+}
+
+.task-changes-tab .task-changes-stats {
+  margin-left: calc(16px + var(--space-sm)); /* align with text after icon + gap */
+}
+
+.changes-file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.changes-file-stat {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+}
+
+.changes-file-content {
+  border-top: 1px solid var(--border);
+}
+
+.changes-diff-patch {
+  margin: 0;
+  padding: var(--space-sm) 0;
+  background: rgba(0, 0, 0, 0.14);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.changes-diff-patch.changes-diff-patch--wrap {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.changes-diff-patch.changes-diff-patch--nowrap {
+  white-space: pre;
+  word-break: normal;
+}
+
+/* Summary section - styled for done tasks with success accent */
+.detail-summary {
+  background: rgba(63, 185, 80, 0.08);
+  border: 1px solid rgba(63, 185, 80, 0.25);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+}
+
+.detail-summary h4 {
+  color: var(--color-success, #3fb950);
+  margin-bottom: var(--space-md);
+}
+
+.detail-summary .markdown-body {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.detail-summary .markdown-body p:first-child {
+  margin-top: 0;
+}
+
+.detail-summary .markdown-body p:last-child {
+  margin-bottom: 0;
+}
+
+/* Spec tab layout - allows SpecEditor to fill available vertical space */
+.detail-section--spec {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin-top: 0;
+}
+
+/* Back button for changed-files modal - hidden on desktop */
+.changed-files-back-button {
+  display: none;
+}
+
+/* Changed-files loading spinner */
+.changed-files-loading-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--text-muted);
+  border-radius: 50%;
+  animation: changed-files-spin 0.6s linear infinite;
+}
+
+@keyframes changed-files-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Changed-files empty state */
+.changed-files-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl) var(--space-lg);
+  color: var(--text-muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+.changed-files-empty-icon {
+  font-size: 24px;
+  opacity: 0.6;
+}
+
+/* Changed-files error state */
+.changed-files-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.changed-files-error-icon {
+  flex-shrink: 0;
+}
+
+/* Renamed file label */
+.changed-files-renamed {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* Mobile responsive for changed-files modal */
+@media (max-width: 768px) {
+  .changed-files-modal .changed-files-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+  }
+
+  /* Mobile two-state view: show only list or diff at a time */
+  .changed-files-sidebar.mobile {
+    display: none;
+  }
+
+  .changed-files-sidebar.mobile.active {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    border-right: none;
+    border-bottom: none;
+    max-height: none;
+    overflow-y: auto;
+    padding: 0;
+    background: var(--surface);
+  }
+
+  .changed-files-sidebar.mobile.active .file-browser-list {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .changed-files-sidebar.mobile.active .gm-diff-loading,
+  .changed-files-sidebar.mobile.active .changed-files-loading {
+    margin: var(--space-lg);
+  }
+
+  .changed-files-sidebar.mobile.active .gm-diff-error,
+  .changed-files-sidebar.mobile.active .changed-files-error {
+    margin: var(--space-lg);
+  }
+
+  .changed-files-sidebar.mobile.active .file-browser-empty,
+  .changed-files-sidebar.mobile.active .changed-files-empty {
+    flex: 1;
+  }
+
+  /* Larger touch targets for file entries on mobile */
+  .changed-files-sidebar.mobile .changed-files-entry {
+    padding: 10px var(--space-md);
+    min-height: 36px;
+  }
+
+  /* Clearer active state on mobile */
+  .changed-files-sidebar.mobile .changed-files-entry.active {
+    background: var(--card-hover);
+    border-left: 3px solid var(--in-progress);
+  }
+
+  .changed-files-content.mobile {
+    display: none;
+  }
+
+  .changed-files-content.mobile.active {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    padding: var(--space-sm);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    background: var(--bg);
+  }
+
+  .changed-files-modal .file-browser-file-info {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .changed-files-modal .file-browser-file-info strong {
+    font-size: 12px;
+    word-break: break-all;
+  }
+
+  /* Diff viewer fills available space on mobile */
+  .changed-files-content.mobile.active .changed-files-diff-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .changed-files-content.mobile.active .gm-diff-viewer {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .changed-files-content.mobile.active .gm-diff-patch {
+    flex: 1;
+    max-height: none;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Back button styles for mobile */
+  .changed-files-back-button {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: 6px 12px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+    margin-right: 8px;
+  }
+
+  .changed-files-back-button:hover {
+    background: var(--card-hover);
+  }
+
+  .changed-files-back-button:focus {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .detail-section--spec {
+    flex: 1;
+    min-height: 0;
+  }
+}
+
+.detail-section h4 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: var(--space-sm);
+}
+
+.detail-prompt {
+  padding: 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-muted);
+}
+
+.spec-loading {
+  padding: 14px;
+  font-size: 13px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spec-loading::before {
+  content: "";
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--text-secondary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* === Modal Edit Mode Styles === */
+
+.modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.modal-edit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.modal-edit-btn:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.modal-edit-btn:focus {
+  outline: 1px solid var(--todo);
+  outline-offset: 1px;
+}
+
+.modal-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.modal-edit-form .form-group textarea {
+  min-height: 160px;
+}
+
+.modal-edit-input {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  font-family: inherit;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.modal-edit-input:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.modal-edit-input::placeholder {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.modal-edit-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.modal-edit-textarea {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  resize: vertical;
+  min-height: 80px;
+  line-height: 1.5;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.modal-edit-textarea:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.modal-edit-textarea::placeholder {
+  color: var(--text-dim);
+}
+
+.modal-edit-textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Edit-mode hint text now lives in modal-actions footer */
+.modal-edit-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.modal-edit-hint kbd {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+}
+
+/* Card saving state */
+.card.card-saving {
+  opacity: 0.7;
+}
+
+/* === Detail Tabs === */
+.detail-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-md);
+}
+
+.detail-tab {
+  padding: var(--space-sm) var(--space-lg);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 400;
+  font-family: inherit;
+  transition:
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.detail-tab:hover {
+  color: var(--text);
+}
+.detail-tab:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.detail-tab-active {
+  border-bottom-color: var(--in-progress);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* === Log Subview Toggle === */
+.log-subview-toggle {
+  display: inline-flex;
+  gap: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  margin-bottom: var(--space-md);
+}
+
+.log-subview-btn {
+  padding: 4px 12px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.log-subview-btn:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.log-subview-btn-active {
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+@media (display-mode: standalone) {
+  #root {
+    /* FN-1626: additive bottom spacing = safe-area inset + 8px home bar gap */
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
+  }
+
+  /* PWA standalone mode: 8px extra breathing room for iOS home indicator */
+  --standalone-bottom-gap: 8px;
+}
+
+@media (max-width: 768px) {
+  .detail-tab {
+    min-height: 36px;
+  }
+
+  .detail-body {
+    padding: 14px;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .detail-title {
+    font-size: 16px;
+  }
+
+  .modal-actions {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .modal-actions .btn {
+    min-width: 0;
+  }
+
+  /* Mobile dropdown menus — position above action bar, constrained to viewport */
+  .detail-actions-menu,
+  .detail-move-menu {
+    bottom: calc(100% + 4px);
+    max-width: calc(100vw - 28px);
+    max-height: calc(100dvh - 120px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .modal-header {
+    padding: 12px 14px;
+  }
+
+  .detail-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .detail-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .detail-tab {
+    padding: var(--space-sm) var(--space-md);
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+
+  /* Task detail modal: prevent header clipping + full-screen refine flow */
+  .detail-title-row {
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  .modal-header-actions {
+    flex-shrink: 0;
+  }
+
+  .detail-refine-overlay {
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .detail-refine-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 100dvh;
+    border-radius: 0;
+    border: none;
+  }
+
+  .detail-refine-textarea {
+    font-size: 16px;
+  }
+
+  .modal-edit-form .form-group {
+    padding: 0;
+  }
+
+  /* Task edit modal: cap description textarea height on mobile so form stays visible */
+  .modal-edit-form .form-group textarea {
+    max-height: 200px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}

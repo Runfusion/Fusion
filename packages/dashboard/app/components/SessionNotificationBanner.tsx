@@ -1,3 +1,4 @@
+import "./SessionNotificationBanner.css";
 import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, Lightbulb, Layers, Target, X } from "lucide-react";
 import type { AiSessionSummary } from "../api";

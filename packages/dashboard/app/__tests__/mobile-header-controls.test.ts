@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { loadAllAppCss, loadAllAppCssBaseOnly } from "../test/cssFixture";
 
 /**
  * Stylesheet regression test for mobile header controls.
@@ -18,8 +17,7 @@ import { resolve } from "path";
  */
 
 describe("mobile-header-controls.css", () => {
-  const cssPath = resolve(__dirname, "../styles.css");
-  const cssContent = readFileSync(cssPath, "utf-8");
+  const cssContent = loadAllAppCss();
 
   // Extract all content from @media (max-width: 768px) blocks
   // This is a simplified approach - we find all mobile media blocks and join them
@@ -101,7 +99,7 @@ describe("mobile-header-controls.css", () => {
   });
 
   it("has header-floating-search styles for floating search container", () => {
-    const floatingSearchMatch = cssContent.match(/\.header-floating-search\s*\{([^}]+)\}/);
+    const floatingSearchMatch = loadAllAppCssBaseOnly().match(/\.header-floating-search\s*\{([^}]+)\}/);
     expect(floatingSearchMatch).toBeTruthy();
     if (floatingSearchMatch) {
       expect(floatingSearchMatch[1]).toContain("background:");

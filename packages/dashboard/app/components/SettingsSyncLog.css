@@ -1,0 +1,305 @@
+/* === SettingsSyncLog === */
+.settings-sync-log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.settings-sync-log__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  cursor: pointer;
+  padding: var(--space-xs) 0;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  transition: background-color var(--transition-fast);
+}
+
+.settings-sync-log__header:hover {
+  background: var(--surface-hover);
+}
+
+.settings-sync-log__header:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  background: var(--surface-hover);
+}
+
+.settings-sync-log__chevron {
+  transform: rotate(0deg);
+  transition: transform var(--transition-fast);
+}
+
+.settings-sync-log__chevron--expanded {
+  transform: rotate(180deg);
+}
+
+.settings-sync-log__filters {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.settings-sync-log__filters label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.settings-sync-log__filters select {
+  font-size: 12px;
+  padding: 4px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+}
+
+.settings-sync-log__filters select:focus {
+  outline: none;
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.settings-sync-log__list {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-sync-log__entry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-sync-log__entry:last-child {
+  border-bottom: none;
+}
+
+.settings-sync-log__entry-timestamp {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 140px;
+}
+
+.settings-sync-log__entry-direction {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.settings-sync-log__entry-result {
+  display: inline-flex;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.settings-sync-log__badge--success {
+  background: color-mix(in srgb, var(--color-success, #2da44e) 14%, transparent);
+  color: var(--color-success, #2da44e);
+}
+
+.settings-sync-log__badge--conflict {
+  background: color-mix(in srgb, #d29922 14%, transparent);
+  color: #d29922;
+}
+
+.settings-sync-log__badge--error {
+  background: color-mix(in srgb, var(--color-error, #cf222e) 14%, transparent);
+  color: var(--color-error, #cf222e);
+}
+
+.settings-sync-log__entry-node {
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.settings-sync-log__entry-details {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.settings-sync-log__empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: var(--space-md);
+  font-size: 13px;
+}
+
+.project-node-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.project-node-selector__label {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.project-node-selector select {
+  width: 100%;
+  max-width: 320px;
+}
+
+.project-node-selector__option--dim {
+  color: var(--text-muted);
+}
+
+.node-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent);
+  color: var(--text-muted);
+  font-size: 11px;
+  width: fit-content;
+  margin-top: 4px;
+}
+
+@media (max-width: 768px) {
+  .nodes-view {
+    padding-inline: var(--space-sm);
+  }
+
+  .nodes-view-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .node-card__metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .node-detail-modal__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-sync-conflict-modal__diff-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .node-detail-modal__field--full {
+    grid-column: span 1;
+  }
+
+  /* Add Node Modal mobile */
+  .add-node-modal {
+    width: calc(100vw - (var(--space-md) * 2));
+  }
+
+  .add-node-modal__type-toggle {
+    width: 100%;
+  }
+
+  .add-node-modal__type-btn {
+    flex: 1;
+    padding: var(--space-md) var(--space-lg);
+  }
+
+  .add-node-modal__field input {
+    min-height: calc(var(--space-2xl) + var(--space-md));
+  }
+
+  /* Instant transition on mobile for remote fields */
+  .add-node-modal__remote-fields {
+    transition: none;
+  }
+
+  /* Connect Node Modal mobile */
+  .connect-node-modal {
+    width: calc(100vw - (var(--space-md) * 2));
+  }
+
+  .connect-node-field__input {
+    min-height: calc(var(--space-2xl) + var(--space-md));
+  }
+
+  /* NodesView mobile alignment */
+  .nodes-view-header {
+    padding: var(--space-sm) var(--space-md);
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .nodes-view-title h2 {
+    font-size: calc(var(--space-md) + var(--space-xs));
+  }
+
+  .nodes-view-title h2 svg {
+    flex-shrink: 0;
+  }
+
+  .nodes-view-count {
+    font-size: calc(var(--space-sm) + var(--space-xs));
+  }
+
+  .nodes-view-actions {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .nodes-view-close {
+    min-height: calc(var(--space-xl) + var(--space-md));
+    min-width: calc(var(--space-xl) + var(--space-md));
+  }
+
+  .nodes-view-actions .btn {
+    min-height: calc(var(--space-xl) + var(--space-md));
+  }
+
+  .nodes-view-stats {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-sm);
+  }
+
+  .nodes-view-stat {
+    padding: var(--space-xs) var(--space-sm);
+  }
+
+  .nodes-view-stat span {
+    font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  }
+
+  .nodes-view-stat strong {
+    font-size: calc(var(--space-md) + var(--space-xs) / 2);
+  }
+
+  .nodes-view-empty {
+    padding: var(--space-xl) var(--space-md);
+    text-align: center;
+  }
+
+  .nodes-view-error {
+    padding: var(--space-md);
+    margin: var(--space-md) 0;
+  }
+
+  .nodes-view-topology {
+    padding: var(--space-sm) 0;
+  }
+
+  .nodes-view-section-title {
+    font-size: calc(var(--space-md) + var(--space-xs) / 4);
+  }
+}
+

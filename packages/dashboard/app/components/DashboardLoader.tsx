@@ -1,4 +1,5 @@
 import { Loader2 } from "lucide-react";
+import "./DashboardLoader.css";
 
 export type DashboardLoaderStage = "projects" | "project" | "tasks" | "ready";
 

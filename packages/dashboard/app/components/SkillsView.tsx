@@ -1,3 +1,4 @@
+import "./SkillsView.css";
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { Wrench, RefreshCw, X, ChevronRight, ChevronDown, AlertCircle, Loader2 } from "lucide-react";
 import {

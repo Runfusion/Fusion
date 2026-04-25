@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { loadAllAppCss } from "../test/cssFixture";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
@@ -15,7 +16,7 @@ import { resolve } from "path";
  *
  * Without any one of these, the modal can extend below the keyboard.
  */
-const css = readFileSync(resolve(__dirname, "../styles.css"), "utf-8");
+const css = loadAllAppCss();
 
 describe("terminal mobile keyboard layout CSS contract", () => {
   // Extract the mobile @media block

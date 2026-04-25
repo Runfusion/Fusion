@@ -1,0 +1,775 @@
+/* === Agent Prompts Manager === */
+.prompt-manager {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: 0 20px;
+  margin-top: var(--space-md);
+}
+
+.prompt-manager-tabs {
+  display: flex;
+  gap: var(--space-xs);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-sm);
+}
+
+.prompt-manager-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.prompt-manager-tab:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.prompt-manager-tab.active {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+.prompt-manager-content {
+  min-height: 200px;
+}
+
+.prompt-manager-templates-tab,
+.prompt-manager-assignments-tab,
+.prompt-manager-overrides-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+/* Templates Tab */
+.prompt-template-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.prompt-template-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.prompt-template-section-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.prompt-template-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.prompt-template-card {
+  padding: var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast);
+}
+
+.prompt-template-card:hover {
+  border-color: var(--text-dim);
+}
+
+.prompt-template-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.prompt-template-card-info {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.prompt-template-card-name {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.prompt-template-badge-built-in,
+.prompt-template-badge-custom,
+.prompt-template-badge-override {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.prompt-template-badge-built-in {
+  background: var(--surface);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.prompt-template-badge-custom {
+  background: color-mix(in srgb, var(--ws-info) 15%, transparent);
+  color: var(--ws-info);
+}
+
+.prompt-template-badge-override {
+  background: color-mix(in srgb, var(--ws-warning) 15%, transparent);
+  color: var(--ws-warning);
+}
+
+.prompt-template-badge-role {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+}
+
+.prompt-template-card-actions {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.prompt-template-card-actions .btn-icon {
+  padding: var(--space-xs);
+}
+
+.prompt-template-card-description {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 var(--space-sm) 0;
+  line-height: 1.4;
+}
+
+.prompt-template-card-preview {
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm);
+  overflow: hidden;
+}
+
+.prompt-template-card-preview code {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: block;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.prompt-template-empty {
+  padding: var(--space-lg);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+
+.prompt-template-add-btn {
+  align-self: flex-start;
+  margin-top: var(--space-sm);
+}
+
+/* Template Editor */
+.prompt-template-editor {
+  padding: var(--space-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-lg);
+}
+
+.prompt-template-editor-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 var(--space-md) 0;
+}
+
+.prompt-template-editor-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.prompt-template-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.prompt-template-field label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.prompt-template-field input,
+.prompt-template-field select,
+.prompt-template-prompt-textarea {
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 13px;
+  transition: border-color var(--transition-fast);
+}
+
+.prompt-template-field input:focus,
+.prompt-template-field select:focus,
+.prompt-template-prompt-textarea:focus {
+  outline: none;
+  border-color: var(--todo);
+}
+
+.prompt-template-prompt-textarea {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 120px;
+}
+
+.prompt-template-error {
+  padding: var(--space-sm);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-sm);
+  color: var(--color-error);
+  font-size: 12px;
+}
+
+.prompt-template-editor-actions {
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: flex-end;
+  margin-top: var(--space-sm);
+}
+
+/* Delete confirmation */
+.prompt-template-delete-confirm {
+  padding: var(--space-md);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.prompt-template-delete-confirm p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.prompt-template-delete-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+/* Assignments Tab */
+.prompt-assignments-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.prompt-role-assignment-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.prompt-role-assignment-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  padding: var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.prompt-role-assignment-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.prompt-role-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+}
+
+.prompt-role-assignment-status {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.prompt-role-select {
+  min-width: 200px;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.prompt-role-select:focus {
+  outline: none;
+  border-color: var(--todo);
+}
+
+.prompt-assignments-note {
+  margin-top: var(--space-md);
+  padding: var(--space-md);
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.prompt-assignments-note strong {
+  color: var(--text);
+}
+
+/* Overrides Tab */
+.prompt-overrides-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.prompt-overrides-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.prompt-override-item {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.prompt-override-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.prompt-override-header:hover {
+  background: var(--card-hover);
+}
+
+.prompt-override-info {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.prompt-override-name {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.prompt-override-key {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  padding: 2px 4px;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+}
+
+.prompt-override-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  background: color-mix(in srgb, var(--ws-warning) 15%, transparent);
+  color: var(--ws-warning);
+  border-radius: var(--radius-sm);
+}
+
+.prompt-override-expand-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.prompt-override-expand-btn:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.prompt-override-description {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+  padding: 0 var(--space-md) var(--space-md);
+  line-height: 1.4;
+}
+
+.prompt-override-editor {
+  padding: var(--space-md);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.prompt-override-textarea {
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 80px;
+  transition: border-color var(--transition-fast);
+}
+
+.prompt-override-textarea:focus {
+  outline: none;
+  border-color: var(--todo);
+}
+
+.prompt-override-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.prompt-override-hint {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+}
+
+/* === Prompt Override Fullscreen === */
+
+/* Header actions container for expand + fullscreen buttons */
+.prompt-override-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+/* Expand button in override header (only visible when expanded) */
+.prompt-override-fullscreen-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.prompt-override-fullscreen-btn:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+
+/* Fullscreen container — fixed position overlay */
+.prompt-override-fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10000;
+  background: var(--surface);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+}
+
+.prompt-override-fullscreen-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+  flex-shrink: 0;
+}
+
+.prompt-override-fullscreen-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.prompt-override-fullscreen-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all var(--transition-fast);
+}
+
+.prompt-override-fullscreen-close:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+
+.prompt-override-fullscreen-close:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+/* Fullscreen textarea fills remaining space */
+.prompt-override-fullscreen textarea {
+  flex: 1;
+  min-height: unset;
+  resize: none;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.prompt-template-fullscreen-pre {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-y: auto;
+  padding: var(--space-md);
+  background: var(--bg);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  margin: 0;
+}
+
+/* Fullscreen footer at bottom */
+.prompt-override-fullscreen .prompt-override-footer {
+  flex-shrink: 0;
+  padding-top: var(--space-sm);
+}
+
+/* Template prompt label row with fullscreen button */
+.prompt-template-prompt-label-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-xs);
+}
+
+.prompt-template-prompt-label-row label {
+  display: block;
+}
+
+/* Template prompt fullscreen button */
+.prompt-template-fullscreen-btn {
+  vertical-align: middle;
+}
+
+.prompt-template-prompt-label-row .prompt-template-fullscreen-btn {
+  margin-left: var(--space-xs);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .prompt-manager {
+    padding: 0 14px;
+  }
+
+  .prompt-manager-tabs {
+    flex-wrap: wrap;
+  }
+
+  .prompt-manager-tab {
+    flex: 1;
+    justify-content: center;
+    min-width: calc(50% - var(--space-xs));
+  }
+
+  .prompt-role-assignment-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-sm);
+  }
+
+  .prompt-role-select {
+    width: 100%;
+  }
+
+  .prompt-template-editor-actions {
+    flex-direction: column;
+  }
+
+  .prompt-template-editor-actions .btn {
+    width: 100%;
+  }
+
+  /* Fullscreen prompt editor mobile overrides */
+  .prompt-override-fullscreen {
+    padding: var(--space-md);
+  }
+
+  .prompt-override-fullscreen textarea {
+    font-size: 16px; /* Prevent iOS zoom */
+  }
+}
+
+.new-task-modal .form-group small {
+  display: block;
+  margin-top: var(--space-sm);
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.new-task-modal textarea {
+  min-height: 80px;
+  transition: height 0.1s ease-out;
+}
+
+.selected-deps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--space-sm);
+  padding: 2px 0;
+}
+
+.dep-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 3px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  font-size: 12px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  max-width: 100%;
+}
+
+.dep-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+  margin-left: 2px;
+  border-radius: 50%;
+  transition: background 0.1s, color 0.1s;
+}
+
+.dep-chip-remove:hover {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+
+.model-select-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.model-select-row:last-child {
+  margin-bottom: 0;
+}
+
+.model-select-label {
+  width: 70px;
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+@media (max-width: 768px) {
+  .model-select-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-xs);
+  }
+
+  .model-select-label {
+    width: auto;
+    text-align: left;
+  }
+}

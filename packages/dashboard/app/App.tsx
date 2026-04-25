@@ -1,20 +1,11 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, lazy, Suspense } from "react";
 import type { Task, TaskDetail } from "@fusion/core";
 import { Header, useViewportMode } from "./components/Header";
 import { Board } from "./components/Board";
 import { ListView } from "./components/ListView";
 import { ProjectOverview } from "./components/ProjectOverview";
-import { AgentsView } from "./components/AgentsView";
-import { DocumentsView } from "./components/DocumentsView";
-import { InsightsView } from "./components/InsightsView";
 import { MissionManager } from "./components/MissionManager";
-import { NodesView } from "./components/NodesView";
-import { ChatView } from "./components/ChatView";
-import { RoadmapsView } from "./components/RoadmapsView";
-import { SkillsView } from "./components/SkillsView";
 import { MailboxView } from "./components/MailboxView";
-import { MemoryView } from "./components/MemoryView";
-import { DevServerView } from "./components/DevServerView";
 import { PageErrorBoundary } from "./components/ErrorBoundary";
 import { AppModals } from "./components/AppModals";
 import { DashboardLoader, type DashboardLoaderStage } from "./components/DashboardLoader";
@@ -56,12 +47,47 @@ import { fetchUnreadCount, reportDashboardPerf } from "./api";
 import { getScopedItem, setScopedItem } from "./utils/projectStorage";
 import { subscribeSse } from "./sse-bus";
 
+const AgentsView = lazy(() => import("./components/AgentsView").then((m) => ({ default: m.AgentsView })));
+const DocumentsView = lazy(() => import("./components/DocumentsView").then((m) => ({ default: m.DocumentsView })));
+const InsightsView = lazy(() => import("./components/InsightsView").then((m) => ({ default: m.InsightsView })));
+const NodesView = lazy(() => import("./components/NodesView").then((m) => ({ default: m.NodesView })));
+const ChatView = lazy(() => import("./components/ChatView").then((m) => ({ default: m.ChatView })));
+const RoadmapsView = lazy(() => import("./components/RoadmapsView").then((m) => ({ default: m.RoadmapsView })));
+const SkillsView = lazy(() => import("./components/SkillsView").then((m) => ({ default: m.SkillsView })));
+const MemoryView = lazy(() => import("./components/MemoryView").then((m) => ({ default: m.MemoryView })));
+const DevServerView = lazy(() => import("./components/DevServerView").then((m) => ({ default: m.DevServerView })));
+
+// Warm lazy chunks during browser idle so first navigation to each view is
+// instant. Each chunk is ~10–80 kB; total prefetch finishes well under a
+// second on broadband. Uses requestIdleCallback so it never blocks render.
+function prefetchLazyViews() {
+  const idle =
+    (typeof window !== "undefined" && (window as Window & { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback) ||
+    ((cb: () => void) => setTimeout(cb, 200));
+  idle(() => {
+    void import("./components/AgentsView");
+    void import("./components/DocumentsView");
+    void import("./components/InsightsView");
+    void import("./components/NodesView");
+    void import("./components/ChatView");
+    void import("./components/RoadmapsView");
+    void import("./components/SkillsView");
+    void import("./components/MemoryView");
+    void import("./components/DevServerView");
+  });
+}
+
 const SETUP_WARNING_DISMISSED_KEY = "kb-setup-warning-dismissed";
 
 function AppInner() {
   const { toasts, addToast, removeToast } = useToast();
   const isElectron = typeof window !== "undefined" && Boolean((window as Window & { electronAPI?: unknown }).electronAPI);
-  
+
+  // Warm lazy view chunks during browser idle so first navigation is instant.
+  useEffect(() => {
+    prefetchLazyViews();
+  }, []);
+
   // Project management hooks - MUST be called before any conditional logic
   const { projects, loading: projectsLoading, refresh: refreshProjects } = useProjects();
   const { nodes } = useNodes();
@@ -437,7 +463,9 @@ function AppInner() {
       return (
         <div className="nodes-management-overlay">
           <PageErrorBoundary>
-            <NodesView addToast={addToast} onClose={() => setNodesOpen(false)} />
+            <Suspense fallback={null}>
+              <NodesView addToast={addToast} onClose={() => setNodesOpen(false)} />
+            </Suspense>
           </PageErrorBoundary>
         </div>
       );
@@ -469,11 +497,13 @@ function AppInner() {
       }
       return (
         <PageErrorBoundary>
-          <SkillsView
-            addToast={addToast}
-            projectId={currentProject?.id}
-            onClose={() => handleChangeTaskView("board")}
-          />
+          <Suspense fallback={null}>
+            <SkillsView
+              addToast={addToast}
+              projectId={currentProject?.id}
+              onClose={() => handleChangeTaskView("board")}
+            />
+          </Suspense>
         </PageErrorBoundary>
       );
     }
@@ -481,7 +511,9 @@ function AppInner() {
     if (taskView === "chat") {
       return (
         <PageErrorBoundary>
-          <ChatView addToast={addToast} projectId={currentProject?.id} />
+          <Suspense fallback={null}>
+            <ChatView addToast={addToast} projectId={currentProject?.id} />
+          </Suspense>
         </PageErrorBoundary>
       );
     }
@@ -501,7 +533,9 @@ function AppInner() {
     if (taskView === "roadmaps") {
       return (
         <PageErrorBoundary>
-          <RoadmapsView addToast={addToast} projectId={currentProject?.id} />
+          <Suspense fallback={null}>
+            <RoadmapsView addToast={addToast} projectId={currentProject?.id} />
+          </Suspense>
         </PageErrorBoundary>
       );
     }
@@ -537,7 +571,9 @@ function AppInner() {
     if (taskView === "agents" && agentsEnabled) {
       return (
         <PageErrorBoundary>
-          <AgentsView addToast={addToast} projectId={currentProject?.id} />
+          <Suspense fallback={null}>
+            <AgentsView addToast={addToast} projectId={currentProject?.id} />
+          </Suspense>
         </PageErrorBoundary>
       );
     }
@@ -545,11 +581,13 @@ function AppInner() {
     if (taskView === "documents") {
       return (
         <PageErrorBoundary>
-          <DocumentsView
-            projectId={currentProject?.id}
-            addToast={addToast}
-            onOpenDetail={modalManager.openDetailTask}
-          />
+          <Suspense fallback={null}>
+            <DocumentsView
+              projectId={currentProject?.id}
+              addToast={addToast}
+              onOpenDetail={modalManager.openDetailTask}
+            />
+          </Suspense>
         </PageErrorBoundary>
       );
     }
@@ -557,11 +595,13 @@ function AppInner() {
     if (taskView === "insights") {
       return (
         <PageErrorBoundary>
-          <InsightsView
-            projectId={currentProject?.id}
-            addToast={addToast}
-            onClose={() => handleChangeTaskView("board")}
-          />
+          <Suspense fallback={null}>
+            <InsightsView
+              projectId={currentProject?.id}
+              addToast={addToast}
+              onClose={() => handleChangeTaskView("board")}
+            />
+          </Suspense>
         </PageErrorBoundary>
       );
     }
@@ -569,7 +609,9 @@ function AppInner() {
     if (taskView === "memory") {
       return (
         <PageErrorBoundary>
-          <MemoryView addToast={addToast} projectId={currentProject?.id} />
+          <Suspense fallback={null}>
+            <MemoryView addToast={addToast} projectId={currentProject?.id} />
+          </Suspense>
         </PageErrorBoundary>
       );
     }
@@ -577,7 +619,9 @@ function AppInner() {
     if (taskView === "devserver" || taskView === "dev-server") {
       return (
         <PageErrorBoundary>
-          <DevServerView addToast={addToast} projectId={currentProject?.id} />
+          <Suspense fallback={null}>
+            <DevServerView addToast={addToast} projectId={currentProject?.id} />
+          </Suspense>
         </PageErrorBoundary>
       );
     }

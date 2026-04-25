@@ -1,3 +1,4 @@
+import "./DocumentsView.css";
 import { useState, useMemo, useCallback, useEffect, useRef, type ChangeEvent } from "react";
 import { ArrowLeft, FileText, ChevronDown, ChevronUp, ChevronRight, RefreshCw, Search, X, Eye, EyeOff } from "lucide-react";
 import ReactMarkdown from "react-markdown";

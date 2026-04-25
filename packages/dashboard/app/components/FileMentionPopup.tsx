@@ -1,5 +1,6 @@
 import { File } from "lucide-react";
 import type { FileSearchItem } from "../hooks/useFileMention";
+import "./FileMentionPopup.css";
 
 import type { ReactNode } from "react";
 

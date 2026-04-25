@@ -1,3 +1,4 @@
+import "./ModelSelectorTab.css";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { fetchModels, updateTask, updateGlobalSettings } from "../api";
 import type { ModelInfo } from "../api";

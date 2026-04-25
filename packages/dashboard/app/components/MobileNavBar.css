@@ -1,0 +1,333 @@
+/* === Mobile Bottom Tab Bar (FN-1108) ===
+   Fixed bottom navigation for mobile viewports (≤768px).
+   Sits at the very bottom; ExecutorStatusBar appears above when visible.
+   Uses safe-area-inset-bottom for notched devices. */
+
+/* Mobile nav height token - used by nav bar, executor status bar, and content padding */
+:root {
+  --mobile-nav-height: 44px;
+}
+
+.mobile-nav-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 45;
+  display: none;
+  align-items: stretch;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  min-height: var(--mobile-nav-height);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.15);
+}
+
+@media (max-width: 768px) {
+  .mobile-nav-bar {
+    display: flex;
+  }
+
+  .mobile-nav-bar--with-footer {
+    bottom: 0;
+  }
+
+  /* Content padding: mobile nav only (no footer) */
+  .project-content--with-mobile-nav:not(.project-content--with-footer) {
+    padding-bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
+  }
+
+  /* Content padding: both mobile nav AND footer */
+  .project-content--with-footer.project-content--with-mobile-nav {
+    padding-bottom: calc(32px + var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
+  }
+}
+
+/* Individual tab button */
+.mobile-nav-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 6px 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: color 0.15s ease;
+  position: relative;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-nav-tab:active {
+  color: var(--text-primary);
+}
+
+.mobile-nav-tab--active {
+  color: var(--accent);
+}
+
+.mobile-nav-tab svg {
+  width: 22px;
+  height: 22px;
+}
+
+.mobile-nav-tab-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.mobile-nav-tab-badge {
+  position: absolute;
+  top: calc(var(--space-xs) / 2);
+  right: calc(50% - var(--space-md));
+  min-width: var(--space-lg);
+  height: var(--space-lg);
+  padding: 0 var(--space-xs);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: var(--space-lg);
+  text-align: center;
+  background: var(--color-error);
+  color: var(--fab-text);
+  border-radius: var(--radius-md);
+}
+
+/* === Mobile More Sheet (Bottom Drawer) === */
+
+.mobile-more-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(0, 0, 0, 0.5);
+  animation: mobile-more-backdrop-in 0.2s ease;
+}
+
+.mobile-more-sheet {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 91;
+  background: var(--surface);
+  border-top-left-radius: var(--radius-lg, 12px);
+  border-top-right-radius: var(--radius-lg, 12px);
+  padding: 16px 0;
+  /* Additive safe-area: base padding + device safe-area inset ensures last item
+     (Settings) is reachable on real mobile viewports including iOS home indicator. */
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  max-height: 85vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  animation: mobile-more-sheet-in 0.25s ease;
+}
+
+@keyframes mobile-more-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes mobile-more-sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.mobile-more-sheet-handle {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  margin: 0 auto 12px;
+}
+
+.mobile-more-sheet-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 0 16px 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.mobile-more-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  min-height: 36px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+  position: relative;
+}
+
+.mobile-more-item:active {
+  background: var(--surface-hover);
+}
+
+.mobile-more-item svg {
+  width: 20px;
+  height: 20px;
+  color: var(--text-muted);
+}
+
+.mobile-more-item-badge {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+}
+
+.mobile-more-item-badge--unread {
+  background: var(--color-error);
+  color: var(--fab-text);
+}
+
+.mobile-more-separator {
+  height: 1px;
+  background: var(--border);
+  margin: 8px 16px;
+}
+
+.mobile-more-split-row {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+}
+
+.mobile-more-split-primary {
+  flex: 1;
+  min-width: 0;
+}
+
+.mobile-more-split-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.mobile-more-split-toggle:hover {
+  background: var(--card);
+}
+
+.mobile-more-chevron {
+  color: var(--text-muted);
+  transition: transform var(--transition-fast);
+}
+
+.mobile-more-chevron--open {
+  transform: rotate(90deg);
+}
+
+.mobile-more-submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: var(--space-md);
+}
+
+.mobile-more-subitem {
+  padding-left: 28px;
+}
+
+.mobile-more-submenu-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 8px 12px 8px 28px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.mobile-more-subitem--manage {
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+  padding-top: 8px;
+}
+
+/* FN-1137: Quick scripts dropdown mobile viewport handling */
+@media (max-width: 768px) {
+  .quick-scripts-dropdown__menu {
+    max-height: min(60vh, 400px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* FN-1137: mobile dep dropdown overflow handling */
+@media (max-width: 768px) {
+  .dep-dropdown {
+    max-height: min(50vh, 240px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* FN-1137: file browser long-press and mobile context menu touch targets */
+.file-node {
+  touch-action: manipulation;
+}
+
+.file-node--long-pressing {
+  background: var(--card-hover);
+}
+
+@media (max-width: 768px) {
+  .file-browser-context-menu__item {
+    min-height: 36px;
+  }
+}
+
+/* FN-1137: iOS momentum scrolling conventions */
+.dep-dropdown,
+.model-combobox-list,
+.quick-scripts-dropdown__list,
+.file-browser-list {
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 768px) {
+  /* iOS momentum scrolling for all modal content areas */
+  .modal-content,
+  .modal-body,
+  .modal-scroll,
+  .task-detail-content,
+  .agent-log-content,
+  .file-browser-list,
+  .settings-content,
+  .activity-log-content {
+    -webkit-overflow-scrolling: touch;
+  }
+}
+

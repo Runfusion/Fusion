@@ -1,5 +1,6 @@
+import "./AgentDetailView.css";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { 
+import {
   Bot, Heart, Activity, Pause, Play, Square, Trash2, RefreshCw, 
   Settings, FileText, ActivitySquare, X, Copy, 
   ExternalLink, CheckCircle, XCircle, Loader2, GitBranch, ListChecks,

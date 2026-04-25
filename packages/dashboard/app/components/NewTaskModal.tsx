@@ -1,3 +1,4 @@
+import "./NewTaskModal.css";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { DEFAULT_TASK_PRIORITY, type Task, type TaskCreateInput, type TaskPriority } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";

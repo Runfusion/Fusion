@@ -1,7 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { loadAllAppCss } from "../../test/cssFixture";
 
 // Mock API functions
 const mockFetchDiscoveredSkills = vi.fn().mockResolvedValue([]);
@@ -51,32 +50,31 @@ function extractMobileMediaBlocks(content: string): string {
 }
 
 describe("skills-view mobile css", () => {
-  const cssPath = resolve(__dirname, "../../styles.css");
-  const cssContent = readFileSync(cssPath, "utf-8");
+  const cssContent = loadAllAppCss();
   const mobileMediaBlock = extractMobileMediaBlocks(cssContent);
 
   it("defines .skills-view-header in mobile block with reduced padding", () => {
     expect(mobileMediaBlock).toContain(".skills-view-header");
-    const block = extractRuleBlock(cssContent, ".skills-view-header");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-header");
     // Base has padding: var(--space-lg) 20px; mobile should override
     expect(block).toMatch(/padding:\s*var\(--space-sm\)\s+var\(--space-md\)/);
   });
 
   it("defines .skills-view-title h2 with smaller font on mobile", () => {
     expect(mobileMediaBlock).toContain(".skills-view-title h2");
-    const block = extractRuleBlock(cssContent, ".skills-view-title h2");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-title h2");
     expect(block).toContain("font-size: 16px");
   });
 
   it("defines .skills-view-content with reduced padding on mobile", () => {
     expect(mobileMediaBlock).toContain(".skills-view-content");
-    const block = extractRuleBlock(cssContent, ".skills-view-content");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-content");
     expect(block).toContain("padding: var(--space-md)");
   });
 
   it("defines .skills-view-search .form-input as full width on mobile", () => {
     expect(mobileMediaBlock).toContain(".skills-view-search .form-input");
-    const block = extractRuleBlock(cssContent, ".skills-view-search .form-input");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-search .form-input");
     expect(block).toContain("max-width: none");
     expect(block).toContain("width: 100%");
   });
@@ -88,7 +86,7 @@ describe("skills-view mobile css", () => {
 
   it("defines .skills-view-item wrapping on mobile", () => {
     expect(mobileMediaBlock).toContain(".skills-view-item");
-    const block = extractRuleBlock(cssContent, ".skills-view-item");
+    const block = extractRuleBlock(mobileMediaBlock, ".skills-view-item");
     expect(block).toContain("flex-wrap: wrap");
   });
 

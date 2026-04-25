@@ -1,0 +1,406 @@
+/* === New Task Modal === */
+.new-task-modal {
+  min-height: min(520px, 80vh);
+}
+
+.new-task-modal .modal-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+  max-height: calc(80vh - 120px);
+  flex: 1;
+  min-height: 0;
+}
+
+.new-task-modal .form-group {
+  margin-top: 0;
+  margin-bottom: 20px;
+  padding: 0;
+}
+
+.new-task-modal .form-group:last-of-type {
+  margin-bottom: 0;
+}
+
+.new-task-modal .form-group label {
+  margin-bottom: var(--space-sm);
+}
+
+.new-task-modal .checkbox-label {
+  margin-bottom: 4px !important;
+}
+
+.task-form-primary-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.task-form-primary-section .form-group {
+  margin-bottom: 0;
+}
+
+.task-form-primary-section .description-with-refine {
+  padding: var(--space-sm);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+}
+
+.task-form-primary-section .description-with-refine textarea {
+  min-height: 120px;
+  padding: 12px 70px 12px 12px;
+  line-height: 1.5;
+  background: var(--surface);
+}
+
+.task-form-primary-section .description-with-refine.description--fullscreen {
+  padding: var(--space-lg);
+  border: none;
+  background: var(--surface);
+}
+
+.task-form-primary-section .description-with-refine.description--fullscreen textarea {
+  min-height: unset;
+}
+
+.task-form-description-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  width: fit-content;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+}
+
+.task-form-description-actions .btn {
+  border-color: var(--border);
+}
+
+.task-form-more-options-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: 10px 2px;
+  margin: 0 0 var(--space-sm);
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary, var(--text-muted));
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.task-form-more-options-toggle:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.task-form-more-options-toggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.task-form-more-options-toggle svg {
+  color: var(--text-dim);
+}
+
+.task-form-more-options {
+  margin-left: 6px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border-subtle);
+  overflow: hidden;
+  max-height: 2400px;
+  opacity: 1;
+  transition:
+    max-height 0.24s ease,
+    opacity 0.2s ease,
+    margin-top 0.2s ease,
+    padding 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.task-form-more-options.collapsed {
+  max-height: 0;
+  opacity: 0;
+  pointer-events: none;
+  margin-top: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-left-color: transparent;
+}
+
+.task-form-more-options .form-group {
+  margin-bottom: var(--space-md);
+}
+
+.task-form-more-options .form-group:last-of-type {
+  margin-bottom: 0;
+}
+
+.task-form-more-options .form-group label {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.4px;
+}
+
+.task-form-more-options .form-group small {
+  margin-top: 6px;
+  color: var(--text-secondary, var(--text-muted));
+}
+
+.task-form-more-options .model-select-row {
+  margin-bottom: var(--space-sm);
+}
+
+/* === Workflow Steps Section (TaskForm & WorkflowResultsTab) === */
+.workflow-steps-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.workflow-steps-description {
+  margin-bottom: var(--space-xs);
+  display: block;
+  color: var(--text-muted);
+  font-size: var(--space-xs);
+}
+
+.workflow-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.workflow-step-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+}
+
+.workflow-step-name {
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.workflow-step-description {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* Workflow step reorder controls */
+.workflow-step-order {
+  margin-top: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm);
+}
+
+.workflow-step-order-label {
+  display: block;
+  margin-bottom: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.workflow-step-order-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+
+.workflow-step-order-item + .workflow-step-order-item {
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 2px;
+  padding-top: 6px;
+}
+
+.workflow-step-order-item:hover {
+  background: var(--card-hover);
+}
+
+.workflow-step-order-number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.workflow-step-order-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-step-order-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.workflow-step-order-actions .btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+@media (hover: hover) {
+  .workflow-step-order-actions .btn-icon:hover:not(:disabled) {
+    background: var(--card-hover);
+    border-color: var(--border);
+    color: var(--text);
+  }
+}
+
+.workflow-step-order-actions .btn-icon:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .workflow-step-order-actions .btn-icon {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+/* === New Task Modal Quick Fields === */
+.new-task-quick-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-sm) 0;
+}
+
+.new-task-quick-fields .form-group {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.new-task-quick-fields .form-group label {
+  margin-bottom: var(--space-xs);
+}
+
+.new-task-quick-fields .dep-trigger {
+  width: 100%;
+}
+
+@media (max-width: 768px) {
+  /* TaskForm: cap description textarea height on mobile, restore in fullscreen */
+  .task-form-primary-section .description-with-refine textarea {
+    max-height: 200px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .task-form-primary-section .description-with-refine.description--fullscreen textarea {
+    max-height: unset;
+  }
+
+  /* New task + task form: stacked mobile fields and bounded popovers */
+  .new-task-modal {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .new-task-modal .modal-body {
+    max-height: unset;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    padding: var(--space-md) var(--space-sm);
+  }
+
+  .new-task-modal .form-group {
+    padding: 0 var(--space-md);
+  }
+
+  .task-form .dep-dropdown {
+    left: 0;
+    right: 0;
+    max-width: 100%;
+  }
+
+  .task-form-description-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  .task-form-more-options-toggle {
+    margin: 0 var(--space-md) var(--space-sm);
+    width: calc(100% - var(--space-md) * 2);
+  }
+
+  .new-task-quick-fields {
+    padding: 0 var(--space-md);
+  }
+
+  .new-task-quick-fields .dep-trigger {
+    width: 100%;
+    min-height: 36px;
+  }
+
+  .new-task-quick-fields .dep-dropdown {
+    left: 0;
+    right: 0;
+    max-width: 100%;
+  }
+
+  .task-form-more-options {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: none;
+  }
+
+  .task-form .checkbox-label {
+    flex-wrap: wrap;
+  }
+
+  .task-form .checkbox-label > div {
+    flex: 1;
+    min-width: 0;
+  }
+}

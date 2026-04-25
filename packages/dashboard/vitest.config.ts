@@ -19,6 +19,9 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    // Process CSS imports so jsdom-based tests that assert on getComputedStyle
+    // see the actual rules from co-located component CSS files.
+    css: { include: [/.+/] },
     globals: true,
     include: ["app/**/*.test.{ts,tsx}", "src/**/*.test.{ts,tsx}"],
     setupFiles: [

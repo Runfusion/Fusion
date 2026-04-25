@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { loadAllAppCss } from "../../test/cssFixture";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { MailboxView } from "../MailboxView";
 import * as apiModule from "../../api";
@@ -1029,8 +1030,7 @@ describe("MailboxView", () => {
     it("defines .mailbox-view base flex layout with min-height: 0", async () => {
       const fs = await import("fs");
       const path = await import("path");
-      const cssPath = path.resolve(__dirname, "../../styles.css");
-      const css = fs.readFileSync(cssPath, "utf-8");
+      const css = loadAllAppCss();
 
       const viewBlockMatch = css.match(/\.mailbox-view\s*\{([^}]*)\}/);
       expect(viewBlockMatch).toBeTruthy();
@@ -1045,8 +1045,7 @@ describe("MailboxView", () => {
     it("keeps mobile .mailbox-view overrides in the dedicated media-query section", async () => {
       const fs = await import("fs");
       const path = await import("path");
-      const cssPath = path.resolve(__dirname, "../../styles.css");
-      const css = fs.readFileSync(cssPath, "utf-8");
+      const css = loadAllAppCss();
 
       const sectionStart = css.indexOf("/* ── Mailbox — Mobile");
       expect(sectionStart).toBeGreaterThan(-1);
@@ -1067,8 +1066,7 @@ describe("MailboxView", () => {
     it("uses mobile-specific values for .mailbox-view content and FAB", async () => {
       const fs = await import("fs");
       const path = await import("path");
-      const cssPath = path.resolve(__dirname, "../../styles.css");
-      const css = fs.readFileSync(cssPath, "utf-8");
+      const css = loadAllAppCss();
 
       const sectionStart = css.indexOf("/* ── Mailbox — Mobile");
       expect(sectionStart).toBeGreaterThan(-1);
@@ -1091,8 +1089,7 @@ describe("MailboxView", () => {
     it("keeps mailbox tab selectors aligned with shared rounded-button defaults", async () => {
       const fs = await import("fs");
       const path = await import("path");
-      const cssPath = path.resolve(__dirname, "../../styles.css");
-      const css = fs.readFileSync(cssPath, "utf-8");
+      const css = loadAllAppCss();
 
       const mailboxTabBlockMatch = css.match(/\.mailbox-tab\s*\{([^}]*)\}/);
       expect(mailboxTabBlockMatch).toBeTruthy();

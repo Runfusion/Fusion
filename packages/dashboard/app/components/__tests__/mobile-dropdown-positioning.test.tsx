@@ -1,24 +1,24 @@
 import fs from "node:fs";
+import { loadAllAppCss } from "../../test/cssFixture";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const stylesPath = path.resolve(__dirname, "../../styles.css");
 
 describe("mobile dropdown positioning and momentum scrolling css", () => {
   it("includes iOS momentum scrolling for dep-dropdown", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
 
     expect(css).toMatch(/\.dep-dropdown[\s\S]*-webkit-overflow-scrolling:\s*touch;/);
   });
 
   it("includes iOS momentum scrolling for file-browser-list", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
 
     expect(css).toMatch(/\.file-browser-list[\s\S]*-webkit-overflow-scrolling:\s*touch;/);
   });
 
   it("includes modal momentum scrolling selectors inside the 768px mobile media query", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const momentumBlockMatch = css.match(/@media \(max-width: 768px\)\s*\{[\s\S]*\/\* iOS momentum scrolling for all modal content areas \*\/[\s\S]*?\}/);
 
     expect(momentumBlockMatch).toBeTruthy();

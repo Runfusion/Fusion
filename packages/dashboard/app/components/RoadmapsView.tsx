@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Plus, Pencil, Trash2, Check, X, GripVertical, Sparkles, Download, Copy, Loader, ArrowLeft, ChevronUp } from "lucide-react";
+import "./RoadmapsView.css";
 import type { ToastType } from "../hooks/useToast";
 import { useRoadmaps, type FeatureSuggestion, type MilestoneSuggestion, type SuggestionDraftPatch } from "../hooks/useRoadmaps";
 import { useViewportMode } from "../hooks/useViewportMode";

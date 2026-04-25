@@ -1,3 +1,4 @@
+import "./ScriptsModal.css";
 import { useState, useEffect, useCallback } from "react";
 import { getErrorMessage } from "@fusion/core";
 import { fetchScripts, addScript, removeScript, type ScriptEntry } from "../api";

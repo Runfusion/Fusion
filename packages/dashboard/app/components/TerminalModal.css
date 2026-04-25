@@ -1,0 +1,873 @@
+/* === Terminal Modal === */
+.terminal-modal {
+  width: 90vw;
+  max-width: 1200px;
+  min-height: 90vh;
+  max-height: 90vh;
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  padding: 0;
+  gap: 0;
+}
+
+.terminal-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  gap: 0;
+  padding: 0 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.terminal-tabs::-webkit-scrollbar {
+  height: 4px;
+}
+
+.terminal-tabs::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-tabs::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.terminal-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+  position: relative;
+  min-height: 44px;
+}
+
+.terminal-tab:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.terminal-tab--active {
+  color: var(--text);
+  border-bottom-color: var(--in-progress);
+}
+
+.terminal-tab--active:hover {
+  border-bottom-color: var(--in-progress);
+}
+
+.terminal-tab-indicator {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--in-progress);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.terminal-tab-label {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.terminal-tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin-left: 4px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+
+.terminal-tab:hover .terminal-tab-close,
+.terminal-tab--active .terminal-tab-close {
+  opacity: 1;
+}
+
+.terminal-tab-close:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.terminal-tab--new {
+  color: var(--text-muted);
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  min-width: 32px;
+  justify-content: center;
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.terminal-tab--new:hover {
+  color: var(--text);
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+
+.terminal-tab--empty {
+  color: var(--text-muted);
+  cursor: default;
+  font-style: italic;
+}
+
+.terminal-tab--empty:hover {
+  background: none;
+  color: var(--text-muted);
+}
+
+.terminal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  background: none;
+  border: none;
+  border-left: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.terminal-close:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.terminal-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.terminal-empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  color: var(--text-muted);
+  text-align: center;
+  padding: 40px;
+}
+
+.terminal-empty-state p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.terminal-empty-state p:first-child {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.terminal-empty-state p:last-child {
+  font-size: 13px;
+}
+
+.terminal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.terminal-task-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.terminal-task-id {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.terminal-task-title {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.terminal-clear-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.terminal-clear-btn:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+  background: var(--card-hover);
+}
+
+.terminal-log-container {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-log-container .agent-log-viewer {
+  flex: 1;
+  max-height: none;
+  background: var(--card);
+  border-radius: 0;
+}
+
+/* === Interactive Terminal Styles === */
+
+.terminal-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  flex: 1;
+}
+
+.terminal-actions {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.terminal-output {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-lg);
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.terminal-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-lg);
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  height: 100%;
+}
+
+.terminal-welcome-icon {
+  color: var(--in-progress);
+  opacity: 0.8;
+}
+
+.terminal-welcome h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.terminal-welcome p {
+  margin: 0;
+  max-width: 400px;
+  line-height: 1.5;
+}
+
+.terminal-commands-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  justify-content: center;
+  margin: 8px 0;
+}
+
+.terminal-commands-list span {
+  display: inline-block;
+  padding: 4px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.terminal-shortcuts {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.terminal-shortcuts kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+}
+
+.terminal-history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.terminal-entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.terminal-prompt-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.terminal-prompt {
+  color: var(--success);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.terminal-command {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.terminal-output-text {
+  margin: 0;
+  padding: var(--space-md) var(--space-lg);
+  background: var(--card);
+  border-radius: var(--radius);
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
+.terminal-output-error {
+  background: rgba(239, 68, 68, 0.1);
+  border-left: 3px solid var(--failed);
+}
+
+.terminal-running-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-lg);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.terminal-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--in-progress);
+  border-radius: 50%;
+  animation: terminal-spin 1s linear infinite;
+}
+
+@keyframes terminal-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.terminal-input-area {
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  padding: var(--space-md) var(--space-lg);
+}
+
+.terminal-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.terminal-input-prompt {
+  color: var(--success);
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.terminal-input {
+  flex: 1;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.terminal-input:focus {
+  border-color: var(--in-progress);
+}
+
+.terminal-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.terminal-input::placeholder {
+  color: var(--text-muted);
+}
+
+.terminal-kill-btn {
+  padding: var(--space-sm) var(--space-lg);
+  background: var(--failed);
+  border: none;
+  border-radius: var(--radius);
+  color: white;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.terminal-kill-btn:hover {
+  opacity: 0.9;
+}
+
+/* === PTY Terminal Styles === */
+
+.terminal-container {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: var(--terminal-bg);
+  overflow: hidden;
+}
+
+.terminal-xterm {
+  width: 100%;
+  height: 100%;
+  padding: var(--space-xs);
+}
+
+.terminal-xterm .xterm {
+  height: 100%;
+}
+
+/*
+ * Keep xterm's helper textarea tiny and inside terminal bounds.
+ *
+ * Mobile browsers are more likely to honor focus for keyboard activation when
+ * the focused element is not placed far off-screen.
+ */
+.terminal-xterm .xterm .xterm-helper-textarea {
+  left: 0 !important;
+  top: 0 !important;
+  width: 1px !important;
+  height: 1px !important;
+  opacity: 0.01 !important;
+  pointer-events: auto !important;
+  z-index: 1 !important;
+}
+
+/*
+ * On touch-primary devices (mobile/tablet), expand the helper textarea to
+ * cover the entire terminal surface so taps land directly on it. iOS Safari
+ * reliably opens the soft keyboard and routes input events only when focus
+ * originates from a tap on the focused element itself — programmatic focus()
+ * from a parent's touch handler is often silently ignored. The textarea
+ * remains visually invisible via opacity:0 and sits above the canvas so
+ * tap/drag events land on it. Desktop (mouse) keeps the 1×1 rule so xterm
+ * can still handle drag-to-select and mouse-tracking on the canvas.
+ */
+@media (hover: none) and (pointer: coarse) {
+  .terminal-xterm .xterm .xterm-helper-textarea {
+    width: 100% !important;
+    height: 100% !important;
+    opacity: 0 !important;
+    z-index: 2 !important;
+  }
+}
+
+.terminal-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: var(--terminal-bg);
+  gap: var(--space-lg);
+  color: var(--text-muted);
+}
+
+.terminal-loading .terminal-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--in-progress);
+  border-radius: 50%;
+  animation: terminal-spin 1s linear infinite;
+}
+
+@keyframes terminal-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.terminal-shell-name {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  margin-left: 8px;
+}
+
+.terminal-status {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 8px;
+}
+
+.terminal-status.connected {
+  background: var(--done);
+}
+
+.terminal-status.connecting,
+.terminal-status.reconnecting {
+  background: var(--in-progress);
+  animation: terminal-pulse 1.5s ease-in-out infinite;
+}
+
+.terminal-status.disconnected {
+  background: var(--error);
+}
+
+@keyframes terminal-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.terminal-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-lg);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.terminal-connection-status {
+  font-weight: 500;
+}
+
+.terminal-connection-status.connected {
+  color: var(--done);
+}
+
+.terminal-connection-status.connecting,
+.terminal-connection-status.reconnecting {
+  color: var(--in-progress);
+}
+
+.terminal-connection-status.disconnected {
+  color: var(--error);
+}
+
+.terminal-exit-code {
+  color: var(--error);
+  font-weight: 500;
+}
+
+.terminal-reconnect-btn,
+.terminal-restart-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 6px 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.terminal-reconnect-btn:hover,
+.terminal-restart-btn:hover {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+
+.terminal-error {
+  padding: var(--space-md) var(--space-lg);
+  background: rgba(179, 38, 38, 0.1);
+  border-bottom: 1px solid var(--border);
+  color: var(--error);
+  font-size: 13px;
+}
+
+.terminal-error-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md, 12px);
+}
+
+.terminal-error-content span {
+  color: var(--error, #f48771);
+  text-align: center;
+}
+
+.terminal-retry-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs, 4px);
+  padding: 6px 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.terminal-retry-btn:hover {
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+
+/* === Terminal Modal Mobile Responsive === */
+@media (max-width: 768px) {
+  .terminal-modal {
+    width: 100%;
+    max-width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    border-radius: 0;
+    border: none;
+  }
+
+  /* Stack tabs and actions on separate rows */
+  .terminal-header {
+    flex-wrap: wrap;
+    padding-top: env(safe-area-inset-top, 0);
+  }
+
+  /* Tabs get their own full-width row and remain scrollable */
+  .terminal-tabs {
+    flex: 1 1 100%;
+    min-width: 100%;
+    order: 1;
+  }
+
+  /* Hide the redundant title/status indicator on mobile — .terminal-status-bar shows connection state */
+  .terminal-title {
+    display: none;
+  }
+
+  /* Actions sit on a compact second row */
+  .terminal-actions {
+    flex: 1 1 100%;
+    order: 2;
+    justify-content: flex-end;
+    border-top: 1px solid var(--border);
+    padding: 0 4px;
+    min-height: 32px;
+  }
+
+  /* Hide text labels on action buttons to save space */
+  .terminal-action-label {
+    display: none;
+  }
+
+  .terminal-reconnect-btn,
+  .terminal-restart-btn,
+  .terminal-clear-btn {
+    padding: 8px;
+    min-height: 32px;
+    min-width: 32px;
+    justify-content: center;
+  }
+
+  .terminal-tab {
+    min-height: 36px;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+
+  .terminal-tab-label {
+    font-size: 13px;
+  }
+
+  .terminal-close {
+    width: 36px;
+    height: 36px;
+  }
+
+  .terminal-toolbar {
+    padding: 10px 12px;
+    padding-bottom: max(10px, env(safe-area-inset-bottom, 0));
+  }
+
+  .terminal-task-title {
+    font-size: 12px;
+    max-width: 200px;
+  }
+
+  .terminal-empty-state {
+    padding: var(--space-xl);
+    padding-bottom: max(24px, env(safe-area-inset-bottom, 0));
+  }
+
+  /* Mobile styles for interactive terminal */
+  .terminal-output {
+    padding: var(--space-md);
+    font-size: 12px;
+  }
+
+  .terminal-welcome {
+    padding: 24px 16px;
+  }
+
+  .terminal-welcome h3 {
+    font-size: 16px;
+  }
+
+  .terminal-commands-list {
+    gap: 6px;
+  }
+
+  .terminal-commands-list span {
+    padding: 3px 8px;
+    font-size: 11px;
+  }
+
+  .terminal-shortcuts {
+    font-size: 11px;
+  }
+
+  .terminal-shortcuts kbd {
+    padding: 1px 4px;
+    font-size: 10px;
+  }
+
+  .terminal-input-area {
+    padding: 10px 12px;
+    padding-bottom: max(10px, env(safe-area-inset-bottom, 0));
+  }
+
+  .terminal-input {
+    font-size: 12px;
+    padding: 6px 10px;
+  }
+
+  .terminal-kill-btn {
+    padding: 6px 12px;
+    font-size: 11px;
+  }
+
+  .terminal-output-text {
+    padding: 10px 12px;
+    font-size: 12px;
+  }
+
+  /* When a virtual keyboard is open, constrain the modal to fit entirely
+     above the keyboard so the status bar / entry area stays visible.
+     --vv-height is the visualViewport.height in pixels (set by JS) and
+     works uniformly across Chrome Android and iOS Safari.
+     Falls back to 100dvh - overlap when --vv-height is not available. */
+  .terminal-modal[style*="--keyboard-overlap"] {
+    /* Neutralize inherited desktop min-height (90vh) so the modal can
+       shrink below the full-viewport mobile default when the keyboard
+       is open.  Without this, min-height keeps the modal taller than
+       the available space and the bottom overlaps the keyboard. */
+    min-height: auto;
+    /* Apply both height and max-height so the modal is *exactly* the
+       visual viewport height — not just capped at it.  Using height
+       ensures the element cannot be taller than max-height due to
+       inherited min-height or flex layout. */
+    height: var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px)));
+    max-height: var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px)));
+    /* Clip any content that exceeds the constrained height during
+       the keyboard-open transition so the terminal doesn't poke out
+       below the visible area while xterm re-fits. */
+    overflow: hidden;
+  }
+}
+
+

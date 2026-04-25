@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { loadAllAppCss } from "../test/cssFixture";
 import fs from "fs";
 import path from "path";
 
@@ -12,11 +13,10 @@ import path from "path";
  */
 
 describe("Status color CSS custom properties", () => {
-  const stylesPath = path.resolve(__dirname, "../styles.css");
   let css: string;
 
   beforeAll(() => {
-    css = fs.readFileSync(stylesPath, "utf-8");
+    css = loadAllAppCss();
   });
 
   it("defines --status-triage-bg custom property in :root using color-mix()", () => {
@@ -235,11 +235,10 @@ describe("PrSection theme safety", () => {
 });
 
 describe("CSS modifier classes for status colors", () => {
-  const stylesPath = path.resolve(__dirname, "../styles.css");
   let css: string;
 
   beforeAll(() => {
-    css = fs.readFileSync(stylesPath, "utf-8");
+    css = loadAllAppCss();
   });
 
   it("defines card-status-badge modifier classes for all columns", () => {
@@ -318,13 +317,12 @@ describe("CSS modifier classes for status colors", () => {
 
 describe("Accent color per color theme", () => {
   // Theme blocks are now in a separate theme-data.css file
-  const stylesPath = path.resolve(__dirname, "../styles.css");
   const themeDataPath = path.resolve(__dirname, "../public/theme-data.css");
   let css: string;
   let themeData: string;
 
   beforeAll(() => {
-    css = fs.readFileSync(stylesPath, "utf-8");
+    css = loadAllAppCss();
     themeData = fs.readFileSync(themeDataPath, "utf-8");
   });
 

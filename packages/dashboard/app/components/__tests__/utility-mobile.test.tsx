@@ -1,6 +1,5 @@
-import fs from "node:fs";
-import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { loadAllAppCss } from "../../test/cssFixture";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { Agent, AiSessionSummary } from "../../api";
 import type { Toast } from "../../hooks/useToast";
@@ -22,7 +21,6 @@ import { ExecutorStatusBar } from "../ExecutorStatusBar";
 import { ActiveAgentsPanel } from "../ActiveAgentsPanel";
 import { ToastContainer } from "../ToastContainer";
 
-const stylesPath = path.resolve(__dirname, "../../styles.css");
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -230,7 +228,7 @@ describe("Utility component mobile adaptations", () => {
   });
 
   it("contains mobile CSS overrides for adapted utility and layout components", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
 
     expectMobileRule(css, ".settings-layout", "flex-direction: column;");
     expectMobileRule(css, ".agent-board", "grid-template-columns: 1fr;");

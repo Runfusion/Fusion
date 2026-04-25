@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { Globe, Folder } from "lucide-react";
 import { THINKING_LEVELS, isGlobalSettingsKey, isProjectSettingsKey, getErrorMessage } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, AgentPromptsConfig, ThinkingLevel } from "@fusion/core";
@@ -9,8 +9,8 @@ import type { ToastType } from "../hooks/useToast";
 import { ThemeSelector } from "./ThemeSelector";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { FileEditor } from "./FileEditor";
-import { PluginManager } from "./PluginManager";
-import { PiExtensionsManager } from "./PiExtensionsManager";
+const PluginManager = lazy(() => import("./PluginManager").then((m) => ({ default: m.PluginManager })));
+const PiExtensionsManager = lazy(() => import("./PiExtensionsManager").then((m) => ({ default: m.PiExtensionsManager })));
 import { ClaudeCliProviderCard } from "./ClaudeCliProviderCard";
 import { PluginSlot } from "./PluginSlot";
 import { AgentPromptsManager } from "./AgentPromptsManager";
@@ -3070,12 +3070,18 @@ export function SettingsModal({
           <>
             {renderScopeBanner()}
             <h4 className="settings-section-heading">Plugins</h4>
-            <PluginManager addToast={addToast} projectId={projectId} />
+            <Suspense fallback={null}>
+              <PluginManager addToast={addToast} projectId={projectId} />
+            </Suspense>
             <PluginSlot slotId="settings-section" projectId={projectId} />
           </>
         );
       case "pi-extensions":
-        return <PiExtensionsManager addToast={addToast} projectId={projectId} />;
+        return (
+          <Suspense fallback={null}>
+            <PiExtensionsManager addToast={addToast} projectId={projectId} />
+          </Suspense>
+        );
       case "authentication": {
         // CLI-backed providers (currently just claude-cli) render their own
         // compact card with Enable/Disable + Test actions — bypassing the

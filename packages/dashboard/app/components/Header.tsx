@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Server, Workflow, Bot, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare, ChevronDown, Check, Map, Zap, Sparkles, FileText, Brain } from "lucide-react";
+import "./Header.css";
+// Header renders an inline ProjectSelector dropdown using project-selector-* classes.
+import "./ProjectSelector.css";
 import type { ProjectInfo } from "../api";
 import type { NodeConfig, ProjectStatus } from "@fusion/core";
 import { fetchScripts } from "../api";

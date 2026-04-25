@@ -1,0 +1,106 @@
+/* === SettingsSyncConflictModal === */
+.settings-sync-conflict-modal {
+  max-width: 860px;
+  width: min(860px, calc(100vw - 32px));
+}
+
+.settings-sync-conflict-modal__conflict-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  max-height: min(50vh, 400px);
+  overflow-y: auto;
+}
+
+.settings-sync-conflict-modal__conflict-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-md);
+}
+
+.settings-sync-conflict-modal__key {
+  font-weight: 600;
+  font-family: monospace;
+  margin-bottom: var(--space-sm);
+}
+
+.settings-sync-conflict-modal__diff-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.settings-sync-conflict-modal__diff-side {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.settings-sync-conflict-modal__diff-label {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.settings-sync-conflict-modal__diff-content {
+  padding: var(--space-xs) var(--space-sm);
+  white-space: pre;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
+.settings-sync-conflict-modal__resolution {
+  display: flex;
+  gap: var(--space-md);
+  align-items: center;
+}
+
+.settings-sync-conflict-modal__resolution label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  cursor: pointer;
+}
+
+.settings-sync-conflict-modal__resolution input[type="radio"] {
+  cursor: pointer;
+}
+
+.settings-sync-conflict-modal__manual-input {
+  width: 100%;
+  font-family: monospace;
+  font-size: 12px;
+  min-height: 80px;
+  margin-top: var(--space-xs);
+  padding: var(--space-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  resize: vertical;
+}
+
+.settings-sync-conflict-modal__manual-input:focus {
+  outline: none;
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.settings-sync-conflict-modal__bulk-actions {
+  display: flex;
+  gap: var(--space-xs);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+}
+
+.settings-sync-conflict-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+}
+

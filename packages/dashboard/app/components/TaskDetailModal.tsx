@@ -1,3 +1,4 @@
+import "./TaskDetailModal.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Pencil, Bot, X, ChevronDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -1763,6 +1764,20 @@ export function TaskDetailModal({
                     Reject Plan
                   </button>
                 </>
+              )}
+
+              {/* Standalone Delete button for triage-column tasks — triage tasks
+                  hide the Actions dropdown (see condition below) so the user has
+                  no quick way to delete a freshly-created task otherwise. */}
+              {task.column === "triage" && task.status !== "awaiting-approval" && !canRetryTask && (
+                <button
+                  className="btn btn-sm btn-danger"
+                  onClick={handleDelete}
+                  aria-label="Delete task"
+                  title="Delete task"
+                >
+                  Delete
+                </button>
               )}
 
               {/* Actions dropdown — less common operations */}

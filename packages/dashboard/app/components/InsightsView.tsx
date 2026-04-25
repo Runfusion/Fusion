@@ -10,6 +10,7 @@
  * - Accessible feedback for all actions
  */
 
+import "./InsightsView.css";
 import { useCallback, useEffect, useState } from "react";
 import {
   Sparkles,

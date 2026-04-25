@@ -1,3 +1,4 @@
+import "./SkillMultiselect.css";
 import { useState, useEffect } from "react";
 import { fetchDiscoveredSkills } from "../api";
 import type { DiscoveredSkill } from "../api";

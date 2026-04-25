@@ -1,0 +1,220 @@
+/* === DirectoryPicker === */
+.directory-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.directory-picker-input-row {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.directory-picker-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.directory-picker-browse-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.directory-picker-browse-btn:hover {
+  background: var(--card-hover);
+  border-color: var(--text-dim);
+}
+
+.directory-picker-browse-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.directory-picker-browse-btn:active {
+  transform: scale(0.97);
+}
+
+.directory-picker-browser {
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  animation: fadeIn var(--transition-fast);
+}
+
+.directory-picker-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.directory-picker-breadcrumb {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  color: var(--todo);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+}
+
+.directory-picker-breadcrumb:hover {
+  background: var(--card-hover);
+  text-decoration: underline;
+}
+
+.directory-picker-breadcrumb-item {
+  display: inline-flex;
+  align-items: center;
+}
+
+.directory-picker-breadcrumb-sep {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.directory-picker-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-md);
+  border-bottom: 1px solid var(--border);
+}
+
+.directory-picker-up-btn,
+.directory-picker-hidden-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.directory-picker-up-btn:hover,
+.directory-picker-hidden-toggle:hover {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.directory-picker-entries {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--space-xs) 0;
+}
+
+.directory-picker-entry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: 6px var(--space-md);
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color var(--transition-fast);
+}
+
+.directory-picker-entry:hover {
+  background: var(--card-hover);
+}
+
+.directory-picker-entry-icon {
+  color: var(--todo);
+  flex-shrink: 0;
+}
+
+.directory-picker-entry-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directory-picker-entry-arrow {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.directory-picker-loading,
+.directory-picker-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.directory-picker-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  margin: var(--space-sm) var(--space-md);
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid var(--error);
+  border-radius: var(--radius-md);
+  color: var(--error);
+  font-size: 13px;
+}
+
+.directory-picker-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.directory-picker-selected-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.directory-picker-select-btn {
+  flex-shrink: 0;
+  padding: 6px 16px !important;
+  font-size: 13px !important;
+}
+

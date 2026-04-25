@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { Bot } from "lucide-react";
+import "./AgentMentionPopup.css";
 import type { Agent } from "@fusion/core";
 
 interface AgentMentionPopupProps {

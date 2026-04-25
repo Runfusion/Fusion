@@ -10,6 +10,7 @@
  * - Live updates via SSE (plugin:lifecycle events)
  */
 
+import "./PluginManager.css";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Package, Settings, Trash2, Plus, X, RefreshCw, RotateCcw, ExternalLink } from "lucide-react";
 import { fetchPlugins, installPlugin, enablePlugin, disablePlugin, uninstallPlugin, fetchPluginSettings, updatePluginSettings, reloadPlugin } from "../api";

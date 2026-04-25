@@ -17,8 +17,8 @@ const mockStartAgentGeneration = vi.mocked(api.startAgentGeneration);
 const mockGenerateAgentSpec = vi.mocked(api.generateAgentSpec);
 const mockCancelAgentGeneration = vi.mocked(api.cancelAgentGeneration);
 
-const stylesPath = path.join(__dirname, "../../styles.css");
-const readStyles = () => fs.readFileSync(stylesPath, "utf-8");
+import { loadAllAppCss } from "../../test/cssFixture";
+const readStyles = () => loadAllAppCss();
 
 const generatedSpec: AgentGenerationSpec = {
   title: "Accessibility Reviewer",

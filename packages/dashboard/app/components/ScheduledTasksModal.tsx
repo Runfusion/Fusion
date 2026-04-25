@@ -1,3 +1,6 @@
+// ScheduledTasksModal renders schedule/routine cards using .scheduling-*, .routine-*,
+// .schedule-form classes that live in ScriptsModal.css. Both modals share that file.
+import "./ScriptsModal.css";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Plus, Zap, Globe, Folder, X } from "lucide-react";
 import type { Routine, RoutineCreateInput } from "@fusion/core";

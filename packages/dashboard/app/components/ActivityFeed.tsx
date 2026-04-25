@@ -1,5 +1,6 @@
 import { memo, useCallback, useMemo } from "react";
-import { 
+import "./ActivityFeed.css";
+import {
   GitMerge,
   CheckCircle, 
   XCircle, 

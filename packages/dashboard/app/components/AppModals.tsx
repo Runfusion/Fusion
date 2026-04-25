@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, lazy, Suspense } from "react";
 import type { ProjectInfo } from "../api";
 import type { ColorTheme, Column, MergeResult, Task, TaskCreateInput, ThemeMode } from "@fusion/core";
 import type { UseProjectActionsResult } from "../hooks/useProjectActions";
@@ -21,9 +21,10 @@ import { ActivityLogModal } from "./ActivityLogModal";
 import { GitManagerModal } from "./GitManagerModal";
 import { WorkflowStepManager } from "./WorkflowStepManager";
 import { AgentListModal } from "./AgentListModal";
-import { SetupWizardModal } from "./SetupWizardModal";
 import { ModelOnboardingModal } from "./ModelOnboardingModal";
 import { ToastContainer } from "./ToastContainer";
+
+const SetupWizardModal = lazy(() => import("./SetupWizardModal").then((m) => ({ default: m.SetupWizardModal })));
 
 interface AppModalsProps {
   projectId?: string;
@@ -277,10 +278,12 @@ export function AppModals({
       />
 
       {modalManager.setupWizardOpen && (
-        <SetupWizardModal
-          onProjectRegistered={projectActions.handleSetupComplete}
-          onClose={modalManager.closeSetupWizard}
-        />
+        <Suspense fallback={null}>
+          <SetupWizardModal
+            onProjectRegistered={projectActions.handleSetupComplete}
+            onClose={modalManager.closeSetupWizard}
+          />
+        </Suspense>
       )}
 
       {modalManager.modelOnboardingOpen && (

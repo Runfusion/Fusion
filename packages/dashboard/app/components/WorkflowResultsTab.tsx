@@ -1,3 +1,4 @@
+import "./WorkflowResultsTab.css";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronUp, Maximize2, Pencil, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";

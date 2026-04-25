@@ -1,3 +1,4 @@
+import "./OnboardingResumeCard.css";
 import { Play, Sparkles } from "lucide-react";
 import { getOnboardingResumeStep } from "./model-onboarding-state";
 import { trackOnboardingEvent } from "./onboarding-events";

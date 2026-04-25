@@ -81,10 +81,10 @@ const mockResetAgentBudget = vi.mocked(api.resetAgentBudget);
 
 const originalFetch = globalThis.fetch;
 
-const stylesPath = path.join(__dirname, "../../styles.css");
+import { loadAllAppCss } from "../../test/cssFixture";
 
 function readStyles(): string {
-  return fs.readFileSync(stylesPath, "utf-8");
+  return loadAllAppCss();
 }
 
 describe("agent modal mobile CSS structure", () => {

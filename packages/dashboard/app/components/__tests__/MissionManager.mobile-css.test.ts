@@ -1,14 +1,17 @@
 import fs from "node:fs";
+import { loadAllAppCss } from "../../test/cssFixture";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const stylesPath = path.resolve(__dirname, "../../styles.css");
 
 function getMissionMobileSection(css: string): string {
   const start = css.indexOf("/* ================================================================\n   Responsive — Mission Manager on mobile (≤768px)");
   expect(start).toBeGreaterThan(-1);
 
-  const end = css.indexOf("}\n\n/* ── Workflow Results ── */", start);
+  // After CSS extraction, the Workflow Results block lives in
+  // WorkflowResultsTab.css; the mission mobile section now ends just before
+  // the appended light-theme overrides at the end of MissionManager.css.
+  const end = css.indexOf("/* Light theme overrides", start);
   expect(end).toBeGreaterThan(start);
 
   return css.slice(start, end);
@@ -16,7 +19,7 @@ function getMissionMobileSection(css: string): string {
 
 describe("MissionManager mobile styles", () => {
   it("adds responsive tab and activity layout rules", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const section = getMissionMobileSection(css);
 
     expect(section).toContain(".mission-detail__tabs {");
@@ -29,7 +32,7 @@ describe("MissionManager mobile styles", () => {
   });
 
   it("adds mobile overflow protection for activity event content", () => {
-    const css = fs.readFileSync(stylesPath, "utf-8");
+    const css = loadAllAppCss();
     const section = getMissionMobileSection(css);
 
     expect(section).toContain(".mission-events {");

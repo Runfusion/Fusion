@@ -1,3 +1,4 @@
+import "./WorkflowStepManager.css";
 import { useState, useEffect, useCallback } from "react";
 import type { WorkflowStep, WorkflowStepInput, WorkflowStepMode, WorkflowStepPhase } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
