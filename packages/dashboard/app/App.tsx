@@ -47,6 +47,12 @@ import { fetchUnreadCount, reportDashboardPerf } from "./api";
 import { getScopedItem, setScopedItem } from "./utils/projectStorage";
 import { subscribeSse } from "./sse-bus";
 
+// ChatView's CSS is imported eagerly so the styles bundle into the main
+// CSS file. Without this, the lazy ChatView JS chunk loaded its own CSS
+// link asynchronously, producing a brief flash of unstyled chat UI on
+// first render.
+import "./components/ChatView.css";
+
 const AgentsView = lazy(() => import("./components/AgentsView").then((m) => ({ default: m.AgentsView })));
 const DocumentsView = lazy(() => import("./components/DocumentsView").then((m) => ({ default: m.DocumentsView })));
 const InsightsView = lazy(() => import("./components/InsightsView").then((m) => ({ default: m.InsightsView })));

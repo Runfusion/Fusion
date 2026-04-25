@@ -130,7 +130,7 @@ fn dashboard
 
 On first launch, Fusion automatically opens the **onboarding wizard**. It guides you through three steps:
 
-1. **AI Setup** — Connect an AI provider and choose a default model. Authenticate via OAuth login (for supported providers like OpenAI Codex) or enter an API key directly.
+1. **AI Setup** — Start with a simplified quick-start list of recommended providers (`anthropic`, `openai`, `google`, `gemini`, `ollama`), plus any providers you already connected. You only need one provider to get started. Additional providers and detailed setup guidance live under the **Advanced provider settings** disclosure. Authenticate via OAuth login (for supported providers like OpenAI Codex) or enter an API key directly.
 
 2. **GitHub (Optional)** — Connect GitHub to import issues and manage pull requests. This step is optional — you can continue without GitHub.
 

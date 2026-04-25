@@ -401,17 +401,23 @@ describe("ModelOnboardingModal", () => {
         expect(screen.getByText("OpenAI API Key")).toBeTruthy();
       });
 
+      expect(screen.queryByText("Create an API key from your OpenAI dashboard under API keys.")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: /Advanced setup details/ }));
+
       expect(
         screen.getByText("Create an API key from your OpenAI dashboard under API keys."),
       ).toBeTruthy();
     });
 
-    it("shows usage disclosure and dashboard link for API key provider", async () => {
+    it("shows dashboard link for API key provider after expanding setup details", async () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
-        expect(screen.getByText("Where is this key used?")).toBeTruthy();
+        expect(screen.getByRole("button", { name: /Advanced setup details/ })).toBeTruthy();
       });
+
+      expect(screen.queryByRole("link", { name: "Get your API key →" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: /Advanced setup details/ }));
 
       const keyLink = screen.getByRole("link", { name: "Get your API key →" });
       expect(keyLink.getAttribute("href")).toBe("https://platform.openai.com/api-keys");
@@ -428,6 +434,60 @@ describe("ModelOnboardingModal", () => {
 
       expect(screen.getByText("Login")).toBeTruthy();
       expect(screen.getByTestId("onboarding-apikey-save-openai")).toBeTruthy();
+    });
+
+    it("shows quick-start section and always-visible one-provider helper copy", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("onboarding-quick-start-providers")).toBeTruthy();
+      });
+
+      expect(screen.getByText("Quick start providers")).toBeTruthy();
+      expect(screen.getByText("You only need one provider to get started.")).toBeTruthy();
+      expect(screen.getByRole("button", { name: /Advanced provider settings/ })).toBeTruthy();
+    });
+
+    it("keeps advanced providers hidden by default until advanced settings is expanded", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+          { id: "minimax", name: "MiniMax", authenticated: false, type: "api_key" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Anthropic")).toBeTruthy();
+      });
+
+      expect(screen.queryByText("MiniMax")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: /Advanced provider settings/ }));
+
+      await waitFor(() => {
+        expect(screen.getByText("MiniMax")).toBeTruthy();
+      });
+    });
+
+    it("shows connected non-quick-start providers outside the collapsed advanced section", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
+          { id: "openrouter", name: "OpenRouter", authenticated: true, type: "api_key" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("onboarding-connected-providers")).toBeTruthy();
+      });
+
+      const connectedSection = screen.getByTestId("onboarding-connected-providers");
+      expect(within(connectedSection).getByText("OpenRouter")).toBeTruthy();
+      expect(screen.queryByTestId("onboarding-provider-card-openrouter")).toBeTruthy();
+      expect(screen.queryByTestId("onboarding-advanced-provider-settings")).toBeNull();
     });
 
     it("shows model dropdown in AI Setup step", async () => {
@@ -744,6 +804,11 @@ describe("ModelOnboardingModal", () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
+        expect(screen.getByRole("button", { name: /Advanced provider settings/ })).toBeTruthy();
+      });
+      fireEvent.click(screen.getByRole("button", { name: /Advanced provider settings/ }));
+
+      await waitFor(() => {
         expect(screen.getByText("AI provider — connect to start using AI models")).toBeTruthy();
       });
     });
@@ -758,9 +823,15 @@ describe("ModelOnboardingModal", () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await waitFor(() => {
+        expect(screen.getByRole("button", { name: /Advanced provider settings/ })).toBeTruthy();
+      });
+      fireEvent.click(screen.getByRole("button", { name: /Advanced provider settings/ }));
+
+      await waitFor(() => {
         expect(screen.getByText("API Key")).toBeTruthy();
       });
 
+      fireEvent.click(screen.getByRole("button", { name: /Advanced setup details/ }));
       expect(screen.getByText("Enter your API key for this provider.")).toBeTruthy();
     });
   });
@@ -945,8 +1016,15 @@ describe("ModelOnboardingModal", () => {
       expect(input).not.toHaveClass("onboarding-apikey-input--success");
     });
 
-    it("shows format hint for known providers", async () => {
+    it("shows format hint for known providers after expanding setup details", async () => {
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /Advanced setup details/ })).toBeTruthy();
+      });
+
+      expect(screen.queryByText("Format: Starts with sk-")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: /Advanced setup details/ }));
 
       await waitFor(() => {
         expect(screen.getByText("Format: Starts with sk-")).toBeTruthy();
@@ -960,6 +1038,11 @@ describe("ModelOnboardingModal", () => {
         ],
       });
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /Advanced provider settings/ })).toBeTruthy();
+      });
+      fireEvent.click(screen.getByRole("button", { name: /Advanced provider settings/ }));
 
       await waitFor(() => {
         expect(screen.getByTestId("onboarding-apikey-input-mystery-provider")).toBeTruthy();
