@@ -18,8 +18,10 @@ const rawArgs = process.argv.slice(2);
 
 // --inspect / --inspect-brk / --inspect=PORT enables the Node inspector and
 // auto-dumps a heap snapshot just before the heap limit is hit. Strip these
-// from forwarded args so they don't reach the dashboard CLI parser; they go
-// into NODE_OPTIONS instead so tsx's child node process picks them up.
+// from forwarded args so they don't reach the dashboard CLI parser. We pass
+// them as CLI flags directly to node (NOT via NODE_OPTIONS), because
+// NODE_OPTIONS is inherited by every grandchild process — every vitest /
+// agent / claude subprocess would then try to bind 9229 and fail.
 const inspectFlags = [];
 const args = [];
 for (const a of rawArgs) {
@@ -33,15 +35,13 @@ if (inspectFlags.length > 0) {
   // 3 = take up to 3 snapshots as we approach the heap limit. Files land in
   // CWD as Heap.YYYYMMDD.HHMMSS.PID.NNN.heapsnapshot
   inspectFlags.push("--heapsnapshot-near-heap-limit=3");
-  console.log(`[dev-with-memory] inspector enabled: ${inspectFlags.join(" ")}`);
+  console.log(`[dev-with-memory] inspector flags: ${inspectFlags.join(" ")}`);
 }
 
-// Base NODE_OPTIONS applied to every spawned node process (build + run).
-// Inspector flags are NOT here — they go only on the final tsx run, otherwise
-// `pnpm build` would grab port 9229 first and tsx would fail to bind.
-const baseNodeOptions = `--max-old-space-size=${MEMORY_MB} ${process.env.NODE_OPTIONS || ""}`.trim();
-process.env.NODE_OPTIONS = baseNodeOptions;
-const runNodeOptions = `${baseNodeOptions} ${inspectFlags.join(" ")}`.trim();
+// NODE_OPTIONS is shared with every spawned node process (build + run +
+// agents). Heap size belongs here. Inspector flags do NOT — see comment above.
+const nodeOptions = `--max-old-space-size=${MEMORY_MB} ${process.env.NODE_OPTIONS || ""}`.trim();
+process.env.NODE_OPTIONS = nodeOptions;
 
 // In dev we bind the dashboard to 0.0.0.0 so the server is reachable from
 // mobile devices and other machines on the LAN for testing. Production
@@ -66,16 +66,16 @@ const ENTRY = path.resolve(process.cwd(), "packages/cli/src/bin.ts");
 
 // Spawn node directly (no shell) so the inspector attaches to the real app
 // process and there's no parent/child wrapper consuming --inspect.
+// Inspector flags are CLI args here so they apply only to this process and
+// don't propagate to grandchildren via NODE_OPTIONS.
 function runApp(extraArgs) {
   const tsx = spawn(process.execPath, [
+    ...inspectFlags,
     "--require", PRELOAD,
     "--import", `file://${LOADER}`,
     ENTRY,
     ...extraArgs,
-  ], {
-    stdio: "inherit",
-    env: { ...process.env, NODE_OPTIONS: runNodeOptions },
-  });
+  ], { stdio: "inherit" });
   tsx.on("close", (c) => process.exit(c ?? 1));
 }
 
