@@ -50,8 +50,12 @@
     "@mariozechner/pi-ai": "^0.70.0",
     "@mariozechner/pi-coding-agent": "^0.70.0",
     "express": "^5.1.0",
+    "ink": "^6.8.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
     "ioredis": "^5.6.0",
-    "multer": "^2.1.1"
+    "multer": "^2.1.1",
+    "react": "^19.0.0"
   },
   "peerDependencies": {
     "@mariozechner/pi-ai": "*",
@@ -74,11 +78,13 @@
     "@fusion/dashboard": "workspace:*",
     "@fusion/engine": "workspace:*",
     "@fusion/pi-claude-cli": "workspace:*",
-    "typebox": "^1.0.0",
     "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
     "@vitest/coverage-v8": "^3.1.0",
+    "ink-testing-library": "^4.0.0",
     "tsup": "^8.5.1",
     "tsx": "^4.19.0",
+    "typebox": "^1.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.1.0",
     "yaml": "^2.8.3"

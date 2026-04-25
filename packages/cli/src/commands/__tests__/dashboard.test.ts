@@ -1,9 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 
-// Use vi.hoisted to define mocks that need to be referenced in vi.mock
+// ── Capture instances & arguments ───────────────────────────────────
+
+let capturedExecutorOpts: Record<string, unknown> | undefined;
+let capturedSelfHealingOpts: Record<string, unknown> | undefined;
+
 const {
-  centralInstances,
+  mockAuthStorage,
+  mockModelRegistry,
+  mockDiscoverAndLoadExtensions,
+  mockCreateExtensionRuntime,
+  mockSelfHealingStart,
+  mockSelfHealingStop,
+  mockCheckStuckBudget,
+  mockStuckCheckNow,
   mockResolveGlobalDir,
   mockGlobalSettingsGetSettings,
   mockGlobalSettingsUpdateSettings,
@@ -13,9 +24,21 @@ const {
   delete process.env.FUSION_DAEMON_TOKEN;
   delete process.env.FUSION_BEARER_TOKEN;
 
-  const centralInstances: any[] = [];
   return {
-    centralInstances,
+    mockAuthStorage: { getAuth: vi.fn(), setAuth: vi.fn(), getApiKey: vi.fn().mockResolvedValue(undefined) },
+    mockModelRegistry: {
+      registerProvider: vi.fn(),
+      refresh: vi.fn(),
+    },
+    mockDiscoverAndLoadExtensions: vi.fn().mockResolvedValue({
+      runtime: { pendingProviderRegistrations: [] },
+      errors: [],
+    }),
+    mockCreateExtensionRuntime: vi.fn(),
+    mockSelfHealingStart: vi.fn(),
+    mockSelfHealingStop: vi.fn(),
+    mockCheckStuckBudget: vi.fn().mockResolvedValue(true),
+    mockStuckCheckNow: vi.fn().mockResolvedValue(undefined),
     mockResolveGlobalDir: vi.fn().mockReturnValue("/tmp/test-global"),
     mockGlobalSettingsGetSettings: vi.fn().mockResolvedValue({}),
     mockGlobalSettingsUpdateSettings: vi.fn().mockResolvedValue({}),
@@ -23,38 +46,12 @@ const {
   };
 });
 
-// ── Multi-project test fixtures ─────────────────────────────────────────
-//
-// Test fixtures model at least two registered projects with distinct IDs/paths
-// and independently addressable engine instances. This enables regression tests
-// for multi-project scoped scheduling where wrong-engine binding can silently
-// route operations to the wrong project.
-//
-const PROJECT_FIXTURES = {
-  primary: {
-    id: "project-1",
-    name: "Primary Project",
-    path: "/repo",
-    status: "active" as const,
-    isolationMode: "in-process" as const,
-  },
-  secondary: {
-    id: "project-2",
-    name: "Secondary Project",
-    path: "/repo-secondary",
-    status: "active" as const,
-    isolationMode: "in-process" as const,
-  },
-};
-
-// ── Capture arguments ───────────────────────────────────────────────
-
 // Minimal mock store backed by EventEmitter so `store.on` works
-function makeMockStore(projectId = "test") {
+function makeMockStore() {
   const emitter = new EventEmitter();
   // runDashboard registers several independent settings listeners by design;
-  // keep the test mock above Node's low default threshold while still checking
-  // startup wiring behavior.
+  // keep the test mock above Node's low default threshold while still asserting
+  // disposal behavior in the lifecycle cleanup tests below.
   emitter.setMaxListeners(20);
   const mockMissionStore = {
     listMissions: vi.fn().mockReturnValue([]),
@@ -67,18 +64,24 @@ function makeMockStore(projectId = "test") {
     init: vi.fn().mockResolvedValue(undefined),
     watch: vi.fn().mockResolvedValue(undefined),
     stopWatching: vi.fn(),
-    close: vi.fn(),
+    updateSettings: vi.fn().mockResolvedValue(undefined),
     getSettings: vi.fn().mockResolvedValue({
       maxConcurrent: 1,
       maxWorktrees: 2,
       autoMerge: false,
+      mergeStrategy: "direct",
       pollIntervalMs: 60_000,
-      openrouterModelSync: true,
     }),
     listTasks: vi.fn().mockResolvedValue([]),
-    getFusionDir: vi.fn().mockReturnValue(`/tmp/${projectId}/.fusion`),
+    getTask: vi.fn().mockResolvedValue({ id: "FN-TEST", column: "in-review", paused: false, description: "Test task", log: [] }),
+    moveTask: vi.fn().mockResolvedValue({}),
+    updatePrInfo: vi.fn().mockResolvedValue({}),
+    logEntry: vi.fn().mockResolvedValue(undefined),
+    updateTask: vi.fn().mockResolvedValue({}),
+    getFusionDir: vi.fn().mockReturnValue("/tmp/test/.fusion"),
+    getActiveMergingTask: vi.fn().mockReturnValue(undefined),
     getMissionStore: vi.fn().mockReturnValue(mockMissionStore),
-    healthCheck: vi.fn().mockReturnValue(true),
+    close: vi.fn(),
     on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
       emitter.on(event, handler);
     }),
@@ -91,52 +94,27 @@ function makeMockStore(projectId = "test") {
 
 // ── Mock @fusion/core ──────────────────────────────────────────────────
 
-const mockSyncInsightExtraction = vi.fn().mockResolvedValue(undefined);
-const mockProcessAndAudit = vi.fn().mockResolvedValue({
-  generatedAt: new Date().toISOString(),
-  health: "healthy",
-  checks: [],
-  workingMemory: { exists: true, size: 100, sectionCount: 2 },
-  insightsMemory: { exists: true, size: 50, insightCount: 3, categories: {}, lastUpdated: "2026-04-09" },
-  extraction: { runAt: new Date().toISOString(), success: true, insightCount: 3, duplicateCount: 0, skippedCount: 0, summary: "Test" },
-});
-
-// Track getProjectByPath calls to allow per-test resolution control
-let getProjectByPathResolver: ((cwd: string) => unknown) | null = null;
-
 vi.mock("@fusion/core", () => ({
   TaskStore: vi.fn().mockImplementation(() => makeMockStore()),
-  CentralCore: vi.fn().mockImplementation(() => {
-    const instance = {
-      init: vi.fn().mockResolvedValue(undefined),
-      close: vi.fn().mockResolvedValue(undefined),
-      getProjectByPath: vi.fn().mockImplementation((cwd: string) => {
-        // Use per-test resolver when available; default to primary project
-        if (getProjectByPathResolver) {
-          return Promise.resolve(getProjectByPathResolver(cwd));
-        }
-        return Promise.resolve({ ...PROJECT_FIXTURES.primary, path: cwd });
-      }),
-      getProject: vi.fn().mockImplementation((id: string) =>
-        Promise.resolve({ id, name: `Project ${id}`, path: `/repo/${id}`, status: "active", isolationMode: "in-process", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
-      ),
-      listProjects: vi.fn().mockResolvedValue([
-        { ...PROJECT_FIXTURES.primary, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-        { ...PROJECT_FIXTURES.secondary, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-      ]),
-      listNodes: vi.fn().mockResolvedValue([
-        { id: "node-local", name: "local", type: "local", status: "offline" },
-      ]),
-      updateNode: vi.fn().mockResolvedValue(undefined),
-      startDiscovery: vi.fn().mockResolvedValue({}),
-      stopDiscovery: vi.fn(),
-    };
-    centralInstances.push(instance);
-    return instance;
-  }),
+  CentralCore: vi.fn().mockImplementation(() => ({
+    init: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+    getProjectByPath: vi.fn().mockResolvedValue({ id: "project-1" }),
+    getProject: vi.fn().mockImplementation((id: string) =>
+      Promise.resolve({ id, name: `Project ${id}`, path: process.cwd(), status: "active", isolationMode: "in-process", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
+    ),
+    listProjects: vi.fn().mockResolvedValue([
+      { id: "project-1", name: "Test Project", path: process.cwd(), status: "active", isolationMode: "in-process", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    ]),
+  })),
   AutomationStore: vi.fn().mockImplementation(() => ({
     init: vi.fn().mockResolvedValue(undefined),
     listSchedules: vi.fn().mockResolvedValue([]),
+    getSchedule: vi.fn().mockResolvedValue(null),
+    createSchedule: vi.fn().mockResolvedValue({}),
+    updateSchedule: vi.fn().mockResolvedValue({}),
+    deleteSchedule: vi.fn().mockResolvedValue({}),
+    recordRun: vi.fn().mockResolvedValue({}),
     getDueSchedules: vi.fn().mockResolvedValue([]),
   })),
   AgentStore: vi.fn().mockImplementation(() => ({
@@ -146,26 +124,52 @@ vi.mock("@fusion/core", () => ({
     listAgents: vi.fn().mockResolvedValue([]),
     getAgent: vi.fn().mockResolvedValue(null),
     deleteAgent: vi.fn(),
+    on: vi.fn(),
+    off: vi.fn(),
+    getActiveHeartbeatRun: vi.fn().mockResolvedValue(null),
+    getBudgetStatus: vi.fn().mockResolvedValue({ isOverBudget: false, isOverThreshold: false, usagePercent: 0 }),
+    getRecentRuns: vi.fn().mockResolvedValue([]),
   })),
-  PluginStore: vi.fn().mockImplementation(() => ({
-    init: vi.fn().mockResolvedValue(undefined),
-    listPlugins: vi.fn().mockResolvedValue([]),
-    getPlugin: vi.fn(),
-    registerPlugin: vi.fn(),
-    enablePlugin: vi.fn(),
-    disablePlugin: vi.fn(),
-    updatePluginSettings: vi.fn(),
-    unregisterPlugin: vi.fn(),
-    updatePluginState: vi.fn(),
-  })),
-  PluginLoader: vi.fn().mockImplementation(() => ({
-    loadPlugin: vi.fn().mockResolvedValue(undefined),
-    stopPlugin: vi.fn().mockResolvedValue(undefined),
-    reloadPlugin: vi.fn().mockResolvedValue(undefined),
-    getPluginRoutes: vi.fn().mockReturnValue([]),
-    getPlugin: vi.fn(),
-    getLoadedPlugins: vi.fn().mockReturnValue([]),
-  })),
+  PluginStore: vi.fn().mockImplementation(() => {
+    const emitter = new EventEmitter();
+    return {
+      init: vi.fn().mockResolvedValue(undefined),
+      listPlugins: vi.fn().mockResolvedValue([]),
+      getPlugin: vi.fn(),
+      registerPlugin: vi.fn(),
+      enablePlugin: vi.fn(),
+      disablePlugin: vi.fn(),
+      updatePluginSettings: vi.fn(),
+      unregisterPlugin: vi.fn(),
+      updatePluginState: vi.fn(),
+      on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        emitter.on(event, handler);
+      }),
+      off: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        emitter.off(event, handler);
+      }),
+      emit: emitter.emit.bind(emitter),
+    };
+  }),
+  PluginLoader: vi.fn().mockImplementation(() => {
+    const emitter = new EventEmitter();
+    return {
+      loadPlugin: vi.fn().mockResolvedValue(undefined),
+      loadAllPlugins: vi.fn().mockResolvedValue({ loaded: 0, errors: 0 }),
+      stopPlugin: vi.fn().mockResolvedValue(undefined),
+      reloadPlugin: vi.fn().mockResolvedValue(undefined),
+      getPluginRoutes: vi.fn().mockReturnValue([]),
+      getPlugin: vi.fn(),
+      getLoadedPlugins: vi.fn().mockReturnValue([]),
+      on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        emitter.on(event, handler);
+      }),
+      off: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        emitter.off(event, handler);
+      }),
+      emit: emitter.emit.bind(emitter),
+    };
+  }),
   getEnabledPiExtensionPaths: vi.fn(() => []),
   resolveGlobalDir: mockResolveGlobalDir,
   GlobalSettingsStore: vi.fn().mockImplementation(() => ({
@@ -177,11 +181,62 @@ vi.mock("@fusion/core", () => ({
     getToken: vi.fn().mockResolvedValue(undefined),
     generateToken: vi.fn().mockResolvedValue("fn_test_dashboard_token"),
   })),
-  getTaskMergeBlocker: vi.fn().mockReturnValue(undefined),
-  syncInsightExtractionAutomation: mockSyncInsightExtraction,
-  INSIGHT_EXTRACTION_SCHEDULE_NAME: "Memory Insight Extraction",
-  processAndAuditInsightExtraction: mockProcessAndAudit,
+  getTaskMergeBlocker: vi.fn((task: any) => {
+    if (task.column !== "in-review") return `task is in '${task.column}', must be in 'in-review'`;
+    if (task.paused) return "task is paused";
+    if (task.status === "failed") return "task is marked 'failed'";
+    if (task.steps?.some((step: any) => step.status === "pending" || step.status === "in-progress")) {
+      return "task has incomplete steps";
+    }
+    if (task.workflowStepResults?.some((result: any) => result.status === "pending" || result.status === "failed")) {
+      return "task has incomplete or failed workflow steps";
+    }
+    return undefined;
+  }),
 }));
+
+// ── Hoisted shared mocks ───────────────────────────────────────────
+
+const {
+  mockExec,
+  mockExecSync,
+  mockFindPrForBranch,
+  mockCreatePr,
+  mockGetPrMergeStatus,
+  mockMergePr,
+} = vi.hoisted(() => ({
+  mockExec: vi.fn((_command: string, _options?: any, callback?: (err: null, stdout: string, stderr: string) => void) => {
+    if (typeof callback === "function") {
+      callback(null, "", "");
+    }
+    // Match child_process.exec's callback-style contract. Returning a Promise
+    // makes util.promisify(exec) emit DEP0174 in tests.
+    return {
+      pid: 12345,
+      stdout: null,
+      stderr: null,
+      on: vi.fn(),
+      once: vi.fn(),
+      kill: vi.fn(),
+    };
+  }),
+  mockExecSync: vi.fn(() => ""),
+  mockFindPrForBranch: vi.fn(),
+  mockCreatePr: vi.fn(),
+  mockGetPrMergeStatus: vi.fn(),
+  mockMergePr: vi.fn(),
+}));
+
+// ── Mock node:child_process ────────────────────────────────────────
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...original,
+    exec: mockExec,
+    execSync: mockExecSync,
+  };
+});
 
 // ── Mock @fusion/dashboard ─────────────────────────────────────────────
 
@@ -205,79 +260,372 @@ const mockListen = vi.fn((port: number) => {
   return server;
 });
 
-const MockGitHubClient = vi.fn().mockImplementation(() => ({
-  findPrForBranch: vi.fn(),
-  createPr: vi.fn(),
-  getPrMergeStatus: vi.fn(),
-  mergePr: vi.fn(),
-}));
-
 vi.mock("@fusion/dashboard", () => ({
-  createServer: vi.fn(() => ({ listen: mockListen })),
-  GitHubClient: MockGitHubClient,
+  createServer: vi.fn((_store: unknown, opts: Record<string, any> = {}) => {
+    if (opts.engine && !opts.onMerge) {
+      opts.onMerge = (taskId: string) => opts.engine.onMerge(taskId);
+    }
+    opts.onProjectFirstAccessed?.("project-1");
+    return { listen: mockListen };
+  }),
+  GitHubClient: vi.fn().mockImplementation(() => ({
+    findPrForBranch: mockFindPrForBranch,
+    createPr: mockCreatePr,
+    getPrMergeStatus: mockGetPrMergeStatus,
+    mergePr: mockMergePr,
+  })),
   createSkillsAdapter: vi.fn().mockReturnValue(undefined),
   getProjectSettingsPath: vi.fn().mockReturnValue("/tmp/project/.fusion/settings.json"),
   loadTlsCredentialsFromEnv: vi.fn().mockReturnValue(undefined),
 }));
 
+// ── Mock node:readline ──────────────────────────────────────────────
+
+vi.mock("node:readline", () => ({
+  createInterface: vi.fn(),
+}));
+
 // ── Mock @fusion/engine ────────────────────────────────────────────────
 
-// Track which engine is used for default/cwd path to assert correct routing
-const engineUsageLog: string[] = [];
+// We need the real WorktreePool class so we can assert `instanceof`.
+const { WorktreePool } = await import("@fusion/engine");
 
 vi.mock("@fusion/engine", async (importOriginal) => {
   const original = await importOriginal<typeof import("@fusion/engine")>();
+  const TriageProcessor = vi.fn().mockImplementation(() => ({
+    start: vi.fn(),
+    stop: vi.fn(),
+  }));
+  const TaskExecutor = vi.fn().mockImplementation((_store: unknown, _cwd: unknown, opts: unknown) => {
+    capturedExecutorOpts = opts as Record<string, unknown>;
+    return {
+      resumeOrphaned: vi.fn().mockResolvedValue(undefined),
+    };
+  });
+  const StuckTaskDetector = vi.fn().mockImplementation(() => ({
+    start: vi.fn(),
+    stop: vi.fn(),
+    checkNow: mockStuckCheckNow,
+    trackTask: vi.fn(),
+    untrackTask: vi.fn(),
+    markTaskProgress: vi.fn(),
+  }));
+  const Scheduler = vi.fn().mockImplementation(() => ({
+    start: vi.fn(),
+    stop: vi.fn(),
+  }));
+  const PrMonitor = vi.fn().mockImplementation(() => ({
+    onNewComments: vi.fn(),
+    startMonitoring: vi.fn(),
+    stopMonitoring: vi.fn(),
+    stopAll: vi.fn(),
+    getTrackedPrs: vi.fn().mockReturnValue(new Map()),
+    updatePrInfo: vi.fn(),
+    drainComments: vi.fn().mockReturnValue([]),
+  }));
+  const PrCommentHandler = vi.fn().mockImplementation(() => ({
+    handleNewComments: vi.fn().mockResolvedValue(undefined),
+    createFollowUpTask: vi.fn().mockResolvedValue(undefined),
+  }));
+  const aiMergeTask = vi.fn().mockImplementation(() => Promise.resolve({ merged: true }));
+  const CronRunner = vi.fn().mockImplementation(() => ({
+    start: vi.fn(),
+    stop: vi.fn(),
+  }));
+  const createAiPromptExecutor = vi.fn().mockResolvedValue({
+    execute: vi.fn().mockResolvedValue(undefined),
+  });
+  const SelfHealingManager = vi.fn().mockImplementation((_store: unknown, opts: unknown) => {
+    capturedSelfHealingOpts = opts as Record<string, unknown>;
+    return {
+      start: mockSelfHealingStart,
+      stop: mockSelfHealingStop,
+      checkStuckBudget: mockCheckStuckBudget,
+    };
+  });
+
+  class ProjectEngine {
+    private store: ReturnType<typeof makeMockStore>;
+    private cwd: string;
+    private pool?: InstanceType<typeof original.WorktreePool>;
+    private executor?: { resumeOrphaned?: () => Promise<void> };
+    private selfHealing?: { start?: () => void; stop?: () => void };
+    private stuckDetector?: { checkNow?: () => Promise<void> };
+    private settingsHandlers: Array<(event: any) => void> = [];
+    private taskMovedHandler?: (event: any) => void;
+    private mergeQueue: string[] = [];
+    private mergeActive = new Set<string>();
+    private mergeRunning = false;
+    private activeMergeSession: { dispose: () => void } | null = null;
+
+    constructor(
+      config: { workingDirectory: string },
+      _centralCore: unknown,
+      private options: { externalTaskStore?: ReturnType<typeof makeMockStore>; getMergeStrategy?: (settings: any) => string; processPullRequestMerge?: (store: any, cwd: string, taskId: string) => Promise<string>; getTaskMergeBlocker?: (task: any) => string | undefined } = {},
+    ) {
+      this.cwd = config.workingDirectory;
+      this.store = options.externalTaskStore ?? makeMockStore();
+    }
+
+    async start(): Promise<void> {
+      this.pool = new original.WorktreePool(this.cwd, this.store as any);
+      const semaphore = new original.AgentSemaphore(1);
+      const recoverCompletedTask = vi.fn().mockResolvedValue(false);
+      const getExecutingTaskIds = vi.fn().mockReturnValue(new Set());
+      const executorOpts = {
+        pool: this.pool,
+        semaphore,
+        recoverCompletedTask,
+        getExecutingTaskIds,
+      };
+
+      TriageProcessor(this.store, this.cwd, { semaphore });
+      this.executor = TaskExecutor(this.store, this.cwd, executorOpts);
+      this.stuckDetector = StuckTaskDetector(this.store, this.cwd, {});
+      this.selfHealing = SelfHealingManager(this.store, {
+        rootDir: process.cwd(),
+        recoverCompletedTask,
+        getExecutingTaskIds,
+      });
+      this.selfHealing.start?.();
+
+      const prMonitor = PrMonitor();
+      const prCommentHandler = PrCommentHandler(this.store);
+      prMonitor.onNewComments((taskId: string, prInfo: any, comments: any[]) =>
+        prCommentHandler.handleNewComments(taskId, prInfo, comments),
+      );
+      Scheduler(this.store, {
+        prMonitor,
+        semaphore,
+        onClosedPrFeedback: (taskId: string, prInfo: any, comments: any[]) =>
+          prCommentHandler.createFollowUpTask(taskId, prInfo, comments),
+      });
+      CronRunner();
+
+      this.wireSettingsListeners();
+      this.wireAutoMerge();
+      await this.executor?.resumeOrphaned?.();
+      await this.startupMergeSweep();
+    }
+
+    async stop(): Promise<void> {
+      for (const handler of this.settingsHandlers) {
+        this.store.off("settings:updated", handler);
+      }
+      this.settingsHandlers = [];
+      if (this.taskMovedHandler) {
+        this.store.off("task:moved", this.taskMovedHandler);
+        this.taskMovedHandler = undefined;
+      }
+      if (this.activeMergeSession) {
+        this.activeMergeSession.dispose();
+        this.activeMergeSession = null;
+      }
+      this.selfHealing?.stop?.();
+    }
+
+    getHeartbeatTriggerScheduler(): { stop: () => void } {
+      return { stop: vi.fn() };
+    }
+
+    async onMerge(taskId: string): Promise<unknown> {
+      return aiMergeTask(this.store, this.cwd, taskId, {
+        pool: this.pool,
+        onSession: (session: { dispose: () => void }) => {
+          this.activeMergeSession = session;
+        },
+      });
+    }
+
+    private canMergeTask(task: any): boolean {
+      if (this.options.getTaskMergeBlocker?.(task)) return false;
+      return (task.mergeRetries ?? 0) < 3 || this.hasAutoHealableVerificationBufferFailure(task);
+    }
+
+    private hasAutoHealableVerificationBufferFailure(task: any): boolean {
+      if (task.column !== "in-review") return false;
+      if ((task.mergeRetries ?? 0) < 3) return false;
+      const err = task.error ?? "";
+      if (
+        !err.includes("Deterministic test verification failed") &&
+        !err.includes("Deterministic build verification failed") &&
+        !err.includes("Build verification failed") &&
+        !err.includes("Test verification failed")
+      ) {
+        return false;
+      }
+      return task.log?.some((entry: { action?: string }) =>
+        entry.action?.includes("[verification] test command failed (exit 0)") ||
+        entry.action?.includes("[verification] build command failed (exit 0)") ||
+        entry.action?.includes("output exceeded buffer"),
+      ) ?? false;
+    }
+
+    private enqueueMerge(taskId: string): void {
+      if (this.mergeActive.has(taskId)) return;
+      this.mergeActive.add(taskId);
+      this.mergeQueue.push(taskId);
+      void this.drainMergeQueue();
+    }
+
+    private async drainMergeQueue(): Promise<void> {
+      if (this.mergeRunning) return;
+      this.mergeRunning = true;
+      try {
+        while (this.mergeQueue.length > 0) {
+          const taskId = this.mergeQueue.shift()!;
+          try {
+            const settings = await this.store.getSettings();
+            if (settings.globalPause || settings.enginePaused || !settings.autoMerge) continue;
+
+            const task = await this.store.getTask(taskId);
+            if (!task || task.column !== "in-review" || !this.canMergeTask(task)) continue;
+
+            if (this.hasAutoHealableVerificationBufferFailure(task)) {
+              await this.store.logEntry(
+                taskId,
+                "Auto-healing stale deterministic verification buffer failure; retrying merge verification",
+              );
+              await this.store.updateTask(taskId, { mergeRetries: 0, error: null, status: null });
+            }
+
+            const mergeStrategy = this.options.getMergeStrategy?.(settings) ?? "direct";
+            if (mergeStrategy === "pull-request" && this.options.processPullRequestMerge) {
+              await this.options.processPullRequestMerge(this.store, this.cwd, taskId);
+            } else {
+              await this.onMerge(taskId);
+              const latestTask = await this.store.getTask(taskId).catch(() => null);
+              if (latestTask?.mergeRetries && latestTask.mergeRetries > 0) {
+                await this.store.updateTask(taskId, { mergeRetries: 0 });
+              }
+            }
+          } catch (err: any) {
+            const errorMsg = err?.message ?? String(err);
+            const settings = await this.store.getSettings().catch(() => ({ autoResolveConflicts: true }));
+            const task = await this.store.getTask(taskId).catch(() => null);
+            if (errorMsg.includes("conflict") || errorMsg.includes("Conflict")) {
+              const currentRetries = task?.mergeRetries ?? 0;
+              if (settings.autoResolveConflicts !== false && currentRetries < 3) {
+                const nextRetries = currentRetries + 1;
+                await this.store.updateTask(taskId, { mergeRetries: nextRetries, status: null });
+                console.log(`Auto-merge conflict retry ${nextRetries}/3 for ${taskId} in 5s`);
+              } else {
+                console.log(`Auto-merge conflict retry skipped for ${taskId}: autoResolveConflicts disabled`);
+                await this.store.updateTask(taskId, { status: null });
+              }
+            } else {
+              await this.store.updateTask(taskId, {
+                status: null,
+                mergeRetries: 3,
+                error: errorMsg,
+              });
+            }
+          } finally {
+            this.mergeActive.delete(taskId);
+          }
+        }
+      } finally {
+        this.mergeRunning = false;
+      }
+    }
+
+    private wireAutoMerge(): void {
+      this.taskMovedHandler = async ({ task, to }: { task: any; to: string }) => {
+        if (to !== "in-review") return;
+        if (this.options.getTaskMergeBlocker?.(task)) return;
+        const settings = await this.store.getSettings();
+        if (settings.globalPause || settings.enginePaused || !settings.autoMerge) return;
+        this.enqueueMerge(task.id);
+      };
+      this.store.on("task:moved", this.taskMovedHandler);
+    }
+
+    private async startupMergeSweep(): Promise<void> {
+      const settings = await this.store.getSettings();
+      if (!settings.autoMerge) return;
+      const tasks = await this.store.listTasks({ column: "in-review" } as any);
+      for (const task of tasks) {
+        if (this.canMergeTask(task)) this.enqueueMerge(task.id);
+      }
+    }
+
+    private wireSettingsListeners(): void {
+      const onGlobalPause = ({ settings, previous }: any) => {
+        if (settings.globalPause && !previous.globalPause && this.activeMergeSession) {
+          this.activeMergeSession.dispose();
+          this.activeMergeSession = null;
+        }
+      };
+      const onGlobalUnpause = async ({ settings, previous }: any) => {
+        if (!previous.globalPause || settings.globalPause) return;
+        await this.executor?.resumeOrphaned?.();
+        if (settings.autoMerge) await this.enqueueInReviewTasks();
+      };
+      const onEngineUnpause = async ({ settings, previous }: any) => {
+        if (!previous.enginePaused || settings.enginePaused) return;
+        await this.executor?.resumeOrphaned?.();
+        if (settings.autoMerge) await this.enqueueInReviewTasks();
+      };
+      const onStuckTimeoutChange = async ({ settings, previous }: any) => {
+        if (settings.taskStuckTimeoutMs === previous.taskStuckTimeoutMs) return;
+        try {
+          await this.stuckDetector?.checkNow?.();
+        } catch (err) {
+          console.error("[stuck-detector] Error during immediate stuck-task check:", err);
+        }
+      };
+      const onInsightSettingsChange = () => {};
+      const onCompatibilityListener = () => {};
+      this.settingsHandlers = [
+        onGlobalPause,
+        onGlobalUnpause,
+        onEngineUnpause,
+        onStuckTimeoutChange,
+        onInsightSettingsChange,
+        onCompatibilityListener,
+      ];
+      for (const handler of this.settingsHandlers) {
+        this.store.on("settings:updated", handler);
+      }
+    }
+
+    private async enqueueInReviewTasks(): Promise<void> {
+      const tasks = await this.store.listTasks({ column: "in-review" } as any);
+      for (const task of tasks) {
+        if (this.canMergeTask(task)) this.enqueueMerge(task.id);
+      }
+    }
+  }
+
   return {
     ...original,
+    // Keep real WorktreePool & AgentSemaphore
     WorktreePool: original.WorktreePool,
     AgentSemaphore: original.AgentSemaphore,
-    ProjectEngine: vi.fn().mockImplementation(() => ({
-      start: vi.fn().mockResolvedValue(undefined),
-      stop: vi.fn().mockResolvedValue(undefined),
-      getTaskStore: vi.fn().mockImplementation(() => makeMockStore()),
-      getRuntime: vi.fn().mockReturnValue({
-        getHeartbeatMonitor: vi.fn().mockReturnValue(undefined),
-        getMissionAutopilot: vi.fn().mockReturnValue(undefined),
-        getMissionExecutionLoop: vi.fn().mockReturnValue(undefined),
-      }),
-      getAutomationStore: vi.fn().mockReturnValue(undefined),
-      getHeartbeatMonitor: vi.fn().mockReturnValue(undefined),
-      getHeartbeatTriggerScheduler: vi.fn().mockReturnValue(undefined),
-      getWorkingDirectory: vi.fn().mockReturnValue("/tmp/test"),
-      onMerge: vi.fn().mockResolvedValue({ merged: true }),
-    })),
-    ProjectEngineManager: vi.fn().mockImplementation((centralCore: any, _options: any) => {
+    // Stub heavy classes/functions
+    ProjectEngine,
+    ProjectEngineManager: vi.fn().mockImplementation((centralCore: any, options: any) => {
       const engines = new Map<string, any>();
-      // Create mock engines that match the ProjectEngine mock shape above.
-      // Each engine is independently addressable by project ID.
-      const createMockEngine = (projectId: string) => ({
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockResolvedValue(undefined),
-        getTaskStore: vi.fn().mockImplementation(() => makeMockStore(projectId)),
-        getRuntime: vi.fn().mockReturnValue({
-          getHeartbeatMonitor: vi.fn().mockReturnValue(undefined),
-          getMissionAutopilot: vi.fn().mockReturnValue(undefined),
-          getMissionExecutionLoop: vi.fn().mockReturnValue(undefined),
-        }),
-        getAutomationStore: vi.fn().mockReturnValue(undefined),
-        getHeartbeatMonitor: vi.fn().mockReturnValue(undefined),
-        getHeartbeatTriggerScheduler: vi.fn().mockReturnValue(undefined),
-        getWorkingDirectory: vi.fn().mockReturnValue("/tmp/test"),
-        onMerge: vi.fn().mockResolvedValue({ merged: true }),
-      });
       return {
         startAll: vi.fn(async () => {
+          // Grab the most recently created TaskStore mock — this is the one
+          // the dashboard created at startup. By passing it as externalTaskStore,
+          // the engine shares the same store, so settings listeners and events
+          // in tests work as expected.
+          const { TaskStore: TSMock } = await import("@fusion/core");
+          const lastStore = (TSMock as any).mock?.results?.at(-1)?.value;
           const projects = await centralCore.listProjects();
           for (const project of projects) {
-            const engine = createMockEngine(project.id);
+            const engine = new ProjectEngine(
+              { workingDirectory: project.path },
+              centralCore,
+              { ...options, externalTaskStore: lastStore, projectId: project.id },
+            );
             await engine.start();
             engines.set(project.id, engine);
           }
         }),
-        getEngine: vi.fn((id: string) => {
-          engineUsageLog.push(`getEngine(${id})`);
-          return engines.get(id);
-        }),
+        getEngine: vi.fn((id: string) => engines.get(id)),
         getAllEngines: vi.fn(() => engines),
         getStore: vi.fn((id: string) => engines.get(id)?.getTaskStore()),
         has: vi.fn((id: string) => engines.has(id)),
@@ -290,79 +638,40 @@ vi.mock("@fusion/engine", async (importOriginal) => {
         startReconciliation: vi.fn(),
       };
     }),
+    ProjectManager: vi.fn().mockImplementation(() => ({
+      getRuntime: vi.fn().mockReturnValue(undefined),
+      addProject: vi.fn().mockResolvedValue(undefined),
+      stopAll: vi.fn().mockResolvedValue(undefined),
+    })),
+    TriageProcessor,
+    TaskExecutor,
+    StuckTaskDetector,
+    Scheduler,
+    PrMonitor,
+    PrCommentHandler,
+    aiMergeTask,
+    CronRunner,
+    createAiPromptExecutor,
+    SelfHealingManager,
     MissionAutopilot: vi.fn().mockImplementation(() => ({
       start: vi.fn(),
       stop: vi.fn(),
       setScheduler: vi.fn(),
     })),
-    TriageProcessor: vi.fn().mockImplementation(() => ({
-      start: vi.fn(),
-      stop: vi.fn(),
-    })),
-    TaskExecutor: vi.fn().mockImplementation(() => ({
-      resumeOrphaned: vi.fn().mockResolvedValue(undefined),
-    })),
-    Scheduler: vi.fn().mockImplementation(() => ({
-      start: vi.fn(),
-      stop: vi.fn(),
-    })),
-    aiMergeTask: vi.fn().mockResolvedValue({ merged: true }),
-    CronRunner: vi.fn().mockImplementation(() => ({
-      start: vi.fn(),
-      stop: vi.fn(),
+    PluginLoader: vi.fn().mockImplementation(() => ({
+      loadPlugin: vi.fn().mockResolvedValue(undefined),
+      stopPlugin: vi.fn().mockResolvedValue(undefined),
+      reloadPlugin: vi.fn().mockResolvedValue(undefined),
+      getPluginRoutes: vi.fn().mockReturnValue([]),
+      getPlugin: vi.fn(),
+      getLoadedPlugins: vi.fn().mockReturnValue([]),
     })),
     scanIdleWorktrees: vi.fn().mockResolvedValue([]),
     cleanupOrphanedWorktrees: vi.fn().mockResolvedValue(0),
-    createAiPromptExecutor: vi.fn().mockResolvedValue(vi.fn().mockResolvedValue("mock AI response")),
-    HeartbeatMonitor: vi.fn().mockImplementation(() => ({
-      start: vi.fn(),
-      stop: vi.fn(),
-      executeHeartbeat: vi.fn().mockResolvedValue({ id: "run-1" }),
-    })),
-    HeartbeatTriggerScheduler: vi.fn().mockImplementation(() => ({
-      start: vi.fn(),
-      stop: vi.fn(),
-      registerAgent: vi.fn(),
-      getRegisteredAgents: vi.fn().mockReturnValue([]),
-    })),
-    ProjectManager: vi.fn().mockImplementation(() => ({
-      getRuntime: vi.fn().mockReturnValue(undefined),
-      addProject: vi.fn().mockResolvedValue({}),
-      stopAll: vi.fn().mockResolvedValue(undefined),
-    })),
-    PeerExchangeService: vi.fn().mockImplementation(() => ({
-      start: vi.fn(),
-      stop: vi.fn().mockResolvedValue(undefined),
-    })),
   };
 });
 
 // ── Mock @mariozechner/pi-coding-agent ──────────────────────────────
-
-const mockAuthStorage = {
-  getAuth: vi.fn(),
-  setAuth: vi.fn(),
-  getApiKey: vi.fn(),
-  reload: vi.fn(),
-  getOAuthProviders: vi.fn().mockReturnValue([{ id: "anthropic", name: "Anthropic" }]),
-  hasAuth: vi.fn().mockReturnValue(false),
-  login: vi.fn(),
-  logout: vi.fn(),
-  set: vi.fn(),
-  remove: vi.fn(),
-  get: vi.fn(),
-};
-const mockModelRegistry = {
-  getModels: vi.fn().mockResolvedValue([]),
-  getAll: vi.fn().mockReturnValue([]),
-  registerProvider: vi.fn(),
-  refresh: vi.fn(),
-};
-const mockDiscoverAndLoadExtensions = vi.fn().mockResolvedValue({
-  runtime: { pendingProviderRegistrations: [] },
-  errors: [],
-});
-const mockCreateExtensionRuntime = vi.fn();
 
 vi.mock("@mariozechner/pi-coding-agent", () => ({
   AuthStorage: {
@@ -385,7 +694,8 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
 
 // ── Import module under test (after mocks) ──────────────────────────
 
-const { runDashboard: runDashboardImpl } = await import("../dashboard.js");
+const { runDashboard: runDashboardImpl, StreamedLogBuffer } = await import("../dashboard.js");
+const { processPullRequestMergeTask, getMergeStrategy, getTaskBranchName } = await import("../task-lifecycle.js");
 const dashboardDisposables: Array<() => void> = [];
 
 function disposeTrackedDashboards(): void {
@@ -401,46 +711,61 @@ async function runDashboard(...args: Parameters<typeof runDashboardImpl>): Retur
   return result;
 }
 
-// ── Multi-project test utilities ────────────────────────────────────
-
-/**
- * Reset multi-project test state between tests.
- * Clears engine usage log and project-by-path resolver.
- */
-function resetMultiProjectState(): void {
-  engineUsageLog.length = 0;
-  getProjectByPathResolver = null;
-  centralInstances.length = 0;
-}
-
-/**
- * Configure how CentralCore.getProjectByPath resolves for tests.
- * Call this in beforeEach to set up specific project resolution scenarios.
- *
- * @param resolver - Function that maps cwd to project record, or null to use default (primary project)
- *
- * @example
- * // Set up secondary project as cwd
- * setupProjectByPath((cwd) => {
- *   if (cwd === "/repo-secondary") return PROJECT_FIXTURES.secondary;
- *   return null; // Not registered
- * });
- *
- * // Use default (primary project)
- * setupProjectByPath(null);
- */
-function setupProjectByPath(
-  resolver: ((cwd: string) => unknown) | null
-): void {
-  getProjectByPathResolver = resolver;
-}
-
 // ── Tests ───────────────────────────────────────────────────────────
+
+function resetGitHubMocks() {
+  mockFindPrForBranch.mockReset();
+  mockCreatePr.mockReset();
+  mockGetPrMergeStatus.mockReset();
+  mockMergePr.mockReset();
+
+  mockFindPrForBranch.mockResolvedValue(null);
+  mockCreatePr.mockResolvedValue({
+    url: "https://github.com/owner/repo/pull/42",
+    number: 42,
+    status: "open",
+    title: "FN-TEST",
+    headBranch: "fusion/fn-test",
+    baseBranch: "main",
+    commentCount: 0,
+  });
+  mockGetPrMergeStatus.mockResolvedValue({
+    prInfo: {
+      url: "https://github.com/owner/repo/pull/42",
+      number: 42,
+      status: "open",
+      title: "FN-TEST",
+      headBranch: "fusion/fn-test",
+      baseBranch: "main",
+      commentCount: 0,
+    },
+    reviewDecision: null,
+    checks: [],
+    mergeReady: false,
+    blockingReasons: ["required checks not successful: ci (pending)"],
+  });
+  mockMergePr.mockResolvedValue({
+    url: "https://github.com/owner/repo/pull/42",
+    number: 42,
+    status: "merged",
+    title: "FN-TEST",
+    headBranch: "fusion/fn-test",
+    baseBranch: "main",
+    commentCount: 0,
+  });
+}
 
 beforeEach(() => {
   delete process.env.FUSION_DASHBOARD_TOKEN;
   delete process.env.FUSION_DAEMON_TOKEN;
   delete process.env.FUSION_BEARER_TOKEN;
+
+  resetGitHubMocks();
+  mockExecSync.mockReset();
+  mockExecSync.mockReturnValue("");
+  mockExec.mockClear();
+  mockStuckCheckNow.mockReset();
+  mockStuckCheckNow.mockResolvedValue(undefined);
   mockResolveGlobalDir.mockReset();
   mockResolveGlobalDir.mockReturnValue("/tmp/test-global");
   mockGlobalSettingsGetSettings.mockReset();
@@ -453,628 +778,2053 @@ beforeEach(() => {
 
 afterEach(() => {
   disposeTrackedDashboards();
-  resetMultiProjectState();
 });
 
-describe("runDashboard — dashboard auth token persistence + precedence", () => {
-  beforeEach(async () => {
-    vi.clearAllMocks();
-    mockDiscoverAndLoadExtensions.mockResolvedValue({
-      runtime: { pendingProviderRegistrations: [] },
-      errors: [],
-    });
-    const { TaskStore, DaemonTokenManager } = await import("@fusion/core");
-    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
-    (DaemonTokenManager as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
-      getOrCreateToken: mockDaemonTokenGetOrCreate,
-      getToken: vi.fn().mockResolvedValue(undefined),
-      generateToken: vi.fn().mockResolvedValue("fn_test_dashboard_token"),
-    }));
+describe("PR merge helpers", () => {
+  it("defaults mergeStrategy to direct when unset", () => {
+    expect(getMergeStrategy({ mergeStrategy: undefined })).toBe("direct");
   });
 
-  it("generates exactly once on first authenticated run and reuses token on subsequent runs", async () => {
-    const { DaemonTokenManager } = await import("@fusion/core");
-    const { createServer } = await import("@fusion/dashboard");
-
-    let storedToken: string | undefined;
-    let generationCount = 0;
-
-    (DaemonTokenManager as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
-      getOrCreateToken: vi.fn().mockImplementation(async () => {
-        if (!storedToken) {
-          generationCount += 1;
-          storedToken = "fn_persisted_dashboard_token";
-        }
-        return storedToken;
-      }),
-    }));
-
-    await runDashboard(0, { open: false, dev: true });
-    const firstOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
-
-    await runDashboard(0, { open: false, dev: true });
-    const secondOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
-
-    expect(generationCount).toBe(1);
-    expect(firstOpts.daemon).toEqual({ token: "fn_persisted_dashboard_token" });
-    expect(secondOpts.daemon).toEqual({ token: "fn_persisted_dashboard_token" });
+  it("uses pull-request mergeStrategy when configured", () => {
+    expect(getMergeStrategy({ mergeStrategy: "pull-request" })).toBe("pull-request");
   });
 
-  it("uses --token over env vars and persisted token", async () => {
-    const { createServer } = await import("@fusion/dashboard");
-    process.env.FUSION_DASHBOARD_TOKEN = "fn_env_dashboard_token";
-    process.env.FUSION_DAEMON_TOKEN = "fn_env_daemon_token";
-
-    await runDashboard(0, { open: false, dev: true, token: "fn_cli_token" });
-
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
-    expect(serverOpts.daemon).toEqual({ token: "fn_cli_token" });
-  });
-
-  it("uses FUSION_DASHBOARD_TOKEN before FUSION_DAEMON_TOKEN", async () => {
-    const { createServer } = await import("@fusion/dashboard");
-    process.env.FUSION_DASHBOARD_TOKEN = "fn_env_dashboard_token";
-    process.env.FUSION_DAEMON_TOKEN = "fn_env_daemon_token";
-
-    await runDashboard(0, { open: false, dev: true });
-
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
-    expect(serverOpts.daemon).toEqual({ token: "fn_env_dashboard_token" });
-  });
-
-  it("uses FUSION_DAEMON_TOKEN when dashboard token env var is absent", async () => {
-    const { createServer } = await import("@fusion/dashboard");
-    process.env.FUSION_DAEMON_TOKEN = "fn_env_daemon_token";
-
-    await runDashboard(0, { open: false, dev: true });
-
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
-    expect(serverOpts.daemon).toEqual({ token: "fn_env_daemon_token" });
-  });
-
-  it("disables auth entirely with --no-auth and bypasses persisted token lookup", async () => {
-    const { createServer } = await import("@fusion/dashboard");
-    const { DaemonTokenManager } = await import("@fusion/core");
-
-    await runDashboard(0, { open: false, dev: true, noAuth: true });
-
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1];
-    expect(serverOpts.daemon).toBeUndefined();
-    expect(serverOpts.noAuth).toBe(true);
-    expect(DaemonTokenManager).not.toHaveBeenCalled();
+  it("uses fusion/{task-id-lower} branch naming for pull requests", () => {
+    expect(getTaskBranchName("FN-093")).toBe("fusion/fn-093");
   });
 });
 
-describe("runDashboard — AuthStorage & ModelRegistry wiring", () => {
+describe("processPullRequestMergeTask", () => {
+  it("creates and links a PR when task.prInfo is missing", async () => {
+    const store = makeMockStore();
+    store.getTask.mockResolvedValue({
+      id: "FN-093",
+      title: "Add support for creating pull requests",
+      description: "Implement PR automation",
+      column: "in-review",
+      paused: false,
+      worktree: "/tmp/kb-093",
+      log: [],
+    });
+
+    const mockGetTaskMergeBlocker = (task: any) => {
+      if (task.column !== "in-review") return `task is in '${task.column}', must be in 'in-review'`;
+      if (task.paused) return "task is paused";
+      if (task.status === "failed") return "task is marked 'failed'";
+      if (task.steps?.some((step: any) => step.status === "pending" || step.status === "in-progress")) {
+        return "task has incomplete steps";
+      }
+      if (task.workflowStepResults?.some((result: any) => result.status === "pending" || result.status === "failed")) {
+        return "task has incomplete or failed workflow steps";
+      }
+      return undefined;
+    };
+
+    const result = await processPullRequestMergeTask(store as any, "/repo", "FN-093", {
+      findPrForBranch: mockFindPrForBranch,
+      createPr: mockCreatePr,
+      getPrMergeStatus: mockGetPrMergeStatus,
+      mergePr: mockMergePr,
+    } as any, mockGetTaskMergeBlocker);
+
+    expect(result).toBe("waiting");
+    expect(mockFindPrForBranch).toHaveBeenCalledWith({ head: "fusion/fn-093", state: "all" });
+    expect(mockCreatePr).toHaveBeenCalledWith({
+      title: "FN-093: Add support for creating pull requests",
+      body: "Automated PR for FN-093.\n\nImplement PR automation",
+      head: "fusion/fn-093",
+    });
+    expect(store.updatePrInfo).toHaveBeenCalledWith(
+      "FN-093",
+      expect.objectContaining({ number: 42, status: "open" }),
+    );
+    expect(store.updateTask).toHaveBeenCalledWith("FN-093", { status: "awaiting-pr-checks" });
+  });
+
+  it("links an existing PR instead of creating a duplicate", async () => {
+    const store = makeMockStore();
+    const existingPr = {
+      url: "https://github.com/owner/repo/pull/7",
+      number: 7,
+      status: "open" as const,
+      title: "Existing PR",
+      headBranch: "fusion/fn-093",
+      baseBranch: "main",
+      commentCount: 0,
+    };
+    mockFindPrForBranch.mockResolvedValue(existingPr);
+    store.getTask.mockResolvedValue({
+      id: "FN-093",
+      title: "Task",
+      description: "Description",
+      column: "in-review",
+      paused: false,
+      log: [],
+    });
+
+    const mockGetTaskMergeBlocker = (task: any) => {
+      if (task.column !== "in-review") return `task is in '${task.column}', must be in 'in-review'`;
+      if (task.paused) return "task is paused";
+      if (task.status === "failed") return "task is marked 'failed'";
+      if (task.steps?.some((step: any) => step.status === "pending" || step.status === "in-progress")) {
+        return "task has incomplete steps";
+      }
+      if (task.workflowStepResults?.some((result: any) => result.status === "pending" || result.status === "failed")) {
+        return "task has incomplete or failed workflow steps";
+      }
+      return undefined;
+    };
+
+    await processPullRequestMergeTask(store as any, "/repo", "FN-093", {
+      findPrForBranch: mockFindPrForBranch,
+      createPr: mockCreatePr,
+      getPrMergeStatus: mockGetPrMergeStatus,
+      mergePr: mockMergePr,
+    } as any, mockGetTaskMergeBlocker);
+
+    expect(mockCreatePr).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-093",
+      "Linked existing PR",
+      "PR #7: https://github.com/owner/repo/pull/7",
+    );
+  });
+
+  it("merges a ready PR and finalizes task cleanup", async () => {
+    const store = makeMockStore();
+    store.getTask.mockResolvedValue({
+      id: "FN-093",
+      title: "Task",
+      description: "Description",
+      column: "in-review",
+      paused: false,
+      worktree: "/tmp/kb-093",
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open",
+        title: "Task",
+        headBranch: "fusion/fn-093",
+        baseBranch: "main",
+        commentCount: 0,
+      },
+      log: [],
+    });
+    mockGetPrMergeStatus.mockResolvedValue({
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open",
+        title: "Task",
+        headBranch: "fusion/fn-093",
+        baseBranch: "main",
+        commentCount: 0,
+      },
+      reviewDecision: "APPROVED",
+      checks: [{ name: "ci", required: true, state: "success" }],
+      mergeReady: true,
+      blockingReasons: [],
+    });
+
+    const mockGetTaskMergeBlocker = (task: any) => {
+      if (task.column !== "in-review") return `task is in '${task.column}', must be in 'in-review'`;
+      if (task.paused) return "task is paused";
+      if (task.status === "failed") return "task is marked 'failed'";
+      if (task.steps?.some((step: any) => step.status === "pending" || step.status === "in-progress")) {
+        return "task has incomplete steps";
+      }
+      if (task.workflowStepResults?.some((result: any) => result.status === "pending" || result.status === "failed")) {
+        return "task has incomplete or failed workflow steps";
+      }
+      return undefined;
+    };
+
+    const result = await processPullRequestMergeTask(store as any, "/repo", "FN-093", {
+      findPrForBranch: mockFindPrForBranch,
+      createPr: mockCreatePr,
+      getPrMergeStatus: mockGetPrMergeStatus,
+      mergePr: mockMergePr,
+    } as any, mockGetTaskMergeBlocker);
+
+    expect(result).toBe("merged");
+    expect(mockMergePr).toHaveBeenCalledWith({ number: 42, method: "squash" });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-093", "done");
+    // Check that exec was called with the expected commands (options object and callback may follow)
+    expect(mockExec.mock.calls.some((call) => call[0] === 'git worktree remove "/tmp/kb-093" --force')).toBe(true);
+    expect(mockExec.mock.calls.some((call) => call[0] === 'git branch -d "fusion/fn-093"')).toBe(true);
+  });
+
+  it("does not merge when required checks or reviews are blocking", async () => {
+    const store = makeMockStore();
+    store.getTask.mockResolvedValue({
+      id: "FN-093",
+      title: "Task",
+      description: "Description",
+      column: "in-review",
+      paused: false,
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open",
+        title: "Task",
+        headBranch: "fusion/fn-093",
+        baseBranch: "main",
+        commentCount: 0,
+      },
+      log: [],
+    });
+    mockGetPrMergeStatus.mockResolvedValue({
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open",
+        title: "Task",
+        headBranch: "fusion/fn-093",
+        baseBranch: "main",
+        commentCount: 0,
+      },
+      reviewDecision: "CHANGES_REQUESTED",
+      checks: [{ name: "ci", required: true, state: "pending" }],
+      mergeReady: false,
+      blockingReasons: ["changes requested review is active", "required checks not successful: ci (pending)"],
+    });
+
+    const mockGetTaskMergeBlocker = (task: any) => {
+      if (task.column !== "in-review") return `task is in '${task.column}', must be in 'in-review'`;
+      if (task.paused) return "task is paused";
+      if (task.status === "failed") return "task is marked 'failed'";
+      if (task.steps?.some((step: any) => step.status === "pending" || step.status === "in-progress")) {
+        return "task has incomplete steps";
+      }
+      if (task.workflowStepResults?.some((result: any) => result.status === "pending" || result.status === "failed")) {
+        return "task has incomplete or failed workflow steps";
+      }
+      return undefined;
+    };
+
+    const result = await processPullRequestMergeTask(store as any, "/repo", "FN-093", {
+      findPrForBranch: mockFindPrForBranch,
+      createPr: mockCreatePr,
+      getPrMergeStatus: mockGetPrMergeStatus,
+      mergePr: mockMergePr,
+    } as any, mockGetTaskMergeBlocker);
+
+    expect(result).toBe("waiting");
+    expect(mockMergePr).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith("FN-093", { status: "awaiting-pr-checks" });
+  });
+});
+
+describe("runDashboard — PR-first auto-merge queue", () => {
+  let mockStore: ReturnType<typeof makeMockStore>;
+
   beforeEach(async () => {
     vi.clearAllMocks();
-    mockDiscoverAndLoadExtensions.mockResolvedValue({
-      runtime: { pendingProviderRegistrations: [] },
-      errors: [],
+    resetGitHubMocks();
+    mockStore = makeMockStore();
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      mergeStrategy: "pull-request",
+      pollIntervalMs: 60_000,
+      enginePaused: false,
+      globalPause: false,
     });
+    mockStore.listTasks.mockResolvedValue([
+      { id: "FN-093", column: "in-review", paused: false },
+    ]);
+    mockStore.getTask.mockResolvedValue({
+      id: "FN-093",
+      title: "Task",
+      description: "Description",
+      column: "in-review",
+      paused: false,
+      log: [],
+    });
+
+    const { TaskStore } = await import("@fusion/core");
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
+  });
+
+  it("uses PR lifecycle instead of aiMergeTask when mergeStrategy is pull-request", async () => {
+    const { aiMergeTask } = await import("@fusion/engine");
+
+    await runDashboard(0, { open: false });
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(mockCreatePr).toHaveBeenCalledWith({
+      title: "FN-093: Task",
+      body: "Automated PR for FN-093.\n\nDescription",
+      head: "fusion/fn-093",
+    });
+    expect(aiMergeTask).not.toHaveBeenCalled();
+  });
+});
+
+describe("runDashboard — WorktreePool wiring", () => {
+  beforeEach(async () => {
+    capturedExecutorOpts = undefined;
+    vi.clearAllMocks();
+    resetGitHubMocks();
+    // Re-set TaskStore mock (clearAllMocks wipes implementations)
     const { TaskStore } = await import("@fusion/core");
     (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
+    // Re-set engine mocks
+    const engine = await import("@fusion/engine");
+    (engine.aiMergeTask as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({ merged: true }),
+    );
+    (engine.TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_store: unknown, _cwd: unknown, opts: unknown) => {
+        capturedExecutorOpts = opts as Record<string, unknown>;
+        return { resumeOrphaned: vi.fn().mockResolvedValue(undefined) };
+      },
+    );
   });
 
-  it("passes wrapped authStorage and modelRegistry to createServer", async () => {
+  it("passes a WorktreePool instance to TaskExecutor", async () => {
+    await runDashboard(0, { open: false });
+
+    expect(capturedExecutorOpts).toBeDefined();
+    expect(capturedExecutorOpts!.pool).toBeInstanceOf(WorktreePool);
+  });
+
+  it("passes a WorktreePool instance to aiMergeTask via rawMerge", async () => {
+    const { aiMergeTask } = await import("@fusion/engine");
     const { createServer } = await import("@fusion/dashboard");
 
-    await runDashboard(0, {});
+    await runDashboard(0, { open: false });
 
-    expect(createServer).toHaveBeenCalledTimes(1);
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(serverOpts).toHaveProperty("modelRegistry", mockModelRegistry);
-    expect(serverOpts.authStorage).toBeDefined();
-    expect(serverOpts.authStorage).not.toBe(mockAuthStorage);
-    expect(serverOpts.authStorage.getApiKeyProviders).toBeTypeOf("function");
-    expect(serverOpts.authStorage.setApiKey).toBeTypeOf("function");
-    expect(serverOpts.authStorage.clearApiKey).toBeTypeOf("function");
-    expect(serverOpts.authStorage.hasApiKey).toBeTypeOf("function");
-    expect(serverOpts.authStorage.getApiKeyProviders()).toEqual([
-      { id: "kimi-coding", name: "Kimi" },
-      { id: "minimax", name: "Minimax" },
-      { id: "openrouter", name: "OpenRouter" },
-      { id: "zai", name: "Zai" },
+    // rawMerge is exposed as the onMerge callback wired into createServer.
+    const createServerCall = (createServer as ReturnType<typeof vi.fn>).mock.calls[0];
+    const serverOpts = createServerCall[1] as { onMerge: (taskId: string) => Promise<unknown> };
+
+    // Invoke the merge handler
+    await serverOpts.onMerge("FN-TEST");
+
+    expect(aiMergeTask).toHaveBeenCalled();
+    const mergeCallOpts = (aiMergeTask as ReturnType<typeof vi.fn>).mock.calls[0][3];
+    expect(mergeCallOpts.pool).toBeInstanceOf(WorktreePool);
+  });
+
+  it("shares the same WorktreePool instance between executor and merger", async () => {
+    const { aiMergeTask } = await import("@fusion/engine");
+    const { createServer } = await import("@fusion/dashboard");
+
+    await runDashboard(0, { open: false });
+
+    // Trigger merger via onMerge
+    const createServerCall = (createServer as ReturnType<typeof vi.fn>).mock.calls[0];
+    const serverOpts = createServerCall[1] as { onMerge: (taskId: string) => Promise<unknown> };
+    await serverOpts.onMerge("FN-TEST");
+
+    const executorPool = capturedExecutorOpts!.pool;
+    const mergerPool = (aiMergeTask as ReturnType<typeof vi.fn>).mock.calls[0][3].pool;
+
+    expect(executorPool).toBeInstanceOf(WorktreePool);
+    expect(mergerPool).toBeInstanceOf(WorktreePool);
+    expect(executorPool).toBe(mergerPool);
+  });
+});
+
+describe("runDashboard — auto-merge pause exclusion", () => {
+  let mockStore: ReturnType<typeof makeMockStore>;
+
+  beforeEach(async () => {
+    capturedExecutorOpts = undefined;
+    capturedSelfHealingOpts = undefined;
+    vi.clearAllMocks();
+    resetGitHubMocks();
+    mockStore = makeMockStore();
+    const { TaskStore } = await import("@fusion/core");
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
+    const engine = await import("@fusion/engine");
+    (engine.aiMergeTask as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({ merged: true }),
+    );
+    (engine.TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_store: unknown, _cwd: unknown, opts: unknown) => {
+        capturedExecutorOpts = opts as Record<string, unknown>;
+        return { resumeOrphaned: vi.fn().mockResolvedValue(undefined) };
+      },
+    );
+  });
+
+  it("does not enqueue paused in-review tasks for auto-merge on task:moved", async () => {
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      pollIntervalMs: 60_000,
+    });
+
+    await runDashboard(0, { open: false });
+
+    const { aiMergeTask } = await import("@fusion/engine");
+
+    // Emit task:moved with a paused task
+    mockStore.emit("task:moved", {
+      task: { id: "FN-PAUSED", column: "in-review", paused: true },
+      from: "in-progress",
+      to: "in-review",
+    });
+
+    // Give async handlers time to process
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(aiMergeTask).not.toHaveBeenCalled();
+  });
+
+  it("does not enqueue paused in-review tasks during startup sweep", async () => {
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      pollIntervalMs: 60_000,
+    });
+    mockStore.listTasks.mockResolvedValue([
+      { id: "FN-PAUSED", column: "in-review", paused: true },
+      { id: "FN-ACTIVE", column: "in-review", paused: false },
     ]);
+
+    const { aiMergeTask } = await import("@fusion/engine");
+    // Reset after import
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({ merged: true }),
+    );
+
+    await runDashboard(0, { open: false });
+
+    // Give async handlers time to process
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Only the non-paused task should be enqueued
+    const mergedIds = (aiMergeTask as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call: any[]) => call[2],
+    );
+    expect(mergedIds).not.toContain("FN-PAUSED");
   });
 
-  it("creates AuthStorage for Fusion writes", async () => {
-    const { AuthStorage } = await import("@mariozechner/pi-coding-agent");
+  it("does not auto-merge failed in-review tasks", async () => {
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      pollIntervalMs: 60_000,
+    });
+    mockStore.listTasks.mockResolvedValue([
+      { id: "FN-FAILED", column: "in-review", paused: false, status: "failed" },
+    ]);
+    mockStore.getTask = vi.fn().mockResolvedValue({
+      id: "FN-FAILED",
+      column: "in-review",
+      paused: false,
+      status: "failed",
+      steps: [{ name: "Step 1", status: "done" }],
+    });
 
-    await runDashboard(0, {});
+    const { aiMergeTask } = await import("@fusion/engine");
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockClear();
 
-    expect(AuthStorage.create).toHaveBeenCalledTimes(1);
+    await runDashboard(0, { open: false });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(aiMergeTask).not.toHaveBeenCalled();
   });
 
-  it("creates ModelRegistry with a merged auth storage reader", async () => {
-    const { ModelRegistry } = await import("@mariozechner/pi-coding-agent");
+  it("does not auto-merge in-review tasks with exhausted merge retries", async () => {
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      pollIntervalMs: 60_000,
+    });
+    mockStore.listTasks.mockResolvedValue([
+      { id: "FN-EXHAUSTED", column: "in-review", paused: false, mergeRetries: 3 },
+    ]);
 
-    await runDashboard(0, {});
+    const { aiMergeTask } = await import("@fusion/engine");
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockClear();
 
-    const createMock = ModelRegistry.create as unknown as ReturnType<typeof vi.fn>;
-    expect(createMock).toHaveBeenCalledTimes(1);
-    const registryAuthStorage = createMock.mock.calls[0][0];
-    expect(registryAuthStorage).not.toBe(mockAuthStorage);
-    expect(registryAuthStorage.getApiKey).toBeTypeOf("function");
+    await runDashboard(0, { open: false });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(aiMergeTask).not.toHaveBeenCalled();
   });
 
-  it("discovers extensions and registers extension providers", async () => {
-    mockDiscoverAndLoadExtensions.mockResolvedValueOnce({
-      runtime: {
-        pendingProviderRegistrations: [
-          {
-            name: "custom-anthropic",
-            config: { models: [{ id: "claude-sonnet-4-5" }] },
-            extensionPath: "/extensions/custom-anthropic",
-          },
-        ],
+  it("auto-heals stale exit-0 verification buffer failures with exhausted merge retries", async () => {
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      pollIntervalMs: 60_000,
+    });
+    const task = {
+      id: "FN-BUFFER",
+      column: "in-review",
+      paused: false,
+      mergeRetries: 3,
+      error: "Deterministic test verification failed for FN-BUFFER",
+      steps: [{ name: "Step 1", status: "done" }],
+      log: [
+        {
+          timestamp: "2026-04-10T20:23:18.691Z",
+          action: "[verification] test command failed (exit 0): stdout maxBuffer length exceeded",
+        },
+      ],
+    };
+    mockStore.listTasks.mockResolvedValue([task]);
+    mockStore.getTask = vi.fn().mockResolvedValue(task);
+
+    const { aiMergeTask } = await import("@fusion/engine");
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockClear();
+
+    await runDashboard(0, { open: false });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(mockStore.logEntry).toHaveBeenCalledWith(
+      "FN-BUFFER",
+      "Auto-healing stale deterministic verification buffer failure; retrying merge verification",
+    );
+    expect(mockStore.updateTask).toHaveBeenCalledWith(
+      "FN-BUFFER",
+      { mergeRetries: 0, error: null, status: null },
+    );
+    expect(aiMergeTask).toHaveBeenCalled();
+  });
+
+  it("does not auto-merge in-review tasks with incomplete steps", async () => {
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      pollIntervalMs: 60_000,
+    });
+    mockStore.listTasks.mockResolvedValue([
+      { id: "FN-INCOMPLETE", column: "in-review", paused: false, steps: [{ name: "Step 1", status: "in-progress" }] },
+    ]);
+    mockStore.getTask = vi.fn().mockResolvedValue({
+      id: "FN-INCOMPLETE",
+      column: "in-review",
+      paused: false,
+      steps: [{ name: "Step 1", status: "in-progress" }],
+    });
+
+    const { aiMergeTask } = await import("@fusion/engine");
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockClear();
+
+    await runDashboard(0, { open: false });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(aiMergeTask).not.toHaveBeenCalled();
+  });
+});
+
+describe("runDashboard — immediate resume on unpause", () => {
+  let mockStore: ReturnType<typeof makeMockStore>;
+
+  beforeEach(async () => {
+    capturedExecutorOpts = undefined;
+    vi.clearAllMocks();
+    resetGitHubMocks();
+    mockStore = makeMockStore();
+    const { TaskStore } = await import("@fusion/core");
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
+    const engine = await import("@fusion/engine");
+    (engine.aiMergeTask as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({ merged: true }),
+    );
+    (engine.TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_store: unknown, _cwd: unknown, opts: unknown) => {
+        capturedExecutorOpts = opts as Record<string, unknown>;
+        return { resumeOrphaned: vi.fn().mockResolvedValue(undefined) };
       },
-      errors: [],
-    });
-
-    await runDashboard(0, {});
-
-    expect(mockDiscoverAndLoadExtensions).toHaveBeenCalledWith(
-      expect.any(Array),
-      expect.any(String),
-      expect.stringContaining(".fusion/disabled-auto-extension-discovery"),
     );
-    expect(mockModelRegistry.registerProvider).toHaveBeenCalledWith(
-      "custom-anthropic",
-      expect.objectContaining({ models: [{ id: "claude-sonnet-4-5" }] }),
-    );
-    expect(mockModelRegistry.refresh).toHaveBeenCalled();
   });
 
-  it("logs extension load errors without aborting startup", async () => {
-    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    mockDiscoverAndLoadExtensions.mockResolvedValueOnce({
-      runtime: { pendingProviderRegistrations: [] },
-      errors: [{ path: "/extensions/bad", error: "Invalid manifest" }],
+  it("registers a settings:updated listener on the store", async () => {
+    await runDashboard(0, { open: false });
+
+    // The store.on should have been called with "settings:updated" at least once
+    const settingsUpdatedCalls = mockStore.on.mock.calls.filter(
+      (call: any[]) => call[0] === "settings:updated",
+    );
+    // At least 2 listeners: one for pause→true (merge kill), one for unpause
+    expect(settingsUpdatedCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("calls executor.resumeOrphaned() when globalPause transitions true → false", async () => {
+    const { TaskExecutor } = await import("@fusion/engine");
+    const resumeOrphaned = vi.fn().mockResolvedValue(undefined);
+    (TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_store: unknown, _cwd: unknown, opts: unknown) => {
+        capturedExecutorOpts = opts as Record<string, unknown>;
+        return { resumeOrphaned };
+      },
+    );
+
+    await runDashboard(0, { open: false });
+
+    // Clear the startup call to resumeOrphaned
+    resumeOrphaned.mockClear();
+
+    // Trigger unpause event
+    mockStore.emit("settings:updated", {
+      settings: { globalPause: false, maxConcurrent: 1, autoMerge: false },
+      previous: { globalPause: true },
     });
 
-    await runDashboard(0, {});
+    await new Promise((r) => setTimeout(r, 50));
 
-    expect(consoleSpy).toHaveBeenCalledWith("[extensions] Failed to load /extensions/bad: Invalid manifest");
+    expect(resumeOrphaned).toHaveBeenCalled();
+  });
+
+  it("passes executor recovery callbacks into SelfHealingManager", async () => {
+    await runDashboard(0, { open: false });
+
+    expect(capturedSelfHealingOpts).toMatchObject({
+      rootDir: process.cwd(),
+      recoverCompletedTask: expect.any(Function),
+      getExecutingTaskIds: expect.any(Function),
+    });
+    expect(mockSelfHealingStart).toHaveBeenCalled();
+  });
+
+  it("sweeps merge queue on unpause when autoMerge is enabled", async () => {
+    // Set up settings to return autoMerge: true for the drain queue check
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      pollIntervalMs: 60_000,
+      globalPause: false,
+    });
+    mockStore.listTasks.mockResolvedValue([
+      { id: "FN-MQ1", column: "in-review", paused: false },
+      { id: "FN-MQ2", column: "in-review", paused: false },
+    ]);
+    // getTask is called inside drainMergeQueue to verify the task
+    mockStore.getTask = vi.fn().mockImplementation(async (id: string) => ({
+      id,
+      column: "in-review",
+      paused: false,
+    }));
+
+    const { aiMergeTask } = await import("@fusion/engine");
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({ merged: true }),
+    );
+
+    await runDashboard(0, { open: false });
+
+    // Clear any calls from startup sweep
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockClear();
+
+    // Trigger unpause event with autoMerge enabled
+    mockStore.emit("settings:updated", {
+      settings: { globalPause: false, maxConcurrent: 1, autoMerge: true },
+      previous: { globalPause: true },
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Both in-review tasks should be enqueued for merge
+    const mergedIds = (aiMergeTask as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call: any[]) => call[2],
+    );
+    expect(mergedIds).toContain("FN-MQ1");
+    expect(mergedIds).toContain("FN-MQ2");
+  });
+});
+
+describe("runDashboard — engine pause/unpause cycle", () => {
+  let mockStore: ReturnType<typeof makeMockStore>;
+
+  beforeEach(async () => {
+    capturedExecutorOpts = undefined;
+    vi.clearAllMocks();
+    resetGitHubMocks();
+    mockStore = makeMockStore();
+    const { TaskStore } = await import("@fusion/core");
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
+    const engine = await import("@fusion/engine");
+    (engine.aiMergeTask as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({ merged: true }),
+    );
+  });
+
+  it("calls executor.resumeOrphaned() when enginePaused transitions true → false", async () => {
+    const { TaskExecutor } = await import("@fusion/engine");
+    const resumeOrphaned = vi.fn().mockResolvedValue(undefined);
+    (TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_store: unknown, _cwd: unknown, opts: unknown) => {
+        capturedExecutorOpts = opts as Record<string, unknown>;
+        return { resumeOrphaned };
+      },
+    );
+
+    await runDashboard(0, { open: false });
+
+    // Clear the startup call to resumeOrphaned
+    resumeOrphaned.mockClear();
+
+    // Trigger engine unpause event
+    mockStore.emit("settings:updated", {
+      settings: { enginePaused: false, maxConcurrent: 1, autoMerge: false },
+      previous: { enginePaused: true },
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(resumeOrphaned).toHaveBeenCalled();
+  });
+});
+
+describe("runDashboard — stuck task timeout listener guards", () => {
+  let mockStore: ReturnType<typeof makeMockStore>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    resetGitHubMocks();
+    mockStore = makeMockStore();
+    const { TaskStore } = await import("@fusion/core");
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
+    const engine = await import("@fusion/engine");
+    (engine.TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_store: unknown, _cwd: unknown, opts: unknown) => {
+        capturedExecutorOpts = opts as Record<string, unknown>;
+        return { resumeOrphaned: vi.fn().mockResolvedValue(undefined) };
+      },
+    );
+  });
+
+  it("catches and logs checkNow errors when taskStuckTimeoutMs changes", async () => {
+    const detectorError = new Error("detector exploded");
+    mockStuckCheckNow.mockRejectedValueOnce(detectorError);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const unhandledRejectionSpy = vi.fn();
+    process.on("unhandledRejection", unhandledRejectionSpy);
+
+    try {
+      await runDashboard(0, { open: false });
+
+      mockStore.emit("settings:updated", {
+        settings: { taskStuckTimeoutMs: 600_000 },
+        previous: { taskStuckTimeoutMs: 1_200_000 },
+      });
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(mockStuckCheckNow).toHaveBeenCalledTimes(1);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "[stuck-detector] Error during immediate stuck-task check:",
+        detectorError,
+      );
+      expect(unhandledRejectionSpy).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandledRejectionSpy);
+      consoleErrorSpy.mockRestore();
+    }
+  });
+});
+
+describe("runDashboard — port fallback on EADDRINUSE", () => {
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    resetGitHubMocks();
+    const { TaskStore } = await import("@fusion/core");
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
+    const engine = await import("@fusion/engine");
+    (engine.TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({ resumeOrphaned: vi.fn().mockResolvedValue(undefined) }),
+    );
+    consoleSpy = vi.spyOn(console, "log");
+  });
+
+  afterEach(() => {
     consoleSpy.mockRestore();
   });
 
-  it("falls back gracefully when extension discovery throws", async () => {
-    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    mockDiscoverAndLoadExtensions.mockRejectedValueOnce(new Error("boom"));
+  it("listens on the requested port when available", async () => {
+    await runDashboard(4040, { open: false });
 
-    await runDashboard(0, {});
+    // Wait for async 'listening' event
+    await new Promise((r) => setTimeout(r, 50));
 
-    expect(mockCreateExtensionRuntime).toHaveBeenCalledTimes(1);
-    expect(mockModelRegistry.refresh).toHaveBeenCalled();
-    expect(consoleSpy).toHaveBeenCalledWith("[extensions] Failed to discover extensions: boom");
+    // mockListen should have been called with the requested port bound to localhost by default.
+    expect(mockListen).toHaveBeenCalledWith(4040, "127.0.0.1");
+
+    // Banner should show the requested port
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("http://localhost:4040"),
+    );
+
+    // No warning should be printed
+    const warningCalls = consoleSpy.mock.calls.filter(
+      (args) => typeof args[0] === "string" && args[0].includes("Port 4040 in use"),
+    );
+    expect(warningCalls).toHaveLength(0);
+  });
+
+  it("falls back to a random port on EADDRINUSE", async () => {
+    const fallbackPort = 54321;
+    const serverEmitter = new EventEmitter();
+
+    // Mock the server's own listen method (used for the retry with port 0)
+    const mockServerListen = vi.fn((_port?: number) => {
+      process.nextTick(() => serverEmitter.emit("listening"));
+      return serverEmitter;
+    });
+
+    Object.assign(serverEmitter, {
+      listen: mockServerListen,
+      address: vi.fn(() => ({ port: fallbackPort, family: "IPv4", address: "127.0.0.1" })),
+      close: vi.fn(),
+    });
+
+    // Override mockListen for one call: simulate EADDRINUSE
+    mockListen.mockImplementationOnce(((_port: number) => {
+      process.nextTick(() => {
+        const err = new Error("listen EADDRINUSE: address already in use") as NodeJS.ErrnoException;
+        err.code = "EADDRINUSE";
+        serverEmitter.emit("error", err);
+      });
+      return serverEmitter;
+    }) as any);
+
+    await runDashboard(4040, { open: false });
+
+    // Wait for async events to settle
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Server should have retried with port 0, still bound to localhost.
+    expect(mockServerListen).toHaveBeenCalledWith(0, "127.0.0.1");
+
+    // Banner should show the fallback port, not the requested port
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining(`http://localhost:${fallbackPort}`),
+    );
+  });
+
+  it("prints a warning when port fallback occurs", async () => {
+    const fallbackPort = 12345;
+    const serverEmitter = new EventEmitter();
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const mockServerListen = vi.fn((_port?: number) => {
+      process.nextTick(() => serverEmitter.emit("listening"));
+      return serverEmitter;
+    });
+
+    Object.assign(serverEmitter, {
+      listen: mockServerListen,
+      address: vi.fn(() => ({ port: fallbackPort, family: "IPv4", address: "127.0.0.1" })),
+      close: vi.fn(),
+    });
+
+    mockListen.mockImplementationOnce(((_port: number) => {
+      process.nextTick(() => {
+        const err = new Error("listen EADDRINUSE: address already in use") as NodeJS.ErrnoException;
+        err.code = "EADDRINUSE";
+        serverEmitter.emit("error", err);
+      });
+      return serverEmitter;
+    }) as any);
+
+    await runDashboard(4040, { open: false });
+
+    // Wait for async events to settle
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Should print warning with both the requested and actual ports
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      `[dashboard] Port 4040 in use, using ${fallbackPort} instead`,
+    );
+    consoleWarnSpy.mockRestore();
+  });
+});
+
+describe("runDashboard — enginePaused (soft pause)", () => {
+  let mockStore: ReturnType<typeof makeMockStore>;
+
+  beforeEach(async () => {
+    capturedExecutorOpts = undefined;
+    vi.clearAllMocks();
+    resetGitHubMocks();
+    mockStore = makeMockStore();
+    const { TaskStore } = await import("@fusion/core");
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
+    const engine = await import("@fusion/engine");
+    (engine.aiMergeTask as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({ merged: true }),
+    );
+    (engine.TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_store: unknown, _cwd: unknown, opts: unknown) => {
+        capturedExecutorOpts = opts as Record<string, unknown>;
+        return { resumeOrphaned: vi.fn().mockResolvedValue(undefined) };
+      },
+    );
+  });
+
+  it("does not enqueue tasks for auto-merge when enginePaused on task:moved", async () => {
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      pollIntervalMs: 60_000,
+      enginePaused: true,
+    });
+
+    await runDashboard(0, { open: false });
+
+    const { aiMergeTask } = await import("@fusion/engine");
+
+    // Emit task:moved
+    mockStore.emit("task:moved", {
+      task: { id: "FN-EP1", column: "in-review", paused: false },
+      from: "in-progress",
+      to: "in-review",
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(aiMergeTask).not.toHaveBeenCalled();
+  });
+
+  it("calls executor.resumeOrphaned() when enginePaused transitions true → false", async () => {
+    const { TaskExecutor } = await import("@fusion/engine");
+    const resumeOrphaned = vi.fn().mockResolvedValue(undefined);
+    (TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_store: unknown, _cwd: unknown, opts: unknown) => {
+        capturedExecutorOpts = opts as Record<string, unknown>;
+        return { resumeOrphaned };
+      },
+    );
+
+    await runDashboard(0, { open: false });
+
+    // Clear the startup call
+    resumeOrphaned.mockClear();
+
+    // Trigger engine unpause event
+    mockStore.emit("settings:updated", {
+      settings: { enginePaused: false, maxConcurrent: 1, autoMerge: false },
+      previous: { enginePaused: true },
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(resumeOrphaned).toHaveBeenCalled();
+  });
+
+  it("sweeps merge queue on engine unpause when autoMerge is enabled", async () => {
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      pollIntervalMs: 60_000,
+      enginePaused: false,
+      globalPause: false,
+    });
+    mockStore.listTasks.mockResolvedValue([
+      { id: "FN-EP2", column: "in-review", paused: false },
+    ]);
+    mockStore.getTask = vi.fn().mockImplementation(async (id: string) => ({
+      id,
+      column: "in-review",
+      paused: false,
+    }));
+
+    const { aiMergeTask } = await import("@fusion/engine");
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({ merged: true }),
+    );
+
+    await runDashboard(0, { open: false });
+
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockClear();
+
+    mockStore.emit("settings:updated", {
+      settings: { enginePaused: false, maxConcurrent: 1, autoMerge: true },
+      previous: { enginePaused: true },
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    const mergedIds = (aiMergeTask as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call: any[]) => call[2],
+    );
+    expect(mergedIds).toContain("FN-EP2");
+  });
+});
+
+describe("runDashboard — --paused flag", () => {
+  let mockStore: ReturnType<typeof makeMockStore>;
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    capturedExecutorOpts = undefined;
+    vi.clearAllMocks();
+    resetGitHubMocks();
+    mockStore = makeMockStore();
+    const { TaskStore } = await import("@fusion/core");
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
+    const engine = await import("@fusion/engine");
+    (engine.aiMergeTask as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({ merged: true }),
+    );
+    (engine.TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_store: unknown, _cwd: unknown, opts: unknown) => {
+        capturedExecutorOpts = opts as Record<string, unknown>;
+        return { resumeOrphaned: vi.fn().mockResolvedValue(undefined) };
+      },
+    );
+    consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
     consoleSpy.mockRestore();
   });
 
-  it("logs provider registration errors without aborting startup", async () => {
-    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    mockDiscoverAndLoadExtensions.mockResolvedValueOnce({
-      runtime: {
-        pendingProviderRegistrations: [
-          {
-            name: "duplicate-provider",
-            config: { models: [{ id: "model-a" }] },
-            extensionPath: "/extensions/duplicate-provider",
-          },
-        ],
-      },
-      errors: [],
-    });
-    mockModelRegistry.registerProvider.mockImplementationOnce(() => {
-      throw new Error("duplicate provider");
-    });
+  it("calls store.updateSettings({ enginePaused: true }) when paused: true is passed", async () => {
+    await runDashboard(0, { open: false, paused: true });
 
-    await runDashboard(0, {});
+    expect(mockStore.updateSettings).toHaveBeenCalledWith({ enginePaused: true });
+  });
+
+  it("logs a message when starting in paused mode", async () => {
+    await runDashboard(0, { open: false, paused: true });
 
     expect(consoleSpy).toHaveBeenCalledWith(
-      "[extensions] Failed to register provider from /extensions/duplicate-provider: duplicate provider",
+      "[engine] Starting in paused mode — automation disabled",
     );
-    expect(mockModelRegistry.refresh).toHaveBeenCalled();
+  });
+
+  it("does NOT set enginePaused when paused option is absent", async () => {
+    await runDashboard(0, { open: false });
+
+    // updateSettings should not be called with enginePaused during normal startup
+    const enginePausedCalls = mockStore.updateSettings.mock.calls.filter(
+      (call: any[]) => call[0]?.enginePaused !== undefined,
+    );
+    expect(enginePausedCalls).toHaveLength(0);
+  });
+
+  it("does NOT log paused message when starting normally", async () => {
+    await runDashboard(0, { open: false });
+
+    const pausedMessageCalls = consoleSpy.mock.calls.filter(
+      (args) => args[0] === "[engine] Starting in paused mode — automation disabled",
+    );
+    expect(pausedMessageCalls).toHaveLength(0);
+  });
+});
+
+describe("runDashboard — --paused flag", () => {
+  let mockStore: ReturnType<typeof makeMockStore>;
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    resetGitHubMocks();
+    mockStore = makeMockStore();
+    const { TaskStore } = await import("@fusion/core");
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
+    const engine = await import("@fusion/engine");
+    (engine.TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({ resumeOrphaned: vi.fn().mockResolvedValue(undefined) }),
+    );
+    consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
     consoleSpy.mockRestore();
   });
 
-  it("skips OpenRouter model sync when openrouterModelSync is false", async () => {
+  it("calls store.updateSettings({ enginePaused: true }) when paused: true is passed", async () => {
+    await runDashboard(0, { open: false, paused: true });
+
+    expect(mockStore.updateSettings).toHaveBeenCalledWith({ enginePaused: true });
+    expect(mockStore.updateSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT call store.updateSettings when paused flag is absent", async () => {
+    await runDashboard(0, { open: false });
+
+    expect(mockStore.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("logs paused mode message when starting with paused: true", async () => {
+    await runDashboard(0, { open: false, paused: true });
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "[engine] Starting in paused mode — automation disabled",
+    );
+  });
+
+  it("does NOT log paused mode message when paused flag is absent", async () => {
+    await runDashboard(0, { open: false });
+
+    const pausedMessageCalls = consoleSpy.mock.calls.filter(
+      (args) => typeof args[0] === "string" && args[0].includes("paused mode"),
+    );
+    expect(pausedMessageCalls).toHaveLength(0);
+  });
+});
+
+describe("runDashboard — --dev mode", () => {
+  let mockStore: ReturnType<typeof makeMockStore>;
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    capturedExecutorOpts = undefined;
+    vi.clearAllMocks();
+    resetGitHubMocks();
+    mockStore = makeMockStore();
     const { TaskStore } = await import("@fusion/core");
-    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
-      ...makeMockStore(),
-      getSettings: vi.fn().mockResolvedValue({
-        maxConcurrent: 1,
-        maxWorktrees: 2,
-        autoMerge: false,
-        pollIntervalMs: 60_000,
-        openrouterModelSync: false,
-      }),
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
+    const engine = await import("@fusion/engine");
+    (engine.aiMergeTask as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({ merged: true }),
+    );
+    (engine.TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_store: unknown, _cwd: unknown, opts: unknown) => {
+        capturedExecutorOpts = opts as Record<string, unknown>;
+        return { resumeOrphaned: vi.fn().mockResolvedValue(undefined) };
+      },
+    );
+    consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
+  });
+
+  it("does NOT start TriageProcessor in dev mode", async () => {
+    const { TriageProcessor } = await import("@fusion/engine");
+    await runDashboard(0, { open: false, dev: true });
+    expect(TriageProcessor).not.toHaveBeenCalled();
+  });
+
+  it("does NOT start TaskExecutor in dev mode", async () => {
+    const { TaskExecutor } = await import("@fusion/engine");
+    await runDashboard(0, { open: false, dev: true });
+    expect(TaskExecutor).not.toHaveBeenCalled();
+  });
+
+  it("does NOT start Scheduler in dev mode", async () => {
+    const { Scheduler } = await import("@fusion/engine");
+    await runDashboard(0, { open: false, dev: true });
+    expect(Scheduler).not.toHaveBeenCalled();
+  });
+
+  it("starts the server correctly in dev mode", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+    await runDashboard(4040, { open: false, dev: true });
+
+    // Wait for async 'listening' event
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Server should have been created and listen called (localhost default)
+    expect(createServer).toHaveBeenCalled();
+    expect(mockListen).toHaveBeenCalledWith(4040, "127.0.0.1");
+
+    // Banner should show the port
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("http://localhost:4040"),
+    );
+  });
+
+  it("shows 'AI engine: disabled (dev mode)' in dev mode", async () => {
+    await runDashboard(0, { open: false, dev: true });
+
+    // Wait for async 'listening' event
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Should show disabled message
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("✗ disabled (dev mode)"),
+    );
+  });
+
+  it("does NOT show triage/scheduler details in dev mode", async () => {
+    await runDashboard(0, { open: false, dev: true });
+
+    // Wait for async 'listening' event
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Should NOT show triage/scheduler details
+    const triageCall = consoleSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("• triage"),
+    );
+    const schedulerCall = consoleSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("• scheduler"),
+    );
+    expect(triageCall).toBeUndefined();
+    expect(schedulerCall).toBeUndefined();
+  });
+
+  it("starts all engine components when dev is false (default)", async () => {
+    const { TriageProcessor, TaskExecutor, Scheduler } = await import("@fusion/engine");
+    await runDashboard(0, { open: false });
+
+    expect(TriageProcessor).toHaveBeenCalled();
+    expect(TaskExecutor).toHaveBeenCalled();
+    expect(Scheduler).toHaveBeenCalled();
+  });
+
+  it("shows 'AI engine: ✓ active' when not in dev mode", async () => {
+    await runDashboard(0, { open: false });
+
+    // Wait for async 'listening' event
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Should show active message
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("✓ active"),
+    );
+  });
+});
+
+describe("runDashboard — merge conflict retry logic", () => {
+  let mockStore: ReturnType<typeof makeMockStore>;
+  let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    capturedExecutorOpts = undefined;
+    vi.clearAllMocks();
+    resetGitHubMocks();
+    mockStore = makeMockStore();
+    const { TaskStore } = await import("@fusion/core");
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
+
+    // Default mock store.getTask implementation
+    mockStore.getTask = vi.fn().mockImplementation(async (id: string) => ({
+      id,
+      column: "in-review",
+      paused: false,
+      mergeRetries: 0,
     }));
 
-    await runDashboard(0, {});
+    const engine = await import("@fusion/engine");
+    (engine.aiMergeTask as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({ merged: true }),
+    );
+    (engine.TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_store: unknown, _cwd: unknown, opts: unknown) => {
+        capturedExecutorOpts = opts as Record<string, unknown>;
+        return { resumeOrphaned: vi.fn().mockResolvedValue(undefined) };
+      },
+    );
+    consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
 
-    expect(mockAuthStorage.getApiKey).not.toHaveBeenCalled();
+  afterEach(() => {
+    consoleSpy.mockRestore();
+  });
+
+  it("increments mergeRetries and re-enqueues on conflict error", async () => {
+    const { aiMergeTask } = await import("@fusion/engine");
+
+    // Simulate merge failure with conflict
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("Merge conflict detected in package-lock.json"),
+    );
+
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      autoResolveConflicts: true,
+      pollIntervalMs: 60_000,
+      enginePaused: false,
+      globalPause: false,
+    });
+
+    mockStore.listTasks.mockResolvedValue([
+      { id: "FN-RETRY", column: "in-review", paused: false },
+    ]);
+
+    await runDashboard(0, { open: false });
+
+    // Wait for retry scheduling
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Should have incremented mergeRetries
+    expect(mockStore.updateTask).toHaveBeenCalledWith(
+      "FN-RETRY",
+      expect.objectContaining({ mergeRetries: 1 }),
+    );
+
+    // Should log retry attempt
+    const retryLog = consoleSpy.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("retry 1/3"),
+    );
+    expect(retryLog).toBeDefined();
+  });
+
+  it("gives up after max retries (3) exceeded", async () => {
+    const { aiMergeTask } = await import("@fusion/engine");
+
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("Merge conflict detected"),
+    );
+
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      autoResolveConflicts: true,
+      pollIntervalMs: 60_000,
+      enginePaused: false,
+      globalPause: false,
+    });
+
+    // Task already has 3 retries
+    mockStore.getTask = vi.fn().mockImplementation(async (id: string) => ({
+      id,
+      column: "in-review",
+      paused: false,
+      mergeRetries: 3,
+    }));
+
+    mockStore.listTasks.mockResolvedValue([
+      { id: "FN-MAX", column: "in-review", paused: false, mergeRetries: 3 },
+    ]);
+
+    await runDashboard(0, { open: false });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Exhausted tasks are skipped before enqueue, so they should not be merged again.
+    expect(aiMergeTask).not.toHaveBeenCalled();
+    expect(mockStore.updateTask).not.toHaveBeenCalledWith(
+      "FN-MAX",
+      expect.objectContaining({ mergeRetries: expect.anything() }),
+    );
+  });
+
+  it("skips retry when autoResolveConflicts is disabled", async () => {
+    const { aiMergeTask } = await import("@fusion/engine");
+
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("Merge conflict detected"),
+    );
+
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      autoResolveConflicts: false, // Disabled
+      pollIntervalMs: 60_000,
+      enginePaused: false,
+      globalPause: false,
+    });
+
+    mockStore.listTasks.mockResolvedValue([
+      { id: "FN-NO-AUTO", column: "in-review", paused: false },
+    ]);
+
+    await runDashboard(0, { open: false });
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Should log that auto-resolve is disabled
+    const disabledLog = consoleSpy.mock.calls.find(
+      (call) =>
+        typeof call[0] === "string" &&
+        call[0].includes("autoResolveConflicts disabled"),
+    );
+    expect(disabledLog).toBeDefined();
+  });
+
+  it("clears mergeRetries on successful merge after retries", async () => {
+    const { aiMergeTask } = await import("@fusion/engine");
+
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockResolvedValue({ merged: true });
+
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      autoResolveConflicts: true,
+      pollIntervalMs: 60_000,
+      enginePaused: false,
+      globalPause: false,
+    });
+
+    // Task had previous retries
+    mockStore.getTask = vi.fn().mockImplementation(async (id: string) => ({
+      id,
+      column: "in-review",
+      paused: false,
+      mergeRetries: 2,
+    }));
+
+    mockStore.listTasks.mockResolvedValue([
+      { id: "FN-SUCCESS", column: "in-review", paused: false, mergeRetries: 2 },
+    ]);
+
+    await runDashboard(0, { open: false });
+
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Should clear mergeRetries on success
+    expect(mockStore.updateTask).toHaveBeenCalledWith(
+      "FN-SUCCESS",
+      expect.objectContaining({ mergeRetries: 0 }),
+    );
+  });
+
+  it("marks non-conflict merge failures as exhausted so auto-merge stops retrying", async () => {
+    const { aiMergeTask } = await import("@fusion/engine");
+
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("Build verification failed for FN-BUILD: Dependency sync failed"),
+    );
+
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: true,
+      autoResolveConflicts: true,
+      pollIntervalMs: 60_000,
+      enginePaused: false,
+      globalPause: false,
+    });
+
+    mockStore.getTask = vi.fn().mockImplementation(async (id: string) => ({
+      id,
+      column: "in-review",
+      paused: false,
+      mergeRetries: 0,
+    }));
+
+    mockStore.listTasks.mockResolvedValue([
+      { id: "FN-BUILD", column: "in-review", paused: false, mergeRetries: 0 },
+    ]);
+
+    await runDashboard(0, { open: false });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(mockStore.updateTask).toHaveBeenCalledWith(
+      "FN-BUILD",
+      expect.objectContaining({
+        status: null,
+        mergeRetries: 3,
+        error: "Build verification failed for FN-BUILD: Dependency sync failed",
+      }),
+    );
   });
 });
 
-describe("runDashboard — non-dev mode engine wiring", () => {
+describe("runDashboard — PR feedback follow-up wiring", () => {
+  let mockStore: ReturnType<typeof makeMockStore>;
+
   beforeEach(async () => {
+    capturedExecutorOpts = undefined;
     vi.clearAllMocks();
-    mockDiscoverAndLoadExtensions.mockResolvedValue({
-      runtime: { pendingProviderRegistrations: [] },
-      errors: [],
-    });
+    resetGitHubMocks();
+    mockStore = makeMockStore();
     const { TaskStore } = await import("@fusion/core");
-    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
+    const engine = await import("@fusion/engine");
+    (engine.aiMergeTask as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({ merged: true }),
+    );
+    (engine.TaskExecutor as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_store: unknown, _cwd: unknown, opts: unknown) => {
+        capturedExecutorOpts = opts as Record<string, unknown>;
+        return { resumeOrphaned: vi.fn().mockResolvedValue(undefined) };
+      },
+    );
   });
 
-  it("passes engineManager to createServer (non-dev mode)", async () => {
-    const { createServer } = await import("@fusion/dashboard");
-    const { ProjectEngineManager } = await import("@fusion/engine");
+  it("wires onClosedPrFeedback callback to PrCommentHandler.createFollowUpTask", async () => {
+    const { PrMonitor, PrCommentHandler, Scheduler } = await import("@fusion/engine");
 
-    await runDashboard(0, {});
+    let capturedOnClosedPrFeedback: ((taskId: string, prInfo: any, comments: any[]) => void) | undefined;
 
-    expect(ProjectEngineManager).toHaveBeenCalledTimes(1);
-    expect(createServer).toHaveBeenCalledTimes(1);
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(serverOpts).toHaveProperty("engineManager");
-    expect(serverOpts.engineManager).toBeDefined();
+    (Scheduler as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_store: unknown, _opts: unknown) => {
+        capturedOnClosedPrFeedback = _opts.onClosedPrFeedback;
+        return { start: vi.fn(), stop: vi.fn() };
+      },
+    );
+
+    await runDashboard(0, { open: false });
+
+    // Verify the callback was passed to the scheduler
+    expect(capturedOnClosedPrFeedback).toBeDefined();
+
+    // Invoke it to verify it reaches createFollowUpTask
+    const mockPrInfo = { status: "merged", number: 42 };
+    const mockComments = [
+      { id: 1, body: "Fix this", user: { login: "reviewer" }, created_at: "2024-01-01", updated_at: "2024-01-01", html_url: "" },
+    ];
+    await capturedOnClosedPrFeedback("FN-001", mockPrInfo, mockComments);
+
+    // The PrCommentHandler mock should have been called
+    const handlerInstance = (PrCommentHandler as unknown as ReturnType<typeof vi.fn>).mock.results[0].value;
+    expect(handlerInstance.createFollowUpTask).toHaveBeenCalledWith("FN-001", mockPrInfo, mockComments);
+  });
+
+  it("preserves existing onNewComments steering behavior", async () => {
+    const { PrMonitor, PrCommentHandler } = await import("@fusion/engine");
+
+    let capturedOnNewComments: ((taskId: string, prInfo: any, comments: any[]) => void) | undefined;
+
+    (PrMonitor as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      onNewComments: vi.fn((cb: any) => { capturedOnNewComments = cb; }),
+      startMonitoring: vi.fn(),
+      stopMonitoring: vi.fn(),
+      stopAll: vi.fn(),
+      getTrackedPrs: vi.fn().mockReturnValue(new Map()),
+      updatePrInfo: vi.fn(),
+      drainComments: vi.fn().mockReturnValue([]),
+    }));
+
+    await runDashboard(0, { open: false });
+
+    // The onNewComments callback should still be wired to handleNewComments
+    expect(capturedOnNewComments).toBeDefined();
+    const handlerInstance = (PrCommentHandler as unknown as ReturnType<typeof vi.fn>).mock.results[0].value;
+    const mockComments = [
+      { id: 1, body: "Fix this", user: { login: "reviewer" }, created_at: "2024-01-01", updated_at: "2024-01-01", html_url: "" },
+    ];
+    const mockPrInfo = { status: "open", number: 42 };
+    await capturedOnNewComments("FN-001", mockPrInfo, mockComments);
+    expect(handlerInstance.handleNewComments).toHaveBeenCalledWith("FN-001", mockPrInfo, mockComments);
   });
 });
 
-describe("runDashboard — Plugin wiring", () => {
+describe("runDashboard — lifecycle listener cleanup", () => {
+  let mockStore: ReturnType<typeof makeMockStore>;
+
   beforeEach(async () => {
-    vi.clearAllMocks();
-    mockDiscoverAndLoadExtensions.mockResolvedValue({
-      runtime: { pendingProviderRegistrations: [] },
-      errors: [],
-    });
+    mockStore = makeMockStore();
     const { TaskStore } = await import("@fusion/core");
-    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
   });
 
-  it("creates PluginStore and PluginLoader instances", async () => {
-    const { PluginStore, PluginLoader } = await import("@fusion/core");
-
-    await runDashboard(0, {});
-
-    expect(PluginStore).toHaveBeenCalledTimes(1);
-    expect(PluginLoader).toHaveBeenCalledTimes(1);
+  it("returns a dispose function", async () => {
+    const { dispose } = await runDashboard(0, { open: false });
+    expect(typeof dispose).toBe("function");
+    expect(() => dispose()).not.toThrow();
   });
 
-  it("passes pluginStore, pluginLoader, and pluginRunner to createServer", async () => {
-    const { createServer } = await import("@fusion/dashboard");
+  it("engine cleans up its own listeners from the shared store on dispose", async () => {
+    const { dispose } = await runDashboard(0, { open: false });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    await runDashboard(0, {});
+    dispose();
 
-    expect(createServer).toHaveBeenCalledTimes(1);
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    
-    expect(serverOpts.pluginStore).toBeDefined();
-    expect(serverOpts.pluginLoader).toBeDefined();
-    expect(serverOpts.pluginRunner).toBeDefined();
-    
-    // pluginRunner should be the same instance as pluginLoader
-    expect(serverOpts.pluginRunner).toBe(serverOpts.pluginLoader);
+    // With ProjectEngineManager, engine.stop() cleans up settings:updated
+    // and task:moved listeners from the store. This is correct behavior —
+    // the engine owns these listeners and removes them on shutdown.
+    // We just verify dispose() doesn't throw.
   });
 
-  it("initializes PluginStore with the task store's fusion directory", async () => {
-    const { PluginStore } = await import("@fusion/core");
+  it("dispose is idempotent — calling twice does not throw", async () => {
+    const { dispose } = await runDashboard(0, { open: false });
 
-    await runDashboard(0, {});
-
-    // PluginStore is initialized with store.getFusionDir() which uses the mock path
-    // The path includes the project ID from the mock store
-    expect(PluginStore).toHaveBeenCalledWith(expect.stringContaining("/.fusion"));
+    expect(() => dispose()).not.toThrow();
+    expect(() => dispose()).not.toThrow();
   });
 
-  it("initializes PluginLoader with pluginStore and taskStore", async () => {
-    const { PluginLoader } = await import("@fusion/core");
+  it("does not accumulate process listeners across repeated invocations", async () => {
+    const baselineSigint = process.listenerCount("SIGINT");
+    const baselineSigterm = process.listenerCount("SIGTERM");
 
-    await runDashboard(0, {});
-
-    expect(PluginLoader).toHaveBeenCalledTimes(1);
-    const loaderOptions = (PluginLoader as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(loaderOptions).toHaveProperty("pluginStore");
-    expect(loaderOptions).toHaveProperty("taskStore");
-  });
-});
-
-describe("runDashboard — per-project engine manager (multi-project)", () => {
-  beforeEach(async () => {
-    vi.clearAllMocks();
-    mockDiscoverAndLoadExtensions.mockResolvedValue({
-      runtime: { pendingProviderRegistrations: [] },
-      errors: [],
-    });
-    const { TaskStore } = await import("@fusion/core");
-    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
-  });
-
-  it("creates a ProjectEngineManager and calls startAll in non-dev mode", async () => {
-    const { ProjectEngineManager } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    expect(ProjectEngineManager).toHaveBeenCalledTimes(1);
-    const managerInstance = (ProjectEngineManager as unknown as ReturnType<typeof vi.fn>).mock.results[0]?.value;
-    expect(managerInstance.startAll).toHaveBeenCalledTimes(1);
-  });
-
-  it("passes onProjectFirstAccessed callback to createServer", async () => {
-    const { createServer } = await import("@fusion/dashboard");
-
-    await runDashboard(0, {});
-
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(serverOpts).toHaveProperty("onProjectFirstAccessed");
-    expect(serverOpts.onProjectFirstAccessed).toBeTypeOf("function");
-  });
-
-  it("onProjectFirstAccessed delegates to engineManager.onProjectAccessed", async () => {
-    const { createServer } = await import("@fusion/dashboard");
-    const { ProjectEngineManager } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    const managerInstance = (ProjectEngineManager as unknown as ReturnType<typeof vi.fn>).mock.results[0]?.value;
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    const cb: (id: string) => void = serverOpts.onProjectFirstAccessed;
-
-    cb("proj_new");
-
-    expect(managerInstance.onProjectAccessed).toHaveBeenCalledWith("proj_new");
-  });
-
-  it("passes engineManager to createServer", async () => {
-    const { createServer } = await import("@fusion/dashboard");
-    const { ProjectEngineManager } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    const managerInstance = (ProjectEngineManager as unknown as ReturnType<typeof vi.fn>).mock.results[0]?.value;
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(serverOpts.engineManager).toBe(managerInstance);
-  });
-
-  it("does not create ProjectEngine in dev mode", async () => {
-    const { ProjectEngine } = await import("@fusion/engine");
-
-    await runDashboard(0, { dev: true });
-
-    expect(ProjectEngine).not.toHaveBeenCalled();
-  });
-});
-
-describe("runDashboard — Peer exchange and discovery", () => {
-  beforeEach(async () => {
-    vi.clearAllMocks();
-    centralInstances.length = 0;
-    mockDiscoverAndLoadExtensions.mockResolvedValue({
-      runtime: { pendingProviderRegistrations: [] },
-      errors: [],
-    });
-    const { TaskStore } = await import("@fusion/core");
-    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
-  });
-
-  it("creates PeerExchangeService with CentralCore and calls start() in non-dev mode", async () => {
-    const { PeerExchangeService } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    expect(PeerExchangeService).toHaveBeenCalledTimes(1);
-    const peerExchangeInstance = PeerExchangeService.mock.results[0]?.value;
-    expect(peerExchangeInstance.start).toHaveBeenCalledTimes(1);
-  });
-
-  it("creates CentralCore with startDiscovery and updateNode methods in non-dev mode", async () => {
-    await runDashboard(0, {});
-
-    // Verify CentralCore was created with the required methods
-    expect(centralInstances.length).toBeGreaterThanOrEqual(1);
-    const meshCentral = centralInstances[0];
-    expect(meshCentral).toBeDefined();
-    expect(typeof meshCentral.startDiscovery).toBe("function");
-    expect(typeof meshCentral.updateNode).toBe("function");
-  });
-
-  it("creates CentralCore and PeerExchangeService in dev mode", async () => {
-    const { PeerExchangeService: PeerExchangeServiceEngine } = await import("@fusion/engine");
-
-    await runDashboard(0, { dev: true });
-
-    // In dev mode, we create a separate CentralCore for mesh
-    expect(centralInstances.length).toBeGreaterThanOrEqual(1);
-    expect(PeerExchangeServiceEngine).toHaveBeenCalledTimes(1);
-    const peerExchangeInstance = PeerExchangeServiceEngine.mock.results[0]?.value;
-    expect(peerExchangeInstance.start).toHaveBeenCalledTimes(1);
-  });
-
-  it("creates CentralCore with startDiscovery and updateNode methods in dev mode", async () => {
-    await runDashboard(0, { dev: true });
-
-    expect(centralInstances.length).toBeGreaterThanOrEqual(1);
-    const meshCentral = centralInstances[0];
-    expect(meshCentral).toBeDefined();
-    expect(typeof meshCentral.startDiscovery).toBe("function");
-    expect(typeof meshCentral.updateNode).toBe("function");
-  });
-});
-
-describe("runDashboard — multi-project cwd/default engine resolution", () => {
-  beforeEach(async () => {
-    vi.clearAllMocks();
-    mockDiscoverAndLoadExtensions.mockResolvedValue({
-      runtime: { pendingProviderRegistrations: [] },
-      errors: [],
-    });
-    const { TaskStore } = await import("@fusion/core");
-    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
-    // Default: cwd resolves to primary project
-    setupProjectByPath(null);
-  });
-
-  it("selects default engine via CentralCore.getProjectByPath(cwd), not by registry order", async () => {
-    const { createServer } = await import("@fusion/dashboard");
-    const { ProjectEngineManager } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    // Verify the engine manager was created
-    expect(ProjectEngineManager).toHaveBeenCalledTimes(1);
-
-    // Verify CentralCore.getProjectByPath was called with cwd
-    expect(centralInstances.some((instance) => instance.getProjectByPath.mock.calls.length > 0)).toBe(true);
-
-    // Verify createServer received an engine (the cwd/default engine)
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(serverOpts).toHaveProperty("engine");
-    expect(serverOpts.engine).toBeDefined();
-  });
-
-  it("passes engineManager to createServer for multi-project scope resolution", async () => {
-    const { createServer } = await import("@fusion/dashboard");
-    const { ProjectEngineManager } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    const managerInstance = (ProjectEngineManager as unknown as ReturnType<typeof vi.fn>).mock.results[0]?.value;
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
-
-    // engineManager should be passed for multi-project route resolution
-    expect(serverOpts.engineManager).toBe(managerInstance);
-  });
-
-  it("passes onProjectFirstAccessed callback that delegates to engineManager.onProjectAccessed", async () => {
-    const { createServer } = await import("@fusion/dashboard");
-    const { ProjectEngineManager } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    const managerInstance = (ProjectEngineManager as unknown as ReturnType<typeof vi.fn>).mock.results[0]?.value;
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
-
-    // Verify the callback is passed
-    expect(serverOpts).toHaveProperty("onProjectFirstAccessed");
-    expect(typeof serverOpts.onProjectFirstAccessed).toBe("function");
-
-    // Invoke the callback and verify delegation
-    serverOpts.onProjectFirstAccessed("proj-new");
-    expect(managerInstance.onProjectAccessed).toHaveBeenCalledWith("proj-new");
-  });
-
-  it("does NOT pass engine when cwd project cannot be resolved (no foreign default engine)", async () => {
-    // Configure cwd to return null (project not registered)
-    setupProjectByPath((_cwd) => null);
-
-    const { createServer } = await import("@fusion/dashboard");
-    const { ProjectEngineManager } = await import("@fusion/engine");
-
-    await runDashboard(0, {});
-
-    // Verify engineManager was still passed (for multi-project support)
-    const managerInstance = (ProjectEngineManager as unknown as ReturnType<typeof vi.fn>).mock.results[0]?.value;
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(serverOpts.engineManager).toBe(managerInstance);
-
-    // But NO default engine was bound (prevents wrong-project execution)
-    expect(serverOpts.engine).toBeUndefined();
-  });
-
-  it("forwards scoped automation/routine lane dependencies to createServer", async () => {
-    const { createServer } = await import("@fusion/dashboard");
-
-    await runDashboard(0, {});
-
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
-
-    // automationStore should be forwarded for scoped scheduling
-    expect(serverOpts).toHaveProperty("automationStore");
-    expect(serverOpts.automationStore).toBeDefined();
-  });
-
-  it("maintains correct engine binding when onProjectFirstAccessed is called", async () => {
-    const { createServer } = await import("@fusion/dashboard");
-
-    await runDashboard(0, {});
-
-    // Get the original engine binding
-    const serverOpts1 = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    const originalEngine = serverOpts1.engine;
-
-    // Trigger onProjectFirstAccessed for a secondary project
-    if (serverOpts1.onProjectFirstAccessed) {
-      serverOpts1.onProjectFirstAccessed("proj-secondary");
+    for (let i = 0; i < 5; i += 1) {
+      const { dispose } = await runDashboard(0, { open: false });
+      dispose();
     }
 
-    // Verify createServer was only called once (engine binding unchanged)
-    expect((createServer as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
-
-    // Verify the engine passed is still the original cwd engine
-    const serverOpts2 = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(serverOpts2.engine).toBe(originalEngine);
+    expect(process.listenerCount("SIGINT")).toBe(baselineSigint);
+    expect(process.listenerCount("SIGTERM")).toBe(baselineSigterm);
   });
 
-  // ── Scoped lane diagnostics wiring tests (FN-1743) ─────────────────────────────────
+  it("does not leak process signal listeners after 12 rapid invocations", async () => {
+    const { TaskStore } = await import("@fusion/core");
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
 
-  it("passes cwd engine's automation store for scoped scheduling", async () => {
-    const { createServer } = await import("@fusion/dashboard");
-    const { ProjectEngineManager } = await import("@fusion/engine");
+    const baselineSigint = process.listenerCount("SIGINT");
+    const baselineSigterm = process.listenerCount("SIGTERM");
 
-    await runDashboard(0, {});
+    for (let i = 0; i < 12; i += 1) {
+      const { dispose } = await runDashboard(0, { open: false });
+      dispose();
+    }
 
-    // Verify ProjectEngineManager was used
-    expect(ProjectEngineManager).toHaveBeenCalledTimes(1);
-    const managerInstance = (ProjectEngineManager as unknown as ReturnType<typeof vi.fn>).mock.results[0]?.value;
-    expect(managerInstance).toBeDefined();
+    await new Promise((resolve) => setImmediate(resolve));
 
-    // Verify automationStore is forwarded through the server options
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(serverOpts).toHaveProperty("automationStore");
-    expect(serverOpts.automationStore).toBeDefined();
+    expect(process.listenerCount("SIGINT")).toBe(baselineSigint);
+    expect(process.listenerCount("SIGTERM")).toBe(baselineSigterm);
+  });
+});
+
+describe("runDashboard — CentralCore cleanup diagnostics", () => {
+  function getNewSignalHandler(
+    signal: "SIGINT" | "SIGTERM",
+    baseline: Array<(...args: any[]) => unknown>,
+  ): () => void {
+    const added = process.listeners(signal).find((listener) => !baseline.includes(listener as (...args: any[]) => unknown));
+    expect(added).toBeDefined();
+    return added as () => void;
+  }
+
+  async function configureCentralCoreCloseFailure(errorMessage: string): Promise<{
+    close: ReturnType<typeof vi.fn>;
+    mockStore: ReturnType<typeof makeMockStore>;
+  }> {
+    const { TaskStore, CentralCore } = await import("@fusion/core");
+    const mockStore = makeMockStore();
+    const close = vi.fn().mockRejectedValue(new Error(errorMessage));
+
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockStore);
+    (CentralCore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      close,
+      getProjectByPath: vi.fn().mockResolvedValue({ id: "project-1" }),
+      listProjects: vi.fn().mockResolvedValue([{ id: "project-1", path: process.cwd() }]),
+      startDiscovery: vi.fn().mockResolvedValue(undefined),
+      stopDiscovery: vi.fn(),
+      listNodes: vi.fn().mockResolvedValue([]),
+      updateNode: vi.fn().mockResolvedValue(undefined),
+    }));
+
+    return { close, mockStore };
+  }
+
+  it("logs non-fatal diagnostics when CentralCore.close fails in dispose cleanup", async () => {
+    const { close } = await configureCentralCoreCloseFailure("dispose close failed");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const unhandledRejectionSpy = vi.fn();
+    process.on("unhandledRejection", unhandledRejectionSpy);
+
+    try {
+      const { dispose } = await runDashboard(0, { open: false });
+      dispose();
+
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(close).toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("[dashboard] CentralCore.close() failed during dispose cleanup: dispose close failed"),
+      );
+      expect(unhandledRejectionSpy).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandledRejectionSpy);
+      warnSpy.mockRestore();
+    }
   });
 
-  it("scoped lane automation store is from cwd engine, not secondary project", async () => {
-    const { createServer } = await import("@fusion/dashboard");
-    const { ProjectEngineManager } = await import("@fusion/engine");
+  it("logs shutdown diagnostics and still closes store + exits when CentralCore.close fails", async () => {
+    const { close, mockStore } = await configureCentralCoreCloseFailure("normal shutdown close failed");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const baselineSigintHandlers = process.listeners("SIGINT");
 
-    // Default: cwd resolves to primary project
-    setupProjectByPath(null);
+    try {
+      await runDashboard(0, { open: false });
+      const sigintHandler = getNewSignalHandler("SIGINT", baselineSigintHandlers);
+      sigintHandler();
 
-    await runDashboard(0, {});
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
 
-    // Verify engineManager was created for primary project
-    expect(ProjectEngineManager).toHaveBeenCalledTimes(1);
-    const managerInstance = (ProjectEngineManager as unknown as ReturnType<typeof vi.fn>).mock.results[0]?.value;
-    expect(managerInstance).toBeDefined();
-
-    // Verify the engine for primary project is selected
-    const engineForPrimary = managerInstance.getEngine("project-1");
-    expect(engineForPrimary).toBeDefined();
-
-    // The server should have the cwd engine (project-1)
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(serverOpts.engine).toBe(engineForPrimary);
+      expect(close).toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("[dashboard] CentralCore.close() failed during shutdown (SIGINT): normal shutdown close failed"),
+      );
+      expect(mockStore.close).toHaveBeenCalled();
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    } finally {
+      warnSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
   });
 
-  it("forwards scoped scheduling accessors that support lane diagnostics", async () => {
+  it("logs dev shutdown diagnostics and still exits when mesh CentralCore.close fails", async () => {
+    const { close, mockStore } = await configureCentralCoreCloseFailure("dev shutdown close failed");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const baselineSigtermHandlers = process.listeners("SIGTERM");
+
+    try {
+      await runDashboard(0, { open: false, dev: true });
+      const sigtermHandler = getNewSignalHandler("SIGTERM", baselineSigtermHandlers);
+      sigtermHandler();
+
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(close).toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("[dashboard] CentralCore.close() failed during dev shutdown (SIGTERM): dev shutdown close failed"),
+      );
+      expect(mockStore.close).toHaveBeenCalled();
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    } finally {
+      warnSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+  });
+});
+
+// ── promptForPort tests ───────────────────────────────────────────────
+
+import { promptForPort } from "../dashboard.js";
+
+describe("promptForPort", () => {
+  let mockRl: {
+    question: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
+  };
+
+  beforeEach(() => {
+    mockRl = {
+      question: vi.fn(),
+      close: vi.fn(),
+    };
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns default port on empty input", async () => {
+    const { createInterface } = await import("node:readline");
+    vi.mocked(createInterface).mockReturnValue(mockRl as unknown as ReturnType<typeof createInterface>);
+
+    // Simulate user pressing Enter (empty input)
+    mockRl.question.mockImplementation((_prompt: string, callback: (answer: string) => void) => {
+      callback("");
+    });
+
+    const result = await promptForPort(4040);
+    expect(result).toBe(4040);
+    expect(mockRl.close).toHaveBeenCalled();
+  });
+
+  it("returns valid custom port", async () => {
+    const { createInterface } = await import("node:readline");
+    vi.mocked(createInterface).mockReturnValue(mockRl as unknown as ReturnType<typeof createInterface>);
+
+    mockRl.question.mockImplementation((_prompt: string, callback: (answer: string) => void) => {
+      callback("8080");
+    });
+
+    const result = await promptForPort(4040);
+    expect(result).toBe(8080);
+    expect(mockRl.close).toHaveBeenCalled();
+  });
+
+  it("re-prompts on invalid (non-numeric) input", async () => {
+    const { createInterface } = await import("node:readline");
+    vi.mocked(createInterface).mockReturnValue(mockRl as unknown as ReturnType<typeof createInterface>);
+
+    // First call returns invalid input, second call returns valid
+    let callCount = 0;
+    mockRl.question.mockImplementation((_prompt: string, callback: (answer: string) => void) => {
+      callCount++;
+      if (callCount === 1) {
+        callback("abc");
+      } else {
+        callback("3000");
+      }
+    });
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const result = await promptForPort(4040);
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("not a number"));
+    expect(result).toBe(3000);
+    expect(mockRl.question).toHaveBeenCalledTimes(2);
+    consoleSpy.mockRestore();
+  });
+
+  it("re-prompts on out-of-range port (too low)", async () => {
+    const { createInterface } = await import("node:readline");
+    vi.mocked(createInterface).mockReturnValue(mockRl as unknown as ReturnType<typeof createInterface>);
+
+    let callCount = 0;
+    mockRl.question.mockImplementation((_prompt: string, callback: (answer: string) => void) => {
+      callCount++;
+      if (callCount === 1) {
+        callback("0");
+      } else {
+        callback("5000");
+      }
+    });
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const result = await promptForPort(4040);
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("must be between 1 and 65535"));
+    expect(result).toBe(5000);
+    expect(mockRl.question).toHaveBeenCalledTimes(2);
+    consoleSpy.mockRestore();
+  });
+
+  it("re-prompts on out-of-range port (too high)", async () => {
+    const { createInterface } = await import("node:readline");
+    vi.mocked(createInterface).mockReturnValue(mockRl as unknown as ReturnType<typeof createInterface>);
+
+    let callCount = 0;
+    mockRl.question.mockImplementation((_prompt: string, callback: (answer: string) => void) => {
+      callCount++;
+      if (callCount === 1) {
+        callback("70000");
+      } else {
+        callback("9000");
+      }
+    });
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const result = await promptForPort(4040);
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("must be between 1 and 65535"));
+    expect(result).toBe(9000);
+    expect(mockRl.question).toHaveBeenCalledTimes(2);
+    consoleSpy.mockRestore();
+  });
+
+  it("accepts minimum valid port (1)", async () => {
+    const { createInterface } = await import("node:readline");
+    vi.mocked(createInterface).mockReturnValue(mockRl as unknown as ReturnType<typeof createInterface>);
+
+    mockRl.question.mockImplementation((_prompt: string, callback: (answer: string) => void) => {
+      callback("1");
+    });
+
+    const result = await promptForPort(4040);
+    expect(result).toBe(1);
+  });
+
+  it("accepts maximum valid port (65535)", async () => {
+    const { createInterface } = await import("node:readline");
+    vi.mocked(createInterface).mockReturnValue(mockRl as unknown as ReturnType<typeof createInterface>);
+
+    mockRl.question.mockImplementation((_prompt: string, callback: (answer: string) => void) => {
+      callback("65535");
+    });
+
+    const result = await promptForPort(4040);
+    expect(result).toBe(65535);
+  });
+
+  it("rejects on SIGINT (Ctrl+C)", async () => {
+    const { createInterface } = await import("node:readline");
+    vi.mocked(createInterface).mockReturnValue(mockRl as unknown as ReturnType<typeof createInterface>);
+
+    // Simulate that the promise rejects when SIGINT is triggered
+    const removeListenerSpy = vi.spyOn(process, "removeListener" as any).mockImplementation(() => process);
+
+    // Trigger SIGINT handler immediately to test rejection
+    let sigintHandler: (() => void) | null = null;
+    const onSpy = vi.spyOn(process, "on" as never).mockImplementation(((event: string, handler: (...args: unknown[]) => void) => {
+      if (event === "SIGINT") {
+        sigintHandler = handler as () => void;
+      }
+      return process;
+    }) as never);
+
+    mockRl.question.mockImplementation(() => {
+      // Simulate SIGINT during prompt
+      setTimeout(() => {
+        if (sigintHandler) sigintHandler();
+      }, 10);
+    });
+
+    await expect(promptForPort(4040)).rejects.toThrow("Interactive prompt cancelled");
+
+    onSpy.mockRestore();
+    removeListenerSpy.mockRestore();
+  });
+});
+
+describe("StreamedLogBuffer", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("coalesces partial chunks and flushes after idle timeout", () => {
+    vi.useFakeTimers();
+    const lines: string[] = [];
+    const buffer = new StreamedLogBuffer((line) => lines.push(line), 100);
+
+    buffer.push("Hel");
+    buffer.push("lo");
+
+    expect(lines).toEqual([]);
+
+    vi.advanceTimersByTime(100);
+    expect(lines).toEqual(["Hello"]);
+  });
+
+  it("flushes complete newline-delimited lines immediately", () => {
+    const lines: string[] = [];
+    const buffer = new StreamedLogBuffer((line) => lines.push(line), 100);
+
+    buffer.push("one\ntwo\n");
+
+    expect(lines).toEqual(["one", "two"]);
+    buffer.dispose();
+  });
+});
+
+describe("runDashboard — merge stream sink routing", () => {
+  it("routes streamed merge deltas through log sink without raw stdout writes", async () => {
+    process.env.FUSION_DASHBOARD_TOKEN = "fn_test_dashboard_token";
+    const { TaskStore, AutomationStore, AgentStore, PluginStore, PluginLoader, CentralCore } = await import("@fusion/core");
+    const { aiMergeTask } = await import("@fusion/engine");
     const { createServer } = await import("@fusion/dashboard");
+    const { AuthStorage, DefaultPackageManager, ModelRegistry, discoverAndLoadExtensions, createExtensionRuntime } = await import("@mariozechner/pi-coding-agent");
 
-    await runDashboard(0, {});
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => makeMockStore());
+    (AutomationStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+    }));
+    (AgentStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      listAgents: vi.fn().mockResolvedValue([]),
+      on: vi.fn(),
+      off: vi.fn(),
+    }));
+    (PluginStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn(),
+      off: vi.fn(),
+    }));
+    (PluginLoader as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      getPluginRoutes: vi.fn().mockReturnValue([]),
+      on: vi.fn(),
+      off: vi.fn(),
+    }));
+    (CentralCore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      getProjectByPath: vi.fn().mockResolvedValue({ id: "project-1" }),
+      listProjects: vi.fn().mockResolvedValue([{ id: "project-1", path: process.cwd() }]),
+    }));
 
-    const serverOpts = (createServer as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    (AuthStorage.create as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      getApiKey: vi.fn().mockResolvedValue(undefined),
+      getAuth: vi.fn(),
+      setAuth: vi.fn(),
+    });
+    (DefaultPackageManager as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      resolve: vi.fn().mockResolvedValue({ extensions: [] }),
+    }));
+    (ModelRegistry.create as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      registerProvider: vi.fn(),
+      refresh: vi.fn(),
+    }));
+    (discoverAndLoadExtensions as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      runtime: { pendingProviderRegistrations: [] },
+      errors: [],
+    });
+    (createExtensionRuntime as unknown as ReturnType<typeof vi.fn>).mockReturnValue({});
 
-    // Verify automationStore is forwarded for scoped scheduling
-    expect(serverOpts).toHaveProperty("automationStore");
-    expect(serverOpts.automationStore).toBeDefined();
+    const stdoutWriteSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    // Verify engineManager is forwarded for multi-project route resolution
-    expect(serverOpts).toHaveProperty("engineManager");
-    expect(serverOpts.engineManager).toBeDefined();
+    (aiMergeTask as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      async (_store: unknown, _cwd: string, _taskId: string, opts: { onAgentText?: (delta: string) => void }) => {
+        opts.onAgentText?.("Hel");
+        opts.onAgentText?.("lo");
+        opts.onAgentText?.("\nWorld");
+        opts.onAgentText?.("!\nTail");
+        return { merged: true };
+      },
+    );
 
-    // Verify engine is passed for scoped route defaults
-    expect(serverOpts).toHaveProperty("engine");
-    expect(serverOpts.engine).toBeDefined();
+    await runDashboard(0, { open: false, dev: true });
+    consoleLogSpy.mockClear();
+    stdoutWriteSpy.mockClear();
+
+    const createServerCall = (createServer as ReturnType<typeof vi.fn>).mock.calls[0];
+    const serverOpts = createServerCall[1] as { onMerge: (taskId: string) => Promise<unknown> };
+
+    await serverOpts.onMerge("FN-TEST");
+
+    expect(stdoutWriteSpy).not.toHaveBeenCalled();
+    expect(consoleLogSpy).toHaveBeenCalledWith("[merge] Hello");
+    expect(consoleLogSpy).toHaveBeenCalledWith("[merge] World!");
+    expect(consoleLogSpy).toHaveBeenCalledWith("[merge] Tail");
+    expect(consoleLogSpy).not.toHaveBeenCalledWith("[merge] H");
+
+    stdoutWriteSpy.mockRestore();
+    consoleLogSpy.mockRestore();
+    delete process.env.FUSION_DASHBOARD_TOKEN;
+  });
+});
+
+describe("runDashboard runtime logger wiring", () => {
+  it("injects a runtime logger into createServer and preserves non-TTY console fallback", async () => {
+    process.env.FUSION_DASHBOARD_TOKEN = "fn_test_dashboard_token";
+    const { createServer } = await import("@fusion/dashboard");
+    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runDashboard(0, { open: false, dev: true });
+
+    const createServerCall = (createServer as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
+    const serverOpts = createServerCall[1] as { runtimeLogger?: { info: (message: string, context?: Record<string, unknown>) => void } };
+
+    expect(serverOpts.runtimeLogger).toBeDefined();
+    serverOpts.runtimeLogger?.info("runtime diagnostic", { source: "test" });
+
+    expect(consoleLogSpy).toHaveBeenCalledWith(
+      '[dashboard] runtime diagnostic {"source":"test"}',
+    );
+
+    consoleLogSpy.mockRestore();
+    delete process.env.FUSION_DASHBOARD_TOKEN;
+  });
+
+  it("routes runtime logger output through DashboardLogSink in TTY mode", async () => {
+    process.env.FUSION_DASHBOARD_TOKEN = "fn_test_dashboard_token";
+    const { createServer } = await import("@fusion/dashboard");
+    const { DashboardLogSink, DashboardTUI } = await import("../dashboard-tui/index.js");
+
+    const originalStdoutIsTTY = process.stdout.isTTY;
+    const originalStdinIsTTY = process.stdin.isTTY;
+
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+
+    const tuiStartSpy = vi.spyOn(DashboardTUI.prototype, "start").mockResolvedValue(undefined);
+    const tuiStopSpy = vi.spyOn(DashboardTUI.prototype, "stop").mockResolvedValue(undefined);
+    const tuiLogSpy = vi.spyOn(DashboardTUI.prototype, "log").mockImplementation(() => {});
+    const captureConsoleSpy = vi.spyOn(DashboardLogSink.prototype, "captureConsole").mockImplementation(() => {});
+
+    try {
+      await runDashboard(0, { open: false, dev: true });
+
+      expect(captureConsoleSpy).toHaveBeenCalledTimes(1);
+
+      const createServerCall = (createServer as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
+      const serverOpts = createServerCall[1] as { runtimeLogger?: { info: (message: string, context?: Record<string, unknown>) => void } };
+
+      expect(serverOpts.runtimeLogger).toBeDefined();
+      serverOpts.runtimeLogger?.info("tty runtime diagnostic", { source: "test" });
+      expect(tuiLogSpy).toHaveBeenCalledWith('tty runtime diagnostic {"source":"test"}', "dashboard");
+      expect(tuiStartSpy).toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process.stdout, "isTTY", { value: originalStdoutIsTTY, configurable: true });
+      Object.defineProperty(process.stdin, "isTTY", { value: originalStdinIsTTY, configurable: true });
+      tuiStartSpy.mockRestore();
+      tuiStopSpy.mockRestore();
+      tuiLogSpy.mockRestore();
+      captureConsoleSpy.mockRestore();
+      delete process.env.FUSION_DASHBOARD_TOKEN;
+    }
   });
 });

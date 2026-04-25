@@ -25,7 +25,7 @@ export default defineConfig({
     ],
   },
   test: {
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     // build-exe + build-exe-cross live in their own vitest project
     // (see vitest.build-exe.config.ts) so the rest of the CLI suite can
     // run with file parallelism enabled.

@@ -4,6 +4,7 @@
     "outDir": "dist",
     "rootDir": "src",
     "types": ["node", "vitest/globals"],
+    "jsx": "react-jsx",
     "paths": {
       "@fusion/test-utils": ["../core/src/__test-utils__/workspace.ts"]
     }

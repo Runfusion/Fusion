@@ -42,7 +42,7 @@ import {
   resolveClaudeCliExtensionPaths,
   setCachedClaudeCliResolution,
 } from "./claude-cli-extension.js";
-import { DashboardTUI, DashboardLogSink, isTTYAvailable, type SystemInfo } from "./dashboard-tui.js";
+import { DashboardTUI, DashboardLogSink, isTTYAvailable, type SystemInfo } from "./dashboard-tui/index.js";
 
 // Re-export for backward compatibility with tests
 export { promptForPort };
@@ -472,6 +472,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     });
     // Start the TUI
     await tui.start();
+    tui.setLoadingStatus("Initializing task store…");
 
     // Wire the TUI into the log sink so all console output routes through TUI
     logSink.setTUI(tui);
@@ -652,8 +653,10 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // and are properly managed throughout their lifecycle (creation, state
   // transitions, termination). Passed to TaskExecutor for agent spawning.
   //
+  if (tui) tui.setLoadingStatus("Initializing agent store…");
   agentStore = new AgentStore({ rootDir: store.getFusionDir() });
   await agentStore.init();
+  if (tui) tui.setLoadingStatus("Starting engine…");
 
   // ── Reactive TUI Updates ─────────────────────────────────────────────
   //
@@ -1515,6 +1518,107 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         active,
         agents: agentStats,
       });
+
+      // Wire interactive-mode data source. CentralCore is shared across
+      // dev/non-dev branches via centralCoreForMesh. Per-project TaskStores
+      // are cached so repeated panel switches don't re-init SQLite.
+      if (centralCoreForMesh) {
+        const centralCore = centralCoreForMesh;
+        const projectStores = new Map<string, TaskStore>();
+        tui.setInteractiveData({
+          listProjects: async () => {
+            const projects = await centralCore.listProjects();
+            return projects.map((p) => ({ id: p.id, name: p.name, path: p.path }));
+          },
+          listTasks: async (projectPath: string) => {
+            let projectStore = projectStores.get(projectPath);
+            if (!projectStore) {
+              projectStore = projectPath === cwd ? store : new TaskStore(projectPath);
+              if (projectPath !== cwd) await projectStore.init();
+              projectStores.set(projectPath, projectStore);
+            }
+            const tasks = await projectStore.listTasks({ slim: true, includeArchived: false });
+            return tasks.map((t) => ({
+              id: t.id,
+              title: t.title,
+              description: t.description ?? "",
+              column: t.column,
+              agentState: (t as { agentState?: string }).agentState,
+            }));
+          },
+          listAgents: async () => {
+            const list = await agentStore!.listAgents();
+            return list.map((a) => ({
+              id: a.id,
+              name: a.name,
+              state: a.state,
+              role: a.role,
+              taskId: a.taskId,
+              lastHeartbeatAt: a.lastHeartbeatAt,
+            }));
+          },
+          getAgentDetail: async (id: string) => {
+            const d = await agentStore!.getAgentDetail(id, 10);
+            if (!d) return null;
+            return {
+              id: d.id,
+              name: d.name,
+              state: d.state,
+              role: d.role,
+              taskId: d.taskId,
+              lastHeartbeatAt: d.lastHeartbeatAt,
+              title: d.title,
+              capabilities: [d.role],
+              recentRuns: d.completedRuns.slice(0, 10).map((r) => ({
+                id: r.id,
+                startedAt: r.startedAt,
+                endedAt: r.endedAt,
+                status: r.status,
+                triggerDetail: r.triggerDetail,
+              })),
+            };
+          },
+          updateAgentState: async (id: string, state: string) => {
+            await agentStore!.updateAgentState(id, state as Parameters<typeof agentStore.updateAgentState>[1]);
+          },
+          deleteAgent: async (id: string) => {
+            await agentStore!.deleteAgent(id);
+          },
+          getSettings: async () => {
+            const s = await store.getSettings();
+            return {
+              maxConcurrent: s.maxConcurrent ?? 1,
+              maxWorktrees: s.maxWorktrees ?? 2,
+              autoMerge: s.autoMerge ?? false,
+              mergeStrategy: s.mergeStrategy ?? "direct",
+              pollIntervalMs: s.pollIntervalMs ?? 60_000,
+              enginePaused: s.enginePaused ?? false,
+              globalPause: s.globalPause ?? false,
+            };
+          },
+          updateSettings: async (partial) => {
+            // Map SettingsValues subset to the store's Settings type (avoid string->MergeStrategy mismatch).
+            const mapped: Record<string, unknown> = {};
+            if (partial.maxConcurrent !== undefined) mapped.maxConcurrent = partial.maxConcurrent;
+            if (partial.maxWorktrees !== undefined) mapped.maxWorktrees = partial.maxWorktrees;
+            if (partial.autoMerge !== undefined) mapped.autoMerge = partial.autoMerge;
+            if (partial.mergeStrategy !== undefined) mapped.mergeStrategy = partial.mergeStrategy;
+            if (partial.pollIntervalMs !== undefined) mapped.pollIntervalMs = partial.pollIntervalMs;
+            if (partial.enginePaused !== undefined) mapped.enginePaused = partial.enginePaused;
+            if (partial.globalPause !== undefined) mapped.globalPause = partial.globalPause;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await store.updateSettings(mapped as any);
+          },
+          listModels: () => {
+            return modelRegistry.getAll().map((m) => ({
+              id: m.id,
+              name: m.name,
+              provider: (m as { provider?: string }).provider ?? "unknown",
+              contextWindow: m.contextWindow ?? 0,
+            }));
+          },
+        });
+      }
 
       // Log startup messages to TUI
       tui.log(`Dashboard started at ${baseUrl}`);

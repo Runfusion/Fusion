@@ -1,14 +1,12 @@
 # FN-1205 System Gap Analysis
 
 Date: 2026-04-08  
-Scope: `packages/core`, `packages/engine`, `packages/dashboard`, `packages/cli`, `packages/tui`, `packages/desktop`
+Scope: `packages/core`, `packages/engine`, `packages/dashboard`, `packages/cli`, `packages/desktop`
 
 ## 1) Incomplete & Stub Packages
 
-### Finding 1.1 — `@fusion/tui` has basic screen navigation (**Medium**)
-- Evidence: `packages/tui/src/index.tsx` renders `DemoApp` with `FusionProvider` and `ScreenRouter`. The `ScreenRouter` component (`packages/tui/src/components/screen-router.tsx`) provides keyboard-navigable tab switching with support for five screens (board, detail, activity, agents, settings). Number keys 1-5 and Tab/Shift+Tab navigate between tabs. However, the actual screen content is still placeholder text.
-- Impact: The TUI package now has a foundation for real screen implementations, but full task views and integration points remain to be built.
-- Existing tracking: **FN-1055** and **FN-1470** track TUI development.
+### Finding 1.1 — Terminal dashboard is now part of `@runfusion/fusion` (**Resolved**)
+- The standalone `@fusion/tui` package has been removed. Terminal UI is implemented in `packages/cli/src/commands/dashboard-tui/` using Ink (React for terminals). The dashboard-tui module provides a fully working 5-panel TUI (system, logs, utilities, stats, settings) integrated into the `fn dashboard` command and launched by default when running `fn` with no arguments.
 
 ### Finding 1.2 — `packages/desktop` is implemented, not a placeholder (**Info / correction to preflight assumption**)
 - Evidence: `packages/desktop` contains `package.json`, `tsconfig.json`, `vitest.config.ts`, `README.md`, build scripts, and substantial source files (`src/main.ts`, `src/ipc.ts`, `src/menu.ts`, `src/tray.ts`, `src/preload.ts`, renderer components/hooks, etc.).
@@ -228,7 +226,7 @@ Impact:
 
 | Dimension | Gap count | Notes |
 |---|---:|---|
-| 1. Incomplete & Stub Packages | 1 | `@fusion/tui` remains stub (desktop/runtime/ipc are implemented) |
+| 1. Incomplete & Stub Packages | 0 | `@fusion/tui` merged into `@runfusion/fusion`; desktop/runtime/ipc are implemented |
 | 2. Missing Test Coverage | 16 (direct file-level gaps) | Concentrated in dashboard/cli utility layers |
 | 3. Naming & Branding | 4 | User-facing `kb` strings remain across CLI, extension, dashboard |
 | 4. Error Handling & Silent Failures | 4 | Includes two high-severity runtime reliability issues |

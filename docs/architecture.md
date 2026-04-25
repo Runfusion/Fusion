@@ -16,7 +16,7 @@ At a high level, Fusion is split into:
 - **Dashboard API + SPA** (`@fusion/dashboard`)
 - **CLI + Pi extension** (`@runfusion/fusion`)
 - **Desktop shell** (`@fusion/desktop`)
-- **TUI** (`@fusion/tui`)
+- **Terminal dashboard** (part of `@runfusion/fusion` — see `packages/cli/src/commands/dashboard-tui/`)
 
 ### High-level runtime diagram
 
@@ -64,7 +64,6 @@ At a high level, Fusion is split into:
 | `@fusion/dashboard` | Private | Express API server + React app | `packages/dashboard/src/server.ts`, `routes.ts`, `sse.ts`, `websocket.ts`, `packages/dashboard/app/App.tsx` |
 | `@runfusion/fusion` | **Published** | CLI binary (`fn`) + Pi extension | `packages/cli/src/bin.ts`, `commands/*`, `project-resolver.ts`, `extension.ts` |
 | `@fusion/desktop` | Private | Electron shell around Fusion dashboard/client | `packages/desktop/src/main.ts`, `ipc.ts`, `preload.ts`, `scripts/build.ts` |
-| `@fusion/tui` | Private | Ink-based terminal package with ScreenRouter and tab navigation | `packages/tui/src/index.tsx`, `packages/tui/src/components/screen-router.tsx` |
 | `@fusion/mobile` | Private | Capacitor + PWA mobile packaging of dashboard assets | `packages/mobile/capacitor.config.ts`, `packages/mobile/src/*` |
 | `@fusion/plugin-sdk` | Private | Plugin SDK for building Fusion extensions | `packages/plugin-sdk/src/*` |
 
@@ -83,7 +82,6 @@ At a high level, Fusion is split into:
 @runfusion/fusion (CLI) ─────────▶ @fusion/core
 @runfusion/fusion (CLI) ─────────▶ @fusion/engine
 @runfusion/fusion (CLI) ─────────▶ @fusion/dashboard
-@fusion/tui ──────────────────▶ @fusion/core
 @fusion/plugin-sdk (peerDep) ─▶ @fusion/core
 
 @fusion/desktop: no workspace package dependencies
@@ -94,7 +92,6 @@ Concrete references:
 - `@fusion/engine` has a workspace dependency on `@fusion/core` (`packages/engine/package.json`)
 - `@fusion/dashboard` has workspace dependencies on `@fusion/core` and `@fusion/engine` (`packages/dashboard/package.json`)
 - `@runfusion/fusion` has workspace development dependencies on `@fusion/core`, `@fusion/engine`, and `@fusion/dashboard` for composition/build packaging (`packages/cli/package.json`)
-- `@fusion/tui` depends on `@fusion/core` (`packages/tui/package.json`)
 - `@fusion/plugin-sdk` declares a peer dependency on `@fusion/core` (`packages/plugin-sdk/package.json`)
 - `@fusion/desktop` embeds dashboard assets at build time via script (`packages/desktop/scripts/build.ts`) but does not declare workspace deps in `package.json`
 - `@fusion/mobile` triggers dashboard build/sync via scripts (`packages/mobile/package.json`) but does not declare workspace deps in `package.json`

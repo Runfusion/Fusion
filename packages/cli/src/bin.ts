@@ -210,6 +210,7 @@ const HELP = `
 fn — AI-orchestrated task board
 
 Usage:
+  fn                                  Launch the dashboard (same as fn dashboard)
   fn init [opts]                      Initialize a new fn project in the current directory
   fn dashboard                        Start the board web UI
   fn dashboard --paused               Start with automation paused
@@ -383,9 +384,16 @@ function getFlagValueNumber(args: string[], flag: string): number | undefined {
 async function main() {
   const { cleanedArgs: args, projectName } = extractGlobalProjectFlag(process.argv.slice(2));
 
-  if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
+  if (args.includes("--help") || args.includes("-h")) {
     console.log(HELP);
     process.exit(0);
+  }
+
+  if (args.length === 0) {
+    // No subcommand — launch dashboard on the default port.
+    const { runDashboard } = await import("./commands/dashboard.js");
+    await runDashboard(4040);
+    return;
   }
 
   const command = args[0];

@@ -103,7 +103,6 @@ The following packages are **internal** and are **not published to npm**:
 - `@fusion/core` — Core domain model and task store
 - `@fusion/dashboard` — Web UI and API server
 - `@fusion/engine` — AI agents and orchestration
-- `@fusion/tui` — Terminal UI components
 - `@fusion/plugin-sdk` — Plugin development SDK
 - `@fusion-plugin-examples/*` — Example plugins
 
