@@ -891,6 +891,54 @@ describe("SettingsModal", () => {
       expect(screen.getByText("Roadmaps")).toBeInTheDocument();
     });
 
+    it("shows a single canonical Dev Server toggle", async () => {
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      const devServerToggles = screen.getAllByLabelText("Dev Server");
+      expect(devServerToggles).toHaveLength(1);
+    });
+
+    it("does not render duplicate Dev Server rows when legacy and canonical keys are both present", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { devServer: true, devServerView: true },
+      });
+
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      const devServerToggles = screen.getAllByLabelText("Dev Server");
+      expect(devServerToggles).toHaveLength(1);
+      expect(devServerToggles[0]).toBeChecked();
+    });
+
+    it("normalizes legacy devServer flag to canonical devServerView on save", async () => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { devServer: true },
+      });
+
+      renderModal();
+
+      await openExperimentalFeaturesSection();
+
+      const devServerToggle = screen.getByLabelText("Dev Server") as HTMLInputElement;
+      expect(devServerToggle).toBeChecked();
+
+      await userEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+      });
+
+      const payload = mockUpdateSettings.mock.calls[0][0];
+      expect(payload.experimentalFeatures).toEqual({ devServerView: true });
+      expect(payload.experimentalFeatures.devServer).toBeUndefined();
+    });
+
     it("shows feature flags when experimentalFeatures is set", async () => {
       mockFetchSettings.mockResolvedValue({
         ...defaultSettings,

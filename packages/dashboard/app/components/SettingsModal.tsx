@@ -93,16 +93,48 @@ const DEFAULT_NTFY_EVENTS: NtfyNotificationEvent[] = [
 
 /** Well-known experimental feature flags with display labels.
  *  These always appear in the Experimental Features settings tab,
- *  regardless of whether they exist in the project's settings blob. */
+ *  regardless of whether they exist in the project's settings blob.
+ *  IMPORTANT: Dev Server is canonically keyed by `devServerView`; `devServer`
+ *  is treated as a legacy alias and must never render as a second row. */
 const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
   insights: "Insights",
   roadmap: "Roadmaps",
   memoryView: "Memory Editor",
   skillsView: "Skills View",
   nodesView: "Nodes View",
-  devServer: "Dev Server",
-  devServerView: "Dev Server View",
+  devServerView: "Dev Server",
 };
+
+const EXPERIMENTAL_FEATURE_LEGACY_ALIASES: Record<string, string> = {
+  devServer: "devServerView",
+};
+
+function getCanonicalExperimentalFeatureKey(key: string): string {
+  return EXPERIMENTAL_FEATURE_LEGACY_ALIASES[key] ?? key;
+}
+
+function isExperimentalFeatureEnabled(features: Record<string, boolean>, key: string): boolean {
+  if (features[key] === true) {
+    return true;
+  }
+
+  return Object.entries(EXPERIMENTAL_FEATURE_LEGACY_ALIASES).some(
+    ([legacyKey, canonicalKey]) => canonicalKey === key && features[legacyKey] === true,
+  );
+}
+
+function normalizeExperimentalFeaturesForSave(features?: Record<string, boolean>): Record<string, boolean> {
+  if (!features) {
+    return {};
+  }
+
+  const normalized: Record<string, boolean> = {};
+  for (const [key, enabled] of Object.entries(features)) {
+    normalized[getCanonicalExperimentalFeatureKey(key)] = enabled;
+  }
+
+  return normalized;
+}
 
 type LegacySectionId = "pi-extensions";
 export type SectionId = SettingsSection["id"] | LegacySectionId;
@@ -963,6 +995,7 @@ export function SettingsModal({
         worktreeInitCommand: form.worktreeInitCommand?.trim() || undefined,
         taskPrefix: form.taskPrefix?.trim() || undefined,
         overlapIgnorePaths: (form.overlapIgnorePaths ?? []).map((path) => path.trim()).filter((path) => path.length > 0),
+        experimentalFeatures: normalizeExperimentalFeaturesForSave(form.experimentalFeatures),
       };
 
       // Always save both global and project settings with strict scope separation.
@@ -2811,11 +2844,16 @@ export function SettingsModal({
       }
       case "experimental": {
         const experimentalFeatures = form.experimentalFeatures ?? {};
-        // Merge known features (always shown) with any custom features from settings
+        // Merge known features (always shown) with custom features from settings,
+        // while canonicalizing legacy aliases (e.g. devServer → devServerView)
+        // so only one user-visible row is rendered per feature.
         const allFeatureKeys = Array.from(
-          new Set([...Object.keys(KNOWN_EXPERIMENTAL_FEATURES), ...Object.keys(experimentalFeatures)])
+          new Set([
+            ...Object.keys(KNOWN_EXPERIMENTAL_FEATURES),
+            ...Object.keys(experimentalFeatures).map(getCanonicalExperimentalFeatureKey),
+          ])
         ).sort((a, b) => a.localeCompare(b));
-        const featureFlags = allFeatureKeys.map((key) => [key, experimentalFeatures[key] === true] as const);
+        const featureFlags = allFeatureKeys.map((key) => [key, isExperimentalFeatureEnabled(experimentalFeatures, key)] as const);
 
         return (
           <>
@@ -2838,13 +2876,23 @@ export function SettingsModal({
                       type="checkbox"
                       checked={enabled}
                       onChange={(e) => {
-                        setForm((f) => ({
-                          ...f,
-                          experimentalFeatures: {
+                        setForm((f) => {
+                          const nextExperimentalFeatures = {
                             ...(f.experimentalFeatures ?? {}),
                             [key]: e.target.checked,
-                          },
-                        }));
+                          };
+
+                          for (const [legacyKey, canonicalKey] of Object.entries(EXPERIMENTAL_FEATURE_LEGACY_ALIASES)) {
+                            if (canonicalKey === key) {
+                              delete nextExperimentalFeatures[legacyKey];
+                            }
+                          }
+
+                          return {
+                            ...f,
+                            experimentalFeatures: nextExperimentalFeatures,
+                          };
+                        });
                       }}
                     />
                     <span>{KNOWN_EXPERIMENTAL_FEATURES[key] ?? key}</span>

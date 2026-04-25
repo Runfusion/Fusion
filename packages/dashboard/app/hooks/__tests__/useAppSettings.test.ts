@@ -159,4 +159,24 @@ describe("useAppSettings", () => {
     // config defaults remain (maxConcurrent stays at initial 2)
     expect(result.current.maxConcurrent).toBe(2);
   });
+
+  it("treats legacy experimentalFeatures.devServer as enabling Dev Server", async () => {
+    mockFetchSettings.mockResolvedValueOnce({
+      autoMerge: false,
+      globalPause: false,
+      enginePaused: false,
+      prAuthAvailable: true,
+      taskStuckTimeoutMs: 600000,
+      showQuickChatFAB: false,
+      experimentalFeatures: {
+        devServer: true,
+      },
+    } as never);
+
+    const { result } = renderHook(() => useAppSettings("proj_123"));
+
+    await waitFor(() => {
+      expect(result.current.devServerEnabled).toBe(true);
+    });
+  });
 });
