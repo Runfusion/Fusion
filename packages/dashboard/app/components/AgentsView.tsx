@@ -7,6 +7,7 @@ import { updateAgent, updateAgentState, deleteAgent, startAgentRun, fetchOrgTree
 const AgentDetailView = lazy(() => import("./AgentDetailView").then((m) => ({ default: m.AgentDetailView })));
 import { ActiveAgentsPanel } from "./ActiveAgentsPanel";
 import { AgentMetricsBar } from "./AgentMetricsBar";
+import { AgentTokenStatsPanel } from "./AgentTokenStatsPanel";
 import { AgentEmptyState } from "./AgentEmptyState";
 import { useAgents } from "../hooks/useAgents";
 import { useAgentHierarchy } from "../hooks/useAgentHierarchy";
@@ -1266,6 +1267,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
 
         {/* Secondary sections after the main collection */}
         <AgentMetricsBar stats={stats} />
+        <AgentTokenStatsPanel agents={displayAgents} />
         <ActiveAgentsPanel agents={activeAgents} projectId={projectId} onAgentSelect={setSelectedAgentId} />
       </div>
 

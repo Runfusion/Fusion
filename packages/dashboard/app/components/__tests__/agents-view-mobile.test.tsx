@@ -65,6 +65,8 @@ const mockAgents: Agent[] = [
     role: "executor" as AgentCapability,
     state: "active" as AgentState,
     taskId: "FN-101",
+    totalInputTokens: 60,
+    totalOutputTokens: 20,
     lastHeartbeatAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -75,6 +77,8 @@ const mockAgents: Agent[] = [
     name: "Mobile Reviewer",
     role: "reviewer" as AgentCapability,
     state: "idle" as AgentState,
+    totalInputTokens: 15,
+    totalOutputTokens: 5,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     metadata: {},
@@ -132,6 +136,9 @@ describe("AgentsView mobile adaptations", () => {
     await waitFor(() => {
       expect(container.querySelector(".agent-list")).toBeTruthy();
       expect(container.querySelectorAll(".agent-card").length).toBeGreaterThan(0);
+      expect(container.querySelector(".agent-token-stats-panel")).toBeTruthy();
+      expect(screen.getByText("Combined Tokens")).toBeTruthy();
+      expect(screen.getByText("100")).toBeTruthy();
     });
   });
 

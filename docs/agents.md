@@ -90,8 +90,25 @@ The agents surface provides:
 - A compact **Controls** popup for secondary actions (state filter, Show system agents toggle, Import, and global Heartbeat Speed)
 - Detail/config panels
 - Runtime metrics and active-agent live cards rendered below the main collection
+- A per-agent **Token Usage** panel that summarizes cumulative token consumption for the currently displayed agents
 - Run history
 - Task assignment context
+
+### Token Usage Panel
+
+The **Token Usage** panel in Agents view is derived from each agent's persisted cumulative counters:
+
+- `totalInputTokens`
+- `totalOutputTokens`
+
+For the current filtered/visible agent set, the panel shows:
+
+- Aggregate input token total
+- Aggregate output token total
+- Aggregate combined total (`input + output`)
+- Per-agent rows sorted by descending combined token usage
+
+If either token field is missing for an agent, the dashboard treats it as `0` so the panel stays stable and never crashes on partial/migrating data.
 
 ### Agent Deletion Controls
 
