@@ -47,6 +47,8 @@ import type { AiSessionSummary } from "./api";
 import { fetchUnreadCount, reportDashboardPerf } from "./api";
 import { getScopedItem, setScopedItem } from "./utils/projectStorage";
 import { subscribeSse } from "./sse-bus";
+import { AUTH_TOKEN_RECOVERY_REQUIRED_EVENT } from "./auth";
+import { AuthTokenRecoveryDialog } from "./components/AuthTokenRecoveryDialog";
 
 // ChatView's CSS is imported eagerly so the styles bundle into the main
 // CSS file. Without this, the lazy ChatView JS chunk loaded its own CSS
@@ -286,6 +288,7 @@ function AppInner() {
   const [missionTargetId, setMissionTargetId] = useState<string | undefined>(undefined);
   const [milestoneSliceResumeSessionId, setMilestoneSliceResumeSessionId] = useState<string | undefined>(undefined);
   const [quickChatOpen, setQuickChatOpen] = useState(false);
+  const [authTokenRecoveryOpen, setAuthTokenRecoveryOpen] = useState(false);
   const [setupWarningDismissed, setSetupWarningDismissed] = useState(
     () => getScopedItem(SETUP_WARNING_DISMISSED_KEY, currentProject?.id) === "true",
   );
@@ -295,6 +298,17 @@ function AppInner() {
       getScopedItem(SETUP_WARNING_DISMISSED_KEY, currentProject?.id) === "true",
     );
   }, [currentProject?.id]);
+
+  useEffect(() => {
+    const handleDaemonAuthFailure = () => {
+      setAuthTokenRecoveryOpen(true);
+    };
+
+    window.addEventListener(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT, handleDaemonAuthFailure);
+    return () => {
+      window.removeEventListener(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT, handleDaemonAuthFailure);
+    };
+  }, []);
 
   const handleDismissSetupWarning = useCallback(() => {
     setScopedItem(SETUP_WARNING_DISMISSED_KEY, "true", currentProject?.id);
@@ -916,6 +930,7 @@ function AppInner() {
           modalManager.openModelOnboarding();
         }}
       />
+      <AuthTokenRecoveryDialog open={authTokenRecoveryOpen} />
     </>
   );
 }

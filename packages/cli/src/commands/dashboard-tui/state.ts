@@ -8,7 +8,7 @@ export type SectionId = "logs" | "system" | "utilities" | "stats" | "settings";
 
 export type AppMode = "status" | "interactive";
 
-export type InteractiveView = "board" | "agents" | "settings" | "git";
+export type InteractiveView = "board" | "agents" | "settings" | "git" | "files";
 
 export interface SystemInfo {
   host: string;
@@ -124,6 +124,60 @@ export interface ModelItem {
   contextWindow: number;
 }
 
+// ── File explorer types ───────────────────────────────────────────────────────
+
+export interface FileEntry {
+  name: string;
+  path: string; // relative to project root
+  isDirectory: boolean;
+  size: number; // bytes; 0 for dirs
+  modifiedAt: string; // ISO
+}
+
+export interface FileReadResult {
+  content: string | null; // null if binary or too-large
+  isBinary: boolean;
+  tooLarge: boolean;
+  size: number;
+  modifiedAt: string;
+  lineCount: number;
+}
+
+// ── Task detail + streaming types ────────────────────────────────────────────
+
+export interface TaskStep {
+  index: number;
+  name: string;
+  status: "pending" | "running" | "done" | "skipped" | "failed";
+  startedAt?: string;
+  endedAt?: string;
+}
+
+export interface TaskLogEntry {
+  timestamp: string; // ISO-8601
+  level: "info" | "warn" | "error" | "debug";
+  text: string;
+  source?: string; // e.g. "executor" / "agent" / step name
+}
+
+export interface TaskDetailData {
+  id: string;
+  title?: string;
+  description: string;
+  column: string;
+  agentState?: string;
+  branch?: string;
+  worktree?: string;
+  currentStepIndex?: number;
+  steps: TaskStep[];
+  recentLogs: TaskLogEntry[]; // last ~200 entries on initial load
+}
+
+export type TaskEvent =
+  | { kind: "step:updated"; step: TaskStep }
+  | { kind: "log:appended"; entry: TaskLogEntry }
+  | { kind: "task:updated"; task: TaskDetailData };
+
 // ── Git view types ────────────────────────────────────────────────────────────
 
 export interface GitStatus {
@@ -187,6 +241,21 @@ export interface InteractiveData {
     listWorktrees: (projectPath: string) => Promise<GitWorktree[]>;
     push: (projectPath: string) => Promise<{ success: boolean; output: string }>;
     fetch: (projectPath: string) => Promise<{ success: boolean; output: string }>;
+  };
+  files: {
+    listDirectory: (projectPath: string, relativePath: string) => Promise<FileEntry[]>;
+    readFile: (projectPath: string, relativePath: string) => Promise<FileReadResult>;
+  };
+  tasks: {
+    // Initial fetch when the detail screen mounts — includes steps + recent logs.
+    getTaskDetail: (projectPath: string, taskId: string) => Promise<TaskDetailData | null>;
+    // Subscribe to live step-change and log-append events for a single task.
+    // Returns an unsubscribe function.
+    subscribeTaskEvents: (
+      projectPath: string,
+      taskId: string,
+      handler: (event: TaskEvent) => void,
+    ) => () => void;
   };
 }
 

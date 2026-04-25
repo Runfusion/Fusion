@@ -874,13 +874,16 @@
   }
 
   .agents-view-title {
-    flex: 0 1 auto;
+    flex: 0 0 auto;
     gap: var(--space-xs);
     flex-wrap: wrap;
+    white-space: nowrap;
+    min-width: 0;
   }
 
   .agents-view-title h2 {
     font-size: 16px;
+    white-space: nowrap;
   }
 
   /* Layout: title (Bot) on the left, view-toggle right after it, then the
@@ -947,13 +950,10 @@
     min-width: 28px;
   }
 
-  /* Title's Bot icon: 32×32 footprint so it sits at the same outer height
-     as the view-toggle pill. The icon itself is 24px (set in JSX), giving
-     it more visual weight than the surrounding 16px button icons. */
+  /* Title row: keep Bot icon + "Agents" text on a single line so the
+     view-toggle and primary actions get pushed to the right edge. */
   .agents-view-title {
-    width: 32px;
     height: 32px;
     align-items: center;
-    justify-content: center;
   }
 }

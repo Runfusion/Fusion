@@ -3,7 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render } from "ink-testing-library";
 import { DashboardApp } from "../app.js";
 import { DashboardTUI } from "../controller.js";
-import type { ProjectItem, TaskItem, AgentItem, AgentDetailItem, ModelItem, SettingsValues } from "../state.js";
+import type { ProjectItem, TaskItem, AgentItem, AgentDetailItem, ModelItem, SettingsValues, TaskDetailData } from "../state.js";
 
 function newController(): DashboardTUI {
   return new DashboardTUI();
@@ -32,11 +32,13 @@ function makeInteractiveData(opts: {
   detail?: AgentDetailItem | null;
   settings?: SettingsValues;
   models?: ModelItem[];
+  taskDetail?: TaskDetailData | null;
 } = {}) {
   const projects = opts.projects ?? [];
   const tasks = opts.tasks ?? [];
   const agents = opts.agents ?? [];
   const detail = opts.detail ?? null;
+  const taskDetail = opts.taskDetail ?? null;
   const settings: SettingsValues = opts.settings ?? {
     maxConcurrent: 1,
     maxWorktrees: 2,
@@ -90,6 +92,21 @@ function makeInteractiveData(opts: {
       listWorktrees: async () => [],
       push: async () => ({ success: true, output: "" }),
       fetch: async () => ({ success: true, output: "" }),
+    },
+    tasks: {
+      getTaskDetail: async () => taskDetail,
+      subscribeTaskEvents: () => () => {},
+    },
+    files: {
+      listDirectory: async () => [],
+      readFile: async () => ({
+        content: null,
+        isBinary: false,
+        tooLarge: false,
+        size: 0,
+        modifiedAt: new Date(0).toISOString(),
+        lineCount: 0,
+      }),
     },
   };
 }

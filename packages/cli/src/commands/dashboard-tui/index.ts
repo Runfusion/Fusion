@@ -22,4 +22,10 @@ export type {
   GitCommitDetail,
   GitBranch,
   GitWorktree,
+  FileEntry,
+  FileReadResult,
+  TaskStep,
+  TaskLogEntry,
+  TaskDetailData,
+  TaskEvent,
 } from "./state.js";

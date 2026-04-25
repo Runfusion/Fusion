@@ -43,6 +43,11 @@ import type {
   GitCommitDetail,
   GitBranch,
   GitWorktree,
+  FileEntry,
+  FileReadResult,
+  TaskDetailData,
+  TaskLogEntry,
+  TaskEvent,
 } from "./state.js";
 import { SECTION_ORDER } from "./state.js";
 import type { LogEntry } from "./log-ring-buffer.js";
@@ -107,6 +112,10 @@ function AnimatedFusionLogo({ lines }: { lines: readonly string[] }) {
 }
 
 // ── Splash screen ─────────────────────────────────────────────────────────────
+
+// Narrow-mode threshold: below this column count each multi-pane view collapses
+// to a single pane so content doesn't overflow or overlap on small terminals.
+const NARROW_THRESHOLD = 80;
 
 // Logo width thresholds. Below SPLASH_MIN_COLS we fall back to the plain
 // "FUSION" word; otherwise we pick the largest variant that fits.
@@ -257,8 +266,10 @@ function SystemPanel({ state, isFocused }: { state: DashboardState; isFocused: b
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "—";
   const mb = bytes / (1024 * 1024);
-  if (mb < 1024) return `${mb.toFixed(0)}MB`;
-  return `${(mb / 1024).toFixed(2)}GB`;
+  // Space between number and unit so a wrap break, if forced, happens after
+  // the unit rather than splitting "450MB" across two lines.
+  if (mb < 1024) return `${mb.toFixed(0)} MB`;
+  return `${(mb / 1024).toFixed(2)} GB`;
 }
 
 function heapColor(used: number, limit: number): "red" | "yellow" | "green" {
@@ -294,14 +305,15 @@ function cpuColor(percent: number, cores: number): "red" | "yellow" | undefined 
 }
 
 function StatRow({ label, children }: { label: string; children: React.ReactNode }) {
-  // Fixed-width label column + 2-col gap before values gives a clean
-  // two-column layout with breathing room between label and value.
+  // Fixed-width label column + gap={2} between value tokens so each
+  // measurement (number + unit + dim qualifier) stays on the same row
+  // without breaking apart when one of the tokens is wider than usual.
   return (
     <Box flexDirection="row">
       <Box width={10}>
         <Text dimColor>{label}</Text>
       </Box>
-      <Box flexDirection="row" gap={1}>{children}</Box>
+      <Box flexDirection="row" gap={2}>{children}</Box>
     </Box>
   );
 }
@@ -317,11 +329,6 @@ function SectionHeader({ title }: { title: string }) {
 function StatsPanel({ state, isFocused }: { state: DashboardState; isFocused: boolean }) {
   const stats = state.taskStats;
   const sys = state.systemStats;
-  const { stdout } = useStdout();
-  // The Stats panel sits in the left column of StatusModeGrid (~1/3 of cols).
-  // When the terminal is narrow the multi-piece Heap / Memory rows overflow
-  // the panel width — break the trailing fragment onto its own line below.
-  const narrow = (stdout?.columns ?? 80) < 120;
   return (
     <Panel title="Stats" isFocused={isFocused} flexGrow={1}>
       <Box flexDirection="column">
@@ -344,19 +351,11 @@ function StatsPanel({ state, isFocused }: { state: DashboardState; isFocused: bo
               </Text>
               <Text dimColor>/</Text>
               <Text>{formatBytes(sys.heapTotal)}</Text>
-              {!narrow && (
-                <>
-                  <Text dimColor>limit</Text>
-                  <Text>{formatBytes(sys.heapLimit)}</Text>
-                </>
-              )}
             </StatRow>
-            {narrow && (
-              <StatRow label="">
-                <Text dimColor>limit</Text>
-                <Text>{formatBytes(sys.heapLimit)}</Text>
-              </StatRow>
-            )}
+            <StatRow label="">
+              <Text dimColor>limit</Text>
+              <Text>{formatBytes(sys.heapLimit)}</Text>
+            </StatRow>
             <StatRow label="External">
               <Text>{formatBytes(sys.external)}</Text>
               <Text dimColor>buffers</Text>
@@ -376,19 +375,9 @@ function StatsPanel({ state, isFocused }: { state: DashboardState; isFocused: bo
                 {formatBytes(sys.systemTotalMem - sys.systemFreeMem)}
               </Text>
               <Text dimColor>used</Text>
-              {!narrow && (
-                <>
-                  <Text>{formatBytes(sys.systemFreeMem)}</Text>
-                  <Text dimColor>free</Text>
-                </>
-              )}
+              <Text>{formatBytes(sys.systemFreeMem)}</Text>
+              <Text dimColor>free</Text>
             </StatRow>
-            {narrow && (
-              <StatRow label="">
-                <Text>{formatBytes(sys.systemFreeMem)}</Text>
-                <Text dimColor>free</Text>
-              </StatRow>
-            )}
             <StatRow label="Cores">
               <Text>{sys.cpuCount}</Text>
               <Text dimColor>{sys.platform}</Text>
@@ -573,7 +562,7 @@ function LogsPanel({
 
 function ExpandedLog({ entry, index, total }: { entry: LogEntry; index: number; total: number }) {
   return (
-    <Box flexDirection="column" flexGrow={1}>
+    <Box flexDirection="column" flexGrow={1} width="100%">
       <Text dimColor>Entry {index + 1}/{total} · [Enter/Esc] close</Text>
       <Box height={1} />
       <Box flexDirection="row" gap={1}>
@@ -698,11 +687,11 @@ function StatusModeGrid({
       <MainHeader state={state} />
 
       <Box flexDirection="row" flexGrow={1} overflow="hidden">
-        <Box flexDirection="column" flexGrow={1} overflow="hidden">
+        <Box flexDirection="column" flexGrow={5} overflow="hidden">
           <SystemPanel state={state} isFocused={focused === "system"} />
           <StatsPanel state={state} isFocused={focused === "stats"} />
         </Box>
-        <Box flexDirection="column" flexGrow={2} overflow="hidden">
+        <Box flexDirection="column" flexGrow={6} overflow="hidden">
           <LogsPanel
             state={state}
             isFocused={focused === "logs"}
@@ -788,12 +777,26 @@ function MainHeader({ state }: { state: DashboardState }) {
   const inInteractive = state.mode === "interactive";
   const focused = state.activeSection;
   const interactiveView = state.interactiveView;
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
   const interactiveTabs: Array<{ key: string; label: string; view: InteractiveView }> = [
     { key: "b", label: "Board", view: "board" },
     { key: "a", label: "Agents", view: "agents" },
     { key: "g", label: "Settings", view: "settings" },
     { key: "t", label: "Git", view: "git" },
+    { key: "e", label: "Explorer", view: "files" },
   ];
+  // Keep FUSION on a single line by progressively dropping decoration as the
+  // terminal shrinks. Thresholds tuned to the natural widths of each segment:
+  //   * Help/quit (~20 chars) drops first.
+  //   * Inactive interactive tabs collapse to a `[k]` glyph.
+  //   * Inactive section tabs collapse to `[N]`.
+  //   * Final fallback shows just the active tab — but never abbreviates the
+  //     FUSION mark itself.
+  const showHelpHint = cols >= 110;
+  const compactInteractive = cols < 100;
+  const compactSections = cols < 90;
+  const minimal = cols < 70;
   return (
     <Box flexDirection="row" gap={1} paddingX={1} paddingY={0}>
       <MiniLogo />
@@ -801,23 +804,34 @@ function MainHeader({ state }: { state: DashboardState }) {
       {SECTION_ORDER.map((section, i) => {
         const isActive = !inInteractive && section === focused;
         const label = section.charAt(0).toUpperCase() + section.slice(1);
+        // In minimal mode only show the active section tab.
+        if (minimal && !isActive) return null;
         return (
           <Box key={section} marginRight={1}>
             {isActive ? (
-              <Text backgroundColor="cyan" color="black" bold>{` [${i + 1}] ${label} `}</Text>
+              <Text backgroundColor="cyan" color="black" bold>
+                {compactSections ? ` ${i + 1} ${label} ` : ` [${i + 1}] ${label} `}
+              </Text>
+            ) : compactSections ? (
+              <Text dimColor>{`[${i + 1}]`}</Text>
             ) : (
               <Text dimColor>{`[${i + 1}] ${label}`}</Text>
             )}
           </Box>
         );
       })}
-      <Text dimColor>│</Text>
+      {!minimal && <Text dimColor>│</Text>}
       {interactiveTabs.map(({ key, label, view }) => {
         const isActive = inInteractive && view === interactiveView;
+        if (minimal && !isActive) return null;
         return (
           <Box key={view} marginRight={1}>
             {isActive ? (
-              <Text backgroundColor="cyan" color="black" bold>{` [${key}] ${label} `}</Text>
+              <Text backgroundColor="cyan" color="black" bold>
+                {compactInteractive ? ` ${key} ${label} ` : ` [${key}] ${label} `}
+              </Text>
+            ) : compactInteractive ? (
+              <Text dimColor>{`[${key}]`}</Text>
             ) : (
               <Text dimColor>{`[${key}] ${label}`}</Text>
             )}
@@ -825,7 +839,7 @@ function MainHeader({ state }: { state: DashboardState }) {
         );
       })}
       <Box flexGrow={1} />
-      <Text dimColor>[?] help  [q] quit</Text>
+      {showHelpHint && <Text dimColor>[?] help  [q] quit</Text>}
     </Box>
   );
 }
@@ -988,8 +1002,189 @@ function ProjectSelector({
   );
 }
 
-function TaskDetailScreen({ task }: { task: TaskItem }) {
+// ── Duration helpers for step display ────────────────────────────────────────
+
+function formatDurationMs(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  if (m > 0) return `${m}m ${s % 60}s`;
+  return `${s}s`;
+}
+
+// Format a single log timestamp as HH:MM:SS, gracefully falling back on parse errors.
+function formatLogTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}:${d.getSeconds().toString().padStart(2, "0")}`;
+  } catch {
+    return "??:??:??";
+  }
+}
+
+// ── Step checklist icon + color mapping ──────────────────────────────────────
+
+const STEP_ICON: Record<string, string> = {
+  done: "✓",
+  running: "▶",
+  pending: "·",
+  failed: "✗",
+  skipped: "⏭",
+};
+type StepStatusColor = "green" | "blue" | "gray" | "red" | "white";
+const STEP_COLOR: Record<string, StepStatusColor> = {
+  done: "green",
+  running: "blue",
+  pending: "gray",
+  failed: "red",
+  skipped: "gray",
+};
+
+// MAX log entries kept in the detail pane to avoid unbounded growth.
+const MAX_LOG_ENTRIES = 1000;
+// Initial log rows fetched from the store.
+const INITIAL_LOG_LIMIT = 200;
+
+// ── TaskDetailScreen ──────────────────────────────────────────────────────────
+
+function TaskDetailScreen({
+  task,
+  projectPath,
+  interactiveData,
+}: {
+  task: TaskItem;
+  projectPath: string | null;
+  interactiveData: DashboardState["interactiveData"];
+}) {
+  const { stdout } = useStdout();
+  // How many lines the log pane can show — leave room for header + steps + dividers.
+  const rows = stdout?.rows ?? 24;
+
+  // Live task detail — initially null (loading) until the initial fetch resolves.
+  const [detail, setDetail] = useState<TaskDetailData | null | "unavailable">(null);
+
+  // Log scroll state: scrollOffset is from the bottom (0 = at bottom).
+  const [logScrollOffset, setLogScrollOffset] = useState(0);
+  const [autoFollow, setAutoFollow] = useState(true);
+
+  // Steps section height is bounded so logs get the remaining space.
+  // Reserve: header (3) + title (3) + meta row (2) + steps header (2) +
+  //          up to 8 step rows + log header (2) + hints (2) + borders (2) = ~22 fixed
+  const FIXED_ROWS = 22;
+  const logPaneRows = Math.max(4, rows - FIXED_ROWS);
+
+  // ── Mount: fetch initial data + subscribe to live events ─────────────────
+  useEffect(() => {
+    if (!projectPath || !interactiveData) {
+      setDetail("unavailable");
+      return;
+    }
+    let cancelled = false;
+
+    void interactiveData.tasks.getTaskDetail(projectPath, task.id).then((d) => {
+      if (cancelled) return;
+      if (d === null) {
+        setDetail("unavailable");
+      } else {
+        // Only keep last INITIAL_LOG_LIMIT entries in the initial load.
+        const trimmed = { ...d, recentLogs: d.recentLogs.slice(-INITIAL_LOG_LIMIT) };
+        setDetail(trimmed);
+      }
+    });
+
+    const unsub = interactiveData.tasks.subscribeTaskEvents(
+      projectPath,
+      task.id,
+      (event: TaskEvent) => {
+        if (cancelled) return;
+        setDetail((prev) => {
+          if (!prev || prev === "unavailable") return prev;
+          if (event.kind === "step:updated") {
+            const steps = prev.steps.map((s) =>
+              s.index === event.step.index ? event.step : s,
+            );
+            return { ...prev, steps };
+          }
+          if (event.kind === "log:appended") {
+            const logs = [...prev.recentLogs, event.entry];
+            // Cap at MAX_LOG_ENTRIES, dropping oldest when over limit.
+            const trimmed = logs.length > MAX_LOG_ENTRIES ? logs.slice(logs.length - MAX_LOG_ENTRIES) : logs;
+            return { ...prev, recentLogs: trimmed };
+          }
+          if (event.kind === "task:updated") {
+            // Full replacement but merge logs so we don't lose buffered entries.
+            const merged = [...prev.recentLogs, ...event.task.recentLogs];
+            const deduped = Array.from(
+              new Map(merged.map((e) => [e.timestamp + e.text, e])).values(),
+            );
+            const trimmed = deduped.length > MAX_LOG_ENTRIES ? deduped.slice(deduped.length - MAX_LOG_ENTRIES) : deduped;
+            return { ...event.task, recentLogs: trimmed };
+          }
+          return prev;
+        });
+      },
+    );
+
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectPath, task.id]);
+
+  // When auto-follow is on and new log entries arrive, reset scroll to bottom.
+  const logCount = detail && detail !== "unavailable" ? detail.recentLogs.length : 0;
+  useEffect(() => {
+    if (autoFollow) setLogScrollOffset(0);
+  }, [autoFollow, logCount]);
+
+  // ── Keyboard: ↑↓ / j/k scroll logs; G = jump to bottom; g = jump to top ──
+  useInput((input, key) => {
+    // All detail-screen keys except Esc/Backspace are consumed here so they
+    // don't bleed into BoardView's handler (which has return guards for detail).
+    if (detail && detail !== "unavailable" && detail.recentLogs.length > 0) {
+      const maxOffset = Math.max(0, detail.recentLogs.length - logPaneRows);
+      if (key.upArrow || input === "k") {
+        setAutoFollow(false);
+        setLogScrollOffset((o) => Math.min(maxOffset, o + 1));
+        return;
+      }
+      if (key.downArrow || input === "j") {
+        setLogScrollOffset((o) => {
+          const next = Math.max(0, o - 1);
+          if (next === 0) setAutoFollow(true);
+          return next;
+        });
+        return;
+      }
+      if (key.pageUp) {
+        setAutoFollow(false);
+        setLogScrollOffset((o) => Math.min(maxOffset, o + Math.floor(logPaneRows / 2)));
+        return;
+      }
+      if (key.pageDown) {
+        setLogScrollOffset((o) => {
+          const next = Math.max(0, o - Math.floor(logPaneRows / 2));
+          if (next === 0) setAutoFollow(true);
+          return next;
+        });
+        return;
+      }
+      if (input === "G") {
+        setLogScrollOffset(0);
+        setAutoFollow(true);
+        return;
+      }
+      if (input === "g") {
+        setAutoFollow(false);
+        setLogScrollOffset(maxOffset);
+        return;
+      }
+    }
+  });
+
   const accent = COLUMN_COLORS[task.column] ?? "white";
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <Box
       borderStyle="round"
@@ -999,32 +1194,140 @@ function TaskDetailScreen({ task }: { task: TaskItem }) {
       paddingY={1}
       flexGrow={1}
     >
-      <Text dimColor>{task.id}</Text>
-      <Box height={1} />
-      <Text bold color="whiteBright" wrap="wrap">{task.title ?? task.id}</Text>
-      <Box height={1} />
-      <Box flexDirection="row" gap={2}>
-        <Box>
-          <Text dimColor>Column </Text>
-          <Text color={accent} bold>{columnLabel(task.column)}</Text>
+      {/* Header strip: id + pills + back hint */}
+      <Box flexDirection="row" justifyContent="space-between" flexShrink={0}>
+        <Box flexDirection="row" gap={2}>
+          <Text dimColor>{task.id}</Text>
+          <Text color={accent} bold>[{columnLabel(task.column)}]</Text>
+          {task.agentState && (
+            <Text color={accent}>▶ {task.agentState}</Text>
+          )}
         </Box>
-        {task.agentState && (
-          <Box>
-            <Text dimColor>Agent </Text>
-            <Text color={accent} bold>{task.agentState}</Text>
-          </Box>
-        )}
+        <Text dimColor>[Esc] back</Text>
       </Box>
-      {task.description && (
+
+      <Box height={1} flexShrink={0} />
+
+      {/* Title */}
+      <Text bold color="whiteBright" wrap="wrap">{task.title ?? task.id}</Text>
+
+      <Box height={1} flexShrink={0} />
+
+      {/* Loading / unavailable state */}
+      {detail === null && (
+        <Box flexDirection="row" gap={1} flexShrink={0}>
+          <Text color="cyanBright"><Spinner type="dots" /></Text>
+          <Text dimColor>Loading task details…</Text>
+        </Box>
+      )}
+
+      {detail === "unavailable" && (
+        <Text color="yellow">Task no longer available — Esc to go back</Text>
+      )}
+
+      {detail && detail !== "unavailable" && (
         <>
-          <Box height={1} />
-          <Text dimColor>──── Description ────</Text>
-          <Box height={1} />
-          <Text wrap="wrap">{task.description}</Text>
+          {/* Meta row: branch + worktree */}
+          {(detail.branch || detail.worktree) && (
+            <Box flexDirection="row" gap={2} flexShrink={0}>
+              {detail.branch && (
+                <Box flexDirection="row" gap={1}>
+                  <Text dimColor>Branch</Text>
+                  <Text color="cyan">{detail.branch}</Text>
+                </Box>
+              )}
+              {detail.worktree && (
+                <Box flexDirection="row" gap={1}>
+                  <Text dimColor>Worktree</Text>
+                  <Text color="cyan" wrap="truncate">{detail.worktree}</Text>
+                </Box>
+              )}
+            </Box>
+          )}
+
+          <Box height={1} flexShrink={0} />
+
+          {/* Steps section */}
+          <Text dimColor>── Steps ──────────────────────────────────────</Text>
+          {detail.steps.length === 0 ? (
+            <Text dimColor>(no steps yet)</Text>
+          ) : (
+            detail.steps.map((step) => {
+              const icon = STEP_ICON[step.status] ?? "·";
+              const color = STEP_COLOR[step.status] ?? "white";
+              const isRunning = step.status === "running";
+              const isDone = step.status === "done" || step.status === "failed" || step.status === "skipped";
+
+              let durationText = "";
+              if (isRunning && step.startedAt) {
+                const elapsed = Date.now() - new Date(step.startedAt).getTime();
+                durationText = ` (running — ${formatDurationMs(elapsed)})`;
+              } else if (isDone && step.startedAt && step.endedAt) {
+                const elapsed = new Date(step.endedAt).getTime() - new Date(step.startedAt).getTime();
+                durationText = ` (${step.status} — ${formatDurationMs(elapsed)})`;
+              }
+
+              return (
+                <Box key={step.index} flexDirection="row" gap={1} flexShrink={0}>
+                  <Text color={color}>{icon}</Text>
+                  <Text bold={isRunning} color={isRunning ? "whiteBright" : undefined} dimColor={step.status === "pending"}>
+                    {step.index + 1}. {step.name}
+                  </Text>
+                  {durationText !== "" && (
+                    <Text dimColor>{durationText}</Text>
+                  )}
+                </Box>
+              );
+            })
+          )}
+
+          <Box height={1} flexShrink={0} />
+
+          {/* Logs section — flexGrow so it fills remaining vertical space */}
+          <Box flexDirection="row" justifyContent="space-between" flexShrink={0}>
+            <Text dimColor>── Logs ───────────────────────────────────────</Text>
+            <Text color={autoFollow ? "cyanBright" : undefined} dimColor={!autoFollow}>
+              {autoFollow ? "[live]" : "[paused]"}
+            </Text>
+          </Box>
+
+          {detail.recentLogs.length === 0 ? (
+            <Text dimColor>(no log entries yet)</Text>
+          ) : (
+            <Box flexDirection="column" flexGrow={1} overflow="hidden">
+              {/* Compute the visible window from the bottom, offset by scroll position. */}
+              {(() => {
+                const logs = detail.recentLogs;
+                const total = logs.length;
+                // scrollOffset counts lines from the bottom; 0 = show tail.
+                const endIdx = total - logScrollOffset;
+                const startIdx = Math.max(0, endIdx - logPaneRows);
+                const visible = logs.slice(startIdx, endIdx);
+                return visible.map((entry, i) => {
+                  const levelColor =
+                    entry.level === "warn" ? "yellow" :
+                    entry.level === "error" ? "red" :
+                    entry.level === "debug" ? "gray" : "white";
+                  const levelLabel = entry.level.toUpperCase().padEnd(5);
+                  return (
+                    <Box key={startIdx + i} flexDirection="row" gap={1} flexShrink={0}>
+                      <Text dimColor>{formatLogTime(entry.timestamp)}</Text>
+                      <Text color={levelColor}>{levelLabel}</Text>
+                      {entry.source && (
+                        <Text color="cyan" dimColor>[{entry.source}]</Text>
+                      )}
+                      <Text wrap="wrap">{entry.text}</Text>
+                    </Box>
+                  );
+                });
+              })()}
+            </Box>
+          )}
         </>
       )}
+
       <Box flexGrow={1} />
-      <Text dimColor>[Esc / Backspace] back to board · [q] quit</Text>
+      <Text dimColor>↑↓/j/k scroll · PgUp/PgDn half-page · g top · G bottom · Esc back</Text>
     </Box>
   );
 }
@@ -1054,7 +1357,12 @@ function groupTasksByColumn(tasks: TaskItem[]): Record<KanbanColumn, TaskItem[]>
 function BoardView({ state, controller }: { state: DashboardState; controller: DashboardTUI }) {
   const { stdout } = useStdout();
   const cols = stdout?.columns ?? 80;
-  const columnWidth = Math.max(20, Math.floor((cols - 2) / KANBAN_COLUMNS.length));
+  // Narrow mode: collapse 4-column kanban to a single full-width column so
+  // columns don't overflow or overlap when the terminal is too slim.
+  const isNarrow = cols < NARROW_THRESHOLD;
+  const columnWidth = isNarrow
+    ? Math.max(20, cols - 2)
+    : Math.max(20, Math.floor((cols - 2) / KANBAN_COLUMNS.length));
 
   const [subView, setSubView] = useState<BoardSubView>("board");
   const [projectIndex, setProjectIndex] = useState(0);
@@ -1184,13 +1492,16 @@ function BoardView({ state, controller }: { state: DashboardState; controller: D
     }
   });
 
+  const narrowColumnIndicator = isNarrow
+    ? ` · ${colIndex + 1}/${KANBAN_COLUMNS.length} ${columnLabel(focusedColumn).toUpperCase()} (${focusedTasks.length})`
+    : "";
   const hintText = subView === "picker"
     ? "↑↓ pick · Enter confirm · Esc cancel"
     : subView === "detail"
     ? "Esc back · q quit"
     : subView === "create"
     ? "type a task title · Enter create · Esc cancel"
-    : "←→ column · ↑↓ task · Enter open · n new · p project";
+    : `←→ column · ↑↓ task · Enter open · n new · p project${narrowColumnIndicator}`;
 
   const submitNewTask = async () => {
     const title = newTaskTitle.trim();
@@ -1270,7 +1581,11 @@ function BoardView({ state, controller }: { state: DashboardState; controller: D
         </Box>
       ) : subView === "detail" && selectedTask ? (
         <Box flexGrow={1} paddingX={1}>
-          <TaskDetailScreen task={selectedTask} />
+          <TaskDetailScreen
+            task={selectedTask}
+            projectPath={selectedProject?.path ?? null}
+            interactiveData={state.interactiveData}
+          />
         </Box>
       ) : tasksState.loading ? (
         <Box justifyContent="center" alignItems="center" flexGrow={1} gap={1}>
@@ -1284,16 +1599,28 @@ function BoardView({ state, controller }: { state: DashboardState; controller: D
         </Box>
       ) : (
         <Box flexDirection="row" flexGrow={1} overflow="hidden">
-          {KANBAN_COLUMNS.map((col, i) => (
+          {/* Narrow: render only the focused column at full width; ←→ cycles columns */}
+          {isNarrow ? (
             <KanbanColumnView
-              key={col}
-              column={col}
-              tasks={grouped[col]}
-              isFocused={i === colIndex}
-              selectedIndex={rowByColumn[col] ?? 0}
+              key={focusedColumn}
+              column={focusedColumn}
+              tasks={focusedTasks}
+              isFocused={true}
+              selectedIndex={focusedRow}
               width={columnWidth}
             />
-          ))}
+          ) : (
+            KANBAN_COLUMNS.map((col, i) => (
+              <KanbanColumnView
+                key={col}
+                column={col}
+                tasks={grouped[col]}
+                isFocused={i === colIndex}
+                selectedIndex={rowByColumn[col] ?? 0}
+                width={columnWidth}
+              />
+            ))
+          )}
         </Box>
       )}
     </Box>
@@ -1322,7 +1649,8 @@ type AgentSubView = "list" | "confirm-delete";
 function AgentsView({ state }: { state: DashboardState }) {
   const { stdout } = useStdout();
   const cols = stdout?.columns ?? 80;
-  const isNarrow = cols < 80;
+  // Narrow mode: hide the inactive pane so list and detail don't overlap side-by-side.
+  const isNarrow = cols < NARROW_THRESHOLD;
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [agents, setAgents] = useState<AgentItem[]>([]);
   const [detail, setDetail] = useState<AgentDetailItem | null>(null);
@@ -1453,133 +1781,140 @@ function AgentsView({ state }: { state: DashboardState }) {
           <Text color="yellow">{statusMsg}</Text>
         </Box>
       )}
-      <Box flexDirection={isNarrow ? "column" : "row"} flexGrow={1} overflow="hidden">
-        {/* List panel */}
-        <Box
-          borderStyle="round"
-          borderColor={detailFocused ? "gray" : "cyanBright"}
-          flexDirection="column"
-          width={isNarrow ? undefined : "30%"}
-          flexGrow={isNarrow ? 1 : 0}
-          flexShrink={0}
-          overflow="hidden"
-        >
-          <Box paddingX={1}>
-            <Text bold={!detailFocused} color={!detailFocused ? "cyanBright" : undefined} dimColor={detailFocused}>
-              Agents ({agents.length})
-            </Text>
-          </Box>
-          <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
-            {agents.length === 0 ? (
-              <Text dimColor>No agents found.</Text>
-            ) : (
-              agents.map((agent, i) => {
-                const isSel = i === selectedIndex;
-                const { fresh, label } = heartbeatFreshness(agent.lastHeartbeatAt);
-                return (
-                  <Box key={agent.id} flexDirection="row" gap={1}>
-                    <Text color={isSel ? "white" : "gray"}>{isSel ? "▶" : " "}</Text>
-                    <Box flexDirection="column" flexGrow={1}>
-                      <Box flexDirection="row" gap={1}>
-                        <Text bold={isSel} color={isSel ? "whiteBright" : undefined} wrap="truncate">
-                          {agent.name}
-                        </Text>
-                        <Text color={agentStateColor(agent.state) as "cyanBright" | "green" | "red" | "gray"}>
-                          {agent.state}
-                        </Text>
-                      </Box>
-                      <Box flexDirection="row" gap={1}>
-                        <Text color={fresh ? "green" : "gray"} dimColor>●</Text>
-                        <Text dimColor>{label}</Text>
+      <Box flexDirection="row" flexGrow={1} overflow="hidden">
+        {/* List panel — in narrow mode, hidden when detail pane is focused */}
+        {(!isNarrow || !detailFocused) && (
+          <Box
+            borderStyle="round"
+            borderColor={detailFocused ? "gray" : "cyanBright"}
+            flexDirection="column"
+            width={isNarrow ? undefined : "30%"}
+            flexGrow={isNarrow ? 1 : 0}
+            flexShrink={0}
+            overflow="hidden"
+          >
+            <Box paddingX={1}>
+              <Text bold={!detailFocused} color={!detailFocused ? "cyanBright" : undefined} dimColor={detailFocused}>
+                Agents ({agents.length})
+              </Text>
+            </Box>
+            <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
+              {agents.length === 0 ? (
+                <Text dimColor>No agents found.</Text>
+              ) : (
+                agents.map((agent, i) => {
+                  const isSel = i === selectedIndex;
+                  const { fresh, label } = heartbeatFreshness(agent.lastHeartbeatAt);
+                  return (
+                    <Box key={agent.id} flexDirection="row" gap={1}>
+                      <Text color={isSel ? "white" : "gray"}>{isSel ? "▶" : " "}</Text>
+                      <Box flexDirection="column" flexGrow={1}>
+                        <Box flexDirection="row" gap={1}>
+                          <Text bold={isSel} color={isSel ? "whiteBright" : undefined} wrap="truncate">
+                            {agent.name}
+                          </Text>
+                          <Text color={agentStateColor(agent.state) as "cyanBright" | "green" | "red" | "gray"}>
+                            {agent.state}
+                          </Text>
+                        </Box>
+                        <Box flexDirection="row" gap={1}>
+                          <Text color={fresh ? "green" : "gray"} dimColor>●</Text>
+                          <Text dimColor>{label}</Text>
+                        </Box>
                       </Box>
                     </Box>
-                  </Box>
-                );
-              })
-            )}
+                  );
+                })
+              )}
+            </Box>
           </Box>
-        </Box>
+        )}
 
-        {/* Right: agent detail */}
-        <Box
-          borderStyle="round"
-          borderColor={detailFocused ? "cyanBright" : "gray"}
-          flexDirection="column"
-          flexGrow={1}
-          overflow="hidden"
-        >
-          <Box paddingX={1}>
-            <Text bold={detailFocused} color={detailFocused ? "cyanBright" : undefined} dimColor={!detailFocused}>
-              Agent Detail
-            </Text>
-          </Box>
-          <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
-            {!selectedAgent ? (
-              <Text dimColor>Select an agent from the list.</Text>
-            ) : loadingDetail ? (
-              <Box flexDirection="row" gap={1}>
-                <Text color="white"><Spinner type="dots" /></Text>
-                <Text dimColor>Loading…</Text>
-              </Box>
-            ) : !detail ? (
-              <Text dimColor>Could not load agent detail.</Text>
-            ) : (
-              <Box flexDirection="column">
-                <Text bold color="whiteBright">{detail.name}</Text>
-                <Text dimColor>{detail.id}</Text>
-                <Box height={1} />
+        {/* Right: agent detail — in narrow mode, hidden when list pane is focused */}
+        {(!isNarrow || detailFocused) && (
+          <Box
+            borderStyle="round"
+            borderColor={detailFocused ? "cyanBright" : "gray"}
+            flexDirection="column"
+            flexGrow={1}
+            overflow="hidden"
+          >
+            <Box paddingX={1}>
+              <Text bold={detailFocused} color={detailFocused ? "cyanBright" : undefined} dimColor={!detailFocused}>
+                Agent Detail
+              </Text>
+            </Box>
+            <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
+              {!selectedAgent ? (
+                <Text dimColor>Select an agent from the list.</Text>
+              ) : loadingDetail ? (
                 <Box flexDirection="row" gap={1}>
-                  <Text dimColor>State:</Text>
-                  <Text color={agentStateColor(detail.state) as "cyanBright" | "green" | "red" | "gray"} bold>
-                    {detail.state}
-                  </Text>
+                  <Text color="white"><Spinner type="dots" /></Text>
+                  <Text dimColor>Loading…</Text>
                 </Box>
-                <Box flexDirection="row" gap={1}>
-                  <Text dimColor>Role:</Text>
-                  <Text>{detail.role}</Text>
+              ) : !detail ? (
+                <Text dimColor>Could not load agent detail.</Text>
+              ) : (
+                <Box flexDirection="column">
+                  <Text bold color="whiteBright">{detail.name}</Text>
+                  <Text dimColor>{detail.id}</Text>
+                  <Box height={1} />
+                  <Box flexDirection="row" gap={1}>
+                    <Text dimColor>State:</Text>
+                    <Text color={agentStateColor(detail.state) as "cyanBright" | "green" | "red" | "gray"} bold>
+                      {detail.state}
+                    </Text>
+                  </Box>
+                  <Box flexDirection="row" gap={1}>
+                    <Text dimColor>Role:</Text>
+                    <Text>{detail.role}</Text>
+                  </Box>
+                  {detail.title && (
+                    <Box flexDirection="row" gap={1}>
+                      <Text dimColor>Title:</Text>
+                      <Text>{detail.title}</Text>
+                    </Box>
+                  )}
+                  {detail.taskId && (
+                    <Box flexDirection="row" gap={1}>
+                      <Text dimColor>Task:</Text>
+                      <Text color="cyanBright">{detail.taskId}</Text>
+                    </Box>
+                  )}
+                  {detail.capabilities.length > 0 && (
+                    <Box flexDirection="row" gap={1}>
+                      <Text dimColor>Caps:</Text>
+                      <Text>{detail.capabilities.join(", ")}</Text>
+                    </Box>
+                  )}
+                  {detail.recentRuns.length > 0 && (
+                    <>
+                      <Box height={1} />
+                      <Text dimColor>Recent runs (latest first):</Text>
+                      {detail.recentRuns.slice(0, 5).map((run) => (
+                        <Box key={run.id} flexDirection="row" gap={1} marginLeft={1}>
+                          <Text color={run.status === "completed" ? "green" : run.status === "failed" ? "red" : "yellow"}>
+                            {run.status.slice(0, 4)}
+                          </Text>
+                          <Text dimColor>{run.startedAt.slice(11, 19)}</Text>
+                          {run.triggerDetail && <Text dimColor>{run.triggerDetail}</Text>}
+                        </Box>
+                      ))}
+                    </>
+                  )}
                 </Box>
-                {detail.title && (
-                  <Box flexDirection="row" gap={1}>
-                    <Text dimColor>Title:</Text>
-                    <Text>{detail.title}</Text>
-                  </Box>
-                )}
-                {detail.taskId && (
-                  <Box flexDirection="row" gap={1}>
-                    <Text dimColor>Task:</Text>
-                    <Text color="cyanBright">{detail.taskId}</Text>
-                  </Box>
-                )}
-                {detail.capabilities.length > 0 && (
-                  <Box flexDirection="row" gap={1}>
-                    <Text dimColor>Caps:</Text>
-                    <Text>{detail.capabilities.join(", ")}</Text>
-                  </Box>
-                )}
-                {detail.recentRuns.length > 0 && (
-                  <>
-                    <Box height={1} />
-                    <Text dimColor>Recent runs (latest first):</Text>
-                    {detail.recentRuns.slice(0, 5).map((run) => (
-                      <Box key={run.id} flexDirection="row" gap={1} marginLeft={1}>
-                        <Text color={run.status === "completed" ? "green" : run.status === "failed" ? "red" : "yellow"}>
-                          {run.status.slice(0, 4)}
-                        </Text>
-                        <Text dimColor>{run.startedAt.slice(11, 19)}</Text>
-                        {run.triggerDetail && <Text dimColor>{run.triggerDetail}</Text>}
-                      </Box>
-                    ))}
-                  </>
-                )}
-              </Box>
-            )}
+              )}
+            </Box>
           </Box>
-        </Box>
+        )}
       </Box>
 
       {/* Footer */}
-      <Box paddingX={1}>
+      <Box paddingX={1} flexDirection="row" gap={1}>
         <Text dimColor>[s] start  [x] stop  [D] delete  [r] refresh  [Tab] focus  ↑↓ select</Text>
+        {isNarrow && (
+          <Text dimColor>[narrow] {detailFocused ? "detail" : "list"}</Text>
+        )}
       </Box>
     </Box>
   );
@@ -2099,6 +2434,9 @@ function GitView({ state }: { state: DashboardState }) {
     }
   });
 
+  // Narrow mode: collapse multi-pane layout to a single full-width pane so
+  // the stacked left+right columns don't overflow on small terminals.
+  const isNarrow = cols < NARROW_THRESHOLD;
   const leftWidth = Math.max(24, Math.floor(cols * 0.35));
   const rightWidth = cols - leftWidth - 1;
 
@@ -2134,255 +2472,271 @@ function GitView({ state }: { state: DashboardState }) {
         )}
       </Box>
 
-      {/* Main body */}
+      {/* Main body — narrow: render only the active pane at full width so stacked columns don't overflow */}
       <Box flexDirection="row" flexGrow={1} overflow="hidden">
-        {/* Left column: status + branches + worktrees */}
-        <Box
-          flexDirection="column"
-          width={leftWidth}
-          flexShrink={0}
-          overflow="hidden"
-        >
-          {/* Status panel */}
+        {/* Left column: status + branches + worktrees — hidden in narrow when right pane is active */}
+        {(!isNarrow || activePane === "status" || activePane === "branches" || activePane === "worktrees") && (
           <Box
-            borderStyle="round"
-            borderColor={activePane === "status" ? "cyanBright" : "gray"}
             flexDirection="column"
+            width={isNarrow ? undefined : leftWidth}
+            flexGrow={isNarrow ? 1 : 0}
             flexShrink={0}
             overflow="hidden"
           >
-            <Box paddingX={1}>
-              <Text bold={activePane === "status"} color={activePane === "status" ? "blue" : undefined} dimColor={activePane !== "status"}>
-                Status
-              </Text>
-            </Box>
-            <Box flexDirection="column" paddingX={1} overflow="hidden">
-              {!gitStatus ? (
-                <Text dimColor>{projectPath ? "Loading…" : "No project"}</Text>
-              ) : (
-                <>
-                  <Box flexDirection="row" gap={1}>
-                    <Text dimColor>Remote:</Text>
-                    <Text color="gray" wrap="truncate">{gitStatus.remoteUrl || "(none)"}</Text>
-                  </Box>
-                  <Box flexDirection="row" gap={1}>
-                    <Text dimColor>Fetched:</Text>
-                    <Text color="gray">{relMs(gitStatus.lastFetchAt)}</Text>
-                  </Box>
-                  <Box flexDirection="row" gap={1}>
-                    <Text dimColor>Staged:</Text>
-                    <Text color={gitStatus.staged.length > 0 ? "green" : "gray"}>{gitStatus.staged.length}</Text>
-                    <Text dimColor>Modified:</Text>
-                    <Text color={gitStatus.unstaged.length > 0 ? "yellow" : "gray"}>{gitStatus.unstaged.length}</Text>
-                    <Text dimColor>New:</Text>
-                    <Text color={gitStatus.untracked.length > 0 ? "cyan" : "gray"}>{gitStatus.untracked.length}</Text>
-                  </Box>
-                </>
-              )}
-            </Box>
-          </Box>
-
-          {/* Branches panel */}
-          <Box
-            borderStyle="round"
-            borderColor={activePane === "branches" ? "cyanBright" : "gray"}
-            flexDirection="column"
-            flexGrow={1}
-            overflow="hidden"
-          >
-            <Box paddingX={1}>
-              <Text bold={activePane === "branches"} color={activePane === "branches" ? "blue" : undefined} dimColor={activePane !== "branches"}>
-                Branches
-              </Text>
-            </Box>
-            <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
-              {branches.length === 0 ? (
-                <Text dimColor>—</Text>
-              ) : (
-                branches.slice(0, 8).map((b, bi) => {
-                  const isSel = activePane === "branches" && bi === branchIndex;
-                  return (
-                    <Box key={b.name} flexDirection="row" gap={1}>
-                      <Text color={isSel ? "white" : b.isCurrent ? "cyanBright" : "gray"}>{isSel ? "▶" : b.isCurrent ? "▶" : " "}</Text>
-                      <Text color={isSel ? "whiteBright" : b.isCurrent ? "white" : "gray"} bold={isSel || b.isCurrent} wrap="truncate">
-                        {b.name}
-                      </Text>
-                      <Text dimColor>{b.shortSha}</Text>
-                    </Box>
-                  );
-                })
-              )}
-              {branches.length > 8 && <Text dimColor>…+{branches.length - 8} more</Text>}
-            </Box>
-          </Box>
-
-          {/* Worktrees panel */}
-          {worktrees.length > 1 && (
-            <Box
-              borderStyle="round"
-              borderColor={activePane === "worktrees" ? "cyanBright" : "gray"}
-              flexDirection="column"
-              flexShrink={0}
-              overflow="hidden"
-            >
-              <Box paddingX={1}>
-                <Text bold={activePane === "worktrees"} color={activePane === "worktrees" ? "blue" : undefined} dimColor={activePane !== "worktrees"}>
-                  Worktrees ({worktrees.length})
-                </Text>
-              </Box>
-              <Box flexDirection="column" paddingX={1} overflow="hidden">
-                {worktrees.map((wt, wi) => {
-                  const isSel = activePane === "worktrees" && wi === worktreeIndex;
-                  return (
-                    <Box key={wt.path} flexDirection="row" gap={1}>
-                      <Text color={isSel ? "white" : wt.isCurrent ? "cyanBright" : "gray"}>{isSel ? "▶" : wt.isCurrent ? "▶" : " "}</Text>
-                      <Text color={isSel ? "whiteBright" : wt.isCurrent ? "white" : "gray"} bold={isSel} wrap="truncate">
-                        {wt.branch}
-                      </Text>
-                      {wt.isLocked && <Text color="yellow">🔒</Text>}
-                    </Box>
-                  );
-                })}
-              </Box>
-            </Box>
-          )}
-        </Box>
-
-        {/* Right column: commits + changes */}
-        <Box flexDirection="column" flexGrow={1} overflow="hidden">
-          {/* Commits panel */}
-          <Box
-            borderStyle="round"
-            borderColor={activePane === "commits" ? "cyanBright" : "gray"}
-            flexDirection="column"
-            flexGrow={1}
-            overflow="hidden"
-          >
-            <Box paddingX={1}>
-              <Text bold={activePane === "commits"} color={activePane === "commits" ? "blue" : undefined} dimColor={activePane !== "commits"}>
-                Commits
-              </Text>
-            </Box>
-            <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
-              {commits.length === 0 ? (
-                <Text dimColor>{loading ? "Loading…" : "No commits"}</Text>
-              ) : (
-                commits.map((c, i) => {
-                  const isSel = i === commitIndex;
-                  const initials = authorInitials(c.authorName);
-                  const subjectWidth = Math.max(10, rightWidth - 30);
-                  const subject = c.subject.length > subjectWidth
-                    ? c.subject.slice(0, subjectWidth - 1) + "…"
-                    : c.subject;
-                  return (
-                    <Box key={c.sha} flexDirection="row" gap={1}>
-                      <Text color={isSel ? "white" : "gray"}>{isSel ? "▶" : " "}</Text>
-                      <Text color="gray">{c.shortSha}</Text>
-                      <Text dimColor>{c.relativeTime.slice(0, 8).padEnd(8)}</Text>
-                      <Text color="cyanBright">{initials.padEnd(2)}</Text>
-                      <Text bold={isSel} color={isSel ? "whiteBright" : undefined} wrap="truncate">
-                        {subject}
-                      </Text>
-                    </Box>
-                  );
-                })
-              )}
-            </Box>
-            {/* Commit detail strip */}
-            {selectedCommit && (
+            {/* Status panel — in narrow mode only shown when it is the active pane */}
+            {(!isNarrow || activePane === "status") && (
               <Box
                 borderStyle="round"
-                borderColor="gray"
+                borderColor={activePane === "status" ? "cyanBright" : "gray"}
                 flexDirection="column"
-                paddingX={1}
                 flexShrink={0}
                 overflow="hidden"
               >
-                {loadingDetail ? (
-                  <Box flexDirection="row" gap={1}>
-                    <Text color="cyanBright"><Spinner type="dots" /></Text>
-                    <Text dimColor>Loading…</Text>
-                  </Box>
-                ) : commitDetail ? (
-                  <>
-                    <Box flexDirection="row" gap={1}>
-                      <Text color="gray">{commitDetail.shortSha}</Text>
-                      <Text dimColor>{commitDetail.isoTime.slice(0, 16)}</Text>
-                      <Text dimColor>by</Text>
-                      <Text color="cyanBright">{commitDetail.authorName}</Text>
-                    </Box>
-                    {commitDetail.body && (
-                      <Text dimColor wrap="wrap">{commitDetail.body.slice(0, 200)}</Text>
-                    )}
-                    {commitDetail.stat && (
-                      <Text dimColor wrap="truncate">{commitDetail.stat.split("\n").slice(-1)[0]}</Text>
-                    )}
-                  </>
-                ) : null}
-              </Box>
-            )}
-          </Box>
-
-          {/* Changes panel */}
-          <Box
-            borderStyle="round"
-            borderColor={activePane === "changes" ? "cyanBright" : "gray"}
-            flexDirection="column"
-            flexShrink={0}
-            overflow="hidden"
-          >
-            <Box paddingX={1}>
-              <Text bold={activePane === "changes"} color={activePane === "changes" ? "blue" : undefined} dimColor={activePane !== "changes"}>
-                Changes
-              </Text>
-            </Box>
-            {gitStatus && (gitStatus.staged.length > 0 || gitStatus.unstaged.length > 0 || gitStatus.untracked.length > 0) ? (
-              <Box flexDirection="row" paddingX={1} overflow="hidden">
-                {/* Staged */}
-                <Box flexDirection="column" width="50%" overflow="hidden">
-                  <Text dimColor>Staged ({gitStatus.staged.length})</Text>
-                  {gitStatus.staged.slice(0, 6).map((f) => (
-                    <Box key={`s-${f.path}`} flexDirection="row" gap={1}>
-                      <Text color={statusColor(f.status)}>{f.status}</Text>
-                      <Text color="gray" wrap="truncate">{truncatePath(f.path, Math.floor(leftWidth / 2) - 4)}</Text>
-                    </Box>
-                  ))}
-                  {gitStatus.staged.length > 6 && <Text dimColor>…+{gitStatus.staged.length - 6}</Text>}
+                <Box paddingX={1}>
+                  <Text bold={activePane === "status"} color={activePane === "status" ? "blue" : undefined} dimColor={activePane !== "status"}>
+                    Status
+                  </Text>
                 </Box>
-                {/* Unstaged + untracked */}
-                <Box flexDirection="column" flexGrow={1} overflow="hidden">
-                  <Text dimColor>Unstaged ({gitStatus.unstaged.length + gitStatus.untracked.length})</Text>
-                  {gitStatus.unstaged.slice(0, 4).map((f) => (
-                    <Box key={`u-${f.path}`} flexDirection="row" gap={1}>
-                      <Text color={statusColor(f.status)}>{f.status}</Text>
-                      <Text color="gray" wrap="truncate">{truncatePath(f.path, Math.floor(rightWidth / 2) - 4)}</Text>
-                    </Box>
-                  ))}
-                  {gitStatus.untracked.slice(0, 2).map((f) => (
-                    <Box key={`n-${f.path}`} flexDirection="row" gap={1}>
-                      <Text color="gray">?</Text>
-                      <Text color="gray" wrap="truncate">{truncatePath(f.path, Math.floor(rightWidth / 2) - 4)}</Text>
-                    </Box>
-                  ))}
-                  {(gitStatus.unstaged.length + gitStatus.untracked.length) > 6 && (
-                    <Text dimColor>…+{gitStatus.unstaged.length + gitStatus.untracked.length - 6}</Text>
+                <Box flexDirection="column" paddingX={1} overflow="hidden">
+                  {!gitStatus ? (
+                    <Text dimColor>{projectPath ? "Loading…" : "No project"}</Text>
+                  ) : (
+                    <>
+                      <Box flexDirection="row" gap={1}>
+                        <Text dimColor>Remote:</Text>
+                        <Text color="gray" wrap="truncate">{gitStatus.remoteUrl || "(none)"}</Text>
+                      </Box>
+                      <Box flexDirection="row" gap={1}>
+                        <Text dimColor>Fetched:</Text>
+                        <Text color="gray">{relMs(gitStatus.lastFetchAt)}</Text>
+                      </Box>
+                      <Box flexDirection="row" gap={1}>
+                        <Text dimColor>Staged:</Text>
+                        <Text color={gitStatus.staged.length > 0 ? "green" : "gray"}>{gitStatus.staged.length}</Text>
+                        <Text dimColor>Modified:</Text>
+                        <Text color={gitStatus.unstaged.length > 0 ? "yellow" : "gray"}>{gitStatus.unstaged.length}</Text>
+                        <Text dimColor>New:</Text>
+                        <Text color={gitStatus.untracked.length > 0 ? "cyan" : "gray"}>{gitStatus.untracked.length}</Text>
+                      </Box>
+                    </>
                   )}
                 </Box>
               </Box>
-            ) : (
-              <Box paddingX={1}>
-                <Text dimColor>Working tree clean</Text>
+            )}
+
+            {/* Branches panel — in narrow mode only shown when it is the active pane */}
+            {(!isNarrow || activePane === "branches") && (
+              <Box
+                borderStyle="round"
+                borderColor={activePane === "branches" ? "cyanBright" : "gray"}
+                flexDirection="column"
+                flexGrow={isNarrow ? 1 : 1}
+                overflow="hidden"
+              >
+                <Box paddingX={1}>
+                  <Text bold={activePane === "branches"} color={activePane === "branches" ? "blue" : undefined} dimColor={activePane !== "branches"}>
+                    Branches
+                  </Text>
+                </Box>
+                <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
+                  {branches.length === 0 ? (
+                    <Text dimColor>—</Text>
+                  ) : (
+                    branches.slice(0, 8).map((b, bi) => {
+                      const isSel = activePane === "branches" && bi === branchIndex;
+                      return (
+                        <Box key={b.name} flexDirection="row" gap={1}>
+                          <Text color={isSel ? "white" : b.isCurrent ? "cyanBright" : "gray"}>{isSel ? "▶" : b.isCurrent ? "▶" : " "}</Text>
+                          <Text color={isSel ? "whiteBright" : b.isCurrent ? "white" : "gray"} bold={isSel || b.isCurrent} wrap="truncate">
+                            {b.name}
+                          </Text>
+                          <Text dimColor>{b.shortSha}</Text>
+                        </Box>
+                      );
+                    })
+                  )}
+                  {branches.length > 8 && <Text dimColor>…+{branches.length - 8} more</Text>}
+                </Box>
+              </Box>
+            )}
+
+            {/* Worktrees panel — in narrow mode only shown when it is the active pane */}
+            {worktrees.length > 1 && (!isNarrow || activePane === "worktrees") && (
+              <Box
+                borderStyle="round"
+                borderColor={activePane === "worktrees" ? "cyanBright" : "gray"}
+                flexDirection="column"
+                flexShrink={0}
+                overflow="hidden"
+              >
+                <Box paddingX={1}>
+                  <Text bold={activePane === "worktrees"} color={activePane === "worktrees" ? "blue" : undefined} dimColor={activePane !== "worktrees"}>
+                    Worktrees ({worktrees.length})
+                  </Text>
+                </Box>
+                <Box flexDirection="column" paddingX={1} overflow="hidden">
+                  {worktrees.map((wt, wi) => {
+                    const isSel = activePane === "worktrees" && wi === worktreeIndex;
+                    return (
+                      <Box key={wt.path} flexDirection="row" gap={1}>
+                        <Text color={isSel ? "white" : wt.isCurrent ? "cyanBright" : "gray"}>{isSel ? "▶" : wt.isCurrent ? "▶" : " "}</Text>
+                        <Text color={isSel ? "whiteBright" : wt.isCurrent ? "white" : "gray"} bold={isSel} wrap="truncate">
+                          {wt.branch}
+                        </Text>
+                        {wt.isLocked && <Text color="yellow">🔒</Text>}
+                      </Box>
+                    );
+                  })}
+                </Box>
               </Box>
             )}
           </Box>
-        </Box>
+        )}
+
+        {/* Right column: commits + changes — hidden in narrow when left pane is active */}
+        {(!isNarrow || activePane === "commits" || activePane === "changes") && (
+          <Box flexDirection="column" flexGrow={1} overflow="hidden">
+            {/* Commits panel — in narrow mode only shown when it is the active pane */}
+            {(!isNarrow || activePane === "commits") && (
+              <Box
+                borderStyle="round"
+                borderColor={activePane === "commits" ? "cyanBright" : "gray"}
+                flexDirection="column"
+                flexGrow={1}
+                overflow="hidden"
+              >
+                <Box paddingX={1}>
+                  <Text bold={activePane === "commits"} color={activePane === "commits" ? "blue" : undefined} dimColor={activePane !== "commits"}>
+                    Commits
+                  </Text>
+                </Box>
+                <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
+                  {commits.length === 0 ? (
+                    <Text dimColor>{loading ? "Loading…" : "No commits"}</Text>
+                  ) : (
+                    commits.map((c, i) => {
+                      const isSel = i === commitIndex;
+                      const initials = authorInitials(c.authorName);
+                      const subjectWidth = Math.max(10, (isNarrow ? cols - 30 : rightWidth - 30));
+                      const subject = c.subject.length > subjectWidth
+                        ? c.subject.slice(0, subjectWidth - 1) + "…"
+                        : c.subject;
+                      return (
+                        <Box key={c.sha} flexDirection="row" gap={1}>
+                          <Text color={isSel ? "white" : "gray"}>{isSel ? "▶" : " "}</Text>
+                          <Text color="gray">{c.shortSha}</Text>
+                          <Text dimColor>{c.relativeTime.slice(0, 8).padEnd(8)}</Text>
+                          <Text color="cyanBright">{initials.padEnd(2)}</Text>
+                          <Text bold={isSel} color={isSel ? "whiteBright" : undefined} wrap="truncate">
+                            {subject}
+                          </Text>
+                        </Box>
+                      );
+                    })
+                  )}
+                </Box>
+                {/* Commit detail strip */}
+                {selectedCommit && (
+                  <Box
+                    borderStyle="round"
+                    borderColor="gray"
+                    flexDirection="column"
+                    paddingX={1}
+                    flexShrink={0}
+                    overflow="hidden"
+                  >
+                    {loadingDetail ? (
+                      <Box flexDirection="row" gap={1}>
+                        <Text color="cyanBright"><Spinner type="dots" /></Text>
+                        <Text dimColor>Loading…</Text>
+                      </Box>
+                    ) : commitDetail ? (
+                      <>
+                        <Box flexDirection="row" gap={1}>
+                          <Text color="gray">{commitDetail.shortSha}</Text>
+                          <Text dimColor>{commitDetail.isoTime.slice(0, 16)}</Text>
+                          <Text dimColor>by</Text>
+                          <Text color="cyanBright">{commitDetail.authorName}</Text>
+                        </Box>
+                        {commitDetail.body && (
+                          <Text dimColor wrap="wrap">{commitDetail.body.slice(0, 200)}</Text>
+                        )}
+                        {commitDetail.stat && (
+                          <Text dimColor wrap="truncate">{commitDetail.stat.split("\n").slice(-1)[0]}</Text>
+                        )}
+                      </>
+                    ) : null}
+                  </Box>
+                )}
+              </Box>
+            )}
+
+            {/* Changes panel — in narrow mode only shown when it is the active pane */}
+            {(!isNarrow || activePane === "changes") && (
+              <Box
+                borderStyle="round"
+                borderColor={activePane === "changes" ? "cyanBright" : "gray"}
+                flexDirection="column"
+                flexShrink={0}
+                overflow="hidden"
+              >
+                <Box paddingX={1}>
+                  <Text bold={activePane === "changes"} color={activePane === "changes" ? "blue" : undefined} dimColor={activePane !== "changes"}>
+                    Changes
+                  </Text>
+                </Box>
+                {gitStatus && (gitStatus.staged.length > 0 || gitStatus.unstaged.length > 0 || gitStatus.untracked.length > 0) ? (
+                  <Box flexDirection="row" paddingX={1} overflow="hidden">
+                    {/* Staged */}
+                    <Box flexDirection="column" width="50%" overflow="hidden">
+                      <Text dimColor>Staged ({gitStatus.staged.length})</Text>
+                      {gitStatus.staged.slice(0, 6).map((f) => (
+                        <Box key={`s-${f.path}`} flexDirection="row" gap={1}>
+                          <Text color={statusColor(f.status)}>{f.status}</Text>
+                          <Text color="gray" wrap="truncate">{truncatePath(f.path, Math.floor(leftWidth / 2) - 4)}</Text>
+                        </Box>
+                      ))}
+                      {gitStatus.staged.length > 6 && <Text dimColor>…+{gitStatus.staged.length - 6}</Text>}
+                    </Box>
+                    {/* Unstaged + untracked */}
+                    <Box flexDirection="column" flexGrow={1} overflow="hidden">
+                      <Text dimColor>Unstaged ({gitStatus.unstaged.length + gitStatus.untracked.length})</Text>
+                      {gitStatus.unstaged.slice(0, 4).map((f) => (
+                        <Box key={`u-${f.path}`} flexDirection="row" gap={1}>
+                          <Text color={statusColor(f.status)}>{f.status}</Text>
+                          <Text color="gray" wrap="truncate">{truncatePath(f.path, Math.floor((isNarrow ? cols : rightWidth) / 2) - 4)}</Text>
+                        </Box>
+                      ))}
+                      {gitStatus.untracked.slice(0, 2).map((f) => (
+                        <Box key={`n-${f.path}`} flexDirection="row" gap={1}>
+                          <Text color="gray">?</Text>
+                          <Text color="gray" wrap="truncate">{truncatePath(f.path, Math.floor((isNarrow ? cols : rightWidth) / 2) - 4)}</Text>
+                        </Box>
+                      ))}
+                      {(gitStatus.unstaged.length + gitStatus.untracked.length) > 6 && (
+                        <Text dimColor>…+{gitStatus.unstaged.length + gitStatus.untracked.length - 6}</Text>
+                      )}
+                    </Box>
+                  </Box>
+                ) : (
+                  <Box paddingX={1}>
+                    <Text dimColor>Working tree clean</Text>
+                  </Box>
+                )}
+              </Box>
+            )}
+          </Box>
+        )}
       </Box>
 
       {/* Footer */}
-      <Box paddingX={1}>
+      <Box paddingX={1} flexDirection="row" gap={1}>
         <Text dimColor>
           [r] refresh  {gitStatus && gitStatus.ahead > 0 ? "[P] push  " : ""}[F] fetch  [↑↓] rows  [←→] status▸branches{worktrees.length > 1 ? "▸worktrees" : ""}▸commits▸changes  [p] project  [Esc/s] back
         </Text>
+        {isNarrow && (
+          <Text dimColor>[narrow] {activePane}</Text>
+        )}
       </Box>
 
       {/* Project picker overlay */}
@@ -2455,6 +2809,498 @@ function GitView({ state }: { state: DashboardState }) {
   );
 }
 
+// ── File explorer view ────────────────────────────────────────────────────────
+
+// Directories we never descend into — same list as the data layer denylist.
+const FILES_DENYLIST = new Set(["node_modules", ".git", "dist", ".next", "target", "build"]);
+
+type FilesPane = "tree" | "preview";
+
+interface TreeNode {
+  entry: FileEntry;
+  depth: number;
+  expanded: boolean;
+  // children loaded; undefined = not yet fetched
+  children: TreeNode[] | undefined;
+}
+
+// Truncate a path string in the middle: "…/long/path/file.ts"
+function truncateMiddle(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const half = Math.floor((max - 1) / 2);
+  return s.slice(0, half) + "…" + s.slice(s.length - (max - half - 1));
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+// Build the flat visible list from the tree (depth-first, expanded nodes reveal children)
+function flattenTree(nodes: TreeNode[], showHidden: boolean): TreeNode[] {
+  const result: TreeNode[] = [];
+  function walk(list: TreeNode[]) {
+    for (const node of list) {
+      if (!showHidden && node.entry.name.startsWith(".")) continue;
+      result.push(node);
+      if (node.expanded && node.children) {
+        walk(node.children);
+      }
+    }
+  }
+  walk(nodes);
+  return result;
+}
+
+// Convert FileEntry[] from listDirectory into TreeNode[]
+function entriesToNodes(entries: FileEntry[], depth: number): TreeNode[] {
+  // Filter denylist entries
+  const filtered = entries.filter((e) => !FILES_DENYLIST.has(e.name));
+  // Sort: directories first, then files; alphabetical within each group
+  const dirs = filtered.filter((e) => e.isDirectory).sort((a, b) => a.name.localeCompare(b.name));
+  const files = filtered.filter((e) => !e.isDirectory).sort((a, b) => a.name.localeCompare(b.name));
+  return [...dirs, ...files].map((e) => ({ entry: e, depth, expanded: false, children: undefined }));
+}
+
+function FilesView({ state }: { state: DashboardState }) {
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+
+  const data = state.interactiveData;
+
+  const [projectIndex, setProjectIndex] = useState(0);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerOriginal, setPickerOriginal] = useState(0);
+
+  const projectsState = useProjects(data);
+  const selectedProject = projectsState.projects[projectIndex] ?? null;
+  const projectPath = selectedProject?.path ?? null;
+
+  // Tree state
+  const [rootNodes, setRootNodes] = useState<TreeNode[]>([]);
+  const [treeLoading, setTreeLoading] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [showHidden, setShowHidden] = useState(false);
+
+  // Preview state
+  const [previewResult, setPreviewResult] = useState<FileReadResult | null>(null);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewScroll, setPreviewScroll] = useState(0);
+  const [wrapEnabled, setWrapEnabled] = useState(false);
+
+  // Focus
+  const [focusedPane, setFocusedPane] = useState<FilesPane>("tree");
+
+  // Derived flat list for rendering
+  const flatNodes = flattenTree(rootNodes, showHidden);
+  const selectedNode = flatNodes[selectedIndex] ?? null;
+
+  // Count hidden top-level items for footer hint
+  const hiddenCount = rootNodes.filter((n) => n.entry.name.startsWith(".")).length;
+
+  // Load root directory when project changes
+  useEffect(() => {
+    if (!data || !projectPath) return;
+    setTreeLoading(true);
+    setRootNodes([]);
+    setSelectedIndex(0);
+    setPreviewResult(null);
+    setPreviewPath(null);
+    data.files.listDirectory(projectPath, "").then((entries) => {
+      setRootNodes(entriesToNodes(entries, 0));
+    }).catch(() => {
+      setRootNodes([]);
+    }).finally(() => {
+      setTreeLoading(false);
+    });
+  }, [data, projectPath]);
+
+  // Load file preview when selected node changes (only for files, on demand)
+  // The preview is loaded when Enter is pressed or pane switches to preview;
+  // here we auto-preview when selection lands on a file so it feels snappy.
+  useEffect(() => {
+    if (!data || !projectPath || !selectedNode) return;
+    if (selectedNode.entry.isDirectory) return;
+    const rel = selectedNode.entry.path;
+    if (rel === previewPath) return; // already loaded
+    setPreviewLoading(true);
+    setPreviewScroll(0);
+    data.files.readFile(projectPath, rel).then((result) => {
+      setPreviewResult(result);
+      setPreviewPath(rel);
+    }).catch(() => {
+      setPreviewResult(null);
+      setPreviewPath(rel);
+    }).finally(() => {
+      setPreviewLoading(false);
+    });
+  }, [data, projectPath, selectedNode?.entry.path]);
+
+  // Expand a directory node and load its children
+  const expandNode = useCallback(async (node: TreeNode) => {
+    if (!data || !projectPath) return;
+    if (!node.entry.isDirectory) return;
+    if (node.children !== undefined) {
+      // Already loaded — just toggle
+      node.expanded = !node.expanded;
+      setRootNodes((prev) => [...prev]);
+      return;
+    }
+    try {
+      const entries = await data.files.listDirectory(projectPath, node.entry.path);
+      node.children = entriesToNodes(entries, node.depth + 1);
+      node.expanded = true;
+      setRootNodes((prev) => [...prev]);
+    } catch {
+      node.children = [];
+      node.expanded = true;
+      setRootNodes((prev) => [...prev]);
+    }
+  }, [data, projectPath]);
+
+  const collapseNode = useCallback((node: TreeNode) => {
+    node.expanded = false;
+    setRootNodes((prev) => [...prev]);
+  }, []);
+
+  // Find parent node in tree (for left-arrow collapse-to-parent)
+  function findParentOf(nodes: TreeNode[], target: TreeNode, depth: number): TreeNode | null {
+    for (const n of nodes) {
+      if (n.depth === depth - 1 && n.expanded && n.children) {
+        if (n.children.includes(target)) return n;
+        const found = findParentOf(n.children, target, depth);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  // Compute visible preview line count for PgUp/PgDn
+  // Reserve: header (3 lines) + footer (2 lines) + pane border (2 lines) = ~7 lines overhead
+  const previewHeight = Math.max(4, (stdout?.rows ?? 24) - 7);
+  const halfPage = Math.max(1, Math.floor(previewHeight / 2));
+
+  useInput((input, key) => {
+    if (!data) return;
+
+    if (pickerOpen) {
+      if (key.upArrow || input === "k") { setProjectIndex((p) => Math.max(0, p - 1)); return; }
+      if (key.downArrow || input === "j") { setProjectIndex((p) => Math.min(projectsState.projects.length - 1, p + 1)); return; }
+      if (key.return) { setPickerOpen(false); return; }
+      if (key.escape) { setProjectIndex(pickerOriginal); setPickerOpen(false); return; }
+      return;
+    }
+
+    if (input === "p") { setPickerOriginal(projectIndex); setPickerOpen(true); return; }
+
+    // Tab cycles pane focus
+    if (key.tab) {
+      setFocusedPane((p) => p === "tree" ? "preview" : "tree");
+      return;
+    }
+
+    if (input === ".") {
+      setShowHidden((v) => !v);
+      return;
+    }
+
+    if (input === "w" || input === "W") {
+      setWrapEnabled((v) => !v);
+      return;
+    }
+
+    if (input === "r" || input === "R") {
+      // Force-reload the current file preview
+      if (data && projectPath && selectedNode && !selectedNode.entry.isDirectory) {
+        setPreviewLoading(true);
+        setPreviewScroll(0);
+        setPreviewPath(null); // clear to force re-fetch via effect
+      }
+      return;
+    }
+
+    if (focusedPane === "tree") {
+      if (key.upArrow || input === "k") {
+        setSelectedIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (key.downArrow || input === "j") {
+        setSelectedIndex((i) => Math.min(flatNodes.length - 1, i + 1));
+        return;
+      }
+      if (key.rightArrow) {
+        if (selectedNode?.entry.isDirectory) {
+          if (selectedNode.expanded) {
+            // Move into first child
+            const ci = flatNodes.indexOf(selectedNode) + 1;
+            if (ci < flatNodes.length) setSelectedIndex(ci);
+          } else {
+            void expandNode(selectedNode);
+          }
+        }
+        return;
+      }
+      if (key.leftArrow) {
+        if (selectedNode?.entry.isDirectory && selectedNode.expanded) {
+          collapseNode(selectedNode);
+        } else if (selectedNode && selectedNode.depth > 0) {
+          // Move to parent
+          const parent = findParentOf(rootNodes, selectedNode, selectedNode.depth);
+          if (parent) {
+            const pi = flatNodes.indexOf(parent);
+            if (pi >= 0) setSelectedIndex(pi);
+          }
+        }
+        return;
+      }
+      if (key.return) {
+        if (selectedNode?.entry.isDirectory) {
+          void expandNode(selectedNode);
+        } else if (selectedNode) {
+          // Switch to preview pane when opening a file
+          setFocusedPane("preview");
+          setPreviewScroll(0);
+        }
+        return;
+      }
+    }
+
+    if (focusedPane === "preview") {
+      const lineCount = previewResult?.lineCount ?? 0;
+      const maxScroll = Math.max(0, lineCount - previewHeight);
+
+      if (key.upArrow || input === "k") {
+        setPreviewScroll((s) => Math.max(0, s - 1));
+        return;
+      }
+      if (key.downArrow || input === "j") {
+        setPreviewScroll((s) => Math.min(maxScroll, s + 1));
+        return;
+      }
+      if (key.pageUp) {
+        setPreviewScroll((s) => Math.max(0, s - halfPage));
+        return;
+      }
+      if (key.pageDown) {
+        setPreviewScroll((s) => Math.min(maxScroll, s + halfPage));
+        return;
+      }
+      if (input === "g") {
+        setPreviewScroll(0);
+        return;
+      }
+      if (input === "G") {
+        setPreviewScroll(maxScroll);
+        return;
+      }
+    }
+  }, { isActive: state.interactiveView === "files" });
+
+  // Narrow mode: collapse tree+preview side-by-side to a single pane so the
+  // two columns don't overflow on terminals below the threshold.
+  const isNarrow = cols < NARROW_THRESHOLD;
+  // Layout: 38% tree, 62% preview; in narrow mode the active pane takes full width
+  const treeWidth = isNarrow ? Math.max(20, cols - 2) : Math.max(20, Math.floor(cols * 0.38));
+
+  const previewEntry = selectedNode && !selectedNode.entry.isDirectory ? selectedNode.entry : null;
+
+  // Lines of preview content to show
+  const previewLines = previewResult?.content
+    ? previewResult.content.split("\n").slice(previewScroll, previewScroll + previewHeight)
+    : null;
+  const totalLines = previewResult?.lineCount ?? 0;
+  const lineNumWidth = Math.max(3, String(previewScroll + previewHeight).length);
+
+  return (
+    <Box flexDirection="column" flexGrow={1} overflow="hidden">
+      {/* Header strip */}
+      <Box flexDirection="row" paddingX={1} gap={1}>
+        <Text color="cyanBright" bold>{selectedProject?.name ?? "—"}</Text>
+        <Text dimColor>│</Text>
+        <Text dimColor color={focusedPane === "tree" ? "cyanBright" : "gray"}>
+          {focusedPane === "tree" ? "tree" : "preview"}
+        </Text>
+        {previewEntry && (
+          <>
+            <Text dimColor>│</Text>
+            <Text color="white" wrap="truncate">{truncateMiddle(previewEntry.path, Math.max(10, cols - 40))}</Text>
+            <Text dimColor>│</Text>
+            <Text dimColor>{formatFileSize(previewEntry.size)}</Text>
+            {previewResult && !previewResult.isBinary && !previewResult.tooLarge && (
+              <>
+                <Text dimColor>{previewResult.lineCount}L</Text>
+                <Text dimColor>{formatRelativeTime(previewEntry.modifiedAt)}</Text>
+              </>
+            )}
+          </>
+        )}
+      </Box>
+
+      {/* Main pane row — narrow: only the focused pane is rendered at full width */}
+      <Box flexDirection="row" flexGrow={1} overflow="hidden">
+        {/* Left: tree pane — hidden in narrow mode when preview is focused */}
+        {(!isNarrow || focusedPane === "tree") && (
+        <Box
+          flexDirection="column"
+          width={isNarrow ? undefined : treeWidth}
+          flexGrow={isNarrow ? 1 : 0}
+          flexShrink={0}
+          borderStyle="round"
+          borderColor={focusedPane === "tree" ? "cyanBright" : "gray"}
+          overflow="hidden"
+        >
+          <Box paddingX={1}>
+            <Text bold={focusedPane === "tree"} color={focusedPane === "tree" ? "cyanBright" : undefined} dimColor={focusedPane !== "tree"}>
+              Files
+            </Text>
+          </Box>
+          <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
+            {treeLoading ? (
+              <Box flexDirection="row" gap={1}>
+                <Text color="cyanBright"><Spinner type="dots" /></Text>
+                <Text dimColor>Loading…</Text>
+              </Box>
+            ) : flatNodes.length === 0 ? (
+              <Text dimColor>(empty)</Text>
+            ) : (
+              flatNodes.map((node, i) => {
+                const isSelected = focusedPane === "tree" && i === selectedIndex;
+                const indent = "  ".repeat(node.depth);
+                let prefix: string;
+                if (node.entry.isDirectory) {
+                  prefix = node.expanded ? "▾ " : "▸ ";
+                } else {
+                  prefix = "· ";
+                }
+                const name = node.entry.name;
+                const maxNameWidth = treeWidth - node.depth * 2 - 4;
+                const displayName = name.length > maxNameWidth ? name.slice(0, maxNameWidth - 1) + "…" : name;
+                return (
+                  <Box key={node.entry.path} flexDirection="row">
+                    {isSelected && <Text color="cyanBright">▶</Text>}
+                    {!isSelected && <Text> </Text>}
+                    <Text
+                      color={isSelected ? "whiteBright" : node.entry.isDirectory ? "cyan" : undefined}
+                      dimColor={!isSelected && !node.entry.isDirectory}
+                      wrap="truncate"
+                    >
+                      {indent}{prefix}{displayName}
+                    </Text>
+                  </Box>
+                );
+              })
+            )}
+          </Box>
+          {/* Tree footer: path strip */}
+          <Box paddingX={1}>
+            <Text dimColor wrap="truncate">
+              {selectedNode
+                ? truncateMiddle(
+                    projectPath ? `${projectPath}/${selectedNode.entry.path}` : selectedNode.entry.path,
+                    treeWidth - 4,
+                  )
+                : " "}
+            </Text>
+            {!showHidden && hiddenCount > 0 && (
+              <Text dimColor> [{hiddenCount} hidden]</Text>
+            )}
+          </Box>
+        </Box>
+        )}
+
+        {/* Right: preview pane — hidden in narrow mode when tree is focused */}
+        {(!isNarrow || focusedPane === "preview") && (
+          <Box
+            flexDirection="column"
+            flexGrow={1}
+            borderStyle="round"
+            borderColor={focusedPane === "preview" ? "cyanBright" : "gray"}
+            overflow="hidden"
+          >
+            <Box paddingX={1}>
+              <Text bold={focusedPane === "preview"} color={focusedPane === "preview" ? "cyanBright" : undefined} dimColor={focusedPane !== "preview"}>
+                Preview
+              </Text>
+            </Box>
+            <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
+              {previewLoading ? (
+                <Box flexDirection="row" gap={1}>
+                  <Text color="cyanBright"><Spinner type="dots" /></Text>
+                  <Text dimColor>Loading…</Text>
+                </Box>
+              ) : !previewEntry ? (
+                <Text dimColor>Select a file to preview</Text>
+              ) : previewResult === null ? (
+                <Text dimColor>Unable to read file</Text>
+              ) : previewResult.isBinary ? (
+                <Text dimColor>[binary file, {formatFileSize(previewResult.size)}]</Text>
+              ) : previewResult.tooLarge ? (
+                <Text dimColor>{formatFileSize(previewResult.size)} — [too large to preview]</Text>
+              ) : previewResult.content === "" ? (
+                <Text dimColor>(empty file)</Text>
+              ) : previewLines ? (
+                <Box flexDirection="column" overflow="hidden">
+                  {previewLines.map((line, i) => {
+                    const lineNo = previewScroll + i + 1;
+                    return (
+                      <Box key={lineNo} flexDirection="row">
+                        <Box width={lineNumWidth + 1} flexShrink={0}>
+                          <Text dimColor>{String(lineNo).padStart(lineNumWidth)}</Text>
+                        </Box>
+                        <Text wrap={wrapEnabled ? "wrap" : "truncate-end"}>{line}</Text>
+                      </Box>
+                    );
+                  })}
+                  {totalLines > previewScroll + previewHeight && (
+                    <Text dimColor>… {totalLines - previewScroll - previewHeight} more lines</Text>
+                  )}
+                </Box>
+              ) : null}
+            </Box>
+          </Box>
+        )}
+      </Box>
+
+      {/* Footer hints */}
+      <Box paddingX={1} flexDirection="row" gap={1}>
+        <Text dimColor>
+          [Tab] switch pane  [↑↓/jk] move  [Enter] open  [←/→] collapse/expand  [.] hidden  [w] wrap  [p] project  [r] reload
+        </Text>
+        {isNarrow && (
+          <Text dimColor>[narrow] {focusedPane}</Text>
+        )}
+      </Box>
+
+      {/* Project picker overlay */}
+      {pickerOpen && (
+        <Box position="absolute" marginTop={2} marginLeft={2}>
+          <Box
+            borderStyle="round"
+            borderColor="cyanBright"
+            flexDirection="column"
+            paddingX={2}
+            paddingY={1}
+            backgroundColor="black"
+          >
+            <Text bold color="white">Select Project</Text>
+            <Box height={1} />
+            {projectsState.projects.map((proj, i) => (
+              <Box key={proj.id} flexDirection="row" gap={1}>
+                <Text color={i === projectIndex ? "cyanBright" : "gray"}>{i === projectIndex ? "▶" : " "}</Text>
+                <Text color={i === projectIndex ? "whiteBright" : undefined}>{proj.name}</Text>
+              </Box>
+            ))}
+            <Box height={1} />
+            <Text dimColor>[↑↓] move  [Enter] select  [Esc] cancel</Text>
+          </Box>
+        </Box>
+      )}
+    </Box>
+  );
+}
+
 // ── Interactive mode root ─────────────────────────────────────────────────────
 
 function InteractiveMode({ state, controller }: { state: DashboardState; controller: DashboardTUI }) {
@@ -2480,6 +3326,7 @@ function InteractiveMode({ state, controller }: { state: DashboardState; control
         {state.interactiveView === "agents" && <AgentsView state={state} />}
         {state.interactiveView === "settings" && <SettingsInteractiveView state={state} />}
         {state.interactiveView === "git" && <GitView state={state} />}
+        {state.interactiveView === "files" && <FilesView state={state} />}
       </Box>
     </Box>
   );
@@ -2543,6 +3390,12 @@ export function DashboardApp({ controller }: DashboardAppProps) {
       return;
     }
 
+    if (input === "e" || input === "E") {
+      controller.setMode("interactive");
+      controller.setInteractiveView("files");
+      return;
+    }
+
     if (input === "s" || input === "S") {
       if (state.mode === "interactive") {
         controller.setMode("status");
@@ -2550,13 +3403,26 @@ export function DashboardApp({ controller }: DashboardAppProps) {
       }
     }
 
-    // Interactive mode: number keys 1/2/3/4 jump to Board/Agents/Settings/Git
+    // Number keys 1-5 always jump to a status-mode section (matching the
+    // [1]System [2]Logs [3]Utilities [4]Stats [5]Settings tabs in the
+    // MainHeader). They switch back from interactive mode if needed —
+    // the interactive views still have letter shortcuts (b/a/g/t).
+    const sectionForNumber: Record<string, SectionId | undefined> = {
+      "1": "system",
+      "2": "logs",
+      "3": "utilities",
+      "4": "stats",
+      "5": "settings",
+    };
+    const targetSection = sectionForNumber[input];
+    if (targetSection) {
+      if (state.mode === "interactive") controller.setMode("status");
+      controller.setActiveSection(targetSection);
+      return;
+    }
+
+    // Let interactive views handle their own keys (n/p/arrows/etc).
     if (state.mode === "interactive") {
-      if (input === "1") { controller.setInteractiveView("board"); return; }
-      if (input === "2") { controller.setInteractiveView("agents"); return; }
-      if (input === "3") { controller.setInteractiveView("settings"); return; }
-      if (input === "4") { controller.setInteractiveView("git"); return; }
-      // Let the active view handle other keys
       return;
     }
 

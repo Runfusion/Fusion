@@ -31,6 +31,18 @@ export const QUERY_TOKEN_PARAM = "fn_token";
 
 let cachedToken: string | undefined;
 let captureAttempted = false;
+let daemonAuthFailureSignaled = false;
+
+/**
+ * Browser event fired when the dashboard API returns the daemon-auth 401 payload,
+ * indicating the current browser token is missing/invalid and user recovery is required.
+ */
+export const AUTH_TOKEN_RECOVERY_REQUIRED_EVENT = "fn:auth-token-recovery-required";
+
+interface DaemonUnauthorizedPayload {
+  error?: unknown;
+  message?: unknown;
+}
 
 function readStoredToken(): string | undefined {
   try {
@@ -100,12 +112,14 @@ export function getAuthToken(): string | undefined {
 /** Persist a token for future dashboard API requests in this browser session. */
 export function setAuthToken(token: string): void {
   cachedToken = token;
+  daemonAuthFailureSignaled = false;
   writeStoredToken(token);
 }
 
 /** Clear the stored token (e.g., on a 401 response). */
 export function clearAuthToken(): void {
   cachedToken = undefined;
+  daemonAuthFailureSignaled = false;
   try {
     window.localStorage.removeItem(STORAGE_KEY);
   } catch {
@@ -186,6 +200,45 @@ export function withTokenHeader(init?: HeadersInit): HeadersInit | undefined {
   return headers;
 }
 
+function isDaemonAuthUnauthorizedPayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+
+  const candidate = payload as DaemonUnauthorizedPayload;
+  return candidate.error === "Unauthorized" && candidate.message === "Valid bearer token required";
+}
+
+function emitDaemonAuthRecoverySignal(): void {
+  if (typeof window === "undefined" || daemonAuthFailureSignaled) {
+    return;
+  }
+
+  daemonAuthFailureSignaled = true;
+  window.dispatchEvent(new CustomEvent(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT));
+}
+
+async function detectDaemonAuthFailure(response: Response): Promise<void> {
+  if (response.status !== 401) {
+    return;
+  }
+
+  try {
+    const responseClone = response.clone();
+    const contentType = responseClone.headers.get("content-type") ?? "";
+    if (!contentType.toLowerCase().includes("application/json")) {
+      return;
+    }
+
+    const payload = await responseClone.json();
+    if (isDaemonAuthUnauthorizedPayload(payload)) {
+      emitDaemonAuthRecoverySignal();
+    }
+  } catch {
+    // If body parsing fails, leave response untouched for callers.
+  }
+}
+
 /**
  * Monkey-patch `window.fetch` once so every same-origin `/api/*` request gets
  * a bearer token. This covers direct `fetch()` callers that don't route
@@ -205,9 +258,6 @@ export function installAuthFetch(): void {
   const originalFetch = window.fetch.bind(window);
   window.fetch = function patchedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const token = getAuthToken();
-    if (!token) {
-      return originalFetch(input, init);
-    }
 
     const urlString = typeof input === "string"
       ? input
@@ -215,7 +265,7 @@ export function installAuthFetch(): void {
         ? input.toString()
         : input.url;
 
-    // Only attach the token for same-origin /api/* requests.
+    // Only attach the token and watch for daemon auth failures on same-origin /api/* requests.
     const isApiCall = (() => {
       try {
         const resolved = new URL(urlString, window.location.origin);
@@ -231,9 +281,13 @@ export function installAuthFetch(): void {
     }
 
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
-    if (!headers.has("Authorization")) {
+    if (token && !headers.has("Authorization")) {
       headers.set("Authorization", `Bearer ${token}`);
     }
-    return originalFetch(input, { ...init, headers });
+
+    return originalFetch(input, { ...init, headers }).then((response) => {
+      void detectDaemonAuthFailure(response);
+      return response;
+    });
   };
 }

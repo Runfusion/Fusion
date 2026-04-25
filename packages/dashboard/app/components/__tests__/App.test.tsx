@@ -149,21 +149,6 @@ vi.mock("../../components/CustomModelDropdown", () => ({
   ),
 }));
 
-// Mock CustomModelDropdown for onboarding modal tests
-vi.mock("../../components/CustomModelDropdown", () => ({
-  CustomModelDropdown: ({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) => (
-    <select
-      data-testid="mock-model-dropdown"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      <option value="">{placeholder ?? "Select…"}</option>
-      <option value="anthropic/claude-sonnet-4-5">Claude Sonnet 4.5</option>
-      <option value="openai/gpt-4o">GPT-4o</option>
-    </select>
-  ),
-}));
-
 // Mock state holders for dynamic mocking
 const mockRefreshProjects = vi.fn(async () => {});
 
@@ -230,6 +215,7 @@ vi.mock("../../hooks/useNodes", () => ({
 }));
 
 import { App } from "../../App";
+import { AUTH_TOKEN_RECOVERY_REQUIRED_EVENT } from "../../auth";
 import { fetchAuthStatus, fetchSettings, fetchGlobalSettings, fetchTaskDetail, fetchUnreadCount, updateSettings, runScript, fetchScripts, fetchModels } from "../../api";
 import * as apiNodeModule from "../../hooks/useRemoteNodeData";
 
@@ -2426,5 +2412,35 @@ describe("App onboarding reopen", () => {
     // Check that the dropdown shows the saved model is selected
     const dropdown = await screen.findByTestId("mock-model-dropdown");
     expect((dropdown as HTMLSelectElement).value).toBe("anthropic/claude-sonnet-4-5");
+  });
+});
+
+describe("App auth token recovery dialog", () => {
+  it("opens as a non-dismissable blocking dialog when daemon auth recovery is required", async () => {
+    render(<App />);
+    await waitForAppShell();
+
+    expect(screen.queryByRole("dialog", { name: "Authentication token required" })).toBeNull();
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT));
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Authentication token required" });
+    expect(dialog).toBeInTheDocument();
+
+    expect(screen.queryByRole("button", { name: /close/i })).toBeNull();
+
+    const overlay = dialog.closest(".auth-token-recovery-overlay");
+    expect(overlay).toBeTruthy();
+
+    if (!overlay) {
+      throw new Error("Expected auth token recovery overlay to be present");
+    }
+
+    fireEvent.keyDown(overlay, { key: "Escape" });
+    fireEvent.click(overlay);
+
+    expect(screen.getByRole("dialog", { name: "Authentication token required" })).toBeInTheDocument();
   });
 });

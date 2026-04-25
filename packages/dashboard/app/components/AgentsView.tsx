@@ -864,10 +864,6 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
           projectId={projectId}
         />
 
-        {/* Stats and live agents above the collection */}
-        <AgentMetricsBar stats={stats} />
-        <ActiveAgentsPanel agents={activeAgents} projectId={projectId} onAgentSelect={setSelectedAgentId} />
-
         {/* Agent Collection */}
         {agentView === "tree" ? (
           <div className="agent-tree__view">
@@ -1267,6 +1263,10 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
           )}
         </div>
         )}
+
+        {/* Secondary sections after the main collection */}
+        <AgentMetricsBar stats={stats} />
+        <ActiveAgentsPanel agents={activeAgents} projectId={projectId} onAgentSelect={setSelectedAgentId} />
       </div>
 
       {/* Agent Detail Modal */}

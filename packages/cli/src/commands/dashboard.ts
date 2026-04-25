@@ -1,8 +1,8 @@
 import type { AddressInfo } from "node:net";
-import { join } from "node:path";
+import { join, resolve as pathResolve } from "node:path";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
-import { stat } from "node:fs/promises";
+import { stat, readdir, readFile as fsReadFile } from "node:fs/promises";
 import {
   TaskStore,
   AutomationStore,
@@ -45,7 +45,7 @@ import {
   resolveClaudeCliExtensionPaths,
   setCachedClaudeCliResolution,
 } from "./claude-cli-extension.js";
-import { DashboardTUI, DashboardLogSink, isTTYAvailable, type SystemInfo, type GitStatus, type GitCommit, type GitCommitDetail, type GitBranch, type GitWorktree } from "./dashboard-tui/index.js";
+import { DashboardTUI, DashboardLogSink, isTTYAvailable, type SystemInfo, type GitStatus, type GitCommit, type GitCommitDetail, type GitBranch, type GitWorktree, type FileEntry, type FileReadResult, type TaskStep as TUITaskStep, type TaskLogEntry as TUITaskLogEntry, type TaskDetailData, type TaskEvent } from "./dashboard-tui/index.js";
 
 // Re-export for backward compatibility with tests
 export { promptForPort };
@@ -496,6 +496,84 @@ async function buildGitWorktrees(projectPath: string): Promise<GitWorktree[]> {
   return worktrees;
 }
 
+// Standard denylist applied to both listing and reads (defence-in-depth).
+const FILES_DENYLIST = new Set(["node_modules", ".git", "dist", ".next", "target", "build"]);
+const FILE_SIZE_LIMIT = 1024 * 1024; // 1 MB
+const BINARY_CHECK_BYTES = 8 * 1024; // 8 KB
+const MAX_PREVIEW_LINES = 2000;
+
+function guardRelativePath(projectPath: string, relativePath: string): string {
+  // Prevent path traversal: the resolved absolute path must start with projectPath.
+  const resolved = pathResolve(projectPath, relativePath);
+  const base = projectPath.endsWith("/") ? projectPath : projectPath + "/";
+  if (resolved !== projectPath && !resolved.startsWith(base)) {
+    throw new Error(`Path traversal denied: ${relativePath}`);
+  }
+  return resolved;
+}
+
+async function buildFileListDirectory(projectPath: string, relativePath: string): Promise<FileEntry[]> {
+  const absDir = guardRelativePath(projectPath, relativePath);
+  const dirents = await readdir(absDir, { withFileTypes: true });
+  const entries: FileEntry[] = [];
+  for (const d of dirents) {
+    if (FILES_DENYLIST.has(d.name)) continue;
+    const entryRelPath = relativePath ? `${relativePath}/${d.name}` : d.name;
+    let size = 0;
+    let modifiedAt = new Date(0).toISOString();
+    try {
+      const s = await stat(join(absDir, d.name));
+      size = d.isDirectory() ? 0 : s.size;
+      modifiedAt = s.mtime.toISOString();
+    } catch {
+      // Silently skip entries we can't stat (permission errors, broken symlinks)
+    }
+    entries.push({
+      name: d.name,
+      path: entryRelPath,
+      isDirectory: d.isDirectory(),
+      size,
+      modifiedAt,
+    });
+  }
+  // Sort: directories first, alphabetical within each group
+  entries.sort((a, b) => {
+    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return entries;
+}
+
+async function buildFileReadFile(projectPath: string, relativePath: string): Promise<FileReadResult> {
+  const absFile = guardRelativePath(projectPath, relativePath);
+  const s = await stat(absFile);
+  const modifiedAt = s.mtime.toISOString();
+  const size = s.size;
+
+  if (size > FILE_SIZE_LIMIT) {
+    return { content: null, isBinary: false, tooLarge: true, size, modifiedAt, lineCount: 0 };
+  }
+
+  const buf = await fsReadFile(absFile);
+
+  // Binary heuristic: look for null byte in the first BINARY_CHECK_BYTES
+  const checkLen = Math.min(buf.length, BINARY_CHECK_BYTES);
+  for (let i = 0; i < checkLen; i++) {
+    if (buf[i] === 0) {
+      return { content: null, isBinary: true, tooLarge: false, size, modifiedAt, lineCount: 0 };
+    }
+  }
+
+  const text = buf.toString("utf8");
+  const lines = text.split("\n");
+  const lineCount = lines.length;
+  const content = lineCount > MAX_PREVIEW_LINES
+    ? lines.slice(0, MAX_PREVIEW_LINES).join("\n")
+    : text;
+
+  return { content, isBinary: false, tooLarge: false, size, modifiedAt, lineCount };
+}
+
 async function resolveRuntimeProjectPath(): Promise<string> {
   try {
     return (await resolveProject(undefined)).projectPath;
@@ -702,8 +780,14 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   async function getProjectStore(projectPath: string): Promise<TaskStore> {
     const cached = projectStores.get(projectPath);
     if (cached) return cached;
-    const projectStore = projectPath === cwd ? store : new TaskStore(projectPath);
-    if (projectPath !== cwd) await projectStore.init();
+    let projectStore: TaskStore;
+    if (projectPath === cwd) {
+      if (!store) throw new Error("cwd TaskStore not yet initialized");
+      projectStore = store;
+    } else {
+      projectStore = new TaskStore(projectPath);
+      await projectStore.init();
+    }
     projectStores.set(projectPath, projectStore);
     return projectStore;
   }
@@ -1857,6 +1941,102 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
                 const msg = err instanceof Error ? (err as NodeJS.ErrnoException & { stderr?: string; stdout?: string }).stderr ?? err.message : String(err);
                 return { success: false, output: msg.trim() };
               }
+            },
+          },
+          files: {
+            listDirectory: (projectPath: string, relativePath: string) =>
+              buildFileListDirectory(projectPath, relativePath),
+            readFile: (projectPath: string, relativePath: string) =>
+              buildFileReadFile(projectPath, relativePath),
+          },
+          tasks: {
+            getTaskDetail: async (projectPath: string, taskId: string): Promise<TaskDetailData | null> => {
+              try {
+                const projectStore = await getProjectStore(projectPath);
+                // getTask loads full data: steps, log, branch, worktree.
+                const t = await projectStore.getTask(taskId);
+                // Map core StepStatus ("in-progress") → TUI status ("running").
+                const steps: TUITaskStep[] = t.steps.map((s, idx) => ({
+                  index: idx,
+                  name: s.name,
+                  status: s.status === "in-progress" ? "running" : (s.status as TUITaskStep["status"]),
+                }));
+                // Map task activity log entries (action + outcome text) → TUI log entries.
+                // The core log has no severity level, so we emit them all as "info".
+                const recentLogs: TUITaskLogEntry[] = t.log.slice(-200).map((entry) => ({
+                  timestamp: entry.timestamp,
+                  level: "info" as const,
+                  text: entry.outcome ? `${entry.action} → ${entry.outcome}` : entry.action,
+                  source: entry.runContext?.agentId ? "agent" : "executor",
+                }));
+                return {
+                  id: t.id,
+                  title: t.title,
+                  description: t.description ?? "",
+                  column: t.column,
+                  agentState: (t as { agentState?: string }).agentState,
+                  branch: t.branch,
+                  worktree: t.worktree,
+                  currentStepIndex: t.currentStep,
+                  steps,
+                  recentLogs,
+                };
+              } catch {
+                // Task not found (deleted/archived between selection and fetch).
+                return null;
+              }
+            },
+            subscribeTaskEvents: (
+              projectPath: string,
+              taskId: string,
+              handler: (event: TaskEvent) => void,
+            ): (() => void) => {
+              // Subscribe to the project store's task:updated event; filter by taskId.
+              // Steps + log both land via task:updated whenever the engine writes a task.
+              let projectStorePromise: Promise<typeof store> | null = null;
+              // Track the last log length so we only emit new entries as log:appended.
+              let lastLogLength = 0;
+
+              const listener = (task: { id: string; steps: Array<{ name: string; status: string }>; currentStep: number; log: Array<{ timestamp: string; action: string; outcome?: string; runContext?: { agentId?: string } }>; column: string; title?: string; description: string; branch?: string; worktree?: string }) => {
+                if (task.id !== taskId) return;
+
+                // Emit step:updated events for any step whose status differs.
+                task.steps.forEach((s, idx) => {
+                  const status = s.status === "in-progress" ? "running" : s.status as TUITaskStep["status"];
+                  handler({
+                    kind: "step:updated",
+                    step: { index: idx, name: s.name, status },
+                  });
+                });
+
+                // Emit log:appended for each new log entry appended since last event.
+                const newEntries = task.log.slice(lastLogLength);
+                lastLogLength = task.log.length;
+                for (const entry of newEntries) {
+                  handler({
+                    kind: "log:appended",
+                    entry: {
+                      timestamp: entry.timestamp,
+                      level: "info" as const,
+                      text: entry.outcome ? `${entry.action} → ${entry.outcome}` : entry.action,
+                      source: entry.runContext?.agentId ? "agent" : "executor",
+                    },
+                  });
+                }
+              };
+
+              // Resolve the project store and attach the listener asynchronously.
+              projectStorePromise = getProjectStore(projectPath).then((ps) => {
+                ps.on("task:updated", listener as Parameters<typeof ps.on>[1]);
+                return ps;
+              }).catch(() => null as unknown as typeof store);
+
+              return () => {
+                // Detach the listener once the store resolves (or immediately if already resolved).
+                void projectStorePromise?.then((ps) => {
+                  if (ps) ps.off("task:updated", listener as Parameters<typeof ps.off>[1]);
+                });
+              };
             },
           },
         });
