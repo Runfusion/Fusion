@@ -3600,6 +3600,7 @@ describe("TerminalModal — xterm focus initialization (FN-1602)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockTerminalInstance.onData.mockImplementation(() => ({ dispose: vi.fn() }));
     mockCreateTerminalSession.mockResolvedValue({
       sessionId: "test-session-123",
       shell: "/bin/bash",
@@ -3685,6 +3686,105 @@ describe("TerminalModal — xterm focus initialization (FN-1602)", () => {
     await waitFor(() => {
       expect(screen.getByTestId("terminal-modal")).toBeTruthy();
     });
+  });
+
+  it("forwards xterm onData input to sendInput", async () => {
+    let terminalInputCallback: ((data: string) => void) | null = null;
+    mockTerminalInstance.onData.mockImplementation((cb: (data: string) => void) => {
+      terminalInputCallback = cb;
+      return { dispose: vi.fn() };
+    });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(terminalInputCallback).not.toBeNull();
+    });
+
+    act(() => {
+      terminalInputCallback?.("echo hello\r");
+    });
+
+    expect(mockSendInput).toHaveBeenCalledWith("echo hello\r");
+  });
+
+  it("keeps terminal input forwarding active after active-tab title rerenders", async () => {
+    let terminalInputCallback: ((data: string) => void) | null = null;
+    const disposeInputHandler = vi.fn();
+
+    mockTerminalInstance.onData.mockImplementation((cb: (data: string) => void) => {
+      terminalInputCallback = cb;
+      return { dispose: disposeInputHandler };
+    });
+
+    const { rerender } = render(
+      <TerminalModal isOpen={true} onClose={mockOnClose} />,
+    );
+
+    await waitFor(() => {
+      expect(terminalInputCallback).not.toBeNull();
+    });
+
+    // Simulate tab metadata update (title change) that should not tear down
+    // input forwarding for the same session.
+    const renamedTab = {
+      ...defaultTab,
+      title: "bash (connected)",
+      isActive: true,
+    };
+
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      tabs: [renamedTab],
+      activeTab: renamedTab,
+    });
+
+    rerender(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    expect(disposeInputHandler).not.toHaveBeenCalled();
+    expect(mockTerminalInstance.onData).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      terminalInputCallback?.("pwd\r");
+    });
+
+    expect(mockSendInput).toHaveBeenCalledWith("pwd\r");
+  });
+
+  it("keeps terminal input forwarding active after connection status transitions", async () => {
+    let terminalInputCallback: ((data: string) => void) | null = null;
+    const disposeInputHandler = vi.fn();
+
+    mockTerminalInstance.onData.mockImplementation((cb: (data: string) => void) => {
+      terminalInputCallback = cb;
+      return { dispose: disposeInputHandler };
+    });
+
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({ connectionStatus: "disconnected" }),
+    );
+
+    const { rerender } = render(
+      <TerminalModal isOpen={true} onClose={mockOnClose} />,
+    );
+
+    await waitFor(() => {
+      expect(terminalInputCallback).not.toBeNull();
+    });
+
+    mockUseTerminal.mockReturnValue(
+      createMockTerminalState({ connectionStatus: "connected" }),
+    );
+    rerender(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    expect(disposeInputHandler).not.toHaveBeenCalled();
+    expect(mockTerminalInstance.onData).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      terminalInputCallback?.("ls\r");
+    });
+
+    expect(mockSendInput).toHaveBeenCalledWith("ls\r");
   });
 
   it("focuses xterm helper textarea on user pointer gesture", async () => {

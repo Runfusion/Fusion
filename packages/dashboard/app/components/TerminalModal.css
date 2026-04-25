@@ -7,8 +7,8 @@
 }
 
 .modal.terminal-modal {
-  width: 90vw;
-  max-width: 1600px;
+  width: min(1800px, calc(100vw - (var(--space-xl) * 2)));
+  max-width: calc(100vw - (var(--space-xl) * 2));
   min-height: 80vh;
   max-height: 85vh;
   background: var(--card);
@@ -409,7 +409,7 @@
 }
 
 .terminal-output-error {
-  background: rgba(239, 68, 68, 0.1);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
   border-left: 3px solid var(--failed);
 }
 
@@ -678,7 +678,7 @@
 
 .terminal-error {
   padding: var(--space-md) var(--space-lg);
-  background: rgba(179, 38, 38, 0.1);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
   border-bottom: 1px solid var(--border);
   color: var(--error);
   font-size: 13px;
@@ -762,7 +762,7 @@
     justify-content: flex-end;
     border-top: 1px solid var(--border);
     padding: 0 4px;
-    min-height: 32px;
+    min-height: 36px;
   }
 
   /* Hide text labels on action buttons to save space */
@@ -774,8 +774,8 @@
   .terminal-restart-btn,
   .terminal-clear-btn {
     padding: 8px;
-    min-height: 32px;
-    min-width: 32px;
+    min-height: 36px;
+    min-width: 36px;
     justify-content: center;
   }
 

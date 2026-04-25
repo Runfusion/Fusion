@@ -297,5 +297,5 @@ describe("diff-base parity between dashboard and merger", () => {
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 });

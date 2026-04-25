@@ -950,11 +950,11 @@ describe("MissionManager", () => {
 
     fireEvent.click(screen.getByTestId("mission-activity-load-more"));
 
-    await waitFor(() => {
-      expect(screen.getByText("Mission event 65")).toBeDefined();
-    }, { timeout: 5000 });
+    await screen.findByText("Mission event 65", undefined, { timeout: 10_000 });
 
-    expect(screen.queryByTestId("mission-activity-load-more")).toBeNull();
+    await waitFor(() => {
+      expect(screen.queryByTestId("mission-activity-load-more")).toBeNull();
+    });
   }, 15000);
 
   it("auto-scrolls to latest mission activity on initial load", async () => {

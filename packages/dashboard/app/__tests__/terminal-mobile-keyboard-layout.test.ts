@@ -153,13 +153,24 @@ describe("terminal mobile keyboard layout CSS contract", () => {
       return match?.[1] ?? "";
     }
 
-    it("has min-height: 80vh on desktop", () => {
+    it("uses viewport-based width with desktop side margins", () => {
       const ruleBody = findDesktopTerminalModalRule();
-      expect(ruleBody).toContain("min-height: 80vh");
+      expect(ruleBody).toContain(
+        "width: min(1800px, calc(100vw - (var(--space-xl) * 2)))",
+      );
+      expect(ruleBody).toContain(
+        "max-width: calc(100vw - (var(--space-xl) * 2))",
+      );
     });
 
-    it("has max-height: 85vh on desktop", () => {
+    it("does not cap desktop width to the old narrow 1600px max", () => {
       const ruleBody = findDesktopTerminalModalRule();
+      expect(ruleBody).not.toContain("max-width: 1600px");
+    });
+
+    it("keeps desktop height constraints", () => {
+      const ruleBody = findDesktopTerminalModalRule();
+      expect(ruleBody).toContain("min-height: 80vh");
       expect(ruleBody).toContain("max-height: 85vh");
     });
   });
