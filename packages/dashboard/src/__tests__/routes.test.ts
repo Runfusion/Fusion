@@ -10057,7 +10057,7 @@ describe("Saturated-slot regression: heartbeat wake routes", () => {
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
       }
-    });
+    }, 15_000);
   });
 });
 

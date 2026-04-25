@@ -305,12 +305,15 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
   // without needing resize as a dependency (avoids ordering issues).
   resizeRef.current = resize;
 
-  // Initialize xterm.js when session is ready
-  // Depends on `isReady`, `activeTab`, and xtermReady to properly reinitialize on tab switch
+  // Initialize xterm.js when session is ready.
+  // Keying this effect by active session id (not full activeTab object) avoids
+  // tearing down xterm lifecycle wiring during unrelated tab metadata updates
+  // such as title changes.
   useEffect(() => {
-    if (!isOpen || !isReady || !activeTab) return;
+    if (!isOpen || !isReady) return;
 
-    const currentSessionId = activeTab.sessionId;
+    const currentSessionId = activeTab?.sessionId;
+    if (!currentSessionId) return;
 
     // Detect project switch: if projectId changed, invalidate xterm even if sessionId is the same.
     // This ensures xterm content from the previous project is not displayed in the new project.
@@ -335,7 +338,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
     }
 
     let mounted = true;
-    let watchdogTimer: ReturnType<typeof setTimeout>;
+    let watchdogTimer: ReturnType<typeof setTimeout> | undefined;
 
     const initTerminal = async () => {
       // Dynamically import xterm modules with watchdog timeout
@@ -414,7 +417,9 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
         terminal.open(terminalRef.current);
 
         // Clear watchdog — imports and open() succeeded within deadline
-        clearTimeout(watchdogTimer);
+        if (watchdogTimer) {
+          clearTimeout(watchdogTimer);
+        }
 
         // Ensure xterm's textarea receives focus for keyboard input.
         // xterm.js creates a hidden textarea that captures keyboard events.
@@ -470,54 +475,73 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
           });
         }
 
-        // Signal that xterm is ready so the subscription effect re-runs
+        // Signal that xterm is ready so lifecycle effects can subscribe.
         setXtermReady(true);
         // Clear any prior xterm init error
         setXtermInitError(null);
-
-        // Handle data from terminal (user input)
-        const dataHandler = terminal.onData((data) => {
-          sendInput(data);
-        });
-
-        // Handle resize
-        const resizeHandler = () => {
-          if (fitAddonRef.current && xtermRef.current) {
-            try {
-              (fitAddonRef.current as InstanceType<typeof FitAddon>).fit();
-              const { cols, rows } = xtermRef.current;
-              resize(cols, rows);
-            } catch {
-              // Ignore fit errors
-            }
-          }
-        };
-
-        window.addEventListener("resize", resizeHandler);
-
-        return () => {
-          dataHandler.dispose();
-          window.removeEventListener("resize", resizeHandler);
-        };
       } catch (err) {
-        clearTimeout(watchdogTimer);
+        if (watchdogTimer) {
+          clearTimeout(watchdogTimer);
+        }
         if (!mounted) return;
         const message = err instanceof Error ? err.message : "xterm initialization failed";
         setXtermInitError(message);
       }
     };
 
-    const cleanupPromise = initTerminal();
+    void initTerminal();
 
     return () => {
       mounted = false;
-      clearTimeout(watchdogTimer);
-      cleanupPromise.then((cleanup) => cleanup?.());
-      
+      if (watchdogTimer) {
+        clearTimeout(watchdogTimer);
+      }
+
       // Don't dispose xterm here - it should persist across tab switches
       // Only dispose when the modal is fully closed
     };
-  }, [fitAndResizeForSession, isOpen, isReady, activeTab, activeTab?.sessionId, sendInput, resize]);
+  }, [fitAndResizeForSession, isOpen, isReady, activeTab?.sessionId, projectId]);
+
+  // Keep user input forwarding and resize publishing attached to the current
+  // xterm instance/session. This prevents unrelated rerenders (tab title or
+  // status updates) from silently dropping onData -> sendInput wiring.
+  useEffect(() => {
+    if (!isOpen || !xtermReady || !activeTab?.sessionId || !xtermRef.current) {
+      return;
+    }
+
+    const expectedSessionId = activeTab.sessionId;
+    const terminal = xtermRef.current;
+
+    const dataHandler = terminal.onData((data) => {
+      if (xtermInitializedRef.current !== expectedSessionId) {
+        return;
+      }
+      sendInput(data);
+    });
+
+    const resizeHandler = () => {
+      if (xtermInitializedRef.current !== expectedSessionId) {
+        return;
+      }
+      if (fitAddonRef.current && xtermRef.current) {
+        try {
+          (fitAddonRef.current as InstanceType<typeof FitAddon>).fit();
+          const { cols, rows } = xtermRef.current;
+          resize(cols, rows);
+        } catch {
+          // Ignore fit errors
+        }
+      }
+    };
+
+    window.addEventListener("resize", resizeHandler);
+
+    return () => {
+      dataHandler.dispose();
+      window.removeEventListener("resize", resizeHandler);
+    };
+  }, [isOpen, xtermReady, activeTab?.sessionId, sendInput, resize]);
 
   // Cleanup xterm when modal closes
   useEffect(() => {

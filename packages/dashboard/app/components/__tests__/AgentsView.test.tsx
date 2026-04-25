@@ -198,7 +198,7 @@ describe("AgentsView", () => {
       });
 
       // Ensure the single-load path still powers dependent UI sections.
-      expect(screen.getByText("Active Agents (1)")).toBeTruthy();
+      expect(await screen.findByText("Active Agents (1)")).toBeTruthy();
     });
 
     it("renders token stats derived from the currently displayed agents", async () => {

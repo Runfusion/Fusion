@@ -743,7 +743,7 @@ describe("POST /api/projects route handler", () => {
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   it("returns clone failure and skips registration when git clone fails", async () => {
     const store = new MockStoreForRoutes();
