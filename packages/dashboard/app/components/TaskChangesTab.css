@@ -1,0 +1,31 @@
+.task-changes-file-list--compact {
+  gap: var(--space-xs);
+}
+
+/* Pull the file list wider to reclaim horizontal space from .detail-body padding */
+.task-changes-tab .changes-file-list.task-changes-file-list--compact {
+  margin-left: calc(-1 * var(--space-md));
+  margin-right: calc(-1 * var(--space-md));
+}
+
+.task-changes-file-list--compact .changes-file-header {
+  padding: calc(var(--space-sm) - var(--space-xs) / 2);
+  gap: calc(var(--space-sm) - var(--space-xs) / 2);
+}
+
+.task-changes-file-list--compact .changes-file-stat {
+  margin-left: var(--space-xs);
+}
+
+.changes-file-header--static {
+  cursor: default;
+}
+
+.changes-file-header--static:hover,
+.changes-file-header--static:active {
+  background: transparent;
+}
+
+.changes-file-header--static:focus-visible {
+  box-shadow: none;
+}

@@ -6,6 +6,8 @@ import { fetchTaskDiff, type TaskDiff } from "../api";
 import { highlightDiff } from "../utils/highlightDiff";
 import { truncateMiddle } from "../utils/truncatePath";
 import { ChangesDiffModal } from "./ChangesDiffModal";
+import "./TaskDiffShared.css";
+import "./TaskChangesTab.css";
 
 interface TaskChangesTabProps {
   taskId: string;
@@ -234,7 +236,7 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
           <div className="changes-file-list task-changes-file-list--compact">
             {modifiedFiles.map((path) => (
               <div key={path} className="changes-file-item">
-                <div className="changes-file-header">
+                <div className="changes-file-header changes-file-header--static">
                   <span
                     className="changes-file-status changes-file-status--unknown"
                     title="status unknown"

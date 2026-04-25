@@ -365,6 +365,71 @@ async function runGitCommand(args: string[], cwd?: string, timeout = 10000): Pro
   return "";
 }
 
+export interface ResolveDiffBaseTaskInput {
+  baseCommitSha?: string;
+  baseBranch?: string;
+}
+
+/**
+ * Resolve the diff base ref for a task worktree.
+ *
+ * IMPORTANT: `packages/engine/src/merger.ts` mirrors this exact ordering for
+ * merge-time scope warnings. Keep both implementations in sync so dashboard
+ * changed-files views and merger scope enforcement evaluate the same range.
+ *
+ * Strategy (in priority order):
+ * 1. **Branch merge-base** — Prefer the live merge-base between `headRef` and
+ *    local `{baseBranch}` (fallback: `origin/{baseBranch}`).
+ * 2. **Task-scoped baseCommitSha** — If merge-base is unavailable or equals
+ *    `headRef`, use `baseCommitSha` when still an ancestor of `headRef`.
+ * 3. **headRef~1** — Last-resort fallback.
+ */
+export async function resolveDiffBase(
+  task: ResolveDiffBaseTaskInput,
+  cwd: string,
+  headRef = "HEAD",
+  runGit: (args: string[], cwd?: string, timeout?: number) => Promise<string> = runGitCommand,
+): Promise<string | undefined> {
+  const baseBranch = task.baseBranch ?? "main";
+  let mergeBase: string | undefined;
+
+  try {
+    try {
+      mergeBase = (await runGit(["merge-base", headRef, baseBranch], cwd, 5000)).trim() || undefined;
+    } catch {
+      mergeBase = (await runGit(["merge-base", headRef, `origin/${baseBranch}`], cwd, 5000)).trim() || undefined;
+    }
+  } catch {
+    // base branch may no longer exist locally/remotely
+  }
+
+  // If merge-base equals headRef, the live merge-base would produce an empty
+  // diff. Prefer task.baseCommitSha when still valid.
+  if (mergeBase) {
+    try {
+      const head = (await runGit(["rev-parse", headRef], cwd, 5000)).trim();
+      if (head && head !== mergeBase) return mergeBase;
+    } catch {
+      return mergeBase;
+    }
+  }
+
+  if (task.baseCommitSha) {
+    try {
+      await runGit(["merge-base", "--is-ancestor", task.baseCommitSha, headRef], cwd, 5000);
+      return task.baseCommitSha;
+    } catch {
+      // stale or unreachable — fall through
+    }
+  }
+
+  try {
+    return (await runGit(["rev-parse", `${headRef}~1`], cwd, 5000)).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function slugifyPresetName(name: string): string {
   const slug = name
     .trim()
@@ -4653,68 +4718,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
     }
   });
-
-  /**
-   * Resolve the diff base ref for a task's worktree.
-   *
-   * Strategy (in priority order):
-   * 1. **Branch merge-base** — Prefer the live merge-base between HEAD and
-   *    the local `{baseBranch}` ref (falling back to `origin/{baseBranch}`
-   *    when the local ref is missing). The local ref reflects the worktree's
-   *    actual fork point regardless of whether merges have been pushed; using
-   *    `origin/{baseBranch}` first would inflate the diff by every commit
-   *    between `origin/main` and a locally-advanced `main`.
-   * 2. **Task-scoped baseCommitSha** — Only when no merge-base is available
-   *    (e.g. the base branch was deleted), fall back to the stored SHA if it
-   *    is still an ancestor of HEAD.
-   * 3. **HEAD~1** — Last resort when neither merge-base nor baseCommitSha
-   *    can be resolved.
-   *
-   * Why not prefer baseCommitSha: a stored SHA captured at worktree creation
-   * goes stale as upstream merges land on the feature branch. The ancestor
-   * check passes but the diff now includes every upstream file that was
-   * merged in, inflating the changed-files count.
-   */
-  async function resolveDiffBase(task: { baseCommitSha?: string; baseBranch?: string }, cwd: string): Promise<string | undefined> {
-    const baseBranch = task.baseBranch ?? "main";
-    let mergeBase: string | undefined;
-    try {
-      try {
-        mergeBase = (await runGitCommand(["merge-base", "HEAD", baseBranch], cwd, 5000)).trim() || undefined;
-      } catch {
-        mergeBase = (await runGitCommand(["merge-base", "HEAD", `origin/${baseBranch}`], cwd, 5000)).trim() || undefined;
-      }
-    } catch {
-      // base branch may no longer exist locally
-    }
-
-    // If the merge-base equals HEAD, we're on the base branch with no feature
-    // divergence — the live merge-base would give an empty diff, so prefer the
-    // task-scoped baseCommitSha instead.
-    if (mergeBase) {
-      try {
-        const head = (await runGitCommand(["rev-parse", "HEAD"], cwd, 5000)).trim();
-        if (head && head !== mergeBase) return mergeBase;
-      } catch {
-        return mergeBase;
-      }
-    }
-
-    if (task.baseCommitSha) {
-      try {
-        await runGitCommand(["merge-base", "--is-ancestor", task.baseCommitSha, "HEAD"], cwd, 5000);
-        return task.baseCommitSha;
-      } catch {
-        // stale or unreachable — fall through
-      }
-    }
-
-    try {
-      return (await runGitCommand(["rev-parse", "HEAD~1"], cwd, 5000)).trim() || undefined;
-    } catch {
-      return undefined;
-    }
-  }
 
   router.get("/tasks/:id/session-files", async (req, res) => {
     try {
@@ -17938,8 +17941,8 @@ async function persistImportedSkills(
    * GET /api/tasks/:id/file-diffs
    * Fetch changed files with individual git diffs for a task worktree.
    * Uses the shared resolveDiffBase() helper so the board card count and the
-   * changed-files viewer always agree. Prefers task.baseCommitSha when valid,
-   * falling back to branch merge-base / HEAD~1.
+   * changed-files viewer always agree. Prefers live branch merge-base first,
+   * then falls back to task.baseCommitSha / HEAD~1.
    * Returns: Array<{ path, status, diff, oldPath? }>
    */
   router.get("/tasks/:id/file-diffs", async (req, res) => {
@@ -18026,8 +18029,8 @@ async function persistImportedSkills(
       const cwd = worktree;
 
       // Resolve a diff base using the shared strategy so both endpoints
-      // always agree on which files have changed.  Prefer task-scoped
-      // baseCommitSha when it is still valid for the current HEAD.
+      // always agree on which files have changed. Prefer live branch
+      // merge-base first, then task-scoped baseCommitSha when needed.
       const diffBase = await resolveDiffBase(task, cwd);
 
       // Collect file statuses from committed, staged, unstaged, and untracked changes.

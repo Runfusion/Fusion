@@ -4,6 +4,7 @@ import type { MergeDetails } from "@fusion/core";
 import { fetchCommitDiff } from "../api";
 import { getErrorMessage } from "@fusion/core";
 import { highlightDiff } from "../utils/highlightDiff";
+import "./TaskDiffShared.css";
 
 interface CommitDiffTabProps {
   commitSha: string;

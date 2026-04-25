@@ -1010,6 +1010,92 @@ export async function validateDiffScope(
   return result;
 }
 
+interface DiffBaseResolutionInput {
+  cwd: string;
+  headRef: string;
+  baseBranch?: string;
+  baseCommitSha?: string;
+}
+
+/**
+ * Resolve the commit ref used as diff base for task-scoped changed-file views.
+ *
+ * IMPORTANT: This ordering must stay in lockstep with dashboard `resolveDiffBase`
+ * so merge-time scope warnings evaluate the exact same change set operators see.
+ *
+ * Strategy (priority order):
+ * 1. Live merge-base between `headRef` and `{baseBranch}` (fallback to
+ *    `origin/{baseBranch}` when local ref is missing).
+ * 2. `baseCommitSha` when merge-base is unavailable or equals `headRef`, and
+ *    the SHA is still an ancestor of `headRef`.
+ * 3. `headRef~1` as last resort.
+ */
+export async function resolveTaskDiffBaseRef({
+  cwd,
+  headRef,
+  baseBranch,
+  baseCommitSha,
+}: DiffBaseResolutionInput): Promise<string | undefined> {
+  const resolvedBaseBranch = baseBranch?.trim() || "main";
+  const quotedHeadRef = quoteArg(headRef);
+  let mergeBase: string | undefined;
+
+  try {
+    try {
+      const { stdout } = await execAsync(`git merge-base ${quotedHeadRef} ${quoteArg(resolvedBaseBranch)}`, {
+        cwd,
+        encoding: "utf-8",
+      });
+      mergeBase = stdout.trim() || undefined;
+    } catch {
+      const { stdout } = await execAsync(`git merge-base ${quotedHeadRef} ${quoteArg(`origin/${resolvedBaseBranch}`)}`, {
+        cwd,
+        encoding: "utf-8",
+      });
+      mergeBase = stdout.trim() || undefined;
+    }
+  } catch {
+    // Base branch may not exist locally/remotely.
+  }
+
+  // Same guard as dashboard routes: when merge-base === headRef, the range
+  // would be empty, so prefer a still-valid task-scoped baseCommitSha.
+  if (mergeBase) {
+    try {
+      const { stdout } = await execAsync(`git rev-parse ${quotedHeadRef}`, {
+        cwd,
+        encoding: "utf-8",
+      });
+      const headSha = stdout.trim();
+      if (headSha && headSha !== mergeBase) return mergeBase;
+    } catch {
+      return mergeBase;
+    }
+  }
+
+  if (baseCommitSha) {
+    try {
+      await execAsync(`git merge-base --is-ancestor ${quoteArg(baseCommitSha)} ${quotedHeadRef}`, {
+        cwd,
+        encoding: "utf-8",
+      });
+      return baseCommitSha;
+    } catch {
+      // stale or unreachable — fall through
+    }
+  }
+
+  try {
+    const { stdout } = await execAsync(`git rev-parse ${quoteArg(`${headRef}~1`)}`, {
+      cwd,
+      encoding: "utf-8",
+    });
+    return stdout.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Get list of conflicted files from git.
  * Runs `git diff --name-only --diff-filter=U` and returns array of file paths.
@@ -1961,10 +2047,19 @@ export async function aiMergeTask(
   }
 
   // 4. Gather context for the agent (used in all attempts)
+  // Keep this range strategy aligned with dashboard changed-files endpoints.
+  const diffBaseRef = await resolveTaskDiffBaseRef({
+    cwd: rootDir,
+    headRef: branch,
+    baseBranch: task.baseBranch,
+    baseCommitSha: task.baseCommitSha,
+  });
+  const contextDiffRange = diffBaseRef ? `${diffBaseRef}..${branch}` : `HEAD..${branch}`;
+
   let commitLog = "";
   let diffStat = "";
   try {
-    const { stdout: logOutput } = await execAsync(`git log HEAD..${branch} --format="- %s"`, {
+    const { stdout: logOutput } = await execAsync(`git log ${contextDiffRange} --format="- %s"`, {
       cwd: rootDir,
       encoding: "utf-8",
     });
@@ -1973,12 +2068,7 @@ export async function aiMergeTask(
     commitLog = "(unable to read commit log)";
   }
   try {
-    const { stdout: mergeBaseOutput } = await execAsync(`git merge-base HEAD ${branch}`, {
-      cwd: rootDir,
-      encoding: "utf-8",
-    });
-    const mergeBase = mergeBaseOutput.trim();
-    const { stdout: diffOutput } = await execAsync(`git diff ${mergeBase}..${branch} --stat`, {
+    const { stdout: diffOutput } = await execAsync(`git diff ${contextDiffRange} --stat`, {
       cwd: rootDir,
       encoding: "utf-8",
     });

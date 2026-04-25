@@ -572,8 +572,8 @@
 
 .task-changes-state--error {
   color: var(--color-error);
-  background: rgba(248, 81, 73, 0.08);
-  border-color: rgba(248, 81, 73, 0.25);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 25%, transparent);
 }
 
 .task-changes-state-hint {

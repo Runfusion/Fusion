@@ -3486,27 +3486,6 @@
   padding: 0;
 }
 
-/* ── TaskChangesTab compact file-row spacing ──────────────────────────────── */
-
-.task-changes-file-list--compact {
-  gap: 4px;
-}
-
-/* Pull the file list wider to reclaim horizontal space from .detail-body padding */
-.task-changes-tab .changes-file-list.task-changes-file-list--compact {
-  margin-left: -12px;
-  margin-right: -12px;
-}
-
-.task-changes-file-list--compact .changes-file-header {
-  padding: 6px 6px;
-  gap: 6px;
-}
-
-.task-changes-file-list--compact .changes-file-stat {
-  margin-left: 4px;
-}
-
 /* Syntax highlighting for diff */
 .gm-diff-patch .diff-add,
 .changes-diff-patch .diff-add,

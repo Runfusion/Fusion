@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import type { MergeDetails, Column } from "@fusion/core";
 import { highlightDiff } from "../utils/highlightDiff";
+import "./TaskDiffShared.css";
+import "./ChangesDiffModal.css";
 
 /** Normalized file entry — re-exported from TaskChangesTab for shared use */
 export interface NormalizedFile {

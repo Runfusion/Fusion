@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import type { Task } from "@fusion/core";
+import { resolveDiffBase } from "../routes.js";
+import { resolveTaskDiffBaseRef } from "../../../engine/src/merger.js";
 
 vi.mock("node:fs", async () => {
   const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
@@ -162,5 +168,134 @@ describe("GET /api/tasks/:id/file-diffs", () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual([]);
+  });
+});
+
+describe("resolveDiffBase", () => {
+  it("prefers merge-base when it differs from head", async () => {
+    const runGit = vi.fn(async (args: string[]) => {
+      if (args.join(" ") === "merge-base HEAD main") return "merge-base-123";
+      if (args.join(" ") === "rev-parse HEAD") return "head-456";
+      throw new Error(`Unexpected command: ${args.join(" ")}`);
+    });
+
+    const diffBase = await resolveDiffBase(
+      { baseBranch: "main", baseCommitSha: "task-base-789" },
+      "/tmp/worktree",
+      "HEAD",
+      runGit,
+    );
+
+    expect(diffBase).toBe("merge-base-123");
+    expect(runGit).not.toHaveBeenCalledWith(
+      ["merge-base", "--is-ancestor", "task-base-789", "HEAD"],
+      "/tmp/worktree",
+      5000,
+    );
+  });
+
+  it("uses baseCommitSha when merge-base equals head", async () => {
+    const runGit = vi.fn(async (args: string[]) => {
+      if (args.join(" ") === "merge-base HEAD main") return "head-456";
+      if (args.join(" ") === "rev-parse HEAD") return "head-456";
+      if (args.join(" ") === "merge-base --is-ancestor task-base-789 HEAD") return "";
+      throw new Error(`Unexpected command: ${args.join(" ")}`);
+    });
+
+    const diffBase = await resolveDiffBase(
+      { baseBranch: "main", baseCommitSha: "task-base-789" },
+      "/tmp/worktree",
+      "HEAD",
+      runGit,
+    );
+
+    expect(diffBase).toBe("task-base-789");
+  });
+
+  it("falls back to origin/baseBranch when local base branch is unavailable", async () => {
+    const runGit = vi.fn(async (args: string[]) => {
+      if (args.join(" ") === "merge-base HEAD main") {
+        throw new Error("missing local main");
+      }
+      if (args.join(" ") === "merge-base HEAD origin/main") return "origin-merge-base";
+      if (args.join(" ") === "rev-parse HEAD") return "head-456";
+      throw new Error(`Unexpected command: ${args.join(" ")}`);
+    });
+
+    const diffBase = await resolveDiffBase(
+      { baseBranch: "main", baseCommitSha: "task-base-789" },
+      "/tmp/worktree",
+      "HEAD",
+      runGit,
+    );
+
+    expect(diffBase).toBe("origin-merge-base");
+  });
+
+  it("falls back to HEAD~1 when merge-base is unavailable and baseCommitSha is stale", async () => {
+    const runGit = vi.fn(async (args: string[]) => {
+      if (args.join(" ") === "merge-base HEAD main") {
+        throw new Error("missing local main");
+      }
+      if (args.join(" ") === "merge-base HEAD origin/main") {
+        throw new Error("missing remote main");
+      }
+      if (args.join(" ") === "merge-base --is-ancestor stale-base HEAD") {
+        throw new Error("stale base sha");
+      }
+      if (args.join(" ") === "rev-parse HEAD~1") return "parent-123";
+      throw new Error(`Unexpected command: ${args.join(" ")}`);
+    });
+
+    const diffBase = await resolveDiffBase(
+      { baseBranch: "main", baseCommitSha: "stale-base" },
+      "/tmp/worktree",
+      "HEAD",
+      runGit,
+    );
+
+    expect(diffBase).toBe("parent-123");
+  });
+});
+
+describe("diff-base parity between dashboard and merger", () => {
+  it("resolves the same effective diff base for identical task metadata", async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), "fn-diff-base-parity-"));
+
+    try {
+      execFileSync("git", ["init", "-b", "main", repoDir], { stdio: "pipe" });
+      execFileSync("git", ["-C", repoDir, "config", "user.email", "parity@example.com"], { stdio: "pipe" });
+      execFileSync("git", ["-C", repoDir, "config", "user.name", "Parity Test"], { stdio: "pipe" });
+
+      writeFileSync(join(repoDir, "README.md"), "# parity\n");
+      execFileSync("git", ["-C", repoDir, "add", "README.md"], { stdio: "pipe" });
+      execFileSync("git", ["-C", repoDir, "commit", "-m", "initial"], { stdio: "pipe" });
+
+      writeFileSync(join(repoDir, "README.md"), "# parity\nsecond\n");
+      execFileSync("git", ["-C", repoDir, "commit", "-am", "second"], { stdio: "pipe" });
+
+      const diffBaseFromDashboard = await resolveDiffBase(
+        { baseBranch: "missing-main", baseCommitSha: "stale-base" },
+        repoDir,
+        "HEAD",
+      );
+
+      const diffBaseFromMerger = await resolveTaskDiffBaseRef({
+        cwd: repoDir,
+        headRef: "HEAD",
+        baseBranch: "missing-main",
+        baseCommitSha: "stale-base",
+      });
+
+      const expectedParent = execFileSync("git", ["-C", repoDir, "rev-parse", "HEAD~1"], {
+        encoding: "utf-8",
+        stdio: "pipe",
+      }).trim();
+
+      expect(diffBaseFromDashboard).toBe(expectedParent);
+      expect(diffBaseFromMerger).toBe(expectedParent);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
   });
 });

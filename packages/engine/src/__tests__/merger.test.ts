@@ -111,6 +111,7 @@ import {
   shouldSyncDependenciesForMerge,
   summarizeVerificationOutput,
   inferDefaultTestCommand,
+  resolveTaskDiffBaseRef,
   type ConflictCategory,
 } from "../merger.js";
 import { mergerLog } from "../logger.js";
@@ -3786,6 +3787,108 @@ describe("validateDiffScope", () => {
     const result = await validateDiffScope(store, "FN-100", diffStat);
     expect(result.outOfScopeFiles).toHaveLength(0);
     expect(result.warnings).toHaveLength(0);
+  });
+});
+
+describe("resolveTaskDiffBaseRef", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("prefers merge-base when it differs from head", async () => {
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr === 'git merge-base "HEAD" "main"') return "merge-base-123" as any;
+      if (cmdStr === 'git rev-parse "HEAD"') return "head-456" as any;
+      throw new Error(`Unexpected command: ${cmdStr}`);
+    });
+
+    const diffBase = await resolveTaskDiffBaseRef({
+      cwd: "/tmp/root",
+      headRef: "HEAD",
+      baseBranch: "main",
+      baseCommitSha: "task-base-789",
+    });
+
+    expect(diffBase).toBe("merge-base-123");
+    expect(
+      mockedExecSync.mock.calls.some(([cmd]) =>
+        String(cmd).includes("merge-base --is-ancestor"),
+      ),
+    ).toBe(false);
+  });
+
+  it("uses baseCommitSha when merge-base equals head", async () => {
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr === 'git merge-base "HEAD" "main"') return "head-456" as any;
+      if (cmdStr === 'git rev-parse "HEAD"') return "head-456" as any;
+      if (cmdStr === 'git merge-base --is-ancestor "task-base-789" "HEAD"') return "" as any;
+      throw new Error(`Unexpected command: ${cmdStr}`);
+    });
+
+    const diffBase = await resolveTaskDiffBaseRef({
+      cwd: "/tmp/root",
+      headRef: "HEAD",
+      baseBranch: "main",
+      baseCommitSha: "task-base-789",
+    });
+
+    expect(diffBase).toBe("task-base-789");
+  });
+
+  it("falls back to HEAD~1 when merge-base is unavailable and baseCommitSha is stale", async () => {
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr === 'git merge-base "HEAD" "main"') {
+        throw new Error("missing local main");
+      }
+      if (cmdStr === 'git merge-base "HEAD" "origin/main"') {
+        throw new Error("missing remote main");
+      }
+      if (cmdStr === 'git merge-base --is-ancestor "stale-base" "HEAD"') {
+        throw new Error("stale base sha");
+      }
+      if (cmdStr === 'git rev-parse "HEAD~1"') return "parent-123" as any;
+      throw new Error(`Unexpected command: ${cmdStr}`);
+    });
+
+    const diffBase = await resolveTaskDiffBaseRef({
+      cwd: "/tmp/root",
+      headRef: "HEAD",
+      baseBranch: "main",
+      baseCommitSha: "stale-base",
+    });
+
+    expect(diffBase).toBe("parent-123");
+  });
+
+  it("returns undefined when no merge base or fallback refs are available", async () => {
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr === 'git merge-base "HEAD" "main"') {
+        throw new Error("missing local main");
+      }
+      if (cmdStr === 'git merge-base "HEAD" "origin/main"') {
+        throw new Error("missing remote main");
+      }
+      if (cmdStr === 'git merge-base --is-ancestor "stale-base" "HEAD"') {
+        throw new Error("stale base sha");
+      }
+      if (cmdStr === 'git rev-parse "HEAD~1"') {
+        throw new Error("single commit repo");
+      }
+      throw new Error(`Unexpected command: ${cmdStr}`);
+    });
+
+    const diffBase = await resolveTaskDiffBaseRef({
+      cwd: "/tmp/root",
+      headRef: "HEAD",
+      baseBranch: "main",
+      baseCommitSha: "stale-base",
+    });
+
+    expect(diffBase).toBeUndefined();
   });
 });
 
