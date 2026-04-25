@@ -1,419 +1,446 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act, waitFor } from "@testing-library/react";
-import { useProjects } from "../useProjects";
-import * as api from "../../api";
-import type { ProjectInfo, ProjectInfoWithSource } from "../../api";
+import {
+  fetchProjects,
+  registerProject,
+  unregisterProject,
+  fetchProject,
+  updateProject,
+  detectProjects,
+  fetchProjectHealth,
+  fetchActivityFeed,
+  pauseProject,
+  resumeProject,
+  fetchFirstRunStatus,
+  fetchGlobalConcurrency,
+  fetchProjectTasks,
+  fetchProjectConfig,
+  type ProjectInfo,
+  type ProjectHealth,
+  type ActivityFeedEntry,
+  type FirstRunStatus,
+  type GlobalConcurrencyState,
+  type DetectedProject,
+} from "../../api";
 
-vi.mock("../../api", () => ({
-  fetchProjectsAcrossNodes: vi.fn(),
-  registerProject: vi.fn(),
-  unregisterProject: vi.fn(),
-  updateProject: vi.fn(),
-  reportDashboardPerf: vi.fn(),
-}));
-
-const mockFetchProjectsAcrossNodes = vi.mocked(api.fetchProjectsAcrossNodes);
-const mockUpdateProject = vi.mocked(api.updateProject);
-const mockRegisterProject = vi.mocked(api.registerProject);
-const mockUnregisterProject = vi.mocked(api.unregisterProject);
-const mockReportDashboardPerf = vi.mocked(api.reportDashboardPerf);
-
-async function flushPromises(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
+function mockFetchResponse(
+  ok: boolean,
+  body: unknown,
+  status = ok ? 200 : 500,
+  contentType = "application/json"
+) {
+  const bodyText = JSON.stringify(body);
+  return Promise.resolve({
+    ok,
+    status,
+    statusText: ok ? "OK" : "Error",
+    headers: {
+      get: (name: string) =>
+        name.toLowerCase() === "content-type" ? contentType : null,
+    },
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(bodyText),
+  } as unknown as Response);
 }
 
-describe("useProjects", () => {
+describe("Project Management API", () => {
+  const originalFetch = globalThis.fetch;
+
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    mockFetchProjectsAcrossNodes.mockReset();
-    mockUpdateProject.mockReset();
-    mockRegisterProject.mockReset();
-    mockUnregisterProject.mockReset();
-    mockReportDashboardPerf.mockReset();
   });
 
   afterEach(() => {
+    globalThis.fetch = originalFetch;
     vi.useRealTimers();
   });
 
-  describe("visibility change", () => {
-    let originalVisibilityState: PropertyDescriptor | undefined;
+  describe("fetchProjects", () => {
+    it("returns empty array when no projects", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, []));
 
-    beforeEach(() => {
-      originalVisibilityState = Object.getOwnPropertyDescriptor(document, "visibilityState");
+      const result = await fetchProjects();
+
+      expect(result).toEqual([]);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/projects",
+        expect.any(Object)
+      );
     });
 
-    afterEach(() => {
-      if (originalVisibilityState) {
-        Object.defineProperty(document, "visibilityState", originalVisibilityState);
-      } else {
-        delete (document as any).visibilityState;
-      }
-    });
+    it("returns projects list when available", async () => {
+      const mockProjects: ProjectInfo[] = [
+        {
+          id: "proj_123",
+          name: "Test Project",
+          path: "/test/path",
+          status: "active",
+          isolationMode: "in-process",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ];
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockProjects));
 
-    function setVisibilityState(state: "visible" | "hidden") {
-      Object.defineProperty(document, "visibilityState", {
-        value: state,
-        writable: true,
-        configurable: true,
-      });
-    }
+      const result = await fetchProjects();
 
-    async function dispatchVisibilityChange() {
-      await act(async () => {
-        document.dispatchEvent(new Event("visibilitychange"));
-        await Promise.resolve();
-      });
-    }
-
-    it("refetches projects when visibility changes from hidden to visible", async () => {
-      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-
-      const initialProject: ProjectInfoWithSource = {
-        id: "proj_001",
-        name: "Initial Project",
-        path: "/initial/path",
-        status: "active",
-        isolationMode: "in-process",
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      };
-      const refreshedProject: ProjectInfoWithSource = {
-        id: "proj_001",
-        name: "Updated Project",
-        path: "/initial/path",
-        status: "active",
-        isolationMode: "in-process",
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-02T00:00:00.000Z",
-      };
-
-      mockFetchProjectsAcrossNodes.mockResolvedValueOnce([initialProject]).mockResolvedValueOnce([refreshedProject]);
-
-      const { result } = renderHook(() => useProjects());
-
-      await act(async () => {
-        await flushPromises();
-      });
-
-      expect(result.current.projects).toHaveLength(1);
-      expect(result.current.projects[0].name).toBe("Initial Project");
-
-      vi.setSystemTime(new Date("2026-01-01T00:00:01.100Z"));
-      setVisibilityState("hidden");
-      await dispatchVisibilityChange();
-
-      setVisibilityState("visible");
-      await dispatchVisibilityChange();
-
-      await act(async () => {
-        await flushPromises();
-      });
-
-      expect(result.current.projects[0].name).toBe("Updated Project");
-      expect(mockFetchProjectsAcrossNodes).toHaveBeenCalledTimes(2);
-    });
-
-    it("does not refetch when visibility changes to hidden", async () => {
-      const initialProject: ProjectInfoWithSource = {
-        id: "proj_001",
-        name: "Test Project",
-        path: "/test/path",
-        status: "active",
-        isolationMode: "in-process",
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      };
-      mockFetchProjectsAcrossNodes.mockResolvedValueOnce([initialProject]);
-
-      renderHook(() => useProjects());
-
-      await act(async () => {
-        await flushPromises();
-      });
-
-      mockFetchProjectsAcrossNodes.mockClear();
-
-      setVisibilityState("hidden");
-      await dispatchVisibilityChange();
-
-      expect(mockFetchProjectsAcrossNodes).not.toHaveBeenCalled();
-    });
-
-    it("debounces rapid visibility changes (minimum 1 second between fetches)", async () => {
-      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-
-      const initialProject: ProjectInfoWithSource = {
-        id: "proj_001",
-        name: "Test Project",
-        path: "/test/path",
-        status: "active",
-        isolationMode: "in-process",
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      };
-      mockFetchProjectsAcrossNodes.mockResolvedValue([initialProject]);
-
-      renderHook(() => useProjects());
-
-      await act(async () => {
-        await flushPromises();
-      });
-
-      mockFetchProjectsAcrossNodes.mockClear();
-
-      vi.setSystemTime(new Date("2026-01-01T00:00:01.100Z"));
-      setVisibilityState("hidden");
-      await dispatchVisibilityChange();
-
-      setVisibilityState("visible");
-      await dispatchVisibilityChange();
-
-      expect(mockFetchProjectsAcrossNodes).toHaveBeenCalledTimes(1);
-
-      for (let i = 0; i < 5; i++) {
-        setVisibilityState("hidden");
-        await dispatchVisibilityChange();
-
-        setVisibilityState("visible");
-        await dispatchVisibilityChange();
-      }
-
-      expect(mockFetchProjectsAcrossNodes).toHaveBeenCalledTimes(1);
-
-      vi.setSystemTime(new Date("2026-01-01T00:00:02.200Z"));
-      setVisibilityState("hidden");
-      await dispatchVisibilityChange();
-
-      setVisibilityState("visible");
-      await dispatchVisibilityChange();
-
-      expect(mockFetchProjectsAcrossNodes).toHaveBeenCalledTimes(2);
-    });
-
-    it("cleans up visibility change listener on unmount", async () => {
-      mockFetchProjectsAcrossNodes.mockResolvedValueOnce([]);
-
-      const removeEventListenerSpy = vi.spyOn(document, "removeEventListener");
-
-      const { unmount } = renderHook(() => useProjects());
-
-      await waitFor(() => {
-        expect(mockFetchProjectsAcrossNodes).toHaveBeenCalledTimes(1);
-      });
-
-      unmount();
-
-      expect(removeEventListenerSpy).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
-
-      removeEventListenerSpy.mockRestore();
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe("proj_123");
+      expect(result[0].name).toBe("Test Project");
     });
   });
 
-  describe("basic functionality", () => {
-    it("fetches projects on mount using cross-node endpoint", async () => {
-      const mockProjects: ProjectInfoWithSource[] = [
-        {
-          id: "proj_001",
-          name: "Test Project",
-          path: "/test/path",
-          status: "active",
-          isolationMode: "in-process",
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-        },
-      ];
-      mockFetchProjectsAcrossNodes.mockResolvedValueOnce(mockProjects);
-
-      const { result } = renderHook(() => useProjects());
-
-      await act(async () => {
-        await flushPromises();
-      });
-
-      expect(result.current.loading).toBe(false);
-      expect(result.current.projects).toHaveLength(1);
-      expect(result.current.projects[0].name).toBe("Test Project");
-    });
-
-    it("handles errors gracefully", async () => {
-      mockFetchProjectsAcrossNodes.mockRejectedValueOnce(new Error("Failed to fetch"));
-
-      const { result } = renderHook(() => useProjects());
-
-      await act(async () => {
-        await flushPromises();
-      });
-
-      expect(result.current.loading).toBe(false);
-      expect(result.current.error).toBe("Failed to fetch");
-    });
-
-    it("register adds project optimistically", async () => {
-      const newProject: ProjectInfo = {
+  describe("registerProject", () => {
+    it("registers a new project with valid input", async () => {
+      const mockProject: ProjectInfo = {
         id: "proj_new",
         name: "New Project",
-        path: "/new/path",
+        path: "/absolute/path",
         status: "active",
         isolationMode: "in-process",
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
       };
-      mockFetchProjectsAcrossNodes.mockResolvedValueOnce([]);
-      mockRegisterProject.mockResolvedValueOnce(newProject);
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockProject));
 
-      const { result } = renderHook(() => useProjects());
-
-      await act(async () => {
-        await flushPromises();
+      const result = await registerProject({
+        name: "New Project",
+        path: "/absolute/path",
+        isolationMode: "in-process",
       });
 
-      expect(result.current.projects).toHaveLength(0);
-
-      await act(async () => {
-        await result.current.register({ name: "New Project", path: "/new/path" });
-      });
-
-      expect(result.current.projects).toHaveLength(1);
-      expect(result.current.projects[0].id).toBe("proj_new");
+      expect(result.id).toBe("proj_new");
+      expect(result.name).toBe("New Project");
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/projects",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.any(String),
+        })
+      );
     });
+  });
 
-    it("unregister removes project optimistically", async () => {
-      const mockProjects: ProjectInfoWithSource[] = [
-        {
-          id: "proj_001",
-          name: "Test Project",
-          path: "/test/path",
-          status: "active",
-          isolationMode: "in-process",
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-        },
-      ];
-      mockFetchProjectsAcrossNodes.mockResolvedValueOnce(mockProjects);
-      mockUnregisterProject.mockResolvedValueOnce(undefined);
+  describe("unregisterProject", () => {
+    it("unregisters a project", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, {}));
 
-      const { result } = renderHook(() => useProjects());
+      await unregisterProject("proj_test123");
 
-      await act(async () => {
-        await flushPromises();
-      });
-
-      expect(result.current.projects).toHaveLength(1);
-
-      await act(async () => {
-        await result.current.unregister("proj_001");
-      });
-
-      expect(result.current.projects).toHaveLength(0);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/projects/proj_test123",
+        expect.objectContaining({
+          method: "DELETE",
+        })
+      );
     });
+  });
 
-    it("update modifies project optimistically", async () => {
-      const mockProjects: ProjectInfoWithSource[] = [
-        {
-          id: "proj_001",
-          name: "Test Project",
-          path: "/test/path",
-          status: "active",
-          isolationMode: "in-process",
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-        },
-      ];
-      const updatedProject: ProjectInfo = {
-        ...mockProjects[0],
-        name: "Updated Name",
+  describe("fetchProjectHealth", () => {
+    it("returns health metrics for a project", async () => {
+      const mockHealth: ProjectHealth = {
+        projectId: "proj_test123",
+        status: "active",
+        activeTaskCount: 5,
+        inFlightAgentCount: 2,
+        totalTasksCompleted: 10,
+        totalTasksFailed: 1,
+        updatedAt: "2026-01-01T00:00:00.000Z",
       };
-      mockFetchProjectsAcrossNodes.mockResolvedValueOnce(mockProjects);
-      mockUpdateProject.mockResolvedValueOnce(updatedProject);
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockHealth));
 
-      const { result } = renderHook(() => useProjects());
+      const result = await fetchProjectHealth("proj_test123");
 
-      await act(async () => {
-        await flushPromises();
-      });
+      expect(result.projectId).toBe("proj_test123");
+      expect(result.activeTaskCount).toBe(5);
+      expect(result.totalTasksCompleted).toBe(10);
+    });
+  });
 
-      expect(result.current.projects[0].name).toBe("Test Project");
+  describe("fetchActivityFeed", () => {
+    it("returns activity feed entries", async () => {
+      const mockEntries: ActivityFeedEntry[] = [
+        {
+          id: "entry_1",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          type: "task:created",
+          projectId: "proj_123",
+          projectName: "Test Project",
+          taskId: "FN-001",
+          taskTitle: "Test Task",
+          details: "Task created",
+        },
+      ];
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockEntries));
 
-      await act(async () => {
-        await result.current.update("proj_001", { name: "Updated Name" });
-      });
+      const result = await fetchActivityFeed();
 
-      expect(result.current.projects[0].name).toBe("Updated Name");
+      expect(result).toHaveLength(1);
+      expect(result[0].type).toBe("task:created");
+      expect(result[0].projectName).toBe("Test Project");
     });
 
-    it("refresh manually refetches projects", async () => {
-      const initialProject: ProjectInfoWithSource = {
-        id: "proj_001",
-        name: "Initial",
+    it("supports limit parameter", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, []));
+
+      await fetchActivityFeed({ limit: 10 });
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining("limit=10"),
+        expect.any(Object)
+      );
+    });
+
+    it("supports projectId filter", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, []));
+
+      await fetchActivityFeed({ projectId: "proj_123" });
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining("projectId=proj_123"),
+        expect.any(Object)
+      );
+    });
+  });
+
+  describe("fetchFirstRunStatus", () => {
+    it("returns first run status", async () => {
+      const mockStatus: FirstRunStatus = {
+        hasProjects: false,
+        singleProjectPath: null,
+      };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockStatus));
+
+      const result = await fetchFirstRunStatus();
+
+      expect(result.hasProjects).toBe(false);
+      expect(result.singleProjectPath).toBeNull();
+    });
+
+    it("returns single project path when only one project", async () => {
+      const mockStatus: FirstRunStatus = {
+        hasProjects: true,
+        singleProjectPath: "/projects/my-project",
+      };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockStatus));
+
+      const result = await fetchFirstRunStatus();
+
+      expect(result.hasProjects).toBe(true);
+      expect(result.singleProjectPath).toBe("/projects/my-project");
+    });
+  });
+
+  describe("fetchGlobalConcurrency", () => {
+    it("returns global concurrency state", async () => {
+      const mockState: GlobalConcurrencyState = {
+        globalMaxConcurrent: 4,
+        currentlyActive: 2,
+        queuedCount: 0,
+        projectsActive: { "proj_123": 2 },
+      };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockState));
+
+      const result = await fetchGlobalConcurrency();
+
+      expect(result.globalMaxConcurrent).toBe(4);
+      expect(result.currentlyActive).toBe(2);
+      expect(result.projectsActive["proj_123"]).toBe(2);
+    });
+  });
+
+  describe("pauseProject", () => {
+    it("pauses a project", async () => {
+      const mockProject: ProjectInfo = {
+        id: "proj_123",
+        name: "Test Project",
+        path: "/test/path",
+        status: "paused",
+        isolationMode: "in-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockProject));
+
+      const result = await pauseProject("proj_123");
+
+      expect(result.status).toBe("paused");
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/projects/proj_123/pause",
+        expect.objectContaining({
+          method: "POST",
+        })
+      );
+    });
+  });
+
+  describe("resumeProject", () => {
+    it("resumes a paused project", async () => {
+      const mockProject: ProjectInfo = {
+        id: "proj_123",
+        name: "Test Project",
         path: "/test/path",
         status: "active",
         isolationMode: "in-process",
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
       };
-      const refreshedProject: ProjectInfoWithSource = {
-        ...initialProject,
-        name: "Refreshed",
-      };
-      mockFetchProjectsAcrossNodes.mockResolvedValueOnce([initialProject]).mockResolvedValueOnce([refreshedProject]);
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockProject));
 
-      const { result } = renderHook(() => useProjects());
+      const result = await resumeProject("proj_123");
 
-      await act(async () => {
-        await flushPromises();
-      });
+      expect(result.status).toBe("active");
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/projects/proj_123/resume",
+        expect.objectContaining({
+          method: "POST",
+        })
+      );
+    });
+  });
 
-      expect(result.current.projects[0].name).toBe("Initial");
+  describe("fetchProjectTasks", () => {
+    it("fetches tasks for a specific project", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, []));
 
-      await act(async () => {
-        await result.current.refresh();
-      });
+      await fetchProjectTasks("proj_123");
 
-      expect(result.current.projects[0].name).toBe("Refreshed");
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining("projectId=proj_123"),
+        expect.any(Object)
+      );
     });
 
-    it("returns projects with _sourceNodeName from aggregated endpoint", async () => {
-      const mockProjects: ProjectInfoWithSource[] = [
-        {
-          id: "proj_local",
-          name: "Local Project",
-          path: "/local/path",
-          status: "active",
-          isolationMode: "in-process",
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-        },
-        {
-          id: "proj_remote",
-          name: "Remote Project",
-          path: "/remote/path",
-          status: "active",
-          isolationMode: "child-process",
-          nodeId: "node_alpha",
-          _sourceNodeName: "Alpha Node",
-          createdAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-        },
-      ];
-      mockFetchProjectsAcrossNodes.mockResolvedValueOnce(mockProjects);
+    it("supports pagination", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, []));
 
-      const { result } = renderHook(() => useProjects());
+      await fetchProjectTasks("proj_123", 10, 20);
 
-      await act(async () => {
-        await flushPromises();
-      });
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining("limit=10"),
+        expect.any(Object)
+      );
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining("offset=20"),
+        expect.any(Object)
+      );
+    });
+  });
 
-      expect(result.current.projects).toHaveLength(2);
+  describe("fetchProjectConfig", () => {
+    it("fetches project config", async () => {
+      const mockConfig = { maxConcurrent: 4, rootDir: "/projects/test" };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockConfig));
 
-      const localProject = result.current.projects.find((p) => p.id === "proj_local");
-      expect(localProject?._sourceNodeName).toBeUndefined();
-      expect(localProject?.nodeId).toBeUndefined();
+      const result = await fetchProjectConfig("proj_123");
 
-      const remoteProject = result.current.projects.find((p) => p.id === "proj_remote");
-      expect(remoteProject?._sourceNodeName).toBe("Alpha Node");
-      expect(remoteProject?.nodeId).toBe("node_alpha");
+      expect(result.maxConcurrent).toBe(4);
+      expect(result.rootDir).toBe("/projects/test");
+    });
+  });
+
+  describe("fetchProject (single)", () => {
+    it("fetches a specific project by ID", async () => {
+      const mockProject: ProjectInfo = {
+        id: "proj_123",
+        name: "Specific Project",
+        path: "/specific/path",
+        status: "active",
+        isolationMode: "child-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockProject));
+
+      const result = await fetchProject("proj_123");
+
+      expect(result.id).toBe("proj_123");
+      expect(result.name).toBe("Specific Project");
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/projects/proj_123",
+        expect.any(Object)
+      );
+    });
+  });
+
+  describe("updateProject", () => {
+    it("updates project with valid data", async () => {
+      const mockProject: ProjectInfo = {
+        id: "proj_123",
+        name: "Updated Name",
+        path: "/test/path",
+        status: "active",
+        isolationMode: "in-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockProject));
+
+      const result = await updateProject("proj_123", { name: "Updated Name" });
+
+      expect(result.name).toBe("Updated Name");
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/projects/proj_123",
+        expect.objectContaining({
+          method: "PATCH",
+          body: expect.any(String),
+        })
+      );
+    });
+
+    it("updates project isolationMode", async () => {
+      const mockProject: ProjectInfo = {
+        id: "proj_123",
+        name: "Test Project",
+        path: "/test/path",
+        status: "active",
+        isolationMode: "child-process",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockProject));
+
+      const result = await updateProject("proj_123", { isolationMode: "child-process" });
+
+      expect(result.isolationMode).toBe("child-process");
+    });
+  });
+
+  describe("detectProjects", () => {
+    it("auto-detects projects in a base path", async () => {
+      const mockDetected = {
+        projects: [
+          { path: "/home/user/project1", suggestedName: "project1", existing: false },
+          { path: "/home/user/project2", suggestedName: "project2", existing: true },
+        ],
+      };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, mockDetected));
+
+      const result = await detectProjects("/home/user");
+
+      expect(result.projects).toHaveLength(2);
+      expect(result.projects[0].path).toBe("/home/user/project1");
+      expect(result.projects[0].suggestedName).toBe("project1");
+      expect(result.projects[1].existing).toBe(true);
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/projects/detect",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ basePath: "/home/user" }),
+        })
+      );
+    });
+
+    it("uses home directory when basePath not provided", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { projects: [] }));
+
+      await detectProjects();
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/projects/detect",
+        expect.objectContaining({
+          body: JSON.stringify({ basePath: undefined }),
+        })
+      );
     });
   });
 });

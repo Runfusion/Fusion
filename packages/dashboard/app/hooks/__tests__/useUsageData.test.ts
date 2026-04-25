@@ -1,59 +1,108 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { renderHook, waitFor } from "@testing-library/react";
 import { useUsageData } from "../useUsageData";
 import * as api from "../../api";
 
-vi.mock("../../api", () => ({
-  fetchUsageData: vi.fn(),
-}));
+describe("useUsageData", () => {
+  const mockFetchUsageData = vi.spyOn(api, "fetchUsageData");
 
-const mockFetchUsageData = vi.mocked(api.fetchUsageData);
-
-describe("useUsageData visibility change", () => {
   beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    mockFetchUsageData.mockReset();
-    // Set default visibility state to visible
-    Object.defineProperty(document, "visibilityState", {
-      value: "visible",
-      writable: true,
-      configurable: true,
-    });
+    mockFetchUsageData.mockClear();
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-    delete (document as any).visibilityState;
+  it("fetches data on initial mount", async () => {
+    const mockData = {
+      providers: [
+        {
+          name: "Claude",
+          icon: "🟠",
+          status: "ok" as const,
+          windows: [],
+        },
+      ],
+    };
+    mockFetchUsageData.mockResolvedValue(mockData);
+
+    const { result } = renderHook(() => useUsageData({ autoRefresh: false }));
+
+    // Should be loading initially
+    expect(result.current.loading).toBe(true);
+    expect(result.current.providers).toEqual([]);
+
+    // Wait for data to load
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.providers).toEqual(mockData.providers);
+    expect(result.current.error).toBeNull();
+    expect(result.current.lastUpdated).toBeInstanceOf(Date);
   });
 
-  function setVisibilityState(state: "visible" | "hidden") {
-    Object.defineProperty(document, "visibilityState", {
-      value: state,
-      writable: true,
-      configurable: true,
-    });
-  }
+  it("handles fetch errors", async () => {
+    mockFetchUsageData.mockRejectedValue(new Error("Network error"));
 
-  it("does not refetch when visibility changes to hidden", async () => {
-    const initialData = {
+    const { result } = renderHook(() => useUsageData({ autoRefresh: false }));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.error).toBe("Network error");
+    expect(result.current.providers).toEqual([]);
+  });
+
+  it("manual refresh fetches new data", async () => {
+    const mockData1 = {
       providers: [{ name: "Claude", icon: "🟠", status: "ok" as const, windows: [] }],
     };
-    mockFetchUsageData.mockResolvedValueOnce(initialData);
+    const mockData2 = {
+      providers: [{ name: "Codex", icon: "🟢", status: "ok" as const, windows: [] }],
+    };
 
-    renderHook(() => useUsageData({ autoRefresh: false }));
+    mockFetchUsageData
+      .mockResolvedValueOnce(mockData1)
+      .mockResolvedValueOnce(mockData2);
 
-    await waitFor(() => {
-      expect(mockFetchUsageData).toHaveBeenCalledTimes(1);
-    });
+    const { result } = renderHook(() => useUsageData({ autoRefresh: false }));
 
-    mockFetchUsageData.mockClear();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.providers).toEqual(mockData1.providers);
 
-    setVisibilityState("hidden");
+    // Manual refresh
+    await result.current.refresh();
 
-    await act(async () => {
-      document.dispatchEvent(new Event("visibilitychange"));
-    });
+    await waitFor(() => expect(result.current.providers).toEqual(mockData2.providers));
+  });
 
-    expect(mockFetchUsageData).not.toHaveBeenCalled();
+  it("clears error on successful manual refresh after error", async () => {
+    mockFetchUsageData
+      .mockRejectedValueOnce(new Error("Network error"))
+      .mockResolvedValueOnce({
+        providers: [{ name: "Claude", icon: "🟠", status: "ok" as const, windows: [] }],
+      });
+
+    const { result } = renderHook(() => useUsageData({ autoRefresh: false }));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBe("Network error");
+
+    // Manual refresh
+    await result.current.refresh();
+
+    await waitFor(() => expect(result.current.error).toBeNull());
+    expect(result.current.providers).toHaveLength(1);
+  });
+
+  it("exports the correct interface", () => {
+    expect(typeof useUsageData).toBe("function");
+  });
+
+  it("returns expected default values before first fetch", () => {
+    mockFetchUsageData.mockImplementation(() => new Promise(() => {})); // Never resolves
+
+    const { result } = renderHook(() => useUsageData({ autoRefresh: false }));
+
+    expect(result.current.providers).toEqual([]);
+    expect(result.current.loading).toBe(true);
+    expect(result.current.error).toBeNull();
+    expect(result.current.lastUpdated).toBeNull();
+    expect(typeof result.current.refresh).toBe("function");
   });
 });

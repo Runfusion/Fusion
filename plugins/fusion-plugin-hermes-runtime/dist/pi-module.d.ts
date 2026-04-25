@@ -1,8 +1,3 @@
-/**
- * Pi Module Seam
- *
- * Provides a mockable import path for pi functions used by the HermesRuntimeAdapter.
- */
 export interface PiAgentSession {
     dispose?: () => Promise<void> | void;
 }

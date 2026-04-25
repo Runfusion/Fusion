@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { loadAllAppCss } from "../../test/cssFixture";
 import { useState } from "react";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -102,19 +103,7 @@ function getCssRuleBlock(css: string, selector: string): string {
 }
 
 function readDashboardStylesSource(): string {
-  const candidatePaths = [
-    process.env.PWD ? resolve(process.env.PWD, "app/styles.css") : null,
-    process.env.npm_config_local_prefix ? resolve(process.env.npm_config_local_prefix, "app/styles.css") : null,
-    resolve(process.cwd(), "app/styles.css"),
-    resolve(process.cwd(), "../app/styles.css"),
-    resolve(process.cwd(), "../../packages/dashboard/app/styles.css"),
-  ].filter((candidate): candidate is string => Boolean(candidate));
-
-  const cssPath = candidatePaths.find((candidate) => existsSync(candidate));
-  if (!cssPath) {
-    throw new Error("Unable to locate dashboard styles.css for Activity timeline CSS assertions");
-  }
-  return readFileSync(cssPath, "utf8");
+  return loadAllAppCss();
 }
 
 describe("TaskDetailModal", () => {

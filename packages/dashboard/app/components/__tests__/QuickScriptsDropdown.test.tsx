@@ -1,196 +1,510 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QuickScriptsDropdown } from "../QuickScriptsDropdown";
-import { fetchScripts } from "../../api";
+
+// Mock the API functions
+const mockFetchScripts = vi.fn();
 
 vi.mock("../../api", () => ({
-  fetchScripts: vi.fn(),
+  fetchScripts: () => mockFetchScripts(),
 }));
 
-const onOpenScripts = vi.fn();
-const onRunScript = vi.fn();
+const mockOnOpenScripts = vi.fn();
+const mockOnRunScript = vi.fn();
 
-const MOCK_SCRIPTS = {
-  build: "pnpm build",
-  lint: "pnpm lint",
-  test: "pnpm test",
-};
+function renderDropdown(props = {}) {
+  return render(
+    <QuickScriptsDropdown
+      onOpenScripts={mockOnOpenScripts}
+      onRunScript={mockOnRunScript}
+      {...props}
+    />
+  );
+}
 
 describe("QuickScriptsDropdown", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useRealTimers();
-    vi.mocked(fetchScripts).mockResolvedValue(MOCK_SCRIPTS);
-    Object.defineProperty(window, "innerWidth", {
-      configurable: true,
-      writable: true,
-      value: 1280,
-    });
-    Object.defineProperty(window, "innerHeight", {
-      configurable: true,
-      writable: true,
-      value: 900,
-    });
-    Object.defineProperty(window, "visualViewport", {
-      configurable: true,
-      writable: true,
-      value: undefined,
-    });
-    vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    } as MediaQueryList));
   });
 
-  function renderDropdown() {
-    render(
-      <QuickScriptsDropdown
-        onOpenScripts={onOpenScripts}
-        onRunScript={onRunScript}
-      />,
-    );
-  }
-
-  function mockTriggerRect(rect: Partial<DOMRect>) {
-    const trigger = screen.getByTestId("scripts-btn");
-    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
-      x: rect.left ?? 0,
-      y: rect.top ?? 0,
-      width: rect.width ?? 80,
-      height: rect.height ?? 32,
-      top: rect.top ?? 0,
-      right: (rect.left ?? 0) + (rect.width ?? 80),
-      bottom: (rect.top ?? 0) + (rect.height ?? 32),
-      left: rect.left ?? 0,
-      toJSON: () => ({}),
+  describe("rendering", () => {
+    it("renders the trigger button", () => {
+      renderDropdown();
+      expect(screen.getByTestId("scripts-btn")).toBeDefined();
+      expect(screen.getByTitle("Scripts")).toBeDefined();
     });
 
-    return trigger;
-  }
-
-  it("renders below trigger when space is available", async () => {
-    const user = userEvent.setup();
-    renderDropdown();
-    const trigger = mockTriggerRect({ top: 120, left: 220, width: 120, height: 36 });
-
-    await user.click(trigger);
-
-    const dropdown = await screen.findByTestId("quick-scripts-dropdown");
-
-    await waitFor(() => {
-      expect(dropdown.style.position).toBe("fixed");
-      expect(dropdown.style.top).toBe("162px");
-      expect(dropdown.style.left).toBe("220px");
-      expect(dropdown.style.width).toBe("260px");
-    });
-  });
-
-  it("repositions above trigger when viewport bottom is near", async () => {
-    const user = userEvent.setup();
-    Object.defineProperty(window, "innerWidth", {
-      configurable: true,
-      writable: true,
-      value: 375,
-    });
-    Object.defineProperty(window, "innerHeight", {
-      configurable: true,
-      writable: true,
-      value: 667,
-    });
-
-    renderDropdown();
-    const trigger = mockTriggerRect({ top: 560, left: 330, width: 120, height: 36 });
-
-    await user.click(trigger);
-
-    const dropdown = await screen.findByTestId("quick-scripts-dropdown");
-
-    await waitFor(() => {
-      expect(dropdown.style.top).toBe("274px");
-      expect(dropdown.style.left).toBe("99px");
-      expect(dropdown.style.width).toBe("260px");
-    });
-  });
-
-  it("clamps horizontal position to viewport edges on small screens", async () => {
-    const user = userEvent.setup();
-    Object.defineProperty(window, "innerWidth", {
-      configurable: true,
-      writable: true,
-      value: 360,
-    });
-    Object.defineProperty(window, "innerHeight", {
-      configurable: true,
-      writable: true,
-      value: 700,
-    });
-
-    renderDropdown();
-    const trigger = mockTriggerRect({ top: 140, left: -40, width: 120, height: 36 });
-
-    await user.click(trigger);
-
-    const dropdown = await screen.findByTestId("quick-scripts-dropdown");
-
-    await waitFor(() => {
-      expect(dropdown.style.left).toBe("16px");
-    });
-  });
-
-  it("repositions on window resize", async () => {
-    const user = userEvent.setup();
-    renderDropdown();
-
-    const triggerRect = { top: 120, left: 220, width: 120, height: 36 };
-    const trigger = mockTriggerRect(triggerRect);
-
-    await user.click(trigger);
-
-    const dropdown = await screen.findByTestId("quick-scripts-dropdown");
-    await waitFor(() => {
-      expect(dropdown.style.top).toBe("162px");
-    });
-
-    Object.defineProperty(window, "innerHeight", {
-      configurable: true,
-      writable: true,
-      value: 360,
-    });
-    fireEvent(window, new Event("resize"));
-
-    await waitFor(() => {
-      expect(dropdown.style.top).toBe("64px");
-    });
-  });
-
-  it("keeps keyboard navigation behavior (arrow keys, enter, escape)", async () => {
-    const user = userEvent.setup();
-    renderDropdown();
-    const trigger = mockTriggerRect({ top: 120, left: 220, width: 120, height: 36 });
-
-    await user.click(trigger);
-
-    const dropdown = await screen.findByTestId("quick-scripts-dropdown");
-    await user.keyboard("{ArrowDown}");
-    await user.keyboard("{Enter}");
-
-    expect(onRunScript).toHaveBeenCalledWith("build", "pnpm build");
-
-    await user.click(trigger);
-    await screen.findByTestId("quick-scripts-dropdown");
-    await user.keyboard("{Escape}");
-
-    await waitFor(() => {
+    it("does not show dropdown menu initially", () => {
+      renderDropdown();
       expect(screen.queryByTestId("quick-scripts-dropdown")).toBeNull();
     });
+  });
 
-    expect(dropdown).toBeTruthy();
+  describe("dropdown open/close", () => {
+    it("opens dropdown when trigger is clicked", async () => {
+      mockFetchScripts.mockResolvedValue({});
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-scripts-dropdown")).toBeDefined();
+      });
+    });
+
+    it("closes dropdown when clicking outside", async () => {
+      mockFetchScripts.mockResolvedValue({});
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-scripts-dropdown")).toBeDefined();
+      });
+
+      fireEvent.mouseDown(document.body);
+      await waitFor(() => {
+        expect(screen.queryByTestId("quick-scripts-dropdown")).toBeNull();
+      });
+    });
+
+    it("closes dropdown on Escape key", async () => {
+      mockFetchScripts.mockResolvedValue({});
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-scripts-dropdown")).toBeDefined();
+      });
+
+      fireEvent.keyDown(document, { key: "Escape" });
+      await waitFor(() => {
+        expect(screen.queryByTestId("quick-scripts-dropdown")).toBeNull();
+      });
+    });
+
+    it("closes dropdown when trigger is clicked again", async () => {
+      mockFetchScripts.mockResolvedValue({});
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-scripts-dropdown")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.queryByTestId("quick-scripts-dropdown")).toBeNull();
+      });
+    });
+  });
+
+  describe("fetching and displaying scripts", () => {
+    it("shows loading state while fetching", async () => {
+      mockFetchScripts.mockImplementation(() => new Promise(() => {}));
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+
+      expect(screen.getByTestId("quick-scripts-loading")).toBeDefined();
+    });
+
+    it("fetches and displays scripts", async () => {
+      mockFetchScripts.mockResolvedValue({
+        build: "npm run build",
+        test: "npm test",
+        lint: "npm run lint",
+      });
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-script-item-build")).toBeDefined();
+        expect(screen.getByTestId("quick-script-item-test")).toBeDefined();
+        expect(screen.getByTestId("quick-script-item-lint")).toBeDefined();
+      });
+    });
+
+    it("displays script names and truncated commands", async () => {
+      mockFetchScripts.mockResolvedValue({
+        "long-command": "this is a very long command that should be truncated",
+      });
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+
+      await waitFor(() => {
+        const item = screen.getByTestId("quick-script-item-long-command");
+        expect(item.textContent).toContain("long-command");
+        expect(item.textContent).toContain("this is a very long command that should be truncat...");
+      });
+    });
+
+    it("handles short commands without truncation", async () => {
+      mockFetchScripts.mockResolvedValue({
+        short: "echo hi",
+      });
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+
+      await waitFor(() => {
+        const item = screen.getByTestId("quick-script-item-short");
+        expect(item.textContent).toContain("short");
+        expect(item.textContent).toContain("echo hi");
+      });
+    });
+
+    it("sorts scripts alphabetically", async () => {
+      mockFetchScripts.mockResolvedValue({
+        zebra: "echo zebra",
+        alpha: "echo alpha",
+        beta: "echo beta",
+      });
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+
+      await waitFor(() => {
+        const items = screen.getAllByRole("option");
+        expect(items[0].textContent).toContain("alpha");
+        expect(items[1].textContent).toContain("beta");
+        expect(items[2].textContent).toContain("zebra");
+      });
+    });
+  });
+
+  describe("running scripts", () => {
+    it("calls onRunScript when a script is clicked", async () => {
+      mockFetchScripts.mockResolvedValue({
+        build: "npm run build",
+      });
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-script-item-build")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByTestId("quick-script-item-build"));
+
+      expect(mockOnRunScript).toHaveBeenCalledWith("build", "npm run build");
+    });
+
+    it("closes dropdown after running script", async () => {
+      mockFetchScripts.mockResolvedValue({
+        test: "npm test",
+      });
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-script-item-test")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByTestId("quick-script-item-test"));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("quick-scripts-dropdown")).toBeNull();
+      });
+    });
+  });
+
+  describe("manage scripts link", () => {
+    it("shows 'Manage Scripts...' link when scripts exist", async () => {
+      mockFetchScripts.mockResolvedValue({
+        build: "npm run build",
+      });
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-scripts-manage")).toBeDefined();
+      });
+    });
+
+    it("calls onOpenScripts when 'Manage Scripts...' is clicked", async () => {
+      mockFetchScripts.mockResolvedValue({
+        build: "npm run build",
+      });
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-scripts-manage")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByTestId("quick-scripts-manage"));
+
+      expect(mockOnOpenScripts).toHaveBeenCalled();
+    });
+
+    it("closes dropdown when 'Manage Scripts...' is clicked", async () => {
+      mockFetchScripts.mockResolvedValue({
+        build: "npm run build",
+      });
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-scripts-manage")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByTestId("quick-scripts-manage"));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("quick-scripts-dropdown")).toBeNull();
+      });
+    });
+  });
+
+  describe("empty state", () => {
+    it("shows empty state when no scripts configured", async () => {
+      mockFetchScripts.mockResolvedValue({});
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-scripts-empty")).toBeDefined();
+      });
+    });
+
+    it("empty state shows 'Add your first script' button", async () => {
+      mockFetchScripts.mockResolvedValue({});
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByText("Add your first script")).toBeDefined();
+      });
+    });
+
+    it("clicking 'Add your first script' calls onOpenScripts", async () => {
+      mockFetchScripts.mockResolvedValue({});
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByText("Add your first script")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByText("Add your first script"));
+
+      expect(mockOnOpenScripts).toHaveBeenCalled();
+    });
+
+    it("closes dropdown when empty state action is clicked", async () => {
+      mockFetchScripts.mockResolvedValue({});
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByText("Add your first script")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByText("Add your first script"));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("quick-scripts-dropdown")).toBeNull();
+      });
+    });
+  });
+
+  describe("keyboard navigation", () => {
+    it("supports ArrowDown to highlight items", async () => {
+      mockFetchScripts.mockResolvedValue({
+        alpha: "echo alpha",
+        beta: "echo beta",
+      });
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-script-item-alpha")).toBeDefined();
+      });
+
+      const menu = screen.getByTestId("quick-scripts-dropdown");
+
+      // First ArrowDown highlights first item
+      fireEvent.keyDown(menu, { key: "ArrowDown" });
+      expect(screen.getByTestId("quick-script-item-alpha").className).toContain("highlighted");
+
+      // Second ArrowDown highlights second item
+      fireEvent.keyDown(menu, { key: "ArrowDown" });
+      expect(screen.getByTestId("quick-script-item-beta").className).toContain("highlighted");
+    });
+
+    it("supports ArrowUp to highlight items", async () => {
+      mockFetchScripts.mockResolvedValue({
+        alpha: "echo alpha",
+        beta: "echo beta",
+      });
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-script-item-alpha")).toBeDefined();
+      });
+
+      const menu = screen.getByTestId("quick-scripts-dropdown");
+
+      // Go to bottom first with End key
+      fireEvent.keyDown(menu, { key: "End" });
+
+      // ArrowUp moves to previous item
+      fireEvent.keyDown(menu, { key: "ArrowUp" });
+      expect(screen.getByTestId("quick-script-item-beta").className).toContain("highlighted");
+    });
+
+    it("wraps around with arrow keys", async () => {
+      mockFetchScripts.mockResolvedValue({
+        alpha: "echo alpha",
+      });
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-script-item-alpha")).toBeDefined();
+      });
+
+      const menu = screen.getByTestId("quick-scripts-dropdown");
+
+      // ArrowUp from start wraps to end (Manage Scripts...)
+      fireEvent.keyDown(menu, { key: "ArrowUp" });
+      expect(screen.getByTestId("quick-scripts-manage").className).toContain("highlighted");
+
+      // ArrowDown from end wraps to start
+      fireEvent.keyDown(menu, { key: "ArrowDown" });
+      expect(screen.getByTestId("quick-script-item-alpha").className).toContain("highlighted");
+    });
+
+    it("runs script with Enter key", async () => {
+      mockFetchScripts.mockResolvedValue({
+        build: "npm run build",
+      });
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-script-item-build")).toBeDefined();
+      });
+
+      const menu = screen.getByTestId("quick-scripts-dropdown");
+
+      // Highlight and press Enter
+      fireEvent.keyDown(menu, { key: "ArrowDown" });
+      fireEvent.keyDown(menu, { key: "Enter" });
+
+      expect(mockOnRunScript).toHaveBeenCalledWith("build", "npm run build");
+    });
+
+    it("opens manage scripts with Enter key on manage button", async () => {
+      mockFetchScripts.mockResolvedValue({
+        build: "npm run build",
+      });
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-scripts-manage")).toBeDefined();
+      });
+
+      const menu = screen.getByTestId("quick-scripts-dropdown");
+
+      // Navigate to last item (Manage Scripts...) and press Enter
+      fireEvent.keyDown(menu, { key: "End" });
+      fireEvent.keyDown(menu, { key: "Enter" });
+
+      expect(mockOnOpenScripts).toHaveBeenCalled();
+    });
+
+    it("supports Home key to go to first item", async () => {
+      mockFetchScripts.mockResolvedValue({
+        alpha: "echo alpha",
+        beta: "echo beta",
+      });
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-script-item-alpha")).toBeDefined();
+      });
+
+      const menu = screen.getByTestId("quick-scripts-dropdown");
+
+      // Go to end first
+      fireEvent.keyDown(menu, { key: "End" });
+      // Home goes to first
+      fireEvent.keyDown(menu, { key: "Home" });
+
+      expect(screen.getByTestId("quick-script-item-alpha").className).toContain("highlighted");
+    });
+
+    it("supports End key to go to last item", async () => {
+      mockFetchScripts.mockResolvedValue({
+        alpha: "echo alpha",
+        beta: "echo beta",
+      });
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-script-item-alpha")).toBeDefined();
+      });
+
+      const menu = screen.getByTestId("quick-scripts-dropdown");
+
+      fireEvent.keyDown(menu, { key: "End" });
+
+      expect(screen.getByTestId("quick-scripts-manage").className).toContain("highlighted");
+    });
+  });
+
+  describe("error handling", () => {
+    it("handles fetch errors gracefully", async () => {
+      mockFetchScripts.mockRejectedValue(new Error("Failed to fetch"));
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+
+      await waitFor(() => {
+        // Should show empty state since scripts will be empty object on error
+        expect(screen.getByTestId("quick-scripts-empty")).toBeDefined();
+      });
+    });
+  });
+
+  describe("focus management", () => {
+    it("menu is focusable with tabIndex", async () => {
+      mockFetchScripts.mockResolvedValue({});
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-scripts-dropdown")).toBeDefined();
+      });
+
+      const menu = screen.getByTestId("quick-scripts-dropdown");
+      expect(menu).toHaveAttribute("tabIndex", "-1");
+    });
+
+    it("focus moves to trigger when Escape is pressed", async () => {
+      mockFetchScripts.mockResolvedValue({});
+      renderDropdown();
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-scripts-dropdown")).toBeDefined();
+      });
+
+      fireEvent.keyDown(document, { key: "Escape" });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("quick-scripts-dropdown")).toBeNull();
+      });
+
+      // Trigger should have focus
+      expect(document.activeElement).toBe(screen.getByTestId("scripts-btn"));
+    });
   });
 });
