@@ -17,4 +17,9 @@ export type {
   InteractiveData,
   ProjectItem,
   TaskItem,
+  GitStatus,
+  GitCommit,
+  GitCommitDetail,
+  GitBranch,
+  GitWorktree,
 } from "./state.js";

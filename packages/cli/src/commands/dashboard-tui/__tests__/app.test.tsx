@@ -63,6 +63,34 @@ function makeInteractiveData(opts: {
     getSettings: async () => settings,
     updateSettings: async (_partial: Partial<SettingsValues>) => {},
     listModels: () => models,
+    git: {
+      getStatus: async () => ({
+        branch: "main",
+        detached: false,
+        ahead: 0,
+        behind: 0,
+        staged: [],
+        unstaged: [],
+        untracked: [],
+        remoteUrl: "",
+        lastFetchAt: null,
+      }),
+      listCommits: async () => [],
+      showCommit: async () => ({
+        sha: "",
+        shortSha: "",
+        subject: "",
+        authorName: "",
+        relativeTime: "",
+        isoTime: "",
+        body: "",
+        stat: "",
+      }),
+      listBranches: async () => [],
+      listWorktrees: async () => [],
+      push: async () => ({ success: true, output: "" }),
+      fetch: async () => ({ success: true, output: "" }),
+    },
   };
 }
 

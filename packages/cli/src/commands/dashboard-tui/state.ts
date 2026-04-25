@@ -8,7 +8,7 @@ export type SectionId = "logs" | "system" | "utilities" | "stats" | "settings";
 
 export type AppMode = "status" | "interactive";
 
-export type InteractiveView = "board" | "agents" | "settings";
+export type InteractiveView = "board" | "agents" | "settings" | "git";
 
 export interface SystemInfo {
   host: string;
@@ -124,6 +124,50 @@ export interface ModelItem {
   contextWindow: number;
 }
 
+// ── Git view types ────────────────────────────────────────────────────────────
+
+export interface GitStatus {
+  branch: string;
+  detached: boolean;
+  ahead: number;
+  behind: number;
+  staged: Array<{ status: string; path: string }>;
+  unstaged: Array<{ status: string; path: string }>;
+  untracked: Array<{ path: string }>;
+  remoteUrl: string;
+  lastFetchAt: number | null;
+}
+
+export interface GitCommit {
+  sha: string;
+  shortSha: string;
+  subject: string;
+  authorName: string;
+  relativeTime: string;
+  isoTime: string;
+}
+
+export interface GitCommitDetail extends GitCommit {
+  body: string;
+  stat: string;
+}
+
+export interface GitBranch {
+  name: string;
+  shortSha: string;
+  relativeTime: string;
+  isCurrent: boolean;
+  upstreamTrack: string;
+}
+
+export interface GitWorktree {
+  path: string;
+  branch: string;
+  sha: string;
+  isCurrent: boolean;
+  isLocked: boolean;
+}
+
 export interface InteractiveData {
   listProjects: () => Promise<ProjectItem[]>;
   listTasks: (projectPath: string) => Promise<TaskItem[]>;
@@ -135,6 +179,15 @@ export interface InteractiveData {
   getSettings: () => Promise<SettingsValues>;
   updateSettings: (partial: Partial<SettingsValues>) => Promise<void>;
   listModels: () => ModelItem[];
+  git: {
+    getStatus: (projectPath: string) => Promise<GitStatus>;
+    listCommits: (projectPath: string, limit?: number) => Promise<GitCommit[]>;
+    showCommit: (projectPath: string, sha: string) => Promise<GitCommitDetail>;
+    listBranches: (projectPath: string) => Promise<GitBranch[]>;
+    listWorktrees: (projectPath: string) => Promise<GitWorktree[]>;
+    push: (projectPath: string) => Promise<{ success: boolean; output: string }>;
+    fetch: (projectPath: string) => Promise<{ success: boolean; output: string }>;
+  };
 }
 
 // ── Dashboard state (mutable, shared between controller and App) ───────────────

@@ -38,6 +38,11 @@ import type {
   ModelItem,
   SettingsValues,
   InteractiveView,
+  GitStatus,
+  GitCommit,
+  GitCommitDetail,
+  GitBranch,
+  GitWorktree,
 } from "./state.js";
 import { SECTION_ORDER } from "./state.js";
 import type { LogEntry } from "./log-ring-buffer.js";
@@ -78,7 +83,7 @@ function formatRelativeTime(iso: string): string {
 // All-blue vertical gradient — top: brightest white, fading through plain
 // blue. blueBright is avoided because some terminal themes render it with
 // a purple cast; we want the gradient to read as strictly white→blue.
-const LOGO_COLORS = ["whiteBright", "white", "white", "blue", "blue", "blue", "blue", "blue"] as const;
+const LOGO_COLORS = ["whiteBright", "white", "white", "cyanBright", "cyanBright", "cyan", "cyan", "blue"] as const;
 type InkColor = typeof LOGO_COLORS[number];
 
 function logoColor(index: number, total: number): InkColor {
@@ -120,15 +125,15 @@ function SplashScreen({ loadingStatus }: { loadingStatus: string }) {
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
       {compact ? (
-        <Text bold color="blue">FUSION</Text>
+        <Text bold color="cyanBright">FUSION</Text>
       ) : (
         <AnimatedFusionLogo lines={large ? FUSION_LOGO_LARGE_LINES : FUSION_LOGO_LINES} />
       )}
-      <Text color="blue" dimColor>{FUSION_TAGLINE}</Text>
+      <Text color="cyanBright" dimColor>{FUSION_TAGLINE}</Text>
       <Box height={1} />
       <Box flexDirection="row" gap={1}>
-        <Text color="blue"><Spinner type="dots" /></Text>
-        <Text color="blue" dimColor>{loadingStatus}</Text>
+        <Text color="cyanBright"><Spinner type="dots" /></Text>
+        <Text color="cyanBright" dimColor>{loadingStatus}</Text>
       </Box>
     </Box>
   );
@@ -139,7 +144,7 @@ function SplashScreen({ loadingStatus }: { loadingStatus: string }) {
 function MiniLogo() {
   return (
     <Box flexDirection="row" gap={0}>
-      <Text color="blue" bold>FUSION</Text>
+      <Text color="cyanBright" bold>FUSION</Text>
     </Box>
   );
 }
@@ -159,7 +164,7 @@ function Panel({ title, isFocused, children, flexGrow, flexShrink, width }: Pane
   return (
     <Box
       borderStyle="round"
-      borderColor={isFocused ? "cyan" : "gray"}
+      borderColor={isFocused ? "cyanBright" : "gray"}
       flexDirection="column"
       flexGrow={flexGrow}
       flexShrink={flexShrink}
@@ -167,7 +172,7 @@ function Panel({ title, isFocused, children, flexGrow, flexShrink, width }: Pane
       overflow="hidden"
     >
       <Box paddingX={1}>
-        <Text bold={isFocused} color={isFocused ? "cyan" : undefined} dimColor={!isFocused}>
+        <Text bold={isFocused} color={isFocused ? "cyanBright" : undefined} dimColor={!isFocused}>
           {title}
         </Text>
       </Box>
@@ -198,7 +203,7 @@ function SystemPanel({ state, isFocused }: { state: DashboardState; isFocused: b
           </Box>
           <Box flexDirection="row" gap={1}>
             <Text dimColor>URL:</Text>
-            <Text color="cyan">{info.baseUrl}</Text>
+            <Text color="cyanBright">{info.baseUrl}</Text>
           </Box>
           {info.authEnabled ? (
             <>
@@ -215,7 +220,7 @@ function SystemPanel({ state, isFocused }: { state: DashboardState; isFocused: b
               {info.tokenizedUrl && (
                 <Box flexDirection="row" gap={1}>
                   <Text dimColor>Open:</Text>
-                  <Text wrap="truncate" color="cyanBright">{info.tokenizedUrl}</Text>
+                  <Text wrap="truncate" color="white">{info.tokenizedUrl}</Text>
                 </Box>
               )}
             </>
@@ -289,10 +294,11 @@ function cpuColor(percent: number, cores: number): "red" | "yellow" | undefined 
 }
 
 function StatRow({ label, children }: { label: string; children: React.ReactNode }) {
-  // Fixed-width label column produces a clean two-column layout.
+  // Fixed-width label column + 2-col gap before values gives a clean
+  // two-column layout with breathing room between label and value.
   return (
-    <Box flexDirection="row" marginBottom={0}>
-      <Box width={11}>
+    <Box flexDirection="row">
+      <Box width={10}>
         <Text dimColor>{label}</Text>
       </Box>
       <Box flexDirection="row" gap={1}>{children}</Box>
@@ -300,107 +306,128 @@ function StatRow({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
+function SectionHeader({ title }: { title: string }) {
+  return (
+    <Box flexDirection="row" gap={1}>
+      <Text bold color="cyanBright">{title}</Text>
+    </Box>
+  );
+}
+
 function StatsPanel({ state, isFocused }: { state: DashboardState; isFocused: boolean }) {
   const stats = state.taskStats;
   const sys = state.systemStats;
+  const { stdout } = useStdout();
+  // The Stats panel sits in the left column of StatusModeGrid (~1/3 of cols).
+  // When the terminal is narrow the multi-piece Heap / Memory rows overflow
+  // the panel width — break the trailing fragment onto its own line below.
+  const narrow = (stdout?.columns ?? 80) < 120;
   return (
     <Panel title="Stats" isFocused={isFocused} flexGrow={1}>
       <Box flexDirection="column">
         {sys && (
           <>
-            <Text bold>Process</Text>
-            <Box marginLeft={1} flexDirection="column" marginTop={0}>
-              <StatRow label="RSS">
-                <Text color={rssColor(sys.rss, sys.systemTotalMem)}>
-                  {formatBytes(sys.rss)}
+            <SectionHeader title="Process" />
+            <StatRow label="RSS">
+              <Text color={rssColor(sys.rss, sys.systemTotalMem)}>
+                {formatBytes(sys.rss)}
+              </Text>
+              {sys.systemTotalMem > 0 && (
+                <Text dimColor>
+                  {((sys.rss / sys.systemTotalMem) * 100).toFixed(1)}%
                 </Text>
-                {sys.systemTotalMem > 0 && (
-                  <Text dimColor>
-                    ({((sys.rss / sys.systemTotalMem) * 100).toFixed(1)}%)
-                  </Text>
-                )}
+              )}
+            </StatRow>
+            <StatRow label="Heap">
+              <Text color={heapColor(sys.heapUsed, sys.heapLimit)}>
+                {formatBytes(sys.heapUsed)}
+              </Text>
+              <Text dimColor>/</Text>
+              <Text>{formatBytes(sys.heapTotal)}</Text>
+              {!narrow && (
+                <>
+                  <Text dimColor>limit</Text>
+                  <Text>{formatBytes(sys.heapLimit)}</Text>
+                </>
+              )}
+            </StatRow>
+            {narrow && (
+              <StatRow label="">
+                <Text dimColor>limit</Text>
+                <Text>{formatBytes(sys.heapLimit)}</Text>
               </StatRow>
-              <StatRow label="Heap">
-                <Text color={heapColor(sys.heapUsed, sys.heapLimit)}>
-                  {formatBytes(sys.heapUsed)}
-                </Text>
-                <Text dimColor>/ {formatBytes(sys.heapTotal)}</Text>
-                <Text dimColor>· limit {formatBytes(sys.heapLimit)}</Text>
-              </StatRow>
-              <StatRow label="External">
-                <Text>{formatBytes(sys.external)}</Text>
-                <Text dimColor>· buffers {formatBytes(sys.arrayBuffers)}</Text>
-              </StatRow>
-              <StatRow label="CPU">
-                <Text color={cpuColor(sys.cpuPercent, sys.cpuCount)}>
-                  {sys.cpuPercent.toFixed(1)}%
-                </Text>
-                <Text dimColor>· load {sys.loadAvg.map((n) => n.toFixed(2)).join(" ")}</Text>
-              </StatRow>
-            </Box>
-            <Box height={1} />
-            <Text bold>System</Text>
-            <Box marginLeft={1} flexDirection="column">
-              <StatRow label="Memory">
-                <Text color={sysMemColor(sys.systemTotalMem - sys.systemFreeMem, sys.systemTotalMem)}>
-                  {formatBytes(sys.systemTotalMem - sys.systemFreeMem)}
-                </Text>
-                <Text dimColor>used ·</Text>
+            )}
+            <StatRow label="External">
+              <Text>{formatBytes(sys.external)}</Text>
+              <Text dimColor>buffers</Text>
+              <Text>{formatBytes(sys.arrayBuffers)}</Text>
+            </StatRow>
+            <StatRow label="CPU">
+              <Text color={cpuColor(sys.cpuPercent, sys.cpuCount)}>
+                {sys.cpuPercent.toFixed(1)}%
+              </Text>
+              <Text dimColor>load</Text>
+              <Text>{sys.loadAvg.map((n) => n.toFixed(2)).join(" ")}</Text>
+            </StatRow>
+
+            <SectionHeader title="System" />
+            <StatRow label="Memory">
+              <Text color={sysMemColor(sys.systemTotalMem - sys.systemFreeMem, sys.systemTotalMem)}>
+                {formatBytes(sys.systemTotalMem - sys.systemFreeMem)}
+              </Text>
+              <Text dimColor>used</Text>
+              {!narrow && (
+                <>
+                  <Text>{formatBytes(sys.systemFreeMem)}</Text>
+                  <Text dimColor>free</Text>
+                </>
+              )}
+            </StatRow>
+            {narrow && (
+              <StatRow label="">
                 <Text>{formatBytes(sys.systemFreeMem)}</Text>
                 <Text dimColor>free</Text>
               </StatRow>
-              <StatRow label="Total">
-                <Text>{formatBytes(sys.systemTotalMem)}</Text>
-              </StatRow>
-              <StatRow label="Cores">
-                <Text>{sys.cpuCount}</Text>
-              </StatRow>
-              <StatRow label="Platform">
-                <Text>{sys.platform}</Text>
-              </StatRow>
-              <StatRow label="Node">
-                <Text>{sys.nodeVersion}</Text>
-              </StatRow>
-              <StatRow label="PID">
-                <Text>{sys.pid}</Text>
-              </StatRow>
-            </Box>
-            <Box height={1} />
+            )}
+            <StatRow label="Cores">
+              <Text>{sys.cpuCount}</Text>
+              <Text dimColor>{sys.platform}</Text>
+            </StatRow>
+            <StatRow label="Node">
+              <Text>{sys.nodeVersion}</Text>
+              <Text dimColor>pid</Text>
+              <Text>{sys.pid}</Text>
+            </StatRow>
           </>
         )}
-        {!stats ? (
-          <Text dimColor>Tasks not available.</Text>
-        ) : (
+        {stats && (
           <>
-            <Text bold>Tasks</Text>
-            <Box marginLeft={1} flexDirection="column">
-              {Object.entries(stats.byColumn).map(([col, count]) => {
-                const name = col.replace(/-/g, " ");
-                const isActive = (col === "in-progress" || col === "in-review") && count > 0;
-                return (
-                  <StatRow key={col} label={name}>
-                    <Text color={isActive ? "green" : undefined}>{count}</Text>
-                  </StatRow>
-                );
-              })}
-            </Box>
-            <Box height={1} />
-            <Text bold>Agents</Text>
-            <Box marginLeft={1} flexDirection="column">
-              <StatRow label="idle">
-                <Text>{stats.agents.idle}</Text>
-              </StatRow>
-              <StatRow label="active">
-                <Text color="green">{stats.agents.active}</Text>
-              </StatRow>
-              <StatRow label="error">
-                <Text color={stats.agents.error > 0 ? "red" : undefined}>
-                  {stats.agents.error}
-                </Text>
-              </StatRow>
-            </Box>
+            <SectionHeader title="Tasks" />
+            {Object.entries(stats.byColumn).map(([col, count]) => {
+              const name = col.replace(/-/g, " ");
+              const isActive = (col === "in-progress" || col === "in-review") && count > 0;
+              return (
+                <StatRow key={col} label={name}>
+                  <Text color={isActive ? "green" : undefined}>{count}</Text>
+                </StatRow>
+              );
+            })}
+
+            <SectionHeader title="Agents" />
+            <StatRow label="idle">
+              <Text>{stats.agents.idle}</Text>
+            </StatRow>
+            <StatRow label="active">
+              <Text color="green">{stats.agents.active}</Text>
+            </StatRow>
+            <StatRow label="error">
+              <Text color={stats.agents.error > 0 ? "red" : undefined}>
+                {stats.agents.error}
+              </Text>
+            </StatRow>
           </>
         )}
+        {!sys && !stats && <Text dimColor>Stats not available.</Text>}
       </Box>
     </Panel>
   );
@@ -512,7 +539,7 @@ function LogsPanel({
           {visibleEntries.map((entry, displayIdx) => {
             const absoluteIndex = visibleStart + displayIdx;
             const isSelected = absoluteIndex === cursor;
-            const bg = isSelected ? "blue" : undefined;
+            const bg = isSelected ? "cyan" : undefined;
             const fg = isSelected ? "whiteBright" : undefined;
             const ts = formatTimestamp(entry.timestamp);
             const lvl = entry.level === "error" ? "✗" : entry.level === "warn" ? "⚠" : "✓";
@@ -530,7 +557,7 @@ function LogsPanel({
                 backgroundColor={bg}
                 wrap={logsWrapEnabled ? "wrap" : "truncate-end"}
               >
-                <Text color={isSelected ? "cyanBright" : "gray"} bold={isSelected}>{marker}</Text>
+                <Text color={isSelected ? "white" : "gray"} bold={isSelected}>{marker}</Text>
                 <Text color={fg} dimColor={!isSelected}>{ts} </Text>
                 <Text color={lvlColor}>{lvl}</Text>
                 <Text color={fg} dimColor={!isSelected}>{` ${prefixSlot} `}</Text>
@@ -546,7 +573,7 @@ function LogsPanel({
 
 function ExpandedLog({ entry, index, total }: { entry: LogEntry; index: number; total: number }) {
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" flexGrow={1}>
       <Text dimColor>Entry {index + 1}/{total} · [Enter/Esc] close</Text>
       <Box height={1} />
       <Box flexDirection="row" gap={1}>
@@ -600,6 +627,7 @@ function HelpOverlay() {
     ["[b]", "Board view (interactive mode)"],
     ["[a]", "Agents view"],
     ["[g]", "Settings view"],
+    ["[t]", "Git view"],
     ["[s]", "Status mode"],
     ["[1] / [2] / [3]", "Board / Agents / Settings (interactive)"],
     ["[Tab]", "Cycle focused panel forward"],
@@ -631,8 +659,8 @@ function HelpOverlay() {
   const titleRow = " KEYBOARD SHORTCUTS".padEnd(innerWidth);
 
   return (
-    <Box borderStyle="round" borderColor="cyan" flexDirection="column" backgroundColor="black">
-      <Text backgroundColor="black" bold color="cyanBright">{titleRow}</Text>
+    <Box borderStyle="round" borderColor="cyanBright" flexDirection="column" backgroundColor="black">
+      <Text backgroundColor="black" bold color="white">{titleRow}</Text>
       <Text backgroundColor="black"> </Text>
       {shortcuts.map(([key, desc]) => {
         const keyCell = ` ${key.padEnd(rowKeyWidth - 1)} `;
@@ -667,25 +695,7 @@ function StatusModeGrid({
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      <Box flexDirection="row" gap={1} paddingX={1} paddingY={0}>
-        <MiniLogo />
-        <Text dimColor>│</Text>
-        {SECTION_ORDER.map((section, i) => {
-          const isActive = section === focused;
-          const label = section.charAt(0).toUpperCase() + section.slice(1);
-          return (
-            <Box key={section} marginRight={1}>
-              {isActive ? (
-                <Text backgroundColor="cyan" color="black" bold>{` [${i + 1}] ${label} `}</Text>
-              ) : (
-                <Text dimColor>{`[${i + 1}] ${label}`}</Text>
-              )}
-            </Box>
-          );
-        })}
-        <Box flexGrow={1} />
-        <Text dimColor>[b] board  [a] agents  [g] settings  [?] help  [q] quit</Text>
-      </Box>
+      <MainHeader state={state} />
 
       <Box flexDirection="row" flexGrow={1} overflow="hidden">
         <Box flexDirection="column" flexGrow={1} overflow="hidden">
@@ -735,23 +745,7 @@ function StatusModeSingle({
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      <Box flexDirection="row" gap={1} paddingX={1}>
-        <MiniLogo />
-        <Text dimColor>│</Text>
-        {SECTION_ORDER.map((section, i) => {
-          const isActive = section === focused;
-          const label = section.charAt(0).toUpperCase() + section.slice(1);
-          return (
-            <Box key={section} marginRight={1}>
-              {isActive ? (
-                <Text backgroundColor="cyan" color="black" bold>{` [${i + 1}] ${label} `}</Text>
-              ) : (
-                <Text dimColor>{`[${i + 1}] ${label}`}</Text>
-              )}
-            </Box>
-          );
-        })}
-      </Box>
+      <MainHeader state={state} />
       <Box flexGrow={1} flexDirection="column" overflow="hidden">
         {activePanel()}
       </Box>
@@ -788,28 +782,50 @@ function StatusBar({ state, controller: _controller }: { state: DashboardState; 
 
 // ── Interactive mode ──────────────────────────────────────────────────────────
 
-// ── Interactive mode header / tab strip ───────────────────────────────────────
+// ── Unified main header — used by both status and interactive modes ──────────
 
-function InteractiveHeader({ activeView }: { activeView: InteractiveView }) {
-  const tabs: Array<{ key: string; label: string; view: InteractiveView }> = [
+function MainHeader({ state }: { state: DashboardState }) {
+  const inInteractive = state.mode === "interactive";
+  const focused = state.activeSection;
+  const interactiveView = state.interactiveView;
+  const interactiveTabs: Array<{ key: string; label: string; view: InteractiveView }> = [
     { key: "b", label: "Board", view: "board" },
     { key: "a", label: "Agents", view: "agents" },
     { key: "g", label: "Settings", view: "settings" },
+    { key: "t", label: "Git", view: "git" },
   ];
   return (
-    <Box flexDirection="row" gap={2} paddingX={1}>
+    <Box flexDirection="row" gap={1} paddingX={1} paddingY={0}>
       <MiniLogo />
       <Text dimColor>│</Text>
-      {tabs.map(({ key, label, view }) => {
-        const isActive = view === activeView;
-        return isActive ? (
-          <Text key={view} backgroundColor="cyan" color="black" bold>{` [${key}] ${label} `}</Text>
-        ) : (
-          <Text key={view} dimColor>{`[${key}] ${label}`}</Text>
+      {SECTION_ORDER.map((section, i) => {
+        const isActive = !inInteractive && section === focused;
+        const label = section.charAt(0).toUpperCase() + section.slice(1);
+        return (
+          <Box key={section} marginRight={1}>
+            {isActive ? (
+              <Text backgroundColor="cyan" color="black" bold>{` [${i + 1}] ${label} `}</Text>
+            ) : (
+              <Text dimColor>{`[${i + 1}] ${label}`}</Text>
+            )}
+          </Box>
+        );
+      })}
+      <Text dimColor>│</Text>
+      {interactiveTabs.map(({ key, label, view }) => {
+        const isActive = inInteractive && view === interactiveView;
+        return (
+          <Box key={view} marginRight={1}>
+            {isActive ? (
+              <Text backgroundColor="cyan" color="black" bold>{` [${key}] ${label} `}</Text>
+            ) : (
+              <Text dimColor>{`[${key}] ${label}`}</Text>
+            )}
+          </Box>
         );
       })}
       <Box flexGrow={1} />
-      <Text dimColor>[s] status  [?] help  [q] quit</Text>
+      <Text dimColor>[?] help  [q] quit</Text>
     </Box>
   );
 }
@@ -819,10 +835,10 @@ function InteractiveHeader({ activeView }: { activeView: InteractiveView }) {
 const KANBAN_COLUMNS = ["todo", "in-progress", "in-review", "done"] as const;
 type KanbanColumn = typeof KANBAN_COLUMNS[number];
 
-const COLUMN_COLORS: Record<string, "yellow" | "cyan" | "magenta" | "green"> = {
+const COLUMN_COLORS: Record<string, "yellow" | "cyanBright" | "cyan" | "green"> = {
   todo: "yellow",
-  "in-progress": "cyan",
-  "in-review": "magenta",
+  "in-progress": "cyanBright",
+  "in-review": "cyan",
   done: "green",
 };
 
@@ -843,6 +859,7 @@ function TaskCard({
   const borderColor = selected ? "cyanBright" : "gray";
   const titleColor = selected ? "whiteBright" : undefined;
   const shortId = task.id.length > 10 ? task.id.slice(0, 8) : task.id;
+  const title = task.title ?? task.description ?? "(untitled)";
   return (
     <Box
       borderStyle="round"
@@ -858,8 +875,8 @@ function TaskCard({
           <Text color={accent}>● {task.agentState}</Text>
         )}
       </Box>
-      <Text bold={selected} color={titleColor} wrap="truncate-end">
-        {task.title ?? task.id}
+      <Text bold={selected} color={titleColor} wrap="wrap">
+        {title}
       </Text>
     </Box>
   );
@@ -935,7 +952,7 @@ function ProjectSelector({
     return (
       <Box flexDirection="row" gap={1}>
         <Text dimColor>Project:</Text>
-        <Text bold color="cyanBright">{current?.name ?? "(none)"}</Text>
+        <Text bold color="white">{current?.name ?? "(none)"}</Text>
         <Text dimColor>[p] change</Text>
       </Box>
     );
@@ -943,13 +960,13 @@ function ProjectSelector({
   return (
     <Box
       borderStyle="round"
-      borderColor="cyan"
+      borderColor="cyanBright"
       flexDirection="column"
       paddingX={1}
       backgroundColor="black"
       width={Math.max(30, ...projects.map((p) => p.name.length + 4))}
     >
-      <Text bold color="cyan" backgroundColor="black">Pick a project</Text>
+      <Text bold color="cyanBright" backgroundColor="black">Pick a project</Text>
       {projects.length === 0 ? (
         <Text dimColor backgroundColor="black">(no projects registered)</Text>
       ) : (
@@ -957,7 +974,7 @@ function ProjectSelector({
           const isSel = i === selectedIndex;
           return (
             <Box key={p.id} flexDirection="row" gap={1} backgroundColor="black">
-              <Text color={isSel ? "cyanBright" : "gray"} backgroundColor="black">{isSel ? "▶" : " "}</Text>
+              <Text color={isSel ? "white" : "gray"} backgroundColor="black">{isSel ? "▶" : " "}</Text>
               <Text bold={isSel} color={isSel ? "whiteBright" : undefined} backgroundColor="black">
                 {p.name}
               </Text>
@@ -976,7 +993,7 @@ function TaskDetailScreen({ task }: { task: TaskItem }) {
   return (
     <Box
       borderStyle="round"
-      borderColor="cyan"
+      borderColor="cyanBright"
       flexDirection="column"
       paddingX={2}
       paddingY={1}
@@ -1034,7 +1051,7 @@ function groupTasksByColumn(tasks: TaskItem[]): Record<KanbanColumn, TaskItem[]>
   return out;
 }
 
-function BoardView({ state }: { state: DashboardState }) {
+function BoardView({ state, controller }: { state: DashboardState; controller: DashboardTUI }) {
   const { stdout } = useStdout();
   const cols = stdout?.columns ?? 80;
   const columnWidth = Math.max(20, Math.floor((cols - 2) / KANBAN_COLUMNS.length));
@@ -1057,6 +1074,15 @@ function BoardView({ state }: { state: DashboardState }) {
   const selectedProject = projectsState.projects[projectIndex] ?? null;
   const tasksState = useTasks(state.interactiveData, selectedProject);
   const grouped = groupTasksByColumn(tasksState.tasks);
+
+  // Push the board's selected project into the controller so dashboard.ts
+  // refreshes the global Stats panel from this project's store instead of cwd.
+  useEffect(() => {
+    controller.setBoardScopedProjectPath(selectedProject?.path ?? null);
+    return () => {
+      controller.setBoardScopedProjectPath(null);
+    };
+  }, [controller, selectedProject?.path]);
 
   const focusedColumn = KANBAN_COLUMNS[colIndex];
   const focusedTasks = grouped[focusedColumn];
@@ -1100,6 +1126,21 @@ function BoardView({ state }: { state: DashboardState }) {
         setNewTaskTitle("");
         setCreateError(null);
       }
+      return;
+    }
+
+    // Cross-view shortcuts — explicit so they work regardless of any
+    // global-handler ordering quirks. p/n stay board-local.
+    if (input === "g" || input === "G") {
+      controller.setInteractiveView("settings");
+      return;
+    }
+    if (input === "a" || input === "A") {
+      controller.setInteractiveView("agents");
+      return;
+    }
+    if (input === "t" || input === "T") {
+      controller.setInteractiveView("git");
       return;
     }
 
@@ -1177,7 +1218,7 @@ function BoardView({ state }: { state: DashboardState }) {
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      <Box flexDirection="row" gap={2} paddingX={1}>
+      <Box flexDirection="row" gap={2} paddingX={1} flexShrink={0}>
         <ProjectSelector
           open={subView === "picker"}
           projects={projectsState.projects}
@@ -1188,24 +1229,24 @@ function BoardView({ state }: { state: DashboardState }) {
         <Text dimColor>{hintText}</Text>
       </Box>
 
-      <Box height={1} />
+      <Box height={1} flexShrink={0} />
 
       {subView === "create" ? (
         <Box justifyContent="center" alignItems="center" flexGrow={1}>
           <Box
             borderStyle="round"
-            borderColor="cyan"
+            borderColor="cyanBright"
             flexDirection="column"
             paddingX={2}
             paddingY={1}
             width={Math.min(80, Math.max(40, cols - 8))}
           >
-            <Text bold color="cyanBright">New Task</Text>
+            <Text bold color="white">New Task</Text>
             <Text dimColor>Project: {selectedProject?.name ?? "(none)"}</Text>
             <Box height={1} />
             <Text dimColor>Title</Text>
             <Box>
-              <Text color="cyanBright">▸ </Text>
+              <Text color="white">▸ </Text>
               <TextInput
                 value={newTaskTitle}
                 onChange={setNewTaskTitle}
@@ -1219,7 +1260,7 @@ function BoardView({ state }: { state: DashboardState }) {
             )}
             {creating ? (
               <Box flexDirection="row" gap={1}>
-                <Text color="cyanBright"><Spinner type="dots" /></Text>
+                <Text color="white"><Spinner type="dots" /></Text>
                 <Text dimColor>Creating…</Text>
               </Box>
             ) : (
@@ -1233,7 +1274,7 @@ function BoardView({ state }: { state: DashboardState }) {
         </Box>
       ) : tasksState.loading ? (
         <Box justifyContent="center" alignItems="center" flexGrow={1} gap={1}>
-          <Text color="cyanBright"><Spinner type="dots" /></Text>
+          <Text color="white"><Spinner type="dots" /></Text>
           <Text dimColor>Loading tasks…</Text>
         </Box>
       ) : tasksState.tasks.length === 0 ? (
@@ -1263,7 +1304,7 @@ function BoardView({ state }: { state: DashboardState }) {
 
 function agentStateColor(state: string): string {
   switch (state) {
-    case "active": return "cyan";
+    case "active": return "cyanBright";
     case "running": return "green";
     case "error": return "red";
     default: return "gray";
@@ -1416,7 +1457,7 @@ function AgentsView({ state }: { state: DashboardState }) {
         {/* List panel */}
         <Box
           borderStyle="round"
-          borderColor={detailFocused ? "gray" : "cyan"}
+          borderColor={detailFocused ? "gray" : "cyanBright"}
           flexDirection="column"
           width={isNarrow ? undefined : "30%"}
           flexGrow={isNarrow ? 1 : 0}
@@ -1424,7 +1465,7 @@ function AgentsView({ state }: { state: DashboardState }) {
           overflow="hidden"
         >
           <Box paddingX={1}>
-            <Text bold={!detailFocused} color={!detailFocused ? "cyan" : undefined} dimColor={detailFocused}>
+            <Text bold={!detailFocused} color={!detailFocused ? "cyanBright" : undefined} dimColor={detailFocused}>
               Agents ({agents.length})
             </Text>
           </Box>
@@ -1437,13 +1478,13 @@ function AgentsView({ state }: { state: DashboardState }) {
                 const { fresh, label } = heartbeatFreshness(agent.lastHeartbeatAt);
                 return (
                   <Box key={agent.id} flexDirection="row" gap={1}>
-                    <Text color={isSel ? "cyanBright" : "gray"}>{isSel ? "▶" : " "}</Text>
+                    <Text color={isSel ? "white" : "gray"}>{isSel ? "▶" : " "}</Text>
                     <Box flexDirection="column" flexGrow={1}>
                       <Box flexDirection="row" gap={1}>
                         <Text bold={isSel} color={isSel ? "whiteBright" : undefined} wrap="truncate">
                           {agent.name}
                         </Text>
-                        <Text color={agentStateColor(agent.state) as "cyan" | "green" | "red" | "gray"}>
+                        <Text color={agentStateColor(agent.state) as "cyanBright" | "green" | "red" | "gray"}>
                           {agent.state}
                         </Text>
                       </Box>
@@ -1462,13 +1503,13 @@ function AgentsView({ state }: { state: DashboardState }) {
         {/* Right: agent detail */}
         <Box
           borderStyle="round"
-          borderColor={detailFocused ? "cyan" : "gray"}
+          borderColor={detailFocused ? "cyanBright" : "gray"}
           flexDirection="column"
           flexGrow={1}
           overflow="hidden"
         >
           <Box paddingX={1}>
-            <Text bold={detailFocused} color={detailFocused ? "cyan" : undefined} dimColor={!detailFocused}>
+            <Text bold={detailFocused} color={detailFocused ? "cyanBright" : undefined} dimColor={!detailFocused}>
               Agent Detail
             </Text>
           </Box>
@@ -1477,7 +1518,7 @@ function AgentsView({ state }: { state: DashboardState }) {
               <Text dimColor>Select an agent from the list.</Text>
             ) : loadingDetail ? (
               <Box flexDirection="row" gap={1}>
-                <Text color="cyanBright"><Spinner type="dots" /></Text>
+                <Text color="white"><Spinner type="dots" /></Text>
                 <Text dimColor>Loading…</Text>
               </Box>
             ) : !detail ? (
@@ -1489,7 +1530,7 @@ function AgentsView({ state }: { state: DashboardState }) {
                 <Box height={1} />
                 <Box flexDirection="row" gap={1}>
                   <Text dimColor>State:</Text>
-                  <Text color={agentStateColor(detail.state) as "cyan" | "green" | "red" | "gray"} bold>
+                  <Text color={agentStateColor(detail.state) as "cyanBright" | "green" | "red" | "gray"} bold>
                     {detail.state}
                   </Text>
                 </Box>
@@ -1506,7 +1547,7 @@ function AgentsView({ state }: { state: DashboardState }) {
                 {detail.taskId && (
                   <Box flexDirection="row" gap={1}>
                     <Text dimColor>Task:</Text>
-                    <Text color="cyan">{detail.taskId}</Text>
+                    <Text color="cyanBright">{detail.taskId}</Text>
                   </Box>
                 )}
                 {detail.capabilities.length > 0 && (
@@ -1671,7 +1712,7 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
       return <Text color={v ? "green" : "yellow"}>{v ? "enabled" : "disabled"}</Text>;
     }
     if (def.type === "enum") {
-      return <Text color="cyan">{String(v)}</Text>;
+      return <Text color="cyanBright">{String(v)}</Text>;
     }
     return <Text>{String(v)}</Text>;
   }
@@ -1687,13 +1728,13 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
         {/* Left: settings list */}
         <Box
           borderStyle="round"
-          borderColor={detailFocused ? "gray" : "cyan"}
+          borderColor={detailFocused ? "gray" : "cyanBright"}
           flexDirection="column"
           width="35%"
           overflow="hidden"
         >
           <Box paddingX={1}>
-            <Text bold={!detailFocused} color={!detailFocused ? "cyan" : undefined} dimColor={detailFocused}>
+            <Text bold={!detailFocused} color={!detailFocused ? "cyanBright" : undefined} dimColor={detailFocused}>
               Settings
             </Text>
           </Box>
@@ -1705,7 +1746,7 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
                 const isSel = i === selectedIndex;
                 return (
                   <Box key={def.key} flexDirection="row" gap={1}>
-                    <Text color={isSel ? "cyanBright" : "gray"}>{isSel ? "▶" : " "}</Text>
+                    <Text color={isSel ? "white" : "gray"}>{isSel ? "▶" : " "}</Text>
                     <Text bold={isSel} color={isSel ? "whiteBright" : undefined} wrap="truncate">
                       {def.label}
                     </Text>
@@ -1721,13 +1762,13 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
         {/* Right: edit + models */}
         <Box
           borderStyle="round"
-          borderColor={detailFocused ? "cyan" : "gray"}
+          borderColor={detailFocused ? "cyanBright" : "gray"}
           flexDirection="column"
           flexGrow={1}
           overflow="hidden"
         >
           <Box paddingX={1}>
-            <Text bold={detailFocused} color={detailFocused ? "cyan" : undefined} dimColor={!detailFocused}>
+            <Text bold={detailFocused} color={detailFocused ? "cyanBright" : undefined} dimColor={!detailFocused}>
               Edit / Models
             </Text>
           </Box>
@@ -1756,7 +1797,7 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
                     <Text dimColor>[←/→] cycle options:</Text>
                     {selectedDef.options.map((opt) => (
                       <Box key={opt} flexDirection="row" gap={1} marginLeft={1}>
-                        <Text color={(localSettings[selectedDef.key] as string) === opt ? "cyanBright" : "gray"}>
+                        <Text color={(localSettings[selectedDef.key] as string) === opt ? "white" : "gray"}>
                           {(localSettings[selectedDef.key] as string) === opt ? "▶" : " "}
                         </Text>
                         <Text>{opt}</Text>
@@ -1797,13 +1838,630 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
   );
 }
 
+// ── Git view ──────────────────────────────────────────────────────────────────
+
+function relMs(ms: number | null): string {
+  if (ms === null) return "never";
+  const diff = Date.now() - ms;
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function statusColor(s: string): "green" | "yellow" | "red" | "cyan" | "gray" {
+  if (s === "A") return "green";
+  if (s === "D") return "red";
+  if (s === "R" || s === "C") return "cyan";
+  if (s === "M" || s === "m") return "yellow";
+  return "gray";
+}
+
+function truncatePath(p: string, maxLen: number): string {
+  if (p.length <= maxLen) return p;
+  return "…" + p.slice(-(maxLen - 1));
+}
+
+function authorInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return (parts[0] ?? "?").slice(0, 2).toUpperCase();
+  return ((parts[0]?.[0] ?? "") + (parts[parts.length - 1]?.[0] ?? "")).toUpperCase();
+}
+
+type GitPane = "status" | "branches" | "worktrees" | "commits" | "changes";
+
+type PushModalState =
+  | { phase: "confirm"; commits: GitCommit[] }
+  | { phase: "pushing" }
+  | { phase: "done"; message: string; isError: boolean };
+
+function PushModal({
+  status,
+  commits,
+  onConfirm,
+  onCancel,
+}: {
+  status: GitStatus;
+  commits: GitCommit[];
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  useInput((_input, key) => {
+    if (key.return) { onConfirm(); return; }
+    if (key.escape) { onCancel(); return; }
+  });
+
+  const toPush = commits.slice(0, status.ahead);
+  return (
+    <Box
+      position="absolute"
+      flexDirection="column"
+      borderStyle="round"
+      borderColor="cyanBright"
+      paddingX={2}
+      paddingY={1}
+      backgroundColor="black"
+    >
+      <Text bold color="white">Push to remote</Text>
+      <Box height={1} />
+      <Box flexDirection="row" gap={1}>
+        <Text dimColor>Branch:</Text>
+        <Text color="cyan">{status.branch}</Text>
+        <Text dimColor>ahead</Text>
+        <Text color="yellow">{status.ahead}</Text>
+      </Box>
+      {toPush.length > 0 && (
+        <>
+          <Box height={1} />
+          <Text dimColor>Commits to push (oldest→newest):</Text>
+          {[...toPush].reverse().map((c) => (
+            <Box key={c.sha} flexDirection="row" gap={1} marginLeft={1}>
+              <Text color="gray">{c.shortSha}</Text>
+              <Text wrap="truncate">{c.subject}</Text>
+            </Box>
+          ))}
+        </>
+      )}
+      <Box height={1} />
+      <Text dimColor>[Enter] push  [Esc] cancel</Text>
+    </Box>
+  );
+}
+
+function GitView({ state }: { state: DashboardState }) {
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+
+  const data = state.interactiveData;
+
+  const [projectIndex, setProjectIndex] = useState(0);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerOriginal, setPickerOriginal] = useState(0);
+
+  const projectsState = useProjects(data);
+  const selectedProject = projectsState.projects[projectIndex] ?? null;
+  const projectPath = selectedProject?.path ?? null;
+
+  const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
+  const [commits, setCommits] = useState<GitCommit[]>([]);
+  const [branches, setBranches] = useState<GitBranch[]>([]);
+  const [worktrees, setWorktrees] = useState<GitWorktree[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+
+  const [commitIndex, setCommitIndex] = useState(0);
+  const [commitDetail, setCommitDetail] = useState<GitCommitDetail | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+
+  const [branchIndex, setBranchIndex] = useState(0);
+  const [worktreeIndex, setWorktreeIndex] = useState(0);
+
+  const [activePane, setActivePane] = useState<GitPane>("status");
+
+  const [pushModal, setPushModal] = useState<PushModalState | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!data || !projectPath) return;
+    setLoading(true);
+    try {
+      const [s, c, b, w] = await Promise.all([
+        data.git.getStatus(projectPath),
+        data.git.listCommits(projectPath, 15),
+        data.git.listBranches(projectPath),
+        data.git.listWorktrees(projectPath),
+      ]);
+      setGitStatus(s);
+      setCommits(c);
+      setBranches(b);
+      setWorktrees(w);
+    } catch (err) {
+      setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [data, projectPath]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const id = setInterval(() => { void refresh(); }, 5000);
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  const selectedCommit = commits[commitIndex] ?? null;
+
+  useEffect(() => {
+    if (!data || !projectPath || !selectedCommit) {
+      setCommitDetail(null);
+      return;
+    }
+    setLoadingDetail(true);
+    data.git.showCommit(projectPath, selectedCommit.sha).then((d) => {
+      setCommitDetail(d);
+      setLoadingDetail(false);
+    }).catch(() => {
+      setCommitDetail(null);
+      setLoadingDetail(false);
+    });
+  }, [data, projectPath, selectedCommit?.sha]);
+
+  useInput((input, key) => {
+    if (pushModal) {
+      if (pushModal.phase === "confirm") {
+        if (key.return) {
+          setPushModal({ phase: "pushing" });
+          if (data && projectPath) {
+            data.git.push(projectPath).then((result) => {
+              setPushModal({ phase: "done", message: result.output || (result.success ? "Push successful" : "Push failed"), isError: !result.success });
+              if (result.success) {
+                setTimeout(() => { setPushModal(null); void refresh(); }, 2000);
+              }
+            }).catch((err: unknown) => {
+              setPushModal({ phase: "done", message: err instanceof Error ? err.message : String(err), isError: true });
+            });
+          }
+          return;
+        }
+        if (key.escape) { setPushModal(null); return; }
+      }
+      if (pushModal.phase === "done" && (pushModal.isError || key.escape)) {
+        setPushModal(null);
+        return;
+      }
+      return;
+    }
+
+    if (pickerOpen) {
+      if (key.upArrow || input === "k") { setProjectIndex((p) => Math.max(0, p - 1)); return; }
+      if (key.downArrow || input === "j") { setProjectIndex((p) => Math.min(projectsState.projects.length - 1, p + 1)); return; }
+      if (key.return) { setPickerOpen(false); return; }
+      if (key.escape) { setProjectIndex(pickerOriginal); setPickerOpen(false); return; }
+      return;
+    }
+
+    if (input === "p") { setPickerOriginal(projectIndex); setPickerOpen(true); return; }
+
+    if (input === "r") { void refresh(); return; }
+
+    if (input === "P" && gitStatus && gitStatus.ahead > 0) {
+      setPushModal({ phase: "confirm", commits });
+      return;
+    }
+
+    if (input === "F" && data && projectPath) {
+      setStatusMsg("Fetching…");
+      data.git.fetch(projectPath).then((result) => {
+        setStatusMsg(result.success ? "Fetched" : `Fetch failed: ${result.output}`);
+        void refresh();
+      }).catch((err: unknown) => {
+        setStatusMsg(`Fetch error: ${err instanceof Error ? err.message : String(err)}`);
+      });
+      return;
+    }
+
+    if (key.leftArrow || input === "h") {
+      setActivePane((p) => {
+        const order: GitPane[] = worktrees.length > 1
+          ? ["status", "branches", "worktrees", "commits", "changes"]
+          : ["status", "branches", "commits", "changes"];
+        const i = order.indexOf(p);
+        return order[Math.max(0, i - 1)] ?? p;
+      });
+      return;
+    }
+    if (key.rightArrow || input === "l") {
+      setActivePane((p) => {
+        const order: GitPane[] = worktrees.length > 1
+          ? ["status", "branches", "worktrees", "commits", "changes"]
+          : ["status", "branches", "commits", "changes"];
+        const i = order.indexOf(p);
+        return order[Math.min(order.length - 1, i + 1)] ?? p;
+      });
+      return;
+    }
+
+    if (activePane === "commits") {
+      if (key.upArrow || input === "k") { setCommitIndex((i) => Math.max(0, i - 1)); return; }
+      if (key.downArrow || input === "j") { setCommitIndex((i) => Math.min(commits.length - 1, i + 1)); return; }
+    }
+    if (activePane === "branches") {
+      if (key.upArrow || input === "k") { setBranchIndex((i) => Math.max(0, i - 1)); return; }
+      if (key.downArrow || input === "j") { setBranchIndex((i) => Math.min(branches.length - 1, i + 1)); return; }
+    }
+    if (activePane === "worktrees") {
+      if (key.upArrow || input === "k") { setWorktreeIndex((i) => Math.max(0, i - 1)); return; }
+      if (key.downArrow || input === "j") { setWorktreeIndex((i) => Math.min(worktrees.length - 1, i + 1)); return; }
+    }
+  });
+
+  const leftWidth = Math.max(24, Math.floor(cols * 0.35));
+  const rightWidth = cols - leftWidth - 1;
+
+  return (
+    <Box flexDirection="column" flexGrow={1} overflow="hidden">
+      {/* Top bar: project selector + status */}
+      <Box flexDirection="row" gap={2} paddingX={1}>
+        <Box flexDirection="row" gap={1}>
+          <Text dimColor>Project:</Text>
+          <Text bold color="white">{selectedProject?.name ?? "(none)"}</Text>
+          <Text dimColor>[p] change</Text>
+        </Box>
+        {loading && (
+          <Box flexDirection="row" gap={1}>
+            <Text color="cyanBright"><Spinner type="dots" /></Text>
+            <Text dimColor>refreshing</Text>
+          </Box>
+        )}
+        {statusMsg && <Text color="yellow">{statusMsg}</Text>}
+        <Box flexGrow={1} />
+        {gitStatus && (
+          <Box flexDirection="row" gap={1}>
+            {gitStatus.detached ? (
+              <Text color="yellow">detached HEAD</Text>
+            ) : (
+              <>
+                <Text color="cyanBright">{gitStatus.branch}</Text>
+                {gitStatus.ahead > 0 && <Text color="green">↑{gitStatus.ahead}</Text>}
+                {gitStatus.behind > 0 && <Text color="yellow">↓{gitStatus.behind}</Text>}
+              </>
+            )}
+          </Box>
+        )}
+      </Box>
+
+      {/* Main body */}
+      <Box flexDirection="row" flexGrow={1} overflow="hidden">
+        {/* Left column: status + branches + worktrees */}
+        <Box
+          flexDirection="column"
+          width={leftWidth}
+          flexShrink={0}
+          overflow="hidden"
+        >
+          {/* Status panel */}
+          <Box
+            borderStyle="round"
+            borderColor={activePane === "status" ? "cyanBright" : "gray"}
+            flexDirection="column"
+            flexShrink={0}
+            overflow="hidden"
+          >
+            <Box paddingX={1}>
+              <Text bold={activePane === "status"} color={activePane === "status" ? "blue" : undefined} dimColor={activePane !== "status"}>
+                Status
+              </Text>
+            </Box>
+            <Box flexDirection="column" paddingX={1} overflow="hidden">
+              {!gitStatus ? (
+                <Text dimColor>{projectPath ? "Loading…" : "No project"}</Text>
+              ) : (
+                <>
+                  <Box flexDirection="row" gap={1}>
+                    <Text dimColor>Remote:</Text>
+                    <Text color="gray" wrap="truncate">{gitStatus.remoteUrl || "(none)"}</Text>
+                  </Box>
+                  <Box flexDirection="row" gap={1}>
+                    <Text dimColor>Fetched:</Text>
+                    <Text color="gray">{relMs(gitStatus.lastFetchAt)}</Text>
+                  </Box>
+                  <Box flexDirection="row" gap={1}>
+                    <Text dimColor>Staged:</Text>
+                    <Text color={gitStatus.staged.length > 0 ? "green" : "gray"}>{gitStatus.staged.length}</Text>
+                    <Text dimColor>Modified:</Text>
+                    <Text color={gitStatus.unstaged.length > 0 ? "yellow" : "gray"}>{gitStatus.unstaged.length}</Text>
+                    <Text dimColor>New:</Text>
+                    <Text color={gitStatus.untracked.length > 0 ? "cyan" : "gray"}>{gitStatus.untracked.length}</Text>
+                  </Box>
+                </>
+              )}
+            </Box>
+          </Box>
+
+          {/* Branches panel */}
+          <Box
+            borderStyle="round"
+            borderColor={activePane === "branches" ? "cyanBright" : "gray"}
+            flexDirection="column"
+            flexGrow={1}
+            overflow="hidden"
+          >
+            <Box paddingX={1}>
+              <Text bold={activePane === "branches"} color={activePane === "branches" ? "blue" : undefined} dimColor={activePane !== "branches"}>
+                Branches
+              </Text>
+            </Box>
+            <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
+              {branches.length === 0 ? (
+                <Text dimColor>—</Text>
+              ) : (
+                branches.slice(0, 8).map((b, bi) => {
+                  const isSel = activePane === "branches" && bi === branchIndex;
+                  return (
+                    <Box key={b.name} flexDirection="row" gap={1}>
+                      <Text color={isSel ? "white" : b.isCurrent ? "cyanBright" : "gray"}>{isSel ? "▶" : b.isCurrent ? "▶" : " "}</Text>
+                      <Text color={isSel ? "whiteBright" : b.isCurrent ? "white" : "gray"} bold={isSel || b.isCurrent} wrap="truncate">
+                        {b.name}
+                      </Text>
+                      <Text dimColor>{b.shortSha}</Text>
+                    </Box>
+                  );
+                })
+              )}
+              {branches.length > 8 && <Text dimColor>…+{branches.length - 8} more</Text>}
+            </Box>
+          </Box>
+
+          {/* Worktrees panel */}
+          {worktrees.length > 1 && (
+            <Box
+              borderStyle="round"
+              borderColor={activePane === "worktrees" ? "cyanBright" : "gray"}
+              flexDirection="column"
+              flexShrink={0}
+              overflow="hidden"
+            >
+              <Box paddingX={1}>
+                <Text bold={activePane === "worktrees"} color={activePane === "worktrees" ? "blue" : undefined} dimColor={activePane !== "worktrees"}>
+                  Worktrees ({worktrees.length})
+                </Text>
+              </Box>
+              <Box flexDirection="column" paddingX={1} overflow="hidden">
+                {worktrees.map((wt, wi) => {
+                  const isSel = activePane === "worktrees" && wi === worktreeIndex;
+                  return (
+                    <Box key={wt.path} flexDirection="row" gap={1}>
+                      <Text color={isSel ? "white" : wt.isCurrent ? "cyanBright" : "gray"}>{isSel ? "▶" : wt.isCurrent ? "▶" : " "}</Text>
+                      <Text color={isSel ? "whiteBright" : wt.isCurrent ? "white" : "gray"} bold={isSel} wrap="truncate">
+                        {wt.branch}
+                      </Text>
+                      {wt.isLocked && <Text color="yellow">🔒</Text>}
+                    </Box>
+                  );
+                })}
+              </Box>
+            </Box>
+          )}
+        </Box>
+
+        {/* Right column: commits + changes */}
+        <Box flexDirection="column" flexGrow={1} overflow="hidden">
+          {/* Commits panel */}
+          <Box
+            borderStyle="round"
+            borderColor={activePane === "commits" ? "cyanBright" : "gray"}
+            flexDirection="column"
+            flexGrow={1}
+            overflow="hidden"
+          >
+            <Box paddingX={1}>
+              <Text bold={activePane === "commits"} color={activePane === "commits" ? "blue" : undefined} dimColor={activePane !== "commits"}>
+                Commits
+              </Text>
+            </Box>
+            <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
+              {commits.length === 0 ? (
+                <Text dimColor>{loading ? "Loading…" : "No commits"}</Text>
+              ) : (
+                commits.map((c, i) => {
+                  const isSel = i === commitIndex;
+                  const initials = authorInitials(c.authorName);
+                  const subjectWidth = Math.max(10, rightWidth - 30);
+                  const subject = c.subject.length > subjectWidth
+                    ? c.subject.slice(0, subjectWidth - 1) + "…"
+                    : c.subject;
+                  return (
+                    <Box key={c.sha} flexDirection="row" gap={1}>
+                      <Text color={isSel ? "white" : "gray"}>{isSel ? "▶" : " "}</Text>
+                      <Text color="gray">{c.shortSha}</Text>
+                      <Text dimColor>{c.relativeTime.slice(0, 8).padEnd(8)}</Text>
+                      <Text color="cyanBright">{initials.padEnd(2)}</Text>
+                      <Text bold={isSel} color={isSel ? "whiteBright" : undefined} wrap="truncate">
+                        {subject}
+                      </Text>
+                    </Box>
+                  );
+                })
+              )}
+            </Box>
+            {/* Commit detail strip */}
+            {selectedCommit && (
+              <Box
+                borderStyle="round"
+                borderColor="gray"
+                flexDirection="column"
+                paddingX={1}
+                flexShrink={0}
+                overflow="hidden"
+              >
+                {loadingDetail ? (
+                  <Box flexDirection="row" gap={1}>
+                    <Text color="cyanBright"><Spinner type="dots" /></Text>
+                    <Text dimColor>Loading…</Text>
+                  </Box>
+                ) : commitDetail ? (
+                  <>
+                    <Box flexDirection="row" gap={1}>
+                      <Text color="gray">{commitDetail.shortSha}</Text>
+                      <Text dimColor>{commitDetail.isoTime.slice(0, 16)}</Text>
+                      <Text dimColor>by</Text>
+                      <Text color="cyanBright">{commitDetail.authorName}</Text>
+                    </Box>
+                    {commitDetail.body && (
+                      <Text dimColor wrap="wrap">{commitDetail.body.slice(0, 200)}</Text>
+                    )}
+                    {commitDetail.stat && (
+                      <Text dimColor wrap="truncate">{commitDetail.stat.split("\n").slice(-1)[0]}</Text>
+                    )}
+                  </>
+                ) : null}
+              </Box>
+            )}
+          </Box>
+
+          {/* Changes panel */}
+          <Box
+            borderStyle="round"
+            borderColor={activePane === "changes" ? "cyanBright" : "gray"}
+            flexDirection="column"
+            flexShrink={0}
+            overflow="hidden"
+          >
+            <Box paddingX={1}>
+              <Text bold={activePane === "changes"} color={activePane === "changes" ? "blue" : undefined} dimColor={activePane !== "changes"}>
+                Changes
+              </Text>
+            </Box>
+            {gitStatus && (gitStatus.staged.length > 0 || gitStatus.unstaged.length > 0 || gitStatus.untracked.length > 0) ? (
+              <Box flexDirection="row" paddingX={1} overflow="hidden">
+                {/* Staged */}
+                <Box flexDirection="column" width="50%" overflow="hidden">
+                  <Text dimColor>Staged ({gitStatus.staged.length})</Text>
+                  {gitStatus.staged.slice(0, 6).map((f) => (
+                    <Box key={`s-${f.path}`} flexDirection="row" gap={1}>
+                      <Text color={statusColor(f.status)}>{f.status}</Text>
+                      <Text color="gray" wrap="truncate">{truncatePath(f.path, Math.floor(leftWidth / 2) - 4)}</Text>
+                    </Box>
+                  ))}
+                  {gitStatus.staged.length > 6 && <Text dimColor>…+{gitStatus.staged.length - 6}</Text>}
+                </Box>
+                {/* Unstaged + untracked */}
+                <Box flexDirection="column" flexGrow={1} overflow="hidden">
+                  <Text dimColor>Unstaged ({gitStatus.unstaged.length + gitStatus.untracked.length})</Text>
+                  {gitStatus.unstaged.slice(0, 4).map((f) => (
+                    <Box key={`u-${f.path}`} flexDirection="row" gap={1}>
+                      <Text color={statusColor(f.status)}>{f.status}</Text>
+                      <Text color="gray" wrap="truncate">{truncatePath(f.path, Math.floor(rightWidth / 2) - 4)}</Text>
+                    </Box>
+                  ))}
+                  {gitStatus.untracked.slice(0, 2).map((f) => (
+                    <Box key={`n-${f.path}`} flexDirection="row" gap={1}>
+                      <Text color="gray">?</Text>
+                      <Text color="gray" wrap="truncate">{truncatePath(f.path, Math.floor(rightWidth / 2) - 4)}</Text>
+                    </Box>
+                  ))}
+                  {(gitStatus.unstaged.length + gitStatus.untracked.length) > 6 && (
+                    <Text dimColor>…+{gitStatus.unstaged.length + gitStatus.untracked.length - 6}</Text>
+                  )}
+                </Box>
+              </Box>
+            ) : (
+              <Box paddingX={1}>
+                <Text dimColor>Working tree clean</Text>
+              </Box>
+            )}
+          </Box>
+        </Box>
+      </Box>
+
+      {/* Footer */}
+      <Box paddingX={1}>
+        <Text dimColor>
+          [r] refresh  {gitStatus && gitStatus.ahead > 0 ? "[P] push  " : ""}[F] fetch  [↑↓] rows  [←→] status▸branches{worktrees.length > 1 ? "▸worktrees" : ""}▸commits▸changes  [p] project  [Esc/s] back
+        </Text>
+      </Box>
+
+      {/* Project picker overlay */}
+      {pickerOpen && (
+        <Box position="absolute" marginTop={1} marginLeft={1}>
+          <ProjectSelector
+            open={true}
+            projects={projectsState.projects}
+            selectedIndex={projectIndex}
+            onSelect={setProjectIndex}
+          />
+        </Box>
+      )}
+
+      {/* Push modal overlay */}
+      {pushModal && (
+        <Box position="absolute" marginTop={2} marginLeft={4}>
+          {pushModal.phase === "confirm" && gitStatus && (
+            <PushModal
+              status={gitStatus}
+              commits={commits}
+              onConfirm={() => {
+                setPushModal({ phase: "pushing" });
+                if (data && projectPath) {
+                  data.git.push(projectPath).then((result) => {
+                    setPushModal({ phase: "done", message: result.output || (result.success ? "Push successful" : "Push failed"), isError: !result.success });
+                    if (result.success) {
+                      setTimeout(() => { setPushModal(null); void refresh(); }, 2000);
+                    }
+                  }).catch((err: unknown) => {
+                    setPushModal({ phase: "done", message: err instanceof Error ? err.message : String(err), isError: true });
+                  });
+                }
+              }}
+              onCancel={() => setPushModal(null)}
+            />
+          )}
+          {pushModal.phase === "pushing" && (
+            <Box
+              borderStyle="round"
+              borderColor="cyanBright"
+              flexDirection="row"
+              paddingX={2}
+              paddingY={1}
+              gap={1}
+              backgroundColor="black"
+            >
+              <Text color="cyanBright"><Spinner type="dots" /></Text>
+              <Text color="white">Pushing to origin/{gitStatus?.branch ?? "…"}</Text>
+            </Box>
+          )}
+          {pushModal.phase === "done" && (
+            <Box
+              borderStyle="round"
+              borderColor={pushModal.isError ? "red" : "blue"}
+              flexDirection="column"
+              paddingX={2}
+              paddingY={1}
+              backgroundColor="black"
+            >
+              <Text color={pushModal.isError ? "red" : "green"}>
+                {pushModal.message}
+              </Text>
+              {pushModal.isError && <Text dimColor>[Esc] dismiss</Text>}
+            </Box>
+          )}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
 // ── Interactive mode root ─────────────────────────────────────────────────────
 
-function InteractiveMode({ state }: { state: DashboardState }) {
+function InteractiveMode({ state, controller }: { state: DashboardState; controller: DashboardTUI }) {
   if (state.interactiveData === null) {
     return (
       <Box flexDirection="column" flexGrow={1}>
-        <InteractiveHeader activeView={state.interactiveView} />
+        <MainHeader state={state} />
         <Box justifyContent="center" alignItems="center" flexGrow={1}>
           <Text dimColor>Interactive mode unavailable — no data source</Text>
         </Box>
@@ -1813,12 +2471,15 @@ function InteractiveMode({ state }: { state: DashboardState }) {
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      <InteractiveHeader activeView={state.interactiveView} />
-      <Box height={1} />
+      <Box flexShrink={0}>
+        <MainHeader state={state} />
+      </Box>
+      <Box height={1} flexShrink={0} />
       <Box flexGrow={1} overflow="hidden">
-        {state.interactiveView === "board" && <BoardView state={state} />}
+        {state.interactiveView === "board" && <BoardView state={state} controller={controller} />}
         {state.interactiveView === "agents" && <AgentsView state={state} />}
         {state.interactiveView === "settings" && <SettingsInteractiveView state={state} />}
+        {state.interactiveView === "git" && <GitView state={state} />}
       </Box>
     </Box>
   );
@@ -1867,6 +2528,20 @@ export function DashboardApp({ controller }: DashboardAppProps) {
       controller.setInteractiveView("settings");
       return;
     }
+    // Logs severity filter — works any time the logs panel is visible
+    // (status mode). Cycles all → info → warn → error → all.
+    if (input === "f" || input === "F") {
+      if (state.mode === "status") {
+        controller.cycleSeverityFilter();
+        return;
+      }
+    }
+
+    if (input === "t" || input === "T") {
+      controller.setMode("interactive");
+      controller.setInteractiveView("git");
+      return;
+    }
 
     if (input === "s" || input === "S") {
       if (state.mode === "interactive") {
@@ -1875,11 +2550,12 @@ export function DashboardApp({ controller }: DashboardAppProps) {
       }
     }
 
-    // Interactive mode: number keys 1/2/3 jump to Board/Agents/Settings
+    // Interactive mode: number keys 1/2/3/4 jump to Board/Agents/Settings/Git
     if (state.mode === "interactive") {
       if (input === "1") { controller.setInteractiveView("board"); return; }
       if (input === "2") { controller.setInteractiveView("agents"); return; }
       if (input === "3") { controller.setInteractiveView("settings"); return; }
+      if (input === "4") { controller.setInteractiveView("git"); return; }
       // Let the active view handle other keys
       return;
     }
@@ -1966,11 +2642,6 @@ export function DashboardApp({ controller }: DashboardAppProps) {
         return;
       }
 
-      if (input === "f" || input === "F") {
-        controller.cycleSeverityFilter();
-        return;
-      }
-
       if (key.upArrow || input === "k" || input === "K") {
         if (state.selectedLogIndex > 0) {
           controller.setSelectedLogIndex(state.selectedLogIndex - 1);
@@ -2011,7 +2682,7 @@ export function DashboardApp({ controller }: DashboardAppProps) {
   return (
     <Box flexDirection="column" height={rows}>
       {state.mode === "interactive" ? (
-        <InteractiveMode state={state} />
+        <InteractiveMode state={state} controller={controller} />
       ) : isNarrow ? (
         <StatusModeSingle state={state} controller={controller} />
       ) : (

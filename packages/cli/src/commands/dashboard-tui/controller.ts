@@ -34,6 +34,10 @@ export class DashboardTUI {
   systemInfo: SystemInfo | null = null;
   taskStats: TaskStats | null = null;
   systemStats: SystemStats | null = null;
+  // When set, dashboard.ts refreshes task stats from this project path
+  // instead of the launch cwd. Mirrors BoardView's selected project.
+  boardScopedProjectPath: string | null = null;
+  private boardScopeListener: ((path: string | null) => void) | null = null;
   settings: SettingsValues | null = null;
   callbacks: TUICallbacks | null = null;
   isRunning = false;
@@ -130,6 +134,20 @@ export class DashboardTUI {
   setSystemStats(stats: SystemStats): void {
     this.systemStats = stats;
     this.notify();
+  }
+
+  setBoardScopedProjectPath(path: string | null): void {
+    if (this.boardScopedProjectPath === path) return;
+    this.boardScopedProjectPath = path;
+    this.boardScopeListener?.(path);
+    this.notify();
+  }
+
+  onBoardScopeChange(listener: (path: string | null) => void): () => void {
+    this.boardScopeListener = listener;
+    return () => {
+      if (this.boardScopeListener === listener) this.boardScopeListener = null;
+    };
   }
 
   /** Sample process memory + CPU% in-place. Called from the sampler timer. */

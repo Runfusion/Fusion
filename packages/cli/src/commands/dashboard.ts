@@ -1,5 +1,8 @@
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
+import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
+import { stat } from "node:fs/promises";
 import {
   TaskStore,
   AutomationStore,
@@ -42,7 +45,7 @@ import {
   resolveClaudeCliExtensionPaths,
   setCachedClaudeCliResolution,
 } from "./claude-cli-extension.js";
-import { DashboardTUI, DashboardLogSink, isTTYAvailable, type SystemInfo } from "./dashboard-tui/index.js";
+import { DashboardTUI, DashboardLogSink, isTTYAvailable, type SystemInfo, type GitStatus, type GitCommit, type GitCommitDetail, type GitBranch, type GitWorktree } from "./dashboard-tui/index.js";
 
 // Re-export for backward compatibility with tests
 export { promptForPort };
@@ -311,6 +314,188 @@ function setDiagnosticStoreListenerCheck(check: () => Record<string, number>): v
   diagnosticStoreListenerCheck = check;
 }
 
+const execFileAsync = promisify(execFileCb);
+
+async function gitExec(cwd: string, args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync("git", args, { cwd, maxBuffer: 4 * 1024 * 1024 });
+  return stdout;
+}
+
+async function buildGitStatus(projectPath: string): Promise<GitStatus> {
+  const [sbOut, remoteOut] = await Promise.allSettled([
+    gitExec(projectPath, ["status", "-sb", "--porcelain=v1"]),
+    gitExec(projectPath, ["remote", "get-url", "origin"]),
+  ]);
+
+  const sbRaw = sbOut.status === "fulfilled" ? sbOut.value : "";
+  const remoteUrl = remoteOut.status === "fulfilled" ? remoteOut.value.trim() : "";
+
+  const lines = sbRaw.split("\n");
+  const header = lines[0] ?? "";
+
+  let branch = "HEAD";
+  let detached = false;
+  let ahead = 0;
+  let behind = 0;
+
+  const noCommitMatch = header.match(/^## No commits yet on (.+)$/);
+  if (noCommitMatch) {
+    branch = noCommitMatch[1] ?? "HEAD";
+  } else {
+    const branchMatch = header.match(/^## ([^.]+?)(?:\.\.\.(\S+?)(?:\s+\[ahead (\d+)(?:, behind (\d+))?\]|\s+\[behind (\d+)\])?)?$/);
+    if (branchMatch) {
+      branch = branchMatch[1] ?? "HEAD";
+      ahead = parseInt(branchMatch[3] ?? "0", 10);
+      behind = parseInt(branchMatch[4] ?? branchMatch[5] ?? "0", 10);
+    } else if (header.startsWith("## HEAD (no branch)")) {
+      detached = true;
+      branch = "HEAD";
+    }
+  }
+
+  const staged: GitStatus["staged"] = [];
+  const unstaged: GitStatus["unstaged"] = [];
+  const untracked: GitStatus["untracked"] = [];
+
+  for (const line of lines.slice(1)) {
+    if (line.length < 3) continue;
+    const x = line[0] ?? " ";
+    const y = line[1] ?? " ";
+    const path = line.slice(3);
+    if (x === "?" && y === "?") {
+      untracked.push({ path });
+    } else {
+      if (x !== " " && x !== "?") staged.push({ status: x, path });
+      if (y !== " " && y !== "?") unstaged.push({ status: y, path });
+    }
+  }
+
+  let lastFetchAt: number | null = null;
+  try {
+    const fetchHead = await stat(`${projectPath}/.git/FETCH_HEAD`);
+    lastFetchAt = fetchHead.mtimeMs;
+  } catch {
+    // no fetch head yet
+  }
+
+  return { branch, detached, ahead, behind, staged, unstaged, untracked, remoteUrl, lastFetchAt };
+}
+
+async function buildGitCommits(projectPath: string, limit = 15): Promise<GitCommit[]> {
+  const sep = "\x1f";
+  const recSep = "\x1e";
+  const fmt = [`%H`, `%h`, `%s`, `%an`, `%ar`, `%aI`].join(sep);
+  let out = "";
+  try {
+    out = await gitExec(projectPath, ["log", `--max-count=${limit}`, `--format=${fmt}${recSep}`]);
+  } catch {
+    return [];
+  }
+  return out.split(recSep).flatMap((rec) => {
+    const parts = rec.trim().split(sep);
+    if (parts.length < 6 || !parts[0]) return [];
+    return [{
+      sha: parts[0] ?? "",
+      shortSha: parts[1] ?? "",
+      subject: parts[2] ?? "",
+      authorName: parts[3] ?? "",
+      relativeTime: parts[4] ?? "",
+      isoTime: parts[5] ?? "",
+    }];
+  });
+}
+
+async function buildGitCommitDetail(projectPath: string, sha: string): Promise<GitCommitDetail> {
+  const sep = "\x1f";
+  const fmt = [`%H`, `%h`, `%s`, `%an`, `%ar`, `%aI`, `%b`].join(sep);
+  const [showOut, statOut] = await Promise.allSettled([
+    gitExec(projectPath, ["show", `--format=${fmt}`, "--no-patch", sha]),
+    gitExec(projectPath, ["show", "--stat", "--format=", sha]),
+  ]);
+  const raw = showOut.status === "fulfilled" ? showOut.value.trim() : "";
+  const parts = raw.split(sep);
+  return {
+    sha: parts[0] ?? sha,
+    shortSha: parts[1] ?? sha.slice(0, 7),
+    subject: parts[2] ?? "",
+    authorName: parts[3] ?? "",
+    relativeTime: parts[4] ?? "",
+    isoTime: parts[5] ?? "",
+    body: (parts[6] ?? "").trim(),
+    stat: statOut.status === "fulfilled" ? statOut.value.trim() : "",
+  };
+}
+
+async function buildGitBranches(projectPath: string): Promise<GitBranch[]> {
+  let out = "";
+  try {
+    out = await gitExec(projectPath, [
+      "for-each-ref",
+      "--sort=-committerdate",
+      "refs/heads",
+      "--format=%(refname:short)|%(objectname:short)|%(committerdate:relative)|%(upstream:track)|%(HEAD)",
+    ]);
+  } catch {
+    return [];
+  }
+  return out.trim().split("\n").flatMap((line) => {
+    if (!line) return [];
+    const parts = line.split("|");
+    return [{
+      name: parts[0] ?? "",
+      shortSha: parts[1] ?? "",
+      relativeTime: parts[2] ?? "",
+      upstreamTrack: parts[3] ?? "",
+      isCurrent: (parts[4] ?? "") === "*",
+    }];
+  });
+}
+
+async function buildGitWorktrees(projectPath: string): Promise<GitWorktree[]> {
+  let out = "";
+  try {
+    out = await gitExec(projectPath, ["worktree", "list", "--porcelain"]);
+  } catch {
+    return [];
+  }
+  const worktrees: GitWorktree[] = [];
+  let current: Partial<GitWorktree> & { rawPath?: string } = {};
+  let isFirst = true;
+  for (const line of out.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      if (current.rawPath) {
+        worktrees.push({
+          path: current.rawPath,
+          branch: current.branch ?? "HEAD",
+          sha: current.sha ?? "",
+          isCurrent: current.isCurrent ?? false,
+          isLocked: current.isLocked ?? false,
+        });
+      }
+      current = { rawPath: line.slice(9), isCurrent: isFirst };
+      isFirst = false;
+    } else if (line.startsWith("HEAD ")) {
+      current.sha = line.slice(5);
+    } else if (line.startsWith("branch ")) {
+      current.branch = line.slice(7).replace("refs/heads/", "");
+    } else if (line === "locked") {
+      current.isLocked = true;
+    } else if (line.startsWith("locked ")) {
+      current.isLocked = true;
+    }
+  }
+  if (current.rawPath) {
+    worktrees.push({
+      path: current.rawPath,
+      branch: current.branch ?? "HEAD",
+      sha: current.sha ?? "",
+      isCurrent: current.isCurrent ?? false,
+      isLocked: current.isLocked ?? false,
+    });
+  }
+  return worktrees;
+}
+
 async function resolveRuntimeProjectPath(): Promise<string> {
   try {
     return (await resolveProject(undefined)).projectPath;
@@ -511,8 +696,22 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   let tuiRefreshPending = false;
   let tuiRefreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Per-project task stores for the BoardView's scoped stats. Shared with the
+  // interactiveData wiring below so we don't re-init SQLite on each refresh.
+  const projectStores = new Map<string, TaskStore>();
+  async function getProjectStore(projectPath: string): Promise<TaskStore> {
+    const cached = projectStores.get(projectPath);
+    if (cached) return cached;
+    const projectStore = projectPath === cwd ? store : new TaskStore(projectPath);
+    if (projectPath !== cwd) await projectStore.init();
+    projectStores.set(projectPath, projectStore);
+    return projectStore;
+  }
+
   /**
-   * Debounced refresh of TUI stats - batches rapid task updates
+   * Debounced refresh of TUI stats - batches rapid task updates.
+   * If the BoardView has a scoped project path set on the controller,
+   * read tasks from that project's store instead of the launch cwd.
    */
   async function refreshTUIStats(): Promise<void> {
     if (!tui || !isTTY) return;
@@ -523,7 +722,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     tuiRefreshPending = true;
 
     try {
-      const tasks = await store.listTasks({ slim: true, includeArchived: false });
+      const scopedPath = tui.boardScopedProjectPath;
+      const taskStore = scopedPath ? await getProjectStore(scopedPath) : store;
+      const tasks = await taskStore.listTasks({ slim: true, includeArchived: false });
       const counts = new Map<string, number>();
       for (const task of tasks) {
         counts.set(task.column, (counts.get(task.column) ?? 0) + 1);
@@ -583,6 +784,14 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     tuiRefreshDebounceTimer = setTimeout(() => {
       void refreshTUIStats();
     }, 500); // 500ms debounce
+  }
+
+  // Refresh stats immediately when the BoardView changes its selected project
+  // (so the Stats panel reflects the new project without waiting for an event).
+  if (tui) {
+    tui.onBoardScopeChange(() => {
+      void refreshTUIStats();
+    });
   }
 
   const handlers: Array<{
@@ -1524,19 +1733,13 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       // are cached so repeated panel switches don't re-init SQLite.
       if (centralCoreForMesh) {
         const centralCore = centralCoreForMesh;
-        const projectStores = new Map<string, TaskStore>();
         tui.setInteractiveData({
           listProjects: async () => {
             const projects = await centralCore.listProjects();
             return projects.map((p) => ({ id: p.id, name: p.name, path: p.path }));
           },
           listTasks: async (projectPath: string) => {
-            let projectStore = projectStores.get(projectPath);
-            if (!projectStore) {
-              projectStore = projectPath === cwd ? store : new TaskStore(projectPath);
-              if (projectPath !== cwd) await projectStore.init();
-              projectStores.set(projectPath, projectStore);
-            }
+            const projectStore = await getProjectStore(projectPath);
             const tasks = await projectStore.listTasks({ slim: true, includeArchived: false });
             return tasks.map((t) => ({
               id: t.id,
@@ -1547,12 +1750,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
             }));
           },
           createTask: async (projectPath: string, input: { title: string; description?: string }) => {
-            let projectStore = projectStores.get(projectPath);
-            if (!projectStore) {
-              projectStore = projectPath === cwd ? store : new TaskStore(projectPath);
-              if (projectPath !== cwd) await projectStore.init();
-              projectStores.set(projectPath, projectStore);
-            }
+            const projectStore = await getProjectStore(projectPath);
             const created = await projectStore.createTask({
               title: input.title,
               description: input.description ?? input.title,
@@ -1635,6 +1833,31 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
               provider: (m as { provider?: string }).provider ?? "unknown",
               contextWindow: m.contextWindow ?? 0,
             }));
+          },
+          git: {
+            getStatus: (projectPath: string) => buildGitStatus(projectPath),
+            listCommits: (projectPath: string, limit?: number) => buildGitCommits(projectPath, limit),
+            showCommit: (projectPath: string, sha: string) => buildGitCommitDetail(projectPath, sha),
+            listBranches: (projectPath: string) => buildGitBranches(projectPath),
+            listWorktrees: (projectPath: string) => buildGitWorktrees(projectPath),
+            push: async (projectPath: string) => {
+              try {
+                const { stdout, stderr } = await execFileAsync("git", ["push"], { cwd: projectPath, maxBuffer: 4 * 1024 * 1024 });
+                return { success: true, output: (stdout + stderr).trim() };
+              } catch (err) {
+                const msg = err instanceof Error ? (err as NodeJS.ErrnoException & { stderr?: string; stdout?: string }).stderr ?? err.message : String(err);
+                return { success: false, output: msg.trim() };
+              }
+            },
+            fetch: async (projectPath: string) => {
+              try {
+                const { stdout, stderr } = await execFileAsync("git", ["fetch"], { cwd: projectPath, maxBuffer: 4 * 1024 * 1024 });
+                return { success: true, output: (stdout + stderr).trim() };
+              } catch (err) {
+                const msg = err instanceof Error ? (err as NodeJS.ErrnoException & { stderr?: string; stdout?: string }).stderr ?? err.message : String(err);
+                return { success: false, output: msg.trim() };
+              }
+            },
           },
         });
       }
