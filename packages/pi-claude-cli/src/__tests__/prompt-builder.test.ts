@@ -910,6 +910,67 @@ describe("buildSystemPrompt", () => {
     expect(result).toContain("IMPORTANT:");
     expect(result).toContain("tool results");
   });
+
+  it("rewrites bare custom tool references to MCP-prefixed names", async () => {
+    vi.resetModules();
+    vi.doMock("node:fs", () => ({
+      existsSync: () => false,
+      readFileSync: () => "",
+    }));
+
+    const { buildSystemPrompt: bsp } = await import("../prompt-builder");
+    const context = {
+      systemPrompt:
+        "Write the PROMPT.md, then call `fn_review_spec()` for review. " +
+        "If REVISE, call fn_review_spec again. Do not call mcp__custom-tools__fn_review_spec twice manually.",
+      messages: [],
+      tools: [
+        { name: "fn_review_spec", description: "review", parameters: {} },
+        { name: "read", description: "builtin", parameters: {} },
+      ],
+    } as unknown as any;
+    const result = bsp(context, "/some/project");
+
+    // Bare name occurrences are rewritten
+    expect(result).toContain(
+      "call `mcp__custom-tools__fn_review_spec()` for review",
+    );
+    expect(result).toContain(
+      "call mcp__custom-tools__fn_review_spec again",
+    );
+    // Already-prefixed occurrence is not double-prefixed
+    expect(result).not.toContain(
+      "mcp__custom-tools__mcp__custom-tools__fn_review_spec",
+    );
+    // Built-in pi tool names are not rewritten
+    expect(result).not.toContain("mcp__custom-tools__read");
+    // The addendum still lists the custom tool with its full mapping
+    expect(result).toContain("mcp__custom-tools__fn_review_spec");
+  });
+
+  it("does not rewrite identifier substrings that happen to overlap a tool name", async () => {
+    vi.resetModules();
+    vi.doMock("node:fs", () => ({
+      existsSync: () => false,
+      readFileSync: () => "",
+    }));
+
+    const { buildSystemPrompt: bsp } = await import("../prompt-builder");
+    const context = {
+      systemPrompt: "fn_review_specifier and fn_reviews are not the tool.",
+      messages: [],
+      tools: [
+        { name: "fn_review", description: "x", parameters: {} },
+        { name: "fn_review_spec", description: "y", parameters: {} },
+      ],
+    } as unknown as any;
+    const result = bsp(context, "/some/project");
+    // Neither substring should be rewritten — they're different identifiers.
+    expect(result).toContain("fn_review_specifier");
+    expect(result).toContain("fn_reviews");
+    expect(result).not.toContain("mcp__custom-tools__fn_review_specifier");
+    expect(result).not.toContain("mcp__custom-tools__fn_reviews");
+  });
 });
 
 describe("buildResumePrompt", () => {

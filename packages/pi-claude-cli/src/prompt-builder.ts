@@ -385,7 +385,7 @@ export function buildSystemPrompt(
   const parts: string[] = [];
 
   if (context.systemPrompt) {
-    parts.push(context.systemPrompt);
+    parts.push(rewriteCustomToolReferences(context.systemPrompt, context.tools));
   }
 
   // Look for AGENTS.md
@@ -425,7 +425,45 @@ const BUILT_IN_PI_TOOLS = new Set([
   "bash",
   "grep",
   "find",
+  "ls",
 ]);
+
+/**
+ * Rewrite bare references to custom pi tool names (e.g. `fn_review_spec`,
+ * `fn_review_spec()`) in the system prompt so they appear as their
+ * MCP-prefixed names (`mcp__custom-tools__fn_review_spec`). Engine prompts are
+ * written for direct API tool calls; under pi-claude-cli the same tools are
+ * reachable only through the MCP shim. Without this rewrite, models like
+ * Sonnet 4.6 inconsistently translate the names — sometimes calling MCP
+ * variants, sometimes silently skipping the call (observed in triage where
+ * `fn_review_spec` was never invoked even though the prompt said "MUST call").
+ *
+ * Only rewrites whole-word matches anchored to a non-identifier boundary, so
+ * substrings inside other identifiers stay intact. Skips already-prefixed
+ * occurrences (`mcp__custom-tools__fn_review_spec`) and pi built-ins.
+ */
+function rewriteCustomToolReferences(
+  prompt: string,
+  tools: ReadonlyArray<PiToolLike> | undefined,
+): string {
+  if (!prompt || !tools || tools.length === 0) return prompt;
+
+  let result = prompt;
+  for (const tool of tools) {
+    if (BUILT_IN_PI_TOOLS.has(tool.name)) continue;
+    // \b doesn't treat `_` as a word boundary the way we want here, so anchor
+    // the match between either start-of-string/non-identifier-char and either
+    // end-of-string/non-identifier-char. Also negative-lookbehind for
+    // `mcp__custom-tools__` so we don't double-prefix.
+    const escaped = tool.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(
+      `(?<![A-Za-z0-9_])(?<!mcp__custom-tools__)${escaped}(?![A-Za-z0-9_])`,
+      "g",
+    );
+    result = result.replace(pattern, `mcp__custom-tools__${tool.name}`);
+  }
+  return result;
+}
 
 /**
  * Build a system-prompt addendum that maps each custom pi tool to its
