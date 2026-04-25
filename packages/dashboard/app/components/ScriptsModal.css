@@ -3141,11 +3141,21 @@
 /* ── Responsive ── */
 
 @media (max-width: 640px) {
-  .gm-modal {
-    width: 100%;
-    max-width: 100%;
-    height: 100vh;
-    max-height: 100vh;
+  /* Full-screen sheet on mobile — drop overlay padding so the modal
+     actually fills the viewport instead of being pushed below it. */
+  .modal-overlay:has(.gm-modal) {
+    padding-top: 0;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .modal.gm-modal {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    margin: 0;
+    border: none;
     border-radius: 0;
   }
 

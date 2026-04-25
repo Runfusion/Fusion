@@ -725,9 +725,22 @@
 }
 
 @media (max-width: 640px) {
-  .github-import-modal {
-    width: calc(100vw - 16px);
-    max-height: 90vh;
+  /* Full-screen sheet on mobile — drop overlay padding so the modal
+     actually fills the viewport instead of being pushed below it. */
+  .modal-overlay:has(.github-import-modal) {
+    padding-top: 0;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .modal.github-import-modal {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    margin: 0;
+    border: none;
+    border-radius: 0;
   }
 
   .github-import-modal__body {

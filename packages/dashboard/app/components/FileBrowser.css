@@ -875,11 +875,22 @@
 
 /* Mobile responsive */
 @media (max-width: 768px) {
-  .file-browser-modal {
+  /* On mobile the file browser is presented as a full-screen sheet — drop
+     the overlay's default top padding so the modal actually fills the
+     viewport instead of being pushed below it. */
+  .modal-overlay:has(.file-browser-modal) {
+    padding-top: 0;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .modal.file-browser-modal {
     width: 100vw;
     height: 100dvh;
-    max-width: 100%;
+    max-width: 100vw;
     max-height: 100dvh;
+    margin: 0;
+    border: none;
     border-radius: 0;
   }
 
