@@ -138,6 +138,29 @@ describe("CustomModelDropdown ProviderIcon Integration", () => {
     expect(kimiIcon.querySelector("path")).toHaveAttribute("fill", "#6C5CE7");
   });
 
+  it("uses explicit icon/text layout hooks for favorited model rows", async () => {
+    const user = userEvent.setup();
+    render(<CustomModelDropdown {...defaultProps} favoriteModels={["openai/gpt-4o"]} />);
+
+    await user.click(screen.getByLabelText("Test Model"));
+
+    const pinnedRow = screen
+      .getByText("GPT-4o")
+      .closest(".model-combobox-option--favorite");
+    expect(pinnedRow).toBeInTheDocument();
+
+    const mainLayout = pinnedRow?.querySelector(".model-combobox-option-main");
+    expect(mainLayout).toBeInTheDocument();
+
+    const iconSlot = mainLayout?.querySelector(".model-combobox-option-icon");
+    expect(iconSlot).toBeInTheDocument();
+    expect(iconSlot?.querySelector("[data-testid='openai-icon']")).toBeInTheDocument();
+
+    const textSlot = mainLayout?.querySelector(".model-combobox-option-text");
+    expect(textSlot).toBeInTheDocument();
+    expect(textSlot).toHaveTextContent("GPT-4o");
+  });
+
   it("renders Kimi brand icon for moonshot provider model in dropdown (alias)", async () => {
     const user = userEvent.setup();
     render(<CustomModelDropdown {...defaultProps} />);

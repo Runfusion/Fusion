@@ -152,29 +152,26 @@
   min-width: var(--executor-status-touch-size);
   min-height: var(--executor-status-touch-size);
   padding: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border: none;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+  transition: color var(--transition-fast);
 }
 
 .executor-status-bar__folder-toggle:hover {
-  background: var(--card-hover);
   color: var(--text);
-  border-color: var(--text-dim);
 }
 
 .executor-status-bar__folder-toggle:focus-visible,
 .executor-status-bar__project-path:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
 }
 
 .executor-status-bar__folder-toggle--active {
   color: var(--todo);
-  border-color: var(--todo);
 }
 
 .executor-status-bar__project-path {

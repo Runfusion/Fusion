@@ -204,6 +204,7 @@ const providerConfig: Record<
   zai: { component: ZaiIcon, color: "#1A6DFF" }, // blue
   kimi: { component: KimiIcon, color: "#6C5CE7" }, // purple
   moonshot: { component: KimiIcon, color: "#6C5CE7" }, // purple (same as kimi)
+  "kimi-coding": { component: KimiIcon, color: "#6C5CE7", label: "Kimi" }, // purple (Kimi alias)
 };
 
 export function ProviderIcon({ provider, size = "sm" }: ProviderIconProps) {

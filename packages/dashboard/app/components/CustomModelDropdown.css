@@ -46,7 +46,7 @@
 
 .model-combobox-trigger-icon {
   display: inline-flex;
-  margin-right: 8px;
+  margin-right: var(--space-sm);
   flex-shrink: 0;
 }
 
@@ -158,6 +158,19 @@
 .model-combobox-option--selected:hover,
 .model-combobox-option--selected.model-combobox-option--highlighted {
   background: rgba(88, 166, 255, 0.25);
+}
+
+.model-combobox-option-main {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  flex: 1;
+}
+
+.model-combobox-option-icon {
+  display: inline-flex;
+  flex-shrink: 0;
 }
 
 .model-combobox-option-text {

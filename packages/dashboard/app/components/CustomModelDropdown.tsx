@@ -522,8 +522,12 @@ export function CustomModelDropdown({
                   role="option"
                   aria-selected={isSelected}
                 >
-                  <ProviderIcon provider={model.provider} size="sm" />
-                  <span className="model-combobox-option-text">{model.name}</span>
+                  <span className="model-combobox-option-main">
+                    <span className="model-combobox-option-icon">
+                      <ProviderIcon provider={model.provider} size="sm" />
+                    </span>
+                    <span className="model-combobox-option-text">{model.name}</span>
+                  </span>
                   <span className="model-combobox-option-id">{model.id}</span>
                   {onToggleModelFavorite && (
                     <button

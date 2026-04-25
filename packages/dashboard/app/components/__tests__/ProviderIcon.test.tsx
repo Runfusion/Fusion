@@ -291,6 +291,26 @@ describe("ProviderIcon", () => {
     expect(wrapper).toHaveAttribute("data-provider", "moonshot");
   });
 
+  it("renders Kimi brand icon for kimi-coding provider (alias)", () => {
+    render(<ProviderIcon provider="kimi-coding" />);
+    expect(screen.getByTestId("kimi-icon")).toBeInTheDocument();
+    expect(screen.getByLabelText("Kimi")).toBeInTheDocument();
+  });
+
+  it("applies provider-specific color for kimi-coding (alias)", () => {
+    render(<ProviderIcon provider="kimi-coding" />);
+    const icon = screen.getByTestId("kimi-icon").parentElement;
+    expect(icon).toHaveStyle({ color: "#6C5CE7" });
+  });
+
+  it("passes correct color to SVG fill for kimi-coding (alias)", () => {
+    render(<ProviderIcon provider="kimi-coding" />);
+    const svg = screen.getByTestId("kimi-icon");
+    const paths = svg.querySelectorAll("path");
+    expect(paths.length).toBeGreaterThan(0);
+    expect(paths[0]).toHaveAttribute("fill", "#6C5CE7");
+  });
+
   // Regression test: verify the Kimi icon is the crescent moon shape, not the old "K" placeholder
   it("renders crescent moon icon geometry (not the old K placeholder)", () => {
     render(<ProviderIcon provider="kimi" />);
