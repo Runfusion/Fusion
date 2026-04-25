@@ -116,7 +116,12 @@ describe("DirectoryPicker", () => {
       expect(screen.getByText("projects")).toBeDefined();
     });
 
-    fireEvent.click(screen.getByText("Select"));
+    const selectButton = screen.getByRole("button", { name: "Select" });
+    expect(selectButton.classList.contains("btn")).toBe(true);
+    expect(selectButton.classList.contains("btn-primary")).toBe(true);
+    expect(selectButton.classList.contains("directory-picker-select-btn")).toBe(true);
+
+    fireEvent.click(selectButton);
     expect(onChange).toHaveBeenCalledWith("/home/user");
   });
 

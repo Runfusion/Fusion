@@ -1,7 +1,7 @@
-import "./DirectoryPicker.css";
 import { useState, useCallback, useEffect } from "react";
 import { Folder, FolderOpen, ChevronRight, ChevronUp, Loader2, Eye, EyeOff, AlertCircle } from "lucide-react";
 import { browseDirectory, type BrowseDirectoryResult } from "../api";
+import "./DirectoryPicker.css";
 
 export interface DirectoryPickerProps {
   value: string;
@@ -218,7 +218,8 @@ export function DirectoryPicker({ value, onChange, placeholder, onInputKeyDown, 
               {browser.currentPath}
             </span>
             <button
-              className="btn-primary directory-picker-select-btn"
+              type="button"
+              className="btn btn-primary directory-picker-select-btn"
               onClick={handleSelect}
             >
               Select

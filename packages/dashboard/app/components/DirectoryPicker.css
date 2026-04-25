@@ -214,7 +214,5 @@
 
 .directory-picker-select-btn {
   flex-shrink: 0;
-  padding: 6px 16px !important;
-  font-size: 13px !important;
+  padding: var(--space-sm) var(--space-lg);
 }
-
