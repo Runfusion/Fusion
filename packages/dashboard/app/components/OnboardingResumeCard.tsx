@@ -46,7 +46,7 @@ export function OnboardingResumeCard({ onResume }: OnboardingResumeCardProps) {
       </div>
       <div className="onboarding-resume-card__actions">
         <button
-          className="onboarding-resume-card__resume-btn"
+          className="onboarding-resume-card__resume-btn btn btn-primary btn-sm"
           onClick={() => {
             trackOnboardingEvent("onboarding:resumed", {
               source: "resume-card",

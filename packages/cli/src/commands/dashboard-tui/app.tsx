@@ -75,9 +75,10 @@ function formatRelativeTime(iso: string): string {
   return `${h}h ago`;
 }
 
-// All-blue vertical gradient — top: brightest white, bottom: deep blue.
-// Strictly white + blue shades, no cyan/purple.
-const LOGO_COLORS = ["whiteBright", "white", "blueBright", "blueBright", "blue", "blue", "blue", "blue"] as const;
+// All-blue vertical gradient — top: brightest white, fading through plain
+// blue. blueBright is avoided because some terminal themes render it with
+// a purple cast; we want the gradient to read as strictly white→blue.
+const LOGO_COLORS = ["whiteBright", "white", "white", "blue", "blue", "blue", "blue", "blue"] as const;
 type InkColor = typeof LOGO_COLORS[number];
 
 function logoColor(index: number, total: number): InkColor {
@@ -119,15 +120,15 @@ function SplashScreen({ loadingStatus }: { loadingStatus: string }) {
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
       {compact ? (
-        <Text bold color="blueBright">FUSION</Text>
+        <Text bold color="blue">FUSION</Text>
       ) : (
         <AnimatedFusionLogo lines={large ? FUSION_LOGO_LARGE_LINES : FUSION_LOGO_LINES} />
       )}
-      <Text color="blueBright" dimColor>{FUSION_TAGLINE}</Text>
+      <Text color="blue" dimColor>{FUSION_TAGLINE}</Text>
       <Box height={1} />
       <Box flexDirection="row" gap={1}>
-        <Text color="blueBright"><Spinner type="dots" /></Text>
-        <Text color="blueBright" dimColor>{loadingStatus}</Text>
+        <Text color="blue"><Spinner type="dots" /></Text>
+        <Text color="blue" dimColor>{loadingStatus}</Text>
       </Box>
     </Box>
   );
@@ -138,7 +139,7 @@ function SplashScreen({ loadingStatus }: { loadingStatus: string }) {
 function MiniLogo() {
   return (
     <Box flexDirection="row" gap={0}>
-      <Text color="blueBright" bold>FUSION</Text>
+      <Text color="blue" bold>FUSION</Text>
     </Box>
   );
 }
@@ -248,39 +249,159 @@ function SystemPanel({ state, isFocused }: { state: DashboardState; isFocused: b
 
 // ── Stats panel ───────────────────────────────────────────────────────────────
 
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  const mb = bytes / (1024 * 1024);
+  if (mb < 1024) return `${mb.toFixed(0)}MB`;
+  return `${(mb / 1024).toFixed(2)}GB`;
+}
+
+function heapColor(used: number, limit: number): "red" | "yellow" | "green" {
+  if (limit <= 0) return "green";
+  const pct = used / limit;
+  if (pct >= 0.85) return "red";
+  if (pct >= 0.65) return "yellow";
+  return "green";
+}
+
+function rssColor(rss: number, totalSystemMem: number): "red" | "yellow" | undefined {
+  if (totalSystemMem <= 0) return undefined;
+  const pct = rss / totalSystemMem;
+  if (pct >= 0.5) return "red";
+  if (pct >= 0.25) return "yellow";
+  return undefined;
+}
+
+function sysMemColor(used: number, total: number): "red" | "yellow" | undefined {
+  if (total <= 0) return undefined;
+  const pct = used / total;
+  if (pct >= 0.9) return "red";
+  if (pct >= 0.75) return "yellow";
+  return undefined;
+}
+
+function cpuColor(percent: number, cores: number): "red" | "yellow" | undefined {
+  // Per-core normalized — >100% means oversubscribed.
+  const norm = cores > 0 ? percent / cores : percent;
+  if (norm >= 80) return "red";
+  if (norm >= 50) return "yellow";
+  return undefined;
+}
+
+function StatRow({ label, children }: { label: string; children: React.ReactNode }) {
+  // Fixed-width label column produces a clean two-column layout.
+  return (
+    <Box flexDirection="row" marginBottom={0}>
+      <Box width={11}>
+        <Text dimColor>{label}</Text>
+      </Box>
+      <Box flexDirection="row" gap={1}>{children}</Box>
+    </Box>
+  );
+}
+
 function StatsPanel({ state, isFocused }: { state: DashboardState; isFocused: boolean }) {
   const stats = state.taskStats;
+  const sys = state.systemStats;
   return (
     <Panel title="Stats" isFocused={isFocused} flexGrow={1}>
-      {!stats ? (
-        <Text dimColor>Statistics not available.</Text>
-      ) : (
-        <Box flexDirection="column">
-          <Box flexDirection="row" gap={1}>
-            <Text dimColor>Total:</Text>
-            <Text>{stats.total}</Text>
-          </Box>
-          {Object.entries(stats.byColumn).map(([col, count]) => {
-            const name = col.replace(/-/g, " ");
-            const isActive = (col === "in-progress" || col === "in-review") && count > 0;
-            return (
-              <Box key={col} flexDirection="row" gap={1} marginLeft={1}>
-                <Text dimColor>{name}:</Text>
-                <Text color={isActive ? "green" : undefined}>{count}</Text>
-              </Box>
-            );
-          })}
-          <Box height={1} />
-          <Text dimColor>Agents:</Text>
-          <Box marginLeft={1} flexDirection="column">
-            <Text dimColor>idle: <Text color="white">{stats.agents.idle}</Text></Text>
-            <Text dimColor>active: <Text color="green">{stats.agents.active}</Text></Text>
-            <Text color={stats.agents.error > 0 ? "red" : undefined} dimColor={stats.agents.error === 0}>
-              error: {stats.agents.error}
-            </Text>
-          </Box>
-        </Box>
-      )}
+      <Box flexDirection="column">
+        {sys && (
+          <>
+            <Text bold>Process</Text>
+            <Box marginLeft={1} flexDirection="column" marginTop={0}>
+              <StatRow label="RSS">
+                <Text color={rssColor(sys.rss, sys.systemTotalMem)}>
+                  {formatBytes(sys.rss)}
+                </Text>
+                {sys.systemTotalMem > 0 && (
+                  <Text dimColor>
+                    ({((sys.rss / sys.systemTotalMem) * 100).toFixed(1)}%)
+                  </Text>
+                )}
+              </StatRow>
+              <StatRow label="Heap">
+                <Text color={heapColor(sys.heapUsed, sys.heapLimit)}>
+                  {formatBytes(sys.heapUsed)}
+                </Text>
+                <Text dimColor>/ {formatBytes(sys.heapTotal)}</Text>
+                <Text dimColor>· limit {formatBytes(sys.heapLimit)}</Text>
+              </StatRow>
+              <StatRow label="External">
+                <Text>{formatBytes(sys.external)}</Text>
+                <Text dimColor>· buffers {formatBytes(sys.arrayBuffers)}</Text>
+              </StatRow>
+              <StatRow label="CPU">
+                <Text color={cpuColor(sys.cpuPercent, sys.cpuCount)}>
+                  {sys.cpuPercent.toFixed(1)}%
+                </Text>
+                <Text dimColor>· load {sys.loadAvg.map((n) => n.toFixed(2)).join(" ")}</Text>
+              </StatRow>
+            </Box>
+            <Box height={1} />
+            <Text bold>System</Text>
+            <Box marginLeft={1} flexDirection="column">
+              <StatRow label="Memory">
+                <Text color={sysMemColor(sys.systemTotalMem - sys.systemFreeMem, sys.systemTotalMem)}>
+                  {formatBytes(sys.systemTotalMem - sys.systemFreeMem)}
+                </Text>
+                <Text dimColor>used ·</Text>
+                <Text>{formatBytes(sys.systemFreeMem)}</Text>
+                <Text dimColor>free</Text>
+              </StatRow>
+              <StatRow label="Total">
+                <Text>{formatBytes(sys.systemTotalMem)}</Text>
+              </StatRow>
+              <StatRow label="Cores">
+                <Text>{sys.cpuCount}</Text>
+              </StatRow>
+              <StatRow label="Platform">
+                <Text>{sys.platform}</Text>
+              </StatRow>
+              <StatRow label="Node">
+                <Text>{sys.nodeVersion}</Text>
+              </StatRow>
+              <StatRow label="PID">
+                <Text>{sys.pid}</Text>
+              </StatRow>
+            </Box>
+            <Box height={1} />
+          </>
+        )}
+        {!stats ? (
+          <Text dimColor>Tasks not available.</Text>
+        ) : (
+          <>
+            <Text bold>Tasks</Text>
+            <Box marginLeft={1} flexDirection="column">
+              {Object.entries(stats.byColumn).map(([col, count]) => {
+                const name = col.replace(/-/g, " ");
+                const isActive = (col === "in-progress" || col === "in-review") && count > 0;
+                return (
+                  <StatRow key={col} label={name}>
+                    <Text color={isActive ? "green" : undefined}>{count}</Text>
+                  </StatRow>
+                );
+              })}
+            </Box>
+            <Box height={1} />
+            <Text bold>Agents</Text>
+            <Box marginLeft={1} flexDirection="column">
+              <StatRow label="idle">
+                <Text>{stats.agents.idle}</Text>
+              </StatRow>
+              <StatRow label="active">
+                <Text color="green">{stats.agents.active}</Text>
+              </StatRow>
+              <StatRow label="error">
+                <Text color={stats.agents.error > 0 ? "red" : undefined}>
+                  {stats.agents.error}
+                </Text>
+              </StatRow>
+            </Box>
+          </>
+        )}
+      </Box>
     </Panel>
   );
 }
@@ -570,7 +691,6 @@ function StatusModeGrid({
         <Box flexDirection="column" flexGrow={1} overflow="hidden">
           <SystemPanel state={state} isFocused={focused === "system"} />
           <StatsPanel state={state} isFocused={focused === "stats"} />
-          <SettingsPanel state={state} isFocused={focused === "settings"} />
         </Box>
         <Box flexDirection="column" flexGrow={2} overflow="hidden">
           <LogsPanel
@@ -578,7 +698,14 @@ function StatusModeGrid({
             isFocused={focused === "logs"}
             availableRows={logsAvailableRows}
           />
-          <UtilitiesPanel isFocused={focused === "utilities"} />
+          <Box flexDirection="row" overflow="hidden">
+            <Box flexDirection="column" flexGrow={1} overflow="hidden">
+              <UtilitiesPanel isFocused={focused === "utilities"} />
+            </Box>
+            <Box flexDirection="column" flexGrow={1} overflow="hidden">
+              <SettingsPanel state={state} isFocused={focused === "settings"} />
+            </Box>
+          </Box>
         </Box>
       </Box>
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import type { Settings } from "@fusion/core";
 import { scopedKey } from "../../utils/projectStorage";
 
@@ -1531,15 +1531,19 @@ describe("App GitHub import", () => {
 
     // Open the modal
     fireEvent.click(screen.getByTitle("Import from GitHub"));
-    expect(screen.getByText("Import from GitHub")).toBeTruthy();
 
-    // Close the modal - use getAllByRole since there might be multiple buttons
-    const cancelButtons = screen.getAllByRole("button", { name: /Cancel/i });
-    fireEvent.click(cancelButtons[cancelButtons.length - 1]);
+    // Scope interactions to the GitHub import modal to avoid clicking Cancel
+    // buttons from other overlays (e.g. onboarding wizard).
+    const modalHeading = await screen.findByRole("heading", { name: "Import from GitHub" });
+    const modalOverlay = modalHeading.closest(".modal-overlay");
+    expect(modalOverlay).toBeTruthy();
 
-    // Modal should be closed - the Load button from the modal should be gone
+    const cancelButton = within(modalOverlay as HTMLElement).getByRole("button", { name: /^Cancel$/i });
+    fireEvent.click(cancelButton);
+
+    // Modal heading should be gone after cancel closes the overlay.
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: /^Load$/i })).toBeNull();
+      expect(screen.queryByRole("heading", { name: "Import from GitHub" })).toBeNull();
     });
   });
 });

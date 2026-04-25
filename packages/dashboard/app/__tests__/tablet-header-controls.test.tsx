@@ -434,7 +434,7 @@ describe("tablet header controls", () => {
     expect(btn.textContent).toContain("Projects");
   });
 
-  it("renders compact project switch trigger beside logo on tablet", () => {
+  it("does not render mobile project switch trigger on tablet", () => {
     const projects = [
       { id: "1", name: "Project One", path: "/path/one", status: "active" as const },
       { id: "2", name: "Project Two", path: "/path/two", status: "active" as const },
@@ -444,7 +444,7 @@ describe("tablet header controls", () => {
       currentProject: projects[0],
       onSelectProject: vi.fn(),
     });
-    expect(screen.getByTestId("mobile-project-switch-trigger")).toBeDefined();
+    expect(screen.queryByTestId("mobile-project-switch-trigger")).toBeNull();
     expect(screen.queryByTestId("project-selector-trigger")).toBeNull();
   });
 

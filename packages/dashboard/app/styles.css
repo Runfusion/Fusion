@@ -1186,6 +1186,7 @@ body {
   inset: 0;
   background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(4px);
+  /* Must remain above sticky top banners (e.g. onboarding/session resume cards). */
   z-index: 100;
   justify-content: center;
   align-items: flex-start;

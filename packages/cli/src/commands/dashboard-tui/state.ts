@@ -34,6 +34,23 @@ export interface TaskStats {
   };
 }
 
+export interface SystemStats {
+  rss: number;
+  heapUsed: number;
+  heapTotal: number;
+  heapLimit: number;
+  external: number;
+  arrayBuffers: number;
+  cpuPercent: number;
+  loadAvg: [number, number, number];
+  cpuCount: number;
+  systemTotalMem: number;
+  systemFreeMem: number;
+  pid: number;
+  nodeVersion: string;
+  platform: string;
+}
+
 export interface SettingsValues {
   maxConcurrent: number;
   maxWorktrees: number;
@@ -127,6 +144,7 @@ export interface DashboardState {
   logEntries: LogEntry[];
   systemInfo: SystemInfo | null;
   taskStats: TaskStats | null;
+  systemStats: SystemStats | null;
   settings: SettingsValues | null;
   callbacks: TUICallbacks | null;
   showHelp: boolean;
@@ -149,6 +167,7 @@ export function createInitialState(): DashboardState {
     logEntries: [],
     systemInfo: null,
     taskStats: null,
+    systemStats: null,
     settings: null,
     callbacks: null,
     showHelp: false,

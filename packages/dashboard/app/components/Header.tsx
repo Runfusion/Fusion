@@ -526,8 +526,8 @@ export function Header({
           <h1 className="logo">Fusion</h1>
         </div>
 
-        {/* Compact Project Switch - dropdown trigger next to logo when 2+ projects (mobile + tablet) */}
-        {isCompact && projects.length > 1 && onSelectProject && (
+        {/* Mobile Project Switch - dropdown trigger next to logo when at least one project exists (mobile only) */}
+        {isMobile && projects.length >= 1 && onSelectProject && (
           <div className="mobile-project-switch" ref={mobileProjectSwitchRef}>
             <button
               className={`mobile-project-switch-trigger${isMobileProjectSwitchOpen ? " mobile-project-switch-trigger--open" : ""}`}

@@ -1,7 +1,10 @@
+import os from "node:os";
+import v8 from "node:v8";
 import { LogRingBuffer } from "./log-ring-buffer.js";
 import type { LogEntry } from "./log-ring-buffer.js";
 import type {
   SystemInfo,
+  SystemStats,
   TaskStats,
   SettingsValues,
   TUICallbacks,
@@ -30,6 +33,7 @@ export class DashboardTUI {
   logBuffer: LogRingBuffer;
   systemInfo: SystemInfo | null = null;
   taskStats: TaskStats | null = null;
+  systemStats: SystemStats | null = null;
   settings: SettingsValues | null = null;
   callbacks: TUICallbacks | null = null;
   isRunning = false;
@@ -57,6 +61,10 @@ export class DashboardTUI {
 
   // Uptime ticker to keep footer time live.
   private uptimeTimer: ReturnType<typeof setInterval> | null = null;
+  // System stats sampler — process memory + CPU%.
+  private systemStatsTimer: ReturnType<typeof setInterval> | null = null;
+  private lastCpuUsage: NodeJS.CpuUsage | null = null;
+  private lastCpuSampleAt = 0;
 
   constructor() {
     this.logBuffer = new LogRingBuffer();
@@ -76,6 +84,7 @@ export class DashboardTUI {
       logEntries: this.logBuffer.getAll(),
       systemInfo: this.systemInfo,
       taskStats: this.taskStats,
+      systemStats: this.systemStats,
       settings: this.settings,
       callbacks: this.callbacks,
       showHelp: this.showHelp,
@@ -116,6 +125,49 @@ export class DashboardTUI {
   setTaskStats(stats: TaskStats): void {
     this.taskStats = stats;
     this.notify();
+  }
+
+  setSystemStats(stats: SystemStats): void {
+    this.systemStats = stats;
+    this.notify();
+  }
+
+  /** Sample process memory + CPU% in-place. Called from the sampler timer. */
+  sampleSystemStats(): void {
+    const mem = process.memoryUsage();
+    const heapStats = v8.getHeapStatistics();
+    const now = Date.now();
+    const cpu = process.cpuUsage();
+    let cpuPercent = 0;
+    if (this.lastCpuUsage && this.lastCpuSampleAt > 0) {
+      const elapsedMicros = (now - this.lastCpuSampleAt) * 1000;
+      if (elapsedMicros > 0) {
+        const usedMicros =
+          (cpu.user - this.lastCpuUsage.user) +
+          (cpu.system - this.lastCpuUsage.system);
+        cpuPercent = (usedMicros / elapsedMicros) * 100;
+      }
+    }
+    this.lastCpuUsage = cpu;
+    this.lastCpuSampleAt = now;
+
+    const load = os.loadavg();
+    this.setSystemStats({
+      rss: mem.rss,
+      heapUsed: mem.heapUsed,
+      heapTotal: mem.heapTotal,
+      heapLimit: heapStats.heap_size_limit,
+      external: mem.external,
+      arrayBuffers: mem.arrayBuffers,
+      cpuPercent,
+      loadAvg: [load[0] ?? 0, load[1] ?? 0, load[2] ?? 0],
+      cpuCount: os.cpus().length,
+      systemTotalMem: os.totalmem(),
+      systemFreeMem: os.freemem(),
+      pid: process.pid,
+      nodeVersion: process.version,
+      platform: `${process.platform}/${process.arch}`,
+    });
   }
 
   setSettings(settings: SettingsValues): void {
@@ -278,6 +330,14 @@ export class DashboardTUI {
     this.uptimeTimer = setInterval(() => {
       if (this.isRunning) this.notify();
     }, 5000);
+
+    // Prime CPU baseline, then sample every 2s.
+    this.lastCpuUsage = process.cpuUsage();
+    this.lastCpuSampleAt = Date.now();
+    this.sampleSystemStats();
+    this.systemStatsTimer = setInterval(() => {
+      if (this.isRunning) this.sampleSystemStats();
+    }, 2000);
   }
 
   async stop(): Promise<void> {
@@ -287,6 +347,11 @@ export class DashboardTUI {
     if (this.uptimeTimer) {
       clearInterval(this.uptimeTimer);
       this.uptimeTimer = null;
+    }
+
+    if (this.systemStatsTimer) {
+      clearInterval(this.systemStatsTimer);
+      this.systemStatsTimer = null;
     }
 
     if (this.inkInstance) {

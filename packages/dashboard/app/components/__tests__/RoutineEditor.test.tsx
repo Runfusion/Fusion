@@ -471,8 +471,11 @@ describe("RoutineEditor", () => {
       await waitFor(() => {
         expect(onSubmit).toHaveBeenCalled();
       });
-      // Button should be re-enabled
-      expect(screen.getByText("Create Routine")).not.toBeDisabled();
+
+      // Button should return from the transient "Saving…" state and be enabled again.
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Create Routine" })).not.toBeDisabled();
+      });
     });
 
     it("builds correct webhook trigger on submit", async () => {

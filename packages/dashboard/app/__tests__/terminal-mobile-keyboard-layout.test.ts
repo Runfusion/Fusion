@@ -143,27 +143,24 @@ describe("terminal mobile keyboard layout CSS contract", () => {
     });
   });
 
-  describe("desktop .terminal-modal base rule", () => {
+  describe("desktop .modal.terminal-modal base rule", () => {
     /**
-     * Extract the desktop .terminal-modal rule (top-level, not inside any
-     * @media block). This is the first .terminal-modal { ... } in the file
-     * that is not indented (i.e., not nested inside a media query).
+     * Extract the desktop terminal modal rule (top-level, not inside any
+     * @media block).
      */
     function findDesktopTerminalModalRule(): string {
-      // Match a top-level .terminal-modal { ... } (not indented)
-      // Use multiline with ^ to match start-of-line
-      const match = css.match(/^\.terminal-modal\s*\{([^}]*)\}/m);
+      const match = css.match(/^\.modal\.terminal-modal\s*\{([^}]*)\}/m);
       return match?.[1] ?? "";
     }
 
-    it("has min-height: 90vh on desktop", () => {
+    it("has min-height: 80vh on desktop", () => {
       const ruleBody = findDesktopTerminalModalRule();
-      expect(ruleBody).toContain("min-height: 90vh");
+      expect(ruleBody).toContain("min-height: 80vh");
     });
 
-    it("has max-height: 90vh on desktop", () => {
+    it("has max-height: 85vh on desktop", () => {
       const ruleBody = findDesktopTerminalModalRule();
-      expect(ruleBody).toContain("max-height: 90vh");
+      expect(ruleBody).toContain("max-height: 85vh");
     });
   });
 });

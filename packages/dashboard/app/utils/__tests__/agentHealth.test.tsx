@@ -239,10 +239,10 @@ describe("getAgentHealthStatus", () => {
       expect(status.stateDerived).toBe(false);
     });
 
-    it('returns "Unresponsive" when heartbeat exceeds the timeout with periodic heartbeat', () => {
+    it('returns "Unresponsive" when heartbeat exceeds the freshness threshold with periodic heartbeat', () => {
       const agent = makeAgent({
         state: "active",
-        lastHeartbeatAt: new Date(FIXED_NOW - 12 * 60 * 1000 - 1).toISOString(), // just over 12 minutes ago
+        lastHeartbeatAt: new Date(FIXED_NOW - 24 * 60 * 1000 - 1).toISOString(), // just over 24 minutes ago
         runtimeConfig: { heartbeatIntervalMs: 6 * 60 * 1000 }, // 6 minute interval
       });
       const status = getAgentHealthStatus(agent);
@@ -266,7 +266,7 @@ describe("getAgentHealthStatus", () => {
   // ── Agents without explicit heartbeatIntervalMs ───────────────────────────
   //
   // Agents that never had an interval persisted still get the server-side
-  // default interval (1h), so they render Healthy within ~2h of the last
+  // default interval (1h), so they render Healthy within ~4h of the last
   // heartbeat and tip into Unresponsive beyond that.
 
   describe("agents without explicit heartbeatIntervalMs", () => {
@@ -279,21 +279,21 @@ describe("getAgentHealthStatus", () => {
       expect(getAgentHealthStatus(agent).label).toBe("Healthy");
     });
 
-    it('returns "Unresponsive" once elapsed exceeds 2× the default 1h interval', () => {
+    it('returns "Unresponsive" once elapsed exceeds 4× the default 1h interval', () => {
       const agent = makeAgent({
         state: "active",
-        lastHeartbeatAt: new Date(FIXED_NOW - 3 * 3_600_000).toISOString(), // 3h ago
+        lastHeartbeatAt: new Date(FIXED_NOW - 5 * 3_600_000).toISOString(), // 5h ago
         runtimeConfig: {},
       });
       expect(getAgentHealthStatus(agent).label).toBe("Unresponsive");
     });
 
     it("clamps invalid intervals (0/negative) to the dashboard minimum (5m)", () => {
-      // 0 clamp to 300000ms (5m minimum) → threshold = max(300000 × 2, 60000) = 600000ms (10 minutes).
-      // A heartbeat 11 minutes old is stale.
+      // 0 clamp to 300000ms (5m minimum) → threshold = max(300000 × 4, 300000) = 1,200,000ms (20 minutes).
+      // A heartbeat 21 minutes old is stale.
       const agent = makeAgent({
         state: "active",
-        lastHeartbeatAt: new Date(FIXED_NOW - 660_000).toISOString(), // 11 minutes ago
+        lastHeartbeatAt: new Date(FIXED_NOW - 1_260_000).toISOString(), // 21 minutes ago
         runtimeConfig: { heartbeatIntervalMs: 0 },
       });
       expect(getAgentHealthStatus(agent).label).toBe("Unresponsive");
@@ -302,11 +302,11 @@ describe("getAgentHealthStatus", () => {
 
   // ── Staleness floor ───────────────────────────────────────────────────────
   //
-  // Short intervals get a 60s floor so the UI doesn't flicker between
+  // Short intervals get a 5m floor so the UI doesn't flicker between
   // Healthy and Unresponsive every tick for second-level heartbeats.
 
   describe("staleness floor", () => {
-    it("holds Healthy below the 60s floor even for sub-minute intervals", () => {
+    it("holds Healthy below the 5m floor even for sub-minute intervals", () => {
       const agent = makeAgent({
         state: "active",
         lastHeartbeatAt: new Date(FIXED_NOW - 30_000).toISOString(),
@@ -316,11 +316,11 @@ describe("getAgentHealthStatus", () => {
     });
 
     it("tips to Unresponsive past the floor", () => {
-      // 6 minute interval → threshold = max(6 × 60s × 2, 60s floor) = max(12 min, 1 min) = 12 minutes.
-      // A heartbeat 13 minutes old exceeds the 12-minute threshold.
+      // 6 minute interval → threshold = max(6m × 4, 5m floor) = 24 minutes.
+      // A heartbeat 25 minutes old exceeds the threshold.
       const agent = makeAgent({
         state: "active",
-        lastHeartbeatAt: new Date(FIXED_NOW - 13 * 60 * 1000).toISOString(), // 13 minutes ago
+        lastHeartbeatAt: new Date(FIXED_NOW - 25 * 60 * 1000).toISOString(), // 25 minutes ago
         runtimeConfig: { heartbeatIntervalMs: 6 * 60 * 1000 }, // 6 minute interval
       });
       expect(getAgentHealthStatus(agent).label).toBe("Unresponsive");
@@ -375,7 +375,7 @@ describe("getAgentHealthStatus", () => {
         name: "unresponsive",
         agent: makeAgent({
           state: "active",
-          lastHeartbeatAt: new Date(FIXED_NOW - 13 * 60 * 1000).toISOString(), // 13 minutes ago
+          lastHeartbeatAt: new Date(FIXED_NOW - 25 * 60 * 1000).toISOString(), // 25 minutes ago
           runtimeConfig: { heartbeatIntervalMs: 6 * 60 * 1000 }, // 6 minute interval
         }),
         expectedLabel: "Unresponsive",
@@ -436,11 +436,11 @@ describe("getAgentHealthStatus", () => {
     });
 
     it("ignores runtimeConfig.enabled and uses interval-based staleness", () => {
-      // 6 minute interval → 12 minute threshold. 13 minutes elapsed is stale regardless of any
+      // 6 minute interval → 24 minute threshold. 25 minutes elapsed is stale regardless of any
       // legacy enabled flag or per-run timeout.
       const agent = makeAgent({
         state: "active",
-        lastHeartbeatAt: new Date(FIXED_NOW - 13 * 60 * 1000).toISOString(), // 13 minutes ago
+        lastHeartbeatAt: new Date(FIXED_NOW - 25 * 60 * 1000).toISOString(), // 25 minutes ago
         runtimeConfig: { enabled: true, heartbeatIntervalMs: 6 * 60 * 1000, heartbeatTimeoutMs: 120_000 },
       });
       expect(getAgentHealthStatus(agent).label).toBe("Unresponsive");

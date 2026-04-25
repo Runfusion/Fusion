@@ -77,7 +77,7 @@ describe("OnboardingResumeCard", () => {
       expect(screen.getByText("Continue onboarding")).toBeInTheDocument();
     });
 
-    it("has accessible button with proper role", () => {
+    it("has accessible button with proper role and shared CTA classes", () => {
       mockGetOnboardingResumeStep.mockReturnValue({
         currentStep: "ai-setup",
         label: "AI Setup",
@@ -86,6 +86,7 @@ describe("OnboardingResumeCard", () => {
       render(<OnboardingResumeCard onResume={vi.fn()} />);
       const button = screen.getByRole("button", { name: "Continue onboarding" });
       expect(button).toBeInTheDocument();
+      expect(button).toHaveClass("btn", "btn-primary", "btn-sm", "onboarding-resume-card__resume-btn");
     });
   });
 
@@ -104,7 +105,10 @@ describe("OnboardingResumeCard", () => {
 
       expect(mockTrackOnboardingEvent).toHaveBeenCalledWith(
         "onboarding:resumed",
-        expect.objectContaining({ source: "resume-card" }),
+        expect.objectContaining({
+          source: "resume-card",
+          resumedFromStep: "ai-setup",
+        }),
       );
       expect(onResume).toHaveBeenCalledTimes(1);
     });

@@ -75,9 +75,8 @@ describe("DashboardApp smoke", () => {
     const controller = newController();
     const { lastFrame, unmount } = render(renderDashboardAppNode(controller));
     const frame = lastFrame() ?? "";
-    // Block-letter "F" opens with this run on wide terminals; on narrow
-    // terminals the compact layout shows plain "FUSION".
-    expect(frame).toMatch(/███████╗|FUSION/);
+    // Splash can render either the compact text mark or the expanded block-art logo.
+    expect(frame).toMatch(/FUSION|███████╗/);
     expect(frame).toContain("AI coding agent dashboard");
     unmount();
   });
