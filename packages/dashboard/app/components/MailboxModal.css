@@ -560,9 +560,33 @@
     flex-shrink: 0;
   }
 
-  .mailbox-modal .mailbox-header-actions {
+  .mailbox-modal .mailbox-header-actions,
+  .mailbox-view .mailbox-header-actions {
     flex-wrap: wrap;
-    gap: 6px;
+    align-items: center;
+    gap: var(--space-sm);
+  }
+
+  .mailbox-modal .mailbox-header-actions .btn,
+  .mailbox-modal .mailbox-header-actions .btn-icon,
+  .mailbox-modal .mailbox-header-actions .modal-close,
+  .mailbox-view .mailbox-header-actions .btn,
+  .mailbox-view .mailbox-header-actions .btn-icon {
+    min-height: 36px;
+  }
+
+  .mailbox-modal .mailbox-header-actions .btn-icon,
+  .mailbox-modal .mailbox-header-actions .modal-close,
+  .mailbox-view .mailbox-header-actions .btn-icon {
+    min-width: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mailbox-modal .mailbox-header-actions .modal-close {
+    padding: 0;
+    border-radius: var(--radius-sm);
   }
 
   .mailbox-modal .mailbox-tabs {
@@ -635,11 +659,6 @@
 
   .mailbox-view .mailbox-title {
     flex-shrink: 0;
-  }
-
-  .mailbox-view .mailbox-header-actions {
-    flex-wrap: wrap;
-    gap: 6px;
   }
 
   .mailbox-view .mailbox-tabs {
