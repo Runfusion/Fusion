@@ -53,6 +53,9 @@ export class DashboardTUI {
   // When true, sampleSystemStats() kills any running vitest processes if
   // system memory usage crosses 90%. Toggled by [v] in the Utilities panel.
   autoKillVitestOnPressure = true;
+  // System-memory ratio (0..1) at which auto-kill triggers. Adjustable from
+  // the Utilities panel via [+]/[-] in 5% steps. Clamped to [0.5, 0.99].
+  vitestKillThreshold = 0.9;
   // Throttle so we don't spam kills while the sampler keeps firing during
   // sustained pressure (sampler runs every 2s).
   private lastAutoKillAt = 0;
@@ -117,6 +120,7 @@ export class DashboardTUI {
       interactiveData: this.interactiveData,
       interactiveView: this.interactiveView,
       autoKillVitestOnPressure: this.autoKillVitestOnPressure,
+      vitestKillThreshold: this.vitestKillThreshold,
     };
     return this.cachedSnapshot;
   }
@@ -210,12 +214,12 @@ export class DashboardTUI {
         const usedRatio = (total - free) / total;
         // 30s minimum gap between auto-kills — vitest restart and OS reclaim
         // both take a few seconds; firing every 2s would flap.
-        if (usedRatio > 0.9 && now - this.lastAutoKillAt > 30_000) {
+        if (usedRatio > this.vitestKillThreshold && now - this.lastAutoKillAt > 30_000) {
           this.lastAutoKillAt = now;
           const result = this.killVitestProcesses();
           if (result.killed > 0) {
             this.warn(
-              `Auto-killed ${result.killed} vitest process${result.killed === 1 ? "" : "es"} (system memory at ${Math.round(usedRatio * 100)}%)`,
+              `Auto-killed ${result.killed} vitest process${result.killed === 1 ? "" : "es"} (system memory at ${Math.round(usedRatio * 100)}%, threshold ${Math.round(this.vitestKillThreshold * 100)}%)`,
               "memory-guard",
             );
           }
@@ -257,13 +261,47 @@ export class DashboardTUI {
     return { killed, pids };
   }
 
+  adjustVitestKillThreshold(deltaPct: number): number {
+    const next = this.vitestKillThreshold + deltaPct / 100;
+    this.vitestKillThreshold = Math.max(0.5, Math.min(0.99, Math.round(next * 100) / 100));
+    this.notify();
+    void this.persistVitestKillSettings({ thresholdPct: Math.round(this.vitestKillThreshold * 100) });
+    return this.vitestKillThreshold;
+  }
+
   toggleAutoKillVitest(): boolean {
     this.autoKillVitestOnPressure = !this.autoKillVitestOnPressure;
     if (!this.autoKillVitestOnPressure) {
       this.lastAutoKillAt = 0;
     }
     this.notify();
+    void this.persistVitestKillSettings({ enabled: this.autoKillVitestOnPressure });
     return this.autoKillVitestOnPressure;
+  }
+
+  /** Apply persisted values from global settings on startup. Does not
+   *  trigger a write-back. */
+  hydrateVitestKillSettings(values: { enabled?: boolean; thresholdPct?: number }): void {
+    if (typeof values.enabled === "boolean") {
+      this.autoKillVitestOnPressure = values.enabled;
+    }
+    if (typeof values.thresholdPct === "number" && Number.isFinite(values.thresholdPct)) {
+      const ratio = values.thresholdPct / 100;
+      this.vitestKillThreshold = Math.max(0.5, Math.min(0.99, ratio));
+    }
+    this.notify();
+  }
+
+  private async persistVitestKillSettings(
+    partial: { enabled?: boolean; thresholdPct?: number },
+  ): Promise<void> {
+    if (!this.callbacks?.onPersistVitestKillSettings) return;
+    try {
+      await this.callbacks.onPersistVitestKillSettings(partial);
+    } catch {
+      // Best-effort persistence — the in-memory toggle remains in effect
+      // even if disk write fails. The next adjust will retry.
+    }
   }
 
   setSettings(settings: SettingsValues): void {
@@ -419,9 +457,21 @@ export class DashboardTUI {
       case "v": {
         const enabled = this.toggleAutoKillVitest();
         this.log(
-          `Auto-kill vitest on memory pressure (>90%): ${enabled ? "ON" : "OFF"}`,
+          `Auto-kill vitest on memory pressure (>${Math.round(this.vitestKillThreshold * 100)}%): ${enabled ? "ON" : "OFF"}`,
           "memory-guard",
         );
+        break;
+      }
+      case "+":
+      case "=": {
+        const v = this.adjustVitestKillThreshold(+5);
+        this.log(`Vitest kill threshold: ${Math.round(v * 100)}%`, "memory-guard");
+        break;
+      }
+      case "-":
+      case "_": {
+        const v = this.adjustVitestKillThreshold(-5);
+        this.log(`Vitest kill threshold: ${Math.round(v * 100)}%`, "memory-guard");
         break;
       }
     }

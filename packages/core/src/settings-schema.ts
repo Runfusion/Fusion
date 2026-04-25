@@ -52,6 +52,9 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   // Dashboard session state (persisted to global settings for PWA/offline restore)
   dashboardCurrentNodeId: undefined,
   dashboardCurrentProjectIdByNode: undefined,
+  // Dashboard TUI memory guard
+  vitestAutoKillEnabled: true,
+  vitestKillThresholdPct: 90,
 } satisfies CompleteSettings<GlobalSettings>;
 
 /** Default values for project-level settings. */

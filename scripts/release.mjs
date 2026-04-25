@@ -16,7 +16,8 @@
 //   pnpm release --dry-run    # run through steps without publishing/pushing
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync, statSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 
@@ -41,6 +42,118 @@ function run(cmd, { capture = false, allowFail = false } = {}) {
   });
   if (r.status !== 0 && !allowFail) fail(`Command failed: ${cmd}`);
   return { status: r.status, stdout: (r.stdout || "").trim() };
+}
+
+/**
+ * Rewrite the repo-root CHANGELOG.md by aggregating every
+ * `packages/*\/CHANGELOG.md` into a single per-version view.
+ *
+ * For each version that appears in any package, we emit a top-level
+ * `## <version>` block, then a `### <pkgName>` sub-block per package that
+ * had an entry for that version, with the package's section body bumped
+ * one heading level deeper (`### Patch Changes` → `#### Patch Changes`).
+ *
+ * Version order: take the order from the package with the most recent
+ * release (the one whose top version is highest by semver). Any extra
+ * versions found only in other packages are appended in semver-descending
+ * order at the end.
+ */
+function syncRootChangelog() {
+  const pkgsDir = "packages";
+  const pkgDirs = readdirSync(pkgsDir).filter((name) => {
+    const p = join(pkgsDir, name);
+    return statSync(p).isDirectory() && existsSync(join(p, "CHANGELOG.md"));
+  });
+
+  // { pkgName, versions: Map<versionKey, bodyMarkdown>, order: versionKey[] }
+  const parsed = pkgDirs.map((dir) => {
+    const path = join(pkgsDir, dir, "CHANGELOG.md");
+    const raw = readFileSync(path, "utf8");
+    let pkgName = dir;
+    const titleMatch = raw.match(/^# ([^\n]+)\n/);
+    if (titleMatch) pkgName = titleMatch[1].trim();
+    return { pkgName, ...parseChangelog(raw) };
+  });
+
+  // Pick the canonical version order from whichever package has the highest
+  // top version (typically the public CLI). Other packages contribute any
+  // additional versions at the tail.
+  parsed.sort((a, b) => compareSemver(b.order[0] ?? "0", a.order[0] ?? "0"));
+  const seen = new Set();
+  const versionOrder = [];
+  for (const p of parsed) {
+    for (const v of p.order) {
+      if (!seen.has(v)) {
+        seen.add(v);
+        versionOrder.push(v);
+      }
+    }
+  }
+
+  const lines = [
+    "# Fusion changelog",
+    "",
+    "User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.",
+    "",
+  ];
+
+  for (const version of versionOrder) {
+    lines.push(`## ${version}`, "");
+    // Sort packages alphabetically within a version for deterministic output.
+    const pkgsForVersion = parsed
+      .filter((p) => p.versions.has(version))
+      .sort((a, b) => a.pkgName.localeCompare(b.pkgName));
+    for (const p of pkgsForVersion) {
+      const body = p.versions.get(version).trim();
+      if (!body) continue;
+      lines.push(`### ${p.pkgName}`, "");
+      // Bump heading levels by one so package sub-sections nest cleanly.
+      const bumped = body.replace(/^(#{1,5}) /gm, (_m, hashes) => `${hashes}# `);
+      lines.push(bumped, "");
+    }
+  }
+
+  writeFileSync("CHANGELOG.md", lines.join("\n").replace(/\n{3,}/g, "\n\n"));
+}
+
+/**
+ * Parse a changeset-format CHANGELOG into { versions, order }.
+ * Splits on top-level `## ` headings; the version key is the heading text
+ * verbatim (e.g. "0.2.5", or "0.4.0 (pre-release, unpublished)").
+ */
+function parseChangelog(raw) {
+  const versions = new Map();
+  const order = [];
+  // Strip out the first-line title and any horizontal rules so they don't
+  // pollute the first version section.
+  const stripped = raw.replace(/^# [^\n]*\n?/, "").replace(/^---\s*$/gm, "");
+  const sections = stripped.split(/^## /m).slice(1); // drop pre-first-version preamble
+  for (const section of sections) {
+    const nl = section.indexOf("\n");
+    const key = (nl === -1 ? section : section.slice(0, nl)).trim();
+    const body = nl === -1 ? "" : section.slice(nl + 1).trim();
+    if (!versions.has(key)) {
+      versions.set(key, body);
+      order.push(key);
+    }
+  }
+  return { versions, order };
+}
+
+/** Compare two semver-ish version strings ("0.2.5", "0.4.0 (pre-release)"). */
+function compareSemver(a, b) {
+  const pa = parseVersionKey(a);
+  const pb = parseVersionKey(b);
+  for (let i = 0; i < 3; i++) {
+    if (pa[i] !== pb[i]) return pa[i] - pb[i];
+  }
+  return 0;
+}
+
+function parseVersionKey(key) {
+  const m = key.match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return [0, 0, 0];
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
 }
 
 async function confirm(prompt) {
@@ -94,6 +207,10 @@ run("pnpm install --no-frozen-lockfile");
 const cliPkg = JSON.parse(readFileSync("packages/cli/package.json", "utf8"));
 const version = cliPkg.version;
 ok(`New version: ${version}`);
+
+info("Syncing root CHANGELOG.md from packages/cli/CHANGELOG.md…");
+syncRootChangelog();
+ok("Root CHANGELOG.md updated.");
 
 // --- Build ----------------------------------------------------------------
 

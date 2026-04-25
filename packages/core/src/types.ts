@@ -1123,6 +1123,15 @@ export interface GlobalSettings {
    *  Clear individual entries by setting them to `undefined` (omitting from update).
    *  Clearing all entries returns the dashboard to overview mode. */
   dashboardCurrentProjectIdByNode?: Record<string, string>;
+  /** When true, the dashboard TUI's memory guard will SIGKILL any running
+   *  vitest processes once system memory usage crosses
+   *  {@link vitestKillThresholdPct}. The kill is throttled to once per 30
+   *  seconds. Default: true. */
+  vitestAutoKillEnabled?: boolean;
+  /** System-memory usage percent (0–100) at which the TUI memory guard
+   *  triggers a vitest auto-kill. Clamped to [50, 99] in the UI.
+   *  Default: 90. */
+  vitestKillThresholdPct?: number;
 }
 
 /**

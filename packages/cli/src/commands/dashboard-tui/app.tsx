@@ -378,6 +378,11 @@ function StatsPanel({ state, isFocused }: { state: DashboardState; isFocused: bo
               <Text dimColor>used</Text>
               <Text>{formatBytes(sys.systemFreeMem)}</Text>
               <Text dimColor>free</Text>
+              {sys.systemTotalMem > 0 && (
+                <Text color={sysMemColor(sys.systemTotalMem - sys.systemFreeMem, sys.systemTotalMem)}>
+                  {((sys.systemTotalMem - sys.systemFreeMem) / sys.systemTotalMem * 100).toFixed(1)}%
+                </Text>
+              )}
             </StatRow>
             <StatRow label="Cores">
               <Text>{sys.cpuCount}</Text>
@@ -591,12 +596,14 @@ function ExpandedLog({ entry, index, total }: { entry: LogEntry; index: number; 
 
 function UtilitiesPanel({ state, isFocused }: { state: DashboardState; isFocused: boolean }) {
   const autoKill = state.autoKillVitestOnPressure;
+  const thresholdPct = Math.round(state.vitestKillThreshold * 100);
   const actions: Array<{ key: string; label: string }> = [
     { key: "r", label: "Refresh Stats" },
     { key: "c", label: "Clear Logs" },
     { key: "t", label: "Toggle Engine Pause" },
     { key: "k", label: "Kill Vitest Processes" },
-    { key: "v", label: `Auto-Kill Vitest >90% Mem: ${autoKill ? "ON" : "OFF"}` },
+    { key: "v", label: `Auto-Kill Vitest >${thresholdPct}% Mem: ${autoKill ? "ON" : "OFF"}` },
+    { key: "+/-", label: `Adjust Threshold (${thresholdPct}%)` },
     { key: "?", label: "Help" },
   ];
   return (
@@ -632,7 +639,8 @@ function HelpOverlay() {
     ["[r]", "Refresh stats (Utilities)"],
     ["[c]", "Clear logs (Utilities)"],
     ["[k]", "Kill all vitest processes (Utilities)"],
-    ["[v]", "Toggle auto-kill vitest >90% mem (Utilities)"],
+    ["[v]", "Toggle auto-kill vitest on memory pressure (Utilities)"],
+    ["[+/-]", "Adjust vitest kill memory threshold (Utilities)"],
     ["[↑/↓/k/j]", "Navigate list / log entries"],
     ["[Home / G]", "First / last log entry (Logs)"],
     ["[Enter/Space]", "Expand log entry (Logs)"],
@@ -769,7 +777,7 @@ function StatusBar({ state, controller: _controller }: { state: DashboardState; 
   if (activeSection === "logs") {
     hotkeys.push("↑↓ navigate", "w wrap", "f filter", "Enter expand");
   } else if (activeSection === "utilities") {
-    hotkeys.push("r refresh", "c clear logs", "t toggle pause", "k kill vitest", "v auto-kill");
+    hotkeys.push("r refresh", "c clear logs", "t toggle pause", "k kill vitest", "v auto-kill", "+/- threshold");
   } else {
     hotkeys.push("Tab cycle panel", "1-5 jump");
   }

@@ -2,7 +2,17 @@
   "$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
   "changelog": "@changesets/cli/changelog",
   "commit": false,
-  "fixed": [["@runfusion/fusion", "runfusion.ai"]],
+  "fixed": [[
+    "@runfusion/fusion",
+    "runfusion.ai",
+    "@fusion/core",
+    "@fusion/dashboard",
+    "@fusion/desktop",
+    "@fusion/engine",
+    "@fusion/mobile",
+    "@fusion/pi-claude-cli",
+    "@fusion/plugin-sdk"
+  ]],
   "linked": [],
   "access": "public",
   "baseBranch": "main",

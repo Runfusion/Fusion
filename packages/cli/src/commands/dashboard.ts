@@ -732,6 +732,18 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           globalPause: false,
         };
       },
+      onPersistVitestKillSettings: async (partial) => {
+        if (!store) return;
+        const patch: Record<string, unknown> = {};
+        if (typeof partial.enabled === "boolean") {
+          patch.vitestAutoKillEnabled = partial.enabled;
+        }
+        if (typeof partial.thresholdPct === "number") {
+          patch.vitestKillThresholdPct = partial.thresholdPct;
+        }
+        if (Object.keys(patch).length === 0) return;
+        await store.getGlobalSettingsStore().updateSettings(patch);
+      },
     });
     // Start the TUI
     await tui.start();
@@ -1787,6 +1799,22 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         enginePaused: settings.enginePaused ?? false,
         globalPause: settings.globalPause ?? false,
       });
+
+      // Hydrate the TUI memory guard from persisted global settings so the
+      // user's previous toggle/threshold survives across dashboard restarts.
+      try {
+        const globalSettings = await store.getGlobalSettingsStore().getSettings();
+        tui.hydrateVitestKillSettings({
+          enabled: typeof globalSettings.vitestAutoKillEnabled === "boolean"
+            ? globalSettings.vitestAutoKillEnabled
+            : undefined,
+          thresholdPct: typeof globalSettings.vitestKillThresholdPct === "number"
+            ? globalSettings.vitestKillThresholdPct
+            : undefined,
+        });
+      } catch {
+        // Fall back to controller defaults if global settings can't be read.
+      }
 
       // Populate initial stats
       const tasks = await store.listTasks({ slim: true, includeArchived: false });

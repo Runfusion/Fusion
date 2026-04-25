@@ -72,6 +72,12 @@ export interface TUICallbacks {
   onRefreshStats: () => Promise<void>;
   onClearLogs: () => void;
   onTogglePause: (paused: boolean) => Promise<SettingsValues>;
+  /** Persist vitest memory-guard settings to global settings so they
+   *  survive across dashboard restarts. Optional — when undefined, the
+   *  controller treats them as session-local. */
+  onPersistVitestKillSettings?: (
+    partial: { enabled?: boolean; thresholdPct?: number },
+  ) => Promise<void>;
 }
 
 // Slim project shape used by interactive mode
@@ -280,6 +286,7 @@ export interface DashboardState {
   interactiveData: InteractiveData | null;
   interactiveView: InteractiveView;
   autoKillVitestOnPressure: boolean;
+  vitestKillThreshold: number;
 }
 
 export const SECTION_ORDER: SectionId[] = ["system", "logs", "utilities", "stats", "settings"];
@@ -304,5 +311,6 @@ export function createInitialState(): DashboardState {
     interactiveData: null,
     interactiveView: "board",
     autoKillVitestOnPressure: true,
+    vitestKillThreshold: 0.9,
   };
 }
