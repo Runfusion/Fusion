@@ -167,7 +167,7 @@ describe("TaskCard", () => {
         task={makeTask({
           steps: [
             { name: "Step 0", status: "done" },
-            { name: "Step 1", status: "pending" },
+            { name: "Step 1", status: "failed" },
           ],
           enabledWorkflowSteps: ["WS-001", "WS-002", "WS-003"],
           workflowStepResults: [
@@ -200,9 +200,17 @@ describe("TaskCard", () => {
     ]);
 
     const dots = container.querySelectorAll(".card-step-dot");
+    expect(dots[1]?.className).toContain("card-step-dot--failed");
+    expect(dots[1]?.className).not.toContain("card-step-dot--workflow-failed");
+
     expect(dots[2]?.className).toContain("card-step-dot--done");
+    expect(dots[2]?.className).not.toContain("card-step-dot--workflow-failed");
+
     expect(dots[3]?.className).toContain("card-step-dot--failed");
+    expect(dots[3]?.className).toContain("card-step-dot--workflow-failed");
+
     expect(dots[4]?.className).toContain("card-step-dot--pending");
+    expect(dots[4]?.className).not.toContain("card-step-dot--workflow-failed");
 
     const workflowBadgeElements = container.querySelectorAll(".card-step-workflow-badge");
     const workflowBadges = Array.from(workflowBadgeElements).map((el) => el.textContent);

@@ -568,6 +568,10 @@
   background: var(--color-error-dark);
 }
 
+.card-step-dot--workflow-failed {
+  background: var(--ws-warning);
+}
+
 .card-step-name {
   flex: 1;
   min-width: 0;

@@ -1222,25 +1222,29 @@ function TaskCardComponent({
             </button>
             {showSteps && (
               <div className="card-steps-list">
-                {unifiedProgress.items.map((step) => (
-                  <div key={step.id} className="card-step-item">
-                    <span
-                      className={`card-step-dot card-step-dot--${step.status}`}
-                      aria-hidden="true"
-                    />
-                    <span className={`card-step-name${step.status === "done" ? " completed" : ""}`}>
-                      {step.name}
-                    </span>
-                    {step.source === "workflow" && (
+                {unifiedProgress.items.map((step) => {
+                  const isWorkflowFailed = step.source === "workflow" && step.status === "failed";
+
+                  return (
+                    <div key={step.id} className="card-step-item">
                       <span
-                        className={`card-step-workflow-badge card-step-workflow-badge--${step.phase}`}
-                        title="Workflow check"
-                      >
-                        workflow
+                        className={`card-step-dot card-step-dot--${step.status}${isWorkflowFailed ? " card-step-dot--workflow-failed" : ""}`}
+                        aria-hidden="true"
+                      />
+                      <span className={`card-step-name${step.status === "done" ? " completed" : ""}`}>
+                        {step.name}
                       </span>
-                    )}
-                  </div>
-                ))}
+                      {step.source === "workflow" && (
+                        <span
+                          className={`card-step-workflow-badge card-step-workflow-badge--${step.phase}`}
+                          title="Workflow check"
+                        >
+                          workflow
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </>
