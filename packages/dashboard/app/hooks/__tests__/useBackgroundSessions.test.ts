@@ -9,6 +9,7 @@ import { useBackgroundSessions } from "../useBackgroundSessions";
 import {
   __destroyAiSessionSyncStoreForTests,
   __resetAiSessionSyncStoreForTests,
+  useAiSessionSync,
 } from "../useAiSessionSync";
 import * as apiModule from "../../api";
 import { MockEventSource } from "../../../vitest.setup";
@@ -295,6 +296,189 @@ describe("useBackgroundSessions", () => {
 
     expect(mockCancelPlanning).toHaveBeenCalledWith("planning-session", undefined, expect.any(String));
     expect(mockDeleteAiSession).toHaveBeenCalledWith("planning-session");
+  });
+
+  it("does not dismiss planning session when cancellation is lock-conflicted", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "planning-locked", status: "generating", type: "planning" }),
+    ]);
+    mockCancelPlanning.mockRejectedValueOnce(new Error("locked by another tab"));
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["planning-locked"]);
+    });
+
+    await act(async () => {
+      await result.current.dismissSession("planning-locked");
+    });
+
+    expect(mockDeleteAiSession).not.toHaveBeenCalled();
+    expect(result.current.sessions.map((session) => session.id)).toEqual(["planning-locked"]);
+    expect(result.current.generating).toBe(1);
+  });
+
+  it("keeps a dismissed planning session hidden when stale sync update arrives", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "dismiss-sync", status: "generating", type: "planning" }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+    const { result: syncResult } = renderHook(() => useAiSessionSync());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["dismiss-sync"]);
+    });
+
+    await act(async () => {
+      await result.current.dismissSession("dismiss-sync");
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+    });
+
+    act(() => {
+      syncResult.current.broadcastUpdate({
+        sessionId: "dismiss-sync",
+        status: "generating",
+        needsInput: false,
+        type: "planning",
+        title: "Dismiss Sync",
+        updatedAt: "1970-01-01T00:00:01.000Z",
+        timestamp: 1,
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+      expect(result.current.planningSessions).toEqual([]);
+      expect(result.current.generating).toBe(0);
+      expect(result.current.needsInput).toBe(0);
+    });
+  });
+
+  it("keeps a dismissed planning session hidden when stale SSE update arrives", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "dismiss-sse", status: "generating", type: "planning" }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["dismiss-sse"]);
+    });
+
+    await act(async () => {
+      await result.current.dismissSession("dismiss-sse");
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+    });
+
+    const eventSource = MockEventSource.instances[0]!;
+    act(() => {
+      eventSource._emit(
+        "ai_session:updated",
+        makeSession({
+          id: "dismiss-sse",
+          type: "planning",
+          status: "generating",
+          title: "Dismiss SSE",
+          updatedAt: "1970-01-01T00:00:01.000Z",
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+      expect(result.current.planningSessions).toEqual([]);
+      expect(result.current.generating).toBe(0);
+      expect(result.current.needsInput).toBe(0);
+    });
+  });
+
+  it("allows a newer authoritative SSE update to restore a dismissed session", async () => {
+    mockFetchAiSessions.mockResolvedValueOnce([
+      makeSession({ id: "dismiss-restore", status: "generating", type: "planning" }),
+    ]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["dismiss-restore"]);
+    });
+
+    await act(async () => {
+      await result.current.dismissSession("dismiss-restore");
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+    });
+
+    const eventSource = MockEventSource.instances[0]!;
+    act(() => {
+      eventSource._emit(
+        "ai_session:updated",
+        makeSession({
+          id: "dismiss-restore",
+          type: "planning",
+          status: "awaiting_input",
+          title: "Dismiss Restore",
+          updatedAt: new Date(Date.now() + 60_000).toISOString(),
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["dismiss-restore"]);
+      expect(result.current.planningSessions.map((session) => session.id)).toEqual(["dismiss-restore"]);
+      expect(result.current.generating).toBe(0);
+      expect(result.current.needsInput).toBe(1);
+    });
+  });
+
+  it("refresh keeps dismissed sessions hidden when server returns stale data", async () => {
+    const staleSession = makeSession({
+      id: "dismiss-refresh",
+      status: "generating",
+      type: "planning",
+      updatedAt: "2026-04-08T00:00:01.000Z",
+    });
+
+    mockFetchAiSessions.mockResolvedValueOnce([staleSession]);
+
+    const { result } = renderHook(() => useBackgroundSessions());
+
+    await waitFor(() => {
+      expect(result.current.sessions.map((session) => session.id)).toEqual(["dismiss-refresh"]);
+    });
+
+    await act(async () => {
+      await result.current.dismissSession("dismiss-refresh");
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+    });
+
+    mockFetchAiSessions.mockResolvedValueOnce([staleSession]);
+
+    act(() => {
+      result.current.refresh();
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessions).toEqual([]);
+      expect(result.current.planningSessions).toEqual([]);
+      expect(result.current.generating).toBe(0);
+      expect(result.current.needsInput).toBe(0);
+    });
   });
 
   it("dismissSession calls cancelSubtaskBreakdown for subtask sessions", async () => {

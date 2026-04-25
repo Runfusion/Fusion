@@ -31,9 +31,16 @@ function shouldIncludeSession(session: AiSessionSummary): boolean {
   return session.status === "generating" || session.status === "awaiting_input";
 }
 
+function isTerminalStatus(
+  status: AiSessionSummary["status"],
+): status is Extract<AiSessionSummary["status"], "complete" | "error"> {
+  return status === "complete" || status === "error";
+}
+
 export function useBackgroundSessions(projectId?: string): UseBackgroundSessionsResult {
   const [sessions, setSessions] = useState<AiSessionSummary[]>([]);
   const sessionTimestampsRef = useRef<Map<string, number>>(new Map());
+  const dismissedSessionTimestampsRef = useRef<Map<string, number>>(new Map());
 
   const {
     sessions: syncedSessions,
@@ -45,12 +52,29 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
   const refresh = useCallback(() => {
     fetchAiSessions(projectId)
       .then((fetched) => {
+        const filtered = fetched.filter((session) => {
+          const fetchedTimestamp = parseTimestamp(session.updatedAt);
+          const dismissedTimestamp = dismissedSessionTimestampsRef.current.get(session.id);
+          if (dismissedTimestamp === undefined) {
+            return true;
+          }
+
+          // Treat explicit dismissals as terminal tombstones unless the server has
+          // emitted a genuinely newer state for the same session id.
+          if (fetchedTimestamp <= dismissedTimestamp) {
+            return false;
+          }
+
+          dismissedSessionTimestampsRef.current.delete(session.id);
+          return true;
+        });
+
         const nextTimestampMap = new Map<string, number>();
-        for (const session of fetched) {
+        for (const session of filtered) {
           nextTimestampMap.set(session.id, parseTimestamp(session.updatedAt));
         }
         sessionTimestampsRef.current = nextTimestampMap;
-        setSessions(fetched);
+        setSessions(filtered);
       })
       .catch((err) => {
         console.warn("[useBackgroundSessions] Failed to fetch AI sessions:", err);
@@ -81,6 +105,27 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
         const incomingTimestamp = syncState.lastEventTimestamp;
         const knownTimestamp = sessionTimestampsRef.current.get(syncState.sessionId) ?? 0;
         if (incomingTimestamp < knownTimestamp) {
+          continue;
+        }
+
+        const dismissedTimestamp = dismissedSessionTimestampsRef.current.get(syncState.sessionId);
+        if (dismissedTimestamp !== undefined && incomingTimestamp <= dismissedTimestamp) {
+          continue;
+        }
+
+        if (
+          dismissedTimestamp !== undefined &&
+          incomingTimestamp > dismissedTimestamp &&
+          !isTerminalStatus(syncState.status)
+        ) {
+          dismissedSessionTimestampsRef.current.delete(syncState.sessionId);
+        }
+
+        if (isTerminalStatus(syncState.status)) {
+          if (nextById.delete(syncState.sessionId)) {
+            changed = true;
+          }
+          sessionTimestampsRef.current.set(syncState.sessionId, incomingTimestamp);
           continue;
         }
 
@@ -145,9 +190,22 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
             return prev;
           }
 
+          const dismissedTimestamp = dismissedSessionTimestampsRef.current.get(updated.id);
+          if (dismissedTimestamp !== undefined && eventTimestamp <= dismissedTimestamp) {
+            return prev;
+          }
+
+          if (
+            dismissedTimestamp !== undefined &&
+            eventTimestamp > dismissedTimestamp &&
+            !isTerminalStatus(updated.status)
+          ) {
+            dismissedSessionTimestampsRef.current.delete(updated.id);
+          }
+
           sessionTimestampsRef.current.set(updated.id, eventTimestamp);
 
-          if (updated.status === "complete" || updated.status === "error") {
+          if (isTerminalStatus(updated.status)) {
             return prev.filter((session) => session.id !== updated.id);
           }
 
@@ -177,7 +235,7 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
           timestamp: eventTimestamp,
         });
 
-        if (updated.status === "complete" || updated.status === "error") {
+        if (isTerminalStatus(updated.status)) {
           broadcastCompleted({
             sessionId: updated.id,
             status: updated.status,
@@ -194,6 +252,7 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
         const id = JSON.parse(e.data) as string;
         setSessions((prev) => prev.filter((s) => s.id !== id));
         sessionTimestampsRef.current.delete(id);
+        dismissedSessionTimestampsRef.current.delete(id);
       } catch {
         // ignore malformed payload
       }
@@ -251,11 +310,28 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
       }
     }
 
+    // If another tab owns the lock, local dismiss must not pretend success.
+    if (lockConflict) {
+      return;
+    }
+
     // Only proceed with deletion if cancellation succeeded or wasn't needed
-    if (cancelFailed && !lockConflict) {
+    if (cancelFailed) {
       // Non-lock cancellation failure: still try to delete
       console.warn(`[useBackgroundSessions] Cancellation failed for session ${id}, attempting delete anyway`);
     }
+
+    const dismissalTimestamp = Date.now();
+
+    // Root cause: local removal without dismissal tombstone let stale sync/SSE
+    // snapshots resurrect the same session. Record terminal dismissal semantics
+    // before async deletion so delayed updates cannot re-materialize it.
+    dismissedSessionTimestampsRef.current.set(id, dismissalTimestamp);
+    sessionTimestampsRef.current.set(
+      id,
+      Math.max(sessionTimestampsRef.current.get(id) ?? 0, dismissalTimestamp),
+    );
+    broadcastCompleted({ sessionId: id, status: "complete", timestamp: dismissalTimestamp });
 
     // Delete the session and update local state
     try {
@@ -265,8 +341,7 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
     }
 
     setSessions((prev) => prev.filter((s) => s.id !== id));
-    sessionTimestampsRef.current.delete(id);
-  }, [projectId, sessions]);
+  }, [broadcastCompleted, projectId, sessions]);
 
   const active = useMemo(
     () => sessions.filter((session) => shouldIncludeSession(session)),
