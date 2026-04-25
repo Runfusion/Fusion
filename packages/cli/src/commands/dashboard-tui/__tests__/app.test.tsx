@@ -1,3 +1,4 @@
+import React from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render } from "ink-testing-library";
 import { DashboardApp } from "../app.js";
@@ -6,6 +7,10 @@ import type { ProjectItem, TaskItem, AgentItem, AgentDetailItem, ModelItem, Sett
 
 function newController(): DashboardTUI {
   return new DashboardTUI();
+}
+
+function renderDashboardAppNode(controller: DashboardTUI) {
+  return React.createElement(DashboardApp, { controller });
 }
 
 function makeSystemInfo() {
@@ -68,7 +73,7 @@ afterEach(() => {
 describe("DashboardApp smoke", () => {
   it("renders the splash logo and tagline before systemInfo arrives", () => {
     const controller = newController();
-    const { lastFrame, unmount } = render(<DashboardApp controller={controller} />);
+    const { lastFrame, unmount } = render(renderDashboardAppNode(controller));
     const frame = lastFrame() ?? "";
     // Block-letter "F" opens with this run on wide terminals; on narrow
     // terminals the compact layout shows plain "FUSION".
@@ -79,9 +84,9 @@ describe("DashboardApp smoke", () => {
 
   it("renders system panel content once setSystemInfo fires", () => {
     const controller = newController();
-    const { lastFrame, unmount, rerender } = render(<DashboardApp controller={controller} />);
+    const { lastFrame, unmount, rerender } = render(renderDashboardAppNode(controller));
     controller.setSystemInfo(makeSystemInfo());
-    rerender(<DashboardApp controller={controller} />);
+    rerender(renderDashboardAppNode(controller));
     const frame = lastFrame() ?? "";
     expect(frame).toContain("http://localhost:4040");
     expect(frame).not.toContain("███████╗");
@@ -92,7 +97,7 @@ describe("DashboardApp smoke", () => {
     const controller = newController();
     controller.setSystemInfo(makeSystemInfo());
     controller.setMode("interactive");
-    const { lastFrame, unmount } = render(<DashboardApp controller={controller} />);
+    const { lastFrame, unmount } = render(renderDashboardAppNode(controller));
     expect(lastFrame() ?? "").toContain("Interactive mode unavailable");
     unmount();
   });
@@ -110,7 +115,7 @@ describe("DashboardApp smoke", () => {
     controller.setInteractiveData(makeInteractiveData({ projects, tasks }));
     controller.setMode("interactive");
     controller.setInteractiveView("board");
-    const { lastFrame, unmount } = render(<DashboardApp controller={controller} />);
+    const { lastFrame, unmount } = render(renderDashboardAppNode(controller));
     await new Promise((r) => setTimeout(r, 30));
     const frame = lastFrame() ?? "";
     // Board shows the currently selected project; first project "alpha" is selected by default
@@ -186,7 +191,7 @@ describe("Agents view", () => {
     controller.setInteractiveData(makeInteractiveData({ agents }));
     controller.setMode("interactive");
     controller.setInteractiveView("agents");
-    const { lastFrame, unmount } = render(<DashboardApp controller={controller} />);
+    const { lastFrame, unmount } = render(renderDashboardAppNode(controller));
     await new Promise((r) => setTimeout(r, 30));
     const frame = lastFrame() ?? "";
     expect(frame).toContain("worker-1");
@@ -201,7 +206,7 @@ describe("Agents view", () => {
     controller.setInteractiveData(makeInteractiveData());
     controller.setMode("interactive");
     controller.setInteractiveView("agents");
-    const { lastFrame, unmount } = render(<DashboardApp controller={controller} />);
+    const { lastFrame, unmount } = render(renderDashboardAppNode(controller));
     await new Promise((r) => setTimeout(r, 30));
     expect(lastFrame() ?? "").toContain("Agent Detail");
     unmount();
@@ -224,7 +229,7 @@ describe("Settings view", () => {
     controller.setInteractiveData(makeInteractiveData({ settings }));
     controller.setMode("interactive");
     controller.setInteractiveView("settings");
-    const { lastFrame, unmount } = render(<DashboardApp controller={controller} />);
+    const { lastFrame, unmount } = render(renderDashboardAppNode(controller));
     await new Promise((r) => setTimeout(r, 30));
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Settings");
@@ -242,7 +247,7 @@ describe("Settings view", () => {
     controller.setInteractiveData(makeInteractiveData({ models }));
     controller.setMode("interactive");
     controller.setInteractiveView("settings");
-    const { lastFrame, unmount } = render(<DashboardApp controller={controller} />);
+    const { lastFrame, unmount } = render(renderDashboardAppNode(controller));
     await new Promise((r) => setTimeout(r, 30));
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Available Models");
@@ -265,7 +270,7 @@ describe("Board view", () => {
     }));
     controller.setMode("interactive");
     controller.setInteractiveView("board");
-    const { lastFrame, unmount } = render(<DashboardApp controller={controller} />);
+    const { lastFrame, unmount } = render(renderDashboardAppNode(controller));
     await new Promise((r) => setTimeout(r, 30));
     const frame = lastFrame() ?? "";
     expect(frame).toContain("TODO");
@@ -284,7 +289,7 @@ describe("LogsPanel indicator", () => {
     controller.log("third message", "test");
     // Select index 1 (middle entry)
     controller.setSelectedLogIndex(1);
-    const { lastFrame, unmount } = render(<DashboardApp controller={controller} />);
+    const { lastFrame, unmount } = render(renderDashboardAppNode(controller));
     await new Promise((r) => setTimeout(r, 10));
     const frame = lastFrame() ?? "";
     expect(frame).toContain("▶");
@@ -297,7 +302,7 @@ describe("LogsPanel indicator", () => {
     controller.setActiveSection("logs");
     controller.log("only message", "test");
     controller.setSelectedLogIndex(0);
-    const { lastFrame, unmount } = render(<DashboardApp controller={controller} />);
+    const { lastFrame, unmount } = render(renderDashboardAppNode(controller));
     await new Promise((r) => setTimeout(r, 10));
     const frame = lastFrame() ?? "";
     // The selected entry shows the arrow; it should appear at least once

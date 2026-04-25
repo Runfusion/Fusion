@@ -155,6 +155,13 @@ function expectMobileRule(css: string, selector: string, declaration: string): v
   expect(pattern.test(css)).toBe(true);
 }
 
+function expectBaseRule(css: string, selector: string, declaration: string): void {
+  const pattern = new RegExp(
+    `${escapeRegExp(selector)}\\s*\\{[^}]*${escapeRegExp(declaration)}`,
+  );
+  expect(pattern.test(css)).toBe(true);
+}
+
 describe("SettingsModal mobile adaptations", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -248,5 +255,21 @@ describe("SettingsModal mobile adaptations", () => {
     expectMobileRule(css, ".settings-preset-item", "flex-direction: column;");
     expectMobileRule(css, ".settings-preset-item-actions", "justify-content: flex-start;");
     expectMobileRule(css, ".settings-preset-size-grid", "grid-template-columns: 1fr;");
+  });
+
+  it("styles settings scrollbar rules for sidebar and content", () => {
+    const css = loadAllAppCss();
+
+    expectBaseRule(css, ".settings-sidebar", "scrollbar-color: var(--border) transparent;");
+    expectBaseRule(css, ".settings-sidebar", "scrollbar-width: thin;");
+    expectBaseRule(css, ".settings-sidebar::-webkit-scrollbar", "width: 6px;");
+    expectBaseRule(css, ".settings-sidebar::-webkit-scrollbar-thumb", "background: var(--border);");
+    expectBaseRule(css, ".settings-sidebar::-webkit-scrollbar-thumb:hover", "background: var(--text-muted);");
+
+    expectBaseRule(css, ".settings-content", "scrollbar-color: var(--border) transparent;");
+    expectBaseRule(css, ".settings-content", "scrollbar-width: thin;");
+    expectBaseRule(css, ".settings-content::-webkit-scrollbar", "width: 6px;");
+    expectBaseRule(css, ".settings-content::-webkit-scrollbar-thumb", "background: var(--border);");
+    expectBaseRule(css, ".settings-content::-webkit-scrollbar-thumb:hover", "background: var(--text-muted);");
   });
 });

@@ -1556,6 +1556,25 @@ input[type="range"]:focus-visible {
   padding: 10px 8px;
   gap: 2px;
   background: rgba(0, 0, 0, 0.1);
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
+}
+
+.settings-sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.settings-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.settings-sidebar::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.settings-sidebar::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 
 .settings-nav-item {
@@ -1612,6 +1631,25 @@ input[type="range"]:focus-visible {
   overflow-x: hidden;
   overflow-y: auto;
   padding: 4px 0 12px;
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
+}
+
+.settings-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.settings-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.settings-content::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.settings-content::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 .settings-content > * {
   animation: settingsFadeIn var(--transition-normal);

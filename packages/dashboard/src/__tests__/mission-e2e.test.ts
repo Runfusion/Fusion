@@ -59,11 +59,11 @@ function createMockMissionStore() {
   // Generate IDs matching the real MissionStore format:
   // prefix + base36(timestamp) + "-" + random alphanumeric suffix
   // e.g., M-MNJVKT2G-ME5Q, MS-M3N8QR-C9F1, SL-P4T2WX-D5E8, F-J6K9AB-G7H3
-  const generateMissionId = () => `M-MOCK${missionCounter++.toString(36).toUpperCase()}-TST`;
-  const generateMilestoneId = () => `MS-MOCK${milestoneCounter++.toString(36).toUpperCase()}-TST`;
-  const generateSliceId = () => `SL-MOCK${sliceCounter++.toString(36).toUpperCase()}-TST`;
-  const generateFeatureId = () => `F-MOCK${featureCounter++.toString(36).toUpperCase()}-TST`;
-  const generateAssertionId = () => `CA-MOCK${assertionCounter++.toString(36).toUpperCase()}-TST`;
+  const generateMissionId = () => `M-MOCK${(missionCounter++).toString(36).toUpperCase()}-TST`;
+  const generateMilestoneId = () => `MS-MOCK${(milestoneCounter++).toString(36).toUpperCase()}-TST`;
+  const generateSliceId = () => `SL-MOCK${(sliceCounter++).toString(36).toUpperCase()}-TST`;
+  const generateFeatureId = () => `F-MOCK${(featureCounter++).toString(36).toUpperCase()}-TST`;
+  const generateAssertionId = () => `CA-MOCK${(assertionCounter++).toString(36).toUpperCase()}-TST`;
 
   return {
     createMission: vi.fn((input: { title: string; description?: string }) => {
