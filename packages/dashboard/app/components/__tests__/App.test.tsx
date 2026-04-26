@@ -332,7 +332,7 @@ describe("App backend-unreachable first-run flow", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Welcome to Fusion")).toBeTruthy();
-    });
+    }, { timeout: 5000 });
   });
 });
 

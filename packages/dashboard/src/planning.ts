@@ -30,7 +30,7 @@ import {
   resetDiagnosticsSink,
   nonfatal,
 } from "./ai-session-diagnostics.js";
-import * as engine from "@fusion/engine";
+import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
@@ -58,29 +58,7 @@ interface PlanningNtfyHelpers {
   }) => Promise<void>;
 }
 
-function buildDefaultPlanningNtfyHelpers(): PlanningNtfyHelpers {
-  const isNtfyEventEnabled =
-    "isNtfyEventEnabled" in engine
-      ? engine.isNtfyEventEnabled
-      : (events: NtfyNotificationEvent[] | undefined, event: NtfyNotificationEvent) =>
-          Array.isArray(events) ? events.includes(event) : false;
-
-  const buildNtfyClickUrl = "buildNtfyClickUrl" in engine
-    ? engine.buildNtfyClickUrl
-    : () => undefined;
-
-  const sendNtfyNotification = "sendNtfyNotification" in engine
-    ? engine.sendNtfyNotification
-    : async () => {};
-
-  return {
-    isNtfyEventEnabled,
-    buildNtfyClickUrl,
-    sendNtfyNotification,
-  };
-}
-
-let planningNtfyHelpers: PlanningNtfyHelpers | undefined = buildDefaultPlanningNtfyHelpers();
+let planningNtfyHelpers: PlanningNtfyHelpers | undefined;
 
 /**
  * Shared diagnostics helper for the planning module.
@@ -118,7 +96,32 @@ function ensureEngineReady(): Promise<void> {
 }
 
 async function ensureNtfyHelpersReady(): Promise<void> {
-  // Helpers are bound statically at module load; nothing to await.
+  if (planningNtfyHelpers) {
+    return;
+  }
+
+  try {
+    const engine = await import("@fusion/engine");
+    const hasAllHelpers =
+      "isNtfyEventEnabled" in engine
+      && "buildNtfyClickUrl" in engine
+      && "sendNtfyNotification" in engine
+      && typeof engine.isNtfyEventEnabled === "function"
+      && typeof engine.buildNtfyClickUrl === "function"
+      && typeof engine.sendNtfyNotification === "function";
+
+    if (!hasAllHelpers) {
+      return;
+    }
+
+    planningNtfyHelpers = {
+      isNtfyEventEnabled: engine.isNtfyEventEnabled,
+      buildNtfyClickUrl: engine.buildNtfyClickUrl,
+      sendNtfyNotification: engine.sendNtfyNotification,
+    };
+  } catch {
+    // Optional notifier helpers unavailable in this runtime/test context.
+  }
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -1706,7 +1709,7 @@ export function __resetPlanningState(): void {
   _aiSessionDeletedListener = undefined;
   _aiSessionStore = undefined;
 
-  planningNtfyHelpers = buildDefaultPlanningNtfyHelpers();
+  planningNtfyHelpers = undefined;
 
   // Reset diagnostics sink to default
   resetDiagnosticsSink();

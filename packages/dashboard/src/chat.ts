@@ -25,14 +25,14 @@ import { EventEmitter } from "node:events";
 import { join, resolve, relative } from "node:path";
 import { SessionEventBuffer } from "./sse-buffer.js";
 
-import * as engine from "@fusion/engine";
+import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let createFnAgent: any = engine.createFnAgent;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let buildAgentChatPromptFn: any = "buildAgentChatPrompt" in engine ? engine.buildAgentChatPrompt : undefined;
+let buildAgentChatPromptFn: any;
 
 /**
  * Diagnostics logger for the chat module.
@@ -94,8 +94,19 @@ const diagnostics: DiagnosticsLogger = {
   },
 };
 
-function ensureEngineReady(): Promise<void> {
-  return Promise.resolve();
+async function ensureEngineReady(): Promise<void> {
+  if (buildAgentChatPromptFn) {
+    return;
+  }
+
+  try {
+    const engine = await import("@fusion/engine");
+    if ("buildAgentChatPrompt" in engine && typeof engine.buildAgentChatPrompt === "function") {
+      buildAgentChatPromptFn = engine.buildAgentChatPrompt;
+    }
+  } catch {
+    // Optional helper unavailable in mocked/test contexts.
+  }
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -886,7 +897,7 @@ export function __setBuildAgentChatPrompt(mock: typeof buildAgentChatPromptFn): 
 export function __resetChatState(): void {
   chatStreamManager.reset();
   rateLimits.clear();
-  buildAgentChatPromptFn = "buildAgentChatPrompt" in engine ? engine.buildAgentChatPrompt : undefined;
+  buildAgentChatPromptFn = undefined;
 
   // Reset diagnostics logger to default
   __setChatDiagnostics(null);
