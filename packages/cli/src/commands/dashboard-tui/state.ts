@@ -51,11 +51,36 @@ export interface SystemStats {
   platform: string;
 }
 
-export interface RemoteStatusValue {
-  provider: "tailscale" | "cloudflare" | null;
+export type RemoteProvider = "tailscale" | "cloudflare";
+
+export interface RemoteStatus {
+  provider: RemoteProvider | null;
   state: "stopped" | "starting" | "running" | "error";
   url: string | null;
   lastError: string | null;
+}
+
+export interface RemoteTokenResult {
+  token?: string;
+  maskedToken?: string;
+  tokenType: "persistent" | "short-lived";
+  expiresAt: string | null;
+}
+
+export interface RemoteQrPayload {
+  url: string;
+  expiresAt: string | null;
+  format: "text" | "image/svg";
+  data?: string;
+}
+
+export interface RemoteSettingsSnapshot {
+  remoteEnabled: boolean;
+  activeProvider: RemoteProvider | null;
+  tailscaleEnabled: boolean;
+  cloudflareEnabled: boolean;
+  shortLivedEnabled: boolean;
+  shortLivedTtlMs: number;
 }
 
 export interface SettingsValues {
@@ -67,10 +92,11 @@ export interface SettingsValues {
   enginePaused: boolean;
   globalPause: boolean;
   remoteEnabled: boolean;
-  remoteActiveProvider: "tailscale" | "cloudflare" | null;
+  remoteActiveProvider: RemoteProvider | null;
   remoteShortLivedEnabled: boolean;
   remoteShortLivedTtlMs: number;
-  remoteStatus?: RemoteStatusValue;
+  remoteSettingsSnapshot?: RemoteSettingsSnapshot;
+  remoteStatus?: RemoteStatus;
 }
 
 export interface UtilityAction {
@@ -258,14 +284,15 @@ export interface InteractiveData {
   updateSettings: (partial: Partial<SettingsValues>) => Promise<void>;
   listModels: () => ModelItem[];
   remote: {
-    getStatus: () => Promise<RemoteStatusValue>;
-    activateProvider: (provider: "tailscale" | "cloudflare") => Promise<void>;
-    start: () => Promise<void>;
-    stop: () => Promise<void>;
-    regeneratePersistentToken: () => Promise<void>;
-    generateShortLivedToken: (ttlMs: number) => Promise<{ token: string; expiresAt: string; ttlMs: number }>;
-    fetchUrl: () => Promise<{ url: string; tokenType: "persistent" | "short-lived"; expiresAt: string | null }>;
-    fetchQr: () => Promise<{ url: string; expiresAt: string | null; format: "text" | "image/svg"; data?: string }>;
+    getSettings: () => Promise<RemoteSettingsSnapshot>;
+    getStatus: () => Promise<RemoteStatus>;
+    activateProvider: (provider: RemoteProvider) => Promise<void>;
+    startTunnel: () => Promise<void>;
+    stopTunnel: () => Promise<void>;
+    regeneratePersistentToken: () => Promise<RemoteTokenResult>;
+    generateShortLivedToken: (ttlMs: number) => Promise<RemoteTokenResult>;
+    getRemoteUrl: (tokenType: "persistent" | "short-lived", ttlMs?: number) => Promise<{ url: string; tokenType: "persistent" | "short-lived"; expiresAt: string | null }>;
+    getQrPayload: (tokenType: "persistent" | "short-lived", ttlMs?: number) => Promise<RemoteQrPayload>;
   };
   git: {
     getStatus: (projectPath: string) => Promise<GitStatus>;
@@ -313,6 +340,7 @@ export interface DashboardState {
   mode: AppMode;
   interactiveData: InteractiveData | null;
   interactiveView: InteractiveView;
+  interactiveInputLocked: boolean;
   autoKillVitestOnPressure: boolean;
   vitestKillThreshold: number;
 }
@@ -338,6 +366,7 @@ export function createInitialState(): DashboardState {
     mode: "status",
     interactiveData: null,
     interactiveView: "board",
+    interactiveInputLocked: false,
     autoKillVitestOnPressure: true,
     vitestKillThreshold: 0.9,
   };

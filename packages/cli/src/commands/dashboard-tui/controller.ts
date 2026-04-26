@@ -61,6 +61,7 @@ export class DashboardTUI {
   private lastAutoKillAt = 0;
   interactiveData: InteractiveData | null = null;
   interactiveView: InteractiveView = "board";
+  interactiveInputLocked = false;
 
   // Subscribers registered by the Ink App component.
   private subscribers: Set<() => void> = new Set();
@@ -119,6 +120,7 @@ export class DashboardTUI {
       mode: this.mode,
       interactiveData: this.interactiveData,
       interactiveView: this.interactiveView,
+      interactiveInputLocked: this.interactiveInputLocked,
       autoKillVitestOnPressure: this.autoKillVitestOnPressure,
       vitestKillThreshold: this.vitestKillThreshold,
     };
@@ -321,6 +323,12 @@ export class DashboardTUI {
 
   setInteractiveView(view: InteractiveView): void {
     this.interactiveView = view;
+    this.notify();
+  }
+
+  setInteractiveInputLocked(locked: boolean): void {
+    if (this.interactiveInputLocked === locked) return;
+    this.interactiveInputLocked = locked;
     this.notify();
   }
 

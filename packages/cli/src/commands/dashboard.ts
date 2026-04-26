@@ -1990,6 +1990,14 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
               remoteActiveProvider: (s.remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null,
               remoteShortLivedEnabled: Boolean(s.remoteShortLivedEnabled),
               remoteShortLivedTtlMs: Number(s.remoteShortLivedTtlMs ?? 900_000),
+              remoteSettingsSnapshot: {
+                remoteEnabled: Boolean(s.remoteEnabled),
+                activeProvider: (s.remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null,
+                tailscaleEnabled: Boolean(s.remoteTailscaleEnabled),
+                cloudflareEnabled: Boolean(s.remoteCloudflareEnabled),
+                shortLivedEnabled: Boolean(s.remoteShortLivedEnabled),
+                shortLivedTtlMs: Number(s.remoteShortLivedTtlMs ?? 900_000),
+              },
             };
           },
           updateSettings: async (partial) => {
@@ -2018,10 +2026,33 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
             }));
           },
           remote: {
+            getSettings: async () => {
+              const response = await fetch(`${baseUrl}/api/remote/settings`, { headers: buildAuthHeaders() });
+              if (!response.ok) {
+                const payload = await response.json().catch(() => null);
+                const message = payload && typeof payload === "object" && "error" in payload
+                  ? String((payload as { error: unknown }).error)
+                  : `Remote settings request failed: ${response.status}`;
+                throw new Error(message);
+              }
+              const payload = await response.json();
+              return {
+                remoteEnabled: Boolean(payload?.settings?.remoteEnabled),
+                activeProvider: (payload?.settings?.remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null,
+                tailscaleEnabled: Boolean(payload?.settings?.remoteTailscaleEnabled),
+                cloudflareEnabled: Boolean(payload?.settings?.remoteCloudflareEnabled),
+                shortLivedEnabled: Boolean(payload?.settings?.remoteShortLivedEnabled),
+                shortLivedTtlMs: Number(payload?.settings?.remoteShortLivedTtlMs ?? 900_000),
+              };
+            },
             getStatus: async () => {
               const response = await fetch(`${baseUrl}/api/remote/status`, { headers: buildAuthHeaders() });
               if (!response.ok) {
-                throw new Error(`Remote status request failed: ${response.status}`);
+                const payload = await response.json().catch(() => null);
+                const message = payload && typeof payload === "object" && "error" in payload
+                  ? String((payload as { error: unknown }).error)
+                  : `Remote status request failed: ${response.status}`;
+                throw new Error(message);
               }
               return await response.json();
             },
@@ -2032,25 +2063,37 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
                 body: JSON.stringify({ provider }),
               });
               if (!response.ok) {
-                throw new Error(`Remote provider activation failed: ${response.status}`);
+                const payload = await response.json().catch(() => null);
+                const message = payload && typeof payload === "object" && "error" in payload
+                  ? String((payload as { error: unknown }).error)
+                  : `Remote provider activation failed: ${response.status}`;
+                throw new Error(message);
               }
             },
-            start: async () => {
+            startTunnel: async () => {
               const response = await fetch(`${baseUrl}/api/remote/tunnel/start`, {
                 method: "POST",
                 headers: buildAuthHeaders(),
               });
               if (!response.ok) {
-                throw new Error(`Remote start failed: ${response.status}`);
+                const payload = await response.json().catch(() => null);
+                const message = payload && typeof payload === "object" && "error" in payload
+                  ? String((payload as { error: unknown }).error)
+                  : `Remote start failed: ${response.status}`;
+                throw new Error(message);
               }
             },
-            stop: async () => {
+            stopTunnel: async () => {
               const response = await fetch(`${baseUrl}/api/remote/tunnel/stop`, {
                 method: "POST",
                 headers: buildAuthHeaders(),
               });
               if (!response.ok) {
-                throw new Error(`Remote stop failed: ${response.status}`);
+                const payload = await response.json().catch(() => null);
+                const message = payload && typeof payload === "object" && "error" in payload
+                  ? String((payload as { error: unknown }).error)
+                  : `Remote stop failed: ${response.status}`;
+                throw new Error(message);
               }
             },
             regeneratePersistentToken: async () => {
@@ -2059,8 +2102,19 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
                 headers: buildAuthHeaders(),
               });
               if (!response.ok) {
-                throw new Error(`Persistent token regeneration failed: ${response.status}`);
+                const payload = await response.json().catch(() => null);
+                const message = payload && typeof payload === "object" && "error" in payload
+                  ? String((payload as { error: unknown }).error)
+                  : `Persistent token regeneration failed: ${response.status}`;
+                throw new Error(message);
               }
+              const payload = await response.json();
+              return {
+                token: typeof payload?.token === "string" ? payload.token : undefined,
+                maskedToken: typeof payload?.maskedToken === "string" ? payload.maskedToken : undefined,
+                tokenType: "persistent" as const,
+                expiresAt: null,
+              };
             },
             generateShortLivedToken: async (ttlMs: number) => {
               const response = await fetch(`${baseUrl}/api/remote/token/short-lived/generate`, {
@@ -2069,21 +2123,43 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
                 body: JSON.stringify({ ttlMs }),
               });
               if (!response.ok) {
-                throw new Error(`Short-lived token generation failed: ${response.status}`);
+                const payload = await response.json().catch(() => null);
+                const message = payload && typeof payload === "object" && "error" in payload
+                  ? String((payload as { error: unknown }).error)
+                  : `Short-lived token generation failed: ${response.status}`;
+                throw new Error(message);
+              }
+              const payload = await response.json();
+              return {
+                token: typeof payload?.token === "string" ? payload.token : undefined,
+                maskedToken: typeof payload?.maskedToken === "string" ? payload.maskedToken : undefined,
+                tokenType: "short-lived" as const,
+                expiresAt: typeof payload?.expiresAt === "string" ? payload.expiresAt : null,
+              };
+            },
+            getRemoteUrl: async (tokenType: "persistent" | "short-lived", ttlMs?: number) => {
+              const params = new URLSearchParams({ tokenType });
+              if (typeof ttlMs === "number") params.set("ttlMs", String(ttlMs));
+              const response = await fetch(`${baseUrl}/api/remote/url?${params.toString()}`, { headers: buildAuthHeaders() });
+              if (!response.ok) {
+                const payload = await response.json().catch(() => null);
+                const message = payload && typeof payload === "object" && "error" in payload
+                  ? String((payload as { error: unknown }).error)
+                  : `Remote URL request failed: ${response.status}`;
+                throw new Error(message);
               }
               return await response.json();
             },
-            fetchUrl: async () => {
-              const response = await fetch(`${baseUrl}/api/remote/url`, { headers: buildAuthHeaders() });
+            getQrPayload: async (tokenType: "persistent" | "short-lived", ttlMs?: number) => {
+              const params = new URLSearchParams({ tokenType });
+              if (typeof ttlMs === "number") params.set("ttlMs", String(ttlMs));
+              const response = await fetch(`${baseUrl}/api/remote/qr?${params.toString()}`, { headers: buildAuthHeaders() });
               if (!response.ok) {
-                throw new Error(`Remote URL request failed: ${response.status}`);
-              }
-              return await response.json();
-            },
-            fetchQr: async () => {
-              const response = await fetch(`${baseUrl}/api/remote/qr?format=image%2Fsvg`, { headers: buildAuthHeaders() });
-              if (!response.ok) {
-                throw new Error(`Remote QR request failed: ${response.status}`);
+                const payload = await response.json().catch(() => null);
+                const message = payload && typeof payload === "object" && "error" in payload
+                  ? String((payload as { error: unknown }).error)
+                  : `Remote QR request failed: ${response.status}`;
+                throw new Error(message);
               }
               return await response.json();
             },

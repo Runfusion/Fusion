@@ -2767,6 +2767,33 @@ describe("runDashboard — merge stream sink routing", () => {
   });
 });
 
+describe("runDashboard — interactiveData remote wiring", () => {
+  it("keeps remote endpoint wiring and method names aligned", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const source = await readFile(new URL("../dashboard.ts", import.meta.url), "utf8");
+
+    expect(source).toContain("getSettings: async () =>");
+    expect(source).toContain("getStatus: async () =>");
+    expect(source).toContain("activateProvider: async");
+    expect(source).toContain("startTunnel: async");
+    expect(source).toContain("stopTunnel: async");
+    expect(source).toContain("regeneratePersistentToken: async");
+    expect(source).toContain("generateShortLivedToken: async");
+    expect(source).toContain("getRemoteUrl: async");
+    expect(source).toContain("getQrPayload: async");
+
+    expect(source).toContain("/api/remote/settings");
+    expect(source).toContain("/api/remote/status");
+    expect(source).toContain("/api/remote/provider/activate");
+    expect(source).toContain("/api/remote/tunnel/start");
+    expect(source).toContain("/api/remote/tunnel/stop");
+    expect(source).toContain("/api/remote/token/persistent/regenerate");
+    expect(source).toContain("/api/remote/token/short-lived/generate");
+    expect(source).toContain("/api/remote/url?");
+    expect(source).toContain("/api/remote/qr?");
+  });
+});
+
 describe("runDashboard runtime logger wiring", () => {
   it("injects a runtime logger into createServer and preserves non-TTY console fallback", async () => {
     process.env.FUSION_DASHBOARD_TOKEN = "fn_test_dashboard_token";

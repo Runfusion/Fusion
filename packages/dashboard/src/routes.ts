@@ -2128,6 +2128,61 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   const hasHeartbeatExecutor = Boolean(heartbeatMonitor);
   const aiSessionStore = options?.aiSessionStore;
 
+  const REMOTE_MIN_TTL_MS = 60_000;
+  const REMOTE_MAX_TTL_MS = 86_400_000;
+  const remoteShortLivedTokens = new Map<string, { expiresAt: number }>();
+
+  function generateRemoteToken(): string {
+    return `rtok_${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+  }
+
+  function maskRemoteToken(token: string): string {
+    if (token.length <= 8) return "********";
+    return `${token.slice(0, 4)}…${token.slice(-4)}`;
+  }
+
+  async function ensurePersistentRemoteToken(scopedStore: TaskStore): Promise<string> {
+    const settings = await scopedStore.getSettings();
+    const existing = typeof settings.remotePersistentToken === "string" ? settings.remotePersistentToken : "";
+    if (existing) return existing;
+    const token = generateRemoteToken();
+    await scopedStore.updateSettings({ remotePersistentToken: token });
+    return token;
+  }
+
+  function resolveRemoteOrigin(req: Request): string {
+    const protocol = req.protocol || "http";
+    const hostHeader = req.get("host") ?? "127.0.0.1:4040";
+    return `${protocol}://${hostHeader}`;
+  }
+
+  async function buildRemoteUrlForTokenType(
+    scopedStore: TaskStore,
+    req: Request,
+    tokenType: "persistent" | "short-lived",
+    ttlMs?: number,
+  ): Promise<{ url: string; tokenType: "persistent" | "short-lived"; expiresAt: string | null }> {
+    const baseUrl = new URL(resolveRemoteOrigin(req));
+    let token: string;
+    let expiresAt: string | null = null;
+
+    if (tokenType === "short-lived") {
+      const ttl = Math.floor(Number(ttlMs ?? 900_000));
+      if (!Number.isFinite(ttl) || ttl < REMOTE_MIN_TTL_MS || ttl > REMOTE_MAX_TTL_MS) {
+        throw new ApiError(400, "Short-lived token ttlMs out of range", { code: "INVALID_TTL" });
+      }
+      token = generateRemoteToken();
+      const expiryMs = Date.now() + ttl;
+      remoteShortLivedTokens.set(token, { expiresAt: expiryMs });
+      expiresAt = new Date(expiryMs).toISOString();
+    } else {
+      token = await ensurePersistentRemoteToken(scopedStore);
+    }
+
+    baseUrl.searchParams.set("token", token);
+    return { url: baseUrl.toString(), tokenType, expiresAt };
+  }
+
   /**
    * Check whether the heartbeatMonitor is bound to the same project as scopedStore.
    * Returns false when the monitor's rootDir is set and differs from the store's root.
@@ -2943,6 +2998,148 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw err;
       }
       rethrowAsApiError(err, "Failed to fetch memory stats");
+    }
+  });
+
+  // ── Remote Access Routes ────────────────────────────────────────────
+
+  router.get("/remote/settings", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      const persistentToken = typeof settings.remotePersistentToken === "string" ? settings.remotePersistentToken : "";
+      res.json({
+        settings: {
+          remoteEnabled: Boolean(settings.remoteEnabled),
+          remoteActiveProvider: (settings.remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null,
+          remoteTailscaleEnabled: Boolean(settings.remoteTailscaleEnabled),
+          remoteCloudflareEnabled: Boolean(settings.remoteCloudflareEnabled),
+          remoteShortLivedEnabled: Boolean(settings.remoteShortLivedEnabled),
+          remoteShortLivedTtlMs: Number(settings.remoteShortLivedTtlMs ?? 900_000),
+          remotePersistentToken: persistentToken ? maskRemoteToken(persistentToken) : null,
+        },
+      });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to load remote settings");
+    }
+  });
+
+  router.get("/remote/status", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      res.json({
+        provider: (settings.remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null,
+        state: "stopped",
+        url: null,
+        lastError: null,
+      });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to load remote status");
+    }
+  });
+
+  router.post("/remote/provider/activate", async (req, res) => {
+    try {
+      const provider = req.body?.provider;
+      if (provider !== "tailscale" && provider !== "cloudflare") {
+        throw new ApiError(400, "Invalid remote provider", { code: "INVALID_PROVIDER" });
+      }
+      const { store: scopedStore } = await getProjectContext(req);
+      await scopedStore.updateSettings({ remoteActiveProvider: provider });
+      res.json({ activeProvider: provider });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to activate remote provider");
+    }
+  });
+
+  router.post("/remote/tunnel/start", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      const provider = (settings.remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null;
+      if (!provider) {
+        throw new ApiError(409, "No active provider configured", { code: "NO_ACTIVE_PROVIDER" });
+      }
+      res.json({ state: "starting", provider });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to start remote tunnel");
+    }
+  });
+
+  router.post("/remote/tunnel/stop", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      const provider = (settings.remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null;
+      res.json({ state: "stopped", provider });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to stop remote tunnel");
+    }
+  });
+
+  router.post("/remote/token/persistent/regenerate", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const token = generateRemoteToken();
+      await scopedStore.updateSettings({ remotePersistentToken: token });
+      res.json({ token, maskedToken: maskRemoteToken(token) });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to regenerate persistent token");
+    }
+  });
+
+  router.post("/remote/token/short-lived/generate", async (req, res) => {
+    try {
+      const ttlMs = Number(req.body?.ttlMs ?? 900_000);
+      if (!Number.isFinite(ttlMs) || ttlMs < REMOTE_MIN_TTL_MS || ttlMs > REMOTE_MAX_TTL_MS) {
+        throw new ApiError(400, "Short-lived token ttlMs out of range", { code: "INVALID_TTL" });
+      }
+      const token = generateRemoteToken();
+      const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+      remoteShortLivedTokens.set(token, { expiresAt: Date.parse(expiresAt) });
+      res.json({ token, expiresAt, ttlMs });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to generate short-lived token");
+    }
+  });
+
+  router.get("/remote/url", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const tokenType = req.query.tokenType === "short-lived" ? "short-lived" : "persistent";
+      const ttlMs = typeof req.query.ttlMs === "string" ? Number(req.query.ttlMs) : undefined;
+      const payload = await buildRemoteUrlForTokenType(scopedStore, req, tokenType, ttlMs);
+      res.json(payload);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to generate remote URL");
+    }
+  });
+
+  router.get("/remote/qr", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const tokenType = req.query.tokenType === "short-lived" ? "short-lived" : "persistent";
+      const ttlMs = typeof req.query.ttlMs === "string" ? Number(req.query.ttlMs) : undefined;
+      const format = req.query.format === "image/svg" ? "image/svg" : "text";
+      const payload = await buildRemoteUrlForTokenType(scopedStore, req, tokenType, ttlMs);
+      if (format === "image/svg") {
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="80"><rect width="100%" height="100%" fill="white"/><text x="10" y="42" font-size="12" fill="black">${payload.url.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</text></svg>`;
+        res.json({ ...payload, format, data: svg });
+        return;
+      }
+      res.json({ ...payload, format, data: payload.url });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to generate remote QR payload");
     }
   });
 

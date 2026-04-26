@@ -33,6 +33,17 @@ function makeInteractiveData(opts: {
   settings?: SettingsValues;
   models?: ModelItem[];
   taskDetail?: TaskDetailData | null;
+  remote?: Partial<{
+    getSettings: () => Promise<{ remoteEnabled: boolean; activeProvider: "tailscale" | "cloudflare" | null; tailscaleEnabled: boolean; cloudflareEnabled: boolean; shortLivedEnabled: boolean; shortLivedTtlMs: number }>;
+    getStatus: () => Promise<{ provider: "tailscale" | "cloudflare" | null; state: "stopped" | "starting" | "running" | "error"; url: string | null; lastError: string | null }>;
+    activateProvider: (provider: "tailscale" | "cloudflare") => Promise<void>;
+    startTunnel: () => Promise<void>;
+    stopTunnel: () => Promise<void>;
+    regeneratePersistentToken: () => Promise<{ maskedToken?: string; tokenType: "persistent"; expiresAt: null }>;
+    generateShortLivedToken: (ttlMs: number) => Promise<{ token?: string; tokenType: "short-lived"; expiresAt: string | null }>;
+    getRemoteUrl: (tokenType: "persistent" | "short-lived", ttlMs?: number) => Promise<{ url: string; tokenType: "persistent" | "short-lived"; expiresAt: string | null }>;
+    getQrPayload: (tokenType: "persistent" | "short-lived", ttlMs?: number) => Promise<{ url: string; expiresAt: string | null; format: "text" | "image/svg"; data?: string }>;
+  }>;
 } = {}) {
   const projects = opts.projects ?? [];
   const tasks = opts.tasks ?? [];
@@ -53,6 +64,26 @@ function makeInteractiveData(opts: {
     remoteShortLivedTtlMs: 900000,
   };
   const models = opts.models ?? [];
+  const remoteDefaults = {
+    getSettings: async () => ({
+      remoteEnabled: settings.remoteEnabled,
+      activeProvider: settings.remoteActiveProvider,
+      tailscaleEnabled: true,
+      cloudflareEnabled: true,
+      shortLivedEnabled: settings.remoteShortLivedEnabled,
+      shortLivedTtlMs: settings.remoteShortLivedTtlMs,
+    }),
+    getStatus: async () => ({ provider: null, state: "stopped" as const, url: null, lastError: null }),
+    activateProvider: async (_provider: "tailscale" | "cloudflare") => {},
+    startTunnel: async () => {},
+    stopTunnel: async () => {},
+    regeneratePersistentToken: async () => ({ maskedToken: "tok_****", tokenType: "persistent" as const, expiresAt: null }),
+    generateShortLivedToken: async (_ttlMs: number) => ({ token: "short", tokenType: "short-lived" as const, expiresAt: new Date().toISOString() }),
+    getRemoteUrl: async (_tokenType: "persistent" | "short-lived", _ttlMs?: number) => ({ url: "https://remote.example.com", tokenType: "persistent" as const, expiresAt: null }),
+    getQrPayload: async (_tokenType: "persistent" | "short-lived", _ttlMs?: number) => ({ url: "https://remote.example.com", expiresAt: null, format: "image/svg" as const, data: "<svg/>" }),
+  };
+  const remote = { ...remoteDefaults, ...(opts.remote ?? {}) };
+
   return {
     listProjects: async () => projects,
     listTasks: async () => tasks,
@@ -69,16 +100,7 @@ function makeInteractiveData(opts: {
     getSettings: async () => settings,
     updateSettings: async (_partial: Partial<SettingsValues>) => {},
     listModels: () => models,
-    remote: {
-      getStatus: async () => ({ provider: null, state: "stopped", url: null, lastError: null }),
-      activateProvider: async () => {},
-      start: async () => {},
-      stop: async () => {},
-      regeneratePersistentToken: async () => {},
-      generateShortLivedToken: async () => ({ token: "short", expiresAt: new Date().toISOString(), ttlMs: 60000 }),
-      fetchUrl: async () => ({ url: "https://remote.example.com", tokenType: "persistent", expiresAt: null }),
-      fetchQr: async () => ({ url: "https://remote.example.com", expiresAt: null, format: "image/svg", data: "<svg/>" }),
-    },
+    remote,
     git: {
       getStatus: async () => ({
         branch: "main",
@@ -363,6 +385,132 @@ describe("Settings view", () => {
     const frame = lastFrame() ?? "";
     expect(frame).toContain("Available Models");
     expect(frame).toContain("Claude 3.5 Sonnet");
+    unmount();
+  });
+
+  it("renders the Remote subsection and supports provider/lifecycle actions", async () => {
+    const controller = newController();
+    controller.setSystemInfo(makeSystemInfo());
+    let remoteState: "stopped" | "starting" | "running" | "error" = "running";
+    const activateProvider = vi.fn(async () => {});
+    const settings: SettingsValues = {
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: false,
+      mergeStrategy: "direct",
+      pollIntervalMs: 60000,
+      enginePaused: false,
+      globalPause: false,
+      remoteEnabled: true,
+      remoteActiveProvider: "cloudflare",
+      remoteShortLivedEnabled: true,
+      remoteShortLivedTtlMs: 600000,
+      remoteStatus: { provider: "cloudflare", state: "running", url: "https://remote.example.com", lastError: null },
+    };
+    controller.setInteractiveData(makeInteractiveData({
+      settings,
+      remote: {
+        activateProvider,
+        getStatus: async () => ({ provider: "cloudflare", state: remoteState, url: "https://remote.example.com", lastError: null }),
+        startTunnel: async () => {
+          remoteState = "starting";
+        },
+        stopTunnel: async () => {
+          remoteState = "stopped";
+        },
+      },
+    }));
+    controller.setMode("interactive");
+    controller.setInteractiveView("settings");
+
+    const { lastFrame, stdin, unmount } = render(renderDashboardAppNode(controller));
+    await waitForFrameContains(lastFrame, "Remote");
+    expect(lastFrame() ?? "").toContain("cloudflare");
+
+    stdin.write("\t");
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("C");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(activateProvider).toHaveBeenCalledWith("cloudflare");
+
+    stdin.write("V");
+    await waitForFrameContains(lastFrame, "Remote tunnel starting");
+
+    stdin.write("X");
+    await waitForFrameContains(lastFrame, "Remote tunnel stopped");
+    unmount();
+  });
+
+  it("renders short-lived token expiry and QR text payload", async () => {
+    const controller = newController();
+    controller.setSystemInfo(makeSystemInfo());
+    controller.setInteractiveData(makeInteractiveData({
+      remote: {
+        getQrPayload: async () => ({
+          url: "https://remote.example.com?token=text",
+          expiresAt: null,
+          format: "text",
+          data: "ASCII-QR-PAYLOAD",
+        }),
+      },
+    }));
+    controller.setMode("interactive");
+    controller.setInteractiveView("settings");
+
+    const { lastFrame, stdin, unmount } = render(renderDashboardAppNode(controller));
+    stdin.write("\t");
+    await new Promise((r) => setTimeout(r, 20));
+
+    stdin.write("L");
+    await waitForFrameContains(lastFrame, "TTL ms:");
+    stdin.write("\r");
+    await waitForFrameContains(lastFrame, "Short-lived expires:");
+
+    stdin.write("K");
+    await waitForFrameContains(lastFrame, "QR text payload: ASCII-QR-PAYLOAD");
+    unmount();
+  });
+
+  it("keeps global shortcuts inactive during TTL input", async () => {
+    const controller = newController();
+    controller.setSystemInfo(makeSystemInfo());
+    controller.setInteractiveData(makeInteractiveData());
+    controller.setMode("interactive");
+    controller.setInteractiveView("settings");
+
+    const { lastFrame, stdin, unmount } = render(renderDashboardAppNode(controller));
+    stdin.write("\t");
+    await new Promise((r) => setTimeout(r, 20));
+
+    stdin.write("L");
+    await waitForFrameContains(lastFrame, "TTL ms:");
+    stdin.write("a");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(controller.getSnapshot().interactiveView).toBe("settings");
+    unmount();
+  });
+
+  it("renders SVG QR fallback instruction", async () => {
+    const controller = newController();
+    controller.setSystemInfo(makeSystemInfo());
+    controller.setInteractiveData(makeInteractiveData({
+      remote: {
+        getQrPayload: async () => ({
+          url: "https://remote.example.com?token=svg",
+          expiresAt: new Date().toISOString(),
+          format: "image/svg",
+          data: "<svg/>",
+        }),
+      },
+    }));
+    controller.setMode("interactive");
+    controller.setInteractiveView("settings");
+
+    const { lastFrame, stdin, unmount } = render(renderDashboardAppNode(controller));
+    stdin.write("\t");
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("K");
+    await waitForFrameContains(lastFrame, "QR SVG returned by server.");
     unmount();
   });
 });

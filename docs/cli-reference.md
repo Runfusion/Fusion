@@ -79,12 +79,27 @@ When running in an interactive terminal (TTY), `fn dashboard` starts an
 interactive TUI with sectioned views for system status, logs, settings, and
 remote-access controls.
 
-Remote view/actions support:
-- Switching active provider (`tailscale` / `cloudflare`)
+Remote controls are available inside **Interactive → Settings** in the detail pane.
+Remote actions support:
+- Switching active provider (`tailscale` / `cloudflare`) and explicit activation
 - Manual tunnel lifecycle (`start` / `stop`)
-- Persistent token regeneration
-- Short-lived token URL generation (bounded TTL)
-- QR hand-off (always includes the full authenticated URL)
+- Persistent token regeneration (masked token display)
+- Short-lived token generation with TTL input and expiry display
+- URL + QR hand-off (always shows full authenticated URL)
+
+Remote action keys in Settings detail pane:
+- `C` activate selected provider
+- `V` start tunnel
+- `X` stop tunnel
+- `P` regenerate persistent token
+- `L` enter TTL input mode and generate short-lived token
+- `U` generate authenticated URL hand-off
+- `K` request QR payload hand-off
+- `R` refresh remote status/snapshot
+
+QR hand-off behavior in TUI:
+- `format="text"`: renders the text payload directly
+- `format="image/svg"`: does not render raw SVG in terminal; shows the authenticated URL, expiry metadata, and a fallback instruction to open the URL on phone/browser
 
 On startup, the TUI opens on the **System** section by default so you can
 immediately see host/port and access-token details.

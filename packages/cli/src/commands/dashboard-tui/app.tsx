@@ -2128,7 +2128,7 @@ const SETTING_DEFS: SettingDef[] = [
   { key: "remoteShortLivedTtlMs", label: "Short-Lived TTL (ms)", type: "number" },
 ];
 
-function SettingsInteractiveView({ state }: { state: DashboardState }) {
+function SettingsInteractiveView({ state, controller }: { state: DashboardState; controller: DashboardTUI }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [localSettings, setLocalSettings] = useState<SettingsValues | null>(null);
   const [models, setModels] = useState<ModelItem[]>([]);
@@ -2137,16 +2137,32 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
   const [detailFocused, setDetailFocused] = useState(false);
   const [remoteUrl, setRemoteUrl] = useState<string | null>(null);
   const [remoteTokenMeta, setRemoteTokenMeta] = useState<string | null>(null);
+  const [remoteQrDisplay, setRemoteQrDisplay] = useState<string | null>(null);
+  const [remoteQrFallback, setRemoteQrFallback] = useState<string | null>(null);
+  const [persistentMaskedToken, setPersistentMaskedToken] = useState<string | null>(null);
+  const [shortLivedExpiresAt, setShortLivedExpiresAt] = useState<string | null>(null);
+  const [ttlInputMode, setTtlInputMode] = useState(false);
+  const [ttlInputValue, setTtlInputValue] = useState("900000");
 
   const data = state.interactiveData;
+
+  useEffect(() => {
+    controller.setInteractiveInputLocked(ttlInputMode);
+    return () => {
+      controller.setInteractiveInputLocked(false);
+    };
+  }, [controller, ttlInputMode]);
 
   useEffect(() => {
     if (!data) return;
     data.getSettings().then(async (settings) => {
       if (data.remote) {
         try {
-          const remoteStatus = await data.remote.getStatus();
-          setLocalSettings({ ...settings, remoteStatus });
+          const [remoteStatus, remoteSettingsSnapshot] = await Promise.all([
+            data.remote.getStatus(),
+            data.remote.getSettings().catch(() => settings.remoteSettingsSnapshot),
+          ]);
+          setLocalSettings({ ...settings, remoteStatus, remoteSettingsSnapshot });
         } catch {
           setLocalSettings(settings);
         }
@@ -2166,7 +2182,8 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
       await data.updateSettings(partial);
       const updated = await data.getSettings();
       const remoteStatus = data.remote ? await data.remote.getStatus().catch(() => null) : null;
-      setLocalSettings(remoteStatus ? { ...updated, remoteStatus } : updated);
+      const remoteSettingsSnapshot = data.remote ? await data.remote.getSettings().catch(() => updated.remoteSettingsSnapshot) : undefined;
+      setLocalSettings(remoteStatus ? { ...updated, remoteStatus, remoteSettingsSnapshot } : updated);
       setStatusMsg("Saved");
     } catch (err) {
       setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);
@@ -2178,11 +2195,35 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
   async function refreshRemoteStatus() {
     if (!data || !localSettings) return;
     try {
-      const remoteStatus = await data.remote.getStatus();
-      setLocalSettings({ ...localSettings, remoteStatus });
+      const [remoteStatus, remoteSettingsSnapshot] = await Promise.all([
+        data.remote.getStatus(),
+        data.remote.getSettings().catch(() => localSettings.remoteSettingsSnapshot),
+      ]);
+      setLocalSettings({ ...localSettings, remoteStatus, remoteSettingsSnapshot });
     } catch {
       // best-effort
     }
+  }
+
+  async function handleFetchRemoteUrl(tokenType: "persistent" | "short-lived", ttlMs?: number) {
+    if (!data?.remote) return;
+    const result = await data.remote.getRemoteUrl(tokenType, ttlMs);
+    setRemoteUrl(result.url);
+    setRemoteTokenMeta(result.expiresAt ? `expires ${new Date(result.expiresAt).toLocaleString()}` : result.tokenType);
+  }
+
+  async function handleFetchRemoteQr(tokenType: "persistent" | "short-lived", ttlMs?: number) {
+    if (!data?.remote) return;
+    const result = await data.remote.getQrPayload(tokenType, ttlMs);
+    setRemoteUrl(result.url);
+    setRemoteTokenMeta(result.expiresAt ? `expires ${new Date(result.expiresAt).toLocaleString()}` : tokenType);
+    if (result.format === "text") {
+      setRemoteQrDisplay(result.data ?? result.url);
+      setRemoteQrFallback(null);
+      return;
+    }
+    setRemoteQrDisplay(null);
+    setRemoteQrFallback("QR SVG returned by server. Open the authenticated URL on your phone/browser to continue.");
   }
 
   useInput((input, key) => {
@@ -2215,48 +2256,72 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
 
     if (!selectedDef || !localSettings) return;
 
+    if (ttlInputMode) {
+      if (key.escape) {
+        setTtlInputMode(false);
+        setStatusMsg("Cancelled short-lived token input");
+      }
+      return;
+    }
+
     if (input === "R") {
       void refreshRemoteStatus();
       setStatusMsg("Remote status refreshed");
       return;
     }
 
-    if (data?.remote && input === "S") {
-      void data.remote.start().then(() => refreshRemoteStatus()).then(() => setStatusMsg("Remote tunnel starting"))
+    if (data?.remote && input === "C") {
+      const provider = localSettings.remoteActiveProvider;
+      if (!provider) {
+        setStatusMsg("Select a remote provider first");
+      } else {
+        void data.remote.activateProvider(provider)
+          .then(() => refreshRemoteStatus())
+          .then(() => setStatusMsg(`Activated provider: ${provider}`))
+          .catch((err) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
+      }
+      return;
+    }
+
+    if (data?.remote && input === "V") {
+      void data.remote.startTunnel().then(() => refreshRemoteStatus()).then(() => setStatusMsg("Remote tunnel starting"))
         .catch((err) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
       return;
     }
 
     if (data?.remote && input === "X") {
-      void data.remote.stop().then(() => refreshRemoteStatus()).then(() => setStatusMsg("Remote tunnel stopped"))
+      void data.remote.stopTunnel().then(() => refreshRemoteStatus()).then(() => setStatusMsg("Remote tunnel stopped"))
         .catch((err) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
       return;
     }
 
     if (data?.remote && input === "P") {
-      void data.remote.regeneratePersistentToken().then(() => setStatusMsg("Persistent token regenerated"))
+      void data.remote.regeneratePersistentToken()
+        .then((result) => {
+          setPersistentMaskedToken(result.maskedToken ?? null);
+          setStatusMsg("Persistent token regenerated");
+        })
         .catch((err) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
+      return;
+    }
+
+    if (data?.remote && input === "L") {
+      setTtlInputValue(String(localSettings.remoteShortLivedTtlMs));
+      setTtlInputMode(true);
+      setStatusMsg("Enter TTL milliseconds and press Enter");
       return;
     }
 
     if (data?.remote && input === "U") {
-      void data.remote.fetchUrl()
-        .then((result) => {
-          setRemoteUrl(result.url);
-          setRemoteTokenMeta(result.expiresAt ? `expires ${new Date(result.expiresAt).toLocaleString()}` : result.tokenType);
-          setStatusMsg("Remote URL fetched");
-        })
+      void handleFetchRemoteUrl("persistent")
+        .then(() => setStatusMsg("Remote URL fetched"))
         .catch((err) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
       return;
     }
 
-    if (data?.remote && input === "Q") {
-      void data.remote.fetchQr()
-        .then((result) => {
-          setRemoteUrl(result.url);
-          setRemoteTokenMeta(result.expiresAt ? `expires ${new Date(result.expiresAt).toLocaleString()}` : "persistent");
-          setStatusMsg("QR URL generated");
-        })
+    if (data?.remote && input === "K") {
+      void handleFetchRemoteQr("persistent")
+        .then(() => setStatusMsg("QR payload fetched"))
         .catch((err) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
       return;
     }
@@ -2296,6 +2361,9 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
         const updated = { ...localSettings, [selectedDef.key]: next };
         setLocalSettings(updated);
         void saveField({ [selectedDef.key]: next });
+        if (selectedDef.key === "remoteActiveProvider" && data?.remote) {
+          void data.remote.activateProvider(next as "tailscale" | "cloudflare").catch(() => {});
+        }
         return;
       }
       if (key.leftArrow || input === "h") {
@@ -2303,6 +2371,9 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
         const updated = { ...localSettings, [selectedDef.key]: prev };
         setLocalSettings(updated);
         void saveField({ [selectedDef.key]: prev });
+        if (selectedDef.key === "remoteActiveProvider" && data?.remote) {
+          void data.remote.activateProvider(prev as "tailscale" | "cloudflare").catch(() => {});
+        }
         return;
       }
     }
@@ -2317,6 +2388,31 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
       return <Text color="cyanBright">{String(v)}</Text>;
     }
     return <Text>{String(v)}</Text>;
+  }
+
+  async function submitShortLivedTtlInput(value: string) {
+    if (!data?.remote || !localSettings) return;
+    const ttlMs = Number(value.trim());
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+      setStatusMsg("TTL must be a positive number (ms)");
+      return;
+    }
+
+    setTtlInputMode(false);
+    setSaving(true);
+    try {
+      const tokenResult = await data.remote.generateShortLivedToken(ttlMs);
+      setShortLivedExpiresAt(tokenResult.expiresAt);
+      setRemoteTokenMeta(tokenResult.expiresAt ? `expires ${new Date(tokenResult.expiresAt).toLocaleString()}` : "short-lived");
+      setLocalSettings({ ...localSettings, remoteShortLivedTtlMs: ttlMs });
+      await saveField({ remoteShortLivedTtlMs: ttlMs });
+      await handleFetchRemoteUrl("short-lived", ttlMs);
+      setStatusMsg("Short-lived token generated");
+    } catch (err) {
+      setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -2409,23 +2505,55 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
                 )}
 
                 <Box height={1} />
-                <Text dimColor>──── Remote Access ────</Text>
+                <Text dimColor>──── Remote ────</Text>
                 <Box flexDirection="row" gap={1}>
                   <Text dimColor>Provider:</Text>
                   <Text>{localSettings.remoteActiveProvider ?? "none"}</Text>
                   <Text dimColor>State:</Text>
                   <Text color={localSettings.remoteStatus?.state === "running" ? "green" : "yellow"}>{localSettings.remoteStatus?.state ?? "unknown"}</Text>
                 </Box>
+                <Box flexDirection="row" gap={1}>
+                  <Text dimColor>Enabled:</Text>
+                  <Text>{localSettings.remoteSettingsSnapshot?.remoteEnabled ? "yes" : "no"}</Text>
+                  <Text dimColor>Short-lived:</Text>
+                  <Text>{localSettings.remoteSettingsSnapshot?.shortLivedEnabled ? "on" : "off"}</Text>
+                </Box>
                 {localSettings.remoteStatus?.url && (
-                  <Text dimColor wrap="truncate-end">URL: {localSettings.remoteStatus.url}</Text>
+                  <Text dimColor wrap="truncate-end">Tunnel URL: {localSettings.remoteStatus.url}</Text>
                 )}
                 {remoteUrl && (
-                  <Text dimColor wrap="truncate-end">Auth URL: {remoteUrl}</Text>
+                  <Text color="white" wrap="truncate-end">Auth URL: {remoteUrl}</Text>
                 )}
                 {remoteTokenMeta && (
-                  <Text dimColor>{remoteTokenMeta}</Text>
+                  <Text dimColor wrap="truncate-end">Token: {remoteTokenMeta}</Text>
                 )}
-                <Text dimColor>[S] start  [X] stop  [P] regenerate token  [U] URL  [Q] QR URL  [R] refresh</Text>
+                {persistentMaskedToken && (
+                  <Text dimColor wrap="truncate-end">Persistent token: {persistentMaskedToken}</Text>
+                )}
+                {shortLivedExpiresAt && (
+                  <Text dimColor wrap="truncate-end">Short-lived expires: {new Date(shortLivedExpiresAt).toLocaleString()}</Text>
+                )}
+                {remoteQrDisplay && (
+                  <Text wrap="truncate-end">QR text payload: {remoteQrDisplay}</Text>
+                )}
+                {remoteQrFallback && (
+                  <Text color="yellow" wrap="truncate-end">{remoteQrFallback}</Text>
+                )}
+                {ttlInputMode && (
+                  <Box flexDirection="row" gap={1}>
+                    <Text dimColor>TTL ms:</Text>
+                    <TextInput
+                      value={ttlInputValue}
+                      onChange={setTtlInputValue}
+                      onSubmit={(value) => {
+                        void submitShortLivedTtlInput(value);
+                      }}
+                    />
+                    <Text dimColor>[Enter] generate [Esc] cancel</Text>
+                  </Box>
+                )}
+                <Text dimColor>[C] activate provider  [V] start  [X] stop  [P] persistent token  [L] short-lived token</Text>
+                <Text dimColor>[U] URL hand-off  [K] QR hand-off  [R] refresh</Text>
 
                 {/* Models subsection */}
                 {models.length > 0 && (
@@ -2453,7 +2581,7 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
       </Box>
 
       <Box paddingX={1}>
-        <Text dimColor>[Tab] switch panel  ↑↓ select setting  [Space] toggle bool  [+/-] adjust num  [←/→] cycle enum  [S/X/P/U/Q/R] remote actions</Text>
+        <Text dimColor>[Tab] switch panel  ↑↓ select setting  [Space] toggle bool  [+/-] adjust num  [←/→] cycle enum  [C/V/X/P/L/U/K/R] remote actions</Text>
       </Box>
     </Box>
   );
@@ -3610,7 +3738,7 @@ function InteractiveMode({ state, controller }: { state: DashboardState; control
       <Box flexGrow={1} overflow="hidden">
         {state.interactiveView === "board" && <BoardView state={state} controller={controller} />}
         {state.interactiveView === "agents" && <AgentsView state={state} />}
-        {state.interactiveView === "settings" && <SettingsInteractiveView state={state} />}
+        {state.interactiveView === "settings" && <SettingsInteractiveView state={state} controller={controller} />}
         {state.interactiveView === "git" && <GitView state={state} />}
         {state.interactiveView === "files" && <FilesView state={state} />}
       </Box>
@@ -3660,6 +3788,10 @@ export function DashboardApp({ controller }: DashboardAppProps) {
       void controller.stop();
       exit();
       process.kill(process.pid, "SIGINT");
+      return;
+    }
+
+    if (state.mode === "interactive" && state.interactiveInputLocked) {
       return;
     }
 
