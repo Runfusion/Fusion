@@ -360,6 +360,16 @@ const mocks = vi.hoisted(() => {
     });
     const notifier = notifierCtor();
 
+    const remoteStatus = {
+      provider: "cloudflare" as const,
+      state: "running" as const,
+      pid: 1234,
+      startedAt: new Date().toISOString(),
+      stoppedAt: null,
+      url: "https://remote.example.com",
+      lastError: null,
+    };
+
     const engine = {
       start: vi.fn(async () => {
         await store.init();
@@ -412,6 +422,15 @@ const mocks = vi.hoisted(() => {
         getMissionAutopilot: () => missionAutopilot,
         getMissionExecutionLoop: () => missionExecutionLoop,
       })),
+      getRemoteTunnelManager: vi.fn(() => ({ getStatus: vi.fn(() => remoteStatus) })),
+      getRemoteTunnelRestoreDiagnostics: vi.fn(() => ({
+        outcome: "skipped",
+        reason: "not_attempted",
+        at: new Date().toISOString(),
+        provider: null,
+      })),
+      startRemoteTunnel: vi.fn(async () => remoteStatus),
+      stopRemoteTunnel: vi.fn(async () => ({ ...remoteStatus, state: "stopped" as const, provider: null, pid: null, url: null })),
       onMerge: vi.fn().mockResolvedValue(undefined),
     };
     projectEngineInstances.push(engine);
@@ -689,6 +708,22 @@ describe("runServe", () => {
     expect(mocks.stuckDetectorInstances[0].start).toHaveBeenCalledTimes(1);
     expect(mocks.selfHealingInstances[0].start).toHaveBeenCalledTimes(1);
     expect(mocks.executorInstances[0].resumeOrphaned).toHaveBeenCalledTimes(1);
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("passes remote-capable engine hooks into headless createServer for fn serve parity", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+
+    await runServe(0, {});
+
+    expect(createServer).toHaveBeenCalledTimes(1);
+    const serverOptions = createServer.mock.calls[0][1];
+    expect(serverOptions).toMatchObject({ headless: true });
+    expect(serverOptions.engine).toBeDefined();
+    expect(typeof serverOptions.engine.startRemoteTunnel).toBe("function");
+    expect(typeof serverOptions.engine.stopRemoteTunnel).toBe("function");
+    expect(typeof serverOptions.engine.getRemoteTunnelManager).toBe("function");
 
     await triggerSignal("SIGINT");
   });

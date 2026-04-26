@@ -171,6 +171,7 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
         await this.startInternal(target, config);
       } catch (error) {
         const stateError = toStateError("switch_failed", error);
+        const redactedMessage = this.redactForProviderConfig(target, config, stateError.message);
         this.updateStatus({
           provider: target,
           state: "failed",
@@ -178,12 +179,25 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
           startedAt: null,
           stoppedAt: nowIso(),
           url: null,
-          lastError: stateError,
+          lastError: {
+            ...stateError,
+            message: redactedMessage,
+          },
         });
-        this.emitLog("error", "manager", `Provider switch failed (${previousProvider ?? "none"} -> ${target}): ${stateError.message}`);
+        this.emitLog("error", "manager", `Provider switch failed (${previousProvider ?? "none"} -> ${target}): ${redactedMessage}`);
         throw error;
       }
     });
+  }
+
+  private redactForProviderConfig(provider: TunnelProvider, config: TunnelProviderConfig, message: string): string {
+    try {
+      const adapter = getTunnelProviderAdapter(provider);
+      const command = adapter.buildCommand(config);
+      return redactTunnelText(message, command.sensitiveValues);
+    } catch {
+      return message;
+    }
   }
 
   private async runExclusive(operation: () => Promise<void>): Promise<void> {

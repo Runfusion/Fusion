@@ -1,5 +1,9 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import type { RemoteAccessProjectSettings } from "@fusion/core";
+// @vitest-environment node
+
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import type { RemoteAccessProjectSettings, TaskStore } from "@fusion/core";
+import { createServer } from "../server.js";
+import { request as performRequest, get as performGet } from "../test-request.js";
 import {
   __resetRemoteAuthStateForTests,
   constantTimeEqual,
@@ -44,6 +48,33 @@ function createRemoteSettings(overrides: Partial<RemoteAccessProjectSettings> = 
     },
     ...overrides,
   };
+}
+
+function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
+  return {
+    getSettings: vi.fn().mockResolvedValue({ remoteAccess: createRemoteSettings() }),
+    updateSettings: vi.fn(),
+    listTasks: vi.fn().mockResolvedValue([]),
+    getTask: vi.fn(),
+    createTask: vi.fn(),
+    moveTask: vi.fn(),
+    updateTask: vi.fn(),
+    deleteTask: vi.fn(),
+    mergeTask: vi.fn(),
+    archiveTask: vi.fn(),
+    unarchiveTask: vi.fn(),
+    logEntry: vi.fn(),
+    getAgentLogs: vi.fn().mockResolvedValue([]),
+    getRootDir: vi.fn().mockReturnValue("/fake/root"),
+    getFusionDir: vi.fn().mockReturnValue("/fake/root/.fusion"),
+    getDatabase: vi.fn().mockReturnValue({
+      exec: vi.fn(),
+      prepare: vi.fn().mockReturnValue({ run: vi.fn().mockReturnValue({ changes: 0 }), get: vi.fn(), all: vi.fn().mockReturnValue([]) }),
+    }),
+    on: vi.fn(),
+    off: vi.fn(),
+    ...overrides,
+  } as unknown as TaskStore;
 }
 
 describe("remote-auth", () => {
@@ -142,5 +173,87 @@ describe("remote-auth", () => {
   it("masks remote token values in diagnostics", () => {
     expect(maskRemoteToken("12345678")).toBe("********");
     expect(maskRemoteToken("frt_abcdefghijklmnop")).toBe("frt_…mnop");
+  });
+});
+
+describe("remote auth route contracts", () => {
+  beforeEach(() => {
+    __resetRemoteAuthStateForTests();
+  });
+
+  it("returns login-url payload with token shape for both persistent and short-lived modes", async () => {
+    const app = createServer(createMockStore(), { noAuth: true });
+
+    const persistent = await performRequest(
+      app,
+      "POST",
+      "/api/remote-access/auth/login-url",
+      JSON.stringify({ mode: "persistent" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(persistent.status).toBe(200);
+    expect(persistent.body).toMatchObject({
+      tokenType: "persistent",
+      loginUrl: expect.stringContaining("/remote-login?rt="),
+    });
+
+    const shortLived = await performRequest(
+      app,
+      "POST",
+      "/api/remote-access/auth/login-url",
+      JSON.stringify({ mode: "short-lived" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(shortLived.status).toBe(200);
+    expect(shortLived.body).toMatchObject({
+      tokenType: "short-lived",
+      loginUrl: expect.stringContaining("/remote-login?rt="),
+      expiresAt: expect.any(String),
+    });
+  });
+
+  it("validates /remote-login?rt= for persistent, short-lived, expired, missing, and malformed tokens", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-04-26T12:00:00.000Z"));
+      const app = createServer(createMockStore(), { daemon: { token: "fn_daemon_token" } });
+
+      const persistentValid = await performGet(app, "/remote-login?rt=frt_persistent_token");
+      expect(persistentValid.status).toBe(302);
+      expect(persistentValid.headers.location).toBe("/?token=fn_daemon_token");
+
+      const issueShortLived = await performRequest(
+        app,
+        "POST",
+        "/api/remote-access/auth/login-url",
+        JSON.stringify({ mode: "short-lived" }),
+        { "Content-Type": "application/json", Authorization: "Bearer fn_daemon_token" },
+      );
+      expect(issueShortLived.status).toBe(200);
+      const issued = new URL(String((issueShortLived.body as Record<string, unknown>).loginUrl));
+      const shortToken = issued.searchParams.get("rt");
+      expect(shortToken).toBeTruthy();
+
+      const shortValid = await performGet(app, `/remote-login?rt=${shortToken}`);
+      expect(shortValid.status).toBe(302);
+
+      vi.advanceTimersByTime(121000);
+
+      const shortExpired = await performGet(app, `/remote-login?rt=${shortToken}`);
+      expect(shortExpired.status).toBe(401);
+      expect(shortExpired.body).toEqual({ error: "Unauthorized", code: "remote_token_expired" });
+
+      const missing = await performGet(app, "/remote-login");
+      expect(missing.status).toBe(401);
+      expect(missing.body).toEqual({ error: "Unauthorized", code: "remote_token_missing" });
+
+      const malformed = await performGet(app, "/remote-login?rt=not-a-valid-token");
+      expect(malformed.status).toBe(401);
+      expect(malformed.body).toEqual({ error: "Unauthorized", code: "remote_token_invalid" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

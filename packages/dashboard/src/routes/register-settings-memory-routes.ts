@@ -263,27 +263,110 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
 
   // ── Remote Access Routes ────────────────────────────────────────────
 
+  function toRemoteSettingsPayload(remoteAccess: NonNullable<Awaited<ReturnType<typeof store.getSettings>>["remoteAccess"]>) {
+    const persistentToken = remoteAccess.tokenStrategy.persistent.token?.trim() ?? "";
+    return {
+      remoteEnabled: Boolean(remoteAccess.enabled),
+      remoteActiveProvider: remoteAccess.activeProvider ?? null,
+      remoteTailscaleEnabled: Boolean(remoteAccess.providers.tailscale.enabled),
+      remoteTailscaleHostname: remoteAccess.providers.tailscale.hostname,
+      remoteTailscaleTargetPort: Number(remoteAccess.providers.tailscale.targetPort ?? 4040),
+      remoteTailscaleAcceptRoutes: Boolean(remoteAccess.providers.tailscale.acceptRoutes),
+      remoteCloudflareEnabled: Boolean(remoteAccess.providers.cloudflare.enabled),
+      remoteCloudflareTunnelName: remoteAccess.providers.cloudflare.tunnelName,
+      remoteCloudflareTunnelToken: remoteAccess.providers.cloudflare.tunnelToken,
+      remoteCloudflareIngressUrl: remoteAccess.providers.cloudflare.ingressUrl,
+      remoteShortLivedEnabled: Boolean(remoteAccess.tokenStrategy.shortLived.enabled),
+      remoteShortLivedTtlMs: Number(remoteAccess.tokenStrategy.shortLived.ttlMs ?? 900_000),
+      remoteShortLivedMaxTtlMs: Number(remoteAccess.tokenStrategy.shortLived.maxTtlMs ?? 86_400_000),
+      remotePersistentToken: persistentToken ? maskRemoteToken(persistentToken) : null,
+      remoteRememberLastRunning: Boolean(remoteAccess.lifecycle.rememberLastRunning),
+      remoteWasRunningOnShutdown: Boolean(remoteAccess.lifecycle.wasRunningOnShutdown),
+      remoteLastStartedProvider: remoteAccess.lifecycle.lastRunningProvider ?? null,
+    };
+  }
+
   router.get("/remote/settings", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       const remoteAccess = settings.remoteAccess;
-      const persistentToken = remoteAccess?.tokenStrategy.persistent.token?.trim() ?? "";
 
-      res.json({
-        settings: {
-          remoteEnabled: Boolean(remoteAccess?.enabled),
-          remoteActiveProvider: remoteAccess?.activeProvider ?? null,
-          remoteTailscaleEnabled: Boolean(remoteAccess?.providers.tailscale.enabled),
-          remoteCloudflareEnabled: Boolean(remoteAccess?.providers.cloudflare.enabled),
-          remoteShortLivedEnabled: Boolean(remoteAccess?.tokenStrategy.shortLived.enabled),
-          remoteShortLivedTtlMs: Number(remoteAccess?.tokenStrategy.shortLived.ttlMs ?? 900_000),
-          remotePersistentToken: persistentToken ? maskRemoteToken(persistentToken) : null,
-        },
-      });
+      if (!remoteAccess) {
+        throw new ApiError(409, "Remote access is not configured", { code: "REMOTE_ACCESS_DISABLED" });
+      }
+
+      res.json({ settings: toRemoteSettingsPayload(remoteAccess) });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
       rethrowAsApiError(err, "Failed to load remote settings");
+    }
+  });
+
+  router.put("/remote/settings", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      const remoteAccess = settings.remoteAccess;
+      if (!remoteAccess) {
+        throw new ApiError(409, "Remote access is not configured", { code: "REMOTE_ACCESS_DISABLED" });
+      }
+
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const nextRemoteAccess = {
+        ...remoteAccess,
+        enabled: body.remoteEnabled === undefined ? remoteAccess.enabled : Boolean(body.remoteEnabled),
+        activeProvider: body.remoteActiveProvider === undefined
+          ? remoteAccess.activeProvider
+          : (body.remoteActiveProvider as "tailscale" | "cloudflare" | null),
+        providers: {
+          tailscale: {
+            ...remoteAccess.providers.tailscale,
+            enabled: body.remoteTailscaleEnabled === undefined ? remoteAccess.providers.tailscale.enabled : Boolean(body.remoteTailscaleEnabled),
+            hostname: body.remoteTailscaleHostname === undefined ? remoteAccess.providers.tailscale.hostname : String(body.remoteTailscaleHostname ?? ""),
+            targetPort: body.remoteTailscaleTargetPort === undefined ? remoteAccess.providers.tailscale.targetPort : Number(body.remoteTailscaleTargetPort ?? 4040),
+            acceptRoutes: body.remoteTailscaleAcceptRoutes === undefined ? remoteAccess.providers.tailscale.acceptRoutes : Boolean(body.remoteTailscaleAcceptRoutes),
+          },
+          cloudflare: {
+            ...remoteAccess.providers.cloudflare,
+            enabled: body.remoteCloudflareEnabled === undefined ? remoteAccess.providers.cloudflare.enabled : Boolean(body.remoteCloudflareEnabled),
+            tunnelName: body.remoteCloudflareTunnelName === undefined ? remoteAccess.providers.cloudflare.tunnelName : String(body.remoteCloudflareTunnelName ?? ""),
+            tunnelToken: body.remoteCloudflareTunnelToken === undefined
+              ? remoteAccess.providers.cloudflare.tunnelToken
+              : (body.remoteCloudflareTunnelToken ? String(body.remoteCloudflareTunnelToken) : null),
+            ingressUrl: body.remoteCloudflareIngressUrl === undefined ? remoteAccess.providers.cloudflare.ingressUrl : String(body.remoteCloudflareIngressUrl ?? ""),
+          },
+        },
+        tokenStrategy: {
+          persistent: {
+            ...remoteAccess.tokenStrategy.persistent,
+            enabled: body.remotePersistentEnabled === undefined ? remoteAccess.tokenStrategy.persistent.enabled : Boolean(body.remotePersistentEnabled),
+            token: body.remotePersistentToken === undefined
+              ? remoteAccess.tokenStrategy.persistent.token
+              : (body.remotePersistentToken ? String(body.remotePersistentToken) : null),
+          },
+          shortLived: {
+            ...remoteAccess.tokenStrategy.shortLived,
+            enabled: body.remoteShortLivedEnabled === undefined ? remoteAccess.tokenStrategy.shortLived.enabled : Boolean(body.remoteShortLivedEnabled),
+            ttlMs: body.remoteShortLivedTtlMs === undefined ? remoteAccess.tokenStrategy.shortLived.ttlMs : Number(body.remoteShortLivedTtlMs ?? 900_000),
+            maxTtlMs: body.remoteShortLivedMaxTtlMs === undefined ? remoteAccess.tokenStrategy.shortLived.maxTtlMs : Number(body.remoteShortLivedMaxTtlMs ?? 86_400_000),
+          },
+        },
+        lifecycle: {
+          ...remoteAccess.lifecycle,
+          rememberLastRunning: body.remoteRememberLastRunning === undefined ? remoteAccess.lifecycle.rememberLastRunning : Boolean(body.remoteRememberLastRunning),
+          wasRunningOnShutdown: body.remoteWasRunningOnShutdown === undefined ? remoteAccess.lifecycle.wasRunningOnShutdown : Boolean(body.remoteWasRunningOnShutdown),
+          lastRunningProvider: body.remoteLastStartedProvider === undefined
+            ? remoteAccess.lifecycle.lastRunningProvider
+            : (body.remoteLastStartedProvider as "tailscale" | "cloudflare" | null),
+        },
+      };
+
+      await scopedStore.updateSettings({ remoteAccess: nextRemoteAccess });
+      res.json({ settings: toRemoteSettingsPayload(nextRemoteAccess) });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to update remote settings");
     }
   });
 
@@ -452,7 +535,10 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         : remoteAccess;
 
       const issued = issueRemoteAuthToken("short-lived", modeSettings);
-      res.json({ token: issued.token, expiresAt: issued.expiresAt ?? null, ttlMs: modeSettings.tokenStrategy.shortLived.ttlMs });
+      const effectiveTtlMs = issued.expiresAt
+        ? Math.max(0, Date.parse(issued.expiresAt) - Date.now())
+        : modeSettings.tokenStrategy.shortLived.ttlMs;
+      res.json({ token: issued.token, expiresAt: issued.expiresAt ?? null, ttlMs: effectiveTtlMs });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
       rethrowAsApiError(err, "Failed to generate short-lived token");

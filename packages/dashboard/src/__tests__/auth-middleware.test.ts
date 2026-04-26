@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Request, Response, NextFunction } from "express";
 import { createAuthMiddleware, isDaemonAuthActive } from "../auth-middleware.js";
@@ -116,6 +118,16 @@ describe("createAuthMiddleware", () => {
 
   it("handles empty bearer token", () => {
     mockReq.headers = { authorization: "Bearer " };
+
+    const middleware = createAuthMiddleware("fn_abc123def456789");
+    middleware(mockReq as Request, mockRes as Response, nextFn);
+
+    expect(mockRes.status).toHaveBeenCalledWith(401);
+    expect(nextFn).not.toHaveBeenCalled();
+  });
+
+  it("does not accept remote-login rt query tokens for non-remote API auth", () => {
+    mockReq.url = "/api/tasks?rt=frt_persistent_token";
 
     const middleware = createAuthMiddleware("fn_abc123def456789");
     middleware(mockReq as Request, mockRes as Response, nextFn);

@@ -1363,5 +1363,76 @@ describe("SettingsModal", () => {
       expect(await screen.findByRole("img", { name: "Remote access QR code" })).toBeInTheDocument();
       expect(screen.getByText("Scan this QR code on your phone")).toBeInTheDocument();
     });
+
+    it("saves both provider configs and preserves inactive provider values when switching active provider", async () => {
+      const addToast = vi.fn();
+      renderModal({ addToast });
+      await waitForSettingsModalReady();
+      await userEvent.click(screen.getByRole("button", { name: /Remote Access/ }));
+
+      await userEvent.selectOptions(screen.getByLabelText("Active provider"), "tailscale");
+      await userEvent.clear(screen.getByLabelText("Hostname label"));
+      await userEvent.type(screen.getByLabelText("Hostname label"), "tail-new.ts.net");
+      await userEvent.clear(screen.getByLabelText("Tunnel name"));
+      await userEvent.type(screen.getByLabelText("Tunnel name"), "cf-preserved");
+      await userEvent.clear(screen.getByLabelText("Ingress URL"));
+      await userEvent.type(screen.getByLabelText("Ingress URL"), "https://cf-preserved.example.com");
+
+      await userEvent.click(screen.getByRole("button", { name: "Save Remote Settings" }));
+
+      await waitFor(() => {
+        expect(mockUpdateRemoteSettings).toHaveBeenCalledTimes(1);
+      });
+
+      expect(mockUpdateRemoteSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          remoteActiveProvider: "tailscale",
+          remoteTailscaleHostname: "tail-new.ts.net",
+          remoteCloudflareTunnelName: "cf-preserved",
+          remoteCloudflareIngressUrl: "https://cf-preserved.example.com",
+        }),
+        undefined,
+      );
+      expect(addToast).toHaveBeenCalledWith("Remote settings saved", "success");
+    });
+
+    it("handles tunnel lifecycle and token action errors without exposing raw token values", async () => {
+      const addToast = vi.fn();
+      mockFetchRemoteStatus
+        .mockResolvedValueOnce({ provider: null, state: "stopped", url: null, lastError: null })
+        .mockResolvedValueOnce({ provider: "tailscale", state: "starting", url: null, lastError: null })
+        .mockResolvedValue({ provider: "tailscale", state: "stopped", url: null, lastError: null });
+      mockGenerateShortLivedRemoteToken.mockRejectedValueOnce(new Error("TTL must be between 60000 and 86400000ms"));
+
+      renderModal({ addToast });
+      await waitForSettingsModalReady();
+      await userEvent.click(screen.getByRole("button", { name: /Remote Access/ }));
+
+      await userEvent.click(screen.getByRole("button", { name: "Start tunnel" }));
+      await waitFor(() => {
+        expect(mockStartRemoteTunnel).toHaveBeenCalledWith(undefined);
+      });
+      expect(addToast).toHaveBeenCalledWith("Remote tunnel start requested", "success");
+
+      await userEvent.click(screen.getByRole("button", { name: "Stop tunnel" }));
+      await waitFor(() => {
+        expect(mockStopRemoteTunnel).toHaveBeenCalledWith(undefined);
+      });
+      expect(addToast).toHaveBeenCalledWith("Remote tunnel stopped", "success");
+
+      fireEvent.change(screen.getByLabelText("Short-lived TTL (ms)"), { target: { value: "1000" } });
+      await userEvent.click(screen.getByRole("button", { name: "Generate short-lived token" }));
+
+      await waitFor(() => {
+        expect(mockGenerateShortLivedRemoteToken).toHaveBeenCalledWith(1000, undefined);
+      });
+      expect(addToast).toHaveBeenCalledWith("TTL must be between 60000 and 86400000ms", "error");
+      expect(addToast.mock.calls.flat().join(" ")).not.toContain("frt_");
+
+      await userEvent.click(screen.getByRole("button", { name: "Regenerate persistent token" }));
+      await waitFor(() => {
+        expect(mockRegenerateRemotePersistentToken).toHaveBeenCalledWith(undefined);
+      });
+    });
   });
 });

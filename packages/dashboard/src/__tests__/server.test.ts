@@ -308,6 +308,39 @@ describe("createServer health and headless mode", () => {
     const rootRes = await GET(app, "/");
     expect(rootRes.status).toBe(404);
   });
+
+  it("wires remote settings/auth routes in both dashboard and headless modes", async () => {
+    const remoteAccess = {
+      enabled: true,
+      activeProvider: "cloudflare",
+      providers: {
+        tailscale: { enabled: false, hostname: "", targetPort: 4040, acceptRoutes: false },
+        cloudflare: { enabled: true, tunnelName: "demo", tunnelToken: "cf-secret", ingressUrl: "https://remote.example.com" },
+      },
+      tokenStrategy: {
+        persistent: { enabled: true, token: "frt_persistent_token" },
+        shortLived: { enabled: true, ttlMs: 120000, maxTtlMs: 86400000 },
+      },
+      lifecycle: { rememberLastRunning: false, wasRunningOnShutdown: false, lastRunningProvider: null },
+    };
+
+    const dashboard = createServer(createMockStore({ getSettings: vi.fn().mockResolvedValue({ remoteAccess }) }));
+    const headless = createServer(createMockStore({ getSettings: vi.fn().mockResolvedValue({ remoteAccess }) }), { headless: true });
+
+    const [dashSettings, headlessSettings, dashLoginUrl, headlessLoginUrl] = await Promise.all([
+      GET(dashboard, "/api/remote/settings"),
+      GET(headless, "/api/remote/settings"),
+      REQUEST(headless, "POST", "/api/remote-access/auth/login-url", JSON.stringify({ mode: "persistent" }), { "Content-Type": "application/json" }),
+      REQUEST(dashboard, "POST", "/api/remote-access/auth/login-url", JSON.stringify({ mode: "persistent" }), { "Content-Type": "application/json" }),
+    ]);
+
+    expect(dashSettings.status).toBe(200);
+    expect(headlessSettings.status).toBe(200);
+    expect(dashLoginUrl.status).toBe(200);
+    expect(headlessLoginUrl.status).toBe(200);
+    expect(String((dashLoginUrl.body as Record<string, unknown>).loginUrl)).toContain("/remote-login?rt=");
+    expect(String((headlessLoginUrl.body as Record<string, unknown>).loginUrl)).toContain("/remote-login?rt=");
+  });
 });
 
 describe("API Error Handling Middleware", () => {

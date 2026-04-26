@@ -471,6 +471,44 @@ describe("Settings view", () => {
     unmount();
   });
 
+  it("wires P/U remote actions to persistent token refresh and URL handoff state", async () => {
+    const controller = newController();
+    controller.setSystemInfo(makeSystemInfo());
+    const regeneratePersistentToken = vi.fn(async () => ({
+      maskedToken: "tok_****",
+      tokenType: "persistent" as const,
+      expiresAt: null,
+    }));
+    const getRemoteUrl = vi.fn(async () => ({
+      url: "https://remote.example.com/remote-login?rt=masked",
+      tokenType: "persistent" as const,
+      expiresAt: null,
+    }));
+
+    controller.setInteractiveData(makeInteractiveData({
+      remote: {
+        regeneratePersistentToken,
+        getRemoteUrl,
+      },
+    }));
+    controller.setMode("interactive");
+    controller.setInteractiveView("settings");
+
+    const { lastFrame, stdin, unmount } = render(renderDashboardAppNode(controller));
+    stdin.write("\t");
+    await new Promise((r) => setTimeout(r, 20));
+
+    stdin.write("P");
+    await waitForFrameContains(lastFrame, "Persistent token: tok_****");
+    expect(regeneratePersistentToken).toHaveBeenCalledTimes(1);
+
+    stdin.write("U");
+    await waitForFrameContains(lastFrame, "Auth URL: https://remote.example.com/remote-login?rt=masked");
+    expect(getRemoteUrl).toHaveBeenCalledWith("persistent", undefined);
+
+    unmount();
+  });
+
   it("keeps global shortcuts inactive during TTL input", async () => {
     const controller = newController();
     controller.setSystemInfo(makeSystemInfo());

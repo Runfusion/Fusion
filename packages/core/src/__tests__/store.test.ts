@@ -2656,6 +2656,24 @@ describe("TaskStore", () => {
       },
     };
 
+    it("round-trips nested remoteAccess settings with both providers, token strategy, and lifecycle", async () => {
+      await store.updateSettings({ remoteAccess: baseRemoteAccess });
+
+      const settings = await store.getSettings();
+      expect(settings.remoteAccess).toEqual(baseRemoteAccess);
+
+      const { project, global } = await store.getSettingsByScope();
+      expect(project.remoteAccess).toEqual(baseRemoteAccess);
+      expect((global as Record<string, unknown>).remoteAccess).toBeUndefined();
+
+      store.close();
+      store = new TaskStore(rootDir, globalDir);
+      await store.init();
+
+      const reloaded = await store.getSettings();
+      expect(reloaded.remoteAccess).toEqual(baseRemoteAccess);
+    });
+
     it("patching remoteAccess.providers.tailscale preserves providers.cloudflare", async () => {
       await store.updateSettings({ remoteAccess: baseRemoteAccess });
 

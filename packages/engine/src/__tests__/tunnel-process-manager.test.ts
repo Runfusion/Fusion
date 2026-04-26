@@ -107,6 +107,44 @@ describe("TunnelProcessManager", () => {
     expect(allLogs).not.toContain("secret-token");
   });
 
+  it("transitions start→running and stop→stopped, with idempotent repeated stop", async () => {
+    const manager = new TunnelProcessManager({
+      spawnImpl: () => {
+        const child = new FakeChildProcess(++pid);
+        children.set(child.pid, child);
+        return child as never;
+      },
+    });
+
+    const states: string[] = [];
+    manager.subscribeStatus((snapshot) => states.push(snapshot.state));
+
+    await manager.start("cloudflare", cloudflareConfig());
+    const child = [...children.values()][0];
+    child.emitStdout("Tunnel ready https://demo.trycloudflare.com");
+
+    await vi.waitFor(() => {
+      expect(manager.getStatus().state).toBe("running");
+    });
+
+    await manager.stop();
+    expect(manager.getStatus().state).toBe("stopped");
+
+    // Idempotent: repeated stop keeps manager in a deterministic stopped state.
+    await manager.stop();
+    expect(manager.getStatus()).toMatchObject({
+      provider: null,
+      state: "stopped",
+      pid: null,
+      lastError: null,
+    });
+
+    expect(states).toContain("starting");
+    expect(states).toContain("running");
+    expect(states).toContain("stopping");
+    expect(states).toContain("stopped");
+  });
+
   it("falls back to SIGKILL when graceful stop times out", async () => {
     vi.useFakeTimers();
 
@@ -146,7 +184,47 @@ describe("TunnelProcessManager", () => {
     expect(manager.getStatus().state).toBe("stopped");
   });
 
-  it("switchProvider stops active provider before emitting switch_failed on target start failure", async () => {
+  it("switchProvider stops active provider before starting target provider", async () => {
+    const order: string[] = [];
+    const manager = new TunnelProcessManager({
+      spawnImpl: () => {
+        order.push("spawn");
+        const child = new FakeChildProcess(++pid);
+        children.set(child.pid, child);
+        return child as never;
+      },
+    });
+
+    manager.subscribeStatus((snapshot) => order.push(`state:${snapshot.state}`));
+
+    await manager.start("tailscale", {
+      provider: "tailscale",
+      executablePath: "tailscale",
+      args: ["serve", "status"],
+    });
+    const initialChild = [...children.values()][0];
+    initialChild.emitStdout("Serve started https://machine.ts.net");
+    await vi.waitFor(() => expect(manager.getStatus().state).toBe("running"));
+
+    const switchPromise = manager.switchProvider("cloudflare", cloudflareConfig());
+
+    await vi.waitFor(() => {
+      expect(processKillSpy).toHaveBeenCalledWith(expect.any(Number), "SIGTERM");
+    });
+
+    const cloudflareChild = [...children.values()].at(-1);
+    cloudflareChild?.emitStdout("Connected https://demo.trycloudflare.com");
+    await switchPromise;
+
+    expect(manager.getStatus()).toMatchObject({
+      state: "running",
+      provider: "cloudflare",
+      url: "https://demo.trycloudflare.com",
+    });
+    expect(order.indexOf("state:stopping")).toBeLessThan(order.lastIndexOf("spawn"));
+  });
+
+  it("switchProvider failure is rollback-safe and never leaks raw token values", async () => {
     const manager = new TunnelProcessManager({
       spawnImpl: vi
         .fn()
@@ -156,12 +234,14 @@ describe("TunnelProcessManager", () => {
           return child as never;
         })
         .mockImplementationOnce(() => {
-          throw new Error("cloudflare launcher boom");
+          throw new Error("cloudflare launcher boom token=secret-token");
         }),
     });
 
     const states: string[] = [];
+    const logs: string[] = [];
     manager.subscribeStatus((snapshot) => states.push(snapshot.state));
+    manager.subscribeLogs((entry) => logs.push(entry.message));
 
     await manager.start("tailscale", {
       provider: "tailscale",
@@ -182,5 +262,8 @@ describe("TunnelProcessManager", () => {
     expect(finalStatus.provider).toBe("cloudflare");
     expect(states).toContain("stopping");
     expect(states).toContain("stopped");
+
+    const logText = logs.join("\n");
+    expect(logText).not.toContain("secret-token");
   });
 });

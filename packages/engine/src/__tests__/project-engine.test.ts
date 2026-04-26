@@ -486,6 +486,75 @@ describe("ProjectEngine remote lifecycle restore policy", () => {
     startSpy.mockRestore();
   });
 
+  it("persists shutdown lifecycle markers and deterministically restores on next engine start", async () => {
+    const restoreSettings = {
+      ...baseSettings,
+      remoteAccess: {
+        ...baseRemoteAccess,
+        activeProvider: "cloudflare" as const,
+        lifecycle: {
+          ...baseRemoteAccess.lifecycle,
+          rememberLastRunning: true,
+          wasRunningOnShutdown: false,
+          lastRunningProvider: null,
+        },
+      },
+    };
+    const mockStore = createMockStore(restoreSettings);
+    mocks.currentStore = mockStore.store;
+
+    const startSpy = vi.spyOn(TunnelProcessManager.prototype, "start").mockResolvedValue(undefined);
+    const stopSpy = vi.spyOn(TunnelProcessManager.prototype, "stop").mockResolvedValue(undefined);
+    const getStatusSpy = vi.spyOn(TunnelProcessManager.prototype, "getStatus")
+      .mockReturnValueOnce({
+        provider: "cloudflare",
+        state: "running",
+        pid: 4321,
+        startedAt: "2026-04-26T12:00:00.000Z",
+        stoppedAt: null,
+        url: "https://remote.example.com",
+        lastError: null,
+      })
+      .mockReturnValue({
+        provider: null,
+        state: "stopped",
+        pid: null,
+        startedAt: null,
+        stoppedAt: "2026-04-26T12:05:00.000Z",
+        url: null,
+        lastError: null,
+      });
+
+    const firstEngine = createEngine();
+    await firstEngine.start();
+    await firstEngine.stop();
+
+    const persistedSettings = mockStore.getCurrentSettings() as {
+      remoteAccess?: { lifecycle?: { wasRunningOnShutdown?: boolean; lastRunningProvider?: string | null } };
+    };
+    expect(persistedSettings.remoteAccess?.lifecycle).toMatchObject({
+      wasRunningOnShutdown: true,
+      lastRunningProvider: "cloudflare",
+    });
+
+    const secondEngine = createEngine();
+    await secondEngine.start();
+
+    expect(startSpy).toHaveBeenCalled();
+    expect(secondEngine.getRemoteTunnelRestoreDiagnostics()).toMatchObject({
+      outcome: "applied",
+      reason: "restore_started",
+      provider: "cloudflare",
+    });
+
+    await secondEngine.stop();
+    expect(stopSpy).toHaveBeenCalled();
+
+    startSpy.mockRestore();
+    stopSpy.mockRestore();
+    getStatusSpy.mockRestore();
+  });
+
   it("reconciles stale persisted running marker to avoid restore loops", async () => {
     const restoreSettings = {
       ...baseSettings,

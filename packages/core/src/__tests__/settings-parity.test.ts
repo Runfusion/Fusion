@@ -59,6 +59,16 @@ describe("settings key parity", () => {
     expect(DEFAULT_PROJECT_SETTINGS.heartbeatMultiplier).toBe(1);
   });
 
+  it("keeps remoteAccess scoped to project settings only", () => {
+    const globalKeys = GLOBAL_SETTINGS_KEYS as readonly string[];
+    const projectKeys = PROJECT_SETTINGS_KEYS as readonly string[];
+
+    expect(projectKeys).toContain("remoteAccess");
+    expect(globalKeys).not.toContain("remoteAccess");
+    expect(DEFAULT_PROJECT_SETTINGS.remoteAccess).toBeDefined();
+    expect((DEFAULT_GLOBAL_SETTINGS as Record<string, unknown>).remoteAccess).toBeUndefined();
+  });
+
   it("No key appears in both GLOBAL_SETTINGS_KEYS and PROJECT_SETTINGS_KEYS", () => {
     const projectKeySet = new Set(PROJECT_SETTINGS_KEYS as readonly string[]);
     const overlap = (GLOBAL_SETTINGS_KEYS as readonly string[]).filter((key) => projectKeySet.has(key));
