@@ -454,7 +454,7 @@ Key server capabilities:
 - Root composition: `packages/dashboard/app/App.tsx`
 - Core board components: `Board.tsx`, `Column.tsx`, `TaskCard.tsx`, `TaskDetailModal.tsx`
 - Chat system UI: `ChatView.tsx`, `QuickChatFAB.tsx`
-- Planning/roadmap/insight UI: `MissionManager.tsx`, `RoadmapsView.tsx`, `InsightsView.tsx`, `DocumentsView.tsx`
+- Planning/roadmap/insight UI: `MissionManager.tsx`, `RoadmapsView.tsx`, `TodoView.tsx`, `InsightsView.tsx`, `DocumentsView.tsx`
 - Dev server UI: `DevServerView.tsx` (controls + status/log panel + embedded preview with iframe fallback messaging)
 
 ### CSS Architecture
@@ -471,10 +471,10 @@ The dashboard's CSS is split between a consolidated global stylesheet and modula
   - Component-specific CSS rules live in the component's `.css` file, not in the root stylesheet
 
 **Lazy-loaded views** (bundle size optimization):
-The following 13 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null}>`:
-- `AgentsView`, `RoadmapsView`, `NodesView`, `ChatView`, `MemoryView`
+The following 14 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null}>`:
+- `AgentsView`, `RoadmapsView`, `TodoView`, `NodesView`, `ChatView`, `MemoryView`
 - `DevServerView`, `InsightsView`, `DocumentsView`, `SkillsView`
-- `SetupWizardModal`, `PluginManager`, `PiExtensionsManager`, `AgentDetailView`
+- `SetupWizardModal`, `PluginManager`, `PiExtensionsManager`, `AgentDetailView
 
 A `prefetchLazyViews()` function runs once on mount via `requestIdleCallback` to warm chunks. Do not make these views eager — bundle size is carefully managed.
 

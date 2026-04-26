@@ -29,6 +29,7 @@ export interface UseTodoListsResult {
   renameList: (id: string, title: string) => Promise<void>;
   deleteList: (id: string) => Promise<void>;
   createItem: (text: string) => Promise<void>;
+  updateItem: (id: string, patch: { text?: string; completed?: boolean }) => Promise<void>;
   toggleItem: (id: string) => Promise<void>;
   deleteItem: (id: string) => Promise<void>;
   reorderItems: (itemIds: string[]) => Promise<void>;
@@ -242,7 +243,7 @@ export function useTodoLists(options: UseTodoListsOptions = {}): UseTodoListsRes
     }
   }, [addToast, items, listData, projectId]);
 
-  const toggleItemAction = useCallback(async (id: string) => {
+  const updateItemAction = useCallback(async (id: string, patch: { text?: string; completed?: boolean }) => {
     const target = items.find((item) => item.id === id);
     if (!target) {
       return;
@@ -250,11 +251,12 @@ export function useTodoLists(options: UseTodoListsOptions = {}): UseTodoListsRes
 
     const previousItems = items;
     const previousListData = listData;
-    const nextCompleted = !target.completed;
+    const nextCompleted = patch.completed ?? target.completed;
     const optimisticItem: TodoItem = {
       ...target,
+      ...patch,
       completed: nextCompleted,
-      completedAt: nextCompleted ? new Date().toISOString() : null,
+      completedAt: nextCompleted ? (target.completedAt ?? new Date().toISOString()) : null,
       updatedAt: new Date().toISOString(),
     };
 
@@ -269,13 +271,7 @@ export function useTodoLists(options: UseTodoListsOptions = {}): UseTodoListsRes
     );
 
     try {
-      const updated = await updateTodoItem(
-        id,
-        {
-          completed: nextCompleted,
-        },
-        projectId,
-      );
+      const updated = await updateTodoItem(id, patch, projectId);
       setItems((prev) => prev.map((item) => (item.id === id ? updated : item)));
       setListData((prev) =>
         prev.map((list) =>
@@ -287,10 +283,19 @@ export function useTodoLists(options: UseTodoListsOptions = {}): UseTodoListsRes
     } catch (err) {
       setItems(previousItems);
       setListData(previousListData);
-      setError(err instanceof Error ? err.message : "Failed to toggle item");
+      setError(err instanceof Error ? err.message : "Failed to update item");
       addToast?.("Failed to update todo item", "error");
     }
   }, [addToast, items, listData, projectId]);
+
+  const toggleItemAction = useCallback(async (id: string) => {
+    const target = items.find((item) => item.id === id);
+    if (!target) {
+      return;
+    }
+
+    await updateItemAction(id, { completed: !target.completed });
+  }, [items, updateItemAction]);
 
   const deleteItemAction = useCallback(async (id: string) => {
     const previousItems = items;
@@ -369,6 +374,7 @@ export function useTodoLists(options: UseTodoListsOptions = {}): UseTodoListsRes
     renameList: renameListAction,
     deleteList: deleteListAction,
     createItem: createItemAction,
+    updateItem: updateItemAction,
     toggleItem: toggleItemAction,
     deleteItem: deleteItemAction,
     reorderItems: reorderItemsAction,
