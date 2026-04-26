@@ -338,6 +338,10 @@ function compileBinary(outFile: string, target: string, isCrossCompile: boolean)
       target,
       "--minify",
       "--conditions=source",
+      // ink imports react-devtools-core dynamically only when DEV=true; mark
+      // external so Bun's static bundler doesn't try to resolve it at compile.
+      "--external",
+      "react-devtools-core",
     ],
     cwd: workspaceRoot,
     stdout: "inherit",
