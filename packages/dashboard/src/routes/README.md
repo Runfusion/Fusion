@@ -24,7 +24,14 @@ The context provides core cross-cutting plumbing:
 
 ## Registrar module map
 
-- `register-settings-memory-routes.ts` — settings APIs and memory backend/file/insight routes
+- `register-settings-memory-routes.ts` — settings APIs and memory backend/file/insight routes (excluding node-to-node sync endpoints)
+- `register-project-routes.ts` — `/projects` CRUD + `/projects/across-nodes`, `/projects/detect`, health/config/pause/resume routes
+- `register-node-routes.ts` — `/nodes` CRUD + operational endpoints (`/health-check`, `/metrics`, `/version`, `/sync-plugins`, `/compatibility`)
+- `register-settings-sync-routes.ts` — node settings/auth sync routes (`/nodes/:id/settings*`, `/nodes/:id/auth/sync`)
+- `register-mesh-routes.ts` — mesh topology routes (`/mesh/state`, `/mesh/sync`)
+- `register-discovery-routes.ts` — discovery routes (`/discovery/status|start|stop|nodes|connect`) with `options?.centralCore` reuse
+- `register-settings-sync-inbound-routes.ts` — inbound sync/auth endpoints (`/settings/sync-receive`, `/settings/auth-receive`, `/settings/auth-export`)
+- `register-settings-sync-helpers.ts` — shared sync-domain helpers (`fetchFromRemoteNode`, `readStoredAuthProvidersFromDisk`)
 - `register-task-workflow-routes.ts` — task/workflow domain (`/tasks*`, `/documents`, task comments/docs/checkout/spec/attachments, PR+issue status, task file/diff endpoints)
 - `register-planning-subtask-routes.ts` — planning sessions and subtask breakdown routes
 - `register-chat-routes.ts` — chat session/list/mutation/stream routes
@@ -46,7 +53,13 @@ Express matches in registration order. Keep registrar and in-registrar route ord
 1. **Specific operation routes before generic parameterized routes** (`/runs`, `/runs/:id`, `/copy`, `/delete` before `/:id` style handlers)
 2. **Specific operation routes before wildcard paths** (`/files/{*filepath}/copy|move|delete` before catch-all file write routes)
 3. **Do not move proxy/script/message/file wildcards ahead of specific routes**
-4. **Agent ordering constraints must stay intact**:
+4. **Project/node/sync/discovery ordering constraints must stay intact**:
+   - `/projects/across-nodes` and `/projects/detect` must be registered before `/projects/:id`
+   - `/nodes/:id/settings` must be registered before `/nodes/:id/settings/push|pull|sync-status` and before `/nodes/:id/auth/sync`
+   - `/mesh/state` must be registered before `/mesh/sync`
+   - Discovery routes stay grouped after mesh routes
+   - Inbound `/settings/sync-receive|auth-receive|auth-export` routes mount after discovery routes
+5. **Agent ordering constraints must stay intact**:
    - `/agents/stats`, `/agents/org-tree`, `/agents/resolve/:shortname` before `/agents/:id`
    - `/agents/:id/runs/stop` before `/agents/:id/runs/:runId`
    - `/agents/:id/reflections/latest` before `/agents/:id/reflections`

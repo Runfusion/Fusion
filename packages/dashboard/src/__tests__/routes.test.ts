@@ -210,6 +210,45 @@ async function REQUEST(
   return { status: res.status, body: res.body };
 }
 
+function collectOrderedRouteKeys(router: express.Router): string[] {
+  const stack = (router as unknown as {
+    stack?: Array<{ route?: { path?: string; methods?: Record<string, boolean> } }>;
+  }).stack ?? [];
+
+  const orderedKeys: string[] = [];
+  for (const layer of stack) {
+    const route = layer.route;
+    if (!route?.path || !route.methods) continue;
+    const method = Object.keys(route.methods).find((name) => route.methods?.[name]);
+    if (!method) continue;
+    orderedKeys.push(`${method.toUpperCase()} ${route.path}`);
+  }
+  return orderedKeys;
+}
+
+describe("route registrar ordering invariants", () => {
+  it("keeps project, node settings, and mesh/discovery precedence-sensitive routes ordered", () => {
+    const router = createApiRoutes(createMockStore());
+    const orderedKeys = collectOrderedRouteKeys(router);
+
+    const indexOf = (routeKey: string): number => orderedKeys.indexOf(routeKey);
+
+    expect(indexOf("GET /projects/across-nodes")).toBeGreaterThan(-1);
+    expect(indexOf("POST /projects/detect")).toBeGreaterThan(-1);
+    expect(indexOf("GET /projects/:id")).toBeGreaterThan(-1);
+    expect(indexOf("GET /projects/across-nodes")).toBeLessThan(indexOf("GET /projects/:id"));
+    expect(indexOf("POST /projects/detect")).toBeLessThan(indexOf("GET /projects/:id"));
+
+    expect(indexOf("GET /nodes/:id/settings")).toBeLessThan(indexOf("POST /nodes/:id/settings/push"));
+    expect(indexOf("GET /nodes/:id/settings")).toBeLessThan(indexOf("POST /nodes/:id/settings/pull"));
+    expect(indexOf("GET /nodes/:id/settings")).toBeLessThan(indexOf("GET /nodes/:id/settings/sync-status"));
+    expect(indexOf("GET /nodes/:id/settings")).toBeLessThan(indexOf("POST /nodes/:id/auth/sync"));
+
+    expect(indexOf("GET /mesh/state")).toBeLessThan(indexOf("POST /mesh/sync"));
+    expect(indexOf("GET /discovery/status")).toBeGreaterThan(indexOf("POST /mesh/sync"));
+  });
+});
+
 describe("routes/context project scoping helpers", () => {
   it("prefers query.projectId over body.projectId", () => {
     const req = {
