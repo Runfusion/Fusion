@@ -13,6 +13,7 @@ vi.mock("../../hooks/useUsageData", () => ({
 const mockUseUsageData = vi.mocked(useUsageDataModule.useUsageData);
 const TEST_PROJECT_ID = "proj-123";
 const USAGE_VIEW_MODE_KEY = scopedKey("kb-usage-view-mode", TEST_PROJECT_ID);
+const USAGE_HIDDEN_WINDOWS_KEY = scopedKey("kb-usage-hidden-windows", TEST_PROJECT_ID);
 
 describe("UsageIndicator", () => {
   const mockOnClose = vi.fn();
@@ -68,6 +69,7 @@ describe("UsageIndicator", () => {
     vi.clearAllMocks();
     // Clear localStorage to ensure clean view mode state
     localStorage.removeItem(USAGE_VIEW_MODE_KEY);
+    localStorage.removeItem(USAGE_HIDDEN_WINDOWS_KEY);
   });
 
   it("renders nothing when isOpen is false", () => {
@@ -532,6 +534,144 @@ describe("UsageIndicator", () => {
 
     // Clean up
     localStorage.removeItem(USAGE_VIEW_MODE_KEY);
+  });
+
+  it("renders eye icon button on each usage window row", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
+
+    expect(screen.getAllByTestId("usage-window-hide-btn")).toHaveLength(3);
+  });
+
+  it("clicking eye icon hides a window row", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide Session (5h)" }));
+
+    const hiddenRow = screen.getByText("Session (5h)").closest(".usage-window");
+    expect(hiddenRow).toHaveClass("usage-window--hidden");
+    expect(screen.queryByText("45% used")).not.toBeInTheDocument();
+  });
+
+  it("persists hidden windows to localStorage", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide Session (5h)" }));
+
+    expect(localStorage.getItem(USAGE_HIDDEN_WINDOWS_KEY)).toBe(
+      JSON.stringify({ Anthropic: ["Session (5h)"] })
+    );
+  });
+
+  it("restores hidden windows from localStorage on mount", () => {
+    localStorage.setItem(
+      USAGE_HIDDEN_WINDOWS_KEY,
+      JSON.stringify({ Anthropic: ["Session (5h)"] })
+    );
+
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
+
+    const hiddenRow = screen.getByText("Session (5h)").closest(".usage-window");
+    expect(hiddenRow).toHaveClass("usage-window--hidden");
+  });
+
+  it("shows provider-level show hidden button when windows are hidden", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide Session (5h)" }));
+
+    expect(screen.getByTestId("usage-show-hidden-btn")).toHaveTextContent("Show hidden (1)");
+  });
+
+  it("show hidden button reveals all hidden windows for a provider", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide Session (5h)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Hide Weekly" }));
+
+    fireEvent.click(screen.getByTestId("usage-show-hidden-btn"));
+
+    expect(screen.queryByTestId("usage-show-hidden-btn")).not.toBeInTheDocument();
+    expect(screen.getByText("Session (5h)").closest(".usage-window")).not.toHaveClass("usage-window--hidden");
+    expect(screen.getByText("Weekly").closest(".usage-window")).not.toHaveClass("usage-window--hidden");
+  });
+
+  it("does not show provider-level show hidden button when no windows are hidden", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
+
+    expect(screen.queryByTestId("usage-show-hidden-btn")).not.toBeInTheDocument();
+  });
+
+  it("allows un-hiding a specific hidden window", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide Session (5h)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show Session (5h)" }));
+
+    expect(screen.getByText("Session (5h)").closest(".usage-window")).not.toHaveClass("usage-window--hidden");
   });
 
   // ProviderIcon integration tests

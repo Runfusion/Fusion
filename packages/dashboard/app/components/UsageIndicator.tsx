@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { X, RefreshCw, Activity, TrendingUp, CheckCircle, AlertTriangle } from "lucide-react";
+import { X, RefreshCw, Activity, TrendingUp, CheckCircle, AlertTriangle, Eye, EyeOff } from "lucide-react";
 import type { ProviderUsage, UsageWindow } from "../api";
 import { useUsageData } from "../hooks/useUsageData";
 import { ProviderIcon } from "./ProviderIcon";
@@ -78,24 +78,69 @@ function getUsageColorClass(percentUsed: number): string {
   return "usage-progress-fill--low";
 }
 
+const HIDDEN_WINDOWS_STORAGE_KEY = "kb-usage-hidden-windows";
+
+function getHiddenWindows(projectId: string | undefined): Record<string, string[]> {
+  const stored = getScopedItem(HIDDEN_WINDOWS_STORAGE_KEY, projectId);
+  if (!stored) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+
+    return Object.entries(parsed).reduce<Record<string, string[]>>((acc, [provider, labels]) => {
+      if (Array.isArray(labels)) {
+        const validLabels = labels.filter((label): label is string => typeof label === "string");
+        if (validLabels.length > 0) {
+          acc[provider] = validLabels;
+        }
+      }
+      return acc;
+    }, {});
+  } catch {
+    return {};
+  }
+}
+
+function setHiddenWindows(hidden: Record<string, string[]>, projectId: string | undefined): void {
+  setScopedItem(HIDDEN_WINDOWS_STORAGE_KEY, JSON.stringify(hidden), projectId);
+}
+
+function isWindowHidden(
+  providerName: string,
+  windowLabel: string,
+  hidden: Record<string, string[]>
+): boolean {
+  return hidden[providerName]?.includes(windowLabel) ?? false;
+}
+
 interface UsageWindowRowProps {
   window: UsageWindow;
   viewMode: 'used' | 'remaining';
-  providerName: string;
+  isHidden: boolean;
+  onToggleHidden: () => void;
 }
 
 /**
  * Single usage window row with progress bar
  */
-function UsageWindowRow({ window, viewMode, providerName: _providerName }: UsageWindowRowProps) {
+function UsageWindowRow({ window, viewMode, isHidden, onToggleHidden }: UsageWindowRowProps) {
   const colorClass = getUsageColorClass(window.percentUsed);
   const isRemainingMode = viewMode === 'remaining';
-  
+
   // Display percentage based on view mode, but color always based on actual usage
   // Round percentages for cleaner display
   const displayPercent = Math.round(isRemainingMode ? window.percentLeft : window.percentUsed);
-  const headerText = isRemainingMode ? `${Math.round(window.percentLeft)}% remaining` : `${Math.round(window.percentUsed)}% used`;
-  const footerText = isRemainingMode ? `${Math.round(window.percentUsed)}% used` : `${Math.round(window.percentLeft)}% left`;
+  const headerText = isRemainingMode
+    ? `${Math.round(window.percentLeft)}% remaining`
+    : `${Math.round(window.percentUsed)}% used`;
+  const footerText = isRemainingMode
+    ? `${Math.round(window.percentUsed)}% used`
+    : `${Math.round(window.percentLeft)}% left`;
 
   // If resetText is null but resetAt exists, generate relative text from resetAt as a fallback
   let displayResetText = window.resetText;
@@ -134,10 +179,20 @@ function UsageWindowRow({ window, viewMode, providerName: _providerName }: Usage
   const isOnTrack = pace?.status === "on-track";
 
   return (
-    <div className="usage-window">
+    <div className={`usage-window ${isHidden ? "usage-window--hidden" : ""}`}>
       <div className="usage-window-header">
         <span className="usage-window-label">{window.label}</span>
-        <span className="usage-window-percentage">{headerText}</span>
+        <div className="usage-window-header-controls">
+          {!isHidden && <span className="usage-window-percentage">{headerText}</span>}
+          <button
+            className="btn-icon usage-window-hide-btn"
+            onClick={onToggleHidden}
+            aria-label={`${isHidden ? "Show" : "Hide"} ${window.label}`}
+            data-testid="usage-window-hide-btn"
+          >
+            {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+        </div>
       </div>
       <div className="usage-progress-wrapper">
         <div className="usage-progress-bar">
@@ -208,6 +263,9 @@ function UsageWindowRow({ window, viewMode, providerName: _providerName }: Usage
 interface ProviderCardProps {
   provider: ProviderUsage;
   viewMode: 'used' | 'remaining';
+  hiddenWindows: Record<string, string[]>;
+  onToggleWindow: (providerName: string, windowLabel: string) => void;
+  onShowAllHidden: (providerName: string) => void;
 }
 
 /**
@@ -258,7 +316,14 @@ function getProviderIconKey(providerName: string): string {
 /**
  * Provider card showing status and usage windows
  */
-function ProviderCard({ provider, viewMode }: ProviderCardProps) {
+function ProviderCard({
+  provider,
+  viewMode,
+  hiddenWindows,
+  onToggleWindow,
+  onShowAllHidden,
+}: ProviderCardProps) {
+  const hiddenCount = hiddenWindows[provider.name]?.length ?? 0;
   const getStatusBadge = () => {
     switch (provider.status) {
       case "ok":
@@ -290,7 +355,18 @@ function ProviderCard({ provider, viewMode }: ProviderCardProps) {
           <ProviderIcon provider={getProviderIconKey(provider.name)} size="md" />
           <span className="usage-provider-name">{provider.name}</span>
         </div>
-        {getStatusBadge()}
+        <div className="usage-provider-actions">
+          {getStatusBadge()}
+          {hiddenCount > 0 && (
+            <button
+              className="btn btn-sm usage-show-hidden-btn"
+              onClick={() => onShowAllHidden(provider.name)}
+              data-testid="usage-show-hidden-btn"
+            >
+              Show hidden ({hiddenCount})
+            </button>
+          )}
+        </div>
       </div>
 
       {provider.error && (
@@ -307,9 +383,19 @@ function ProviderCard({ provider, viewMode }: ProviderCardProps) {
 
       {provider.windows.length > 0 ? (
         <div className="usage-provider-windows">
-          {provider.windows.map((window, index) => (
-            <UsageWindowRow key={`${provider.name}-${window.label}-${index}`} window={window} viewMode={viewMode} providerName={provider.name} />
-          ))}
+          {provider.windows.map((window, index) => {
+            const hidden = isWindowHidden(provider.name, window.label, hiddenWindows);
+
+            return (
+              <UsageWindowRow
+                key={`${provider.name}-${window.label}-${index}`}
+                window={window}
+                viewMode={viewMode}
+                isHidden={hidden}
+                onToggleHidden={() => onToggleWindow(provider.name, window.label)}
+              />
+            );
+          })}
         </div>
       ) : provider.status === "ok" ? (
         <div className="usage-provider-empty">No usage data available</div>
@@ -353,6 +439,9 @@ export function UsageIndicator({ isOpen, onClose, projectId }: UsageIndicatorPro
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [viewMode, setViewMode] = useState<'used' | 'remaining'>('used');
+  const [hiddenWindows, setHiddenWindowsState] = useState<Record<string, string[]>>(() =>
+    getHiddenWindows(projectId)
+  );
   const contentRef = useRef<HTMLDivElement>(null);
   const wasOpenRef = useRef(isOpen);
   const hasCompletedInitialFetchRef = useRef(false);
@@ -400,6 +489,47 @@ export function UsageIndicator({ isOpen, onClose, projectId }: UsageIndicatorPro
     setViewMode(mode);
     setScopedItem("kb-usage-view-mode", mode, projectId);
   }, [projectId]);
+
+  useEffect(() => {
+    setHiddenWindowsState(getHiddenWindows(projectId));
+  }, [projectId]);
+
+  useEffect(() => {
+    setHiddenWindows(hiddenWindows, projectId);
+  }, [hiddenWindows, projectId]);
+
+  const handleToggleWindow = useCallback((providerName: string, windowLabel: string) => {
+    setHiddenWindowsState((previous) => {
+      if (isWindowHidden(providerName, windowLabel, previous)) {
+        const remaining = (previous[providerName] ?? []).filter((label) => label !== windowLabel);
+        if (remaining.length === 0) {
+          const { [providerName]: _removed, ...rest } = previous;
+          return rest;
+        }
+
+        return {
+          ...previous,
+          [providerName]: remaining,
+        };
+      }
+
+      return {
+        ...previous,
+        [providerName]: [...(previous[providerName] ?? []), windowLabel],
+      };
+    });
+  }, []);
+
+  const handleShowAllHidden = useCallback((providerName: string) => {
+    setHiddenWindowsState((previous) => {
+      if (!previous[providerName]) {
+        return previous;
+      }
+
+      const { [providerName]: _removed, ...rest } = previous;
+      return rest;
+    });
+  }, []);
 
   // Handle manual refresh
   const handleRefresh = useCallback(async () => {
@@ -493,7 +623,14 @@ export function UsageIndicator({ isOpen, onClose, projectId }: UsageIndicatorPro
           ) : (
             <div className="usage-providers">
               {providers.map((provider) => (
-                <ProviderCard key={provider.name} provider={provider} viewMode={viewMode} />
+                <ProviderCard
+                  key={provider.name}
+                  provider={provider}
+                  viewMode={viewMode}
+                  hiddenWindows={hiddenWindows}
+                  onToggleWindow={handleToggleWindow}
+                  onShowAllHidden={handleShowAllHidden}
+                />
               ))}
             </div>
           )}

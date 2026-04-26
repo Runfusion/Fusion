@@ -21,6 +21,7 @@ export const PROJECT_STORAGE_KEYS: string[] = [
   "kb-subtask-last-description",
   "kb-mission-last-goal",
   "kb-usage-view-mode",
+  "kb-usage-hidden-windows",
   "kb-chat-active-session",
 ];
 

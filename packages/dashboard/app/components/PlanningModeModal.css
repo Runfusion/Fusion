@@ -1266,6 +1266,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-sm);
   margin-bottom: var(--space-sm);
 }
 
@@ -1273,6 +1274,16 @@
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  min-width: 0;
+  flex: 1;
+}
+
+.usage-provider-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  flex-shrink: 0;
 }
 
 .usage-provider-icon {
@@ -1283,6 +1294,7 @@
 .usage-provider-name {
   font-weight: 600;
   font-size: 14px;
+  overflow-wrap: anywhere;
 }
 
 /* Status badges */
@@ -1358,6 +1370,43 @@
   justify-content: space-between;
   align-items: center;
   font-size: 12px;
+}
+
+.usage-window-header-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.usage-window-hide-btn {
+  opacity: 0.5;
+  transition: opacity var(--transition-fast);
+  padding: calc(var(--space-xs) / 2);
+  margin-left: var(--space-xs);
+}
+
+.usage-window-hide-btn:hover {
+  opacity: 1;
+}
+
+.usage-window--hidden {
+  opacity: 0.4;
+}
+
+.usage-window--hidden .usage-progress-wrapper,
+.usage-window--hidden .usage-window-footer,
+.usage-window--hidden .usage-pace-row {
+  display: none;
+}
+
+.usage-show-hidden-btn {
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.usage-show-hidden-btn:hover {
+  color: var(--text);
 }
 
 .usage-window-label {
@@ -1631,6 +1680,17 @@
 
   .usage-last-updated {
     text-align: left;
+  }
+
+  .usage-provider-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .usage-provider-actions {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
   }
 }
 
