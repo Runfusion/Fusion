@@ -2685,6 +2685,18 @@ input[type="range"]:focus-visible {
   white-space: nowrap;
 }
 
+@media (display-mode: standalone) {
+  :root {
+    /* PWA standalone mode: 8px extra breathing room for iOS home indicator */
+    --standalone-bottom-gap: 8px;
+  }
+
+  #root {
+    /* FN-1626: additive bottom spacing = safe-area inset + standalone home bar gap */
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
+  }
+}
+
 /* === Mobile Responsive Overrides ===
    Cross-cutting mobile rules only. Component-specific overrides have been
    moved into co-located @media blocks at the bottom of each component's
@@ -2712,10 +2724,6 @@ input[type="range"]:focus-visible {
 
   #root {
     overflow: hidden;
-    padding-top: env(safe-area-inset-top, 0px);
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-    padding-left: env(safe-area-inset-left, 0px);
-    padding-right: env(safe-area-inset-right, 0px);
   }
 
   /* Prevent horizontal overflow from wide content */

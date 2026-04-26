@@ -1396,16 +1396,6 @@
   box-shadow: var(--shadow-sm);
 }
 
-@media (display-mode: standalone) {
-  #root {
-    /* FN-1626: additive bottom spacing = safe-area inset + 8px home bar gap */
-    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
-  }
-
-  /* PWA standalone mode: 8px extra breathing room for iOS home indicator */
-  --standalone-bottom-gap: 8px;
-}
-
 @media (max-width: 768px) {
   .detail-tab {
     min-height: 36px;

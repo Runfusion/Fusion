@@ -73,8 +73,7 @@ describe("mobile CSS foundation", () => {
     const mobileSection = getMainMobileSection(css);
 
     expect(mobileSection).toContain("#root {");
-    expect(mobileSection).toContain("padding-top: env(safe-area-inset-top, 0px);");
-    expect(mobileSection).toContain("padding-bottom: env(safe-area-inset-bottom, 0px);");
+    expect(mobileSection).toContain("overflow: hidden;");
     expect(mobileSection).toContain(".header {");
     expect(mobileSection).toContain("padding-left: max(var(--space-md), env(safe-area-inset-left, 0px));");
     expect(mobileSection).toContain(".board {");

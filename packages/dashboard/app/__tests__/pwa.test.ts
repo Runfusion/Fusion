@@ -40,7 +40,7 @@ describe("PWA configuration", () => {
     const cssContent = loadAllAppCss();
 
     expect(cssContent).toMatch(/@media\s*\(\s*display-mode:\s*standalone\s*\)/);
-    expect(cssContent).toMatch(/@media\s*\(\s*display-mode:\s*standalone\s*\)\s*\{[^}]*#root\s*\{[^}]*env\(safe-area-inset-bottom,\s*0px\)/);
+    expect(cssContent).toMatch(/@media\s*\(\s*display-mode:\s*standalone\s*\)\s*\{[\s\S]*?#root\s*\{[\s\S]*?env\(safe-area-inset-bottom,\s*0px\)/);
   });
 
   it("CSS includes --standalone-bottom-gap token with 8px value in standalone mode", () => {
