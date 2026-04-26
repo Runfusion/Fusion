@@ -1,10 +1,28 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
+import { writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+
+const buildVersion = `${Date.now().toString(36)}-${randomBytes(4).toString("hex")}`;
+
+function emitVersionJson(): Plugin {
+  return {
+    name: "fusion-emit-version-json",
+    apply: "build",
+    closeBundle() {
+      const outFile = resolve(__dirname, "dist/client/version.json");
+      writeFileSync(outFile, `${JSON.stringify({ version: buildVersion })}\n`);
+    },
+  };
+}
 
 export default defineConfig({
   root: "app",
-  plugins: [react()],
+  plugins: [react(), emitVersionJson()],
+  define: {
+    __BUILD_VERSION__: JSON.stringify(buildVersion),
+  },
   resolve: {
     alias: {
       "@fusion/core": resolve(__dirname, "../core/src/types.ts"),

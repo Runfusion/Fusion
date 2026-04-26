@@ -1,5 +1,6 @@
 import { Component, type ReactNode, type ErrorInfo } from "react";
 import { AlertTriangle } from "lucide-react";
+import { handleChunkLoadError } from "../versionCheck";
 import "./ErrorBoundary.css";
 
 interface ErrorBoundaryProps {
@@ -26,6 +27,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
     console.error("[ErrorBoundary]", error, errorInfo);
+    if (handleChunkLoadError(error)) return;
     this.props.onError?.(error, errorInfo);
   }
 

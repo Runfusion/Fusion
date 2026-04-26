@@ -503,6 +503,14 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
         : join(__dirname, "..", "client");
 
   if (!isHeadless) {
+    app.get("/version.json", (_req, res) => {
+      res.setHeader("Cache-Control", "no-store, max-age=0");
+      res.sendFile(join(clientDir, "version.json"), (err) => {
+        if (err) {
+          res.status(404).json({ version: null });
+        }
+      });
+    });
     app.use(express.static(clientDir));
   }
 

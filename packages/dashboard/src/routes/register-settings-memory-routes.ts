@@ -534,9 +534,10 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
           }
         : remoteAccess;
 
-      const issued = issueRemoteAuthToken("short-lived", modeSettings);
+      const issuedAtMs = Date.now();
+      const issued = issueRemoteAuthToken("short-lived", modeSettings, issuedAtMs);
       const effectiveTtlMs = issued.expiresAt
-        ? Math.max(0, Date.parse(issued.expiresAt) - Date.now())
+        ? Math.max(0, Date.parse(issued.expiresAt) - issuedAtMs)
         : modeSettings.tokenStrategy.shortLived.ttlMs;
       res.json({ token: issued.token, expiresAt: issued.expiresAt ?? null, ttlMs: effectiveTtlMs });
     } catch (err: unknown) {

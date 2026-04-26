@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { RootErrorBoundary } from "./components/ErrorBoundary";
 import { App } from "./App";
 import { installAuthFetch } from "./auth";
+import { installVersionCheck } from "./versionCheck";
 import "./styles.css";
 
 // Install the bearer-token fetch wrapper before React mounts so every API
@@ -10,6 +11,7 @@ import "./styles.css";
 // the token that was either captured from `?token=` in the launch URL or
 // stored from a previous session.
 installAuthFetch();
+installVersionCheck();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
