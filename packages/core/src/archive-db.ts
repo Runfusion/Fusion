@@ -1,4 +1,4 @@
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "./sqlite-adapter.js";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ArchivedTaskEntry } from "./types.js";

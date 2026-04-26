@@ -10,7 +10,7 @@
  * unified activity feed, global concurrency limits, and project health.
  */
 
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "./sqlite-adapter.js";
 import { join } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import type { Statement } from "./db.js";

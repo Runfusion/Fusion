@@ -8,7 +8,7 @@
  * Schema version tracking is managed via a `__meta` table.
  */
 
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "./sqlite-adapter.js";
 import { isAbsolute, join } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { DEFAULT_PROJECT_SETTINGS } from "./types.js";
