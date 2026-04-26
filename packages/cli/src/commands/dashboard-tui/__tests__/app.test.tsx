@@ -47,6 +47,10 @@ function makeInteractiveData(opts: {
     pollIntervalMs: 60000,
     enginePaused: false,
     globalPause: false,
+    remoteEnabled: false,
+    remoteActiveProvider: null,
+    remoteShortLivedEnabled: false,
+    remoteShortLivedTtlMs: 900000,
   };
   const models = opts.models ?? [];
   return {
@@ -65,6 +69,16 @@ function makeInteractiveData(opts: {
     getSettings: async () => settings,
     updateSettings: async (_partial: Partial<SettingsValues>) => {},
     listModels: () => models,
+    remote: {
+      getStatus: async () => ({ provider: null, state: "stopped", url: null, lastError: null }),
+      activateProvider: async () => {},
+      start: async () => {},
+      stop: async () => {},
+      regeneratePersistentToken: async () => {},
+      generateShortLivedToken: async () => ({ token: "short", expiresAt: new Date().toISOString(), ttlMs: 60000 }),
+      fetchUrl: async () => ({ url: "https://remote.example.com", tokenType: "persistent", expiresAt: null }),
+      fetchQr: async () => ({ url: "https://remote.example.com", expiresAt: null, format: "image/svg", data: "<svg/>" }),
+    },
     git: {
       getStatus: async () => ({
         branch: "main",
@@ -317,6 +331,11 @@ describe("Settings view", () => {
       pollIntervalMs: 60000,
       enginePaused: false,
       globalPause: false,
+      remoteEnabled: true,
+      remoteActiveProvider: "tailscale",
+      remoteShortLivedEnabled: true,
+      remoteShortLivedTtlMs: 600000,
+      remoteStatus: { provider: "tailscale", state: "running", url: "https://remote.example.com", lastError: null },
     };
     controller.setInteractiveData(makeInteractiveData({ settings }));
     controller.setMode("interactive");

@@ -722,6 +722,10 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
             pollIntervalMs: fullSettings.pollIntervalMs ?? 60_000,
             enginePaused: fullSettings.enginePaused ?? false,
             globalPause: fullSettings.globalPause ?? false,
+            remoteEnabled: Boolean(fullSettings.remoteEnabled),
+            remoteActiveProvider: (fullSettings.remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null,
+            remoteShortLivedEnabled: Boolean(fullSettings.remoteShortLivedEnabled),
+            remoteShortLivedTtlMs: Number(fullSettings.remoteShortLivedTtlMs ?? 900_000),
           };
         }
         return {
@@ -732,6 +736,10 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           pollIntervalMs: 60_000,
           enginePaused: paused,
           globalPause: false,
+          remoteEnabled: false,
+          remoteActiveProvider: null,
+          remoteShortLivedEnabled: false,
+          remoteShortLivedTtlMs: 900_000,
         };
       },
       onPersistVitestKillSettings: async (partial) => {
@@ -866,6 +874,10 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         pollIntervalMs: settings.pollIntervalMs ?? 60_000,
         enginePaused: settings.enginePaused ?? false,
         globalPause: settings.globalPause ?? false,
+        remoteEnabled: Boolean(settings.remoteEnabled),
+        remoteActiveProvider: (settings.remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null,
+        remoteShortLivedEnabled: Boolean(settings.remoteShortLivedEnabled),
+        remoteShortLivedTtlMs: Number(settings.remoteShortLivedTtlMs ?? 900_000),
       });
     } catch {
       // Ignore errors refreshing settings
@@ -1834,6 +1846,10 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         pollIntervalMs: settings.pollIntervalMs ?? 60_000,
         enginePaused: settings.enginePaused ?? false,
         globalPause: settings.globalPause ?? false,
+        remoteEnabled: Boolean(settings.remoteEnabled),
+        remoteActiveProvider: (settings.remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null,
+        remoteShortLivedEnabled: Boolean(settings.remoteShortLivedEnabled),
+        remoteShortLivedTtlMs: Number(settings.remoteShortLivedTtlMs ?? 900_000),
       });
 
       // Hydrate the TUI memory guard from persisted global settings so the
@@ -1881,6 +1897,13 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       // are cached so repeated panel switches don't re-init SQLite.
       if (centralCoreForMesh) {
         const centralCore = centralCoreForMesh;
+        const buildAuthHeaders = (): Record<string, string> => {
+          const headers: Record<string, string> = { "Content-Type": "application/json" };
+          if (dashboardAuthToken) {
+            headers.Authorization = `Bearer ${dashboardAuthToken}`;
+          }
+          return headers;
+        };
         tui.setInteractiveData({
           listProjects: async () => {
             const projects = await centralCore.listProjects();
@@ -1963,6 +1986,10 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
               pollIntervalMs: s.pollIntervalMs ?? 60_000,
               enginePaused: s.enginePaused ?? false,
               globalPause: s.globalPause ?? false,
+              remoteEnabled: Boolean(s.remoteEnabled),
+              remoteActiveProvider: (s.remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null,
+              remoteShortLivedEnabled: Boolean(s.remoteShortLivedEnabled),
+              remoteShortLivedTtlMs: Number(s.remoteShortLivedTtlMs ?? 900_000),
             };
           },
           updateSettings: async (partial) => {
@@ -1975,6 +2002,10 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
             if (partial.pollIntervalMs !== undefined) mapped.pollIntervalMs = partial.pollIntervalMs;
             if (partial.enginePaused !== undefined) mapped.enginePaused = partial.enginePaused;
             if (partial.globalPause !== undefined) mapped.globalPause = partial.globalPause;
+            if (partial.remoteEnabled !== undefined) mapped.remoteEnabled = partial.remoteEnabled;
+            if (partial.remoteActiveProvider !== undefined) mapped.remoteActiveProvider = partial.remoteActiveProvider;
+            if (partial.remoteShortLivedEnabled !== undefined) mapped.remoteShortLivedEnabled = partial.remoteShortLivedEnabled;
+            if (partial.remoteShortLivedTtlMs !== undefined) mapped.remoteShortLivedTtlMs = partial.remoteShortLivedTtlMs;
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await store.updateSettings(mapped as any);
           },
@@ -1985,6 +2016,77 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
               provider: (m as { provider?: string }).provider ?? "unknown",
               contextWindow: m.contextWindow ?? 0,
             }));
+          },
+          remote: {
+            getStatus: async () => {
+              const response = await fetch(`${baseUrl}/api/remote/status`, { headers: buildAuthHeaders() });
+              if (!response.ok) {
+                throw new Error(`Remote status request failed: ${response.status}`);
+              }
+              return await response.json();
+            },
+            activateProvider: async (provider: "tailscale" | "cloudflare") => {
+              const response = await fetch(`${baseUrl}/api/remote/provider/activate`, {
+                method: "POST",
+                headers: buildAuthHeaders(),
+                body: JSON.stringify({ provider }),
+              });
+              if (!response.ok) {
+                throw new Error(`Remote provider activation failed: ${response.status}`);
+              }
+            },
+            start: async () => {
+              const response = await fetch(`${baseUrl}/api/remote/tunnel/start`, {
+                method: "POST",
+                headers: buildAuthHeaders(),
+              });
+              if (!response.ok) {
+                throw new Error(`Remote start failed: ${response.status}`);
+              }
+            },
+            stop: async () => {
+              const response = await fetch(`${baseUrl}/api/remote/tunnel/stop`, {
+                method: "POST",
+                headers: buildAuthHeaders(),
+              });
+              if (!response.ok) {
+                throw new Error(`Remote stop failed: ${response.status}`);
+              }
+            },
+            regeneratePersistentToken: async () => {
+              const response = await fetch(`${baseUrl}/api/remote/token/persistent/regenerate`, {
+                method: "POST",
+                headers: buildAuthHeaders(),
+              });
+              if (!response.ok) {
+                throw new Error(`Persistent token regeneration failed: ${response.status}`);
+              }
+            },
+            generateShortLivedToken: async (ttlMs: number) => {
+              const response = await fetch(`${baseUrl}/api/remote/token/short-lived/generate`, {
+                method: "POST",
+                headers: buildAuthHeaders(),
+                body: JSON.stringify({ ttlMs }),
+              });
+              if (!response.ok) {
+                throw new Error(`Short-lived token generation failed: ${response.status}`);
+              }
+              return await response.json();
+            },
+            fetchUrl: async () => {
+              const response = await fetch(`${baseUrl}/api/remote/url`, { headers: buildAuthHeaders() });
+              if (!response.ok) {
+                throw new Error(`Remote URL request failed: ${response.status}`);
+              }
+              return await response.json();
+            },
+            fetchQr: async () => {
+              const response = await fetch(`${baseUrl}/api/remote/qr?format=image%2Fsvg`, { headers: buildAuthHeaders() });
+              if (!response.ok) {
+                throw new Error(`Remote QR request failed: ${response.status}`);
+              }
+              return await response.json();
+            },
           },
           git: {
             getStatus: (projectPath: string) => buildGitStatus(projectPath),

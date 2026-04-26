@@ -448,6 +448,9 @@ function SettingsPanel({ state, isFocused }: { state: DashboardState; isFocused:
               ["pollMs", `${s.pollIntervalMs}`],
               ["paused", s.enginePaused ? "yes" : "no"],
               ["globalPause", s.globalPause ? "yes" : "no"],
+              ["remoteEnabled", s.remoteEnabled ? "enabled" : "disabled"],
+              ["remoteProvider", s.remoteActiveProvider ?? "none"],
+              ["remoteState", s.remoteStatus?.state ?? "unknown"],
             ] as Array<[string, string]>
           ).map(([key, value]) => {
             const isEnabled = value === "enabled" || value === "yes";
@@ -2102,7 +2105,7 @@ function AgentsView({ state }: { state: DashboardState }) {
 
 // ── Settings interactive view ─────────────────────────────────────────────────
 
-type SettingKey = "maxConcurrent" | "maxWorktrees" | "autoMerge" | "mergeStrategy" | "pollIntervalMs" | "enginePaused" | "globalPause";
+type SettingKey = "maxConcurrent" | "maxWorktrees" | "autoMerge" | "mergeStrategy" | "pollIntervalMs" | "enginePaused" | "globalPause" | "remoteEnabled" | "remoteActiveProvider" | "remoteShortLivedEnabled" | "remoteShortLivedTtlMs";
 
 interface SettingDef {
   key: SettingKey;
@@ -2119,6 +2122,10 @@ const SETTING_DEFS: SettingDef[] = [
   { key: "pollIntervalMs", label: "Poll Interval (ms)", type: "number" },
   { key: "enginePaused", label: "Engine Paused", type: "boolean" },
   { key: "globalPause", label: "Global Pause", type: "boolean" },
+  { key: "remoteEnabled", label: "Remote Access", type: "boolean" },
+  { key: "remoteActiveProvider", label: "Remote Provider", type: "enum", options: ["tailscale", "cloudflare"] },
+  { key: "remoteShortLivedEnabled", label: "Short-Lived Tokens", type: "boolean" },
+  { key: "remoteShortLivedTtlMs", label: "Short-Lived TTL (ms)", type: "number" },
 ];
 
 function SettingsInteractiveView({ state }: { state: DashboardState }) {
@@ -2128,12 +2135,25 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
   const [saving, setSaving] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [detailFocused, setDetailFocused] = useState(false);
+  const [remoteUrl, setRemoteUrl] = useState<string | null>(null);
+  const [remoteTokenMeta, setRemoteTokenMeta] = useState<string | null>(null);
 
   const data = state.interactiveData;
 
   useEffect(() => {
     if (!data) return;
-    data.getSettings().then(setLocalSettings).catch(() => {});
+    data.getSettings().then(async (settings) => {
+      if (data.remote) {
+        try {
+          const remoteStatus = await data.remote.getStatus();
+          setLocalSettings({ ...settings, remoteStatus });
+        } catch {
+          setLocalSettings(settings);
+        }
+      } else {
+        setLocalSettings(settings);
+      }
+    }).catch(() => {});
     setModels(data.listModels());
   }, [data]);
 
@@ -2145,12 +2165,23 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
     try {
       await data.updateSettings(partial);
       const updated = await data.getSettings();
-      setLocalSettings(updated);
+      const remoteStatus = data.remote ? await data.remote.getStatus().catch(() => null) : null;
+      setLocalSettings(remoteStatus ? { ...updated, remoteStatus } : updated);
       setStatusMsg("Saved");
     } catch (err) {
       setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function refreshRemoteStatus() {
+    if (!data || !localSettings) return;
+    try {
+      const remoteStatus = await data.remote.getStatus();
+      setLocalSettings({ ...localSettings, remoteStatus });
+    } catch {
+      // best-effort
     }
   }
 
@@ -2183,6 +2214,52 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
     }
 
     if (!selectedDef || !localSettings) return;
+
+    if (input === "R") {
+      void refreshRemoteStatus();
+      setStatusMsg("Remote status refreshed");
+      return;
+    }
+
+    if (data?.remote && input === "S") {
+      void data.remote.start().then(() => refreshRemoteStatus()).then(() => setStatusMsg("Remote tunnel starting"))
+        .catch((err) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
+      return;
+    }
+
+    if (data?.remote && input === "X") {
+      void data.remote.stop().then(() => refreshRemoteStatus()).then(() => setStatusMsg("Remote tunnel stopped"))
+        .catch((err) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
+      return;
+    }
+
+    if (data?.remote && input === "P") {
+      void data.remote.regeneratePersistentToken().then(() => setStatusMsg("Persistent token regenerated"))
+        .catch((err) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
+      return;
+    }
+
+    if (data?.remote && input === "U") {
+      void data.remote.fetchUrl()
+        .then((result) => {
+          setRemoteUrl(result.url);
+          setRemoteTokenMeta(result.expiresAt ? `expires ${new Date(result.expiresAt).toLocaleString()}` : result.tokenType);
+          setStatusMsg("Remote URL fetched");
+        })
+        .catch((err) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
+      return;
+    }
+
+    if (data?.remote && input === "Q") {
+      void data.remote.fetchQr()
+        .then((result) => {
+          setRemoteUrl(result.url);
+          setRemoteTokenMeta(result.expiresAt ? `expires ${new Date(result.expiresAt).toLocaleString()}` : "persistent");
+          setStatusMsg("QR URL generated");
+        })
+        .catch((err) => setStatusMsg(`Error: ${err instanceof Error ? err.message : String(err)}`));
+      return;
+    }
 
     if (selectedDef.type === "boolean" && input === " ") {
       const current = localSettings[selectedDef.key] as boolean;
@@ -2331,6 +2408,25 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
                   </Box>
                 )}
 
+                <Box height={1} />
+                <Text dimColor>──── Remote Access ────</Text>
+                <Box flexDirection="row" gap={1}>
+                  <Text dimColor>Provider:</Text>
+                  <Text>{localSettings.remoteActiveProvider ?? "none"}</Text>
+                  <Text dimColor>State:</Text>
+                  <Text color={localSettings.remoteStatus?.state === "running" ? "green" : "yellow"}>{localSettings.remoteStatus?.state ?? "unknown"}</Text>
+                </Box>
+                {localSettings.remoteStatus?.url && (
+                  <Text dimColor wrap="truncate-end">URL: {localSettings.remoteStatus.url}</Text>
+                )}
+                {remoteUrl && (
+                  <Text dimColor wrap="truncate-end">Auth URL: {remoteUrl}</Text>
+                )}
+                {remoteTokenMeta && (
+                  <Text dimColor>{remoteTokenMeta}</Text>
+                )}
+                <Text dimColor>[S] start  [X] stop  [P] regenerate token  [U] URL  [Q] QR URL  [R] refresh</Text>
+
                 {/* Models subsection */}
                 {models.length > 0 && (
                   <>
@@ -2357,7 +2453,7 @@ function SettingsInteractiveView({ state }: { state: DashboardState }) {
       </Box>
 
       <Box paddingX={1}>
-        <Text dimColor>[Tab] switch panel  ↑↓ select setting  [Space] toggle bool  [+/-] adjust num  [←/→] cycle enum</Text>
+        <Text dimColor>[Tab] switch panel  ↑↓ select setting  [Space] toggle bool  [+/-] adjust num  [←/→] cycle enum  [S/X/P/U/Q/R] remote actions</Text>
       </Box>
     </Box>
   );

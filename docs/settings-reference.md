@@ -176,6 +176,34 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `showQuickChatFAB` | `boolean` | `false` | Show floating quick-chat button (chat remains available via More menu). |
 | `experimentalFeatures` | `Record<string, boolean>` | `{}` | Project-scoped experimental feature flags. |
 
+### Remote Access settings (project-scoped)
+
+Remote access settings are project-only (stored in `.fusion/config.json`), not global.
+
+| Setting | Type | Default | Description |
+|---|---|---:|---|
+| `remoteEnabled` | `boolean` | `false` | Master toggle for remote access orchestration. |
+| `remoteActiveProvider` | `"tailscale" \| "cloudflare" \| null` | `null` | Currently selected provider. |
+| `remoteTailscaleEnabled` | `boolean` | `false` | Enables Tailscale provider configuration. |
+| `remoteTailscaleHostname` | `string` | `""` | Optional serve hostname label for Tailscale. |
+| `remoteTailscaleTargetPort` | `number` | `4040` | Local port exposed by `tailscale serve`. |
+| `remoteTailscaleAcceptRoutes` | `boolean` | `false` | Accept subnet routes when supported by local Tailscale config. |
+| `remoteCloudflareEnabled` | `boolean` | `false` | Enables Cloudflare tunnel configuration. |
+| `remoteCloudflareTunnelName` | `string` | `""` | Named tunnel identifier for `cloudflared tunnel run`. |
+| `remoteCloudflareTunnelToken` | `string` | `null` | Tunnel token (stored in project config; masked by default in API/UI). |
+| `remoteCloudflareIngressUrl` | `string` | `""` | Optional preferred public ingress URL for display. |
+| `remotePersistentToken` | `string` | `null` | Persistent remote-auth token used for authenticated remote URLs. |
+| `remoteShortLivedEnabled` | `boolean` | `false` | Enables short-lived token generation. |
+| `remoteShortLivedTtlMs` | `number` | `900000` | Default short-lived token TTL in milliseconds (15 minutes). |
+| `remoteShortLivedMaxTtlMs` | `number` | `86400000` | Maximum allowed short-lived token TTL (24 hours). |
+| `remoteRememberLastRunning` | `boolean` | `false` | Restore prior running tunnel at startup when valid. |
+| `remoteWasRunningOnShutdown` | `boolean` | `false` | Internal state flag persisted on shutdown. |
+| `remoteLastStartedProvider` | `"tailscale" \| "cloudflare" \| null` | `null` | Internal last-known running provider for restore decisions. |
+
+Short-lived token bounds are enforced server-side:
+- Minimum TTL: `60_000` ms (60s)
+- Maximum TTL: `86_400_000` ms (24h)
+
 > **Note:** Agent `metadata.skills` is not a top-level project setting, but it is the primary mechanism for controlling execution-time skill selection. The engine's `buildSessionSkillContext` function reads this metadata from the assigned agent and uses it to resolve which skills are available in the agent session. If `metadata.skills` is absent or empty, the engine falls back to the built-in `fusion` skill.
 
 ---

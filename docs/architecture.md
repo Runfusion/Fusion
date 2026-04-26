@@ -350,6 +350,15 @@ Implemented in `agent-heartbeat.ts`:
 - `NodeHealthMonitor` (`node-health-monitor.ts`) — remote node liveness/metrics checks
 - `PeerExchangeService` (`peer-exchange-service.ts`) — peer sync orchestration
 
+### Remote access runtime
+- `remote-access/remote-access-manager.ts` supervises tunnel lifecycle with non-blocking child processes
+- Provider adapters:
+  - `remote-access/providers/tailscale-adapter.ts` (`tailscale serve`, status probes)
+  - `remote-access/providers/cloudflare-adapter.ts` (`cloudflared tunnel run`, startup URL detection)
+- Crash-safe lifecycle: graceful stop (`SIGTERM`), bounded wait, forced kill fallback (`SIGKILL`)
+- Restore-on-start guardrails: only when remember-last-running is enabled and provider config/binaries are valid
+- Short-lived token registry is in-memory and intentionally ephemeral (clears on process restart)
+
 ### Multi-runtime support + IPC
 - Runtime contracts: `project-runtime.ts`
 - Orchestration: `ProjectManager` and `HybridExecutor`
@@ -374,6 +383,7 @@ Implemented in `agent-heartbeat.ts`:
 
 Key server capabilities:
 - REST APIs for tasks, git, GitHub, agents, missions, planning, automations/routines, settings
+- Remote access APIs (`/api/remote/*`) for provider config, activation, tunnel lifecycle, status, token issuance, authenticated URL generation, and QR payload generation
 - Chat APIs (`/api/chat/*`) with streaming response support (`routes.ts`, `chat.ts`)
 - Dev-server lifecycle + persistence APIs (`/api/dev-server/*`) backed by:
   - `dev-server-routes.ts` (router factory + per-project runtime registry)
@@ -392,6 +402,7 @@ Key server capabilities:
 - Dashboard/server runtime diagnostics use the shared `RuntimeLogger` contract (`packages/dashboard/src/runtime-logger.ts`) instead of ad hoc `console.*` calls.
 - `createServer()` accepts `ServerOptions.runtimeLogger`; when omitted it defaults to a console-backed logger, preserving readable output in non-TTY/headless modes.
 - CLI TTY dashboard sessions inject a logger backed by `DashboardLogSink`, so runtime diagnostics from server/routes are captured in the TUI log buffer.
+- Sensitive remote-auth material is never logged raw; route/UI responses mask persistent token values unless explicitly requested by token-generation actions.
 - Intentional startup/banner text in `fn dashboard` and `fn serve` remains direct plain output for readability and backward-compatible scripting behavior.
 
 ### Real-time channels

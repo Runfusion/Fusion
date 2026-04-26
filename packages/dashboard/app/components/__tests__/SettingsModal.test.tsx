@@ -29,6 +29,16 @@ const mockTestMemoryRetrieval = vi.fn();
 const mockInstallQmd = vi.fn();
 const mockFetchGitRemotesDetailed = vi.fn();
 const mockFetchDashboardHealth = vi.fn();
+const mockFetchRemoteSettings = vi.fn();
+const mockUpdateRemoteSettings = vi.fn();
+const mockFetchRemoteStatus = vi.fn();
+const mockActivateRemoteProvider = vi.fn();
+const mockStartRemoteTunnel = vi.fn();
+const mockStopRemoteTunnel = vi.fn();
+const mockRegenerateRemotePersistentToken = vi.fn();
+const mockGenerateShortLivedRemoteToken = vi.fn();
+const mockFetchRemoteQr = vi.fn();
+const mockFetchRemoteUrl = vi.fn();
 const mockUseWorkspaceFileBrowser = vi.fn();
 
 vi.mock("../../api", () => ({
@@ -56,6 +66,16 @@ vi.mock("../../api", () => ({
   installQmd: (...args: unknown[]) => mockInstallQmd(...args),
   fetchGitRemotesDetailed: (...args: unknown[]) => mockFetchGitRemotesDetailed(...args),
   fetchDashboardHealth: (...args: unknown[]) => mockFetchDashboardHealth(...args),
+  fetchRemoteSettings: (...args: unknown[]) => mockFetchRemoteSettings(...args),
+  updateRemoteSettings: (...args: unknown[]) => mockUpdateRemoteSettings(...args),
+  fetchRemoteStatus: (...args: unknown[]) => mockFetchRemoteStatus(...args),
+  activateRemoteProvider: (...args: unknown[]) => mockActivateRemoteProvider(...args),
+  startRemoteTunnel: (...args: unknown[]) => mockStartRemoteTunnel(...args),
+  stopRemoteTunnel: (...args: unknown[]) => mockStopRemoteTunnel(...args),
+  regenerateRemotePersistentToken: (...args: unknown[]) => mockRegenerateRemotePersistentToken(...args),
+  generateShortLivedRemoteToken: (...args: unknown[]) => mockGenerateShortLivedRemoteToken(...args),
+  fetchRemoteQr: (...args: unknown[]) => mockFetchRemoteQr(...args),
+  fetchRemoteUrl: (...args: unknown[]) => mockFetchRemoteUrl(...args),
 }));
 
 // Mock the hook
@@ -178,6 +198,56 @@ describe("SettingsModal", () => {
     });
     mockFetchGitRemotesDetailed.mockResolvedValue([]);
     mockFetchDashboardHealth.mockResolvedValue({ status: "ok", version: "1.2.3", uptime: 123 });
+    mockFetchRemoteSettings.mockResolvedValue({
+      settings: {
+        remoteEnabled: false,
+        remoteActiveProvider: null,
+        remoteTailscaleEnabled: false,
+        remoteTailscaleHostname: "",
+        remoteTailscaleTargetPort: 4040,
+        remoteTailscaleAcceptRoutes: false,
+        remoteCloudflareEnabled: false,
+        remoteCloudflareTunnelName: "",
+        remoteCloudflareTunnelToken: null,
+        remoteCloudflareIngressUrl: "",
+        remotePersistentToken: null,
+        remoteShortLivedEnabled: false,
+        remoteShortLivedTtlMs: 900000,
+        remoteShortLivedMaxTtlMs: 86400000,
+        remoteRememberLastRunning: false,
+        remoteWasRunningOnShutdown: false,
+        remoteLastStartedProvider: null,
+      },
+    });
+    mockUpdateRemoteSettings.mockResolvedValue({
+      settings: {
+        remoteEnabled: false,
+        remoteActiveProvider: null,
+        remoteTailscaleEnabled: false,
+        remoteTailscaleHostname: "",
+        remoteTailscaleTargetPort: 4040,
+        remoteTailscaleAcceptRoutes: false,
+        remoteCloudflareEnabled: false,
+        remoteCloudflareTunnelName: "",
+        remoteCloudflareTunnelToken: null,
+        remoteCloudflareIngressUrl: "",
+        remotePersistentToken: null,
+        remoteShortLivedEnabled: false,
+        remoteShortLivedTtlMs: 900000,
+        remoteShortLivedMaxTtlMs: 86400000,
+        remoteRememberLastRunning: false,
+        remoteWasRunningOnShutdown: false,
+        remoteLastStartedProvider: null,
+      },
+    });
+    mockFetchRemoteStatus.mockResolvedValue({ provider: null, state: "stopped", url: null, lastError: null });
+    mockActivateRemoteProvider.mockResolvedValue({ activeProvider: "tailscale" });
+    mockStartRemoteTunnel.mockResolvedValue({ state: "starting", provider: "tailscale" });
+    mockStopRemoteTunnel.mockResolvedValue({ state: "stopped", provider: null });
+    mockRegenerateRemotePersistentToken.mockResolvedValue({ token: "token", maskedToken: "****" });
+    mockGenerateShortLivedRemoteToken.mockResolvedValue({ token: "short", expiresAt: new Date(Date.now() + 60000).toISOString(), ttlMs: 60000 });
+    mockFetchRemoteQr.mockResolvedValue({ url: "https://remote.example.com", expiresAt: null, format: "image/svg", data: "<svg></svg>" });
+    mockFetchRemoteUrl.mockResolvedValue({ url: "https://remote.example.com", tokenType: "persistent", expiresAt: null });
     mockUseWorkspaceFileBrowser.mockReturnValue({
       entries: [],
       currentPath: ".",
@@ -1226,6 +1296,31 @@ describe("SettingsModal", () => {
 
       const payload = mockUpdateSettings.mock.calls[0][0];
       expect(payload.experimentalFeatures).toEqual({ "feature-a": true, "feature-b": true });
+    });
+
+    it("renders remote access section and tunnel controls", async () => {
+      renderModal();
+      await waitForSettingsModalReady();
+
+      await userEvent.click(screen.getByRole("button", { name: /Remote Access/ }));
+
+      expect(screen.getByRole("heading", { name: "Remote Access" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Start tunnel" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Generate QR" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Hostname label")).toBeInTheDocument();
+      expect(screen.getByLabelText("Target port")).toBeInTheDocument();
+      expect(screen.getByLabelText("Tunnel name")).toBeInTheDocument();
+      expect(screen.getByLabelText("Tunnel token")).toBeInTheDocument();
+      expect(screen.getByLabelText("Ingress URL")).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("button", { name: "Show URL" }));
+      await waitFor(() => {
+        expect(mockFetchRemoteUrl).toHaveBeenCalled();
+      });
+
+      await userEvent.click(screen.getByRole("button", { name: "Generate QR" }));
+      expect(await screen.findByRole("img", { name: "Remote access QR code" })).toBeInTheDocument();
+      expect(screen.getByText("Scan this QR code on your phone")).toBeInTheDocument();
     });
   });
 });

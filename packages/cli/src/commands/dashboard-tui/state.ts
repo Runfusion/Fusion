@@ -51,6 +51,13 @@ export interface SystemStats {
   platform: string;
 }
 
+export interface RemoteStatusValue {
+  provider: "tailscale" | "cloudflare" | null;
+  state: "stopped" | "starting" | "running" | "error";
+  url: string | null;
+  lastError: string | null;
+}
+
 export interface SettingsValues {
   maxConcurrent: number;
   maxWorktrees: number;
@@ -59,6 +66,11 @@ export interface SettingsValues {
   pollIntervalMs: number;
   enginePaused: boolean;
   globalPause: boolean;
+  remoteEnabled: boolean;
+  remoteActiveProvider: "tailscale" | "cloudflare" | null;
+  remoteShortLivedEnabled: boolean;
+  remoteShortLivedTtlMs: number;
+  remoteStatus?: RemoteStatusValue;
 }
 
 export interface UtilityAction {
@@ -245,6 +257,16 @@ export interface InteractiveData {
   getSettings: () => Promise<SettingsValues>;
   updateSettings: (partial: Partial<SettingsValues>) => Promise<void>;
   listModels: () => ModelItem[];
+  remote: {
+    getStatus: () => Promise<RemoteStatusValue>;
+    activateProvider: (provider: "tailscale" | "cloudflare") => Promise<void>;
+    start: () => Promise<void>;
+    stop: () => Promise<void>;
+    regeneratePersistentToken: () => Promise<void>;
+    generateShortLivedToken: (ttlMs: number) => Promise<{ token: string; expiresAt: string; ttlMs: number }>;
+    fetchUrl: () => Promise<{ url: string; tokenType: "persistent" | "short-lived"; expiresAt: string | null }>;
+    fetchQr: () => Promise<{ url: string; expiresAt: string | null; format: "text" | "image/svg"; data?: string }>;
+  };
   git: {
     getStatus: (projectPath: string) => Promise<GitStatus>;
     listCommits: (projectPath: string, limit?: number) => Promise<GitCommit[]>;

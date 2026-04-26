@@ -76,15 +76,15 @@ fn dashboard --dev
 ### Interactive Terminal UI (TTY Mode)
 
 When running in an interactive terminal (TTY), `fn dashboard` starts an
-interactive TUI with five sections:
+interactive TUI with sectioned views for system status, logs, settings, and
+remote-access controls.
 
-| Section | Description |
-|---|---|
-| **System** | Host, port, URL, auth mode, token, engine status, uptime |
-| **Logs** | Real-time log entries with timestamps and severity levels |
-| **Utilities** | Actions: refresh stats, clear logs, toggle engine pause |
-| **Stats** | Task counts by column, active task count, agent state counts |
-| **Settings** | Key settings from the task store |
+Remote view/actions support:
+- Switching active provider (`tailscale` / `cloudflare`)
+- Manual tunnel lifecycle (`start` / `stop`)
+- Persistent token regeneration
+- Short-lived token URL generation (bounded TTL)
+- QR hand-off (always includes the full authenticated URL)
 
 On startup, the TUI opens on the **System** section by default so you can
 immediately see host/port and access-token details.
@@ -203,6 +203,11 @@ fn serve --interactive
 | `--paused` | Start with engine paused (automation disabled). |
 | `--interactive` | Interactive port selection. |
 | `--daemon` | Enable bearer token authentication for CLI client connections. |
+
+`fn serve` uses the same project-scoped Remote Access manager as `fn dashboard`.
+When remote access is enabled/configured, the headless server exposes `/api/remote/*`
+control/status endpoints and applies the same hybrid token validation rules for
+remote routes (persistent token + optional short-lived token registry).
 
 ---
 
