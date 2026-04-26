@@ -4,15 +4,19 @@ import { ApiError } from "../api-error.js";
 import { getAuthFileCandidates, type StoredAuthProvider } from "../auth-paths.js";
 
 export async function readStoredAuthProvidersFromDisk(): Promise<Record<string, StoredAuthProvider>> {
+  const merged: Record<string, StoredAuthProvider> = {};
   for (const authJsonPath of getAuthFileCandidates()) {
     try {
       const authContent = await fsReadFile(authJsonPath, "utf-8");
-      return JSON.parse(authContent) as Record<string, StoredAuthProvider>;
+      const parsed = JSON.parse(authContent) as Record<string, StoredAuthProvider>;
+      for (const [provider, credential] of Object.entries(parsed)) {
+        merged[provider] ??= credential;
+      }
     } catch {
       // Try next candidate.
     }
   }
-  return {};
+  return merged;
 }
 
 /**
