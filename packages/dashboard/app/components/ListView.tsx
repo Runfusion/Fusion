@@ -22,7 +22,7 @@ const COLUMN_COLOR_MAP: Record<Column, string> = {
   archived: "var(--text-secondary)",
 };
 
-const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "specifying"]);
+const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging"]);
 
 type SortField = "id" | "title" | "status" | "column";
 type SortDirection = "asc" | "desc";

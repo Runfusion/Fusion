@@ -137,12 +137,12 @@ export default function kbExtension(pi: ExtensionAPI) {
     name: "fn_task_create",
     label: "fn: Create Task",
     description:
-      "Create a new task on the Fusion task board. The task enters the triage column " +
-      "where the AI triage agent will specify it into a full prompt with steps, " +
+      "Create a new task on the Fusion task board. The task enters the planning column " +
+      "where the AI planning agent will plan it into a full prompt with steps, " +
       "file scope, and acceptance criteria.",
     promptSnippet: "Create a task on the Fusion AI-orchestrated task board",
     promptGuidelines: [
-      "Use fn_task_create for task tracking — be descriptive so the triage agent can write a good spec.",
+      "Use fn_task_create for task tracking — be descriptive so the planning agent can write a good plan.",
       "Include the problem AND desired outcome. For bugs, describe current vs expected behavior.",
     ],
     parameters: Type.Object({
@@ -584,13 +584,13 @@ export default function kbExtension(pi: ExtensionAPI) {
     name: "fn_task_duplicate",
     label: "fn: Duplicate Task",
     description:
-      "Duplicate an existing task, creating a fresh copy in triage. " +
+      "Duplicate an existing task, creating a fresh copy in planning. " +
       "Copies the title and description but resets all execution state. " +
-      "The AI triage agent will re-specify the new task.",
-    promptSnippet: "Duplicate a Fusion task (creates copy in triage)",
+      "The AI planning agent will replan the new task.",
+    promptSnippet: "Duplicate a Fusion task (creates copy in planning)",
     promptGuidelines: [
       "Use when a task needs to be re-done, split, or used as a template",
-      "The duplicated task will be placed in triage for re-specification",
+      "The duplicated task will be placed in planning for replanning",
       "Dependencies, attachments, and execution state are NOT copied",
     ],
     parameters: Type.Object({
@@ -615,13 +615,13 @@ export default function kbExtension(pi: ExtensionAPI) {
     label: "fn: Refine Task",
     description:
       "Request a refinement of a completed or in-review task. " +
-      "Creates a new follow-up task in triage that references the original task as a dependency. " +
+      "Creates a new follow-up task in planning that references the original task as a dependency. " +
       "Use this when a done or in-review task needs additional work, improvements, or follow-up changes.",
     promptSnippet: "Create a refinement task for follow-up work on a completed task",
     promptGuidelines: [
       "Use when a completed or in-review task needs follow-up work or improvements",
       "The original task must be in 'done' or 'in-review' column",
-      "The refinement task will be created in triage and depend on the original task",
+      "The refinement task will be created in planning and depend on the original task",
       "Provide clear feedback about what needs to be refined or improved",
     ],
     parameters: Type.Object({
@@ -739,7 +739,7 @@ export default function kbExtension(pi: ExtensionAPI) {
     label: "fn: Import GitHub Issues",
     description:
       "Import GitHub issues as Fusion tasks. Fetches open issues from a repository " +
-      "and creates tasks in the triage column. Each task includes the issue title " +
+      "and creates tasks in the planning column. Each task includes the issue title " +
       "and body with a link to the source issue.",
     promptSnippet: "Import GitHub issues as Fusion tasks",
     promptGuidelines: [
@@ -830,7 +830,7 @@ export default function kbExtension(pi: ExtensionAPI) {
     label: "fn: Import GitHub Issue",
     description:
       "Import a specific GitHub issue as a Fusion task. Fetches the issue by number " +
-      "and creates a single task in the triage column with the issue title and body.",
+      "and creates a single task in the planning column with the issue title and body.",
     promptSnippet: "Import a specific GitHub issue as a Fusion task",
     promptGuidelines: [
       "Use for importing a single known issue by its number",
@@ -1055,7 +1055,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         content: [
           {
             type: "text",
-            text: summaryLine + (taskId ? `\n\nPlanning session completed. Task ${taskId} is now in triage and will be auto-specified by the AI triage agent.` : ""),
+            text: summaryLine + (taskId ? `\n\nPlanning session completed. Task ${taskId} is now in planning and will be auto-planned by the AI planning agent.` : ""),
           },
         ],
         details: { taskId, logs },

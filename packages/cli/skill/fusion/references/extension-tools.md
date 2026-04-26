@@ -10,7 +10,7 @@ All tools are registered via the pi extension. They are available in any pi agen
 
 ### fn_task_create
 
-Create a new task on the Fusion task board. The task enters the triage column where the AI triage agent will specify it into a full prompt with steps, file scope, and acceptance criteria.
+Create a new task on the Fusion task board. The task enters the planning column where the AI planning agent will plan it into a full prompt with steps, file scope, and acceptance criteria.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -82,7 +82,7 @@ Retry a failed task — clears the error state and moves it back to the todo col
 
 ### fn_task_duplicate
 
-Duplicate an existing task, creating a fresh copy in triage. Copies the title and description but resets all execution state. The AI triage agent will re-specify the new task.
+Duplicate an existing task, creating a fresh copy in planning. Copies the title and description but resets all execution state. The AI planning agent will replan the new task.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -90,7 +90,7 @@ Duplicate an existing task, creating a fresh copy in triage. Copies the title an
 
 ### fn_task_refine
 
-Request a refinement of a completed or in-review task. Creates a new follow-up task in triage that references the original task as a dependency. Use this when a done or in-review task needs additional work, improvements, or follow-up changes.
+Request a refinement of a completed or in-review task. Creates a new follow-up task in planning that references the original task as a dependency. Use this when a done or in-review task needs additional work, improvements, or follow-up changes.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -133,7 +133,7 @@ Create a task via AI-guided planning mode — interactive conversation to refine
 
 ### fn_task_import_github
 
-Import GitHub issues as Fusion tasks. Fetches open issues from a repository and creates tasks in the triage column. Each task includes the issue title and body with a link to the source issue.
+Import GitHub issues as Fusion tasks. Fetches open issues from a repository and creates tasks in the planning column. Each task includes the issue title and body with a link to the source issue.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -143,7 +143,7 @@ Import GitHub issues as Fusion tasks. Fetches open issues from a repository and 
 
 ### fn_task_import_github_issue
 
-Import a specific GitHub issue as a Fusion task. Fetches the issue by number and creates a single task in the triage column with the issue title and body.
+Import a specific GitHub issue as a Fusion task. Fetches the issue by number and creates a single task in the planning column with the issue title and body.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

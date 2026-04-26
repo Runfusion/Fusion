@@ -882,7 +882,7 @@ export function SettingsModal({
       globalModelKey: "planningGlobalModelId",
       projectProviderKey: "planningProvider",
       projectModelKey: "planningModelId",
-      helperText: "AI model used for task specification (triage).",
+      helperText: "AI model used for task planning.",
       fallbackOrder: "Project override → Global planning lane → Global default lane → Automatic resolution",
     },
     {
@@ -2102,7 +2102,7 @@ export function SettingsModal({
                   setForm((f) => ({ ...f, maxTriageConcurrent: val === "" ? undefined : Number(val) } as SettingsFormState));
                 }}
               />
-              <small>Maximum concurrent triage/specification agents</small>
+              <small>Maximum concurrent planning agents</small>
             </div>
             <div className="form-group">
               <label htmlFor="pollIntervalMs">Poll Interval (ms)</label>
@@ -2144,9 +2144,9 @@ export function SettingsModal({
                     setForm((f) => ({ ...f, specStalenessEnabled: e.target.checked }))
                   }
                 />
-                Enable specification staleness enforcement
+                Enable plan staleness enforcement
               </label>
-              <small>When enabled, tasks with stale specifications (PROMPT.md older than the threshold) are automatically sent back to triage for re-specification</small>
+              <small>When enabled, tasks with stale plans (PROMPT.md older than the threshold) are automatically sent back to planning for replanning</small>
             </div>
             <div className="form-group">
               <label htmlFor="specStalenessMaxAgeMs">Stale Spec Threshold (hours)</label>
@@ -2163,7 +2163,7 @@ export function SettingsModal({
                 }}
                 disabled={!form.specStalenessEnabled}
               />
-              <small>Maximum age in hours before a specification is considered stale. Default: 6 hours.</small>
+              <small>Maximum age in hours before a plan is considered stale. Default: 6 hours.</small>
             </div>
             <div className="form-group">
               <label htmlFor="autoArchiveDoneTasksEnabled" className="checkbox-label">

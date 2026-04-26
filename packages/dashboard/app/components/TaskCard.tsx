@@ -81,7 +81,7 @@ function abbreviateBadge(text: string, max: number): string {
 
 const EDITABLE_COLUMNS: Set<Column> = new Set(["triage", "todo"]);
 
-const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "specifying"]);
+const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging"]);
 
 const COLUMN_PROGRESS_COLOR_MAP: Record<Column, string> = {
   triage: "var(--triage)",

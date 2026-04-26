@@ -70,7 +70,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
   const [dragOver, setDragOver] = useState(false);
   const [visibleTaskCount, setVisibleTaskCount] = useState(VISIBLE_TASKS_INITIAL);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isRespecifying, setIsRespecifying] = useState(false);
+  const [isReplanning, setIsReplanning] = useState(false);
   const [isPausingAll, setIsPausingAll] = useState(false);
   const [isMovingAllToTodo, setIsMovingAllToTodo] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -161,16 +161,16 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
     setVisibleTaskCount((current) => Math.min(current + VISIBLE_TASKS_INCREMENT, tasks.length));
   }, [tasks.length]);
 
-  const handleRespecifyAll = useCallback(async () => {
+  const handleReplanAll = useCallback(async () => {
     setIsMenuOpen(false);
     if (tasks.length === 0) return;
 
     const confirmed = window.confirm(
-      `Move all ${tasks.length} todo task${tasks.length === 1 ? "" : "s"} back to triage to be respecified?`,
+      `Move all ${tasks.length} todo task${tasks.length === 1 ? "" : "s"} back to planning to be replanned?`,
     );
     if (!confirmed) return;
 
-    setIsRespecifying(true);
+    setIsReplanning(true);
     try {
       // Issue moves in parallel — onMoveTask is per-task, no bulk endpoint.
       const results = await Promise.allSettled(
@@ -179,19 +179,19 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
       const failed = results.filter((r) => r.status === "rejected").length;
       const moved = results.length - failed;
       if (failed === 0) {
-        addToast(`Moved ${moved} task${moved === 1 ? "" : "s"} to triage for respec`, "success");
+        addToast(`Moved ${moved} task${moved === 1 ? "" : "s"} to planning for replanning`, "success");
       } else {
         addToast(`Moved ${moved} of ${results.length} tasks; ${failed} failed`, "error");
       }
     } finally {
-      setIsRespecifying(false);
+      setIsReplanning(false);
     }
   }, [tasks, onMoveTask, addToast]);
 
   const pauseEligibleTasks = useMemo(() => tasks.filter((task) => !task.paused), [tasks]);
   const pauseEligibleCount = pauseEligibleTasks.length;
   const hasColumnBulkActions = column === "todo" || column === "in-progress" || column === "in-review";
-  const isMenuBusy = isRespecifying || isPausingAll || isMovingAllToTodo;
+  const isMenuBusy = isReplanning || isPausingAll || isMovingAllToTodo;
 
   const handlePauseAll = useCallback(async () => {
     if (!onPauseTask) return;
@@ -332,12 +332,12 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
                     type="button"
                     role="menuitem"
                     className="column-menu-item"
-                    onClick={() => void handleRespecifyAll()}
-                    disabled={tasks.length === 0 || isRespecifying}
+                    onClick={() => void handleReplanAll()}
+                    disabled={tasks.length === 0 || isReplanning}
                   >
-                    Respecify All
+                    Replan All
                     <span className="column-menu-item-hint">
-                      Move {tasks.length} task{tasks.length === 1 ? "" : "s"} to Triage
+                      Move {tasks.length} task{tasks.length === 1 ? "" : "s"} to Planning
                     </span>
                   </button>
                 )}

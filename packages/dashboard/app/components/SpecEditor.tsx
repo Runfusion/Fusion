@@ -163,7 +163,7 @@ export function SpecEditor({
         <div className="spec-editor-revision">
           <h4>Ask AI to Revise</h4>
           <p className="spec-editor-revision-help">
-            Provide feedback for the AI to improve this specification. The task will move to triage for re-specification.
+            Provide feedback for the AI to improve this specification. The task will move to planning for replanning.
           </p>
           <textarea
             ref={feedbackRef}

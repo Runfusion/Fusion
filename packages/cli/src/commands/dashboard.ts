@@ -2315,7 +2315,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         console.log(`  AI engine:  ✗ disabled (dev mode)`);
       } else {
         console.log(`  AI engine:  ✓ active`);
-        console.log(`    • triage: auto-specifying tasks`);
+        console.log(`    • planning: auto-planning tasks`);
         console.log(`    • scheduler: dependency-aware execution`);
         console.log(`    • cron: scheduled task execution`);
       }

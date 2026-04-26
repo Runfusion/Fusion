@@ -241,7 +241,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
-  // Retry failed, stuck-killed, or stranded triage/specification task
+  // Retry failed, stuck-killed, or stranded triage/planning task
   router.post("/tasks/:id/retry", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
@@ -249,14 +249,14 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const retrySpecification =
         task.column === "triage" &&
         (task.status === "failed" ||
-          task.status === "specifying" ||
-          task.status === "needs-respecify" ||
+          task.status === "planning" ||
+          task.status === "needs-replan" ||
           (task.stuckKillCount ?? 0) > 0);
       if (task.status !== "failed" && task.status !== "stuck-killed" && !retrySpecification) {
         throw badRequest(`Task is not in a retryable state (current status: ${task.status || 'none'})`);
       }
       await scopedStore.updateTask(req.params.id, {
-        status: retrySpecification ? "needs-respecify" : null,
+        status: retrySpecification ? "needs-replan" : null,
         error: null,
         worktree: null,
         branch: null,
@@ -272,7 +272,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         const { join } = await import("node:path");
         const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
         await rm(promptPath, { force: true });
-        await scopedStore.logEntry(req.params.id, "Retry requested from dashboard (specification retry budget reset)");
+        await scopedStore.logEntry(req.params.id, "Retry requested from dashboard (planning retry budget reset)");
         const updated = await scopedStore.getTask(req.params.id);
         res.json(updated);
         return;
@@ -1110,20 +1110,20 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const task = await scopedStore.getTask(req.params.id);
 
       // If task is already in triage, skip the transition check and moveTask.
-      // Just reset for re-specification in place.
+      // Just reset for replanning in place.
       if (task.column === "triage") {
         // Log the revision request
         await scopedStore.logEntry(task.id, "AI spec revision requested", feedback);
 
-        // Remove the existing spec so re-specification starts from the task
+        // Remove the existing spec so replanning starts from the task
         // description and feedback rather than revising stale PROMPT.md content.
         const { rm } = await import("node:fs/promises");
         const { join } = await import("node:path");
         const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
         await rm(promptPath, { force: true });
 
-        // Update status to indicate needs re-specification
-        await scopedStore.updateTask(task.id, { status: "needs-respecify" });
+        // Update status to indicate needs replanning
+        await scopedStore.updateTask(task.id, { status: "needs-replan" });
 
         const updated = await scopedStore.getTask(task.id);
         res.json(updated);
@@ -1141,18 +1141,18 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // Log the revision request
       await scopedStore.logEntry(task.id, "AI spec revision requested", feedback);
 
-      // Move to triage for re-specification
+      // Move to triage for replanning
       const updated = await scopedStore.moveTask(task.id, "triage");
 
-      // Remove the existing spec so re-specification starts from the task
+      // Remove the existing spec so replanning starts from the task
       // description and feedback rather than revising stale PROMPT.md content.
       const { rm } = await import("node:fs/promises");
       const { join } = await import("node:path");
       const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
       await rm(promptPath, { force: true });
 
-      // Update status to indicate needs re-specification
-      await scopedStore.updateTask(task.id, { status: "needs-respecify" });
+      // Update status to indicate needs replanning
+      await scopedStore.updateTask(task.id, { status: "needs-replan" });
 
       res.json(updated);
     } catch (err: unknown) {
@@ -1176,7 +1176,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const task = await scopedStore.getTask(req.params.id);
 
       // If task is already in triage, skip the transition check and moveTask.
-      // Just reset for re-specification in place.
+      // Just reset for replanning in place.
       if (task.column === "triage") {
         // Log the rebuild request
         await scopedStore.logEntry(task.id, "Specification rebuild requested by user");
@@ -1188,8 +1188,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
         await rm(promptPath, { force: true });
 
-        // Update status to indicate needs re-specification
-        await scopedStore.updateTask(task.id, { status: "needs-respecify" });
+        // Update status to indicate needs replanning
+        await scopedStore.updateTask(task.id, { status: "needs-replan" });
 
         const updated = await scopedStore.getTask(task.id);
         res.json(updated);
@@ -1205,7 +1205,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       // Log the rebuild request
       await scopedStore.logEntry(task.id, "Specification rebuild requested by user");
 
-      // Move to triage for re-specification
+      // Move to triage for replanning
       const updated = await scopedStore.moveTask(task.id, "triage");
 
       // Remove the existing spec so rebuilds produce a fresh PROMPT.md instead
@@ -1215,8 +1215,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
       await rm(promptPath, { force: true });
 
-      // Update status to indicate needs re-specification
-      await scopedStore.updateTask(task.id, { status: "needs-respecify" });
+      // Update status to indicate needs replanning
+      await scopedStore.updateTask(task.id, { status: "needs-replan" });
 
       res.json(updated);
     } catch (err: unknown) {

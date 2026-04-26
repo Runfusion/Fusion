@@ -374,10 +374,10 @@ describe("TaskDetailModal", () => {
       expect(retryButtons).toHaveLength(1);
     });
 
-    it("shows Retry for a stranded specifying triage task", () => {
+    it("shows Retry for a stranded planning triage task", () => {
       render(
         <TaskDetailModal
-          task={makeTask({ column: "triage", status: "specifying", stuckKillCount: 6 })}
+          task={makeTask({ column: "triage", status: "planning", stuckKillCount: 6 })}
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -2992,7 +2992,7 @@ describe("TaskDetailModal", () => {
 
       await waitFor(() => {
         expect(requestSpecRevision).toHaveBeenCalledWith("FN-099", "Please add more error handling details", undefined);
-        expect(addToast).toHaveBeenCalledWith("AI revision requested. Task moved to triage.", "success");
+        expect(addToast).toHaveBeenCalledWith("AI revision requested. Task moved to planning.", "success");
         expect(onClose).toHaveBeenCalled();
       });
     });
@@ -3219,7 +3219,7 @@ describe("TaskDetailModal", () => {
         <TaskDetailModal
           task={makeTask({
             column: "triage",
-            status: "specifying",
+            status: "planning",
             prompt: "# Task Spec",
           })}
           onClose={noop}
@@ -3325,7 +3325,7 @@ describe("TaskDetailModal", () => {
         expect(mockRejectPlan).toHaveBeenCalledWith("FN-001", undefined);
       });
       expect(addToast).toHaveBeenCalledWith(
-        "Plan rejected — FN-001 returned to Triage for re-specification",
+        "Plan rejected — FN-001 returned to Planning for replanning",
         "info"
       );
       expect(onClose).toHaveBeenCalled();

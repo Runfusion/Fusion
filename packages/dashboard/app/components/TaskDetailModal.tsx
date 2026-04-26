@@ -299,8 +299,8 @@ export function TaskDetailModal({
   const canRetryTask =
     task.status === "failed" ||
     task.status === "stuck-killed" ||
-    task.status === "specifying" ||
-    task.status === "needs-respecify" ||
+    task.status === "planning" ||
+    task.status === "needs-replan" ||
     (task.stuckKillCount ?? 0) > 0 ||
     (task.recoveryRetryCount ?? 0) > 0 ||
     Boolean(task.nextRecoveryAt);
@@ -903,7 +903,7 @@ export function TaskDetailModal({
     if (!confirm("Reject this plan? The specification will be discarded and regenerated.")) return;
     try {
       await rejectPlan(task.id, projectId);
-      addToast(`Plan rejected — ${task.id} returned to Triage for re-specification`, "info");
+      addToast(`Plan rejected — ${task.id} returned to Planning for replanning`, "info");
       onClose();
     } catch (err) {
       addToast(getErrorMessage(err), "error");
@@ -911,11 +911,11 @@ export function TaskDetailModal({
   }, [task.id, onClose, addToast]);
 
   const handleRespecify = useCallback(async () => {
-    if (!confirm("Rebuild the specification for this task? The task will move to triage for re-specification.")) return;
+    if (!confirm("Rebuild the plan for this task? The task will move to planning for replanning.")) return;
     try {
       await rebuildTaskSpec(task.id, projectId);
       onClose();
-      addToast(`Respecifying ${task.id}...`, "info");
+      addToast(`Replanning ${task.id}...`, "info");
     } catch (err) {
       addToast(getErrorMessage(err), "error");
     }
@@ -1152,8 +1152,8 @@ export function TaskDetailModal({
     setIsRequestingRevision(true);
     try {
       await requestSpecRevision(task.id, feedback, projectId);
-      addToast("AI revision requested. Task moved to triage.", "success");
-      // Task has been moved to triage, close modal
+      addToast("AI revision requested. Task moved to planning.", "success");
+      // Task has been moved to planning, close modal
       onClose();
     } catch (err) {
       const msg = getErrorMessage(err);
@@ -1730,7 +1730,7 @@ export function TaskDetailModal({
                 <div className="spec-editor-revision">
                   <h4>Ask AI to Revise</h4>
                   <p className="spec-editor-revision-help">
-                    Provide feedback for the AI to improve this specification. The task will move to triage for re-specification.
+                    Provide feedback for the AI to improve this specification. The task will move to planning for replanning.
                   </p>
                   <textarea
                     className="spec-editor-feedback"
