@@ -94,29 +94,15 @@ function parseTargetInterviewResponseImpl(text: string): TargetInterviewResponse
 // Export the parse function for tests
 export { parseTargetInterviewResponseImpl as parseTargetInterviewResponse };
 
-// Dynamic import for @fusion/engine to avoid resolution issues in test environment
+import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let createFnAgent: any;
+let createFnAgent: any = engineCreateFnAgent;
 
-async function initEngine() {
-  if (!createFnAgent) {
-    try {
-      const engineModule = "@fusion/engine";
-      const engine = await import(/* @vite-ignore */ engineModule);
-      createFnAgent = engine.createFnAgent;
-    } catch {
-      // Allow failure in test environments
-      createFnAgent = undefined;
-    }
-  }
-}
-
-let engineReady: Promise<void> | undefined;
-function ensureEngineReady() {
-  engineReady ??= initEngine();
-  return engineReady;
+function ensureEngineReady(): Promise<void> {
+  return Promise.resolve();
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────

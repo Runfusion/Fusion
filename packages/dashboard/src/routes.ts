@@ -218,8 +218,10 @@ async function discoverDashboardPiExtensions(cwd: string): Promise<PiExtensionSe
   };
 }
 
-// Dynamic import fallback for @fusion/engine with injectable override for tests.
-let createFnAgentForRefine: typeof import("@fusion/engine").createFnAgent | undefined;
+import { createFnAgent as engineCreateFnAgentForRefine } from "@fusion/engine";
+
+// Test-injectable override; defaults to the statically imported engine binding.
+let createFnAgentForRefine: typeof import("@fusion/engine").createFnAgent | undefined = engineCreateFnAgentForRefine;
 
 /** @internal Inject a mock createFnAgent function for workflow-step refine route tests. */
 export function __setCreateFnAgentForRefine(mock: typeof createFnAgentForRefine): void {
@@ -2513,13 +2515,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       // Use AI to refine the description into a detailed agent prompt
       let refinedPrompt: string;
       try {
-        let createFnAgent = createFnAgentForRefine;
-        if (!createFnAgent) {
-          // Dynamic import to avoid resolution issues in tests
-          const engineModule = "@fusion/engine";
-          const engine = await import(/* @vite-ignore */ engineModule);
-          createFnAgent = engine.createFnAgent;
-        }
+        const createFnAgent = createFnAgentForRefine;
 
         const settings = await scopedStore.getSettings();
 

@@ -9,9 +9,10 @@ import {
   resetDiagnosticsSink,
 } from "./ai-session-diagnostics.js";
 
+import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let createFnAgent: any;
-const engineModule = "@fusion/engine";
+let createFnAgent: any = engineCreateFnAgent;
 
 /**
  * Shared diagnostics helper for the subtask-breakdown module.
@@ -45,21 +46,8 @@ export function __setSubtaskBreakdownDiagnostics(_logger: unknown): void {
   }
 }
 
-async function initEngine() {
-  if (!createFnAgent) {
-    try {
-      const engine = await import(/* @vite-ignore */ engineModule);
-      createFnAgent = engine.createFnAgent;
-    } catch {
-      createFnAgent = undefined;
-    }
-  }
-}
-
-let engineReady: Promise<void> | undefined;
-function ensureEngineReady() {
-  engineReady ??= initEngine();
-  return engineReady;
+function ensureEngineReady(): Promise<void> {
+  return Promise.resolve();
 }
 
 export interface SubtaskItem {

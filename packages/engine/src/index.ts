@@ -18,6 +18,13 @@ export { MissionExecutionLoop, type MissionExecutionLoopOptions, type Validation
 export { aiMergeTask, type MergerOptions } from "./merger.js";
 export { reviewStep, type ReviewType, type ReviewVerdict, type ReviewResult, type ReviewOptions } from "./reviewer.js";
 export { createFnAgent, promptWithFallback, describeModel, setHostExtensionPaths, getHostExtensionPaths, type AgentOptions, type AgentResult } from "./pi.js";
+
+// Register createFnAgent into core's loader so consumers in @fusion/core
+// (e.g. ai-summarize, memory-compaction) can resolve it without a circular
+// static import. Runs once at engine module load.
+import { setCreateFnAgent } from "@fusion/core";
+import { createFnAgent as _createFnAgentForCore } from "./pi.js";
+setCreateFnAgent(_createFnAgentForCore);
 export {
   resolveSessionSkills,
   createSkillsOverrideFromSelection,

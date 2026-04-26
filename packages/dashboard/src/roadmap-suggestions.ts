@@ -13,38 +13,13 @@
  * - Error mapping (validation 400, not found 404, AI/parser 500/503)
  */
 
-// Dynamic import for @fusion/engine to avoid resolution issues in test environment
+import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let createFnAgent: any;
+let createFnAgent: any = engineCreateFnAgent;
 
-// Track if engine has been initialized (prevents multiple imports)
-let engineInitialized = false;
-
-// Flag to indicate if createFnAgent was explicitly set (even to undefined)
-let createFnAgentExplicitlySet = false;
-
-// Initialize the import (this runs in actual server, mocked in tests)
 async function initEngine(): Promise<void> {
-  if (engineInitialized) return;
-
-  // If createFnAgent was explicitly set (even to undefined), don't try to import
-  if (createFnAgentExplicitlySet) {
-    engineInitialized = true;
-    return;
-  }
-
-  if (!createFnAgent) {
-    try {
-      // Use dynamic import with variable to prevent static analysis
-      const engineModule = "@fusion/engine";
-      const engine = await import(/* @vite-ignore */ engineModule);
-      createFnAgent = engine.createFnAgent;
-    } catch {
-      // Allow failure in test environments - agent functionality will be stubbed
-      createFnAgent = undefined;
-    }
-  }
-  engineInitialized = true;
+  // Engine is statically imported; nothing to do.
 }
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -893,9 +868,7 @@ export class ServiceUnavailableError extends Error {
  * Reset module state. Used for testing only.
  */
 export function __resetSuggestionState(): void {
-  createFnAgent = undefined;
-  engineInitialized = false;
-  createFnAgentExplicitlySet = false;
+  createFnAgent = engineCreateFnAgent;
 }
 
 /**
@@ -903,5 +876,4 @@ export function __resetSuggestionState(): void {
  */
 export function __setCreateFnAgent(mock: typeof createFnAgent): void {
   createFnAgent = mock;
-  createFnAgentExplicitlySet = true;
 }

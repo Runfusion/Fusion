@@ -46,6 +46,28 @@ The release script is also the required path for keeping both public npm package
 
 Only `@runfusion/fusion` is published. The others are internal workspace packages.
 
+### Importing across `@fusion/*` packages
+
+Because `@fusion/core`, `@fusion/dashboard`, and `@fusion/engine` are **not** on npm, the published CLI bundle (`packages/cli/dist/bin.js`) only works because tsup is configured with `noExternal: [/^@fusion\//]` — every `@fusion/*` import gets inlined into the bundle.
+
+For that inlining to happen the import must be **statically analyzable**. The following anti-pattern silently breaks on the published `npm i -g @runfusion/fusion`:
+
+```ts
+// ❌ BROKEN: variable specifier defeats static analysis
+const engineModule = "@fusion/engine";
+const engine = await import(/* @vite-ignore */ engineModule);
+createFnAgent = engine.createFnAgent;
+```
+
+esbuild leaves the dynamic `import("@fusion/engine")` in the output, the package isn't installed at runtime, the import throws, the catch silently sets the binding to `undefined`, and the next call fails with a confusing TypeError like `createFnAgent2 is not a function` (issue Runfusion/Fusion#9, FN-2613). Affects every AI flow in the dashboard.
+
+**Rules:**
+
+1. **Default to a static import** — `import { createFnAgent } from "@fusion/engine"` — so esbuild can bundle it and tests can `vi.mock("@fusion/engine", …)` it.
+2. **The one exception is `@fusion/core` itself**, which can't statically import engine without a circular dependency (engine → core). Core uses dependency injection: `setCreateFnAgent` (in `packages/core/src/ai-engine-loader.ts`) is called by `packages/engine/src/index.ts` at module load. Don't add new dynamic `import("@fusion/engine")` calls in core — extend the loader instead.
+3. **Never reintroduce the `engineModule = "@fusion/engine"` + `await import(/* @vite-ignore */ engineModule)` trick.** If you find one, treat it as a bug.
+4. Test mocking still works with static imports — vitest's module-level `vi.mock("@fusion/engine", …)` hoists above the static import.
+
 ## Storage Model
 
 Fusion uses a hybrid storage architecture: structured metadata lives in SQLite (`.fusion/fusion.db`) while large blob files (PROMPT.md, attachments) remain on the filesystem under `.fusion/tasks/{ID}/`. The database runs in WAL mode for concurrent access.

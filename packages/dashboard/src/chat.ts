@@ -25,13 +25,17 @@ import { EventEmitter } from "node:events";
 import { join, resolve, relative } from "node:path";
 import { SessionEventBuffer } from "./sse-buffer.js";
 
-// Dynamic import for @fusion/engine to avoid resolution issues in test environment
+import {
+  createFnAgent as engineCreateFnAgent,
+  buildAgentChatPrompt as engineBuildAgentChatPrompt,
+} from "@fusion/engine";
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let createFnAgent: any;
+let createFnAgent: any = engineCreateFnAgent;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let buildAgentChatPromptFn: any;
+let buildAgentChatPromptFn: any = engineBuildAgentChatPrompt;
 
 /**
  * Diagnostics logger for the chat module.
@@ -93,35 +97,8 @@ const diagnostics: DiagnosticsLogger = {
   },
 };
 
-// Initialize the import (this runs in actual server, mocked in tests)
-async function initEngine() {
-  if (!createFnAgent || !buildAgentChatPromptFn) {
-    try {
-      // Use dynamic import with variable to prevent static analysis
-      const engineModule = "@fusion/engine";
-      const engine = await import(/* @vite-ignore */ engineModule);
-      if (!createFnAgent) {
-        createFnAgent = engine.createFnAgent;
-      }
-      if (!buildAgentChatPromptFn) {
-        buildAgentChatPromptFn = engine.buildAgentChatPrompt;
-      }
-    } catch {
-      // Allow failure in test environments - agent functionality will be stubbed
-      if (!createFnAgent) {
-        createFnAgent = undefined;
-      }
-      if (!buildAgentChatPromptFn) {
-        buildAgentChatPromptFn = undefined;
-      }
-    }
-  }
-}
-
-let engineReady: Promise<void> | undefined;
-function ensureEngineReady() {
-  engineReady ??= initEngine();
-  return engineReady;
+function ensureEngineReady(): Promise<void> {
+  return Promise.resolve();
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -912,8 +889,7 @@ export function __setBuildAgentChatPrompt(mock: typeof buildAgentChatPromptFn): 
 export function __resetChatState(): void {
   chatStreamManager.reset();
   rateLimits.clear();
-  engineReady = undefined;
-  buildAgentChatPromptFn = undefined;
+  buildAgentChatPromptFn = engineBuildAgentChatPrompt;
 
   // Reset diagnostics logger to default
   __setChatDiagnostics(null);

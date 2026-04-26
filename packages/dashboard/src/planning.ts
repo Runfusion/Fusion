@@ -30,12 +30,17 @@ import {
   resetDiagnosticsSink,
   nonfatal,
 } from "./ai-session-diagnostics.js";
+import {
+  createFnAgent as engineCreateFnAgent,
+  isNtfyEventEnabled as engineIsNtfyEventEnabled,
+  buildNtfyClickUrl as engineBuildNtfyClickUrl,
+  sendNtfyNotification as engineSendNtfyNotification,
+} from "@fusion/engine";
 
-// Dynamic import for @fusion/engine to avoid resolution issues in test environment
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let createFnAgent: any;
+let createFnAgent: any = engineCreateFnAgent;
 
 interface PlanningNtfyConfig {
   enabled: boolean;
@@ -58,8 +63,11 @@ interface PlanningNtfyHelpers {
   }) => Promise<void>;
 }
 
-let planningNtfyHelpers: PlanningNtfyHelpers | undefined;
-let ntfyHelpersReady: Promise<void> | undefined;
+let planningNtfyHelpers: PlanningNtfyHelpers | undefined = {
+  isNtfyEventEnabled: engineIsNtfyEventEnabled,
+  buildNtfyClickUrl: engineBuildNtfyClickUrl,
+  sendNtfyNotification: engineSendNtfyNotification,
+};
 
 /**
  * Shared diagnostics helper for the planning module.
@@ -92,39 +100,12 @@ export function __setPlanningDiagnostics(_logger: unknown): void {
   }
 }
 
-// Initialize the import (this runs in actual server, mocked in tests)
-async function initEngine() {
-  try {
-    // Use dynamic import with variable to prevent static analysis
-    const engineModule = "@fusion/engine";
-    const engine = await import(/* @vite-ignore */ engineModule);
-    if (!createFnAgent) {
-      createFnAgent = engine.createFnAgent;
-    }
-    if (!planningNtfyHelpers) {
-      planningNtfyHelpers = {
-        isNtfyEventEnabled: engine.isNtfyEventEnabled,
-        buildNtfyClickUrl: engine.buildNtfyClickUrl,
-        sendNtfyNotification: engine.sendNtfyNotification,
-      };
-    }
-  } catch {
-    // Allow failure in test environments - agent functionality will be stubbed
-    if (!createFnAgent) {
-      createFnAgent = undefined;
-    }
-  }
-}
-
-let engineReady: Promise<void> | undefined;
-function ensureEngineReady() {
-  engineReady ??= initEngine();
-  return engineReady;
+function ensureEngineReady(): Promise<void> {
+  return Promise.resolve();
 }
 
 async function ensureNtfyHelpersReady(): Promise<void> {
-  ntfyHelpersReady ??= initEngine();
-  await ntfyHelpersReady;
+  // Helpers are bound statically at module load; nothing to await.
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -1712,8 +1693,11 @@ export function __resetPlanningState(): void {
   _aiSessionDeletedListener = undefined;
   _aiSessionStore = undefined;
 
-  planningNtfyHelpers = undefined;
-  ntfyHelpersReady = undefined;
+  planningNtfyHelpers = {
+    isNtfyEventEnabled: engineIsNtfyEventEnabled,
+    buildNtfyClickUrl: engineBuildNtfyClickUrl,
+    sendNtfyNotification: engineSendNtfyNotification,
+  };
 
   // Reset diagnostics sink to default
   resetDiagnosticsSink();
@@ -1729,7 +1713,6 @@ export function __setCreateFnAgent(mock: typeof createFnAgent): void {
 /** Inject ntfy helper implementations (test-only). */
 export function __setPlanningNtfyHelpers(mock: PlanningNtfyHelpers | undefined): void {
   planningNtfyHelpers = mock;
-  ntfyHelpersReady = undefined;
 }
 
 // ── Custom Errors ───────────────────────────────────────────────────────────
