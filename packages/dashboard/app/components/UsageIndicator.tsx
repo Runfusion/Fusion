@@ -327,11 +327,7 @@ function ProviderCard({
   const getStatusBadge = () => {
     switch (provider.status) {
       case "ok":
-        return (
-          <span className="usage-status-badge usage-status-badge--connected">
-            Connected
-          </span>
-        );
+        return null;
       case "error":
         return (
           <span className="usage-status-badge usage-status-badge--error">

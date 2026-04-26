@@ -1307,11 +1307,6 @@
   border-radius: var(--radius-pill);
 }
 
-.usage-status-badge--connected {
-  background: rgba(63, 185, 80, 0.15);
-  color: var(--color-success);
-}
-
 .usage-status-badge--error {
   background: rgba(248, 81, 73, 0.15);
   color: var(--color-error);
@@ -1395,7 +1390,8 @@
 
 .usage-window--hidden .usage-progress-wrapper,
 .usage-window--hidden .usage-window-footer,
-.usage-window--hidden .usage-pace-row {
+.usage-window--hidden .usage-pace-row,
+.usage-window--hidden .usage-window-label {
   display: none;
 }
 

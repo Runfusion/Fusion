@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { UsageIndicator } from "../UsageIndicator";
+import "../PlanningModeModal.css";
 import * as useUsageDataModule from "../../hooks/useUsageData";
 import type { ProviderUsage } from "../../api";
 import { scopedKey } from "../../utils/projectStorage";
@@ -117,7 +118,6 @@ describe("UsageIndicator", () => {
     expect(screen.getByText("Google")).toBeInTheDocument();
 
     // Check status badges
-    expect(screen.getAllByText("Connected").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Not configured")).toBeInTheDocument();
 
     // Check usage windows
@@ -316,6 +316,27 @@ describe("UsageIndicator", () => {
     // The hook is called even when isOpen is false because hooks must be called
     // unconditionally at the top level in React
     expect(mockUseUsageData).toHaveBeenCalledWith({ autoRefresh: false });
+  });
+
+  it("does not render a Connected badge for providers with ok status", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: [
+        {
+          name: "Anthropic",
+          icon: "🅰️",
+          status: "ok",
+          windows: [],
+        },
+      ],
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
+
+    expect(screen.queryByText("Connected")).not.toBeInTheDocument();
   });
 
   it("renders provider error messages", () => {
@@ -561,10 +582,12 @@ describe("UsageIndicator", () => {
 
     render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
 
+    const sessionLabel = screen.getByText("Session (5h)");
     fireEvent.click(screen.getByRole("button", { name: "Hide Session (5h)" }));
 
-    const hiddenRow = screen.getByText("Session (5h)").closest(".usage-window");
+    const hiddenRow = sessionLabel.closest(".usage-window");
     expect(hiddenRow).toHaveClass("usage-window--hidden");
+    expect(sessionLabel).not.toBeVisible();
     expect(screen.queryByText("45% used")).not.toBeInTheDocument();
   });
 
