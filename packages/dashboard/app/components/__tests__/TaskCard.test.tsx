@@ -18,6 +18,10 @@ vi.mock("lucide-react", () => ({
   Trash2: () => null,
 }));
 
+vi.mock("../ProviderIcon", () => ({
+  ProviderIcon: ({ provider }: { provider: string }) => <span data-testid={`provider-icon-${provider}`} />,
+}));
+
 // Mock the api module
 vi.mock("../../api", () => ({
   fetchTaskDetail: vi.fn(),
@@ -696,6 +700,65 @@ describe("TaskCard", () => {
     });
 
     expect(container.querySelector(".card-time-indicator")?.textContent).toContain("1m");
+  });
+});
+
+describe("TaskCard provider icons on agent row", () => {
+  it("renders provider icons when task has model overrides", () => {
+    render(
+      <TaskCard
+        task={makeTask({ modelProvider: "anthropic", assignedAgentId: "agent-1" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByTestId("card-provider-icons")).toBeDefined();
+    expect(screen.getByTestId("provider-icon-anthropic")).toBeDefined();
+  });
+
+  it("deduplicates when executor and validator use same provider", () => {
+    render(
+      <TaskCard
+        task={makeTask({
+          modelProvider: "openai",
+          validatorModelProvider: "openai",
+          planningModelProvider: "anthropic",
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const icons = screen.getByTestId("card-provider-icons");
+    expect(icons.querySelectorAll("[data-testid^='provider-icon-']").length).toBe(2);
+    expect(screen.getByTestId("provider-icon-openai")).toBeDefined();
+    expect(screen.getByTestId("provider-icon-anthropic")).toBeDefined();
+  });
+
+  it("renders agent row with provider icons even without assignedAgentId", () => {
+    render(
+      <TaskCard
+        task={makeTask({ modelProvider: "anthropic", assignedAgentId: undefined })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByTestId("card-provider-icons")).toBeDefined();
+    expect(screen.getByTestId("provider-icon-anthropic")).toBeDefined();
+  });
+
+  it("does not render provider icons when no model overrides set", () => {
+    render(
+      <TaskCard
+        task={makeTask({ assignedAgentId: "agent-1" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.queryByTestId("card-provider-icons")).toBeNull();
   });
 });
 

@@ -1,5 +1,5 @@
 import "./TaskDetailModal.css";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pencil, Bot, X, ChevronDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -20,6 +20,7 @@ import { WorkflowResultsTab } from "./WorkflowResultsTab";
 import { TaskDocumentsTab } from "./TaskDocumentsTab";
 import { TaskTokenStatsPanel } from "./TaskTokenStatsPanel";
 import { PluginSlot } from "./PluginSlot";
+import { ProviderIcon } from "./ProviderIcon";
 import { subscribeSse } from "../sse-bus";
 import { usePluginUiSlots } from "../hooks/usePluginUiSlots";
 import { appendTokenQuery } from "../auth";
@@ -1215,6 +1216,17 @@ export function TaskDetailModal({
     });
 
   const assignedAgentLabel = assignedAgent?.name ?? task.assignedAgentId ?? null;
+  const detailProviders = useMemo(() => {
+    const providers: string[] = [];
+    if (workingTask.modelProvider) providers.push(workingTask.modelProvider);
+    if (workingTask.validatorModelProvider && !providers.includes(workingTask.validatorModelProvider)) {
+      providers.push(workingTask.validatorModelProvider);
+    }
+    if (workingTask.planningModelProvider && !providers.includes(workingTask.planningModelProvider)) {
+      providers.push(workingTask.planningModelProvider);
+    }
+    return providers;
+  }, [workingTask.modelProvider, workingTask.validatorModelProvider, workingTask.planningModelProvider]);
 
   const transitions = VALID_TRANSITIONS[task.column] || [];
   const prAutomationStatusLabels: Record<string, string> = {
@@ -1592,10 +1604,19 @@ export function TaskDetailModal({
           )}
           <div className="detail-section detail-agent-section">
             <div className="detail-meta-row">
-              <span className="detail-meta-label">
-                <Bot size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />
-                Agent
-              </span>
+              <div className="detail-meta-left">
+                {detailProviders.length > 0 && (
+                  <span className="detail-provider-icons" data-testid="detail-provider-icons">
+                    {detailProviders.map((provider) => (
+                      <ProviderIcon key={provider} provider={provider} size="sm" />
+                    ))}
+                  </span>
+                )}
+                <span className="detail-meta-label">
+                  <Bot size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                  Agent
+                </span>
+              </div>
               <div className="detail-agent-actions">
                 {assignedAgentLabel ? (
                   <span className="detail-agent-chip">

@@ -6,6 +6,7 @@ import { COLUMN_LABELS, DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, VALID_TRANSITION
 import { fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent } from "../api";
 import { GitHubBadge } from "./GitHubBadge";
 import { pickPreferredBadge } from "./TaskCardBadge";
+import { ProviderIcon } from "./ProviderIcon";
 import { PluginSlot } from "./PluginSlot";
 import { useBadgeWebSocket } from "../hooks/useBadgeWebSocket";
 import { getFreshBatchData } from "../hooks/useBatchBadgeFetch";
@@ -326,6 +327,8 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previousTask.modelId === nextTask.modelId &&
     previousTask.validatorModelProvider === nextTask.validatorModelProvider &&
     previousTask.validatorModelId === nextTask.validatorModelId &&
+    previousTask.planningModelProvider === nextTask.planningModelProvider &&
+    previousTask.planningModelId === nextTask.planningModelId &&
     previousTask.reviewLevel === nextTask.reviewLevel &&
     previousTask.missionId === nextTask.missionId &&
     previousTask.assignedAgentId === nextTask.assignedAgentId &&
@@ -611,6 +614,17 @@ function TaskCardComponent({
   const canEdit = EDITABLE_COLUMNS.has(task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
   const hasGitHubBadge = Boolean(task.prInfo || task.issueInfo);
   const isAgentNameLoading = Boolean(task.assignedAgentId && agentName === null);
+  const taskProviders = useMemo(() => {
+    const providers: string[] = [];
+    if (task.modelProvider) providers.push(task.modelProvider);
+    if (task.validatorModelProvider && !providers.includes(task.validatorModelProvider)) {
+      providers.push(task.validatorModelProvider);
+    }
+    if (task.planningModelProvider && !providers.includes(task.planningModelProvider)) {
+      providers.push(task.planningModelProvider);
+    }
+    return providers;
+  }, [task.modelProvider, task.validatorModelProvider, task.planningModelProvider]);
   const unifiedProgress = useMemo(
     () => getUnifiedTaskProgress(task, workflowStepNameLookup),
     [task.steps, task.enabledWorkflowSteps, task.workflowStepResults, workflowStepNameLookup],
@@ -1334,17 +1348,26 @@ function TaskCardComponent({
           {(queued || task.status === "queued") && task.column !== "in-progress" && <span className="queued-badge"><Clock size={12} style={{ verticalAlign: "middle" }} /> Queued</span>}
         </div>
       )}
-      {task.assignedAgentId && (
+      {(task.assignedAgentId || taskProviders.length > 0) && (
         <div className="card-agent-row">
-          <span
-            className={`card-agent-badge${isAgentNameLoading ? " card-agent-badge--loading" : ""}`}
-            title={`Assigned to ${agentName ?? task.assignedAgentId}`}
-          >
-            <Bot size={11} />
-            <span className="card-agent-badge-text">
-              {abbreviateBadge(agentName ?? task.assignedAgentId, 15)}
+          {taskProviders.length > 0 && (
+            <span className="card-provider-icons" data-testid="card-provider-icons">
+              {taskProviders.map((provider) => (
+                <ProviderIcon key={provider} provider={provider} size="sm" />
+              ))}
             </span>
-          </span>
+          )}
+          {task.assignedAgentId && (
+            <span
+              className={`card-agent-badge${isAgentNameLoading ? " card-agent-badge--loading" : ""}`}
+              title={`Assigned to ${agentName ?? task.assignedAgentId}`}
+            >
+              <Bot size={11} />
+              <span className="card-agent-badge-text">
+                {abbreviateBadge(agentName ?? task.assignedAgentId, 15)}
+              </span>
+            </span>
+          )}
         </div>
       )}
       <PluginSlot slotId="task-card-badge" projectId={projectId} />

@@ -1873,6 +1873,12 @@ input[type="range"]:focus-visible {
   gap: var(--space-sm);
 }
 
+.detail-meta-left {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
 .detail-meta-label {
   display: inline-flex;
   align-items: center;

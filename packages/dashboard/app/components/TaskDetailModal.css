@@ -157,6 +157,12 @@
   margin-top: var(--space-lg);
 }
 
+.detail-provider-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
 .detail-source-section {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);

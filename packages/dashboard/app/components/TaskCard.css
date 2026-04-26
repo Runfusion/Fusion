@@ -388,6 +388,18 @@
   margin-top: var(--space-xs);
 }
 
+.card-provider-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.card-provider-icons .provider-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
 .card-agent-badge {
   display: inline-flex;
   align-items: center;
