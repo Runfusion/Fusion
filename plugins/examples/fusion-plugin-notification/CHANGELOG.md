@@ -4,7 +4,7 @@
 
 ### Patch Changes
 
-- @fusion/plugin-sdk@0.3.0
+- @fusion/plugin-sdk@1.0.0
 
 ## 0.1.2
 

@@ -1,6 +1,6 @@
 {
   "name": "@fusion/mobile",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "license": "MIT",
   "description": "Fusion mobile: Capacitor wrapper around the Fusion dashboard for iOS and Android.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",

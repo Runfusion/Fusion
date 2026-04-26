@@ -1018,7 +1018,7 @@ describe("App global pause (hard stop)", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTitle("Stop AI engine")).toBeTruthy();
+      expect(screen.getByTestId("engine-control-main-btn")).toBeTruthy();
     });
   });
 
@@ -1032,11 +1032,11 @@ describe("App global pause (hard stop)", () => {
 
     // Wait for initial render
     await waitFor(() => {
-      expect(screen.getByTitle("Stop AI engine")).toBeTruthy();
+      expect(screen.getByTestId("engine-control-main-btn")).toBeTruthy();
     });
 
     // Click the stop button
-    fireEvent.click(screen.getByTitle("Stop AI engine"));
+    fireEvent.click(screen.getByTestId("engine-control-main-btn"));
 
     // Should optimistically switch to "Start" state
     await waitFor(() => {
@@ -1060,15 +1060,15 @@ describe("App global pause (hard stop)", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTitle("Stop AI engine")).toBeTruthy();
+      expect(screen.getByTestId("engine-control-main-btn")).toBeTruthy();
     });
 
     // Click the stop button — will fail
-    fireEvent.click(screen.getByTitle("Stop AI engine"));
+    fireEvent.click(screen.getByTestId("engine-control-main-btn"));
 
     // Should revert back to "Stop" state after failure
     await waitFor(() => {
-      expect(screen.getByTitle("Stop AI engine")).toBeTruthy();
+      expect(screen.getByTestId("engine-control-main-btn")).toBeTruthy();
     });
   });
 });
@@ -1082,10 +1082,11 @@ describe("App engine pause (soft pause)", () => {
 
     render(<App />);
 
-    // When engine is paused, the pause button should show "Resume scheduling"
     await waitFor(() => {
-      expect(screen.getByTitle("Resume scheduling")).toBeTruthy();
+      expect(screen.getByTestId("engine-control-chevron-btn")).toBeTruthy();
     });
+    fireEvent.click(screen.getByTestId("engine-control-chevron-btn"));
+    expect(screen.getByTitle("Resume scheduling")).toBeTruthy();
   });
 
   it("shows Pause button when enginePaused is false", async () => {
@@ -1097,7 +1098,7 @@ describe("App engine pause (soft pause)", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTitle("Pause scheduling")).toBeTruthy();
+      expect(screen.getByTestId("engine-control-chevron-btn")).toBeTruthy();
     });
   });
 
@@ -1110,19 +1111,18 @@ describe("App engine pause (soft pause)", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTitle("Pause scheduling")).toBeTruthy();
+      expect(screen.getByTestId("engine-control-chevron-btn")).toBeTruthy();
     });
 
     // Click the pause button
-    fireEvent.click(screen.getByTitle("Pause scheduling"));
+    fireEvent.click(screen.getByTestId("engine-control-chevron-btn"));
+    fireEvent.click(screen.getByTestId("engine-control-pause-triage-btn"));
 
-    // Should optimistically switch to "Resume" state
     await waitFor(() => {
-      expect(screen.getByTitle("Resume scheduling")).toBeTruthy();
+      expect(updateSettings).toHaveBeenCalledWith({ enginePaused: true }, "proj_123");
     });
-
-    // Should call updateSettings with enginePaused: true
-    expect(updateSettings).toHaveBeenCalledWith({ enginePaused: true }, "proj_123");
+    fireEvent.click(screen.getByTestId("engine-control-chevron-btn"));
+    expect(screen.getByTitle("Resume scheduling")).toBeTruthy();
   });
 });
 

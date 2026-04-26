@@ -2,6 +2,72 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 1.0.0
+
+### @fusion/dashboard
+
+#### Patch Changes
+
+- @fusion/core@1.0.0
+- @fusion/engine@1.0.0
+
+### @fusion/engine
+
+#### Patch Changes
+
+- @fusion/core@1.0.0
+- @fusion/pi-claude-cli@1.0.0
+
+### @fusion/plugin-sdk
+
+#### Patch Changes
+
+- @fusion/core@1.0.0
+
+### @runfusion/fusion
+
+#### Minor Changes
+
+- 9d8852e: Add project-level overlap ignore paths so teams can exempt safe shared files/directories from overlap-based task serialization while keeping overlap protection enabled for the rest of the repo.
+
+#### Patch Changes
+
+- f560af5: Fix dashboard TUI agents view run history rendering to use readable status labels and allow opening selected run logs reliably.
+- cd4cef3: Fix dashboard TUI agent run-log opening so Enter key presses sent as carriage-return/newline characters are recognized reliably.
+- 7e05a20: Speed up `fn init` project-name detection by skipping git remote lookup when the target directory is not a git repository. This avoids unnecessary subprocess work and reduces timeout risk in test/CI environments.
+- c818d71: Inset plugin manager cards from the modal edges on mobile. The plugins subsection panel had no horizontal padding while its heading and toggle were already inset, leaving cards flush with the modal frame on small screens.
+- c818d71: Fix triage hangs when using pi-claude-cli with claude-sonnet-4-6. Parameterless custom tools (e.g. `fn_review_spec`) emit zero `input_json_delta` events from the Claude CLI, so the event bridge previously fell through to a raw empty-string fallback and pi's TypeBox validator rejected the call with "root: must be object" — looping the agent indefinitely. Defaults empty `partialJson` to `{}`. Also adds a reminder loop before the planning fallback model engages, propagates the bundled `@runfusion/fusion` extension into engine sessions so `fn_*` tools register without `pi install`, and drops the "historical" qualifier from replayed tool labels that was confusing models into treating their own prior turns as a previous session.
+- ff6a68b: Fix Skills Catalog initial-load failures by preventing unauthenticated public search requests for empty or too-short queries. The dashboard now returns a successful empty catalog result for short-query unauthenticated/fallback states instead of surfacing upstream 400 errors.
+- 1b3994f: Fix the dashboard terminal modal desktop width contract so large displays use a broad viewport-based layout, and harden terminal input lifecycle handling so xterm keyboard input continues forwarding reliably after rerenders.
+- 1a8058f: Make agent pause/resume state transitions act immediately by stopping active heartbeat runs on pause and triggering an on-demand heartbeat on resume.
+- 39622f0: Fix scheduled automations so overdue runs catch up reliably after server downtime. Startup/settings sync no longer pushes unchanged overdue schedules into the future, and memory dreams automation is now synchronized during engine startup before cron begins ticking.
+- 26f9c74: Synchronize Fusion skill documentation from `extension.ts` across `SKILL.md`, `references/extension-tools.md`, and `references/fusion-capabilities.md`, and document engine session-scoped runtime tools in a new `references/engine-tools.md` reference.
+
+### runfusion.ai
+
+#### Patch Changes
+
+- Updated dependencies [f560af5]
+- Updated dependencies [cd4cef3]
+- Updated dependencies [7e05a20]
+- Updated dependencies [c818d71]
+- Updated dependencies [c818d71]
+- Updated dependencies [ff6a68b]
+- Updated dependencies [1b3994f]
+- Updated dependencies [1a8058f]
+- Updated dependencies [39622f0]
+- Updated dependencies [26f9c74]
+- Updated dependencies [9d8852e]
+  - @runfusion/fusion@1.0.0
+
+## Unreleased
+
+### @runfusion/fusion
+
+#### Patch Changes
+
+- FN-2501: Agent pause/resume controls now act immediately. Pausing stops an active heartbeat run right away, and resuming to `active` triggers an immediate on-demand heartbeat instead of waiting for the next timer tick.
+
 ## 0.2.7
 
 ### @fusion/dashboard

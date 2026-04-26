@@ -223,36 +223,40 @@ describe("Header", () => {
   });
 
   describe("pause controls", () => {
-    it("renders pause button for engine pause", () => {
+    it("renders engine control split-button", () => {
       renderHeader();
-      expect(screen.getByTitle("Pause scheduling")).toBeDefined();
+      expect(screen.getByTestId("engine-control-main-btn")).toBeDefined();
+      expect(screen.getByTestId("engine-control-chevron-btn")).toBeDefined();
     });
 
-    it("renders stop button for global pause", () => {
+    it("renders pause triage option in dropdown", () => {
       renderHeader();
-      expect(screen.getByTitle("Stop AI engine")).toBeDefined();
+      fireEvent.click(screen.getByTestId("engine-control-chevron-btn"));
+      expect(screen.getByTestId("engine-control-pause-triage-btn")).toBeDefined();
     });
 
-    it("calls onToggleEnginePause when pause button is clicked", () => {
+    it("calls onToggleEnginePause when pause triage item is clicked", () => {
       const onToggleEnginePause = vi.fn();
       renderHeader({ onToggleEnginePause });
-      fireEvent.click(screen.getByTitle("Pause scheduling"));
+      fireEvent.click(screen.getByTestId("engine-control-chevron-btn"));
+      fireEvent.click(screen.getByTestId("engine-control-pause-triage-btn"));
       expect(onToggleEnginePause).toHaveBeenCalled();
     });
 
-    it("calls onToggleGlobalPause when stop button is clicked", () => {
+    it("calls onToggleGlobalPause when main button is clicked", () => {
       const onToggleGlobalPause = vi.fn();
       renderHeader({ onToggleGlobalPause });
-      fireEvent.click(screen.getByTitle("Stop AI engine"));
+      fireEvent.click(screen.getByTestId("engine-control-main-btn"));
       expect(onToggleGlobalPause).toHaveBeenCalled();
     });
 
-    it("shows resume text when engine is paused", () => {
+    it("shows resume text in dropdown when engine is paused", () => {
       renderHeader({ enginePaused: true });
+      fireEvent.click(screen.getByTestId("engine-control-chevron-btn"));
       expect(screen.getByTitle("Resume scheduling")).toBeDefined();
     });
 
-    it("shows start text when global is paused", () => {
+    it("shows start AI engine title on main button when global is paused", () => {
       renderHeader({ globalPaused: true });
       expect(screen.getByTitle("Start AI engine")).toBeDefined();
     });
@@ -1171,25 +1175,27 @@ describe("Header", () => {
         onRunScript: noop,
       }, "desktop");
 
-      // Get all inline btn-icon buttons inside header-actions
+      // Get direct children of header-actions: top-level btn-icon buttons AND the split-button container
       const headerActions = container.querySelector(".header-actions")!;
-      const inlineButtons = Array.from(headerActions.querySelectorAll<HTMLButtonElement>(":scope > button.btn-icon"));
+      const inlineItems = Array.from(
+        headerActions.querySelectorAll<HTMLElement>(
+          ":scope > button.btn-icon, :scope > .engine-control-split-btn"
+        )
+      );
 
-      // Find the Settings button index and the Pause/Stop button indices
-      const settingsIdx = inlineButtons.findIndex((btn) => btn.title === "Settings");
-      const pauseIdx = inlineButtons.findIndex((btn) => btn.title === "Pause scheduling" || btn.title === "Resume scheduling");
-      const stopIdx = inlineButtons.findIndex((btn) => btn.title === "Stop AI engine" || btn.title === "Start AI engine");
+      const settingsIdx = inlineItems.findIndex(
+        (el) => el instanceof HTMLButtonElement && el.title === "Settings"
+      );
+      const splitBtnIdx = inlineItems.findIndex((el) =>
+        el.classList.contains("engine-control-split-btn")
+      );
 
-      // Settings must exist
       expect(settingsIdx).toBeGreaterThanOrEqual(0);
+      expect(splitBtnIdx).toBeGreaterThanOrEqual(0);
+      expect(settingsIdx).toBeGreaterThan(splitBtnIdx);
 
-      // Settings must come after pause and stop (engine controls come before Settings)
-      expect(settingsIdx).toBeGreaterThan(pauseIdx);
-      expect(settingsIdx).toBeGreaterThan(stopIdx);
-
-      // Settings must be the very last button — no buttons after it
-      const buttonsAfterSettings = inlineButtons.slice(settingsIdx + 1);
-      expect(buttonsAfterSettings).toHaveLength(0);
+      const itemsAfterSettings = inlineItems.slice(settingsIdx + 1);
+      expect(itemsAfterSettings).toHaveLength(0);
     });
 
     it("Settings is the last item in the mobile overflow menu", () => {

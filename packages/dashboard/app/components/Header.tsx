@@ -272,6 +272,7 @@ export function Header({
   const [isMobileProjectSwitchOpen, setIsMobileProjectSwitchOpen] = useState(false);
   const [isViewOverflowOpen, setIsViewOverflowOpen] = useState(false);
   const [isDesktopOverflowOpen, setIsDesktopOverflowOpen] = useState(false);
+  const [isEngineMenuOpen, setIsEngineMenuOpen] = useState(false);
   const [overflowScripts, setOverflowScripts] = useState<Record<string, string>>({});
   const [overflowScriptsLoading, setOverflowScriptsLoading] = useState(false);
   const overflowButtonRef = useRef<HTMLButtonElement>(null);
@@ -285,6 +286,7 @@ export function Header({
   const mobileProjectSwitchRef = useRef<HTMLDivElement>(null);
   const viewOverflowRef = useRef<HTMLDivElement>(null);
   const viewOverflowTriggerRef = useRef<HTMLButtonElement>(null);
+  const engineMenuRef = useRef<HTMLDivElement>(null);
   
   // Get remote nodes only (exclude local node type)
   const remoteNodes = useMemo(() => 
@@ -450,6 +452,32 @@ export function Header({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isMobileProjectSwitchOpen]);
+
+  // Close engine controls dropdown on outside click
+  useEffect(() => {
+    if (!isEngineMenuOpen) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (engineMenuRef.current && !engineMenuRef.current.contains(e.target as Node)) {
+        setIsEngineMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isEngineMenuOpen]);
+
+  // Close engine controls dropdown on Escape
+  useEffect(() => {
+    if (!isEngineMenuOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsEngineMenuOpen(false);
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isEngineMenuOpen]);
 
   // Close view toggle overflow on outside click
   useEffect(() => {
@@ -1058,24 +1086,46 @@ export function Header({
           </div>
         )}
 
-        {/* Pause button (soft pause) - always inline */}
-        <button
-          className={`btn-icon${enginePaused ? " btn-icon--paused" : ""}`}
-          onClick={onToggleEnginePause}
-          title={enginePaused ? "Resume scheduling" : "Pause scheduling"}
-          disabled={!!globalPaused}
-        >
-          {enginePaused ? <Play size={16} /> : <Pause size={16} />}
-        </button>
-
-        {/* Stop button (hard stop) - always inline */}
-        <button
-          className={`btn-icon${globalPaused ? " btn-icon--stopped" : ""}`}
-          onClick={onToggleGlobalPause}
-          title={globalPaused ? "Start AI engine" : "Stop AI engine"}
-        >
-          {globalPaused ? <Play size={16} /> : <Square size={16} />}
-        </button>
+        {/* Engine control split-button: main=stop/start, chevron dropdown=pause triage */}
+        <div className="engine-control-split-btn" ref={engineMenuRef}>
+          <button
+            className={`btn-icon engine-control-split-btn__main${globalPaused ? " btn-icon--stopped" : ""}`}
+            onClick={onToggleGlobalPause}
+            title={globalPaused ? "Start AI engine" : "Stop AI engine"}
+            data-testid="engine-control-main-btn"
+          >
+            {globalPaused ? <Play size={16} /> : <Square size={16} />}
+          </button>
+          <span className="engine-control-split-btn__divider" />
+          <button
+            className={`btn-icon engine-control-split-btn__chevron${isEngineMenuOpen ? " btn-icon--active" : ""}`}
+            onClick={() => setIsEngineMenuOpen((prev) => !prev)}
+            title="Engine options"
+            aria-haspopup="menu"
+            aria-expanded={isEngineMenuOpen}
+            data-testid="engine-control-chevron-btn"
+          >
+            <ChevronDown size={12} />
+          </button>
+          {isEngineMenuOpen && (
+            <div className="engine-control-split-btn__menu" role="menu">
+              <button
+                className={`engine-control-split-btn__menu-item${enginePaused ? " engine-control-split-btn__menu-item--active" : ""}`}
+                onClick={() => {
+                  onToggleEnginePause?.();
+                  setIsEngineMenuOpen(false);
+                }}
+                role="menuitem"
+                title={enginePaused ? "Resume scheduling" : "Pause triage"}
+                disabled={!!globalPaused}
+                data-testid="engine-control-pause-triage-btn"
+              >
+                {enginePaused ? <Play size={14} /> : <Pause size={14} />}
+                <span>{enginePaused ? "Resume scheduling" : "Pause triage"}</span>
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Settings - always inline on desktop, placed after engine controls */}
         {!isCompact && (

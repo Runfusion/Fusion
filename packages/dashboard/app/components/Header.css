@@ -285,6 +285,90 @@
   }
 }
 
+/* Split-button for engine controls */
+.engine-control-split-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-md);
+}
+
+.engine-control-split-btn__main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.engine-control-split-btn__chevron {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  min-width: 28px;
+  padding: 0;
+}
+
+.engine-control-split-btn__divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.engine-control-split-btn__menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 160px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  z-index: 200;
+  overflow: hidden;
+}
+
+.engine-control-split-btn__menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.engine-control-split-btn__menu-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.engine-control-split-btn__menu-item:focus-visible {
+  background: var(--card-hover);
+  box-shadow: var(--focus-ring-strong);
+  color: var(--text);
+  outline: none;
+}
+
+@media (hover: hover) {
+  .engine-control-split-btn__menu-item:not(:disabled):hover {
+    background: var(--card-hover);
+    color: var(--text);
+  }
+}
+
+.engine-control-split-btn__menu-item--active {
+  color: var(--triage);
+}
+
+@media (hover: hover) {
+  .engine-control-split-btn__menu-item--active:not(:disabled):hover {
+    color: var(--triage);
+  }
+}
+
 /* Header badge for active sessions */
 .btn-icon--has-indicator {
   position: relative;
@@ -854,6 +938,12 @@
   /* Overflow menu and overflow split-toggle touch targets */
   .mobile-overflow-item,
   .mobile-overflow-split-toggle {
+    min-height: 36px;
+  }
+
+  .engine-control-split-btn__main,
+  .engine-control-split-btn__chevron {
+    min-width: 36px;
     min-height: 36px;
   }
 

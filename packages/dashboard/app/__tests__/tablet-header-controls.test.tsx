@@ -83,14 +83,10 @@ describe("tablet header controls", () => {
 
   // ── Engine controls stay inline on tablet ──────────────────────
 
-  it("renders pause scheduling button inline on tablet", () => {
+  it("renders engine control split-button inline on tablet", () => {
     renderTabletHeader();
-    expect(screen.getByTitle("Pause scheduling")).toBeDefined();
-  });
-
-  it("renders stop AI engine button inline on tablet", () => {
-    renderTabletHeader();
-    expect(screen.getByTitle("Stop AI engine")).toBeDefined();
+    expect(screen.getByTestId("engine-control-main-btn")).toBeDefined();
+    expect(screen.getByTestId("engine-control-chevron-btn")).toBeDefined();
   });
 
   it("renders view toggle inline on tablet", () => {
