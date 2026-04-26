@@ -238,6 +238,9 @@ function getProviderIconKey(providerName: string): string {
   if (normalized.includes('kimi') || normalized.includes('moonshot')) {
     return 'kimi';
   }
+  if (normalized.includes('bedrock') || normalized.includes('amazon')) {
+    return 'bedrock';
+  }
   if (normalized.includes('xai') || normalized.includes('grok')) {
     return 'xai';
   }

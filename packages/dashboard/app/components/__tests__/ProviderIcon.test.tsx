@@ -437,4 +437,43 @@ describe("ProviderIcon", () => {
     // Verify the new crescent moon geometry: contains circle arc notation "a9 9"
     expect(pathD).toContain("a9 9");
   });
+
+  it("renders Bedrock brand icon for bedrock provider", () => {
+    render(<ProviderIcon provider="bedrock" />);
+    expect(screen.getByTestId("bedrock-icon")).toBeInTheDocument();
+    expect(screen.getByLabelText("Amazon Bedrock")).toBeInTheDocument();
+  });
+
+  it("applies provider-specific color for bedrock", () => {
+    render(<ProviderIcon provider="bedrock" />);
+    const icon = screen.getByTestId("bedrock-icon").parentElement;
+    expect(icon).toHaveStyle({ color: "var(--provider-bedrock)" });
+  });
+
+  it("passes correct color to SVG fill for bedrock", () => {
+    render(<ProviderIcon provider="bedrock" />);
+    const svg = screen.getByTestId("bedrock-icon");
+    const paths = svg.querySelectorAll("path");
+    expect(paths.length).toBeGreaterThan(0);
+    expect(paths[0]).toHaveAttribute("fill", "var(--provider-bedrock)");
+  });
+
+  it("normalizes Bedrock (capitalized) to bedrock", () => {
+    render(<ProviderIcon provider="Bedrock" />);
+    expect(screen.getByTestId("bedrock-icon")).toBeInTheDocument();
+    const wrapper = screen.getByTestId("bedrock-icon").parentElement;
+    expect(wrapper).toHaveAttribute("data-provider", "bedrock");
+  });
+
+  it("renders Bedrock brand icon for amazon-bedrock alias", () => {
+    render(<ProviderIcon provider="amazon-bedrock" />);
+    expect(screen.getByTestId("bedrock-icon")).toBeInTheDocument();
+    expect(screen.getByLabelText("Amazon Bedrock")).toBeInTheDocument();
+  });
+
+  it("applies provider-specific color for amazon-bedrock alias", () => {
+    render(<ProviderIcon provider="amazon-bedrock" />);
+    const icon = screen.getByTestId("bedrock-icon").parentElement;
+    expect(icon).toHaveStyle({ color: "var(--provider-bedrock)" });
+  });
 });
