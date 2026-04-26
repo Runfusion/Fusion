@@ -1537,6 +1537,87 @@ async function fetchZaiUsage(authStorage?: AuthStorageLike): Promise<ProviderUsa
   return usage;
 }
 
+// ── GitHub Copilot fetcher ──────────────────────────────────────────────────
+
+async function fetchGitHubCopilotUsage(): Promise<ProviderUsage> {
+  const usage: ProviderUsage = {
+    name: "GitHub Copilot",
+    icon: "⚫",
+    status: "no-auth",
+    windows: [],
+  };
+
+  try {
+    await execFileAsync("gh", ["auth", "status"], { encoding: "utf-8", timeout: 5000 });
+  } catch {
+    usage.error = "GitHub CLI not authenticated — run 'gh auth login'";
+    return usage;
+  }
+
+  try {
+    const { stdout } = await execFileAsync("gh", ["api", "/user/copilot", "--jq", "."], {
+      encoding: "utf-8",
+      timeout: 10000,
+    });
+
+    const data = JSON.parse(stdout.trim());
+    usage.status = "ok";
+
+    if (data.seat_management_setting) {
+      usage.plan = data.seat_management_setting;
+    }
+
+    const planType: string | undefined = data.copilot_plan_type || data.plan_type;
+    if (planType) {
+      usage.plan = planType.charAt(0).toUpperCase() + planType.slice(1);
+    }
+
+    if (data.copilot_plan_type === "free" || data.plan_type === "free") {
+      if (data.chat_messages_used !== undefined && data.chat_messages_limit !== undefined) {
+        const chatPct =
+          data.chat_messages_limit > 0
+            ? (data.chat_messages_used / data.chat_messages_limit) * 100
+            : 0;
+        usage.windows.push({
+          label: "Chat (Monthly)",
+          percentUsed: Math.min(100, Math.max(0, chatPct)),
+          percentLeft: Math.min(100, Math.max(0, 100 - chatPct)),
+          resetText: null,
+          windowDurationMs: 30 * 24 * 60 * 60 * 1000,
+        });
+      }
+
+      if (data.completions_used !== undefined && data.completions_limit !== undefined) {
+        const completionPct =
+          data.completions_limit > 0
+            ? (data.completions_used / data.completions_limit) * 100
+            : 0;
+        usage.windows.push({
+          label: "Completions (Monthly)",
+          percentUsed: Math.min(100, Math.max(0, completionPct)),
+          percentLeft: Math.min(100, Math.max(0, 100 - completionPct)),
+          resetText: null,
+          windowDurationMs: 30 * 24 * 60 * 60 * 1000,
+        });
+      }
+    }
+  } catch (e: unknown) {
+    const errMsg = e instanceof Error ? e.message : "Failed to fetch";
+    if (errMsg.includes("404") || errMsg.includes("Not Found")) {
+      usage.status = "error";
+      usage.error = "No Copilot subscription found";
+    } else if (errMsg.includes("401") || errMsg.includes("403")) {
+      usage.status = "error";
+      usage.error = "GitHub auth expired — run 'gh auth login'";
+    } else {
+      usage.status = "error";
+      usage.error = errMsg;
+    }
+  }
+
+  return usage;
+}
+
 // ── Main export ────────────────────────────────────────────────────────────
 
 /**
@@ -1598,13 +1679,14 @@ export async function fetchAllProviderUsage(authStorage?: AuthStorageLike): Prom
   }
 
   // Fetch all providers in parallel with per-provider timeout
-  // Currently includes: Claude, Codex, Gemini, Minimax, Zai
+  // Currently includes: Claude, Codex, Gemini, Minimax, Zai, GitHub Copilot
   const results = await Promise.allSettled([
     withTimeout(fetchClaudeUsage(), "Claude", CLAUDE_FETCH_TIMEOUT_MS),
     withTimeout(fetchCodexUsage(), "Codex"),
     withTimeout(fetchGeminiUsage(), "Gemini"),
     withTimeout(fetchMinimaxUsage(authStorage), "Minimax"),
     withTimeout(fetchZaiUsage(authStorage), "Zai"),
+    withTimeout(fetchGitHubCopilotUsage(), "GitHub Copilot"),
   ]);
 
   const providers: ProviderUsage[] = [];

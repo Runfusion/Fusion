@@ -247,6 +247,9 @@ function getProviderIconKey(providerName: string): string {
   if (normalized.includes('opencode')) {
     return 'opencode';
   }
+  if (normalized.includes('copilot') || normalized === 'github copilot') {
+    return 'github-copilot';
+  }
 
   // Return the original name as fallback (ProviderIcon will show a default icon)
   return providerName;

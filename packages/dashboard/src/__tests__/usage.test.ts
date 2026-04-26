@@ -56,6 +56,9 @@ describe("usage", () => {
     mockRequest.mockClear();
     mockReadFile.mockClear();
     mockExecFileSync.mockClear();
+    mockExecFileSync.mockImplementation(() => {
+      throw new Error("File not found");
+    });
     vi.stubEnv("HOME", "/home/testuser");
   });
 
@@ -72,12 +75,13 @@ describe("usage", () => {
 
       const providers = await fetchAllProviderUsage();
 
-      expect(providers).toHaveLength(5);
+      expect(providers).toHaveLength(6);
       expect(providers.map((p) => p.name)).toContain("Claude");
       expect(providers.map((p) => p.name)).toContain("Codex");
       expect(providers.map((p) => p.name)).toContain("Gemini");
       expect(providers.map((p) => p.name)).toContain("Minimax");
       expect(providers.map((p) => p.name)).toContain("Zai");
+      expect(providers.map((p) => p.name)).toContain("GitHub Copilot");
       expect(providers.map((p) => p.name)).not.toContain("Kimi");
 
       // All should be no-auth status
@@ -113,7 +117,63 @@ describe("usage", () => {
 
       // Should be different array reference
       expect(second).not.toBe(first);
-      expect(second).toHaveLength(5);
+      expect(second).toHaveLength(6);
+    });
+  });
+
+  describe("fetchGitHubCopilotUsage (via fetchAllProviderUsage)", () => {
+    it("returns no-auth when gh auth status fails", async () => {
+      mockReadFile.mockRejectedValue(new Error("File not found"));
+      mockExecFileSync.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === "gh" && args[0] === "auth") {
+          throw new Error("not logged in");
+        }
+        throw new Error("File not found");
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const copilot = providers.find((p) => p.name === "GitHub Copilot");
+      expect(copilot).toBeDefined();
+      expect(copilot!.status).toBe("no-auth");
+      expect(copilot!.error).toContain("not authenticated");
+    });
+
+    it("returns ok with plan when gh api succeeds", async () => {
+      mockReadFile.mockRejectedValue(new Error("File not found"));
+      mockExecFileSync.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === "gh" && args[0] === "auth") {
+          return "";
+        }
+        if (cmd === "gh" && args[0] === "api" && args[1] === "/user/copilot") {
+          return JSON.stringify({ copilot_plan_type: "individual" });
+        }
+        throw new Error("File not found");
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const copilot = providers.find((p) => p.name === "GitHub Copilot");
+      expect(copilot).toBeDefined();
+      expect(copilot!.status).toBe("ok");
+      expect(copilot!.plan).toBe("Individual");
+    });
+
+    it("returns error when Copilot subscription not found (404)", async () => {
+      mockReadFile.mockRejectedValue(new Error("File not found"));
+      mockExecFileSync.mockImplementation((cmd: string, args: string[]) => {
+        if (cmd === "gh" && args[0] === "auth") {
+          return "";
+        }
+        if (cmd === "gh" && args[0] === "api") {
+          throw new Error("HTTP 404: Not Found");
+        }
+        throw new Error("File not found");
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const copilot = providers.find((p) => p.name === "GitHub Copilot");
+      expect(copilot).toBeDefined();
+      expect(copilot!.status).toBe("error");
+      expect(copilot!.error).toContain("No Copilot subscription");
     });
   });
 
