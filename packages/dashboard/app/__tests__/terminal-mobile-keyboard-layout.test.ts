@@ -99,7 +99,7 @@ describe("terminal mobile keyboard layout CSS contract", () => {
     // so it must appear later in the stylesheet.
     const afterSection = css.slice(terminalMediaStart);
 
-    const baseRuleMatch = afterSection.match(/^\s+\.terminal-modal\s*\{/m);
+    const baseRuleMatch = afterSection.match(/^\s+\.modal\.terminal-modal\s*\{/m);
     const keyboardMatch = afterSection.match(keyboardOpenSelectorPattern);
 
     expect(baseRuleMatch).not.toBeNull();
@@ -120,9 +120,9 @@ describe("terminal mobile keyboard layout CSS contract", () => {
     function findMobileTerminalModalRule(): string {
       const searchFrom = terminalMediaStart >= 0 ? terminalMediaStart : 0;
       const afterSection = css.slice(searchFrom);
-      // Match the first indented .terminal-modal { ... } in this section
+      // Match the first indented .modal.terminal-modal { ... } in this section
       const match = afterSection.match(
-        /^\s+\.terminal-modal\s*\{([^}]*)\}/m,
+        /^\s+\.modal\.terminal-modal\s*\{([^}]*)\}/m,
       );
       return match?.[1] ?? "";
     }
@@ -140,6 +140,11 @@ describe("terminal mobile keyboard layout CSS contract", () => {
     it("sets max-height: 100dvh on mobile", () => {
       const ruleBody = findMobileTerminalModalRule();
       expect(ruleBody).toContain("max-height: 100dvh");
+    });
+
+    it("sets min-height: 100dvh on mobile", () => {
+      const ruleBody = findMobileTerminalModalRule();
+      expect(ruleBody).toContain("min-height: 100dvh");
     });
   });
 

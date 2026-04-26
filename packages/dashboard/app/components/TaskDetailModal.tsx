@@ -73,7 +73,7 @@ function resolveEffectiveValidator(
 }
 
 /**
- * Extract planning/triage model from agent log entries.
+ * Extract planning model from agent log entries.
  * Looks for text entries with agent role "triage" matching the pattern:
  *   "Triage using model: <provider>/<modelId>"
  * Returns the latest match, or null if none found.
@@ -92,7 +92,7 @@ function extractPlanningModelFromLog(entries: AgentLogEntry[]): { provider: stri
 }
 
 /**
- * Resolve the effective planning/triage model following the resolution order:
+ * Resolve the effective planning model following the resolution order:
  * 1. Per-task planningModelProvider/planningModelId override
  * 2. Runtime triage model from agent log marker (if present)
  * 3. Project settings planningProvider/planningModelId
