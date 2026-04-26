@@ -824,6 +824,11 @@
     min-height: 36px;
   }
 
+  .settings-plugins-subsection-panel {
+    padding-left: var(--space-lg);
+    padding-right: var(--space-lg);
+  }
+
   .form-group {
     padding: 0 14px;
   }
