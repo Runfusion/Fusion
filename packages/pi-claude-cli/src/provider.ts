@@ -44,8 +44,14 @@ import { createEventBridge } from "./event-bridge.js";
 import { handleControlRequest } from "./control-handler.js";
 import { mapThinkingEffort } from "./thinking-config.js";
 import { isPiKnownClaudeTool } from "./tool-mapping.js";
-/** Inactivity timeout: kill subprocess if no stdout for 180 seconds (3 minutes). */
-const INACTIVITY_TIMEOUT_MS = 180_000;
+/**
+ * Inactivity timeout: kill the Claude CLI subprocess if no stdout arrives
+ * for this long. Sonnet 4.6 with extended thinking on large system prompts
+ * (e.g. the triage prompt + AGENTS.md + skill blocks ~ 40k chars) can take
+ * minutes between thinking deltas; a 3-minute timeout was killing those
+ * sessions before they could call fn_review_spec. Bump to 5 minutes.
+ */
+const INACTIVITY_TIMEOUT_MS = 300_000;
 
 /** Extended stream options: pi's SimpleStreamOptions plus optional cwd and mcpConfigPath */
 type StreamViaCLiOptions = SimpleStreamOptions & {
