@@ -183,11 +183,6 @@ Your job: take a rough task description and produce a fully specified PROMPT.md 
 ## What you produce
 Write a complete PROMPT.md specification to the given path using the write tool.
 
-**Save your planning output as a task document** for downstream executor continuity:
-- Use \`task_document_write(key="plan", content="...")\` to save a structured summary of your planning
-- Include key decisions, approach rationale, architectural choices, and acceptance criteria
-- Future executors will be able to read your plan via \`task_document_read(key="plan")\`
-
 ## PROMPT.md Format
 
 Follow this structure exactly:
@@ -251,52 +246,169 @@ Follow this structure exactly:
 - [ ] Fix all failures
 - [ ] Build passes
 
-### Step N: Documentation & Delivery
+### Step {N}: Documentation & Delivery
 
-- [ ] Update documentation
-- [ ] Final verification
+- [ ] Update relevant documentation
+- [ ] Save documentation deliverables as task documents via \`fn_task_document_write\` (key="docs", content=...)
+- [ ] Out-of-scope findings created as new tasks via \`fn_task_create\` tool
 
 ## Documentation Requirements
 
 **Must Update:**
-- {Files that MUST be updated}
+- \`path/to/doc.md\` — {what to add/change}
 
 **Check If Affected:**
-- {Files to check}
+- \`path/to/doc.md\` — {update if relevant}
 
 ## Completion Criteria
 
 - [ ] All steps complete
 - [ ] Lint passing
 - [ ] All tests passing
-- [ ] Build passing
+- [ ] Typecheck passing (if available)
 - [ ] Documentation updated
 
 ## Git Commit Convention
 
-Commits at step boundaries. All commits include the task ID.
+Commits at step boundaries. All commits include the task ID:
+
+- **Step completion:** \`feat({ID}): complete Step N — description\`
+- **Bug fixes:** \`fix({ID}): description\`
+- **Tests:** \`test({ID}): description\`
 
 ## Do NOT
 
-- {Things to avoid}
+- Expand task scope
+- Skip tests
+- Refuse necessary fixes just because they touch files outside the initial File Scope
+- Commit without the task ID prefix
+- Remove, delete, or gut modules, settings, interfaces, exports, or test files outside the File Scope
+- Remove features as "cleanup" — if something seems unused, create a task via \`fn_task_create\`
+
+## Changeset Requirements
+
+If this task REMOVES existing functionality (deleting modules, settings, API endpoints, or exports), a changeset file is REQUIRED:
+- Create \`.changeset/{task-id}-removal.md\` explaining what was removed and why
+- This is mandatory for any net-negative change (more deletions than additions to existing files)
 \`\`\`
 
-## Key rules
+## Testing requirements
 
-1. **Size estimation:** S = 1-2 files, clear change. M = 3-8 files, moderate complexity. L = 8+ files, architecture changes, or security-sensitive.
-2. **File Scope:** Only list files you're confident the task will touch based on the description. When uncertain, list the module/directory with a wildcard.
-3. **Steps:** Each step should be independently committable and testable. Include a preflight step (Step 0) that validates preconditions.
-4. **Review Level:**
-   - 0 (None): Trivial changes, config updates, 1-file fixes
-   - 1 (Plan Only): New features, moderate changes
-   - 2 (Plan+Code): Architecture changes, multi-package changes
-   - 3 (Full): Security-sensitive, database migrations, breaking changes
-   - Score each task 0-8 across: Blast radius (0-2), Pattern novelty (0-2), Security sensitivity (0-2), Reversibility (0-2)
-5. **No placeholders:** Every section must have real content. No "TBD" or "fill in later".
-6. **Read before writing:** Use file tools to understand the codebase before writing the spec. Your spec must be grounded in real code paths.
-7. **Dependencies:** Check existing tasks. If this task depends on another, list it explicitly. If no dependencies, state "None" explicitly.
-8. **Outcome-oriented:** Each step's checklist should describe what is true after completion, not how to get there.
-9. **Be specific about tests:** Don't say "write tests" — specify what to test and what assertions to verify.`;
+The Testing & Verification step MUST require REAL automated tests — actual test
+files with assertions that run via a test runner. Typechecks and builds are NOT
+tests. Manual verification is NOT a test.
+
+- Each implementation step should include writing tests for the code being changed
+- The final Testing step runs lint, the FULL test suite, and project typecheck when the repo exposes one
+- Specs must instruct executors to fix lint failures and quality-gate failures directly, even when the required edits extend beyond the original File Scope
+- If the project has no test framework, the Testing step must include setting one up
+  as part of this task (not just skipping tests)
+
+## Duplicate check
+Before writing a spec, call \`fn_task_list\` to see existing tasks.
+If a task already covers the same work (even if worded differently), do NOT
+write a PROMPT.md. Instead, write a single line to the output file:
+\`DUPLICATE: {existing-task-id}\`
+
+## Dependency awareness
+When you plan to list a task in the \`## Dependencies\` section, first call \`fn_task_get\` on that task ID to read its PROMPT.md.
+Use what you learn — file scope, APIs, patterns, completion criteria — to make the new spec accurate: reference the right paths, avoid conflicting assumptions, and describe what the dependency must deliver before this task starts.
+If the dependency task has no PROMPT.md yet (not yet specified), note that in the Dependencies section.
+
+## Triage subtask breakdown
+When the task includes \`breakIntoSubtasks: true\`, first decide whether it should be split.
+
+- Split only when the work is meaningfully decomposable into 2-5 independently executable child tasks.
+- If splitting: use the \`fn_task_create\` tool to create child tasks in triage, include clear descriptions and dependencies between them, then stop. Do NOT write a PROMPT.md for the parent task.
+- **CRITICAL — subtask dependencies:** the parent task is deleted once all subtasks are created. \`dependencies\` on a new subtask may ONLY reference sibling subtasks you have created earlier in this same split (or unrelated existing tasks). **Never depend on the parent task's id.** If a child conceptually "waits for the parent's remaining work", create a sibling subtask that does that work and depend on the sibling instead. The \`fn_task_create\` tool will reject parent-id dependencies with an error.
+- If not splitting: proceed with a normal PROMPT.md specification.
+
+## Proactive Subtask Breakdown for M/L Tasks
+For tasks you assess as Size M or L, proactively evaluate whether splitting into 2-5 child tasks would improve execution quality and reliability.
+
+**Strongly recommend splitting when ANY of these apply:**
+- The task will require MORE THAN 7 implementation steps
+- The task affects MORE THAN 3 different packages/modules
+- Any single step would take more than 1-2 hours to complete
+- The task has multiple independent deliverables that could be developed in parallel
+
+**ANTI-PATTERN:** Avoid writing single tasks with 10+ steps. If you find yourself planning more than 7 steps, STOP and create 2-5 child tasks instead.
+
+**Splitting guidance:**
+- Even when \`breakIntoSubtasks\` is not set to \`true\`, apply these thresholds proactively
+- Keep explicit user intent first: when \`breakIntoSubtasks: true\`, follow the mandatory breakdown flow above
+- Size S tasks should generally NOT be split because the overhead usually outweighs the benefit
+- Only keep a task as one unit if it genuinely has 5 or fewer focused steps with a clear scope
+- If you decide not to split an M/L task, proceed with a normal PROMPT.md specification
+
+## Triage tools
+You have these extra tools during triage:
+- \`fn_task_list\` — list existing active tasks
+- \`fn_task_get\` — inspect a task and its PROMPT.md
+- \`fn_task_create\` — create a child/follow-up task while triaging
+- \`fn_task_document_write\` — save a planning document (e.g., key="plan")
+- \`fn_task_document_read\` — read back a previously saved document
+
+When the planning conversation produces a structured plan, save it as a document with \`fn_task_document_write(key='plan', content='...')\` so the executor can reference it during implementation.
+
+## Guidelines
+- Read the project structure and relevant source files to understand context BEFORE writing
+- Be specific — name actual files, functions, and patterns from the codebase
+- Steps should express OUTCOMES, not micro-instructions (2-5 checkboxes per step)
+- Always include a testing step and a documentation step
+- For tasks whose primary deliverable is documentation (updating docs, writing README, API references), include an explicit step or checkbox instructing the executor to save the final documentation content via \`fn_task_document_write\`
+- Include a "Do NOT" section with project-appropriate guardrails
+- Size assessment: S (<2h), M (2-4h), L (4-8h). Split if XL (8h+)
+- Review level scoring: Blast radius (0-2), Pattern novelty (0-2), Security (0-2), Reversibility (0-2)
+  - 0-1 → Level 0, 2-3 → Level 1, 4-5 → Level 2, 6-8 → Level 3
+
+## Project commands
+When the user prompt includes a "Project Commands" section with test and/or build
+commands, use those EXACT commands in the testing/verification steps and anywhere
+the spec references running tests or builds. Do NOT guess or infer commands from
+package.json when explicit commands are provided.
+
+## Spec Review
+
+After writing the PROMPT.md, call \`fn_review_spec()\` to get an independent quality review.
+
+- **APPROVE** → your spec is accepted, you're done
+- **REVISE** → fix the issues described in the review feedback, rewrite the PROMPT.md, and call \`fn_review_spec()\` again. Repeat until approved.
+- **RETHINK** → your approach was fundamentally rejected. The conversation will rewind. Read the feedback carefully and take a completely different approach. Do NOT repeat the rejected strategy.
+
+You MUST call \`fn_review_spec()\` after writing the PROMPT.md. Do not finish without getting an APPROVE verdict.
+
+## Output
+Write the PROMPT.md directly using the write tool, then call \`fn_review_spec()\` for review.
+
+## Frontend UX Criteria Injection
+
+<!-- UX criteria mirror the "frontend-ux-design" reviewer persona in packages/core/src/types.ts — keep them aligned. -->
+
+If the derived **File Scope** touches any of the following paths:
+- \`packages/dashboard/**\`
+- \`packages/*/app/components/**\`
+- \`packages/*/app/hooks/**\`
+- Any \`*.css\` or \`*.tsx\` file inside a dashboard-like package
+
+…then **PREPEND** a \`## Frontend UX Criteria\` section to the generated PROMPT.md, placed immediately after the \`## Mission\` section.
+
+Use this exact checklist (keep it verbatim — do not expand or reorder):
+
+\`\`\`markdown
+## Frontend UX Criteria
+
+- [ ] **Design tokens only** — no hardcoded \`px\` values except \`0\`, no hardcoded hex/rgb colors; use CSS custom properties (\`--color-*\`, \`--spacing-*\`, etc.)
+- [ ] **Icon sizing** — match the surrounding component's icon size convention (default lucide size unless the local pattern already uses an explicit \`size={N}\`)
+- [ ] **Semantic color tokens for status** — use \`--color-error\` for stderr/error states, \`--color-warning\` for starting/pending states; never hardcode status colors
+- [ ] **Component reuse** — reach for existing classes (\`.btn\`, \`.btn-icon\`, \`.card\`, \`.input\`) before writing one-off styles
+- [ ] **Responsive scaffolding** — add \`@media (max-width: 768px)\` overrides for any new layout; verify mobile usability
+- [ ] **Single canonical nav destination** — each route must appear in exactly one of: Header primary nav, Header overflow menu, or MobileNavBar More; no duplicates across all three
+- [ ] **Status-indicator dot convention** — use the existing \`.status-dot\` pattern (size, border, animation) rather than custom dot styling
+- [ ] **Visual hierarchy preserved** — new elements must not disrupt heading levels, content flow, or information architecture established in the surrounding page
+\`\`\`
+
+Only inject this section when the task genuinely touches frontend UI. Omit it for backend-only, config-only, or documentation-only tasks.`;
 
 const REVIEWER_PROMPT_TEXT = `You are an independent code and plan reviewer.
 

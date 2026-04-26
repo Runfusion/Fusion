@@ -447,9 +447,6 @@ function rewriteCustomToolReferences(
   tools: ReadonlyArray<PiToolLike> | undefined,
 ): string {
   if (!prompt || !tools || tools.length === 0) {
-    console.error(
-      `[pi-claude-cli] system prompt rewrite skipped (tools=${tools?.length ?? 0}, promptLen=${prompt?.length ?? 0})`,
-    );
     return prompt;
   }
 
@@ -479,16 +476,6 @@ function rewriteCustomToolReferences(
   if (totalRewrites > 0) {
     console.error(
       `[pi-claude-cli] system prompt: rewrote ${totalRewrites} custom tool ref(s) [${rewritten.join(", ")}]`,
-    );
-  } else {
-    const customNames = tools
-      .filter((t) => !BUILT_IN_PI_TOOLS.has(t.name))
-      .map((t) => t.name);
-    const fnMatches = (prompt.match(/fn_[a-z_]+/g) ?? []).slice(0, 12);
-    const fnUnique = [...new Set(fnMatches)];
-    const reviewSpecCount = (prompt.match(/fn_review_spec/g) ?? []).length;
-    console.error(
-      `[pi-claude-cli] system prompt: no custom tool refs to rewrite (tools=${tools.length}, promptLen=${prompt.length}, customNames=[${customNames.join(",")}], fnTokensInPrompt=[${fnUnique.join(",")}], fn_review_spec_occurrences=${reviewSpecCount})`,
     );
   }
   return result;
