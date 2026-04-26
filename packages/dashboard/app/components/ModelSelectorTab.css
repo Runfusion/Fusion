@@ -10,6 +10,9 @@
 .model-selector-intro {
   color: var(--text-muted);
   font-size: 13px;
+  line-height: 1.5;
+  border-left: var(--space-xs) solid var(--todo);
+  padding-left: var(--space-md);
   margin-bottom: var(--space-lg);
 }
 
@@ -23,7 +26,7 @@
 
 .model-selector-error {
   padding: var(--space-lg);
-  background: rgba(248, 81, 73, 0.1);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
   color: var(--color-error);
   border-radius: var(--radius);
   font-size: 13px;

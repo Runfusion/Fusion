@@ -416,7 +416,7 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings }: Mo
     <div className="model-selector-tab">
       <h4>Model Configuration</h4>
       <p className="model-selector-intro">
-        Override the AI models used for this task. When not specified, global default settings are used.
+        Override the AI models used for this task. When not specified, project or global defaults are used.
       </p>
 
       {modelsLoading ? (
@@ -571,7 +571,7 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings }: Mo
 
           <div className="model-selector-status">
             {executorUsingDefault && validatorUsingDefault && planningUsingDefault && savedThinking === null
-              ? "Using global default models."
+              ? "Using project or global default models."
               : "Model settings are up to date."}
           </div>
         </>

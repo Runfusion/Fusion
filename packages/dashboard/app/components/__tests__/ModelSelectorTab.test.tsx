@@ -127,6 +127,26 @@ describe("ModelSelectorTab", () => {
     expect(screen.queryByText("Reset")).not.toBeInTheDocument();
   });
 
+  it("shows updated intro copy mentioning project or global defaults", async () => {
+    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+
+    await waitForSelectors();
+
+    expect(
+      screen.getByText(
+        "Override the AI models used for this task. When not specified, project or global defaults are used.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows updated status copy when all selections use defaults", async () => {
+    render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
+
+    await waitForSelectors();
+
+    expect(screen.getByText("Using project or global default models.")).toBeInTheDocument();
+  });
+
   it("shows 'Using default' when no model overrides are set", async () => {
     render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
 
