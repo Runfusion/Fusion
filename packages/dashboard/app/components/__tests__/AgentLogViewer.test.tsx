@@ -49,7 +49,7 @@ describe("AgentLogViewer", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it("renders text entries as spans in reverse order (newest first)", () => {
+  it("renders text entries in chronological order (oldest first)", () => {
     const entries = [
       makeEntry({ text: "first chunk" }),
       makeEntry({ text: "second chunk" }),
@@ -57,12 +57,11 @@ describe("AgentLogViewer", () => {
     const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
     const textSpans = container.querySelectorAll(".agent-log-text");
     expect(textSpans).toHaveLength(2);
-    // Reversed order: second chunk first, then first chunk
-    expect(textSpans[0].textContent).toContain("second chunk");
-    expect(textSpans[1].textContent).toContain("first chunk");
+    expect(textSpans[0].textContent).toContain("first chunk");
+    expect(textSpans[1].textContent).toContain("second chunk");
   });
 
-  it("keeps existing DOM rows stable when a new live entry appears at the top", () => {
+  it("keeps existing DOM rows stable when a new live entry appears at the bottom", () => {
     const initialEntries = [
       makeEntry({ text: "first chunk", timestamp: "2026-01-01T00:00:00Z" }),
       makeEntry({ text: "second chunk", timestamp: "2026-01-01T00:00:01Z" }),
@@ -73,10 +72,10 @@ describe("AgentLogViewer", () => {
     );
 
     const initialTextRows = container.querySelectorAll(".agent-log-text");
-    const secondChunkNode = initialTextRows[0] as HTMLElement;
-    const firstChunkNode = initialTextRows[1] as HTMLElement;
-    expect(secondChunkNode.textContent).toContain("second chunk");
+    const firstChunkNode = initialTextRows[0] as HTMLElement;
+    const secondChunkNode = initialTextRows[1] as HTMLElement;
     expect(firstChunkNode.textContent).toContain("first chunk");
+    expect(secondChunkNode.textContent).toContain("second chunk");
 
     const withLiveUpdate = [
       ...initialEntries,
@@ -87,11 +86,11 @@ describe("AgentLogViewer", () => {
 
     const updatedTextRows = container.querySelectorAll(".agent-log-text");
     expect(updatedTextRows).toHaveLength(3);
-    expect(updatedTextRows[0].textContent).toContain("third chunk");
+    expect(updatedTextRows[0].textContent).toContain("first chunk");
     expect(updatedTextRows[1].textContent).toContain("second chunk");
-    expect(updatedTextRows[2].textContent).toContain("first chunk");
+    expect(updatedTextRows[2].textContent).toContain("third chunk");
+    expect(updatedTextRows[0]).toBe(firstChunkNode);
     expect(updatedTextRows[1]).toBe(secondChunkNode);
-    expect(updatedTextRows[2]).toBe(firstChunkNode);
   });
 
   it("avoids duplicate-key collisions when entries are exact duplicates", () => {
@@ -136,18 +135,17 @@ describe("AgentLogViewer", () => {
     expect(toolDiv!.textContent).toContain("Read");
   });
 
-  it("renders a mix of text and tool entries in reverse order", () => {
+  it("renders a mix of text and tool entries in chronological order", () => {
     const entries = [
       makeEntry({ text: "Starting...", type: "text" }),
       makeEntry({ text: "Bash", type: "tool" }),
       makeEntry({ text: "Done!", type: "text" }),
     ];
     const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
-    // Reversed order: Done! (text), Bash (tool), Starting... (text)
     const textSpans = container.querySelectorAll(".agent-log-text");
     expect(textSpans).toHaveLength(2);
-    expect(textSpans[0].textContent).toContain("Done!");
-    expect(textSpans[1].textContent).toContain("Starting...");
+    expect(textSpans[0].textContent).toContain("Starting...");
+    expect(textSpans[1].textContent).toContain("Done!");
 
     const toolDivs = container.querySelectorAll(".agent-log-tool");
     expect(toolDivs).toHaveLength(1);
@@ -196,7 +194,7 @@ describe("AgentLogViewer", () => {
   });
 
   describe("agent badge deduplication", () => {
-    it("shows badge only on the first (newest) of consecutive text entries from the same agent", () => {
+    it("shows badge only on the first (oldest) of consecutive text entries from the same agent", () => {
       const entries = [
         makeEntry({ text: "chunk 1", type: "text", agent: "executor" }),
         makeEntry({ text: "chunk 2", type: "text", agent: "executor" }),
@@ -205,11 +203,11 @@ describe("AgentLogViewer", () => {
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       const badges = container.querySelectorAll(".agent-log-agent-badge");
       expect(badges).toHaveLength(1);
-      // In reversed order, the newest (chunk 3) gets the badge
+      // In chronological order, the oldest (chunk 1) gets the badge
       expect(badges[0].textContent).toBe("[executor]");
     });
 
-    it("shows badge on each agent transition in reversed order", () => {
+    it("shows badge on each agent transition in chronological order", () => {
       const entries = [
         makeEntry({ text: "hello", type: "text", agent: "triage" }),
         makeEntry({ text: "world", type: "text", agent: "triage" }),
@@ -219,13 +217,11 @@ describe("AgentLogViewer", () => {
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       const badges = container.querySelectorAll(".agent-log-agent-badge");
       expect(badges).toHaveLength(2);
-      // Reversed order: done (executor), starting (executor), world (triage), hello (triage)
-      // Badge on done (i=0) and world (transition from executor to triage)
-      expect(badges[0].textContent).toBe("[executor]");
-      expect(badges[1].textContent).toBe("[triage]");
+      expect(badges[0].textContent).toBe("[triage]");
+      expect(badges[1].textContent).toBe("[executor]");
     });
 
-    it("shows badge on text, tool, and text-after-tool (same agent, type change) in reversed order", () => {
+    it("shows badge on text, tool, and text-after-tool (same agent, type change) in chronological order", () => {
       const entries = [
         makeEntry({ text: "reading...", type: "text", agent: "executor" }),
         makeEntry({ text: "Read", type: "tool", agent: "executor" }),
@@ -233,12 +229,12 @@ describe("AgentLogViewer", () => {
       ];
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       const badges = container.querySelectorAll(".agent-log-agent-badge");
-      // Reversed: got it (text), Read (tool), reading... (text)
-      // Badge on got it (i=0), Read (always block-level), reading... (type changed from tool)
+      // Chronological: reading... (text), Read (tool), got it (text)
+      // Badge on reading... (i=0), Read (always block-level), got it (type changed from tool)
       expect(badges).toHaveLength(3);
     });
 
-    it("shows badge only on the first (newest) of consecutive thinking entries from the same agent", () => {
+    it("shows badge only on the first (oldest) of consecutive thinking entries from the same agent", () => {
       const entries = [
         makeEntry({ text: "hmm", type: "thinking", agent: "triage" }),
         makeEntry({ text: "let me think", type: "thinking", agent: "triage" }),
@@ -247,7 +243,7 @@ describe("AgentLogViewer", () => {
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
       const badges = container.querySelectorAll(".agent-log-agent-badge");
       expect(badges).toHaveLength(1);
-      // In reversed order, the newest (ok) gets the badge
+      // In chronological order, the oldest (hmm) gets the badge
       expect(badges[0].textContent).toBe("[triage]");
     });
 
@@ -721,7 +717,7 @@ describe("AgentLogViewer", () => {
 
       expect(badges).toHaveLength(3);
       expect(timestamps).toHaveLength(3);
-      expect(badges.map((badge) => badge.textContent)).toEqual(["[reviewer]", "[executor]", "[triage]"]);
+      expect(badges.map((badge) => badge.textContent)).toEqual(["[triage]", "[executor]", "[reviewer]"]);
     });
 
     it("badge container includes both badge text and timestamp text", () => {
@@ -813,7 +809,7 @@ describe("AgentLogViewer", () => {
   });
 
   describe("auto-scroll behavior", () => {
-    it("scrolls to top when streaming updates arrive and user is near the top", () => {
+    it("scrolls to bottom when streaming updates arrive and user is near the bottom", () => {
       const initialEntries = [
         makeEntry({ text: "first", timestamp: "2026-01-01T00:00:00Z" }),
       ];
@@ -831,16 +827,16 @@ describe("AgentLogViewer", () => {
         get: () => scrollHeight,
       });
 
-      viewer.scrollTop = 20;
+      viewer.scrollTop = 560;
       rerender(<AgentLogViewer entries={[...initialEntries]} loading={false} />);
 
       scrollHeight = 720;
       rerender(<AgentLogViewer entries={streamedEntries} loading={false} />);
 
-      expect(viewer.scrollTop).toBe(0);
+      expect(viewer.scrollTop).toBe(720);
     });
 
-    it("keeps the viewport anchored when streaming updates arrive and user is reading older output", () => {
+    it("does not auto-scroll when streaming updates arrive and user is reading older output", () => {
       const initialEntries = [
         makeEntry({ text: "first", timestamp: "2026-01-01T00:00:00Z" }),
       ];
@@ -864,11 +860,10 @@ describe("AgentLogViewer", () => {
       scrollHeight = 1120;
       rerender(<AgentLogViewer entries={streamedEntries} loading={false} />);
 
-      // Anchored by delta (1120 - 1000): 220 + 120
-      expect(viewer.scrollTop).toBe(340);
+      expect(viewer.scrollTop).toBe(220);
     });
 
-    it("does not offset scroll when loading older history at the bottom", () => {
+    it("keeps viewport anchored when older history is prepended", () => {
       const initialEntries = [
         makeEntry({ text: "recent", timestamp: "2026-01-01T00:00:00Z" }),
       ];
@@ -892,7 +887,87 @@ describe("AgentLogViewer", () => {
       scrollHeight = 1030;
       rerender(<AgentLogViewer entries={olderLoadedEntries} loading={false} />);
 
-      expect(viewer.scrollTop).toBe(260);
+      // Anchored by delta (1030 - 900): 260 + 130
+      expect(viewer.scrollTop).toBe(390);
+    });
+
+    it("shows return-to-live button when user scrolls away from bottom", () => {
+      const entries = [
+        makeEntry({ text: "first", timestamp: "2026-01-01T00:00:00Z" }),
+        makeEntry({ text: "second", timestamp: "2026-01-01T00:00:01Z" }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLDivElement;
+
+      Object.defineProperty(viewer, "scrollHeight", { configurable: true, value: 1000 });
+      Object.defineProperty(viewer, "clientHeight", { configurable: true, value: 200 });
+
+      viewer.scrollTop = 300;
+      fireEvent.scroll(viewer);
+
+      expect(screen.getByTestId("agent-log-return-to-live")).toBeTruthy();
+    });
+
+    it("hides return-to-live button when user is following live output", () => {
+      const entries = [
+        makeEntry({ text: "first", timestamp: "2026-01-01T00:00:00Z" }),
+        makeEntry({ text: "second", timestamp: "2026-01-01T00:00:01Z" }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLDivElement;
+
+      Object.defineProperty(viewer, "scrollHeight", { configurable: true, value: 1000 });
+      Object.defineProperty(viewer, "clientHeight", { configurable: true, value: 200 });
+
+      viewer.scrollTop = 760;
+      fireEvent.scroll(viewer);
+
+      expect(screen.queryByTestId("agent-log-return-to-live")).toBeNull();
+    });
+
+    it("returns to bottom and resumes following when return-to-live is clicked", () => {
+      const entries = [
+        makeEntry({ text: "first", timestamp: "2026-01-01T00:00:00Z" }),
+        makeEntry({ text: "second", timestamp: "2026-01-01T00:00:01Z" }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLDivElement;
+
+      Object.defineProperty(viewer, "scrollHeight", { configurable: true, value: 1000 });
+      Object.defineProperty(viewer, "clientHeight", { configurable: true, value: 200 });
+
+      viewer.scrollTop = 280;
+      fireEvent.scroll(viewer);
+
+      const returnButton = screen.getByTestId("agent-log-return-to-live");
+      fireEvent.click(returnButton);
+
+      expect(viewer.scrollTop).toBe(1000);
+      expect(screen.queryByTestId("agent-log-return-to-live")).toBeNull();
+    });
+  });
+
+  describe("pagination placement", () => {
+    it("renders the load-more control above the first log entry", () => {
+      const entries = [
+        makeEntry({ text: "oldest", timestamp: "2026-01-01T00:00:00Z" }),
+        makeEntry({ text: "newest", timestamp: "2026-01-01T00:00:01Z" }),
+      ];
+
+      const { container } = render(
+        <AgentLogViewer
+          entries={entries}
+          loading={false}
+          hasMore={true}
+          onLoadMore={() => {}}
+        />,
+      );
+
+      const loadMore = screen.getByTestId("agent-log-load-more");
+      const firstRow = container.querySelector(".agent-log-text") as HTMLElement;
+      expect(firstRow).toBeTruthy();
+
+      expect(loadMore.compareDocumentPosition(firstRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
   });
 

@@ -49,7 +49,11 @@ const markdownComponents: Components = {
   ),
 };
 
-const TOP_FOLLOW_THRESHOLD_PX = 50;
+const BOTTOM_FOLLOW_THRESHOLD_PX = 50;
+
+function isNearBottom(container: HTMLDivElement): boolean {
+  return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD_PX;
+}
 
 function getEntrySignature(entry: AgentLogEntry): string {
   return [
@@ -97,7 +101,7 @@ interface AgentLogViewerProps {
  * Renders agent log entries in a scrollable, monospace container.
  *
  * Features:
- * - Displays entries in reverse chronological order (newest first)
+ * - Displays entries in chronological order (oldest first, newest last)
  * - Auto-scrolls to keep latest entries visible when streaming
  * - Supports toggling between markdown-formatted and plain-text rendering
  * - "Load More" button to fetch older entries when pagination is enabled
@@ -124,38 +128,47 @@ export function AgentLogViewer({
   const containerRef = useRef<HTMLDivElement>(null);
   const previousEntryCountRef = useRef<number>(0);
   const previousScrollHeightRef = useRef<number>(0);
+  const previousOldestEntryKeyRef = useRef<string | null>(null);
   const previousNewestEntryKeyRef = useRef<string | null>(null);
   const [renderMarkdown, setRenderMarkdown] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [modelHeaderExpanded, setModelHeaderExpanded] = useState(false);
+  const [isFollowing, setIsFollowing] = useState(true);
 
   const chronologicalEntryKeys = useMemo(
     () => buildEntryRenderKeys(entries),
     [entries],
   );
 
-  // Newest entries render first. When streaming prepends content while the reader is away
-  // from the top, keep the viewport anchored by offsetting scrollTop with the added height.
-  // Near the top, preserve live-follow behavior by snapping back to the latest output.
+  // Keep live-follow pinned to the bottom when new streamed entries append.
+  // When older history is prepended (load more), preserve viewport position.
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const newEntryCount = entries.length;
     const previousCount = previousEntryCountRef.current;
-    const previousScrollHeight = previousScrollHeightRef.current;
+    const previousScrollHeight = previousScrollHeightRef.current || container.scrollHeight;
+    const oldestEntryKey = chronologicalEntryKeys[0] ?? null;
     const newestEntryKey = chronologicalEntryKeys[chronologicalEntryKeys.length - 1] ?? null;
+    const oldestEntryChanged = previousOldestEntryKeyRef.current !== oldestEntryKey;
     const newestEntryChanged = previousNewestEntryKeyRef.current !== newestEntryKey;
 
-    // Only adjust scroll for streaming updates (which append to chronological data
-    // and therefore prepend in this reversed viewer).
     if (newEntryCount > previousCount) {
-      const isNearTop = container.scrollTop <= TOP_FOLLOW_THRESHOLD_PX;
+      if (previousCount === 0) {
+        container.scrollTop = container.scrollHeight;
+      } else {
+        const wasNearBottom =
+          previousScrollHeight - (container.scrollTop + container.clientHeight) <=
+          BOTTOM_FOLLOW_THRESHOLD_PX;
+        const appendedLiveEntry = newestEntryChanged && !oldestEntryChanged;
+        const prependedOlderEntries = oldestEntryChanged && !newestEntryChanged;
 
-      if (newestEntryChanged) {
-        if (isNearTop) {
-          container.scrollTop = 0;
-        } else {
+        if (appendedLiveEntry && wasNearBottom) {
+          container.scrollTop = container.scrollHeight;
+        }
+
+        if (prependedOlderEntries) {
           const heightDelta = container.scrollHeight - previousScrollHeight;
           if (heightDelta > 0) {
             container.scrollTop += heightDelta;
@@ -166,8 +179,23 @@ export function AgentLogViewer({
 
     previousEntryCountRef.current = newEntryCount;
     previousScrollHeightRef.current = container.scrollHeight;
+    previousOldestEntryKeyRef.current = oldestEntryKey;
     previousNewestEntryKeyRef.current = newestEntryKey;
+    setIsFollowing(isNearBottom(container));
   }, [entries, chronologicalEntryKeys]);
+
+  const handleScroll = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    setIsFollowing(isNearBottom(container));
+  }, []);
+
+  const scrollToLive = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+    setIsFollowing(true);
+  }, []);
 
   // Escape key handler to exit fullscreen mode
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -238,15 +266,12 @@ export function AgentLogViewer({
     );
   }
 
-  // Reverse entries so newest appear first
-  const reversedEntries = [...entries].reverse();
-  const reversedEntryKeys = [...chronologicalEntryKeys].reverse();
-
   return (
     <div
       ref={containerRef}
       className={`agent-log-viewer agent-log-viewer--streaming${isFullscreen ? " agent-log-viewer--fullscreen" : ""}`}
       data-testid="agent-log-viewer"
+      onScroll={handleScroll}
     >
       {/* Model info header */}
       <div className="agent-log-model-header" data-testid="agent-log-model-header">
@@ -339,13 +364,32 @@ export function AgentLogViewer({
         </div>
       )}
 
-      {reversedEntries.map((entry, i) => {
-        const rowKey = reversedEntryKeys[i] ?? `${getEntrySignature(entry)}|fallback`;
-        // Look at previous entry in reversed array (= next chronologically) for deduplication
-        const prev = reversedEntries[i - 1];
+      {hasMore && onLoadMore && (
+        <div className="agent-log-load-more" data-testid="agent-log-load-more">
+          <button
+            className="agent-log-mode-toggle"
+            onClick={onLoadMore}
+            disabled={loadingMore}
+            data-testid="agent-log-load-more-button"
+          >
+            {loadingMore ? (
+              <>
+                <Loader2 size={14} className="animate-spin" />
+                Loading…
+              </>
+            ) : (
+              "Load More"
+            )}
+          </button>
+        </div>
+      )}
+
+      {entries.map((entry, i) => {
+        const rowKey = chronologicalEntryKeys[i] ?? `${getEntrySignature(entry)}|fallback`;
+        const prev = entries[i - 1];
         const isBlockLevel = entry.type === "tool" || entry.type === "tool_result" || entry.type === "tool_error";
         const showBadge = entry.agent
-          ? isBlockLevel || i === 0 || (prev && (prev.agent !== entry.agent || prev.type !== entry.type))
+          ? isBlockLevel || !prev || prev.agent !== entry.agent || prev.type !== entry.type
           : false;
 
         const timestampSpan = showBadge ? (
@@ -422,25 +466,16 @@ export function AgentLogViewer({
         );
       })}
 
-      {/* Load More button */}
-      {hasMore && onLoadMore && (
-        <div className="agent-log-load-more" data-testid="agent-log-load-more">
-          <button
-            className="agent-log-mode-toggle"
-            onClick={onLoadMore}
-            disabled={loadingMore}
-            data-testid="agent-log-load-more-button"
-          >
-            {loadingMore ? (
-              <>
-                <Loader2 size={14} className="animate-spin" />
-                Loading…
-              </>
-            ) : (
-              "Load More"
-            )}
-          </button>
-        </div>
+      {!isFollowing && (
+        <button
+          type="button"
+          className="agent-log-return-to-live"
+          onClick={scrollToLive}
+          data-testid="agent-log-return-to-live"
+        >
+          <ChevronDown size={12} />
+          <span>Live</span>
+        </button>
       )}
     </div>
   );

@@ -31,7 +31,7 @@ function capLogEntries(entries: AgentLogEntry[]): AgentLogEntry[] {
  * **Pagination semantics**:
  * - Entries are returned in chronological order (oldest first) from the API
  * - Entries are stored in chronological order
- * - The UI displays newest first by reversing the array
+ * - The UI displays entries in chronological order (oldest first)
  * - `loadMore()` fetches the next 100 older entries and prepends them
  *
  * When `enabled` is true:

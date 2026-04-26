@@ -433,11 +433,40 @@
 .agent-log-load-more {
   padding: var(--space-md);
   text-align: center;
-  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
 
 .agent-log-load-more .agent-log-mode-toggle {
   min-width: 120px;
+}
+
+.agent-log-return-to-live {
+  position: sticky;
+  bottom: var(--space-md);
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  z-index: 2;
+}
+
+.agent-log-return-to-live:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.agent-log-return-to-live:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
 }
 
 /* Fullscreen mode for agent log viewer */
@@ -1479,5 +1508,9 @@
   .modal-edit-btn {
     min-width: 36px;
     min-height: 36px;
+  }
+
+  .agent-log-return-to-live {
+    bottom: var(--space-sm);
   }
 }
