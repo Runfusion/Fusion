@@ -726,9 +726,11 @@
 
 /* === Terminal Modal Mobile Responsive === */
 @media (max-width: 768px) {
-  .terminal-modal {
+  .modal.terminal-modal {
     width: 100%;
     max-width: 100%;
+    min-height: 100vh;
+    min-height: 100dvh;
     height: 100vh;
     height: 100dvh;
     max-height: 100vh;
@@ -882,6 +884,14 @@
        the keyboard-open transition so the terminal doesn't poke out
        below the visible area while xterm re-fits. */
     overflow: hidden;
+  }
+
+  /* Anchor the overlay to the top when the keyboard is open so the header
+     stays visible.  Without this, align-items:center (from the non-keyboard
+     modal-overlay:has rule) vertically centers the shrunken modal and pushes
+     the top area out of the visible viewport. */
+  .modal-overlay:has(.terminal-modal[style*="--keyboard-overlap"]) {
+    align-items: flex-start !important;
   }
 
   /* Terminal tab close button: touch target on mobile */
