@@ -6,7 +6,8 @@
     "jsx": "react-jsx",
     "types": ["node", "vitest/globals", "@testing-library/jest-dom"],
     "paths": {
-      "@fusion/test-utils": ["../core/src/__test-utils__/workspace.ts"]
+      "@fusion/test-utils": ["../core/src/__test-utils__/workspace.ts"],
+      "node-pty": ["./src/types/node-pty/index.d.ts"]
     }
   },
   "include": ["src/**/*"],

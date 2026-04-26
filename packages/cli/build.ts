@@ -19,7 +19,8 @@
  */
 
 import { join, dirname } from "node:path";
-import { cpSync, mkdirSync, existsSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, existsSync, rmSync, writeFileSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 
 const cliRoot = dirname(new URL(import.meta.url).pathname);
 const workspaceRoot = join(cliRoot, "..", "..");
@@ -30,8 +31,56 @@ const runtimeDir = join(outDir, "runtime");
 const entryPoint = join(cliRoot, "src", "bin.ts");
 
 // ── Native module asset paths ─────────────────────────────────────────
-// node-pty prebuilds location in pnpm workspace
-const nodePtyRoot = join(workspaceRoot, "node_modules", ".pnpm", "node-pty@1.1.0", "node_modules", "node-pty");
+// Resolve the @homebridge/node-pty-prebuilt-multiarch install root dynamically.
+// The package is aliased as "node-pty" in package.json of @fusion/dashboard.
+// We must create the require from the dashboard package location so Node resolves
+// node-pty via the dashboard's node_modules (where the alias is installed).
+const dashboardPkgDir = join(workspaceRoot, "packages", "dashboard");
+const _require = createRequire(join(dashboardPkgDir, "package.json"));
+let nodePtyRoot: string;
+try {
+  const pkgJsonPath = _require.resolve("node-pty/package.json");
+  nodePtyRoot = dirname(pkgJsonPath);
+  console.log(`  node-pty resolved to: ${nodePtyRoot}`);
+} catch {
+  // Fallback: check pnpm's shared node_modules
+  const fallback = join(workspaceRoot, "node_modules", ".pnpm", "node_modules", "node-pty");
+  if (existsSync(fallback)) {
+    nodePtyRoot = fallback;
+    console.log(`  node-pty fallback resolved to: ${nodePtyRoot}`);
+  } else {
+    // Last resort: rely on pnpm symlink structure
+    nodePtyRoot = join(dashboardPkgDir, "node_modules", "node-pty");
+    console.log(`  node-pty last-resort resolved to: ${nodePtyRoot}`);
+  }
+}
+
+/**
+ * Pick the highest ABI .node file from a prebuilds/<plat-arch>/ directory
+ * that is <= the host Node.js ABI, returning its full path (or null).
+ * The fork names files like: node.abi115.node, node.abi115.musl.node
+ * We want the non-musl version (glibc) for cross-compile targets.
+ */
+function pickHighestAbiNode(prebuildDir: string, targetAbi: number): string | null {
+  let files: string[];
+  try {
+    files = readdirSync(prebuildDir);
+  } catch {
+    return null;
+  }
+  // Match node.abi<N>.node (non-musl)
+  const abiRe = /^node\.abi(\d+)\.node$/;
+  let best: { abi: number; file: string } | null = null;
+  for (const f of files) {
+    const m = abiRe.exec(f);
+    if (!m) continue;
+    const abi = parseInt(m[1], 10);
+    if (abi <= targetAbi && (!best || abi > best.abi)) {
+      best = { abi, file: f };
+    }
+  }
+  return best ? join(prebuildDir, best.file) : null;
+}
 
 // ── Supported cross-compilation targets ───────────────────────────────
 const SUPPORTED_TARGETS = [
@@ -155,56 +204,101 @@ function ensureClientAssets(): ClientAssetMode {
 
 // ── Copy native terminal assets for a specific target ─────────────────
 /**
- * Stage node-pty native assets for the given target platform.
+ * Stage @homebridge/node-pty-prebuilt-multiarch native assets for the given target.
  * Assets are placed in dist/runtime/<platform-arch>/ alongside client/.
- * 
- * For each target, we copy:
- *   - prebuilds/<platform>-<arch>/pty.node (the native binary)
- *   - prebuilds/<platform>-<arch>/spawn-helper (Unix helper, if exists)
- * 
- * This ensures the standalone binary can find these assets at runtime
- * without relying on the original node_modules structure.
+ *
+ * The fork ships two layouts:
+ *   - build/Release/pty.node   — placed here by `prebuild-install` at install time
+ *                                (present on the HOST platform only)
+ *   - prebuilds/linux-<arch>/node.abi<N>.node — bundled inside the npm tarball
+ *                                (present for Linux targets on any host)
+ *
+ * Strategy per target:
+ *   - Host (no --target flag):     use build/Release/pty.node + build/Release/spawn-helper
+ *   - bun-linux-x64/arm64:        use prebuilds/linux-<arch>/node.abi<N>.node (highest ≤ host ABI)
+ *   - bun-darwin-x64/arm64:       prebuilds not bundled; warn and skip (cross-compile unsupported)
+ *   - bun-windows-x64:            prebuilds not bundled; warn and skip
  */
-function copyNativeAssets(target?: BunTarget) {
+function copyNativeAssets(target?: BunTarget): boolean {
   const prebuildName = target ? targetToPrebuildName(target) : hostPrebuildName();
-  const srcPrebuildDir = join(nodePtyRoot, "prebuilds", prebuildName);
-  
-  if (!existsSync(srcPrebuildDir)) {
-    console.warn(`  ⚠ No prebuilds found for ${prebuildName} at ${srcPrebuildDir}`);
-    return false;
-  }
-
   const destDir = join(runtimeDir, prebuildName);
-  
+
   try {
-    // Clean and recreate
+    // Clean and recreate dest
     if (existsSync(destDir)) {
       rmSync(destDir, { recursive: true, force: true });
     }
     mkdirSync(destDir, { recursive: true });
 
-    // Copy pty.node (required)
-    const ptyNodeSrc = join(srcPrebuildDir, "pty.node");
-    const ptyNodeDest = join(destDir, "pty.node");
-    if (existsSync(ptyNodeSrc)) {
-      cpSync(ptyNodeSrc, ptyNodeDest);
-      console.log(`  → ${destDir}/pty.node`);
+    // ── Determine source pty.node ─────────────────────────────────────
+    let ptyNodeSrc: string | null = null;
+    let spawnHelperSrc: string | null = null;
+
+    if (!target) {
+      // HOST build: use the prebuild-install output in build/Release/
+      const releaseDir = join(nodePtyRoot, "build", "Release");
+      const candidate = join(releaseDir, "pty.node");
+      if (existsSync(candidate)) {
+        ptyNodeSrc = candidate;
+        const helper = join(releaseDir, "spawn-helper");
+        if (existsSync(helper)) spawnHelperSrc = helper;
+      } else {
+        // Fallback: maybe prebuilds/<plat-arch>/ exists (older fork layout or manually extracted)
+        const prebuildDir = join(nodePtyRoot, "prebuilds", prebuildName);
+        const hostAbi = parseInt(process.versions.modules, 10);
+        ptyNodeSrc = pickHighestAbiNode(prebuildDir, hostAbi);
+        if (!ptyNodeSrc && existsSync(join(prebuildDir, "pty.node"))) {
+          // Some layouts ship pty.node directly (shouldn't happen with this fork, but guard)
+          ptyNodeSrc = join(prebuildDir, "pty.node");
+        }
+        const helper = join(prebuildDir, "spawn-helper");
+        if (existsSync(helper)) spawnHelperSrc = helper;
+      }
+    } else if (target.startsWith("bun-linux-")) {
+      // Linux cross-compile: use the pre-bundled prebuilds/ in the npm tarball
+      const [, , arch] = target.split("-") as [string, string, string]; // bun-linux-<arch>
+      // Bun's arm64 → arm64, but armv7 is "arm" in prebuilds
+      const linuxArch = arch === "arm64" ? "arm64" : arch === "x64" ? "x64" : arch;
+      const prebuildDir = join(nodePtyRoot, "prebuilds", `linux-${linuxArch}`);
+      const hostAbi = parseInt(process.versions.modules, 10);
+      ptyNodeSrc = pickHighestAbiNode(prebuildDir, hostAbi);
+      if (ptyNodeSrc) {
+        const helper = join(prebuildDir, "spawn-helper");
+        if (existsSync(helper)) spawnHelperSrc = helper;
+      }
     } else {
-      console.warn(`  ⚠ pty.node not found for ${prebuildName}`);
+      // darwin or windows cross-compile: prebuilds are NOT bundled in the tarball.
+      // They are only present in build/Release/ after prebuild-install runs on that host.
+      // Warn and skip rather than erroring — the binary will start but terminal won't work.
+      console.warn(
+        `  WARNING: Cross-compiling for ${target} from ${hostPrebuildName()}. ` +
+        `The @homebridge/node-pty-prebuilt-multiarch package only bundles Linux prebuilds in the npm tarball. ` +
+        `Darwin/Windows prebuilds are downloaded by prebuild-install at install time on the target host. ` +
+        `Terminal functionality will be unavailable in this cross-compiled build.`
+      );
       return false;
     }
 
-    // Copy spawn-helper if it exists (Unix platforms)
-    const spawnHelperSrc = join(srcPrebuildDir, "spawn-helper");
-    if (existsSync(spawnHelperSrc)) {
-      const spawnHelperDest = join(destDir, "spawn-helper");
-      cpSync(spawnHelperSrc, spawnHelperDest);
+    if (!ptyNodeSrc) {
+      console.warn(`  WARNING: No pty.node found for target ${prebuildName}. Terminal will be unavailable.`);
+      console.warn(`    Looked in: ${join(nodePtyRoot, "build", "Release")} and ${join(nodePtyRoot, "prebuilds", prebuildName)}`);
+      return false;
+    }
+
+    // Copy pty.node (renamed to stable "pty.node" so native-patch.ts can find it)
+    const ptyNodeDest = join(destDir, "pty.node");
+    cpSync(ptyNodeSrc, ptyNodeDest);
+    console.log(`  → ${destDir}/pty.node  (from ${ptyNodeSrc})`);
+
+    // Copy spawn-helper if available (Unix platforms)
+    if (spawnHelperSrc) {
+      cpSync(spawnHelperSrc, join(destDir, "spawn-helper"));
       console.log(`  → ${destDir}/spawn-helper`);
     }
 
     return true;
   } catch (err) {
-    console.error(`  ✗ Failed to copy native assets for ${prebuildName}:`, err);
+    console.error(`  ERROR: Failed to copy native assets for ${prebuildName}:`, err);
     return false;
   }
 }

@@ -36,8 +36,7 @@
     "build:client": "vite build",
     "dev": "pnpm build && pnpm typecheck && pnpm dev:serve",
     "dev:serve": "vite dev",
-    "postinstall": "chmod +x node_modules/.pnpm/node-pty*/node_modules/node-pty/prebuilds/darwin-*/spawn-helper node_modules/.pnpm/node-pty*/node_modules/node-pty/prebuilds/darwin-*/*.node 2>/dev/null || true",
-    "test": "vitest run --silent=passed-only --reporter=dot --exclude '**/build-output.test.ts'",
+"test": "vitest run --silent=passed-only --reporter=dot --exclude '**/build-output.test.ts'",
     "test:build": "vitest run --silent=passed-only --reporter=dot app/__tests__/build-output.test.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.app.json"
   },
@@ -64,7 +63,7 @@
     "ioredis": "^5.6.0",
     "lucide-react": "^1.7.0",
     "multer": "^2.1.1",
-    "node-pty": "^1.1.0-beta22",
+    "node-pty": "npm:@homebridge/node-pty-prebuilt-multiarch@^0.13.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",

@@ -50,6 +50,7 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
+      "@homebridge/node-pty-prebuilt-multiarch",
       "electron",
       "esbuild",
       "koffi",
