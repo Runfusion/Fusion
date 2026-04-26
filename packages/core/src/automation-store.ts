@@ -254,6 +254,9 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   async updateSchedule(id: string, updates: ScheduledTaskUpdateInput): Promise<ScheduledTask> {
     return this.withScheduleLock(id, async () => {
       const schedule = await this.getSchedule(id);
+      const previousEnabled = schedule.enabled;
+      const previousScheduleType = schedule.scheduleType;
+      const previousCronExpression = schedule.cronExpression;
 
       if (updates.name !== undefined) {
         if (!updates.name.trim()) throw new Error("Name cannot be empty");
@@ -299,11 +302,16 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
         schedule.enabled = updates.enabled;
       }
 
-      // Recompute next run if enabled
-      if (schedule.enabled) {
-        schedule.nextRunAt = this.computeNextRun(schedule.cronExpression);
-      } else {
+      const cadenceChanged =
+        schedule.scheduleType !== previousScheduleType ||
+        schedule.cronExpression !== previousCronExpression;
+      const enabledFromDisabled = !previousEnabled && schedule.enabled;
+      const missingNextRunAt = !schedule.nextRunAt;
+
+      if (!schedule.enabled) {
         schedule.nextRunAt = undefined;
+      } else if (cadenceChanged || enabledFromDisabled || missingNextRunAt) {
+        schedule.nextRunAt = this.computeNextRun(schedule.cronExpression);
       }
 
       schedule.updatedAt = new Date().toISOString();

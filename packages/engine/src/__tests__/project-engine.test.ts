@@ -5,6 +5,7 @@ import { runtimeLog } from "../logger.js";
 const mocks = vi.hoisted(() => ({
   syncInsightExtractionAutomation: vi.fn(),
   syncAutoSummarizeAutomation: vi.fn(),
+  syncMemoryDreamsAutomation: vi.fn(),
   automationStoreInit: vi.fn(async () => undefined),
   createAiPromptExecutor: vi.fn(async () => vi.fn()),
   cronRunnerStart: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock("@fusion/core", async () => {
     AutomationStore: MockAutomationStore,
     syncInsightExtractionAutomation: mocks.syncInsightExtractionAutomation,
     syncAutoSummarizeAutomation: mocks.syncAutoSummarizeAutomation,
+    syncMemoryDreamsAutomation: mocks.syncMemoryDreamsAutomation,
   };
 });
 
@@ -119,6 +121,8 @@ const baseSettings: Record<string, unknown> = {
   memoryAutoSummarizeEnabled: false,
   memoryAutoSummarizeThresholdChars: 50_000,
   memoryAutoSummarizeSchedule: "0 3 * * *",
+  memoryDreamsEnabled: false,
+  memoryDreamsSchedule: "0 4 * * *",
   insightExtractionEnabled: false,
   insightExtractionSchedule: "0 3 * * *",
   insightExtractionMinIntervalMs: 0,
@@ -145,17 +149,31 @@ describe("ProjectEngine auto-summarize wiring", () => {
     mocks.currentStore = mockStore.store;
   });
 
-  it("syncs auto-summarize automation on startup using one settings snapshot", async () => {
+  it("syncs startup memory automations using one settings snapshot", async () => {
     const engine = createEngine();
 
     await engine.start();
 
     expect(mocks.syncInsightExtractionAutomation).toHaveBeenCalledTimes(1);
     expect(mocks.syncAutoSummarizeAutomation).toHaveBeenCalledTimes(1);
+    expect(mocks.syncMemoryDreamsAutomation).toHaveBeenCalledTimes(1);
 
     const insightSettings = mocks.syncInsightExtractionAutomation.mock.calls[0][1];
     const autoSummarizeSettings = mocks.syncAutoSummarizeAutomation.mock.calls[0][1];
+    const memoryDreamsSettings = mocks.syncMemoryDreamsAutomation.mock.calls[0][1];
     expect(autoSummarizeSettings).toBe(insightSettings);
+    expect(memoryDreamsSettings).toBe(insightSettings);
+
+    const cronRunnerStartOrder = mocks.cronRunnerStart.mock.invocationCallOrder[0];
+    expect(mocks.syncInsightExtractionAutomation.mock.invocationCallOrder[0]).toBeLessThan(
+      cronRunnerStartOrder,
+    );
+    expect(mocks.syncAutoSummarizeAutomation.mock.invocationCallOrder[0]).toBeLessThan(
+      cronRunnerStartOrder,
+    );
+    expect(mocks.syncMemoryDreamsAutomation.mock.invocationCallOrder[0]).toBeLessThan(
+      cronRunnerStartOrder,
+    );
 
     await engine.stop();
   });

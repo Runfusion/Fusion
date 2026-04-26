@@ -317,6 +317,72 @@ describe("AutomationStore", () => {
       expect(reenabled.nextRunAt).toBeTruthy();
     });
 
+    it("preserves overdue nextRunAt when updating non-cadence fields", async () => {
+      const schedule = await store.createSchedule({
+        name: "Catch-up",
+        command: "echo catch-up",
+        scheduleType: "hourly",
+      });
+      const overdue = new Date(Date.now() - 60_000).toISOString();
+      store["db"].prepare("UPDATE automations SET nextRunAt = ? WHERE id = ?").run(overdue, schedule.id);
+
+      const updated = await store.updateSchedule(schedule.id, {
+        description: "updated description",
+      });
+
+      expect(updated.nextRunAt).toBe(overdue);
+    });
+
+    it("recomputes nextRunAt when cadence changes", async () => {
+      const schedule = await store.createSchedule({
+        name: "Cadence",
+        command: "echo cadence",
+        scheduleType: "hourly",
+      });
+      const overdue = new Date(Date.now() - 60_000).toISOString();
+      store["db"].prepare("UPDATE automations SET nextRunAt = ? WHERE id = ?").run(overdue, schedule.id);
+
+      const updated = await store.updateSchedule(schedule.id, {
+        scheduleType: "custom",
+        cronExpression: "*/5 * * * *",
+      });
+
+      expect(updated.nextRunAt).not.toBe(overdue);
+      expect(new Date(updated.nextRunAt ?? 0).getTime()).toBeGreaterThan(Date.now() - 1000);
+    });
+
+    it("recomputes nextRunAt when enabling from disabled state", async () => {
+      const schedule = await store.createSchedule({
+        name: "Enable",
+        command: "echo enable",
+        scheduleType: "hourly",
+        enabled: false,
+      });
+
+      const updated = await store.updateSchedule(schedule.id, {
+        enabled: true,
+      });
+
+      expect(updated.nextRunAt).toBeTruthy();
+      expect(new Date(updated.nextRunAt ?? 0).getTime()).toBeGreaterThan(Date.now() - 1000);
+    });
+
+    it("recomputes nextRunAt when missing on enabled schedule", async () => {
+      const schedule = await store.createSchedule({
+        name: "Missing next run",
+        command: "echo missing",
+        scheduleType: "hourly",
+      });
+      store["db"].prepare("UPDATE automations SET nextRunAt = NULL WHERE id = ?").run(schedule.id);
+
+      const updated = await store.updateSchedule(schedule.id, {
+        command: "echo changed",
+      });
+
+      expect(updated.nextRunAt).toBeTruthy();
+      expect(new Date(updated.nextRunAt ?? 0).getTime()).toBeGreaterThan(Date.now() - 1000);
+    });
+
     it("rejects empty name", async () => {
       const schedule = await store.createSchedule({
         name: "Test",

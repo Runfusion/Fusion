@@ -190,6 +190,16 @@ export class ProjectEngine {
         // syncAutoSummarizeAutomation may not be exported yet
       }
 
+      // Sync memory dreams automation on startup
+      try {
+        const { syncMemoryDreamsAutomation } = await import("@fusion/core");
+        if (typeof syncMemoryDreamsAutomation === "function") {
+          await syncMemoryDreamsAutomation(this.automationStore, settings);
+        }
+      } catch {
+        // syncMemoryDreamsAutomation may not be exported yet
+      }
+
       this.cronRunner.start();
       runtimeLog.log("CronRunner initialized and started");
     } catch (err) {
