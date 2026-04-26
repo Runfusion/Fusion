@@ -444,6 +444,40 @@ describe("createEventBridge", () => {
       expect(event.toolCall.arguments).toEqual({ path: "/foo.ts" });
     });
 
+    it("emits {} for parameterless MCP tool calls (no input_json_delta)", () => {
+      // Parameterless MCP tools (e.g. fn_review_spec, schema
+      // {type:"object", properties:{}}) emit ZERO input_json_delta events.
+      // Without the empty-partialJson guard, finalArgs would fall through to
+      // the raw-string fallback ("") and pi's TypeBox validator would reject
+      // the call with "Validation failed for tool ...: root: must be object".
+      const bridge = createBridgeWithStart();
+      bridge.handleEvent({
+        type: "content_block_start",
+        index: 0,
+        content_block: {
+          type: "tool_use",
+          id: "toolu_01XYZ",
+          name: "mcp__custom-tools__fn_review_spec",
+        },
+      });
+      // No content_block_delta with input_json_delta — Claude emits none for
+      // parameterless tools.
+      stream.push.mockClear();
+      stream.events.length = 0;
+
+      bridge.handleEvent({
+        type: "content_block_stop",
+        index: 0,
+      });
+
+      expect(stream.push).toHaveBeenCalledTimes(1);
+      const event = stream.events[0] as any;
+      expect(event.type).toBe("toolcall_end");
+      expect(event.toolCall.arguments).toEqual({});
+      // The MCP prefix should be stripped: pi sees the bare tool name.
+      expect(event.toolCall.name).toBe("fn_review_spec");
+    });
+
     it("tracks multiple tool_use blocks independently by Claude event.index", () => {
       const bridge = createBridgeWithStart();
 

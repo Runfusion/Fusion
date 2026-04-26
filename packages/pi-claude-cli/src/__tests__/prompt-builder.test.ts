@@ -21,7 +21,7 @@ describe("buildPrompt", () => {
     expect(buildPrompt(context)).toBe("ASSISTANT:\nHi there");
   });
 
-  it("produces 'TOOL RESULT (historical {claudeName}):\\n{content}' for a tool result message", () => {
+  it("produces 'TOOL RESULT ({claudeName}):\\n{content}' for a tool result message", () => {
     const context = {
       messages: [
         {
@@ -33,7 +33,7 @@ describe("buildPrompt", () => {
     } as unknown as any;
     // Pi tool name "read" should be mapped to Claude name "Read" in the label
     expect(buildPrompt(context)).toBe(
-      "TOOL RESULT (historical Read):\nfile contents here",
+      "TOOL RESULT (Read):\nfile contents here",
     );
   });
 
@@ -57,7 +57,7 @@ describe("buildPrompt", () => {
       "What is in file.ts?",
       "ASSISTANT:",
       "Let me read that file.",
-      "TOOL RESULT (historical Read):",
+      "TOOL RESULT (Read):",
       "export const x = 1;",
       "USER:",
       "Now explain it.",
@@ -109,7 +109,7 @@ describe("buildPrompt", () => {
     // Tool name should be mapped from pi "read" to Claude "Read"
     // Arg "path" should be mapped from pi format to Claude "file_path"
     expect(result).toContain(
-      'Historical tool call (non-executable): Read args={"file_path":"/file.ts"}',
+      '[Prior tool call — already executed; result follows in TOOL RESULT (Read):] args={"file_path":"/file.ts"}',
     );
   });
 
@@ -158,7 +158,7 @@ describe("buildPrompt", () => {
     const result = buildPrompt(context);
     // Pi "bash" maps to Claude "Bash"
     expect(result).toContain(
-      "Historical tool call (non-executable): Bash args={}",
+      "[Prior tool call — already executed; result follows in TOOL RESULT (Bash):] args={}",
     );
   });
 
@@ -177,7 +177,7 @@ describe("buildPrompt", () => {
     } as unknown as any;
 
     const result = buildPrompt(context);
-    expect(result).toBe("TOOL RESULT (historical Bash):\nline 1\nline 2");
+    expect(result).toBe("TOOL RESULT (Bash):\nline 1\nline 2");
   });
 
   describe("tool name and argument reverse mapping", () => {
@@ -237,7 +237,7 @@ describe("buildPrompt", () => {
       } as unknown as any;
 
       const result = buildPrompt(context);
-      expect(result).toContain("TOOL RESULT (historical Read):");
+      expect(result).toContain("TOOL RESULT (Read):");
     });
 
     it("prefixes custom (non-built-in) tool names with MCP prefix", () => {
@@ -281,7 +281,8 @@ describe("buildPrompt", () => {
 
       const result = buildPrompt(context);
       // String arguments should be serialized as JSON string
-      expect(result).toContain('Read args="raw string args"');
+      expect(result).toContain('TOOL RESULT (Read):');
+      expect(result).toContain('args="raw string args"');
     });
   });
 });
@@ -688,7 +689,7 @@ describe("custom tool history replay", () => {
     } as unknown as any;
 
     const result = buildPrompt(context);
-    expect(result).toContain("TOOL RESULT (historical Read):");
+    expect(result).toContain("TOOL RESULT (Read):");
     expect(result).not.toContain("mcp__custom-tools__");
   });
 
@@ -1019,7 +1020,7 @@ describe("buildResumePrompt", () => {
       ],
     };
     const result = buildResumePrompt(context) as string;
-    expect(result).toContain("TOOL RESULT (historical Read):");
+    expect(result).toContain("TOOL RESULT (Read):");
     expect(result).toContain("file contents here");
     expect(result).toContain("Now explain it");
   });

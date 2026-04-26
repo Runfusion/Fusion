@@ -25,7 +25,7 @@ import {
 } from "@fusion/core";
 import type { AutomationRunResult, ScheduledTask } from "@fusion/core";
 import { createServer, GitHubClient, createSkillsAdapter, getProjectSettingsPath, loadTlsCredentialsFromEnv } from "@fusion/dashboard";
-import { ProjectEngineManager, PeerExchangeService } from "@fusion/engine";
+import { ProjectEngineManager, PeerExchangeService, setHostExtensionPaths } from "@fusion/engine";
 import {
   AuthStorage,
   DefaultPackageManager,
@@ -49,6 +49,7 @@ import {
   resolveClaudeCliExtensionPaths,
   setCachedClaudeCliResolution,
 } from "./claude-cli-extension.js";
+import { resolveSelfExtension } from "./self-extension.js";
 import { createReadOnlyAuthFileStorage, mergeAuthStorageReads, wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 import { getFusionAuthPath, getLegacyAuthPaths, getModelRegistryModelsPath, getPackageManagerAgentDir } from "./auth-paths.js";
 import { resolveProject } from "../project-context.js";
@@ -416,8 +417,17 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     // external `pi-claude-cli` install. Drops shadowing externals (e.g. a
     // global `npm install -g pi-claude-cli`) so the upstream's once-and-lock
     // MCP-config bug can't poison sessions.
+    // Inject the cli's own extension (@runfusion/fusion) so fn_* tools
+    // register globally without requiring `pi install npm:@runfusion/fusion`.
+    const selfExtension = resolveSelfExtension();
+    const selfExtensionPaths = selfExtension.status === "ok" ? [selfExtension.path] : [];
+    if (selfExtension.status !== "ok") {
+      console.warn(`[extensions] self: ${selfExtension.reason}`);
+    }
+    setHostExtensionPaths(selfExtensionPaths);
+
     const reconciledExtensionPaths = reconcileClaudeCliPaths(
-      [...getEnabledPiExtensionPaths(cwd), ...packageExtensionPaths, ...claudeCliPaths],
+      [...selfExtensionPaths, ...getEnabledPiExtensionPaths(cwd), ...packageExtensionPaths, ...claudeCliPaths],
       claudeCliPaths[0] ?? null,
     );
 

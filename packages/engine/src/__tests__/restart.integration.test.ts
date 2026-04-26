@@ -840,11 +840,20 @@ describe("Triage re-pick after restart", () => {
     const task = makeTask("FN-062", "triage");
     store.getTask.mockResolvedValue(makeTaskDetail("FN-062", "triage"));
 
-    // Slow agent to keep task in processing
+    // Slow agent to keep task in processing — only the first prompt() blocks;
+    // subsequent calls (e.g. the no-APPROVE reminder loop in triage) resolve
+    // immediately so cleanup can drain.
     let resolvePrompt: (() => void) | undefined;
+    let promptCallCount = 0;
     mockedCreateFnAgent.mockResolvedValue({
       session: {
-        prompt: vi.fn().mockImplementation(() => new Promise<void>((r) => { resolvePrompt = r; })),
+        prompt: vi.fn().mockImplementation(() => {
+          promptCallCount += 1;
+          if (promptCallCount === 1) {
+            return new Promise<void>((r) => { resolvePrompt = r; });
+          }
+          return Promise.resolve();
+        }),
         dispose: vi.fn(),
       },
     } as any);

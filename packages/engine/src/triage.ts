@@ -1043,6 +1043,44 @@ export class TriageProcessor {
             return;
           }
 
+          // Before swapping to the fallback model, give the primary one more
+          // shot with a pointed reminder. The model may have written PROMPT.md
+          // but stopped without calling fn_review_spec — that's recoverable
+          // with a nudge, no need to discard the session and pay the cold-start
+          // tax of a new triage on a different model.
+          const MAX_REVIEW_REMINDERS = 2;
+          let reviewReminders = 0;
+          while (
+            specReviewVerdictRef.current !== "APPROVE" &&
+            !this.pauseAborted.has(task.id) &&
+            !this.stuckAborted.has(task.id) &&
+            createdSubtasksRef.current.length === 0 &&
+            reviewReminders < MAX_REVIEW_REMINDERS
+          ) {
+            reviewReminders += 1;
+            const verdictDesc =
+              specReviewVerdictRef.current === null
+                ? "fn_review_spec was never called"
+                : `verdict was ${specReviewVerdictRef.current}`;
+            triageLog.warn(
+              `${task.id} primary planning model returned without APPROVE (${verdictDesc}) — reminder ${reviewReminders}/${MAX_REVIEW_REMINDERS}`,
+            );
+            await this.store.logEntry(
+              task.id,
+              `Primary planning model returned without APPROVE (${verdictDesc}) — reminder ${reviewReminders}/${MAX_REVIEW_REMINDERS}`,
+            );
+            const reminder =
+              specReviewVerdictRef.current === null
+                ? "You wrote the PROMPT.md but did not call `fn_review_spec()`. Call `fn_review_spec()` now to validate the spec. Do not stop until the verdict is APPROVE."
+                : `Spec review verdict was ${specReviewVerdictRef.current}. Address the feedback, rewrite the PROMPT.md as needed, and call \`fn_review_spec()\` again. Do not stop until the verdict is APPROVE.`;
+            stuckDetector?.recordActivity(task.id);
+            await promptWithFallback(session, reminder);
+            checkSessionError(session);
+            if (this.pauseAborted.has(task.id) || this.stuckAborted.has(task.id)) {
+              break;
+            }
+          }
+
           const planningFallbackProvider = settings.planningFallbackProvider;
           const planningFallbackModelId = settings.planningFallbackModelId;
           const canRetryWithPlanningFallback =

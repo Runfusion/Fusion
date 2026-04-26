@@ -136,11 +136,6 @@ export function streamViaCli(
       });
       const getStderr = captureStderr(proc);
       const spawnTime = Date.now();
-      const procPid = proc.pid;
-      const traceMode = resumeSessionId ? "resume" : "new";
-      console.error(
-        `[pi-claude-cli] spawn pid=${procPid} model=${model.id} mode=${traceMode} effort=${effort ?? "default"} promptLen=${typeof prompt === "string" ? prompt.length : 0} systemPromptLen=${systemPrompt?.length ?? 0} mcp=${options?.mcpConfigPath ? "yes" : "no"}`,
-      );
 
       // Register in global process registry for teardown cleanup
       registerProcess(proc);
@@ -231,12 +226,8 @@ export function streamViaCli(
       });
 
       // Handle subprocess close -- surface crashes with stderr and exit code
-      proc.on("close", (code: number | null, signal: string | null) => {
+      proc.on("close", (code: number | null, _signal: string | null) => {
         clearTimeout(inactivityTimer);
-        const elapsedMs = Date.now() - spawnTime;
-        console.error(
-          `[pi-claude-cli] close pid=${procPid} code=${code ?? "null"} signal=${signal ?? "null"} elapsedMs=${elapsedMs} broken=${broken}`,
-        );
         if (broken) return; // Break-early kill, expected
         if (code !== 0 && code !== null) {
           const stderr = getStderr();
@@ -250,9 +241,6 @@ export function streamViaCli(
       // Start inactivity timer after writing user message
       resetInactivityTimer();
 
-      let firstLineLoggedAt = 0;
-      let lineCount = 0;
-
       // Process NDJSON lines from stdout using event-based callback
       // NOTE: Using 'line' event instead of `for await` because the async
       // iterator batches lines, breaking real-time streaming to pi.
@@ -261,35 +249,9 @@ export function streamViaCli(
 
         // Reset inactivity timer on each line of output
         resetInactivityTimer();
-        lineCount++;
-        if (lineCount === 1) {
-          firstLineLoggedAt = Date.now();
-          console.error(
-            `[pi-claude-cli] first-stdout-line pid=${procPid} afterMs=${firstLineLoggedAt - spawnTime}`,
-          );
-        }
 
         const msg = parseLine(line);
         if (!msg) return;
-
-        // Log init system event so we can see MCP server status / model on stderr
-        if (
-          msg.type === "system" &&
-          (msg as { subtype?: string }).subtype === "init"
-        ) {
-          const init = msg as unknown as {
-            session_id?: string;
-            mcp_servers?: Array<{ name: string; status: string }>;
-            model?: string;
-            permissionMode?: string;
-          };
-          const mcps = (init.mcp_servers ?? [])
-            .map((s) => `${s.name}=${s.status}`)
-            .join(",");
-          console.error(
-            `[pi-claude-cli] init pid=${procPid} session=${init.session_id ?? "?"} model=${init.model ?? "?"} permissionMode=${init.permissionMode ?? "?"} mcp=[${mcps}]`,
-          );
-        }
 
         if (msg.type === "stream_event") {
           // Only forward top-level events to pi's event bridge.
@@ -306,11 +268,6 @@ export function streamViaCli(
             msg.event.content_block?.type === "tool_use"
           ) {
             const toolName = msg.event.content_block.name;
-            if (toolName) {
-              console.error(
-                `[pi-claude-cli] tool_use pid=${procPid} name=${toolName} piKnown=${isPiKnownClaudeTool(toolName)}`,
-              );
-            }
             if (toolName && isPiKnownClaudeTool(toolName)) {
               // Built-in tool (Read/Write/etc.) OR custom MCP tool (mcp__custom-tools__*)
               // Internal Claude Code tools (ToolSearch, Task, etc.) are excluded
@@ -325,9 +282,6 @@ export function streamViaCli(
             msg.event.type === "message_stop" &&
             sawBuiltInOrCustomTool
           ) {
-            console.error(
-              `[pi-claude-cli] break-early pid=${procPid} elapsedMs=${Date.now() - spawnTime} lines=${lineCount}`,
-            );
             broken = true; // Set guard BEFORE rl.close() to prevent buffered lines
             clearTimeout(inactivityTimer);
             // Pi will execute these tools. Kill subprocess to prevent CLI from executing them.

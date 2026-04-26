@@ -62,7 +62,7 @@ type AnthropicContentBlock =
  * Each message is labeled with its role:
  * - USER: for user messages
  * - ASSISTANT: for assistant messages
- * - TOOL RESULT (historical {toolName}): for tool result messages
+ * - TOOL RESULT ({toolName}): for tool result messages
  */
 /** Module-level counter for placeholder images, reset per buildPrompt call. */
 let placeholderImageCount = 0;
@@ -213,7 +213,7 @@ export function buildResumePrompt(context: PiContext): string | AnthropicContent
         const claudeToolName = msg.toolName
           ? mapPiToolNameToClaude(msg.toolName)
           : "unknown";
-        parts.push(`TOOL RESULT (historical ${claudeToolName}):`);
+        parts.push(`TOOL RESULT (${claudeToolName}):`);
       }
       parts.push(toolResultContentToText(msg.content));
     } else if (msg.role === "user") {
@@ -283,7 +283,7 @@ export function buildPrompt(context: PiContext): string | AnthropicContentBlock[
           const claudeToolName = message.toolName
             ? mapPiToolNameToClaude(message.toolName)
             : "unknown";
-          historyParts.push(`TOOL RESULT (historical ${claudeToolName}):`);
+          historyParts.push(`TOOL RESULT (${claudeToolName}):`);
         }
         // Extract text portion of tool result
         historyParts.push(toolResultContentToText(message.content));
@@ -347,7 +347,7 @@ export function buildPrompt(context: PiContext): string | AnthropicContentBlock[
         const claudeToolName = message.toolName
           ? mapPiToolNameToClaude(message.toolName)
           : "unknown";
-        parts.push(`TOOL RESULT (historical ${claudeToolName}):`);
+        parts.push(`TOOL RESULT (${claudeToolName}):`);
       }
       parts.push(toolResultContentToText(message.content));
     }
@@ -451,8 +451,6 @@ function rewriteCustomToolReferences(
   }
 
   let result = prompt;
-  let totalRewrites = 0;
-  const rewritten: string[] = [];
   for (const tool of tools) {
     if (BUILT_IN_PI_TOOLS.has(tool.name)) continue;
     // \b doesn't treat `_` as a word boundary the way we want here, so anchor
@@ -464,19 +462,7 @@ function rewriteCustomToolReferences(
       `(?<![A-Za-z0-9_])(?<!mcp__custom-tools__)${escaped}(?![A-Za-z0-9_])`,
       "g",
     );
-    const before = result;
     result = result.replace(pattern, `mcp__custom-tools__${tool.name}`);
-    if (result !== before) {
-      const matches = before.match(pattern);
-      const count = matches?.length ?? 0;
-      totalRewrites += count;
-      rewritten.push(`${tool.name}×${count}`);
-    }
-  }
-  if (totalRewrites > 0) {
-    console.error(
-      `[pi-claude-cli] system prompt: rewrote ${totalRewrites} custom tool ref(s) [${rewritten.join(", ")}]`,
-    );
   }
   return result;
 }
@@ -580,7 +566,7 @@ function contentToText(content: string | unknown[]): string {
           : typeof rawArgs === "string"
             ? JSON.stringify(rawArgs)
             : "{}";
-        return `Historical tool call (non-executable): ${claudeName} args=${argsStr}`;
+        return `[Prior tool call — already executed; result follows in TOOL RESULT (${claudeName}):] args=${argsStr}`;
       }
       // Unknown block types are represented as a placeholder
       return `[${String(block.type)}]`;

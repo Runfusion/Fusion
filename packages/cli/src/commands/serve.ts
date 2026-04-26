@@ -25,7 +25,7 @@ import {
 } from "@fusion/core";
 import type { AutomationRunResult, ScheduledTask } from "@fusion/core";
 import { createServer, GitHubClient, createSkillsAdapter, getProjectSettingsPath, loadTlsCredentialsFromEnv } from "@fusion/dashboard";
-import { ProjectEngineManager, PeerExchangeService } from "@fusion/engine";
+import { ProjectEngineManager, PeerExchangeService, setHostExtensionPaths } from "@fusion/engine";
 import {
   AuthStorage,
   DefaultPackageManager,
@@ -52,6 +52,7 @@ import {
   resolveClaudeCliExtensionPaths,
   setCachedClaudeCliResolution,
 } from "./claude-cli-extension.js";
+import { resolveSelfExtension } from "./self-extension.js";
 
 const DIAGNOSTIC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 let diagnosticIntervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -468,8 +469,18 @@ export async function runServe(
       }
     })();
 
+    // Inject the cli's own extension so fn_* tools register globally without
+    // requiring `pi install npm:@runfusion/fusion`.
+    const selfExtension = resolveSelfExtension();
+    const selfExtensionPaths = selfExtension.status === "ok" ? [selfExtension.path] : [];
+    if (selfExtension.status !== "ok") {
+      console.warn(`[extensions] self: ${selfExtension.reason}`);
+    }
+    setHostExtensionPaths(selfExtensionPaths);
+
     const extensionsResult = await discoverAndLoadExtensions(
       [
+        ...selfExtensionPaths,
         ...getEnabledPiExtensionPaths(cwd),
         ...packageExtensionPaths,
         ...claudeCliPaths,

@@ -26,7 +26,7 @@ import {
   stopAllDevServers,
   type RuntimeLogger,
 } from "@fusion/dashboard";
-import { aiMergeTask, MissionAutopilot, MissionExecutionLoop, HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext, ProjectEngineManager, PeerExchangeService } from "@fusion/engine";
+import { aiMergeTask, MissionAutopilot, MissionExecutionLoop, HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext, ProjectEngineManager, PeerExchangeService, setHostExtensionPaths } from "@fusion/engine";
 import { AuthStorage, DefaultPackageManager, ModelRegistry, SettingsManager, discoverAndLoadExtensions, createExtensionRuntime } from "@mariozechner/pi-coding-agent";
 import {
   getMergeStrategy,
@@ -46,6 +46,7 @@ import {
   resolveClaudeCliExtensionPaths,
   setCachedClaudeCliResolution,
 } from "./claude-cli-extension.js";
+import { resolveSelfExtension } from "./self-extension.js";
 import { DashboardTUI, DashboardLogSink, isTTYAvailable, type SystemInfo, type GitStatus, type GitCommit, type GitCommitDetail, type GitBranch, type GitWorktree, type FileEntry, type FileReadResult, type TaskStep as TUITaskStep, type TaskLogEntry as TUITaskLogEntry, type TaskDetailData, type TaskEvent } from "./dashboard-tui/index.js";
 
 // Re-export for backward compatibility with tests
@@ -1131,9 +1132,24 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       }
     })();
 
+    // Always inject the cli's own extension (`@runfusion/fusion`) so its
+    // `fn_*` tools register globally even when the user hasn't run
+    // `pi install npm:@runfusion/fusion`. Without this, agent chat with
+    // pi-claude-cli has no fn_* tools at all.
+    const selfExtension = resolveSelfExtension();
+    const selfExtensionPaths = selfExtension.status === "ok" ? [selfExtension.path] : [];
+    if (selfExtension.status !== "ok") {
+      logSink.warn(`[extensions] self: ${selfExtension.reason}`, "extensions");
+    }
+    // Propagate self-extension path to engine so createFnAgent sessions
+    // (chat, refine, mission, etc.) also load fn_* tools, not just the
+    // dashboard's extension runtime.
+    setHostExtensionPaths(selfExtensionPaths);
+
     // Load all enabled extensions: Fusion/Pi filesystem-discovered + package-resolved.
     const extensionsResult = await discoverAndLoadExtensions(
       [
+        ...selfExtensionPaths,
         ...getEnabledPiExtensionPaths(cwd),
         ...packageExtensionPaths,
         ...claudeCliPaths,

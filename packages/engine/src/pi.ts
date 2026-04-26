@@ -50,6 +50,24 @@ export interface AgentResult {
   sessionFile?: string;
 }
 
+/**
+ * Process-global list of extension paths to inject into every createFnAgent
+ * session. Set once at startup by the host (cli's dashboard/daemon/serve)
+ * before any sessions are created. The paths are passed to pi's
+ * `DefaultResourceLoader` as `additionalExtensionPaths` so the cli's own
+ * `@runfusion/fusion` extension (registering `fn_*` tools) is loaded inside
+ * every agent session — including chat sessions that pass no `customTools`.
+ */
+let hostExtensionPaths: string[] = [];
+
+export function setHostExtensionPaths(paths: readonly string[]): void {
+  hostExtensionPaths = [...paths];
+}
+
+export function getHostExtensionPaths(): readonly string[] {
+  return hostExtensionPaths;
+}
+
 export interface PromptableSession extends AgentSession {
   promptWithFallback: (prompt: string, options?: unknown) => Promise<void>;
 }
@@ -1066,6 +1084,10 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     settingsManager,
     systemPromptOverride: () => options.systemPrompt,
     appendSystemPromptOverride: () => [],
+    // Inject host-supplied extension paths (e.g. cli's own `@runfusion/fusion`
+    // extension that registers `fn_*` tools) so they're loaded inside every
+    // agent session, including chat sessions that don't pass `customTools`.
+    ...(hostExtensionPaths.length > 0 ? { additionalExtensionPaths: [...hostExtensionPaths] } : {}),
     ...(skillsOverrideFn ? { skillsOverride: skillsOverrideFn } : {}),
   });
   await resourceLoader.reload();

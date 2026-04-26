@@ -323,13 +323,24 @@ export function createEventBridge(
         partial: output,
       });
     } else if (block.type === "tool_use") {
-      // Final JSON parse with fallback to raw string
+      // Final JSON parse with fallback to raw string.
+      // Special case: parameterless MCP tools (e.g. fn_review_spec, schema
+      // `{type:"object", properties:{}}`) emit ZERO input_json_delta events,
+      // so `partialJson` stays "". Without this guard we'd JSON.parse("")
+      // → throw → fall through to `finalArgs = ""` (raw string), and pi's
+      // TypeBox validator then rejects with "root: must be object" because
+      // an empty string is not an object. Default to `{}` so the call lands.
       let finalArgs: Record<string, unknown> | string;
-      try {
-        const parsed = JSON.parse(block.partialJson);
-        finalArgs = translateClaudeArgsToPi(block.claudeName, parsed);
-      } catch {
-        finalArgs = block.partialJson;
+      const trimmedJson = block.partialJson.trim();
+      if (trimmedJson === "") {
+        finalArgs = {};
+      } else {
+        try {
+          const parsed = JSON.parse(trimmedJson);
+          finalArgs = translateClaudeArgsToPi(block.claudeName, parsed);
+        } catch {
+          finalArgs = block.partialJson;
+        }
       }
 
       // Update output.content with final arguments
