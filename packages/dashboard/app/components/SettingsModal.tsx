@@ -2543,7 +2543,8 @@ export function SettingsModal({
 
         // Determine if editing is allowed
         const isMemoryEnabled = form.memoryEnabled !== false;
-        const isBackendWritable = capabilities?.writable ?? true;
+        const backendStatusResolved = !backendLoading && backendStatus !== null;
+        const isBackendWritable = backendStatusResolved ? (capabilities?.writable ?? true) : true;
         const isEditingAllowed = isMemoryEnabled && isBackendWritable;
 
         const selectedMemoryFile = memoryFiles.find((file) => file.path === selectedMemoryPath);
@@ -2588,7 +2589,7 @@ export function SettingsModal({
               </div>
             ) : null}
 
-            {backendStatus?.qmdAvailable === false && (
+            {backendStatusResolved && backendStatus.qmdAvailable === false && (
               <div className="settings-empty-state memory-status-message">
                 <span>
                   qmd is not installed. Search will use local files.
@@ -2741,7 +2742,7 @@ export function SettingsModal({
                 Memory is currently disabled. You can view the file, but editing is read-only until memory is re-enabled.
               </div>
             )}
-            {isMemoryEnabled && !isBackendWritable && (
+            {isMemoryEnabled && backendStatusResolved && !isBackendWritable && (
               <div className="settings-empty-state memory-status-message">
                 Memory is configured with a read-only backend. You can view the file, but saving is disabled.
               </div>

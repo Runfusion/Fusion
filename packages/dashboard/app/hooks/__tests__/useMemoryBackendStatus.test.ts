@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { useMemoryBackendStatus } from "../useMemoryBackendStatus";
 import * as api from "../../api";
 
@@ -125,6 +125,41 @@ describe("useMemoryBackendStatus", () => {
     await result.current.refresh();
 
     await waitFor(() => expect(result.current.currentBackend).toBe("qmd"));
+  });
+
+  it("treats backend status as unknown while a refresh is in flight", async () => {
+    let resolveRefresh: ((value: api.MemoryBackendStatus) => void) | null = null;
+
+    mockFetchMemoryBackendStatus
+      .mockResolvedValueOnce(mockReadonlyBackendStatus)
+      .mockImplementationOnce(
+        () => new Promise<api.MemoryBackendStatus>((resolve) => {
+          resolveRefresh = resolve;
+        }),
+      );
+
+    const { result } = renderHook(() => useMemoryBackendStatus({ autoRefresh: false }));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.isWritable).toBe(false);
+    expect(result.current.status).toEqual(mockReadonlyBackendStatus);
+
+    act(() => {
+      void result.current.refresh();
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(true));
+    expect(result.current.status).toBeNull();
+    expect(result.current.capabilities).toBeNull();
+    expect(result.current.isWritable).toBe(false);
+
+    act(() => {
+      resolveRefresh?.(mockFileBackendStatus);
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.status).toEqual(mockFileBackendStatus);
+    expect(result.current.isWritable).toBe(true);
   });
 
   it("clears error on successful refresh after error", async () => {

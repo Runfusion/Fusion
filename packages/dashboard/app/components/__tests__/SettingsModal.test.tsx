@@ -658,6 +658,87 @@ describe("SettingsModal", () => {
       expect(checkbox).toBeChecked();
     });
 
+    it("shows only loading copy while backend status is unresolved", async () => {
+      mockUseMemoryBackendStatus.mockReturnValue({
+        // Simulate stale negative payload while a refresh is still in-flight.
+        status: {
+          currentBackend: "readonly",
+          capabilities: {
+            readable: true,
+            writable: false,
+            supportsAtomicWrite: false,
+            hasConflictResolution: false,
+            persistent: true,
+          },
+          availableBackends: ["file", "readonly", "qmd"],
+          qmdAvailable: false,
+          qmdInstallCommand: "bun install -g @tobilu/qmd",
+        },
+        currentBackend: "readonly",
+        capabilities: {
+          readable: true,
+          writable: false,
+          supportsAtomicWrite: false,
+          hasConflictResolution: false,
+          persistent: true,
+        },
+        availableBackends: ["file", "readonly", "qmd"],
+        loading: true,
+        error: null,
+        refresh: vi.fn(),
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+      await userEvent.click(screen.getByText("Memory"));
+
+      expect(screen.getByText("Checking memory write access...")).toBeInTheDocument();
+      expect(screen.queryByText(/qmd is not installed\. Search will use local files\./i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Memory is configured with a read-only backend\./i)).not.toBeInTheDocument();
+    });
+
+    it("shows read-only warning after backend resolves as non-writable", async () => {
+      mockUseMemoryBackendStatus.mockReturnValue({
+        status: {
+          currentBackend: "readonly",
+          capabilities: {
+            readable: true,
+            writable: false,
+            supportsAtomicWrite: false,
+            hasConflictResolution: false,
+            persistent: true,
+          },
+          availableBackends: ["file", "readonly", "qmd"],
+          qmdAvailable: true,
+          qmdInstallCommand: "bun install -g @tobilu/qmd",
+        },
+        currentBackend: "readonly",
+        capabilities: {
+          readable: true,
+          writable: false,
+          supportsAtomicWrite: false,
+          hasConflictResolution: false,
+          persistent: true,
+        },
+        availableBackends: ["file", "readonly", "qmd"],
+        loading: false,
+        error: null,
+        refresh: vi.fn(),
+      });
+
+      renderModal();
+
+      await waitFor(() => {
+        expect(mockFetchSettings).toHaveBeenCalled();
+      });
+      await userEvent.click(screen.getByText("Memory"));
+
+      expect(screen.getByText(/Memory is configured with a read-only backend\./i)).toBeInTheDocument();
+    });
+
     it("installs qmd from the missing qmd prompt", async () => {
       const addToast = vi.fn();
       const refresh = vi.fn(() => Promise.resolve());

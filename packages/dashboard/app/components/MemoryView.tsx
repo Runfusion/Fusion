@@ -344,6 +344,7 @@ export function MemoryView({ projectId, addToast }: MemoryViewProps) {
     setInsightsEditorContent(null);
   }, []);
 
+  const backendStatusResolved = !backendLoading && backendStatus !== null;
   const isWritable = backendStatus?.capabilities?.writable ?? false;
 
   return (
@@ -397,7 +398,7 @@ export function MemoryView({ projectId, addToast }: MemoryViewProps) {
         {/* Working Memory Tab */}
         {activeTab === "working" && (
           <div className="memory-working-tab">
-            {!isWritable && (
+            {backendStatusResolved && !isWritable && (
               <div className="memory-readonly-banner">
                 This memory backend is read-only. Changes cannot be saved.
               </div>
@@ -793,15 +794,15 @@ export function MemoryView({ projectId, addToast }: MemoryViewProps) {
                 {/* QMD Integration Card */}
                 <div className="memory-engine-card memory-qmd-card">
                   <h3>QMD Integration</h3>
-                  {backendStatus?.qmdAvailable ? (
+                  {backendStatus?.qmdAvailable === true ? (
                     <div className="memory-engine-status">
                       <span className="memory-health-badge memory-health-badge--healthy">Installed</span>
                       <span className="memory-char-count">qmd is available on PATH.</span>
                     </div>
-                  ) : (
+                  ) : backendStatus?.qmdAvailable === false ? (
                     <div className="settings-empty-state memory-status-message">
                       <span>
-                        qmd is not installed. Search will use local files. Install indexed retrieval: <code>{backendStatus?.qmdInstallCommand || "bun install -g @tobilu/qmd"}</code>
+                        qmd is not installed. Search will use local files. Install indexed retrieval: <code>{backendStatus.qmdInstallCommand || "bun install -g @tobilu/qmd"}</code>
                       </span>
                       <button
                         type="button"
@@ -811,6 +812,11 @@ export function MemoryView({ projectId, addToast }: MemoryViewProps) {
                       >
                         {installingQmd ? "Installing…" : "Install qmd"}
                       </button>
+                    </div>
+                  ) : (
+                    <div className="memory-engine-status">
+                      <span className="memory-health-badge">Checking</span>
+                      <span className="memory-char-count">Checking qmd availability…</span>
                     </div>
                   )}
                   <div style={{ display: "flex", gap: "var(--space-xs)", marginTop: "var(--space-sm)", flexWrap: "wrap" }}>

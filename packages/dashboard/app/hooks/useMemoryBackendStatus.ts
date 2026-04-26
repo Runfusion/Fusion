@@ -34,17 +34,18 @@ export function useMemoryBackendStatus(options: UseMemoryBackendStatusOptions = 
   // Track if the component is still mounted to prevent stale updates
   const mountedRef = useRef(true);
 
-  const fetchStatus = useCallback(async (isManual = false) => {
+  const fetchStatus = useCallback(async () => {
     // Cancel any in-flight request
     if (abortRef.current) {
       abortRef.current.abort();
     }
     abortRef.current = new AbortController();
 
-    if (isManual) {
-      setLoading(true);
-      setError(null);
-    }
+    // Always reset to unresolved while a new request is in flight so stale
+    // capabilities are never treated as authoritative.
+    setLoading(true);
+    setError(null);
+    setStatus(null);
 
     try {
       const data = await fetchMemoryBackendStatus(projectId);
@@ -78,7 +79,7 @@ export function useMemoryBackendStatus(options: UseMemoryBackendStatusOptions = 
   // Initial fetch
   useEffect(() => {
     mountedRef.current = true;
-    fetchStatus(false);
+    fetchStatus();
 
     return () => {
       mountedRef.current = false;
@@ -90,7 +91,7 @@ export function useMemoryBackendStatus(options: UseMemoryBackendStatusOptions = 
     if (!autoRefresh) return;
 
     pollRef.current = setInterval(() => {
-      fetchStatus(false);
+      fetchStatus();
     }, pollInterval);
 
     return () => {
@@ -116,13 +117,15 @@ export function useMemoryBackendStatus(options: UseMemoryBackendStatusOptions = 
   }, []);
 
   const refresh = useCallback(() => {
-    return fetchStatus(true);
+    return fetchStatus();
   }, [fetchStatus]);
 
   // Derived convenience getters
-  const currentBackend = status?.currentBackend ?? null;
-  const capabilities = status?.capabilities ?? null;
-  const availableBackends = status?.availableBackends ?? [];
+  // Hide stale status while loading to preserve unknown/loading semantics.
+  const resolvedStatus = loading ? null : status;
+  const currentBackend = resolvedStatus?.currentBackend ?? null;
+  const capabilities = resolvedStatus?.capabilities ?? null;
+  const availableBackends = resolvedStatus?.availableBackends ?? [];
 
   const isReadable = capabilities?.readable ?? false;
   const isWritable = capabilities?.writable ?? false;
@@ -130,7 +133,7 @@ export function useMemoryBackendStatus(options: UseMemoryBackendStatusOptions = 
 
   return {
     // Raw status
-    status,
+    status: resolvedStatus,
     // Convenience getters
     currentBackend,
     capabilities,
