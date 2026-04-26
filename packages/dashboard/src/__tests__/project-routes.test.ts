@@ -593,6 +593,9 @@ class MockStoreForRoutes extends EventEmitter {
 
 describe("POST /api/projects route handler", () => {
   beforeEach(() => {
+    // Ensure HTTP request helpers and async route handlers are never evaluated under fake timers.
+    // Other test suites in this file and in parallel workers may enable fake timers.
+    vi.useRealTimers();
     vi.clearAllMocks();
     mockFsAccess.mockResolvedValue(undefined);
     mockFsStat.mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" }));

@@ -8,7 +8,11 @@ All registrars receive `ApiRoutesContext` from `./types.ts`, built by `createApi
 
 Registrars should be typed as `ApiRouteRegistrar` so modules share one explicit registration contract.
 
-The context centralizes cross-cutting dependencies so registrars preserve behavior without re-implementing plumbing:
+The context centralizes cross-cutting dependencies so registrars preserve behavior without re-implementing plumbing.
+
+Some registrars (for example `register-task-workflow-routes.ts`) also take a narrow dependency-injection object for non-context helpers that must stay source-of-truth in `routes.ts` (cache maps, git diff helpers, background refresh helpers, multer upload middleware). This avoids helper duplication while preserving runtime parity.
+
+The context provides core cross-cutting plumbing:
 
 - Request/project scoping: `getProjectIdFromRequest`, `getScopedStore`, `getProjectContext`
   - These are also exported from `context.ts` as canonical helpers for future extraction tasks.
@@ -20,9 +24,10 @@ The context centralizes cross-cutting dependencies so registrars preserve behavi
 
 ## Registrar module map
 
-- `register-settings-memory.ts` — settings, memory backend, memory file APIs
-- `register-tasks.ts` — tasks, comments, documents, activity, task lifecycle operations
-- `register-planning-chat.ts` — planning sessions, subtasks, chat session routes
+- `register-settings-memory-routes.ts` — settings APIs and memory backend/file/insight routes
+- `register-task-workflow-routes.ts` — task/workflow domain (`/tasks*`, `/documents`, task comments/docs/checkout/spec/attachments, PR+issue status, task file/diff endpoints)
+- `register-planning-subtask-routes.ts` — planning sessions and subtask breakdown routes
+- `register-chat-routes.ts` — chat session/list/mutation/stream routes
 - `register-messaging-scripts.ts` — scripts API and mailbox/message routes
 - `register-git-github.ts` — git/GitHub workflows and related helpers
 - `register-files-terminal-workspaces.ts` — files, terminal, workspace file operations
