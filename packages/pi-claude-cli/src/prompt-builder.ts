@@ -446,9 +446,16 @@ function rewriteCustomToolReferences(
   prompt: string,
   tools: ReadonlyArray<PiToolLike> | undefined,
 ): string {
-  if (!prompt || !tools || tools.length === 0) return prompt;
+  if (!prompt || !tools || tools.length === 0) {
+    console.error(
+      `[pi-claude-cli] system prompt rewrite skipped (tools=${tools?.length ?? 0})`,
+    );
+    return prompt;
+  }
 
   let result = prompt;
+  let totalRewrites = 0;
+  const rewritten: string[] = [];
   for (const tool of tools) {
     if (BUILT_IN_PI_TOOLS.has(tool.name)) continue;
     // \b doesn't treat `_` as a word boundary the way we want here, so anchor
@@ -460,7 +467,23 @@ function rewriteCustomToolReferences(
       `(?<![A-Za-z0-9_])(?<!mcp__custom-tools__)${escaped}(?![A-Za-z0-9_])`,
       "g",
     );
+    const before = result;
     result = result.replace(pattern, `mcp__custom-tools__${tool.name}`);
+    if (result !== before) {
+      const matches = before.match(pattern);
+      const count = matches?.length ?? 0;
+      totalRewrites += count;
+      rewritten.push(`${tool.name}×${count}`);
+    }
+  }
+  if (totalRewrites > 0) {
+    console.error(
+      `[pi-claude-cli] system prompt: rewrote ${totalRewrites} custom tool ref(s) [${rewritten.join(", ")}]`,
+    );
+  } else {
+    console.error(
+      `[pi-claude-cli] system prompt: no custom tool refs to rewrite (tools=${tools.length})`,
+    );
   }
   return result;
 }
