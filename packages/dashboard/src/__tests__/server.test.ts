@@ -327,19 +327,35 @@ describe("createServer health and headless mode", () => {
     const dashboard = createServer(createMockStore({ getSettings: vi.fn().mockResolvedValue({ remoteAccess }) }));
     const headless = createServer(createMockStore({ getSettings: vi.fn().mockResolvedValue({ remoteAccess }) }), { headless: true });
 
-    const [dashSettings, headlessSettings, dashLoginUrl, headlessLoginUrl] = await Promise.all([
+    const [dashSettings, headlessSettings, dashLoginUrl, headlessLoginUrl, dashStatus, headlessStatus, headlessRoot] = await Promise.all([
       GET(dashboard, "/api/remote/settings"),
       GET(headless, "/api/remote/settings"),
       REQUEST(headless, "POST", "/api/remote-access/auth/login-url", JSON.stringify({ mode: "persistent" }), { "Content-Type": "application/json" }),
       REQUEST(dashboard, "POST", "/api/remote-access/auth/login-url", JSON.stringify({ mode: "persistent" }), { "Content-Type": "application/json" }),
+      GET(dashboard, "/api/remote/status"),
+      GET(headless, "/api/remote/status"),
+      GET(headless, "/"),
     ]);
 
     expect(dashSettings.status).toBe(200);
     expect(headlessSettings.status).toBe(200);
     expect(dashLoginUrl.status).toBe(200);
     expect(headlessLoginUrl.status).toBe(200);
-    expect(String((dashLoginUrl.body as Record<string, unknown>).loginUrl)).toContain("/remote-login?rt=");
-    expect(String((headlessLoginUrl.body as Record<string, unknown>).loginUrl)).toContain("/remote-login?rt=");
+    expect(dashStatus.status).toBe(200);
+    expect(headlessStatus.status).toBe(200);
+
+    const dashLoginBody = dashLoginUrl.body as Record<string, unknown>;
+    const headlessLoginBody = headlessLoginUrl.body as Record<string, unknown>;
+    expect(Object.keys(dashLoginBody).sort()).toEqual(["loginUrl", "tokenType"]);
+    expect(Object.keys(headlessLoginBody).sort()).toEqual(["loginUrl", "tokenType"]);
+    expect(String(dashLoginBody.loginUrl)).toContain("/remote-login?rt=");
+    expect(String(headlessLoginBody.loginUrl)).toContain("/remote-login?rt=");
+
+    const dashStatusBody = dashStatus.body as Record<string, unknown>;
+    const headlessStatusBody = headlessStatus.body as Record<string, unknown>;
+    expect(Object.keys(dashStatusBody).sort()).toEqual(["lastError", "lastErrorCode", "provider", "restore", "state", "url"]);
+    expect(Object.keys(headlessStatusBody).sort()).toEqual(["lastError", "lastErrorCode", "provider", "restore", "state", "url"]);
+    expect(headlessRoot.status).toBe(404);
   });
 });
 

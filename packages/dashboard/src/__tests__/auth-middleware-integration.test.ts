@@ -281,4 +281,108 @@ describe("Auth middleware integration with createServer", () => {
       expect(healthResponse.status).toBe(200);
     });
   });
+
+  describe("remote login hybrid token validation", () => {
+    function buildRemoteAccessSettings() {
+      return {
+        enabled: true,
+        activeProvider: "cloudflare",
+        providers: {
+          tailscale: {
+            enabled: false,
+            hostname: "tail.example.ts.net",
+            targetPort: 4040,
+            acceptRoutes: false,
+          },
+          cloudflare: {
+            enabled: true,
+            tunnelName: "demo-tunnel",
+            tunnelToken: "cf-secret",
+            ingressUrl: "https://remote.example.com",
+          },
+        },
+        tokenStrategy: {
+          persistent: {
+            enabled: true,
+            token: "frt_persistent_token",
+          },
+          shortLived: {
+            enabled: true,
+            ttlMs: 120000,
+            maxTtlMs: 86400000,
+          },
+        },
+        lifecycle: {
+          rememberLastRunning: false,
+          wasRunningOnShutdown: false,
+          lastRunningProvider: null,
+        },
+      };
+    }
+
+    it("returns fully-qualified login-url payloads and consistent invalid token errors", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-04-26T12:00:00.000Z"));
+
+        const store = new MockStore() as unknown as TaskStore & { getSettings: ReturnType<typeof vi.fn> };
+        store.getSettings = vi.fn().mockResolvedValue({ remoteAccess: buildRemoteAccessSettings() });
+
+        const app = createServer(store as unknown as TaskStore, { daemon: { token: "fn_daemon_token" } });
+
+        const persistentIssue = await request(
+          app,
+          "POST",
+          "/api/remote-access/auth/login-url",
+          JSON.stringify({ mode: "persistent" }),
+          {
+            "Content-Type": "application/json",
+            Authorization: "Bearer fn_daemon_token",
+          },
+        );
+
+        expect(persistentIssue.status).toBe(200);
+        expect(persistentIssue.body).toMatchObject({ tokenType: "persistent" });
+        const persistentUrl = new URL(String((persistentIssue.body as Record<string, unknown>).loginUrl));
+        expect(persistentUrl.protocol).toBe("https:");
+        expect(persistentUrl.host).toBe("remote.example.com");
+        expect(persistentUrl.pathname).toBe("/remote-login");
+        expect(persistentUrl.searchParams.get("rt")).toMatch(/^frt_[A-Za-z0-9_-]+$/);
+
+        const shortIssue = await request(
+          app,
+          "POST",
+          "/api/remote-access/auth/login-url",
+          JSON.stringify({ mode: "short-lived" }),
+          {
+            "Content-Type": "application/json",
+            Authorization: "Bearer fn_daemon_token",
+          },
+        );
+
+        expect(shortIssue.status).toBe(200);
+        expect(shortIssue.body).toMatchObject({ tokenType: "short-lived", expiresAt: expect.any(String) });
+
+        const shortUrl = new URL(String((shortIssue.body as Record<string, unknown>).loginUrl));
+        const shortToken = shortUrl.searchParams.get("rt");
+        expect(shortToken).toMatch(/^frt_[A-Za-z0-9_-]+$/);
+
+        const invalid = await request(app, "GET", "/remote-login?rt=frt_wrong");
+        const missing = await request(app, "GET", "/remote-login");
+
+        vi.advanceTimersByTime(121000);
+        const expired = await request(app, "GET", `/remote-login?rt=${shortToken}`);
+
+        expect(invalid.status).toBe(401);
+        expect(missing.status).toBe(401);
+        expect(expired.status).toBe(401);
+
+        expect(invalid.body).toEqual({ error: "Unauthorized", code: "remote_token_invalid" });
+        expect(missing.body).toEqual({ error: "Unauthorized", code: "remote_token_missing" });
+        expect(expired.body).toEqual({ error: "Unauthorized", code: "remote_token_expired" });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });

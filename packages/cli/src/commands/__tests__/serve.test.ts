@@ -728,6 +728,22 @@ describe("runServe", () => {
     await triggerSignal("SIGINT");
   });
 
+  it("preserves remote-capable headless wiring when daemon auth is enabled", async () => {
+    const { createServer } = await import("@fusion/dashboard");
+
+    await runServe(0, { daemon: true });
+
+    expect(createServer).toHaveBeenCalledTimes(1);
+    const serverOptions = createServer.mock.calls[0][1];
+    expect(serverOptions).toMatchObject({ headless: true, daemon: { token: expect.any(String) } });
+    expect(serverOptions.daemon.token.length).toBeGreaterThan(0);
+    expect(serverOptions.engine).toBeDefined();
+    expect(typeof serverOptions.engine.startRemoteTunnel).toBe("function");
+    expect(typeof serverOptions.engine.stopRemoteTunnel).toBe("function");
+
+    await triggerSignal("SIGINT");
+  });
+
   it("sets enginePaused when started with paused=true", async () => {
     await runServe(0, { paused: true });
 

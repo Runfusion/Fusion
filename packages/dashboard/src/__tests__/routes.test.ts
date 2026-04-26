@@ -17926,7 +17926,12 @@ describe("remote access auth login-url endpoints", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.tokenType).toBe("persistent");
-    expect(res.body.loginUrl).toContain("https://remote.example.com/remote-login?rt=");
+    const persistentLoginUrl = new URL(String(res.body.loginUrl));
+    expect(persistentLoginUrl.protocol).toBe("https:");
+    expect(persistentLoginUrl.host).toBe("remote.example.com");
+    expect(persistentLoginUrl.pathname).toBe("/remote-login");
+    expect(persistentLoginUrl.searchParams.get("rt")).toMatch(/^frt_[A-Za-z0-9_-]+$/);
+    expect(res.body.expiresAt).toBeUndefined();
     expect(store.updateSettings).toHaveBeenCalledWith(expect.objectContaining({
       remoteAccess: expect.objectContaining({
         tokenStrategy: expect.objectContaining({
@@ -17965,7 +17970,12 @@ describe("remote access auth login-url endpoints", () => {
     expect(res.status).toBe(200);
     expect(res.body.tokenType).toBe("short-lived");
     expect(res.body.expiresAt).toEqual(expect.any(String));
-    expect(res.body.loginUrl).toContain("/remote-login?rt=");
+    const shortLivedUrl = new URL(String(res.body.loginUrl));
+    expect(shortLivedUrl.protocol).toBe("https:");
+    expect(shortLivedUrl.host).toBe("remote.example.com");
+    expect(shortLivedUrl.pathname).toBe("/remote-login");
+    expect(shortLivedUrl.searchParams.get("rt")).toMatch(/^frt_[A-Za-z0-9_-]+$/);
+    expect(Date.parse(String(res.body.expiresAt))).not.toBeNaN();
     expect(JSON.stringify(res.body)).not.toContain("cf-secret");
     expect(JSON.stringify(res.body)).not.toContain("frt_persistent");
   });
@@ -17981,5 +17991,6 @@ describe("remote access auth login-url endpoints", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("mode must be");
+    expect(res.body.details).toEqual({ code: "INVALID_REMOTE_AUTH_MODE" });
   });
 });
