@@ -1074,7 +1074,7 @@ describe("TaskForm workflow step reordering (FN-836)", () => {
     expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-001", "WS-002", "WS-003"]);
   });
 
-  it("preserves order when removing a step via checkbox (not reorder remove)", async () => {
+  it("preserves order when removing a step via remove action (not reorder remove)", async () => {
     const { fetchWorkflowSteps } = await import("../../api");
     vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([
       { id: "WS-001", name: "QA Check", description: "Run tests", prompt: "Check tests", enabled: true, createdAt: "", updatedAt: "" },
@@ -1089,9 +1089,8 @@ describe("TaskForm workflow step reordering (FN-836)", () => {
       expect(screen.getByTestId("workflow-step-order")).toBeTruthy();
     });
 
-    // Uncheck WS-002 via checkbox
-    const checkbox = screen.getByTestId("workflow-step-checkbox-WS-002").querySelector('input[type="checkbox"]') as HTMLInputElement;
-    fireEvent.click(checkbox);
+    // Remove WS-002 via explicit remove action
+    fireEvent.click(screen.getByTestId("workflow-step-remove-WS-002"));
 
     expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-001", "WS-003"]);
   });

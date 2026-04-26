@@ -22,9 +22,11 @@ export { createFnAgent, promptWithFallback, describeModel, setHostExtensionPaths
 // Register createFnAgent into core's loader so consumers in @fusion/core
 // (e.g. ai-summarize, memory-compaction) can resolve it without a circular
 // static import. Runs once at engine module load.
-import { setCreateFnAgent } from "@fusion/core";
+import * as core from "@fusion/core";
 import { createFnAgent as _createFnAgentForCore } from "./pi.js";
-setCreateFnAgent(_createFnAgentForCore);
+if ("setCreateFnAgent" in core) {
+  core.setCreateFnAgent?.(_createFnAgentForCore);
+}
 export {
   resolveSessionSkills,
   createSkillsOverrideFromSelection,

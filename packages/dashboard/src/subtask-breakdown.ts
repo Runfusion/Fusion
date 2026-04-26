@@ -12,7 +12,7 @@ import {
 import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let createFnAgent: any = engineCreateFnAgent;
+const createFnAgent: any = engineCreateFnAgent;
 
 /**
  * Shared diagnostics helper for the subtask-breakdown module.
