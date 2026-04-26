@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { loadAllAppCss } from "../../test/cssFixture";
 import { CustomModelDropdown } from "../CustomModelDropdown";
 
 vi.mock("../ProviderIcon", () => ({
@@ -26,6 +27,13 @@ describe("CustomModelDropdown", () => {
       removeEventListener: vi.fn(),
       dispatchEvent: vi.fn(),
     } as MediaQueryList));
+  });
+
+  it("keeps the search wrapper background opaque to prevent list bleed-through", () => {
+    const css = loadAllAppCss();
+    const wrapperRuleMatch = css.match(/\.model-combobox-search-wrapper\s*\{[^}]*\}/);
+    expect(wrapperRuleMatch).toBeTruthy();
+    expect(wrapperRuleMatch![0]).toContain("background: var(--surface);");
   });
 
   it("renders the open dropdown in a portal attached to document.body", async () => {

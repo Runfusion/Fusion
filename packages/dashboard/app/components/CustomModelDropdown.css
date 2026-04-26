@@ -78,6 +78,7 @@
 .model-combobox-search-wrapper {
   position: relative;
   flex-shrink: 0;
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
 
@@ -125,7 +126,7 @@
   padding: 6px 12px;
   font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
   color: var(--text-muted);
-  background: var(--bg);
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
 
