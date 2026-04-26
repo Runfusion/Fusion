@@ -173,6 +173,16 @@ afterEach(() => {
   localStorage.removeItem("fn.authToken");
 });
 
+describe("ModelOnboardingModal module exports", () => {
+  it("does not export dead AppModals/auth onboarding symbols", async () => {
+    const moduleExports = await import("../ModelOnboardingModal");
+
+    expect("AppModals" in moduleExports).toBe(false);
+    expect("useAuthOnboarding" in moduleExports).toBe(false);
+    expect("UseAuthOnboardingOptions" in moduleExports).toBe(false);
+  });
+});
+
 describe("ModelOnboardingModal", () => {
   describe("step structure", () => {
     it("renders the AI Setup step by default with all three step indicators", async () => {

@@ -1,7 +1,6 @@
 /* === SettingsModal: all settings-related layout, panel, and component styles ===
    Extracted from styles.css as part of the Sweep-3 CSS extraction effort.
-   Imported by SettingsModal.tsx (and MemoryView.tsx / ModelOnboardingModal.tsx
-   for the classes they share). */
+   Imported by SettingsModal.tsx (and MemoryView.tsx for shared classes). */
 
 /* === Settings Layout === */
 .settings-modal-heading {
