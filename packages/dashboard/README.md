@@ -811,7 +811,7 @@ Plugin management endpoints with multi-project scoping support via `projectId` q
 
 - **Frontend**: React + Vite, TypeScript, xterm.js for terminal emulation, CSS custom properties for theming
 - **Backend**: Express server with REST API, badge WebSocket at `/api/ws`, terminal WebSocket at `/api/terminal/ws`, and Server-Sent Events (SSE) for task/log updates
-- **Terminal**: node-pty for PTY spawning, WebSocket for bidirectional I/O
+- **Terminal**: @homebridge/node-pty-prebuilt-multiarch (aliased as node-pty) for PTY spawning, WebSocket for bidirectional I/O
 - **Badge Updates**: `useBadgeWebSocket()` shares a single browser socket and subscribes per visible GitHub-linked task card
 - **State Management**: Custom hooks with EventSource for real-time task updates plus a dedicated WebSocket store for badge snapshots
 - **Git Integration**: Server-side git command execution with validation

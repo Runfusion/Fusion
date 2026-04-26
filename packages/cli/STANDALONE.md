@@ -170,10 +170,14 @@ dist/
 **Important:** When distributing or moving the binary, ensure the `client/` and `runtime/` directories are copied alongside it. Terminal functionality will gracefully degrade (return HTTP 503) if runtime assets are missing — the dashboard will continue to work but terminal sessions won't be available.
 
 **How it works:**
-When the dashboard starts from a Bun-compiled binary, it attempts to set up native module resolution so `node-pty` can find its platform-specific `.node` files. This involves:
-1. Copying native assets to a temp directory (`/tmp/kb-bunfs-<pid>/kb/prebuilds/<platform>/`)
+When the dashboard starts from a Bun-compiled binary, it attempts to set up native module resolution so `@homebridge/node-pty-prebuilt-multiarch` (aliased as `node-pty`) can find its platform-specific `.node` file. This involves:
+1. Copying the staged `pty.node` from `runtime/<platform>/` to a temp directory (`/tmp/fn-bunfs-<pid>/fn/prebuilds/<platform>/`)
 2. Attempting to create a symlink at `/$bunfs/root` pointing to the temp directory (Unix platforms)
 3. If the symlink can't be created (e.g., macOS permissions), pre-loading the native module via `process.dlopen()`
+
+During the build (`bun run build.ts`), native assets are sourced from:
+- **Host platform**: `node_modules/node-pty/build/Release/pty.node` (placed by `prebuild-install` at install time)
+- **Linux cross-compile targets**: `node_modules/node-pty/prebuilds/linux-<arch>/node.abi<N>.node` (bundled in the fork's npm tarball)
 
 If all resolution methods fail, terminal creation gracefully returns `null`, which the HTTP layer converts to a 503 Service Unavailable response.
 

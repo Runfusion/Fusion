@@ -44,8 +44,23 @@ function getNativePrebuildName(): string {
 function findInstalledNodePtyNativeDir(): string | null {
   try {
     const packageJsonPath = require.resolve("node-pty/package.json");
-    const nativeDir = join(dirname(packageJsonPath), "prebuilds", getNativePrebuildName());
-    return fs.existsSync(join(nativeDir, "pty.node")) ? nativeDir : null;
+    const pkgRoot = dirname(packageJsonPath);
+
+    // @homebridge/node-pty-prebuilt-multiarch (aliased as node-pty) places the binary
+    // in build/Release/pty.node after prebuild-install runs at install time.
+    // Prefer this location as it is the fork's standard output path.
+    const releaseDir = join(pkgRoot, "build", "Release");
+    if (fs.existsSync(join(releaseDir, "pty.node"))) {
+      return releaseDir;
+    }
+
+    // Fallback: check the old prebuilds/<plat-arch>/ layout (upstream node-pty style).
+    const prebuildDir = join(pkgRoot, "prebuilds", getNativePrebuildName());
+    if (fs.existsSync(join(prebuildDir, "pty.node"))) {
+      return prebuildDir;
+    }
+
+    return null;
   } catch {
     return null;
   }
