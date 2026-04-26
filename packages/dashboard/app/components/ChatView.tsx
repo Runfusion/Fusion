@@ -15,6 +15,8 @@ import {
   Bot,
   Square,
   Wrench,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { useChat, type ToolCallInfo } from "../hooks/useChat";
 import { useViewportMode } from "./Header";
@@ -481,6 +483,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
   const [mentionHighlightIndex, setMentionHighlightIndex] = useState(0);
   const [mentionStartPos, setMentionStartPos] = useState(-1);
   const [renderAssistantMarkdown, setRenderAssistantMarkdown] = useState(true);
+  const [plainTextMessageIds, setPlainTextMessageIds] = useState<Set<string>>(() => new Set());
 
   // File mention state and hook
   const [, setFileMentionPopupVisible] = useState(false);
@@ -1031,9 +1034,22 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     ? `${pendingMessage.slice(0, 50)}…`
     : pendingMessage;
 
+  const toggleMessageRenderMode = useCallback((messageId: string) => {
+    setPlainTextMessageIds((current) => {
+      const next = new Set(current);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  }, []);
+
   const renderAssistantContent = useCallback(
-    (content: string) => {
-      if (!renderAssistantMarkdown) {
+    (content: string, forcePlain = false) => {
+      const showPlainText = isMobile ? forcePlain : forcePlain || !renderAssistantMarkdown;
+      if (showPlainText) {
         return <div className="chat-message-content chat-message-content--plain">{content}</div>;
       }
 
@@ -1045,7 +1061,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
         </div>
       );
     },
-    [renderAssistantMarkdown],
+    [isMobile, renderAssistantMarkdown],
   );
 
   return (
@@ -1242,41 +1258,68 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
             </div>
           ) : (
             <>
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`chat-message chat-message--${message.role}`}
-                  data-testid={`chat-message-${message.id}`}
-                >
-                  {message.role === "assistant" && (
-                    <div className="chat-message-avatar">
-                      <Bot size={14} />
-                      <span>{agentName}</span>
-                      {showAssistantModelTag && <span className="chat-model-tag">{activeModelTag}</span>}
-                    </div>
-                  )}
-                  {message.role === "assistant"
-                    ? renderAssistantContent(message.content)
-                    : <div className="chat-message-content">{renderMessageContent(message.content)}</div>}
-                  {renderToolCalls(message.toolCalls)}
-                  {message.thinkingOutput && (
-                    <details className="chat-message-thinking">
-                      <summary>Thinking</summary>
-                      <pre className="chat-message-thinking-content">{message.thinkingOutput}</pre>
-                    </details>
-                  )}
-                  <div className="chat-message-time">{formatRelativeTime(message.createdAt)}</div>
-                </div>
-              ))}
+              {messages.map((message) => {
+                const isAssistantMessage = message.role === "assistant";
+                const forcePlain = plainTextMessageIds.has(message.id);
+
+                return (
+                  <div
+                    key={message.id}
+                    className={`chat-message chat-message--${message.role}`}
+                    data-testid={`chat-message-${message.id}`}
+                  >
+                    {isAssistantMessage && (
+                      <div className="chat-message-avatar">
+                        <Bot size={14} />
+                        <span>{agentName}</span>
+                        {showAssistantModelTag && <span className="chat-model-tag">{activeModelTag}</span>}
+                        {isMobile && (
+                          <button
+                            type="button"
+                            className={`btn btn-icon chat-message-render-toggle${forcePlain ? " chat-message-render-toggle--plain" : ""}`}
+                            data-testid="chat-message-render-toggle"
+                            aria-label={forcePlain ? "Show rendered markdown" : "Show plain text"}
+                            onClick={() => toggleMessageRenderMode(message.id)}
+                          >
+                            {forcePlain ? <EyeOff size={14} /> : <Eye size={14} />}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {isAssistantMessage
+                      ? renderAssistantContent(message.content, forcePlain)
+                      : <div className="chat-message-content">{renderMessageContent(message.content)}</div>}
+                    {renderToolCalls(message.toolCalls)}
+                    {message.thinkingOutput && (
+                      <details className="chat-message-thinking">
+                        <summary>Thinking</summary>
+                        <pre className="chat-message-thinking-content">{message.thinkingOutput}</pre>
+                      </details>
+                    )}
+                    <div className="chat-message-time">{formatRelativeTime(message.createdAt)}</div>
+                  </div>
+                );
+              })}
               {isStreaming && (
                 <div className="chat-message chat-message--assistant chat-message--streaming">
                   <div className="chat-message-avatar">
                     <Bot size={14} />
                     <span>{agentName}</span>
                     {showAssistantModelTag && <span className="chat-model-tag">{activeModelTag}</span>}
+                    {isMobile && (
+                      <button
+                        type="button"
+                        className={`btn btn-icon chat-message-render-toggle${plainTextMessageIds.has("__streaming__") ? " chat-message-render-toggle--plain" : ""}`}
+                        data-testid="chat-message-render-toggle"
+                        aria-label={plainTextMessageIds.has("__streaming__") ? "Show rendered markdown" : "Show plain text"}
+                        onClick={() => toggleMessageRenderMode("__streaming__")}
+                      >
+                        {plainTextMessageIds.has("__streaming__") ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    )}
                   </div>
                   {streamingText ? (
-                    renderAssistantContent(streamingText)
+                    renderAssistantContent(streamingText, plainTextMessageIds.has("__streaming__"))
                   ) : (
                     <div className="chat-message-content chat-message-content--waiting">
                       {streamingThinking ? "Thinking…" : "Connecting…"}

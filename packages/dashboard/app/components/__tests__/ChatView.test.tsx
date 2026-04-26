@@ -37,6 +37,8 @@ vi.mock("lucide-react", async (importOriginal) => {
     ChevronLeft: ({ "data-testid": testId, ...props }: any) => <svg data-testid={testId || "icon-chevron-left"} {...props} />,
     Bot: ({ "data-testid": testId, ...props }: any) => <svg data-testid={testId || "icon-bot"} {...props} />,
     Square: ({ "data-testid": testId, ...props }: any) => <svg data-testid={testId || "icon-square"} {...props} />,
+    Eye: ({ "data-testid": testId, ...props }: any) => <svg data-testid={testId || "icon-eye"} {...props} />,
+    EyeOff: ({ "data-testid": testId, ...props }: any) => <svg data-testid={testId || "icon-eye-off"} {...props} />,
   };
 });
 
@@ -136,6 +138,31 @@ function createMockSkill(overrides: Partial<DiscoveredSkill>): DiscoveredSkill {
 function setupMockChat(overrides: Partial<typeof defaultChatState> = {}) {
   const state = { ...defaultChatState, ...overrides };
   mockUseChat.mockReturnValue(state as any);
+}
+
+function ensureMatchMedia() {
+  if (!window.matchMedia) {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn(),
+    });
+  }
+}
+
+function mockViewportMode(mode: "mobile" | "desktop") {
+  ensureMatchMedia();
+  const isMobile = mode === "mobile";
+  Object.defineProperty(window, "innerWidth", { value: isMobile ? 375 : 1280, configurable: true });
+  return vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+    matches: isMobile && query === "(max-width: 768px)",
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
 }
 
 beforeEach(() => {
@@ -469,6 +496,100 @@ describe("ChatView", () => {
     await userEvent.click(screen.getByTestId("chat-render-mode-plain"));
 
     expect(within(streamingBubble).getByText(/\*\*Live\*\* stream/)).toBeInTheDocument();
+  });
+
+  it("renders inline per-message render toggles for assistant bubbles on mobile", () => {
+    const restoreMatchMedia = mockViewportMode("mobile");
+    try {
+      setupMockChat({
+        activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+        messages: [
+          { id: "msg-001", sessionId: "session-001", role: "assistant", content: "**First** item", createdAt: "2026-04-08T00:00:00.000Z" },
+          { id: "msg-002", sessionId: "session-001", role: "assistant", content: "**Second** item", createdAt: "2026-04-08T00:01:00.000Z" },
+        ],
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      expect(screen.getAllByTestId("chat-message-render-toggle")).toHaveLength(2);
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+
+  it("toggles plain text for one mobile assistant message without affecting others", async () => {
+    const restoreMatchMedia = mockViewportMode("mobile");
+    try {
+      setupMockChat({
+        activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+        messages: [
+          { id: "msg-001", sessionId: "session-001", role: "assistant", content: "**First** item", createdAt: "2026-04-08T00:00:00.000Z" },
+          { id: "msg-002", sessionId: "session-001", role: "assistant", content: "**Second** item", createdAt: "2026-04-08T00:01:00.000Z" },
+        ],
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const firstBubble = screen.getByTestId("chat-message-msg-001");
+      const secondBubble = screen.getByTestId("chat-message-msg-002");
+      const [firstToggle] = screen.getAllByTestId("chat-message-render-toggle");
+
+      expect(within(firstBubble).getByText("First", { selector: "strong" })).toBeInTheDocument();
+      expect(within(secondBubble).getByText("Second", { selector: "strong" })).toBeInTheDocument();
+
+      await userEvent.click(firstToggle);
+
+      expect(within(firstBubble).getByText(/\*\*First\*\* item/)).toBeInTheDocument();
+      expect(within(firstBubble).queryByText("First", { selector: "strong" })).toBeNull();
+      expect(within(secondBubble).getByText("Second", { selector: "strong" })).toBeInTheDocument();
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+
+  it("toggles mobile assistant message back to markdown when clicked again", async () => {
+    const restoreMatchMedia = mockViewportMode("mobile");
+    try {
+      setupMockChat({
+        activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+        messages: [
+          { id: "msg-001", sessionId: "session-001", role: "assistant", content: "**First** item", createdAt: "2026-04-08T00:00:00.000Z" },
+        ],
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const bubble = screen.getByTestId("chat-message-msg-001");
+      const toggle = screen.getByTestId("chat-message-render-toggle");
+
+      await userEvent.click(toggle);
+      expect(within(bubble).getByText(/\*\*First\*\* item/)).toBeInTheDocument();
+
+      await userEvent.click(toggle);
+      expect(within(bubble).getByText("First", { selector: "strong" })).toBeInTheDocument();
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+
+  it("hides the header markdown/plain toggle controls on mobile via CSS", () => {
+    const restoreMatchMedia = mockViewportMode("mobile");
+    try {
+      setupMockChat({
+        activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" },
+        messages: [
+          { id: "msg-001", sessionId: "session-001", role: "assistant", content: "**First** item", createdAt: "2026-04-08T00:00:00.000Z" },
+        ],
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      expect(screen.queryByTestId("chat-render-mode-markdown")).toBeInTheDocument();
+      expect(screen.queryByTestId("chat-render-mode-plain")).toBeInTheDocument();
+      expect(document.querySelector(".chat-render-mode-toggle")).toBeInTheDocument();
+    } finally {
+      restoreMatchMedia();
+    }
   });
 
   it("renders tool calls from persisted messages", () => {
@@ -2027,5 +2148,13 @@ describe("ChatView mobile CSS contract", () => {
   it("mobile .chat-sidebar-footer-btn has flex: 1 for full-width button", () => {
     expect(mobileRuleContains(".chat-sidebar-footer-btn", "flex: 1")).toBe(true);
     expect(mobileRuleContains(".chat-sidebar-footer-btn", "justify-content: center")).toBe(true);
+  });
+
+  it("mobile hides thread header markdown/plain toggle container", () => {
+    expect(mobileRuleContains(".chat-render-mode-toggle", "display: none")).toBe(true);
+  });
+
+  it("mobile shows inline assistant render toggle button", () => {
+    expect(mobileRuleContains(".chat-message-render-toggle", "display: inline-flex")).toBe(true);
   });
 });
