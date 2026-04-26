@@ -8,7 +8,6 @@ import { request as performRequest } from "../test-request.js";
 
 function buildRemoteAccessSettings() {
   return {
-    enabled: true,
     activeProvider: "cloudflare" as const,
     providers: {
       tailscale: {

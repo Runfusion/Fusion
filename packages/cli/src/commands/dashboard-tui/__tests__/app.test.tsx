@@ -34,7 +34,7 @@ function makeInteractiveData(opts: {
   models?: ModelItem[];
   taskDetail?: TaskDetailData | null;
   remote?: Partial<{
-    getSettings: () => Promise<{ remoteEnabled: boolean; activeProvider: "tailscale" | "cloudflare" | null; tailscaleEnabled: boolean; cloudflareEnabled: boolean; shortLivedEnabled: boolean; shortLivedTtlMs: number }>;
+    getSettings: () => Promise<{ activeProvider: "tailscale" | "cloudflare" | null; tailscaleEnabled: boolean; cloudflareEnabled: boolean; shortLivedEnabled: boolean; shortLivedTtlMs: number }>;
     getStatus: () => Promise<{ provider: "tailscale" | "cloudflare" | null; state: "stopped" | "starting" | "running" | "error"; url: string | null; lastError: string | null }>;
     activateProvider: (provider: "tailscale" | "cloudflare") => Promise<void>;
     startTunnel: () => Promise<void>;
@@ -58,7 +58,6 @@ function makeInteractiveData(opts: {
     pollIntervalMs: 60000,
     enginePaused: false,
     globalPause: false,
-    remoteEnabled: false,
     remoteActiveProvider: null,
     remoteShortLivedEnabled: false,
     remoteShortLivedTtlMs: 900000,
@@ -66,7 +65,6 @@ function makeInteractiveData(opts: {
   const models = opts.models ?? [];
   const remoteDefaults = {
     getSettings: async () => ({
-      remoteEnabled: settings.remoteEnabled,
       activeProvider: settings.remoteActiveProvider,
       tailscaleEnabled: true,
       cloudflareEnabled: true,
@@ -353,7 +351,6 @@ describe("Settings view", () => {
       pollIntervalMs: 60000,
       enginePaused: false,
       globalPause: false,
-      remoteEnabled: true,
       remoteActiveProvider: "tailscale",
       remoteShortLivedEnabled: true,
       remoteShortLivedTtlMs: 600000,
@@ -401,7 +398,6 @@ describe("Settings view", () => {
       pollIntervalMs: 60000,
       enginePaused: false,
       globalPause: false,
-      remoteEnabled: true,
       remoteActiveProvider: "cloudflare",
       remoteShortLivedEnabled: true,
       remoteShortLivedTtlMs: 600000,

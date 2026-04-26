@@ -14,7 +14,6 @@ import {
 
 function createRemoteSettings(overrides: Partial<RemoteAccessProjectSettings> = {}): RemoteAccessProjectSettings {
   return {
-    enabled: true,
     activeProvider: "tailscale",
     providers: {
       tailscale: {
@@ -94,7 +93,7 @@ describe("remote-auth", () => {
   });
 
   it("returns disabled when remote access or token strategy is disabled", () => {
-    const disabledRemote = validateRemoteAuthToken("anything", createRemoteSettings({ enabled: false }));
+    const disabledRemote = validateRemoteAuthToken("anything", createRemoteSettings({ activeProvider: null }));
     expect(disabledRemote).toEqual({ status: "disabled" });
 
     const disabledStrategies = validateRemoteAuthToken(

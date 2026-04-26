@@ -13670,7 +13670,6 @@ describe("GET /settings/scopes", () => {
       global: { themeMode: "dark" },
       project: {
         remoteAccess: {
-          enabled: true,
           activeProvider: "tailscale",
           providers: {
             tailscale: {

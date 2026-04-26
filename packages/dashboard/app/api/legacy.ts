@@ -404,7 +404,6 @@ export function updateSettings(settings: Partial<Settings>, projectId?: string):
 }
 
 export interface RemoteSettings {
-  remoteEnabled: boolean;
   remoteActiveProvider: "tailscale" | "cloudflare" | null;
   remoteTailscaleEnabled: boolean;
   remoteTailscaleHostname: string;

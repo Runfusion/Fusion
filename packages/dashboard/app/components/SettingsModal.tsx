@@ -1244,7 +1244,6 @@ export function SettingsModal({
 
   const handleSaveRemoteSettings = useCallback(async () => {
     const nextSettings: Partial<RemoteSettings> = {
-      remoteEnabled: Boolean((form as Record<string, unknown>).remoteEnabled),
       remoteActiveProvider: ((form as Record<string, unknown>).remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null,
       remoteTailscaleEnabled: Boolean((form as Record<string, unknown>).remoteTailscaleEnabled),
       remoteTailscaleHostname: String((form as Record<string, unknown>).remoteTailscaleHostname ?? ""),
@@ -3410,19 +3409,6 @@ export function SettingsModal({
           <>
             {renderScopeBanner()}
             <h4 className="settings-section-heading">Remote Access</h4>
-
-            <div className="form-group">
-              <label htmlFor="remoteEnabled" className="checkbox-label">
-                <input
-                  id="remoteEnabled"
-                  type="checkbox"
-                  checked={Boolean(remoteForm.remoteEnabled)}
-                  onChange={(e) => setForm((f) => ({ ...f, remoteEnabled: e.target.checked } as SettingsFormState))}
-                />
-                Enable remote access controls
-              </label>
-              <small>Configure provider settings, tunnel lifecycle, and tokenized remote URLs.</small>
-            </div>
 
             <div className="form-group">
               <label htmlFor="remoteActiveProvider">Active provider</label>

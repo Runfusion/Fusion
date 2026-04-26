@@ -75,7 +75,6 @@ async function REQUEST(
 describe("remote access headless parity", () => {
   function buildRemoteAccessSettings() {
     return {
-      enabled: true,
       activeProvider: "cloudflare" as const,
       providers: {
         tailscale: {

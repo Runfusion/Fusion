@@ -157,7 +157,6 @@ export const DEFAULT_PROJECT_SETTINGS = {
   agentPrompts: undefined,
   promptOverrides: undefined,
   remoteAccess: {
-    enabled: false,
     activeProvider: null,
     providers: {
       tailscale: {

@@ -50,6 +50,9 @@ interface RemoteLifecycleEvaluation {
   message?: string;
 }
 
+const isRemoteActive = (ra: Settings["remoteAccess"] | undefined): boolean =>
+  ra?.activeProvider != null && (ra.providers[ra.activeProvider]?.enabled ?? false);
+
 export interface ProjectEngineOptions {
   /** Project identifier for notification deep links */
   projectId?: string;
@@ -419,8 +422,8 @@ export class ProjectEngine {
     const store = this.runtime.getTaskStore();
     const settings = await store.getSettings();
     const remoteAccess = settings.remoteAccess;
-    if (!remoteAccess?.enabled) {
-      throw new Error("invalid_config:remote access is disabled");
+    if (!remoteAccess || !isRemoteActive(remoteAccess)) {
+      throw new Error("invalid_config:no remote access provider enabled");
     }
 
     const provider = remoteAccess.activeProvider;
@@ -545,7 +548,7 @@ export class ProjectEngine {
 
     const settings = await store.getSettings();
     const remoteAccess = settings.remoteAccess;
-    if (!remoteAccess?.enabled) {
+    if (!remoteAccess || !isRemoteActive(remoteAccess)) {
       this.setRestoreDiagnostics("skipped", "remote_access_disabled", null);
       return;
     }
@@ -651,8 +654,8 @@ export class ProjectEngine {
     provider: TunnelProvider,
   ): Promise<RemoteLifecycleEvaluation> {
     const remoteAccess = settings.remoteAccess;
-    if (!remoteAccess?.enabled) {
-      return { provider, reason: "remote_access_disabled", message: "Remote access is disabled" };
+    if (!remoteAccess || !isRemoteActive(remoteAccess)) {
+      return { provider, reason: "remote_access_disabled", message: "No remote provider is enabled" };
     }
 
     if (provider === "tailscale") {

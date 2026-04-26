@@ -448,7 +448,6 @@ function SettingsPanel({ state, isFocused }: { state: DashboardState; isFocused:
               ["pollMs", `${s.pollIntervalMs}`],
               ["paused", s.enginePaused ? "yes" : "no"],
               ["globalPause", s.globalPause ? "yes" : "no"],
-              ["remoteEnabled", s.remoteEnabled ? "enabled" : "disabled"],
               ["remoteProvider", s.remoteActiveProvider ?? "none"],
               ["remoteState", s.remoteStatus?.state ?? "unknown"],
             ] as Array<[string, string]>
@@ -2105,7 +2104,7 @@ function AgentsView({ state }: { state: DashboardState }) {
 
 // ── Settings interactive view ─────────────────────────────────────────────────
 
-type SettingKey = "maxConcurrent" | "maxWorktrees" | "autoMerge" | "mergeStrategy" | "pollIntervalMs" | "enginePaused" | "globalPause" | "remoteEnabled" | "remoteActiveProvider" | "remoteShortLivedEnabled" | "remoteShortLivedTtlMs";
+type SettingKey = "maxConcurrent" | "maxWorktrees" | "autoMerge" | "mergeStrategy" | "pollIntervalMs" | "enginePaused" | "globalPause" | "remoteActiveProvider" | "remoteShortLivedEnabled" | "remoteShortLivedTtlMs";
 
 interface SettingDef {
   key: SettingKey;
@@ -2122,7 +2121,6 @@ const SETTING_DEFS: SettingDef[] = [
   { key: "pollIntervalMs", label: "Poll Interval (ms)", type: "number" },
   { key: "enginePaused", label: "Engine Paused", type: "boolean" },
   { key: "globalPause", label: "Global Pause", type: "boolean" },
-  { key: "remoteEnabled", label: "Remote Access", type: "boolean" },
   { key: "remoteActiveProvider", label: "Remote Provider", type: "enum", options: ["tailscale", "cloudflare"] },
   { key: "remoteShortLivedEnabled", label: "Short-Lived Tokens", type: "boolean" },
   { key: "remoteShortLivedTtlMs", label: "Short-Lived TTL (ms)", type: "number" },
@@ -2513,8 +2511,6 @@ function SettingsInteractiveView({ state, controller }: { state: DashboardState;
                   <Text color={localSettings.remoteStatus?.state === "running" ? "green" : "yellow"}>{localSettings.remoteStatus?.state ?? "unknown"}</Text>
                 </Box>
                 <Box flexDirection="row" gap={1}>
-                  <Text dimColor>Enabled:</Text>
-                  <Text>{localSettings.remoteSettingsSnapshot?.remoteEnabled ? "yes" : "no"}</Text>
                   <Text dimColor>Short-lived:</Text>
                   <Text>{localSettings.remoteSettingsSnapshot?.shortLivedEnabled ? "on" : "off"}</Text>
                 </Box>

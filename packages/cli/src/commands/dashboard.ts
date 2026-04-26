@@ -722,7 +722,6 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
             pollIntervalMs: fullSettings.pollIntervalMs ?? 60_000,
             enginePaused: fullSettings.enginePaused ?? false,
             globalPause: fullSettings.globalPause ?? false,
-            remoteEnabled: Boolean(fullSettings.remoteEnabled),
             remoteActiveProvider: (fullSettings.remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null,
             remoteShortLivedEnabled: Boolean(fullSettings.remoteShortLivedEnabled),
             remoteShortLivedTtlMs: Number(fullSettings.remoteShortLivedTtlMs ?? 900_000),
@@ -736,7 +735,6 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           pollIntervalMs: 60_000,
           enginePaused: paused,
           globalPause: false,
-          remoteEnabled: false,
           remoteActiveProvider: null,
           remoteShortLivedEnabled: false,
           remoteShortLivedTtlMs: 900_000,
@@ -874,7 +872,6 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         pollIntervalMs: settings.pollIntervalMs ?? 60_000,
         enginePaused: settings.enginePaused ?? false,
         globalPause: settings.globalPause ?? false,
-        remoteEnabled: Boolean(settings.remoteEnabled),
         remoteActiveProvider: (settings.remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null,
         remoteShortLivedEnabled: Boolean(settings.remoteShortLivedEnabled),
         remoteShortLivedTtlMs: Number(settings.remoteShortLivedTtlMs ?? 900_000),
@@ -1846,7 +1843,6 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         pollIntervalMs: settings.pollIntervalMs ?? 60_000,
         enginePaused: settings.enginePaused ?? false,
         globalPause: settings.globalPause ?? false,
-        remoteEnabled: Boolean(settings.remoteEnabled),
         remoteActiveProvider: (settings.remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null,
         remoteShortLivedEnabled: Boolean(settings.remoteShortLivedEnabled),
         remoteShortLivedTtlMs: Number(settings.remoteShortLivedTtlMs ?? 900_000),
@@ -1986,12 +1982,10 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
               pollIntervalMs: s.pollIntervalMs ?? 60_000,
               enginePaused: s.enginePaused ?? false,
               globalPause: s.globalPause ?? false,
-              remoteEnabled: Boolean(s.remoteEnabled),
               remoteActiveProvider: (s.remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null,
               remoteShortLivedEnabled: Boolean(s.remoteShortLivedEnabled),
               remoteShortLivedTtlMs: Number(s.remoteShortLivedTtlMs ?? 900_000),
               remoteSettingsSnapshot: {
-                remoteEnabled: Boolean(s.remoteEnabled),
                 activeProvider: (s.remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null,
                 tailscaleEnabled: Boolean(s.remoteTailscaleEnabled),
                 cloudflareEnabled: Boolean(s.remoteCloudflareEnabled),
@@ -2010,7 +2004,6 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
             if (partial.pollIntervalMs !== undefined) mapped.pollIntervalMs = partial.pollIntervalMs;
             if (partial.enginePaused !== undefined) mapped.enginePaused = partial.enginePaused;
             if (partial.globalPause !== undefined) mapped.globalPause = partial.globalPause;
-            if (partial.remoteEnabled !== undefined) mapped.remoteEnabled = partial.remoteEnabled;
             if (partial.remoteActiveProvider !== undefined) mapped.remoteActiveProvider = partial.remoteActiveProvider;
             if (partial.remoteShortLivedEnabled !== undefined) mapped.remoteShortLivedEnabled = partial.remoteShortLivedEnabled;
             if (partial.remoteShortLivedTtlMs !== undefined) mapped.remoteShortLivedTtlMs = partial.remoteShortLivedTtlMs;
@@ -2037,7 +2030,6 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
               }
               const payload = await response.json();
               return {
-                remoteEnabled: Boolean(payload?.settings?.remoteEnabled),
                 activeProvider: (payload?.settings?.remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null,
                 tailscaleEnabled: Boolean(payload?.settings?.remoteTailscaleEnabled),
                 cloudflareEnabled: Boolean(payload?.settings?.remoteCloudflareEnabled),

@@ -2628,7 +2628,6 @@ describe("TaskStore", () => {
 
   describe("remoteAccess settings", () => {
     const baseRemoteAccess = {
-      enabled: true,
       activeProvider: "cloudflare" as const,
       providers: {
         tailscale: {
@@ -2759,7 +2758,6 @@ describe("TaskStore", () => {
       await store.updateSettings({ remoteAccess: null as any });
 
       const settings = await store.getSettings();
-      expect(settings.remoteAccess?.enabled).toBe(false);
       expect(settings.remoteAccess?.activeProvider).toBeNull();
       expect(settings.remoteAccess?.tokenStrategy.persistent.token).toBeNull();
 

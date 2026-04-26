@@ -1214,7 +1214,6 @@ export interface RemoteAccessLifecycleConfig {
 }
 
 export interface RemoteAccessProjectSettings {
-  enabled: boolean;
   activeProvider: RemoteAccessProvider | null;
   providers: RemoteAccessProvidersConfig;
   tokenStrategy: RemoteAccessTokenStrategyConfig;

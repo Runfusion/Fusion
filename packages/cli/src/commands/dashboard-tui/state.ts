@@ -75,7 +75,6 @@ export interface RemoteQrPayload {
 }
 
 export interface RemoteSettingsSnapshot {
-  remoteEnabled: boolean;
   activeProvider: RemoteProvider | null;
   tailscaleEnabled: boolean;
   cloudflareEnabled: boolean;
@@ -91,7 +90,6 @@ export interface SettingsValues {
   pollIntervalMs: number;
   enginePaused: boolean;
   globalPause: boolean;
-  remoteEnabled: boolean;
   remoteActiveProvider: RemoteProvider | null;
   remoteShortLivedEnabled: boolean;
   remoteShortLivedTtlMs: number;

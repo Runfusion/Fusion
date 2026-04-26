@@ -200,7 +200,6 @@ describe("SettingsModal", () => {
     mockFetchDashboardHealth.mockResolvedValue({ status: "ok", version: "1.2.3", uptime: 123 });
     mockFetchRemoteSettings.mockResolvedValue({
       settings: {
-        remoteEnabled: false,
         remoteActiveProvider: null,
         remoteTailscaleEnabled: false,
         remoteTailscaleHostname: "",
@@ -221,7 +220,6 @@ describe("SettingsModal", () => {
     });
     mockUpdateRemoteSettings.mockResolvedValue({
       settings: {
-        remoteEnabled: false,
         remoteActiveProvider: null,
         remoteTailscaleEnabled: false,
         remoteTailscaleHostname: "",

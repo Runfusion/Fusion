@@ -110,12 +110,16 @@ function isRemoteAccessTokenStrategyEnabled(settings: RemoteAccessSettings): boo
   return settings.tokenStrategy.persistent.enabled || settings.tokenStrategy.shortLived.enabled;
 }
 
+function isRemoteProviderEnabled(settings: RemoteAccessSettings): boolean {
+  return Boolean(settings.activeProvider != null && settings.providers[settings.activeProvider]?.enabled);
+}
+
 export function validateRemoteAuthToken(
   rt: string | null | undefined,
   settings: RemoteAccessSettings,
   nowMs: number = Date.now(),
 ): RemoteTokenValidationResult {
-  if (!settings.enabled || !isRemoteAccessTokenStrategyEnabled(settings)) {
+  if (!isRemoteProviderEnabled(settings) || !isRemoteAccessTokenStrategyEnabled(settings)) {
     return { status: "disabled" };
   }
 

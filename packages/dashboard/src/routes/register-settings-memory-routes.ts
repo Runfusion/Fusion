@@ -122,8 +122,8 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
     const settings = await scopedStore.getSettings();
     const remoteAccess = settings.remoteAccess;
 
-    if (!remoteAccess?.enabled) {
-      throw new ApiError(409, "Remote access is disabled", { code: "REMOTE_ACCESS_DISABLED" });
+    if (!remoteAccess || remoteAccess.activeProvider == null || !remoteAccess.providers[remoteAccess.activeProvider]?.enabled) {
+      throw new ApiError(409, "No remote provider is enabled", { code: "REMOTE_ACCESS_DISABLED" });
     }
 
     const baseUrl = resolveRemoteBaseUrl(remoteAccess);
@@ -266,7 +266,8 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
   function toRemoteSettingsPayload(remoteAccess: NonNullable<Awaited<ReturnType<typeof store.getSettings>>["remoteAccess"]>) {
     const persistentToken = remoteAccess.tokenStrategy.persistent.token?.trim() ?? "";
     return {
-      remoteEnabled: Boolean(remoteAccess.enabled),
+      remoteEnabled: remoteAccess.activeProvider != null &&
+        (remoteAccess.providers[remoteAccess.activeProvider]?.enabled ?? false),
       remoteActiveProvider: remoteAccess.activeProvider ?? null,
       remoteTailscaleEnabled: Boolean(remoteAccess.providers.tailscale.enabled),
       remoteTailscaleHostname: remoteAccess.providers.tailscale.hostname,
@@ -315,7 +316,6 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       const body = (req.body ?? {}) as Record<string, unknown>;
       const nextRemoteAccess = {
         ...remoteAccess,
-        enabled: body.remoteEnabled === undefined ? remoteAccess.enabled : Boolean(body.remoteEnabled),
         activeProvider: body.remoteActiveProvider === undefined
           ? remoteAccess.activeProvider
           : (body.remoteActiveProvider as "tailscale" | "cloudflare" | null),
