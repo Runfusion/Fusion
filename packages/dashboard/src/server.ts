@@ -47,6 +47,7 @@ import { ChatManager } from "./chat.js";
 import { stopAllDevServers } from "./dev-server-routes.js";
 import type { SkillsAdapter } from "./skills-adapter.js";
 import { createAuthMiddleware, authenticateUpgradeRequest, getDaemonToken } from "./auth-middleware.js";
+import { validateRemoteAuthToken } from "./remote-auth.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -893,6 +894,50 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       version: process.env.npm_package_version ?? "0.4.0",
       uptime: Math.floor(process.uptime()),
     });
+  });
+
+  app.get("/remote-login", async (req, res) => {
+    const remoteToken = typeof req.query.rt === "string" ? req.query.rt : undefined;
+
+    let settings: Awaited<ReturnType<typeof store.getSettings>>;
+    try {
+      settings = await store.getSettings();
+    } catch {
+      res.status(401).json({ error: "Unauthorized", code: "remote_token_invalid" });
+      return;
+    }
+
+    const remoteAccess = settings.remoteAccess;
+    if (!remoteAccess) {
+      res.status(401).json({ error: "Unauthorized", code: "remote_token_invalid" });
+      return;
+    }
+
+    const result = validateRemoteAuthToken(remoteToken, remoteAccess);
+    if (result.status !== "valid") {
+      const codeByStatus: Record<string, string> = {
+        missing: "remote_token_missing",
+        expired: "remote_token_expired",
+        invalid: "remote_token_invalid",
+        disabled: "remote_token_invalid",
+      };
+
+      res.status(401).json({
+        error: "Unauthorized",
+        code: codeByStatus[result.status] ?? "remote_token_invalid",
+      });
+      return;
+    }
+
+    const daemonTokenForRedirect = getDaemonToken(options);
+    if (daemonTokenForRedirect) {
+      const redirectUrl = new URL("/", `${req.protocol}://${req.get("host")}`);
+      redirectUrl.searchParams.set("token", daemonTokenForRedirect);
+      res.redirect(302, redirectUrl.pathname + redirectUrl.search);
+      return;
+    }
+
+    res.redirect(302, "/");
   });
 
   // REST API

@@ -388,6 +388,10 @@ Implemented in `agent-heartbeat.ts`:
 Key server capabilities:
 - REST APIs for tasks, git, GitHub, agents, missions, planning, automations/routines, settings
 - Remote access APIs (`/api/remote/*`) for provider config, activation, tunnel lifecycle, status, token issuance, authenticated URL generation, and QR payload generation
+- Remote auth handoff endpoints:
+  - `POST /api/remote-access/auth/login-url` (daemon-auth protected) issues a tokenized phone-login URL for either `persistent` or `short-lived` mode.
+  - `GET /remote-login?rt=<token>` (public) validates remote token strategy and redirects to dashboard auth handoff (`/?token=<daemonToken>` when daemon auth is enabled, otherwise `/`).
+  - Invalid/missing/expired remote tokens return `401` JSON with deterministic codes: `remote_token_invalid`, `remote_token_missing`, `remote_token_expired`.
 - Chat APIs (`/api/chat/*`) with streaming response support (`routes.ts`, `chat.ts`)
 - Dev-server lifecycle + persistence APIs (`/api/dev-server/*`) backed by:
   - `dev-server-routes.ts` (router factory + per-project runtime registry)
@@ -407,6 +411,8 @@ Key server capabilities:
 - `createServer()` accepts `ServerOptions.runtimeLogger`; when omitted it defaults to a console-backed logger, preserving readable output in non-TTY/headless modes.
 - CLI TTY dashboard sessions inject a logger backed by `DashboardLogSink`, so runtime diagnostics from server/routes are captured in the TUI log buffer.
 - Sensitive remote-auth material is never logged raw; route/UI responses mask persistent token values unless explicitly requested by token-generation actions.
+- Short-lived remote auth tokens are runtime-ephemeral (in-memory only, cleared on process restart) and TTL-enforced server-side against persisted `remoteAccess.tokenStrategy.shortLived.ttlMs` plus issued expiry metadata.
+- Remote login links carry auth material in query params (`rt` then `token` on redirect). Treat links/QR screenshots as secrets: they can leak through history, screenshots, and chat logs; prefer short-lived mode for sharing.
 - Intentional startup/banner text in `fn dashboard` and `fn serve` remains direct plain output for readability and backward-compatible scripting behavior.
 
 ### Real-time channels

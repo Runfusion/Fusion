@@ -2128,3 +2128,159 @@ describe("createServer scoped scheduling resolver regressions", () => {
     });
   });
 });
+
+describe("GET /remote-login", () => {
+  const originalDaemonToken = process.env.FUSION_DAEMON_TOKEN;
+
+  beforeEach(() => {
+    delete process.env.FUSION_DAEMON_TOKEN;
+  });
+
+  afterEach(() => {
+    if (originalDaemonToken === undefined) {
+      delete process.env.FUSION_DAEMON_TOKEN;
+    } else {
+      process.env.FUSION_DAEMON_TOKEN = originalDaemonToken;
+    }
+  });
+
+  function buildRemoteAccessSettings() {
+    return {
+      enabled: true,
+      activeProvider: "cloudflare",
+      providers: {
+        tailscale: {
+          enabled: false,
+          hostname: "tail.example.ts.net",
+          targetPort: 4040,
+          acceptRoutes: false,
+        },
+        cloudflare: {
+          enabled: true,
+          tunnelName: "tunnel",
+          tunnelToken: "secret",
+          ingressUrl: "https://remote.example.com",
+        },
+      },
+      tokenStrategy: {
+        persistent: {
+          enabled: true,
+          token: "frt_persistent_token",
+        },
+        shortLived: {
+          enabled: true,
+          ttlMs: 120000,
+          maxTtlMs: 86400000,
+        },
+      },
+      lifecycle: {
+        rememberLastRunning: false,
+        wasRunningOnShutdown: false,
+        lastRunningProvider: null,
+      },
+    };
+  }
+
+  it("redirects valid token to dashboard with daemon token handoff when daemon auth is enabled", async () => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({ remoteAccess: buildRemoteAccessSettings() }),
+    });
+    const app = createServer(store, { daemon: { token: "fn_daemon_token" } });
+
+    const res = await GET(app, "/remote-login?rt=frt_persistent_token");
+
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("/?token=fn_daemon_token");
+  });
+
+  it("redirects valid token to root when daemon auth is disabled", async () => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({ remoteAccess: buildRemoteAccessSettings() }),
+    });
+    const app = createServer(store, { noAuth: true });
+
+    const res = await GET(app, "/remote-login?rt=frt_persistent_token");
+
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe("/");
+  });
+
+  it("returns 401 for invalid and missing remote token", async () => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({ remoteAccess: buildRemoteAccessSettings() }),
+    });
+    const app = createServer(store, { daemon: { token: "fn_daemon_token" } });
+
+    const invalid = await GET(app, "/remote-login?rt=frt_wrong");
+    expect(invalid.status).toBe(401);
+    expect(invalid.body).toEqual({ error: "Unauthorized", code: "remote_token_invalid" });
+
+    const missing = await GET(app, "/remote-login");
+    expect(missing.status).toBe(401);
+    expect(missing.body).toEqual({ error: "Unauthorized", code: "remote_token_missing" });
+  });
+
+  it("issues short-lived login URL and expires remote-login handoff after TTL", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-04-26T12:00:00.000Z"));
+
+      const store = createMockStore({
+        getSettings: vi.fn().mockResolvedValue({
+          remoteAccess: {
+            ...buildRemoteAccessSettings(),
+            tokenStrategy: {
+              persistent: { enabled: true, token: "frt_persistent_token" },
+              shortLived: { enabled: true, ttlMs: 120000, maxTtlMs: 86400000 },
+            },
+          },
+        }),
+      });
+      const app = createServer(store, { daemon: { token: "fn_daemon_token" } });
+
+      const issue = await REQUEST(
+        app,
+        "POST",
+        "/api/remote-access/auth/login-url",
+        JSON.stringify({ mode: "short-lived" }),
+        {
+          "Content-Type": "application/json",
+          Authorization: "Bearer fn_daemon_token",
+        },
+      );
+
+      expect(issue.status).toBe(200);
+      expect(typeof issue.body === "object" ? (issue.body as Record<string, unknown>).loginUrl : "").toEqual(expect.any(String));
+      const issuedLoginUrl = new URL(String((issue.body as Record<string, unknown>).loginUrl));
+      const shortLivedToken = issuedLoginUrl.searchParams.get("rt");
+      expect(shortLivedToken).toBeTruthy();
+
+      const beforeExpiry = await GET(app, `/remote-login?rt=${shortLivedToken}`);
+      expect(beforeExpiry.status).toBe(302);
+      expect(beforeExpiry.headers.location).toBe("/?token=fn_daemon_token");
+
+      vi.advanceTimersByTime(121000);
+
+      const afterExpiry = await GET(app, `/remote-login?rt=${shortLivedToken}`);
+      expect(afterExpiry.status).toBe(401);
+      expect(afterExpiry.body).toEqual({ error: "Unauthorized", code: "remote_token_expired" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not accept remote rt query tokens as API auth", async () => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({ remoteAccess: buildRemoteAccessSettings() }),
+    });
+    const app = createServer(store, { daemon: { token: "fn_daemon_token" } });
+
+    const res = await GET(app, "/api/tasks?rt=frt_persistent_token");
+
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({
+      error: "Unauthorized",
+      message: "Valid bearer token required",
+    });
+  });
+});

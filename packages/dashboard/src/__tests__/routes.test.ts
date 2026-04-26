@@ -17808,3 +17808,139 @@ describe("GET /api/chat/sessions lookup=resume", () => {
     expect(res.body.sessions[0].id).toBe("chat-listed");
   });
 });
+
+describe("remote access auth login-url endpoints", () => {
+  let store: TaskStore;
+
+  const remoteAccessSettings = {
+    enabled: true,
+    activeProvider: "cloudflare",
+    providers: {
+      tailscale: {
+        enabled: false,
+        hostname: "tail.example.ts.net",
+        targetPort: 4040,
+        acceptRoutes: false,
+      },
+      cloudflare: {
+        enabled: true,
+        tunnelName: "tunnel",
+        tunnelToken: "cf-secret",
+        ingressUrl: "https://remote.example.com",
+      },
+    },
+    tokenStrategy: {
+      persistent: {
+        enabled: true,
+        token: null,
+      },
+      shortLived: {
+        enabled: true,
+        ttlMs: 120000,
+        maxTtlMs: 86400000,
+      },
+    },
+    lifecycle: {
+      rememberLastRunning: false,
+      wasRunningOnShutdown: false,
+      lastRunningProvider: null,
+    },
+  };
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  beforeEach(() => {
+    store = createMockStore();
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      remoteAccess: remoteAccessSettings,
+    });
+  });
+
+  it("creates persistent login URL payload and persists generated fallback token", async () => {
+    (store.updateSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      remoteAccess: {
+        ...remoteAccessSettings,
+        tokenStrategy: {
+          ...remoteAccessSettings.tokenStrategy,
+          persistent: {
+            ...remoteAccessSettings.tokenStrategy.persistent,
+            token: "frt_generated_persistent",
+          },
+        },
+      },
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/remote-access/auth/login-url",
+      JSON.stringify({ mode: "persistent" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.tokenType).toBe("persistent");
+    expect(res.body.loginUrl).toContain("https://remote.example.com/remote-login?rt=");
+    expect(store.updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      remoteAccess: expect.objectContaining({
+        tokenStrategy: expect.objectContaining({
+          persistent: expect.objectContaining({
+            token: expect.any(String),
+          }),
+        }),
+      }),
+    }));
+  });
+
+  it("creates short-lived login URL payload with expiresAt", async () => {
+    const withPersistentToken = {
+      ...remoteAccessSettings,
+      tokenStrategy: {
+        ...remoteAccessSettings.tokenStrategy,
+        persistent: {
+          ...remoteAccessSettings.tokenStrategy.persistent,
+          token: "frt_persistent",
+        },
+      },
+    };
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      remoteAccess: withPersistentToken,
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/remote-access/auth/login-url",
+      JSON.stringify({ mode: "short-lived" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.tokenType).toBe("short-lived");
+    expect(res.body.expiresAt).toEqual(expect.any(String));
+    expect(res.body.loginUrl).toContain("/remote-login?rt=");
+    expect(JSON.stringify(res.body)).not.toContain("cf-secret");
+    expect(JSON.stringify(res.body)).not.toContain("frt_persistent");
+  });
+
+  it("rejects invalid login-url mode", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/remote-access/auth/login-url",
+      JSON.stringify({ mode: "legacy" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("mode must be");
+  });
+});
