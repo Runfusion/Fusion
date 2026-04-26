@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectEngine } from "../project-engine.js";
 import { runtimeLog } from "../logger.js";
+import { aiMergeTask } from "../merger.js";
 
 const mocks = vi.hoisted(() => ({
   syncInsightExtractionAutomation: vi.fn(),
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   cronRunnerStop: vi.fn(),
   runtimeStart: vi.fn(async () => undefined),
   runtimeStop: vi.fn(async () => undefined),
+  aiMergeTask: vi.fn(),
   currentStore: null as Record<string, unknown> | null,
 }));
 
@@ -39,6 +41,10 @@ vi.mock("../cron-runner.js", () => {
     createAiPromptExecutor: mocks.createAiPromptExecutor,
   };
 });
+
+vi.mock("../merger.js", () => ({
+  aiMergeTask: mocks.aiMergeTask,
+}));
 
 vi.mock("../pr-monitor.js", () => ({
   PrMonitor: vi.fn().mockImplementation(() => ({
@@ -85,6 +91,12 @@ function createMockStore(initialSettings: Record<string, unknown>) {
   const store = {
     getSettings: vi.fn(async () => ({ ...settings })),
     listTasks: vi.fn(async () => []),
+    getTask: vi.fn(async (taskId: string) => ({ id: taskId, column: "in-review", mergeRetries: 0, status: null })),
+    updateTask: vi.fn(async () => undefined),
+    moveTask: vi.fn(async () => undefined),
+    logEntry: vi.fn(async () => undefined),
+    addTaskComment: vi.fn(async () => undefined),
+    getActiveMergingTask: vi.fn(() => null),
     on: vi.fn((event: string, handler: (...args: unknown[]) => void | Promise<void>) => {
       if (event === "settings:updated") {
         settingsHandlers.add(handler as (payload: SettingsHandlerPayload) => void | Promise<void>);
@@ -147,6 +159,13 @@ describe("ProjectEngine auto-summarize wiring", () => {
     vi.clearAllMocks();
     const mockStore = createMockStore(baseSettings);
     mocks.currentStore = mockStore.store;
+    mocks.aiMergeTask.mockResolvedValue({
+      task: { id: "FN-001", column: "done" },
+      branch: "fusion/fn-001",
+      merged: true,
+      worktreeRemoved: false,
+      branchDeleted: true,
+    });
   });
 
   it("syncs startup memory automations using one settings snapshot", async () => {
@@ -212,6 +231,67 @@ describe("ProjectEngine auto-summarize wiring", () => {
     expect(mocks.syncAutoSummarizeAutomation).toHaveBeenCalledTimes(2);
 
     await engine.stop();
+  });
+});
+
+describe("ProjectEngine shutdown merge handling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+  });
+
+  it("aborts active merges, clears pending queue, and blocks new merges after stop", async () => {
+    const engine = createEngine();
+    await engine.start();
+
+    const privateEngine = engine as unknown as {
+      mergeQueue: string[];
+      mergeActive: Set<string>;
+      mergeAbortController: AbortController | null;
+      mergeRetryTimer: ReturnType<typeof setTimeout> | null;
+      activeMergeSession: { dispose: () => void } | null;
+    };
+
+    let capturedSignal: AbortSignal | undefined;
+    mocks.aiMergeTask.mockImplementationOnce(async (...args: unknown[]) => {
+      const options = args[3] as { signal?: AbortSignal } | undefined;
+      capturedSignal = options?.signal;
+      await new Promise<never>((_, reject) => {
+        options?.signal?.addEventListener("abort", () => {
+          const abortError = new Error("merge aborted");
+          abortError.name = "MergeAbortedError";
+          reject(abortError);
+        }, { once: true });
+      });
+    });
+
+    const manualMergePromise = engine.onMerge("FN-123");
+    engine.enqueueMerge("FN-queued");
+
+    await vi.waitFor(() => {
+      expect(mocks.aiMergeTask).toHaveBeenCalledTimes(1);
+    });
+
+    expect(capturedSignal?.aborted).toBe(false);
+
+    await engine.stop();
+
+    await expect(manualMergePromise).rejects.toThrow("Engine shutting down");
+
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(privateEngine.mergeQueue).toHaveLength(0);
+    expect(privateEngine.mergeRetryTimer).toBeNull();
+    expect(privateEngine.activeMergeSession).toBeNull();
+    await vi.waitFor(() => {
+      expect(privateEngine.mergeActive.has("FN-123")).toBe(false);
+    });
+    expect(privateEngine.mergeAbortController).toBeNull();
+
+    const mergeCallsBeforeRequeue = mocks.aiMergeTask.mock.calls.length;
+    engine.enqueueMerge("FN-after-stop");
+    expect(privateEngine.mergeQueue).toHaveLength(0);
+    expect(mocks.aiMergeTask).toHaveBeenCalledTimes(mergeCallsBeforeRequeue);
   });
 });
 

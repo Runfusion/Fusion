@@ -340,10 +340,12 @@ async function syncDependenciesForMerge(
   store: TaskStore,
   rootDir: string,
   taskId: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const installCommand = getDependencySyncCommand(rootDir);
   if (!installCommand) return;
 
+  throwIfAborted(signal, taskId);
   mergerLog.log(`${taskId}: syncing dependencies before merge build verification`);
   await store.logEntry(taskId, `Syncing dependencies before merge build verification: ${installCommand}`);
   try {
@@ -353,7 +355,9 @@ async function syncDependenciesForMerge(
       maxBuffer: 10 * 1024 * 1024,
       timeout: 300_000,
     });
+    throwIfAborted(signal, taskId);
   } catch (error: any) {
+    throwIfAborted(signal, taskId);
     const details = error?.stderr || error?.stdout || error?.message || String(error);
     throw new Error(`Dependency sync failed for ${taskId}: ${details}`.trim());
   }
@@ -479,6 +483,25 @@ export class VerificationError extends Error {
   }
 }
 
+/** Raised when a merge is explicitly cancelled (for example engine shutdown). */
+export class MergeAbortedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MergeAbortedError";
+  }
+}
+
+export function throwIfAborted(signal: AbortSignal | undefined, taskId: string): void {
+  if (!signal?.aborted) return;
+  throw new MergeAbortedError(`Merge aborted for ${taskId}: engine shutdown requested`);
+}
+
+function rethrowIfMergeAborted(error: unknown): void {
+  if (error instanceof Error && error.name === "MergeAbortedError") {
+    throw error;
+  }
+}
+
 async function runDeterministicVerification(
   store: TaskStore,
   rootDir: string,
@@ -487,6 +510,7 @@ async function runDeterministicVerification(
   buildCommand?: string,
   testSource?: "explicit" | "inferred",
   buildSource?: "explicit" | "inferred",
+  signal?: AbortSignal,
 ): Promise<VerificationResult> {
   const result: VerificationResult = { allPassed: true };
 
@@ -520,7 +544,7 @@ async function runDeterministicVerification(
   // Run test command first if configured
   if (hasTestCommand) {
     const testResult = await runVerificationCommand(
-      store, rootDir, taskId, normalizedTestCommand!, "test",
+      store, rootDir, taskId, normalizedTestCommand!, "test", signal,
     );
     result.testResult = testResult;
 
@@ -542,7 +566,7 @@ async function runDeterministicVerification(
   // Run build command second if configured
   if (hasBuildCommand) {
     const buildResult = await runVerificationCommand(
-      store, rootDir, taskId, normalizedBuildCommand!, "build",
+      store, rootDir, taskId, normalizedBuildCommand!, "build", signal,
     );
     result.buildResult = buildResult;
 
@@ -572,7 +596,9 @@ async function runVerificationCommand(
   taskId: string,
   command: string,
   type: "test" | "build",
+  signal?: AbortSignal,
 ): Promise<VerificationCommandResult> {
+  throwIfAborted(signal, taskId);
   mergerLog.log(`${taskId}: running ${type} command: ${command}`);
   await store.logEntry(taskId, `[verification] Running ${type} command: ${command}`);
 
@@ -593,6 +619,8 @@ async function runVerificationCommand(
       maxBuffer: VERIFICATION_COMMAND_MAX_BUFFER,
     });
 
+    throwIfAborted(signal, taskId);
+
     result.stdout = stdout?.toString?.() || "";
     result.stderr = stderr?.toString?.() || "";
     result.exitCode = 0;
@@ -603,6 +631,7 @@ async function runVerificationCommand(
     await store.logEntry(taskId, `[timing] [verification] ${type} command succeeded (exit 0) in ${verificationDurationMs}ms`);
     return result;
   } catch (error: any) {
+    throwIfAborted(signal, taskId);
     const verificationDurationMs = Date.now() - verificationStartedAt;
     result.stdout = error?.stdout?.toString?.() || "";
     result.stderr = error?.stderr?.toString?.() || "";
@@ -688,6 +717,7 @@ async function attemptInMergeVerificationFix(
     }
 
     // Create the fix agent session
+    throwIfAborted(options.signal, taskId);
     const { session } = await createResolvedAgentSession({
       sessionPurpose: "merger",
       pluginRunner: options.pluginRunner,
@@ -742,12 +772,14 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
 
       // Run the agent with rate limit retry
       await withRateLimitRetry(async () => {
+        throwIfAborted(options.signal, taskId);
         await promptWithFallback(session, fixPrompt);
       }, {
         onRetry: (attempt, delayMs, error) => {
           const delaySec = Math.round(delayMs / 1000);
           mergerLog.warn(`⏳ ${taskId} in-merge fix rate limited — retry ${attempt} in ${delaySec}s: ${error.message}`);
         },
+        signal: options.signal,
       });
 
       // Re-run deterministic verification command after the fix attempt.
@@ -756,7 +788,12 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
         `Re-running deterministic merge verification (attempt ${fixAttemptNumber ?? "unknown"})`,
       );
       const reRunResult = await runVerificationCommand(
-        store, rootDir, taskId, failureContext.command, failureContext.type,
+        store,
+        rootDir,
+        taskId,
+        failureContext.command,
+        failureContext.type,
+        options.signal,
       );
 
       return reRunResult.success;
@@ -766,6 +803,7 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
       await session.dispose();
     }
   } catch (err: unknown) {
+    rethrowIfMergeAborted(err);
     const errorMessage = err instanceof Error ? err.message : String(err);
     mergerLog.warn(`${taskId}: in-merge fix agent error: ${errorMessage}`);
     await store.logEntry(taskId, "In-merge verification fix agent encountered an error", errorMessage);
@@ -1460,6 +1498,8 @@ export interface MergerOptions {
    *  caller (e.g. dashboard.ts) to track and externally dispose the session
    *  when a global pause is triggered. */
   onSession?: (session: { dispose: () => void }) => void;
+  /** Abort signal used to stop an in-flight merge when the engine is shutting down. */
+  signal?: AbortSignal;
   /** AgentStore for resolving per-agent custom instructions. */
   agentStore?: import("@fusion/core").AgentStore;
   /** Plugin runner for runtime selection. When provided, enables plugin runtime lookup. */
@@ -1527,7 +1567,7 @@ async function resolveComplexRebaseConflictsWithAi(
   taskId: string,
   settings: Settings,
   conflictedFiles: string[],
-  options?: { onAgentText?: (delta: string) => void; pluginRunner?: import("./plugin-runner.js").PluginRunner },
+  options?: { onAgentText?: (delta: string) => void; pluginRunner?: import("./plugin-runner.js").PluginRunner; signal?: AbortSignal },
 ): Promise<void> {
   mergerLog.log(`${taskId}: resolving ${conflictedFiles.length} complex rebase conflict(s) with AI`);
 
@@ -1552,6 +1592,7 @@ You are assisting with a paused \`git pull --rebase\`.
       : undefined,
   });
 
+  throwIfAborted(options?.signal, taskId);
   const { session } = await createResolvedAgentSession({
     sessionPurpose: "merger",
     pluginRunner: options?.pluginRunner,
@@ -1578,6 +1619,7 @@ You are assisting with a paused \`git pull --rebase\`.
 
   try {
     await withRateLimitRetry(async () => {
+      throwIfAborted(options?.signal, taskId);
       await promptWithFallback(session, prompt);
       checkSessionError(session);
     }, {
@@ -1586,6 +1628,7 @@ You are assisting with a paused \`git pull --rebase\`.
           `${taskId}: rate limited while resolving rebase conflicts — retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
         );
       },
+      signal: options?.signal,
     });
   } finally {
     session.dispose();
@@ -1597,7 +1640,7 @@ async function resolveRebaseConflictSet(
   rootDir: string,
   taskId: string,
   settings: Settings,
-  options?: { onAgentText?: (delta: string) => void },
+  options?: { onAgentText?: (delta: string) => void; signal?: AbortSignal },
 ): Promise<void> {
   const conflictedFiles = await getConflictedFiles(rootDir);
   if (conflictedFiles.length === 0) return;
@@ -1640,10 +1683,11 @@ async function pullWithRebaseAndResolveConflicts(
   settings: Settings,
   remote: string,
   branch: string,
-  options?: { onAgentText?: (delta: string) => void },
+  options?: { onAgentText?: (delta: string) => void; signal?: AbortSignal },
 ): Promise<void> {
   const pullCommand = `git pull --rebase ${quoteArg(remote)} ${quoteArg(branch)}`;
   try {
+    throwIfAborted(options?.signal, taskId);
     await execAsync(pullCommand, {
       cwd: rootDir,
       timeout: PULL_REBASE_TIMEOUT_MS,
@@ -1666,12 +1710,14 @@ async function pullWithRebaseAndResolveConflicts(
       await resolveRebaseConflictSet(store, rootDir, taskId, settings, options);
 
       for (let attempt = 1; attempt <= 10; attempt++) {
+        throwIfAborted(options?.signal, taskId);
         if (!isRebaseInProgress(rootDir)) {
           mergerLog.log(`${taskId}: rebase conflicts resolved`);
           return;
         }
 
         try {
+          throwIfAborted(options?.signal, taskId);
           await execAsync("GIT_EDITOR=true git rebase --continue", {
             cwd: rootDir,
             timeout: PULL_REBASE_TIMEOUT_MS,
@@ -1713,6 +1759,7 @@ async function pullWithRebaseAndResolveConflicts(
         }
       }
 
+      rethrowIfMergeAborted(resolutionError);
       throw new Error(`unable to resolve rebase conflicts: ${getCommandErrorMessage(resolutionError)}`);
     }
   }
@@ -1727,13 +1774,15 @@ export async function pushToRemoteAfterMerge(
   rootDir: string,
   taskId: string,
   settings: Settings,
-  options?: { onAgentText?: (delta: string) => void },
+  options?: { onAgentText?: (delta: string) => void; signal?: AbortSignal },
 ): Promise<{ pushed: boolean; error?: string }> {
   let target: { remote: string; branch: string };
 
   try {
+    throwIfAborted(options?.signal, taskId);
     target = parsePushRemoteTarget(rootDir, settings.pushRemote);
   } catch (error: unknown) {
+    rethrowIfMergeAborted(error);
     const message = getCommandErrorMessage(error);
     mergerLog.error(`${taskId}: invalid push remote configuration: ${message}`);
     return { pushed: false, error: message };
@@ -1743,8 +1792,10 @@ export async function pushToRemoteAfterMerge(
   mergerLog.log(`${taskId}: push-after-merge enabled; syncing ${remote}/${branch}`);
 
   try {
+    throwIfAborted(options?.signal, taskId);
     await pullWithRebaseAndResolveConflicts(store, rootDir, taskId, settings, remote, branch, options);
   } catch (error: unknown) {
+    rethrowIfMergeAborted(error);
     const message = getCommandErrorMessage(error);
     mergerLog.error(`${taskId}: pull --rebase before push failed: ${message}`);
     return { pushed: false, error: message };
@@ -1753,6 +1804,7 @@ export async function pushToRemoteAfterMerge(
   const pushCommand = `git push ${quoteArg(remote)} ${quoteArg(branch)}`;
 
   try {
+    throwIfAborted(options?.signal, taskId);
     await execAsync(pushCommand, {
       cwd: rootDir,
       timeout: PUSH_TIMEOUT_MS,
@@ -1772,7 +1824,9 @@ export async function pushToRemoteAfterMerge(
     mergerLog.log(`${taskId}: push rejected as non-fast-forward; retrying pull --rebase and push once`);
 
     try {
+      throwIfAborted(options?.signal, taskId);
       await pullWithRebaseAndResolveConflicts(store, rootDir, taskId, settings, remote, branch, options);
+      throwIfAborted(options?.signal, taskId);
       await execAsync(pushCommand, {
         cwd: rootDir,
         timeout: PUSH_TIMEOUT_MS,
@@ -1782,6 +1836,7 @@ export async function pushToRemoteAfterMerge(
       mergerLog.log(`${taskId}: push succeeded after non-fast-forward retry`);
       return { pushed: true };
     } catch (retryError: unknown) {
+      rethrowIfMergeAborted(retryError);
       const retryMessage = getCommandErrorMessage(retryError);
       mergerLog.error(`${taskId}: push retry failed: ${retryMessage}`);
       return { pushed: false, error: retryMessage };
@@ -1844,6 +1899,8 @@ export async function aiMergeTask(
   taskId: string,
   options: MergerOptions = {},
 ): Promise<MergeResult> {
+  throwIfAborted(options.signal, taskId);
+
   // 1. Validate task state
   const task = await store.getTask(taskId);
   const mergeBlocker = getTaskMergeBlocker(task);
@@ -1921,6 +1978,7 @@ export async function aiMergeTask(
   // Without this, a merge could land on whatever branch was last checked out,
   // causing feature code to be committed to the wrong lineage.
   try {
+    throwIfAborted(options.signal, taskId);
     const currentBranch = execSync("git symbolic-ref --short HEAD", {
       cwd: rootDir,
       encoding: "utf-8",
@@ -1939,13 +1997,17 @@ export async function aiMergeTask(
       // Audit trail: record git checkout (FN-1404)
       await audit.git({ type: "branch:checkout", target: mainBranch });
     }
-  } catch {
+  } catch (error: unknown) {
+    rethrowIfMergeAborted(error);
+
     // Fallback: try checking out main directly
     try {
+      throwIfAborted(options.signal, taskId);
       await execAsync("git checkout main", { cwd: rootDir });
       // Audit trail: record git checkout (FN-1404)
       await audit.git({ type: "branch:checkout", target: "main" });
-    } catch {
+    } catch (fallbackError: unknown) {
+      rethrowIfMergeAborted(fallbackError);
       mergerLog.warn(`${taskId}: unable to verify/checkout main branch — proceeding on current HEAD`);
     }
   }
@@ -2004,6 +2066,7 @@ export async function aiMergeTask(
       if (!remote) {
         mergerLog.log(`${taskId}: no remote resolvable — skipping pre-merge rebase`);
       } else {
+        throwIfAborted(options.signal, taskId);
         mergerLog.log(`${taskId}: fetching ${remote} before merge`);
         await execAsync(`git fetch "${remote}"`, { cwd: rootDir });
 
@@ -2023,12 +2086,14 @@ export async function aiMergeTask(
           // Rebase in the task's worktree (so the rootDir's HEAD isn't
           // disturbed). This is the same worktree the executor used.
           if (worktreePath) {
+            throwIfAborted(options.signal, taskId);
             await execAsync(`git rebase "${remoteRef}"`, { cwd: worktreePath });
             mergerLog.log(`${taskId}: rebased ${branch} onto ${remoteRef}`);
           } else {
             mergerLog.warn(`${taskId}: no worktreePath — skipping task branch rebase`);
           }
         } catch (rebaseErr) {
+          rethrowIfMergeAborted(rebaseErr);
           const msg = rebaseErr instanceof Error ? rebaseErr.message : String(rebaseErr);
           mergerLog.warn(`${taskId}: pre-merge rebase failed (${msg}) — aborting rebase and falling through to smart/AI merge`);
           if (worktreePath) {
@@ -2041,6 +2106,7 @@ export async function aiMergeTask(
         }
       }
     } catch (err) {
+      rethrowIfMergeAborted(err);
       const msg = err instanceof Error ? err.message : String(err);
       mergerLog.warn(`${taskId}: pre-merge rebase pipeline failed (${msg}) — proceeding without rebase`);
     }
@@ -2172,6 +2238,15 @@ export async function aiMergeTask(
 
       return false;
     } catch (error: any) {
+      if (error instanceof Error && error.name === "MergeAbortedError") {
+        try {
+          execSync("git reset --merge", { cwd: rootDir, stdio: "pipe" });
+        } catch {
+          // best-effort abort cleanup
+        }
+        throw error;
+      }
+
       // Check if it's a deterministic verification failure (testCommand or buildCommand failed)
       // Try in-merge fix attempts before propagating
       if (error.name === "VerificationError") {
@@ -2197,6 +2272,7 @@ export async function aiMergeTask(
               mergerLog.log(`${taskId}: in-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`);
               await store.logEntry(taskId, `In-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`);
 
+              throwIfAborted(options.signal, taskId);
               fixSuccess = await attemptInMergeVerificationFix(
                 store, rootDir, taskId,
                 {
@@ -2256,6 +2332,7 @@ export async function aiMergeTask(
             mergerLog.log(`${taskId}: in-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`);
             await store.logEntry(taskId, `In-merge verification fix attempt ${fixAttempt}/${maxFixRetries}`);
 
+            throwIfAborted(options.signal, taskId);
             fixSuccess = await attemptInMergeVerificationFix(
               store, rootDir, taskId,
               {
@@ -2451,6 +2528,7 @@ export async function aiMergeTask(
   }
 
   // 7. Run post-merge workflow steps (in temporary worktree for isolation)
+  throwIfAborted(options.signal, taskId);
   const hasPostMergeSteps = await hasEnabledPostMergeWorkflowSteps(store, taskId, task.enabledWorkflowSteps);
   if (hasPostMergeSteps) {
     const postMergeWorktree = await createPostMergeWorktree(rootDir, taskId);
@@ -2464,6 +2542,7 @@ export async function aiMergeTask(
     try {
       await runPostMergeWorkflowSteps(store, taskId, rootDir, postMergeCwd, settings, options);
     } catch (err: any) {
+      rethrowIfMergeAborted(err);
       mergerLog.error(`${taskId}: post-merge workflow steps error: ${err.message}`);
       // Non-fatal — task still moves to done
     } finally {
@@ -2474,6 +2553,7 @@ export async function aiMergeTask(
   }
 
   // 8. Clean up worktree
+  throwIfAborted(options.signal, taskId);
   if (worktreePath && existsSync(worktreePath)) {
     const otherUser = await findWorktreeUser(store, worktreePath, taskId);
     if (otherUser) {
@@ -2497,6 +2577,7 @@ export async function aiMergeTask(
   // 8b. Push to remote if configured
   if (settings.pushAfterMerge && settings.mergeStrategy !== "pull-request") {
     try {
+      throwIfAborted(options.signal, taskId);
       const pushResult = await pushToRemoteAfterMerge(store, rootDir, taskId, settings, options);
       if (pushResult.pushed) {
         mergerLog.log(`${taskId}: pushed merged result to remote`);
@@ -2640,7 +2721,9 @@ async function executeMergeAttempt(
         await execAsync(`git merge --squash "${branch}"`, {
           cwd: rootDir,
         });
-      } catch {
+        throwIfAborted(options.signal, taskId);
+      } catch (error: unknown) {
+        rethrowIfMergeAborted(error);
         // Merge exits with code 1 when conflicts exist - this is expected
         mergeExitedWithConflicts = true;
       }
@@ -2694,6 +2777,7 @@ async function executeMergeAttempt(
           }).trim();
 
           if (staged !== "0") {
+            throwIfAborted(options.signal, taskId);
             const escapedLog = commitLog.replace(/"/g, '\\"');
             const fallbackPrefix = includeTaskId ? `feat(${taskId})` : "feat";
             const authorArg = getCommitAuthorArg(settings);
@@ -2705,7 +2789,17 @@ async function executeMergeAttempt(
           }
           // Run deterministic verification before completing the merge
           if (testCommand || buildCommand) {
-            await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand, testSource, buildSource);
+            throwIfAborted(options.signal, taskId);
+            await runDeterministicVerification(
+              store,
+              rootDir,
+              taskId,
+              testCommand,
+              buildCommand,
+              testSource,
+              buildSource,
+              options.signal,
+            );
           }
           return true;
         }
@@ -2723,7 +2817,17 @@ async function executeMergeAttempt(
           mergerLog.log(`${taskId}: squash merge staged nothing — already merged`);
           // Run deterministic verification (nothing staged but still verify)
           if (testCommand || buildCommand) {
-            await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand, testSource, buildSource);
+            throwIfAborted(options.signal, taskId);
+            await runDeterministicVerification(
+              store,
+              rootDir,
+              taskId,
+              testCommand,
+              buildCommand,
+              testSource,
+              buildSource,
+              options.signal,
+            );
           }
           return true;
         }
@@ -2734,6 +2838,7 @@ async function executeMergeAttempt(
       await execAsync(`git merge --squash "${branch}"`, {
         cwd: rootDir,
       });
+      throwIfAborted(options.signal, taskId);
 
       // Check if squash is empty
       const squashIsEmpty = execSync(
@@ -2745,7 +2850,17 @@ async function executeMergeAttempt(
         mergerLog.log(`${taskId}: squash merge staged nothing — already merged`);
         // Run deterministic verification (nothing staged but still verify)
         if (testCommand || buildCommand) {
-          await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand, testSource, buildSource);
+          throwIfAborted(options.signal, taskId);
+          await runDeterministicVerification(
+            store,
+            rootDir,
+            taskId,
+            testCommand,
+            buildCommand,
+            testSource,
+            buildSource,
+            options.signal,
+          );
         }
         return true;
       }
@@ -2769,9 +2884,10 @@ async function executeMergeAttempt(
     }
 
     if (buildCommand) {
+      throwIfAborted(options.signal, taskId);
       const stagedFiles = await getStagedFiles(rootDir);
       if (shouldSyncDependenciesForMerge(stagedFiles, hasInstallState(rootDir))) {
-        await syncDependenciesForMerge(store, rootDir, taskId);
+        await syncDependenciesForMerge(store, rootDir, taskId, options.signal);
       }
     }
 
@@ -2779,6 +2895,7 @@ async function executeMergeAttempt(
     // - No conflicts (attempt 1) - AI writes commit message
     // - Complex conflicts remain after attempt 2 auto-resolution - AI resolves them
     // Spawn AI agent
+    throwIfAborted(options.signal, taskId);
     aiTracker.aiWasInvoked = true; // Track that AI was invoked
     const agentResult = await runAiAgentForCommit({
       store,
@@ -2816,11 +2933,30 @@ async function executeMergeAttempt(
 
     // Run deterministic verification after AI agent commits
     if (testCommand || buildCommand) {
-      await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand, testSource, buildSource);
+      throwIfAborted(options.signal, taskId);
+      await runDeterministicVerification(
+        store,
+        rootDir,
+        taskId,
+        testCommand,
+        buildCommand,
+        testSource,
+        buildSource,
+        options.signal,
+      );
     }
 
     return true;
   } catch (error: any) {
+    if (error instanceof Error && error.name === "MergeAbortedError") {
+      try {
+        execSync("git reset --merge", { cwd: rootDir, stdio: "pipe" });
+      } catch {
+        // best-effort abort cleanup
+      }
+      throw error;
+    }
+
     // Check if it's a build verification failure - don't retry, propagate immediately
     if (error.message?.includes("Build verification failed")) {
       throw error; // Fatal - don't retry build failures
@@ -2851,6 +2987,7 @@ async function attemptWithTheirsStrategy(params: MergeAttemptParams): Promise<bo
 
   try {
     // Use -X theirs to auto-resolve conflicts favoring the incoming branch
+    throwIfAborted(params.options.signal, taskId);
     await execAsync(`git merge -X theirs --squash "${branch}"`, {
       cwd: rootDir,
     });
@@ -2876,12 +3013,23 @@ async function attemptWithTheirsStrategy(params: MergeAttemptParams): Promise<bo
       // Nothing staged - already merged
       // Run deterministic verification even when nothing is staged
       if (testCommand || buildCommand) {
-        await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand, testSource, buildSource);
+        throwIfAborted(params.options.signal, taskId);
+        await runDeterministicVerification(
+          store,
+          rootDir,
+          taskId,
+          testCommand,
+          buildCommand,
+          testSource,
+          buildSource,
+          params.options.signal,
+        );
       }
       return true;
     }
 
     // Commit with fallback message
+    throwIfAborted(params.options.signal, taskId);
     const escapedLog = commitLog.replace(/"/g, '\\"');
     const fallbackPrefix = includeTaskId ? `feat(${taskId})` : "feat";
     const authorArg = getCommitAuthorArg(settings);
@@ -2893,11 +3041,24 @@ async function attemptWithTheirsStrategy(params: MergeAttemptParams): Promise<bo
 
     // Run deterministic verification after committing
     if (testCommand || buildCommand) {
-      await runDeterministicVerification(store, rootDir, taskId, testCommand, buildCommand, testSource, buildSource);
+      throwIfAborted(params.options.signal, taskId);
+      await runDeterministicVerification(
+        store,
+        rootDir,
+        taskId,
+        testCommand,
+        buildCommand,
+        testSource,
+        buildSource,
+        params.options.signal,
+      );
     }
 
     return true;
   } catch (error) {
+    if (error instanceof Error && error.name === "MergeAbortedError") {
+      throw error;
+    }
     mergerLog.error(`${taskId}: -X theirs merge failed: ${error}`);
     return false;
   }
@@ -3015,6 +3176,8 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     mergerInstructions,
   );
 
+  throwIfAborted(options.signal, taskId);
+
   // Build skill selection context (assigned agent skills take precedence over role fallback)
   let skillContext = undefined;
   if (options.agentStore) {
@@ -3071,6 +3234,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
 
     try {
       await withRateLimitRetry(async () => {
+        throwIfAborted(options.signal, taskId);
         await promptWithFallback(session, prompt);
         checkSessionError(session);
       }, {
@@ -3078,6 +3242,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
           const delaySec = Math.round(delayMs / 1000);
           mergerLog.warn(`⏳ ${taskId} rate limited — retry ${attempt} in ${delaySec}s: ${error.message}`);
         },
+        signal: options.signal,
       });
     } catch (err: unknown) {
       // Context-limit error after promptWithFallback's auto-compaction already attempted recovery.
@@ -3103,6 +3268,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
 
         try {
           await withRateLimitRetry(async () => {
+            throwIfAborted(options.signal, taskId);
             await promptWithFallback(session, truncatedPrompt);
             checkSessionError(session);
           }, {
@@ -3110,6 +3276,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
               const delaySec = Math.round(delayMs / 1000);
               mergerLog.warn(`⏳ ${taskId} rate limited during truncated retry — retry ${attempt} in ${delaySec}s: ${error.message}`);
             },
+            signal: options.signal,
           });
         } catch (retryErr: unknown) {
           // Truncated retry also failed: propagate original error
@@ -3144,6 +3311,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
       // Only use fallback commit if no build command was configured
       // If build command was configured, agent should have committed or reported failure
       if (!buildCommand) {
+        throwIfAborted(options.signal, taskId);
         mergerLog.log("Agent didn't commit — committing with fallback message");
         const escapedLog = commitLog.replace(/"/g, '\\"');
         const fallbackPrefix = includeTaskId ? `feat(${taskId})` : "feat";
@@ -3298,6 +3466,7 @@ async function runPostMergeWorkflowSteps(
   settings: Settings,
   mergeOptions: MergerOptions = {},
 ): Promise<void> {
+  throwIfAborted(mergeOptions.signal, taskId);
   const task = await store.getTask(taskId);
   if (!task.enabledWorkflowSteps?.length) return;
 

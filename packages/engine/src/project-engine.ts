@@ -96,6 +96,7 @@ export class ProjectEngine {
   private mergeActive = new Set<string>();
   private mergeRunning = false;
   private activeMergeSession: { dispose: () => void } | null = null;
+  private mergeAbortController: AbortController | null = null;
   private mergeRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
@@ -227,6 +228,10 @@ export class ProjectEngine {
 
   /**
    * Gracefully stop the engine and all subsystems.
+   *
+   * If a merge is currently running, its abort signal is triggered before the
+   * active merge session is disposed so merge pipeline checkpoints can exit
+   * promptly without continuing git/verification work after shutdown starts.
    */
   async stop(): Promise<void> {
     this.shuttingDown = true;
@@ -235,6 +240,16 @@ export class ProjectEngine {
     if (this.mergeRetryTimer) {
       clearTimeout(this.mergeRetryTimer);
       this.mergeRetryTimer = null;
+    }
+
+    // Abort active/pending merge work before tearing down sessions.
+    this.mergeAbortController?.abort();
+    this.mergeAbortController = null;
+
+    const queuedTaskIds = [...this.mergeQueue];
+    this.mergeQueue.length = 0;
+    for (const queuedTaskId of queuedTaskIds) {
+      this.mergeActive.delete(queuedTaskId);
     }
 
     // Terminate active merge session
@@ -437,6 +452,7 @@ export class ProjectEngine {
   }
 
   private internalEnqueueMerge(taskId: string): void {
+    if (this.shuttingDown) return;
     if (this.mergeActive.has(taskId)) return;
     this.mergeActive.add(taskId);
     this.mergeQueue.push(taskId);
@@ -584,15 +600,18 @@ export class ProjectEngine {
 
             const usageLimitPauser = (this.runtime as any).usageLimitPauser;
 
-            const rawMerge = () =>
-              aiMergeTask(store, cwd, taskId, {
+            const rawMerge = () => {
+              this.mergeAbortController = new AbortController();
+              return aiMergeTask(store, cwd, taskId, {
                 pool,
                 usageLimitPauser,
                 agentStore,
+                signal: this.mergeAbortController.signal,
                 onSession: (session) => {
                   this.activeMergeSession = session;
                 },
               });
+            };
 
             let result: MergeResult;
             if (semaphore) {
@@ -618,6 +637,20 @@ export class ProjectEngine {
         } catch (err: unknown) {
           this.activeMergeSession = null;
           const errorMsg = err instanceof Error ? err.message : String(err);
+          const mergeWasAborted = err instanceof Error && err.name === "MergeAbortedError";
+
+          if (mergeWasAborted) {
+            runtimeLog.log(`${manualResolver ? "Manual" : "Auto"}-merge aborted for ${taskId}: ${errorMsg}`);
+            this.mergeAbortController = null;
+            if (manualResolver) {
+              this.manualMergeResolvers.delete(taskId);
+              manualResolver.reject(err instanceof Error ? err : new Error(errorMsg));
+            } else {
+              await store.updateTask(taskId, { status: null }).catch(() => undefined);
+            }
+            continue;
+          }
+
           runtimeLog.error(`${manualResolver ? "Manual" : "Auto"}-merge failed for ${taskId}: ${errorMsg}`);
 
           // If this was a manual merge, reject the promise and skip auto-retry logic
@@ -727,6 +760,7 @@ export class ProjectEngine {
             }
           }
         } finally {
+          this.mergeAbortController = null;
           this.mergeActive.delete(taskId);
           // If a manual merge was requested while this task was already in-flight,
           // the resolver was set but not consumed above. Resolve it now.

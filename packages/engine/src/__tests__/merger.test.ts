@@ -112,6 +112,7 @@ import {
   summarizeVerificationOutput,
   inferDefaultTestCommand,
   resolveTaskDiffBaseRef,
+  MergeAbortedError,
   type ConflictCategory,
 } from "../merger.js";
 import { mergerLog } from "../logger.js";
@@ -242,6 +243,67 @@ describe("findWorktreeUser", () => {
     ]);
     const result = await findWorktreeUser(store, "/tmp/wt", "FN-050");
     expect(result).toBeNull();
+  });
+});
+
+describe("aiMergeTask abort handling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+    setupHappyPathExecSync();
+    mockedCreateFnAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+  });
+
+  it("throws immediately when signal is already aborted", async () => {
+    const store = createMockStore();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      aiMergeTask(store, "/tmp/root", "FN-050", { signal: controller.signal }),
+    ).rejects.toBeInstanceOf(MergeAbortedError);
+
+    expect(store.getTask).not.toHaveBeenCalled();
+    expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+  });
+
+  it("throws MergeAbortedError when aborted during deterministic verification", async () => {
+    const controller = new AbortController();
+    const store = createMockStore();
+    store.getSettings = vi.fn().mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      testCommand: "pnpm test",
+    });
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr === "pnpm test") {
+        controller.abort();
+        return "" as any;
+      }
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr === "git rev-parse HEAD" || cmdStr.startsWith("git rev-parse HEAD ")) return "mergedcommit123";
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("merge -X theirs --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      if (cmdStr.includes("diff --cached")) return "0" as any;
+      if (cmdStr.includes("show --shortstat")) return "3 files changed, 10 insertions(+), 2 deletions(-)" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    await expect(
+      aiMergeTask(store, "/tmp/root", "FN-050", { signal: controller.signal }),
+    ).rejects.toBeInstanceOf(MergeAbortedError);
   });
 });
 
