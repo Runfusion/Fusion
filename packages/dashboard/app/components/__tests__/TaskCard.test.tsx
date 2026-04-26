@@ -534,6 +534,8 @@ describe("TaskCard", () => {
     expect(timer).not.toBeNull();
     expect(footerRow?.contains(filesChanged)).toBe(true);
     expect(footerRow?.contains(timer)).toBe(true);
+    expect(filesChanged?.nextElementSibling).toBe(timer);
+    expect(Array.from(footerRow?.children ?? [])).toEqual([filesChanged, timer]);
   });
   it.each(["triage", "todo", "in-review", "archived"] as const)(
     "does not render timer chip for %s cards",

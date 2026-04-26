@@ -428,7 +428,7 @@
   gap: var(--space-sm);
   margin-top: var(--space-sm);
   min-width: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .card-session-files {
@@ -442,6 +442,19 @@
   font-size: 12px;
   cursor: pointer;
   min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.card-session-files svg {
+  flex-shrink: 0;
+}
+
+.card-session-files span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .card-session-files:hover {

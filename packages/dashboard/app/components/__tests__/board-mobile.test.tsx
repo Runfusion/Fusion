@@ -232,6 +232,22 @@ describe("TaskCard mobile", () => {
     }
   });
 
+  it("keeps TaskCard footer row on one line", () => {
+    const css = loadAllAppCss();
+    expectRuleToContain(css, ".card-footer-row", "flex-wrap: nowrap;");
+  });
+
+  it("keeps TaskCard timer chip right-aligned with files metadata", () => {
+    const css = loadAllAppCss();
+    expectRuleToContain(css, ".card-time-indicator", "margin-left: auto;");
+  });
+
+  it("truncates TaskCard files-changed text instead of wrapping", () => {
+    const css = loadAllAppCss();
+    expectRuleToContain(css, ".card-session-files span", "text-overflow: ellipsis;");
+    expectRuleToContain(css, ".card-session-files span", "white-space: nowrap;");
+  });
+
   it("sets .card-edit-btn width and height to 32px in the mobile media block", () => {
     const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
