@@ -65,6 +65,7 @@ const RoadmapsView = lazy(() => import("./components/RoadmapsView").then((m) => 
 const SkillsView = lazy(() => import("./components/SkillsView").then((m) => ({ default: m.SkillsView })));
 const MemoryView = lazy(() => import("./components/MemoryView").then((m) => ({ default: m.MemoryView })));
 const DevServerView = lazy(() => import("./components/DevServerView").then((m) => ({ default: m.DevServerView })));
+const TodoView = lazy(() => import("./components/TodoView").then((m) => ({ default: m.TodoView })));
 
 // Warm lazy chunks during browser idle so first navigation to each view is
 // instant. Each chunk is ~10–80 kB; total prefetch finishes well under a
@@ -83,6 +84,7 @@ function prefetchLazyViews() {
     void import("./components/SkillsView");
     void import("./components/MemoryView");
     void import("./components/DevServerView");
+    void import("./components/TodoView");
   });
 }
 
@@ -665,6 +667,16 @@ function AppInner() {
         <PageErrorBoundary>
           <Suspense fallback={null}>
             <MemoryView addToast={addToast} projectId={currentProject?.id} />
+          </Suspense>
+        </PageErrorBoundary>
+      );
+    }
+
+    if (taskView === "todos") {
+      return (
+        <PageErrorBoundary>
+          <Suspense fallback={null}>
+            <TodoView addToast={addToast} projectId={currentProject?.id} />
           </Suspense>
         </PageErrorBoundary>
       );

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Server, Workflow, Bot, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare, ChevronDown, Check, Map, Zap, Sparkles, FileText, Brain } from "lucide-react";
+import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Server, Workflow, Bot, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare, ChevronDown, Check, Map, Zap, Sparkles, FileText, Brain, CheckSquare } from "lucide-react";
 import "./Header.css";
 // Header renders an inline ProjectSelector dropdown using project-selector-* classes.
 import "./ProjectSelector.css";
@@ -185,8 +185,8 @@ export interface HeaderProps {
   enginePaused?: boolean;
   onToggleGlobalPause?: () => void;
   onToggleEnginePause?: () => void;
-  view?: "board" | "list" | "agents" | "missions" | "chat" | "documents" | "roadmaps" | "skills" | "mailbox" | "insights" | "memory" | "devserver" | "dev-server";
-  onChangeView?: (view: "board" | "list" | "agents" | "missions" | "chat" | "documents" | "roadmaps" | "skills" | "mailbox" | "insights" | "memory" | "devserver" | "dev-server") => void;
+  view?: "board" | "list" | "agents" | "missions" | "chat" | "documents" | "roadmaps" | "skills" | "mailbox" | "insights" | "memory" | "devserver" | "dev-server" | "todos";
+  onChangeView?: (view: "board" | "list" | "agents" | "missions" | "chat" | "documents" | "roadmaps" | "skills" | "mailbox" | "insights" | "memory" | "devserver" | "dev-server" | "todos") => void;
   /** Whether to show the skills tab in the view toggle */
   showSkillsTab?: boolean;
   /** When true, shows the Agents view tab button. Hidden by default (experimental feature). */
@@ -834,7 +834,7 @@ export function Header({
               <>
                 <button
                   ref={viewOverflowTriggerRef}
-                  className={`view-toggle-btn${["skills", "roadmaps", "insights", "memory", "dev-server", "devserver"].includes(view) ? " active" : ""}`}
+                  className={`view-toggle-btn${["skills", "roadmaps", "insights", "memory", "dev-server", "devserver", "todos"].includes(view) ? " active" : ""}`}
                   onClick={() => setIsViewOverflowOpen((prev) => !prev)}
                   title="More views"
                   aria-label="More views"
@@ -922,6 +922,18 @@ export function Header({
                         <span className="visually-hidden" data-testid="view-toggle-dev-server" />
                       </button>
                     )}
+                    <button
+                      className={`view-toggle-overflow-item${view === "todos" ? " active" : ""}`}
+                      onClick={() => {
+                        onChangeView("todos");
+                        setIsViewOverflowOpen(false);
+                      }}
+                      role="menuitem"
+                      data-testid="view-overflow-todos"
+                    >
+                      <CheckSquare size={14} />
+                      <span>Todos</span>
+                    </button>
                   </div>
                 )}
               </>

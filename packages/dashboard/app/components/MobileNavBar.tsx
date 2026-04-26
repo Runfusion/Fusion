@@ -4,6 +4,7 @@ import {
   Activity,
   Bot,
   Brain,
+  CheckSquare,
   ChevronRight,
   Clock,
   FileCode,
@@ -32,9 +33,9 @@ import { useViewportMode } from "./Header";
 
 export interface MobileNavBarProps {
   /** Current task view mode */
-  view: "board" | "list" | "agents" | "missions" | "chat" | "documents" | "roadmaps" | "skills" | "mailbox" | "insights" | "memory" | "devserver" | "dev-server";
+  view: "board" | "list" | "agents" | "missions" | "chat" | "documents" | "roadmaps" | "skills" | "mailbox" | "insights" | "memory" | "devserver" | "dev-server" | "todos";
   /** Change task view handler */
-  onChangeView: (view: "board" | "list" | "agents" | "missions" | "chat" | "documents" | "roadmaps" | "skills" | "mailbox" | "insights" | "memory" | "devserver" | "dev-server") => void;
+  onChangeView: (view: "board" | "list" | "agents" | "missions" | "chat" | "documents" | "roadmaps" | "skills" | "mailbox" | "insights" | "memory" | "devserver" | "dev-server" | "todos") => void;
   /** Whether the ExecutorStatusBar footer is visible */
   footerVisible: boolean;
   /** Whether any full-screen modal is currently open (hides the tab bar) */
@@ -186,6 +187,7 @@ export function MobileNavBar({
     || view === "memory"
     || view === "devserver"
     || view === "dev-server"
+    || view === "todos"
     || (view === "roadmaps" && !showRoadmapsTopLevel)
     || (view === "skills" && !showSkillsTopLevel);
 
@@ -581,6 +583,16 @@ export function MobileNavBar({
                 <span>Dev Server</span>
               </button>
             )}
+
+            <button
+              type="button"
+              className="mobile-more-item"
+              data-testid="mobile-more-item-todos"
+              onClick={() => handleMoreAction(() => onChangeView("todos"))}
+            >
+              <CheckSquare size={14} />
+              <span>Todos</span>
+            </button>
 
             <div className="mobile-more-separator" />
 
