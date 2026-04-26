@@ -483,11 +483,12 @@ function rewriteCustomToolReferences(
   } else {
     const customNames = tools
       .filter((t) => !BUILT_IN_PI_TOOLS.has(t.name))
-      .map((t) => t.name)
-      .slice(0, 6);
-    const promptHead = prompt.slice(0, 200).replace(/\n/g, " ");
+      .map((t) => t.name);
+    const fnMatches = (prompt.match(/fn_[a-z_]+/g) ?? []).slice(0, 12);
+    const fnUnique = [...new Set(fnMatches)];
+    const reviewSpecCount = (prompt.match(/fn_review_spec/g) ?? []).length;
     console.error(
-      `[pi-claude-cli] system prompt: no custom tool refs to rewrite (tools=${tools.length}, promptLen=${prompt.length}, customNamesSample=[${customNames.join(",")}], promptHead="${promptHead}")`,
+      `[pi-claude-cli] system prompt: no custom tool refs to rewrite (tools=${tools.length}, promptLen=${prompt.length}, customNames=[${customNames.join(",")}], fnTokensInPrompt=[${fnUnique.join(",")}], fn_review_spec_occurrences=${reviewSpecCount})`,
     );
   }
   return result;
