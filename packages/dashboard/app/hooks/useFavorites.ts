@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchModels, updateGlobalSettings, type ModelInfo } from "../api";
 
 /**
@@ -19,11 +19,15 @@ export function useFavorites(): UseFavoritesResult {
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
   const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
+  const favoriteProvidersRef = useRef<string[]>(favoriteProviders);
+  const favoriteModelsRef = useRef<string[]>(favoriteModels);
 
   useEffect(() => {
     fetchModels()
       .then((response) => {
         setAvailableModels(response.models);
+        favoriteProvidersRef.current = response.favoriteProviders;
+        favoriteModelsRef.current = response.favoriteModels;
         setFavoriteProviders(response.favoriteProviders);
         setFavoriteModels(response.favoriteModels);
       })
@@ -32,45 +36,57 @@ export function useFavorites(): UseFavoritesResult {
       });
   }, []);
 
-  const toggleFavoriteProvider = useCallback(async (provider: string) => {
-    const currentFavorites = favoriteProviders;
-    const isFavorite = currentFavorites.includes(provider);
-    const nextFavorites = isFavorite
-      ? currentFavorites.filter((p) => p !== provider)
-      : [provider, ...currentFavorites];
+  useEffect(() => {
+    favoriteProvidersRef.current = favoriteProviders;
+  }, [favoriteProviders]);
 
-    setFavoriteProviders(nextFavorites);
+  useEffect(() => {
+    favoriteModelsRef.current = favoriteModels;
+  }, [favoriteModels]);
+
+  const toggleFavoriteProvider = useCallback(async (provider: string) => {
+    const previousFavorites = favoriteProvidersRef.current;
+    const isFavorite = previousFavorites.includes(provider);
+    const nextFavorites = isFavorite
+      ? previousFavorites.filter((p) => p !== provider)
+      : [provider, ...previousFavorites];
+
+    favoriteProvidersRef.current = nextFavorites;
+    setFavoriteProviders(() => nextFavorites);
 
     try {
       await updateGlobalSettings({
         favoriteProviders: nextFavorites,
-        favoriteModels,
+        favoriteModels: favoriteModelsRef.current,
       });
     } catch (error) {
-      setFavoriteProviders(currentFavorites);
+      favoriteProvidersRef.current = previousFavorites;
+      setFavoriteProviders(() => previousFavorites);
       throw error;
     }
-  }, [favoriteProviders, favoriteModels]);
+  }, []);
 
   const toggleFavoriteModel = useCallback(async (modelId: string) => {
-    const currentFavorites = favoriteModels;
-    const isFavorite = currentFavorites.includes(modelId);
+    const previousFavorites = favoriteModelsRef.current;
+    const isFavorite = previousFavorites.includes(modelId);
     const nextFavorites = isFavorite
-      ? currentFavorites.filter((id) => id !== modelId)
-      : [modelId, ...currentFavorites];
+      ? previousFavorites.filter((id) => id !== modelId)
+      : [modelId, ...previousFavorites];
 
-    setFavoriteModels(nextFavorites);
+    favoriteModelsRef.current = nextFavorites;
+    setFavoriteModels(() => nextFavorites);
 
     try {
       await updateGlobalSettings({
-        favoriteProviders,
+        favoriteProviders: favoriteProvidersRef.current,
         favoriteModels: nextFavorites,
       });
     } catch (error) {
-      setFavoriteModels(currentFavorites);
+      favoriteModelsRef.current = previousFavorites;
+      setFavoriteModels(() => previousFavorites);
       throw error;
     }
-  }, [favoriteModels, favoriteProviders]);
+  }, []);
 
   return {
     availableModels,

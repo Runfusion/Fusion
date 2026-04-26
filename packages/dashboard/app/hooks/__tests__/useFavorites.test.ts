@@ -93,4 +93,72 @@ describe("useFavorites", () => {
 
     expect(result.current.favoriteModels).toEqual(["gpt-4o"]);
   });
+
+  it("toggle model favorite preserves a prior provider favorite change", async () => {
+    const { result } = renderHook(() => useFavorites());
+
+    await waitFor(() => {
+      expect(result.current.favoriteProviders).toEqual(["openai"]);
+      expect(result.current.favoriteModels).toEqual(["gpt-4o"]);
+    });
+
+    await act(async () => {
+      await result.current.toggleFavoriteProvider("anthropic");
+    });
+
+    await act(async () => {
+      await result.current.toggleFavoriteModel("claude-sonnet-4-5");
+    });
+
+    expect(mockUpdateGlobalSettings).toHaveBeenNthCalledWith(2, {
+      favoriteProviders: ["anthropic", "openai"],
+      favoriteModels: ["claude-sonnet-4-5", "gpt-4o"],
+    });
+  });
+
+  it("toggle provider favorite preserves a prior model favorite change", async () => {
+    const { result } = renderHook(() => useFavorites());
+
+    await waitFor(() => {
+      expect(result.current.favoriteProviders).toEqual(["openai"]);
+      expect(result.current.favoriteModels).toEqual(["gpt-4o"]);
+    });
+
+    await act(async () => {
+      await result.current.toggleFavoriteModel("claude-sonnet-4-5");
+    });
+
+    await act(async () => {
+      await result.current.toggleFavoriteProvider("anthropic");
+    });
+
+    expect(mockUpdateGlobalSettings).toHaveBeenNthCalledWith(2, {
+      favoriteProviders: ["anthropic", "openai"],
+      favoriteModels: ["claude-sonnet-4-5", "gpt-4o"],
+    });
+  });
+
+  it("rapid toggles of both model and provider favorites persist correctly", async () => {
+    const { result } = renderHook(() => useFavorites());
+
+    await waitFor(() => {
+      expect(result.current.favoriteProviders).toEqual(["openai"]);
+      expect(result.current.favoriteModels).toEqual(["gpt-4o"]);
+    });
+
+    await act(async () => {
+      const toggleModelPromise = result.current.toggleFavoriteModel("claude-sonnet-4-5");
+      const toggleProviderPromise = result.current.toggleFavoriteProvider("anthropic");
+      await Promise.all([toggleModelPromise, toggleProviderPromise]);
+    });
+
+    expect(mockUpdateGlobalSettings).toHaveBeenNthCalledWith(1, {
+      favoriteProviders: ["openai"],
+      favoriteModels: ["claude-sonnet-4-5", "gpt-4o"],
+    });
+    expect(mockUpdateGlobalSettings).toHaveBeenNthCalledWith(2, {
+      favoriteProviders: ["anthropic", "openai"],
+      favoriteModels: ["claude-sonnet-4-5", "gpt-4o"],
+    });
+  });
 });
