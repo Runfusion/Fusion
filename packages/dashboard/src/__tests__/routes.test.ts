@@ -27,6 +27,8 @@ import * as planningModule from "../planning.js";
 import { __resetSubtaskBreakdownState, subtaskStreamManager } from "../subtask-breakdown.js";
 import * as subtaskBreakdownModule from "../subtask-breakdown.js";
 import { SESSION_CLEANUP_DEFAULT_MAX_AGE_MS } from "../ai-session-store.js";
+import * as usageModule from "../usage.js";
+import * as claudeCliProbeModule from "../claude-cli-probe.js";
 import * as projectStoreResolver from "../project-store-resolver.js";
 import * as terminalServiceModule from "../terminal-service.js";
 import { get as performGet, request as performRequest } from "../test-request.js";
@@ -3952,6 +3954,44 @@ describe("GET /models", () => {
   });
 });
 
+describe("GET /usage", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("returns provider usage payload", async () => {
+    const providers = [{ name: "Claude", icon: "🤖", status: "ok", windows: [] }];
+    const usageSpy = vi.spyOn(usageModule, "fetchAllProviderUsage").mockResolvedValue(providers as never);
+
+    const res = await GET(buildApp(), "/api/usage");
+
+    usageSpy.mockRestore();
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ providers });
+  });
+
+  it("maps usage fetch errors to 500 responses", async () => {
+    const usageSpy = vi.spyOn(usageModule, "fetchAllProviderUsage").mockRejectedValue(new Error("usage boom"));
+
+    const res = await GET(buildApp(), "/api/usage");
+
+    usageSpy.mockRestore();
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("usage boom");
+  });
+});
+
 // --- Auth route tests ---
 
 function createMockAuthStorage(overrides: Partial<AuthStorageLike> = {}): AuthStorageLike {
@@ -4072,6 +4112,105 @@ describe("GET /auth/status", () => {
   });
 });
 
+describe("POST /auth/claude-cli", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore({
+      updateGlobalSettings: vi.fn().mockResolvedValue({ useClaudeCli: true }),
+      getGlobalSettingsStore: vi.fn().mockReturnValue({
+        ...createMockGlobalSettingsStore(),
+        getSettings: vi.fn().mockResolvedValue({ useClaudeCli: false }),
+      }),
+    });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("enables Claude CLI when binary is available", async () => {
+    const probeSpy = vi.spyOn(claudeCliProbeModule, "probeClaudeCli").mockResolvedValue({
+      available: true,
+      version: "claude 1.0.0",
+      probeDurationMs: 20,
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/claude-cli", JSON.stringify({ enabled: true }), {
+      "Content-Type": "application/json",
+    });
+
+    probeSpy.mockRestore();
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ enabled: true, restartRequired: false });
+    expect(store.updateGlobalSettings).toHaveBeenCalledWith({ useClaudeCli: true });
+  });
+
+  it("returns 400 when enabling Claude CLI without an available binary", async () => {
+    const probeSpy = vi.spyOn(claudeCliProbeModule, "probeClaudeCli").mockResolvedValue({
+      available: false,
+      reason: "`claude` not found on PATH",
+      probeDurationMs: 20,
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/claude-cli", JSON.stringify({ enabled: true }), {
+      "Content-Type": "application/json",
+    });
+
+    probeSpy.mockRestore();
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Cannot enable Claude CLI routing");
+  });
+});
+
+describe("GET /providers/claude-cli/status", () => {
+  let store: TaskStore;
+
+  beforeEach(() => {
+    store = createMockStore({
+      getGlobalSettingsStore: vi.fn().mockReturnValue({
+        ...createMockGlobalSettingsStore(),
+        getSettings: vi.fn().mockResolvedValue({ useClaudeCli: true }),
+      }),
+    });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use(
+      "/api",
+      createApiRoutes(store, {
+        getClaudeCliExtensionStatus: () => ({ status: "ok", path: "/tmp/ext" }),
+      } as Parameters<typeof createApiRoutes>[1]),
+    );
+    return app;
+  }
+
+  it("returns binary + toggle diagnostics and computed readiness", async () => {
+    const probeSpy = vi.spyOn(claudeCliProbeModule, "probeClaudeCli").mockResolvedValue({
+      available: true,
+      version: "claude 1.0.0",
+      probeDurationMs: 10,
+    });
+
+    const res = await GET(buildApp(), "/api/providers/claude-cli/status");
+
+    probeSpy.mockRestore();
+
+    expect(res.status).toBe(200);
+    expect(res.body.enabled).toBe(true);
+    expect(res.body.ready).toBe(true);
+    expect(res.body.binary).toMatchObject({ available: true, version: "claude 1.0.0" });
+    expect(res.body.extension).toMatchObject({ status: "ok" });
+  });
+});
+
 describe("POST /auth/login", () => {
   let store: TaskStore;
   let authStorage: AuthStorageLike;
@@ -4114,6 +4253,36 @@ describe("POST /auth/login", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("Unknown provider");
+  });
+
+  it("returns 409 when login is already in progress for the same provider", async () => {
+    let releaseLogin: (() => void) | undefined;
+    (authStorage.login as ReturnType<typeof vi.fn>).mockImplementation(
+      (_provider: string, callbacks: { onAuth: (info: { url: string }) => void }) => {
+        callbacks.onAuth({ url: "https://auth.example.com/login" });
+        return new Promise<void>((resolve) => {
+          releaseLogin = resolve;
+        });
+      },
+    );
+
+    const app = buildApp();
+
+    const firstRequest = REQUEST(app, "POST", "/api/auth/login", JSON.stringify({ provider: "anthropic" }), {
+      "Content-Type": "application/json",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const secondResponse = await REQUEST(app, "POST", "/api/auth/login", JSON.stringify({ provider: "anthropic" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(secondResponse.status).toBe(409);
+    expect(secondResponse.body.error).toBe("Login already in progress for anthropic");
+
+    releaseLogin?.();
+    await firstRequest;
   });
 
   it("returns 500 when login fails", async () => {

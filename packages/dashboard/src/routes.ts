@@ -18,15 +18,13 @@ const {
   access,
 } = fsPromises;
 import type { TaskStore, ScheduleType, ActivityEventType, ModelPreset, RoutineTriggerType } from "@fusion/core";
-import { type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAvailable, isGhAuthenticated, AutomationStore, RoutineStore, isWebhookTrigger, MemoryBackendError, listAgentMemoryFiles, readAgentMemoryFile, writeAgentMemoryFile, discoverPiExtensions, getFusionAgentDir, getLegacyPiAgentDir } from "@fusion/core";
+import { type BatchStatusEntry, type BatchStatusResponse, type BatchStatusResult, type IssueInfo, type PrInfo, type Task, type PiExtensionEntry, type PiExtensionSettings, getCurrentRepo, isGhAuthenticated, AutomationStore, RoutineStore, isWebhookTrigger, MemoryBackendError, listAgentMemoryFiles, readAgentMemoryFile, writeAgentMemoryFile, discoverPiExtensions, getFusionAgentDir, getLegacyPiAgentDir } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
-import { probeClaudeCli } from "./claude-cli-probe.js";
 import { GitHubClient, parseBadgeUrl } from "./github.js";
 import { githubRateLimiter } from "./github-poll.js";
 import { terminalSessionManager } from "./terminal.js";
 import { getTerminalService } from "./terminal-service.js";
 import { listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, searchWorkspaceFiles, copyWorkspaceFile, moveWorkspaceFile, deleteWorkspaceFile, renameWorkspaceFile, getWorkspaceFileForDownload, getWorkspaceFolderForZip, listProjectMarkdownFiles, FileServiceError, type MarkdownFileListResponse } from "./file-service.js";
-import { clearUsageCache, fetchAllProviderUsage } from "./usage.js";
 import {
   getGitHubAppConfig,
   verifyWebhookSignature,
@@ -34,7 +32,6 @@ import {
   hasPrBadgeFieldsChanged,
   hasIssueBadgeFieldsChanged,
 } from "./github-webhooks.js";
-import { invalidateAllGlobalSettingsCaches } from "./project-store-resolver.js";
 import { AiSessionStore, SESSION_CLEANUP_DEFAULT_MAX_AGE_MS } from "./ai-session-store.js";
 import { getSession as getPlanningSession, cleanupSession as cleanupPlanningSession } from "./planning.js";
 import { getSubtaskSession, cleanupSubtaskSession } from "./subtask-breakdown.js";
@@ -52,7 +49,6 @@ import {
   unauthorized,
 } from "./api-error.js";
 import { resolvePluginManifest } from "./plugin-routes.js";
-import { createRuntimeLogger, type RuntimeLogger } from "./runtime-logger.js";
 import { createSessionDiagnostics } from "./ai-session-diagnostics.js";
 import { createApiRoutesContext } from "./routes/context.js";
 import { registerTaskWorkflowRoutes } from "./routes/register-task-workflow-routes.js";
@@ -76,9 +72,19 @@ import { registerAgentImportExportRoutes, registerAgentGenerationRoutes } from "
 import { registerAgentSkillsRoutes } from "./routes/register-agent-skills-routes.js";
 import { registerPluginsAutomationRoutes } from "./routes/register-plugins-automation.js";
 import { registerProxyRoutes } from "./routes/register-proxy.js";
+import { registerModelRoutes } from "./routes/register-model-routes.js";
+import { registerUsageRoutes } from "./routes/register-usage-routes.js";
+import { registerAuthRoutes } from "./routes/register-auth-routes.js";
 import { registerIntegratedRouters, registerIntegratedDevServerRouter } from "./routes/register-integrated-routers.js";
 
 const TASK_DETAIL_ACTIVITY_LOG_LIMIT = 500;
+
+/**
+ * Compatibility export surface:
+ * `createApiRoutes`, `AuthStorageLike`, `ModelRegistryLike`,
+ * `__resetBatchImportRateLimiter`, and `__setCreateFnAgentForRefine`
+ * intentionally remain exported from this file for existing tests/importers.
+ */
 
 /**
  * Minimal interface matching pi-coding-agent's ModelRegistry API surface
@@ -2479,7 +2485,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   // Models
-  registerModelsRoute(router, options?.modelRegistry, store, runtimeLogger.child("models"));
+  registerModelRoutes(routeContext);
 
   /**
    * GET /api/git/remotes
@@ -3846,7 +3852,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
 
   // ---------- Auth routes ----------
-  registerAuthRoutes(router, options?.authStorage, store, options);
+  registerAuthRoutes(routeContext);
 
   /**
    * POST /api/github/webhooks
@@ -5118,25 +5124,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
-  /**
-   * GET /api/usage
-   * Fetch AI provider subscription usage (Claude, Codex, Gemini).
-   * Returns: { providers: ProviderUsage[] }
-   * 
-   * Cached for 30 seconds to avoid hitting provider API rate limits.
-   * Each provider's status is independent — one failure doesn't break all.
-   */
-  router.get("/usage", async (_req, res) => {
-    try {
-      const providers = await fetchAllProviderUsage(options?.authStorage);
-      res.json({ providers });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      rethrowAsApiError(err, "Failed to fetch usage data");
-    }
-  });
+  registerUsageRoutes(routeContext);
 
   // ── Automation / Scheduled Task Routes ────────────────────────────
   //
@@ -7750,510 +7738,3 @@ async function refreshIssueInBackground(
   }
 }
 
-/**
- * Register the GET /api/models route.
- * Returns available AI models from the ModelRegistry for the UI model selector,
- * along with favoriteProviders for UI ordering.
- * If no ModelRegistry is provided, returns an empty array.
- */
-function registerModelsRoute(
-  router: Router,
-  modelRegistry?: ModelRegistryLike,
-  store?: TaskStore,
-  runtimeLogger: RuntimeLogger = createRuntimeLogger("models"),
-): void {
-  router.get("/models", async (_req, res) => {
-    // Always return 200 with empty array instead of 404 when no models available.
-    // This ensures the frontend can handle empty states gracefully.
-    if (!modelRegistry) {
-      res.json({ models: [], favoriteProviders: [], favoriteModels: [] });
-      return;
-    }
-
-    try {
-      modelRegistry.refresh();
-      let models = modelRegistry.getAvailable().map((m) => ({
-        provider: m.provider,
-        id: m.id,
-        name: m.name,
-        reasoning: m.reasoning,
-        contextWindow: m.contextWindow,
-      }));
-
-      // Get favoriteProviders and favoriteModels from global settings
-      let favoriteProviders: string[] = [];
-      let favoriteModels: string[] = [];
-      let useClaudeCli = false;
-      if (store) {
-        try {
-          const globalStore = store.getGlobalSettingsStore();
-          const globalSettings = await globalStore.getSettings();
-          favoriteProviders = globalSettings.favoriteProviders ?? [];
-          favoriteModels = globalSettings.favoriteModels ?? [];
-          useClaudeCli = globalSettings.useClaudeCli === true;
-        } catch {
-          // Silently ignore settings errors - just return empty favorites
-        }
-      }
-
-      // The vendored pi-claude-cli extension registers its provider as
-      // "pi-claude-cli" (distinct from "anthropic") whenever it loads.
-      // When the toggle is OFF, hide those entries from pickers so users
-      // don't see CLI-routed models they haven't opted into. When ON,
-      // surface everything so the CLI-routed entries appear alongside any
-      // direct provider auth the user has connected.
-      if (!useClaudeCli) {
-        models = models.filter((m) => m.provider !== "pi-claude-cli");
-      }
-
-      res.json({ models, favoriteProviders, favoriteModels });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      const message = err instanceof Error ? err.message : String(err);
-      runtimeLogger.warn(`Failed to load models: ${message}`);
-      res.json({ models: [], favoriteProviders: [], favoriteModels: [] });
-    }
-  });
-}
-
-/**
- * Register authentication status, login, and logout routes.
- * Uses pi-coding-agent's AuthStorage for credential management.
- * If no AuthStorage is provided, authentication routes return an unavailable status.
- */
-function registerAuthRoutes(
-  router: Router,
-  authStorage?: AuthStorageLike,
-  store?: TaskStore,
-  options?: ServerOptions,
-): void {
-  // Use injected AuthStorage or fail gracefully if not provided.
-  // When running via the CLI/engine, AuthStorage is passed in via ServerOptions.
-  function getAuthStorage(): AuthStorageLike {
-    if (!authStorage) {
-      throw new Error("Authentication is not configured");
-    }
-    return authStorage;
-  }
-
-  /**
-   * Mask an API key for safe display.
-   * - If key length <= 8: return 8 bullets (never reveal short keys)
-   * - Otherwise: first 3 chars + 5 bullets + last 4 chars
-   */
-  function maskApiKey(key: string): string {
-    if (key.length <= 8) {
-      return "••••••••";
-    }
-    return key.slice(0, 3) + "•••••" + key.slice(-4);
-  }
-
-  /**
-   * Track in-progress login flows to prevent concurrent logins for the same provider.
-   * Maps provider ID → AbortController for the active login.
-   */
-  const loginInProgress = new Map<string, AbortController>();
-
-  /**
-   * GET /api/auth/status
-   * Returns list of all providers with their authentication status and type.
-   * Includes both OAuth-backed and API-key-backed providers.
-   * Response: {
-   *   providers: [{ id, name, authenticated, type, keyHint? }],
-   *   ghCli: { available: boolean, authenticated: boolean }
-   * }
-   */
-  router.get("/auth/status", async (_req, res) => {
-    try {
-      const storage = getAuthStorage();
-      storage.reload();
-      const oauthProviders = storage.getOAuthProviders();
-      const providers: { id: string; name: string; authenticated: boolean; type: "oauth" | "api_key" | "cli"; keyHint?: string }[] = oauthProviders.map((p) => ({
-        id: p.id,
-        name: p.name,
-        authenticated: storage.hasAuth(p.id),
-        type: "oauth" as const,
-      }));
-
-      // Include API-key-backed providers if supported
-      if (storage.getApiKeyProviders) {
-        const apiKeyProviders = storage.getApiKeyProviders();
-        for (const p of apiKeyProviders) {
-          // Skip if already listed as an OAuth provider (avoid duplicates)
-          if (providers.some((existing) => existing.id === p.id)) continue;
-          let keyHint: string | undefined;
-          if (storage.get) {
-            const cred = storage.get(p.id);
-            if (cred?.type === "api_key" && cred?.key) {
-              keyHint = maskApiKey(cred.key);
-            }
-          }
-          providers.push({
-            id: p.id,
-            name: p.name,
-            authenticated: storage.hasApiKey ? storage.hasApiKey(p.id) : false,
-            type: "api_key" as const,
-            keyHint,
-          });
-        }
-      }
-
-      // Inject the synthetic "Anthropic — via Claude CLI" provider. Its
-      // "authenticated" state is a product of three facts: the `claude`
-      // binary must be on PATH, the user must have enabled useClaudeCli,
-      // and the vendored extension must have loaded cleanly. We compute
-      // them here once per /auth/status call so the provider list rendered
-      // by onboarding + settings stays consistent with what a direct call
-      // to /providers/claude-cli/status would return.
-      if (store) {
-        let enabled = false;
-        try {
-          const globalSettings = await store.getGlobalSettingsStore().getSettings();
-          enabled = globalSettings.useClaudeCli === true;
-        } catch {
-          // Unreadable settings — fall through with enabled=false
-        }
-        const extension = options?.getClaudeCliExtensionStatus?.() ?? null;
-        const binary = await probeClaudeCli();
-        const extensionOk = extension === null || extension.status === "ok";
-        providers.push({
-          id: "claude-cli",
-          name: "Anthropic — via Claude CLI",
-          authenticated: enabled && binary.available && extensionOk,
-          type: "cli" as const,
-        });
-      }
-
-      const ghCli = {
-        available: isGhAvailable(),
-        authenticated: isGhAuthenticated(),
-      };
-
-      res.json({ providers, ghCli });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      rethrowAsApiError(err);
-    }
-  });
-
-  /**
-   * GET /api/providers/claude-cli/status
-   * Dedicated diagnostic endpoint for the "Anthropic — via Claude CLI"
-   * provider card. Runs three checks:
-   *   1. `claude --version` binary probe (with short timeout)
-   *   2. GlobalSettings.useClaudeCli toggle state
-   *   3. Cached @fusion/pi-claude-cli extension resolution from the host
-   *
-   * Response fields are structured so the frontend can render a clear
-   * "what's working, what isn't" breakdown without itself having to know
-   * about pi internals.
-   */
-  /**
-   * POST /api/auth/claude-cli
-   * Enable or disable the "Anthropic — via Claude CLI" synthetic provider.
-   * Body: { enabled: boolean }
-   *
-   * Rather than add yet another settings API, this delegates to the
-   * existing PUT /api/settings/global path — same cache invalidation,
-   * same onUseClaudeCliToggled hook firing, same downstream skill
-   * backfill behavior. The thin wrapper exists so the frontend provider
-   * card has a shape-appropriate endpoint ("turn this provider on/off")
-   * without calling a generic settings route.
-   *
-   * When `enabled=true` is requested we probe the claude binary first
-   * and refuse if it's missing — saving the user from a confusing state
-   * where the toggle is "on" but nothing actually works.
-   */
-  router.post("/auth/claude-cli", async (req, res) => {
-    try {
-      if (!store) {
-        throw new ApiError(500, "Settings store unavailable");
-      }
-      const enabled = req.body?.enabled;
-      if (typeof enabled !== "boolean") {
-        throw badRequest("enabled must be a boolean");
-      }
-
-      if (enabled) {
-        const binary = await probeClaudeCli();
-        if (!binary.available) {
-          throw new ApiError(
-            400,
-            `Cannot enable Claude CLI routing: ${binary.reason ?? "claude binary not available"}`,
-          );
-        }
-      }
-
-      // Snapshot prior value so we only fire the toggle hook on an actual
-      // transition — mirrors the logic in PUT /api/settings/global.
-      let prev = false;
-      try {
-        const priorGlobal = await store.getGlobalSettingsStore().getSettings();
-        prev = priorGlobal.useClaudeCli === true;
-      } catch {
-        // Unreadable prior — treat as false so a first enable still fires.
-      }
-
-      const settings = await store.updateGlobalSettings({ useClaudeCli: enabled });
-      invalidateAllGlobalSettingsCaches();
-      const engineManager = options?.engineManager;
-      if (engineManager) {
-        for (const engine of engineManager.getAllEngines().values()) {
-          engine.getTaskStore().getGlobalSettingsStore().invalidateCache();
-        }
-      }
-
-      const next = settings.useClaudeCli === true;
-      if (options?.onUseClaudeCliToggled && prev !== next) {
-        try {
-          options.onUseClaudeCliToggled(prev, next);
-        } catch (hookErr) {
-          console.warn(
-            `[auth/claude-cli] onUseClaudeCliToggled callback threw: ${hookErr instanceof Error ? hookErr.message : String(hookErr)}`,
-          );
-        }
-      }
-
-      res.json({
-        enabled: next,
-        // The pi-claude-cli extension is now always loaded; toggling
-        // this setting only flips the /api/models filter, which takes
-        // effect on the next picker fetch. No restart needed.
-        restartRequired: false,
-      });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      rethrowAsApiError(err);
-    }
-  });
-
-  router.get("/providers/claude-cli/status", async (_req, res) => {
-    try {
-      const binary = await probeClaudeCli();
-      let enabled = false;
-      if (store) {
-        try {
-          const globalSettings = await store.getGlobalSettingsStore().getSettings();
-          enabled = globalSettings.useClaudeCli === true;
-        } catch {
-          // Best-effort: unreadable settings still allow the binary probe
-          // to surface, just with enabled=false.
-        }
-      }
-      const extension = options?.getClaudeCliExtensionStatus?.() ?? null;
-
-      res.json({
-        binary,
-        enabled,
-        extension,
-        // Convenience field: the provider card considers everything "ready"
-        // when the binary is available, the user has enabled the toggle,
-        // AND the host loaded the extension without error. Surfacing this
-        // keeps the UI render logic simple.
-        ready:
-          binary.available &&
-          enabled &&
-          (extension === null || extension.status === "ok"),
-      });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      rethrowAsApiError(err);
-    }
-  });
-
-  /**
-   * POST /api/auth/login
-   * Initiates OAuth login for a provider.
-   * Body: { provider: string }
-   * Response: { url: string, instructions?: string }
-   *
-   * The endpoint starts the OAuth flow and returns the auth URL from the
-   * onAuth callback. The client should open this URL in a new tab and
-   * poll GET /api/auth/status to detect completion.
-   */
-  router.post("/auth/login", async (req, res) => {
-    try {
-      const { provider } = req.body;
-      if (!provider || typeof provider !== "string") {
-        throw badRequest("provider is required");
-      }
-
-      // Prevent concurrent logins for the same provider
-      if (loginInProgress.has(provider)) {
-        throw conflict(`Login already in progress for ${provider}`);
-      }
-
-      const storage = getAuthStorage();
-      const oauthProviders = storage.getOAuthProviders();
-      const found = oauthProviders.find((p) => p.id === provider);
-      if (!found) {
-        throw badRequest(`Unknown provider: ${provider}`);
-      }
-
-      const abortController = new AbortController();
-      loginInProgress.set(provider, abortController);
-
-      // We need to get the URL from the onAuth callback before responding.
-      // The login() call continues in the background until the user completes OAuth.
-      let authResolve: (info: { url: string; instructions?: string }) => void;
-      let authReject: (err: Error) => void;
-      const authUrlPromise = new Promise<{ url: string; instructions?: string }>((resolve, reject) => {
-        authResolve = resolve;
-        authReject = reject;
-      });
-
-      // Start login flow in background — don't await the full login
-      const loginPromise = storage.login(provider, {
-        onAuth: (info) => {
-          authResolve({ url: info.url, instructions: info.instructions });
-        },
-        onPrompt: async (prompt) => {
-          // Web UI cannot interactively prompt — return empty string if allowed
-          if (prompt.allowEmpty) return "";
-          return prompt.placeholder || "";
-        },
-        onProgress: () => {}, // no-op for web UI
-        signal: abortController.signal,
-      });
-
-      // Race: either we get the auth URL or the login completes/fails first
-      const timeout = setTimeout(() => {
-        authReject(new Error("Login initiation timed out"));
-      }, 30_000);
-
-      loginPromise
-        .then(() => {
-          // Login completed (user finished OAuth in browser)
-        })
-        .catch((err) => {
-          // Login failed — also reject auth URL if not yet received
-          authReject(err);
-        })
-        .finally(() => {
-          clearTimeout(timeout);
-          loginInProgress.delete(provider);
-        });
-
-      const authInfo = await authUrlPromise;
-      clearTimeout(timeout);
-      res.json({ url: authInfo.url, instructions: authInfo.instructions });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      // Clean up on error
-      const provider = req.body?.provider;
-      if (provider) loginInProgress.delete(provider);
-      rethrowAsApiError(err);
-    }
-  });
-
-  /**
-   * POST /api/auth/logout
-   * Removes credentials for a provider.
-   * Body: { provider: string }
-   * Response: { success: true }
-   */
-  router.post("/auth/logout", (req, res) => {
-    try {
-      const { provider } = req.body;
-      if (!provider || typeof provider !== "string") {
-        throw badRequest("provider is required");
-      }
-
-      const storage = getAuthStorage();
-      storage.logout(provider);
-      res.json({ success: true });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      rethrowAsApiError(err);
-    }
-  });
-
-  /**
-   * POST /api/auth/api-key
-   * Save an API key for an API-key-backed provider.
-   * Body: { provider: string, apiKey: string }
-   * Response: { success: true }
-   *
-   * Validates the provider exists, is API-key-backed, and the key is non-empty.
-   * Never returns the key in any response.
-   */
-  router.post("/auth/api-key", (req, res) => {
-    try {
-      const { provider, apiKey } = req.body;
-      if (!provider || typeof provider !== "string") {
-        throw badRequest("provider is required");
-      }
-      if (!apiKey || typeof apiKey !== "string" || !apiKey.trim()) {
-        throw badRequest("apiKey is required and must be a non-empty string");
-      }
-
-      const storage = getAuthStorage();
-
-      // Check that the storage supports API key management
-      if (!storage.setApiKey) {
-        throw badRequest("API key management is not supported");
-      }
-
-      // Validate the provider is an API-key-backed provider
-      const apiKeyProviders = storage.getApiKeyProviders?.() ?? [];
-      const found = apiKeyProviders.find((p) => p.id === provider);
-      if (!found) {
-        throw badRequest(`Unknown API key provider: ${provider}`);
-      }
-
-      storage.setApiKey(provider, apiKey.trim());
-      clearUsageCache();
-      res.json({ success: true });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      rethrowAsApiError(err);
-    }
-  });
-
-  /**
-   * DELETE /api/auth/api-key
-   * Remove an API key for a provider.
-   * Body: { provider: string }
-   * Response: { success: true }
-   */
-  router.delete("/auth/api-key", (req, res) => {
-    try {
-      const { provider } = req.body;
-      if (!provider || typeof provider !== "string") {
-        throw badRequest("provider is required");
-      }
-
-      const storage = getAuthStorage();
-      if (!storage.clearApiKey) {
-        throw badRequest("API key management is not supported");
-      }
-
-      storage.clearApiKey(provider);
-      clearUsageCache();
-      res.json({ success: true });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      rethrowAsApiError(err);
-    }
-  });
-
-
-
-
-}

@@ -37,6 +37,9 @@ The context provides core cross-cutting plumbing:
 - `register-chat-routes.ts` — chat session/list/mutation/stream routes
 - `register-messaging-scripts.ts` — scripts API and mailbox/message routes
 - `register-git-github.ts` — git/GitHub workflows and related helpers
+- `register-model-routes.ts` — `/models` endpoint, favorites projection, and `useClaudeCli` filtering for `pi-claude-cli` entries
+- `register-auth-routes.ts` — auth/provider domain (`/auth/status`, `/auth/login`, `/auth/logout`, `/auth/api-key`, `/auth/claude-cli`, `/providers/claude-cli/status`)
+- `register-usage-routes.ts` — `/usage` endpoint with `fetchAllProviderUsage(options?.authStorage)` integration
 - `register-files-terminal-workspaces.ts` — files, terminal, workspace file operations
 - `register-agent-core-routes.ts` — core agent CRUD, lookups, stats/org-tree, hierarchy aliases (`/agents/:id/children|employees`)
 - `register-agent-runtime-routes.ts` — agent runtime/control-plane, heartbeats/runs, access/permissions, soul/memory, revisions/budget/keys, task/inbox surfaces
@@ -59,7 +62,11 @@ Express matches in registration order. Keep registrar and in-registrar route ord
    - `/mesh/state` must be registered before `/mesh/sync`
    - Discovery routes stay grouped after mesh routes
    - Inbound `/settings/sync-receive|auth-receive|auth-export` routes mount after discovery routes
-5. **Agent ordering constraints must stay intact**:
+5. **Auth/model/usage ordering constraints must stay intact**:
+   - Keep `/models` registration before auth-dependent picker/settings flows that rely on consistent model filtering
+   - Keep auth registrar routes grouped as currently mounted (status/diagnostic + mutation endpoints) so no wildcard handler can shadow `/providers/claude-cli/status`
+   - Keep `/usage` mounted as a standalone registrar route (not under auth paths) with unchanged error mapping semantics
+6. **Agent ordering constraints must stay intact**:
    - `/agents/stats`, `/agents/org-tree`, `/agents/resolve/:shortname` before `/agents/:id`
    - `/agents/:id/runs/stop` before `/agents/:id/runs/:runId`
    - `/agents/:id/reflections/latest` before `/agents/:id/reflections`
