@@ -1,6 +1,6 @@
 /**
  * Simulates live board activity — tasks progressing, new ideas landing,
- * triage completing, reviews finishing. Run alongside `kb dashboard`.
+ * planning completing, reviews finishing. Run alongside `kb dashboard`.
  *
  * Usage: `npx tsx demo/simulate.ts [dir]`
  *
@@ -44,7 +44,7 @@ async function main() {
    
   while (true) {
     const tasks = await store.listTasks();
-    const triage = tasks.filter((t) => t.column === "triage" && !t.paused);
+    const planning = tasks.filter((t) => t.column === "triage" && !t.paused);
     const inProgress = tasks.filter((t) => t.column === "in-progress" && !t.paused);
     const inReview = tasks.filter((t) => t.column === "in-review" && !t.paused);
     const todo = tasks.filter((t) => t.column === "todo" && !t.paused);
@@ -53,23 +53,23 @@ async function main() {
     const roll = Math.random();
 
     if (roll < 0.2 && ideaIndex < NEW_TASK_IDEAS.length) {
-      // New task lands in triage
+      // New task lands in planning
       const desc = NEW_TASK_IDEAS[ideaIndex++];
       const task = await store.createTask({ description: desc });
       console.log(`  + New task: ${task.id} — "${desc.slice(0, 50)}..."`);
       await sleep(2000 + Math.random() * 3000);
-    } else if (roll < 0.4 && triage.length > 0) {
-      // Triage completes — task gets spec'd and moves to todo
-      const task = pick(triage);
+    } else if (roll < 0.4 && planning.length > 0) {
+      // Planning completes — task gets planned and moves to todo
+      const task = pick(planning);
       const title = task.description.slice(0, 60).replace(/\.$/, "");
       await store.updateTask(task.id, {
         title,
         size: pick(["S", "M", "L"] as const),
         reviewLevel: pick([0, 1, 1, 2, 2, 3]),
       });
-      await store.logEntry(task.id, "Triage complete — spec written", "approved");
+      await store.logEntry(task.id, "Planning complete — plan written", "approved");
       await store.moveTask(task.id, "todo");
-      console.log(`  ✓ Triaged: ${task.id} → todo`);
+      console.log(`  ✓ Planned: ${task.id} → todo`);
       await sleep(3000 + Math.random() * 4000);
     } else if (roll < 0.6 && todo.length > 0 && inProgress.length < 3) {
       // Scheduler picks up a todo task

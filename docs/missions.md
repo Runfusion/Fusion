@@ -53,7 +53,7 @@ The dashboard supports mission planning workflows where you can:
 When missions are created through the interview planning workflow, Fusion automatically generates contract assertions for each feature:
 
 - **Assertion text source priority**: `acceptanceCriteria` → `feature.description` → fallback text (`"Verify implementation of: {feature.title}"`)
-- **Assertions are linked to features**: Each auto-generated assertion is automatically linked to its feature, enabling mission validation rollup and enriched triage context
+- **Assertions are linked to features**: Each auto-generated assertion is automatically linked to its feature, enabling mission validation rollup and enriched planning context
 - **Verification fields**: Milestone and slice verification criteria from the interview are stored in dedicated `verification` fields rather than concatenated into descriptions
 - **Partial plans handled**: Auto-generation is robust to partial plans (missing slices/features or empty criteria) without throwing errors
 
@@ -87,13 +87,13 @@ Typical flow:
 
 ## `autopilotEnabled` vs `autoAdvance`
 
-- **`autopilotEnabled`**: primary control for autopilot behavior — enables background monitoring, orchestration, and automatic slice activation when a slice completes. Also triggers auto-triage (converting features to tasks) when a slice is activated.
+- **`autopilotEnabled`**: primary control for autopilot behavior — enables background monitoring, orchestration, and automatic slice activation when a slice completes. Also triggers auto-planning (converting features to tasks) when a slice is activated.
 - **`autoAdvance`**: legacy fallback for backward compatibility with existing mission data. Kept for compatibility — new missions should use `autopilotEnabled`.
 
-**Auto-triage behavior:**
+**Auto-planning behavior:**
 
-- `autopilotEnabled=true` → features in activated slices are automatically triaged (converted to tasks)
-- `autopilotEnabled=false`, `autoAdvance=true` → features are triaged (legacy compat)
+- `autopilotEnabled=true` → features in activated slices are automatically planned (converted to tasks)
+- `autopilotEnabled=false`, `autoAdvance=true` → features are planned (legacy compat)
 - `autopilotEnabled=false`, `autoAdvance=false` → manual slice activation only
 
 **Slice progression (on slice completion):**
@@ -144,7 +144,7 @@ interface MissionContractAssertion {
   id: string;              // e.g., "CA-A3B7CD-E9F2"
   milestoneId: string;     // Parent milestone
   title: string;           // Human-readable title
-  assertion: string;       // Behavioral specification
+  assertion: string;       // Behavioral plan
   status: AssertionStatus; // pending | passed | failed | blocked
   orderIndex: number;      // Sort order within milestone
   featureIds: string[];    // Linked features (many-to-many)
@@ -246,7 +246,7 @@ interface MissionFixFeatureLineage {
 }
 ```
 
-The fix feature is **auto-triaged** (converted to tasks) for immediate execution. Each fix increments `implementationAttemptCount`.
+The fix feature is **auto-planned** (converted to tasks) for immediate execution. Each fix increments `implementationAttemptCount`.
 
 **Default retry budget:** 3 (`DEFAULT_IMPLEMENTATION_RETRY_BUDGET`). When `implementationAttemptCount >= maxRetryBudget`, the feature transitions to `blocked`.
 
@@ -291,7 +291,7 @@ These are independent tracking mechanisms — autopilot monitors mission progres
 - `inProgressCount`, `passedCount`, `failedCount`, `blockedCount`
 
 **MissionEvent audit types:**
-- `slice_activated`, `feature_triaged`, `feature_completed`
+- `slice_activated`, `feature_planned`, `feature_completed`
 - `validation:started`, `validation:passed`, `validation:failed`, `validation:blocked`
 - `fix_feature:created`, `feature:blocked`
 
@@ -320,7 +320,7 @@ interface MissionAssertionFailureRecord {
 | Symptom | Diagnosis | Resolution |
 |---------|-----------|------------|
 | Feature stuck in "validating" | `activeValidations` set may be stale; engine restart needed | Check logs for validator errors; restart engine to trigger `recoverActiveMissions()` |
-| Fix feature not auto-triaging | `triageFeature()` may have errored; check logs | Manual triage via `fn mission triage-feature <id>`; investigate `triageFeature()` errors |
+| Fix feature not auto-planning | `planFeature()` may have errored; check logs | Manual planning via `fn mission plan-feature <id>`; investigate `planFeature()` errors |
 | Budget exhaustion loop | `implementationAttemptCount >= maxRetryBudget` (default: 3) | Increase `maxRetryBudget` in mission settings or fix root cause |
 | Blocked mission not advancing | `MilestoneValidationRollup.state` shows `blocked` | Identify blocked assertions; operator must resolve root cause |
 | Validation agent errors | AI session creation failed or `VALIDATION_TIMEOUT_MS` (10 min) exceeded | Check model configuration and logs; verify AI provider auth |

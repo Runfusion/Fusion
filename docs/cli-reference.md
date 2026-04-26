@@ -71,7 +71,7 @@ fn dashboard --dev
 | `--no-auth` | Disable bearer-token auth. Not recommended when binding to `0.0.0.0`. |
 | `--paused` | Start with the engine paused (automation disabled). |
 | `--interactive` | Interactive port selection. |
-| `--dev` | Start dashboard only (no AI engine, no triage/scheduler). |
+| `--dev` | Start dashboard only (no AI engine, no planning/scheduler). |
 
 ### Interactive Terminal UI (TTY Mode)
 

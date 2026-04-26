@@ -55,7 +55,7 @@ Fusion currently has two related but distinct memory systems:
 | `readProjectMemoryWithBackend()` | Backend-aware read helper |
 | `searchProjectMemory()`, `getProjectMemory()` | Backend-aware search/get wrappers |
 | `resolveMemoryInstructionContext()` | Backend-aware instruction context |
-| `buildTriageMemoryInstructions()` | Triage prompt memory instructions |
+| Planning instruction builder | Planning prompt memory instructions |
 | `buildExecutionMemoryInstructions()` | Executor prompt memory instructions |
 | `buildReviewerMemoryInstructions()` | Reviewer prompt memory instructions |
 | `readProjectMemory()` | Direct canonical long-term file read |
@@ -319,10 +319,10 @@ Contract-critical behavior is covered by:
 - `packages/core/src/project-memory.test.ts`
   - canonical long-term path bootstrap/read behavior
   - `resolveMemoryInstructionContext()` branching
-  - triage/execution/reviewer instruction generation per backend
+  - planning/execution/reviewer instruction generation per backend
 - `packages/core/src/store.test.ts`
   - memory bootstrap behavior when memory is enabled/disabled and toggled
-- `packages/engine/src/triage.test.ts` and `packages/engine/src/executor.test.ts`
+- Engine planning and executor tests
   - memory instruction injection behavior by settings/backend
 
 ---

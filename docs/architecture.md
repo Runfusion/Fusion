@@ -8,7 +8,7 @@ This document describes the actual architecture of Fusion as implemented in this
 
 ## 1) Overview
 
-Fusion is an AI-orchestrated task board. It takes tasks through a structured lifecycle (`triage → todo → in-progress → in-review → done → archived`) and automates triage, execution, review, merge, and operational recovery.
+Fusion is an AI-orchestrated task board. It takes tasks through a structured lifecycle (`planning → todo → in-progress → in-review → done → archived`) and automates planning, execution, review, merge, and operational recovery.
 
 At a high level, Fusion is split into:
 - **Core domain + persistence** (`@fusion/core`)
@@ -37,7 +37,7 @@ At a high level, Fusion is split into:
                                │                       │
                       ┌────────▼───────────────────────▼───────┐
                       │            Engine Runtime               │
-                      │ Scheduler / Triage / Executor / Merger │
+                      │ Scheduler / Planning / Executor / Merger │
                       │ Heartbeat / Self-healing / Autopilot   │
                       └────────┬───────────────────────┬────────┘
                                │                       │
@@ -61,7 +61,7 @@ At a high level, Fusion is split into:
 | Package | Published | Role | Key files |
 |---|---|---|---|
 | `@fusion/core` | Private | Domain model, stores, SQLite adapters, settings, shared types | `packages/core/src/types.ts`, `store.ts`, `db.ts`, `central-core.ts`, `agent-store.ts` |
-| `@fusion/engine` | Private | AI orchestration runtime (triage, scheduler, executor, merger, recovery) | `packages/engine/src/triage.ts`, `scheduler.ts`, `executor.ts`, `merger.ts`, `project-runtime.ts` |
+| `@fusion/engine` | Private | AI orchestration runtime (planning, scheduler, executor, merger, recovery) | planning processor, `scheduler.ts`, `executor.ts`, `merger.ts`, `project-runtime.ts` |
 | `@fusion/dashboard` | Private | Express API server + React app | `packages/dashboard/src/server.ts`, `routes.ts`, `sse.ts`, `websocket.ts`, `packages/dashboard/app/App.tsx` |
 | `@runfusion/fusion` | **Published** | CLI binary (`fn`) + Pi extension | `packages/cli/src/bin.ts`, `commands/*`, `project-resolver.ts`, `extension.ts` |
 | `@fusion/desktop` | Private | Electron shell around Fusion dashboard/client | `packages/desktop/src/main.ts`, `ipc.ts`, `preload.ts`, `scripts/build.ts` |
@@ -284,7 +284,7 @@ The QMD backend (`qmd`) delegates read/write I/O to the file backend and schedul
 **Dashboard API:**
 - `GET /api/memory/backend` — Returns current backend status and capabilities
 
-See [Memory Plugin Contract](./memory-plugin-contract.md) for the full specification.
+See [Memory Plugin Contract](./memory-plugin-contract.md) for the full plan.
 
 ---
 
@@ -293,7 +293,7 @@ See [Memory Plugin Contract](./memory-plugin-contract.md) for the full specifica
 `@fusion/engine` executes the autonomous workflow.
 
 ### Agent roles
-- **Triage**: `TriageProcessor` (`triage.ts`) generates task specs (`PROMPT.md`) and selects eligible triage tasks by priority first, then FIFO (`createdAt` ascending) within each priority tier.
+- **Planning**: the planning processor generates task plans (`PROMPT.md`) and selects eligible planning tasks by priority first, then FIFO (`createdAt` ascending) within each priority tier.
 - **Executor**: `TaskExecutor` (`executor.ts`) implements tasks in worktrees
 - **Reviewer**: `reviewStep()` (`reviewer.ts`) performs plan/code reviews
 - **Merger**: `aiMergeTask()` (`merger.ts`) merges approved work
@@ -596,14 +596,14 @@ Some data remains intentionally filesystem-based:
 ## 9) Task Lifecycle
 
 Lifecycle constants are defined in `packages/core/src/types.ts`:
-- Columns: `triage`, `todo`, `in-progress`, `in-review`, `done`, `archived`
+- Columns: `planning`, `todo`, `in-progress`, `in-review`, `done`, `archived`
 - Transition rules via `VALID_TRANSITIONS`
 
 ### Lifecycle flow
 
 ```text
-triage
-  │ (TriageProcessor writes PROMPT.md)
+planning
+  │ (Planning processor writes PROMPT.md)
   ▼
 todo
   │ (Scheduler selects task, dependencies satisfied)
@@ -620,7 +620,7 @@ done
 ```
 
 ### Execution detail
-- **Triage phase**: `TriageProcessor` generates executable spec
+- **Planning phase**: the planning processor generates an executable plan
 - **Execution phase**: `TaskExecutor` performs implementation, tool calls, tests/build commands
 - **Review phase**: optional `reviewStep()` workflow depending on prompt review level (bypassed in fast mode)
 - **Merge phase**: `aiMergeTask()` handles merge strategy and post-merge workflow steps
@@ -641,7 +641,7 @@ Task steps use statuses: `pending`, `in-progress`, `done`, `skipped`.
 
 Fusion has two complementary agent models:
 
-1. **Task pipeline agents** (triage/executor/reviewer/merger) managed by engine runtime
+1. **Task pipeline agents** (planning/executor/reviewer/merger) managed by engine runtime
 2. **Persistent registered agents** managed by `AgentStore`
 
 ### Persistent agent storage

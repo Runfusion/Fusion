@@ -151,10 +151,10 @@ Recommended priority: first add ownership/inbox primitives (checkout + inbox-lit
 ### 12) Approval workflows
 **Status:** PARTIAL  
 **Description:** Approval entities linked to issues, reviewed first on wake.  
-**Current State:** Triaged specs can require manual approval (`awaiting-approval` + approve/reject routes).  
+**Current State:** Planned tasks can require manual approval (`awaiting-approval` + approve/reject routes).  
 **Gap:** No standalone approval objects with linked issue resolution metadata.  
-**Recommendation:** Add optional approval domain only if needed beyond existing triage-plan approval.  
-**Files Affected:** `packages/engine/src/triage.ts`, `packages/dashboard/src/routes.ts`, `packages/core/src/types.ts`
+**Recommendation:** Add optional approval domain only if needed beyond existing planning approval.  
+**Files Affected:** `packages/engine/src/planning.ts`, `packages/dashboard/src/routes.ts`, `packages/core/src/types.ts`
 
 ### 13) Self-assignment constraints
 **Status:** MISSING  
@@ -167,7 +167,7 @@ Recommended priority: first add ownership/inbox primitives (checkout + inbox-lit
 ### 14) Status value parity
 **Status:** PARTIAL  
 **Description:** Paperclip issue statuses differ from Fusion’s board columns/status fields.  
-**Current State:** Fusion has columns (`triage`, `todo`, `in-progress`, `in-review`, `done`, `archived`) and ad-hoc task status strings.  
+**Current State:** Fusion has columns (`planning`, `todo`, `in-progress`, `in-review`, `done`, `archived`) and ad-hoc task status strings.  
 **Gap:** No direct `blocked/cancelled/backlog` canonical lifecycle.  
 **Recommendation:** Decide whether to add a normalized execution status enum alongside board columns.  
 **Files Affected:** `packages/core/src/types.ts`, `packages/core/src/store.ts`, `packages/dashboard/src/routes.ts`, `packages/engine/src/scheduler.ts`

@@ -51,7 +51,7 @@ The **Frontend UX Design** template verifies visual polish and consistency with 
 
 ## Model Overrides for Prompt Steps
 
-A prompt-mode workflow step can specify its own model with:
+A prompt-mode workflow step can set its own model with:
 
 - `modelProvider`
 - `modelId`

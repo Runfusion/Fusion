@@ -427,7 +427,7 @@ describe("fn pi extension", () => {
         makeCtx(tmpDir),
       );
 
-      expect(result.content[0].text).toContain("Triage (2)");
+      expect(result.content[0].text).toContain("Planning (2)");
       expect(result.content[0].text).toContain("FN-001");
       expect(result.content[0].text).toContain("FN-002");
       expect(result.details.count).toBe(2);
@@ -451,7 +451,7 @@ describe("fn pi extension", () => {
         undefined,
         makeCtx(tmpDir),
       );
-      expect(triageResult.content[0].text).toContain("Triage (1)");
+      expect(triageResult.content[0].text).toContain("Planning (1)");
       expect(triageResult.content[0].text).toContain("FN-001");
 
       const todoResult = await listTool.execute(
@@ -485,7 +485,7 @@ describe("fn pi extension", () => {
         makeCtx(tmpDir),
       );
 
-      expect(result.content[0].text).toContain("Triage (5)");
+      expect(result.content[0].text).toContain("Planning (5)");
       expect(result.content[0].text).toContain("FN-001");
       expect(result.content[0].text).toContain("FN-002");
       expect(result.content[0].text).not.toContain("FN-003");
@@ -515,7 +515,7 @@ describe("fn pi extension", () => {
 
       expect(result.content[0].text).toContain("FN-001");
       expect(result.content[0].text).toContain("Implement caching layer");
-      expect(result.content[0].text).toContain("Triage");
+      expect(result.content[0].text).toContain("Planning");
       expect(result.details.task).toBeDefined();
       expect(result.details.task.id).toBe("FN-001");
     });

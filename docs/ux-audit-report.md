@@ -205,7 +205,7 @@ This audit acknowledges and does not duplicate the following existing backlog it
 ### 3.3 Color Contrast in Status Badges
 
 - **Component:** `styles.css` (34 color themes)
-- **Current behavior:** Status badge colors (triage, todo, in-progress, etc.) may have insufficient contrast with background colors in certain themes, especially light themes.
+- **Current behavior:** Status badge colors (planning, todo, in-progress, etc.) may have insufficient contrast with background colors in certain themes, especially light themes.
 - **Recommended fix:** Audit all status badge colors across all 34 themes for WCAG AA compliance (4.5:1 for text). Use darker variants of status colors in light themes. Test with accessibility tools.
 - **Impact:** Users with visual impairments may struggle to distinguish status badges.
 - **Effort estimate:** M

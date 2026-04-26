@@ -6,8 +6,8 @@
  * - Done: shipped features
  * - In Review: finished work waiting for merge
  * - In Progress: agents actively executing (with steps partially done)
- * - Todo: specified and queued
- * - Triage: raw ideas just landing
+ * - Todo: planned and queued
+ * - Planning: raw ideas just landing
  */
 import { TaskStore } from "../packages/core/src/index.js";
 import { writeFile } from "node:fs/promises";
@@ -66,7 +66,7 @@ async function main() {
     doneIds.push(task.id);
     await store.updateTask(task.id, { size: t.size, reviewLevel: t.reviewLevel });
 
-    // Move through the pipeline: triage → todo → in-progress → in-review → done
+    // Move through the pipeline: planning → todo → in-progress → in-review → done
     await store.moveTask(task.id, "todo");
     await store.moveTask(task.id, "in-progress");
 
@@ -221,9 +221,9 @@ async function main() {
     await writePrompt(store, task.id, t.title, t.desc, steps, t.deps);
   }
 
-  // ── Triage ────────────────────────────────────────────────────────
+  // ── Planning ──────────────────────────────────────────────────────
 
-  const triage = [
+  const planning = [
     {
       desc: "Users are reporting slow page loads on the dashboard when they have more than 200 tasks. Probably need virtual scrolling or pagination in the UI.",
     },
@@ -241,7 +241,7 @@ async function main() {
     },
   ];
 
-  for (const t of triage) {
+  for (const t of planning) {
     await store.createTask({ description: t.desc });
   }
 
@@ -252,7 +252,7 @@ async function main() {
   }
 
   console.log(`\nSeeded ${tasks.length} tasks:`);
-  console.log(`  Triage:      ${byColumn["triage"] || 0}`);
+  console.log(`  Planning:    ${byColumn["triage"] || 0}`);
   console.log(`  Todo:        ${byColumn["todo"] || 0}`);
   console.log(`  In Progress: ${byColumn["in-progress"] || 0}`);
   console.log(`  In Review:   ${byColumn["in-review"] || 0}`);
@@ -341,7 +341,7 @@ ${stepsSection}
 async function addLogs(store: TaskStore, id: string, targetColumn: string) {
   const actions: Record<string, string[][]> = {
     done: [
-      ["Triage complete — spec written", "approved"],
+      ["Planning complete — plan written", "approved"],
       ["Scheduled for execution", "worktree created"],
       ["Step 0 started", "in-progress"],
       ["Review: step 0", "approved"],
@@ -355,7 +355,7 @@ async function addLogs(store: TaskStore, id: string, targetColumn: string) {
       ["Auto-merged into main"],
     ],
     "in-review": [
-      ["Triage complete — spec written", "approved"],
+      ["Planning complete — plan written", "approved"],
       ["Scheduled for execution", "worktree created"],
       ["Step 0 started", "in-progress"],
       ["Review: step 0", "approved"],
@@ -368,7 +368,7 @@ async function addLogs(store: TaskStore, id: string, targetColumn: string) {
       ["All steps complete — moved to review"],
     ],
     "in-progress": [
-      ["Triage complete — spec written", "approved"],
+      ["Planning complete — plan written", "approved"],
       ["Scheduled for execution", "worktree created"],
       ["Step 0 started", "in-progress"],
       ["Review: step 0", "approved"],

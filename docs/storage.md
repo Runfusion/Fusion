@@ -79,8 +79,8 @@ API endpoints reviewed:
 | `modelOnboardingComplete` | Global | `GET/PUT /api/settings/global` | Onboarding completion flag |
 | `executionGlobalProvider` | Global | `GET/PUT /api/settings/global` | Global baseline AI provider for task execution |
 | `executionGlobalModelId` | Global | `GET/PUT /api/settings/global` | Global baseline AI model ID for task execution |
-| `planningGlobalProvider` | Global | `GET/PUT /api/settings/global` | Global baseline AI provider for planning/triage |
-| `planningGlobalModelId` | Global | `GET/PUT /api/settings/global` | Global baseline AI model ID for planning/triage |
+| `planningGlobalProvider` | Global | `GET/PUT /api/settings/global` | Global baseline AI provider for planning |
+| `planningGlobalModelId` | Global | `GET/PUT /api/settings/global` | Global baseline AI model ID for planning |
 | `validatorGlobalProvider` | Global | `GET/PUT /api/settings/global` | Global baseline AI provider for validator/reviewer |
 | `validatorGlobalModelId` | Global | `GET/PUT /api/settings/global` | Global baseline AI model ID for validator/reviewer |
 | `titleSummarizerGlobalProvider` | Global | `GET/PUT /api/settings/global` | Global baseline AI provider for title summarization |

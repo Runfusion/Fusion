@@ -418,7 +418,7 @@ describe("ListView", () => {
 
     // Check that all column badges are rendered in the table
     // Use getAllByText and check length since column names appear in both drop zones and badges
-    expect(screen.getAllByText("Triage").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Planning").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Todo").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("In Progress").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("In Review").length).toBeGreaterThanOrEqual(1);
@@ -426,7 +426,7 @@ describe("ListView", () => {
 
     // Check that badges have the correct styling by querying within the table
     const table = document.querySelector(".list-table");
-    expect(table?.textContent).toContain("Triage");
+    expect(table?.textContent).toContain("Planning");
     expect(table?.textContent).toContain("Todo");
     expect(table?.textContent).toContain("In Progress");
     expect(table?.textContent).toContain("In Review");
@@ -589,7 +589,7 @@ describe("ListView", () => {
   it("renders drop zones for each column", () => {
     renderListView();
 
-    expect(screen.getByText("Triage")).toBeDefined();
+    expect(screen.getByText("Planning")).toBeDefined();
     expect(screen.getByText("Todo")).toBeDefined();
     expect(screen.getByText("In Progress")).toBeDefined();
     expect(screen.getByText("In Review")).toBeDefined();
@@ -719,7 +719,7 @@ describe("ListView", () => {
     renderListView({ tasks });
 
     // Check that section headers are rendered with column names
-    expect(screen.getAllByText("Triage").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Planning").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Todo").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("In Progress").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("In Review").length).toBeGreaterThanOrEqual(1);
@@ -740,7 +740,7 @@ describe("ListView", () => {
     expect(sectionHeaders.length).toBe(6); // One for each column
 
     // Check that triage section shows count of 2
-    const triageHeader = sectionHeaders.find(h => h.textContent?.includes("Triage"));
+    const triageHeader = sectionHeaders.find(h => h.textContent?.includes("Planning"));
     expect(triageHeader?.textContent).toContain("2");
 
     // Check that todo section shows count of 1
@@ -796,7 +796,7 @@ describe("ListView", () => {
     // Only triage section should be visible (todo section should be hidden)
     const sectionHeaders = screen.getAllByRole("row").filter(r => r.className.includes("list-section-header"));
     expect(sectionHeaders.length).toBe(1);
-    expect(sectionHeaders[0].textContent).toContain("Triage");
+    expect(sectionHeaders[0].textContent).toContain("Planning");
 
     // Verify the filtered task is visible
     expect(screen.getByText("FN-001")).toBeDefined();
@@ -818,7 +818,7 @@ describe("ListView", () => {
 
     // Get only data rows within the triage section
     const allRows = screen.getAllByRole("row");
-    const triageSectionStart = allRows.findIndex(r => r.className.includes("list-section-header") && r.textContent?.includes("Triage"));
+    const triageSectionStart = allRows.findIndex(r => r.className.includes("list-section-header") && r.textContent?.includes("Planning"));
     
     // The next 3 rows after the section header should be the sorted tasks
     const dataRows = allRows.slice(triageSectionStart + 1, triageSectionStart + 4).filter(r => r.getAttribute("data-id"));
@@ -836,7 +836,7 @@ describe("ListView Column Filtering", () => {
 
   it("filters tasks by column when drop zone is clicked", () => {
     const tasks = [
-      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Planning Task" }),
       createMockTask({ id: "FN-002", column: "todo", title: "Todo Task" }),
       createMockTask({ id: "FN-003", column: "in-progress", title: "In Progress Task" }),
     ];
@@ -855,12 +855,12 @@ describe("ListView Column Filtering", () => {
     // Only triage section header should be visible
     const sectionHeaders = screen.getAllByRole("row").filter(r => r.className.includes("list-section-header"));
     expect(sectionHeaders.length).toBe(1);
-    expect(sectionHeaders[0].textContent).toContain("Triage");
+    expect(sectionHeaders[0].textContent).toContain("Planning");
   });
 
   it("clears column filter when same drop zone is clicked again", () => {
     const tasks = [
-      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Planning Task" }),
       createMockTask({ id: "FN-002", column: "todo", title: "Todo Task" }),
     ];
 
@@ -888,7 +888,7 @@ describe("ListView Column Filtering", () => {
 
   it("switches column filter when different drop zone is clicked", () => {
     const tasks = [
-      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Planning Task" }),
       createMockTask({ id: "FN-002", column: "todo", title: "Todo Task" }),
     ];
 
@@ -918,7 +918,7 @@ describe("ListView Column Filtering", () => {
 
   it("clears column filter when clear button is clicked", () => {
     const tasks = [
-      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Planning Task" }),
       createMockTask({ id: "FN-002", column: "todo", title: "Todo Task" }),
     ];
 
@@ -942,8 +942,8 @@ describe("ListView Column Filtering", () => {
 
   it("shows correct filtered stats when column filter is active", () => {
     const tasks = [
-      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
-      createMockTask({ id: "FN-002", column: "triage", title: "Triage Task 2" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Planning Task" }),
+      createMockTask({ id: "FN-002", column: "triage", title: "Planning Task 2" }),
       createMockTask({ id: "FN-003", column: "todo", title: "Todo Task" }),
     ];
 
@@ -954,13 +954,13 @@ describe("ListView Column Filtering", () => {
     fireEvent.click(triageZone);
 
     // Stats should show filtered count with column name
-    expect(screen.getByText("2 of 3 tasks in Triage")).toBeDefined();
+    expect(screen.getByText("2 of 3 tasks in Planning")).toBeDefined();
   });
 
   it("applies text filter within column filter", () => {
     const tasks = [
-      createMockTask({ id: "FN-001", column: "triage", title: "Alpha Triage Task" }),
-      createMockTask({ id: "FN-002", column: "triage", title: "Beta Triage Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Alpha Planning Task" }),
+      createMockTask({ id: "FN-002", column: "triage", title: "Beta Planning Task" }),
       createMockTask({ id: "FN-003", column: "todo", title: "Alpha Todo Task" }),
     ];
 
@@ -976,12 +976,12 @@ describe("ListView Column Filtering", () => {
     expect(screen.queryByText("FN-003")).toBeNull();
 
     // Stats should reflect combined filtering
-    expect(screen.getByText("1 of 3 tasks in Triage")).toBeDefined();
+    expect(screen.getByText("1 of 3 tasks in Planning")).toBeDefined();
   });
 
   it("applies active class to selected column drop zone", () => {
     const tasks = [
-      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Planning Task" }),
     ];
 
     renderListView({ tasks });
@@ -1180,7 +1180,7 @@ describe("ListView Column Visibility", () => {
     expect(screen.getByText("pending")).toBeDefined();
     // Check for column badge specifically using the class
     const columnBadge = document.querySelector(".list-column-badge");
-    expect(columnBadge?.textContent).toContain("Triage");
+    expect(columnBadge?.textContent).toContain("Planning");
   });
 });
 
@@ -1371,9 +1371,9 @@ describe("ListView Hide Done Tasks", () => {
     );
     expect(archivedSection).toBeUndefined();
 
-    // Triage section should still be visible
+    // Planning section should still be visible
     const triageSection = screen.getAllByRole("row").find(r => 
-      r.className.includes("list-section-header") && r.textContent?.includes("Triage")
+      r.className.includes("list-section-header") && r.textContent?.includes("Planning")
     );
     expect(triageSection).toBeDefined();
   });
@@ -1438,7 +1438,7 @@ describe("ListView Hide Done Tasks", () => {
   it("shows done section when selectedColumn is done even with hide done active", () => {
     const tasks = [
       createMockTask({ id: "FN-001", column: "done", title: "Done Task" }),
-      createMockTask({ id: "FN-002", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-002", column: "triage", title: "Planning Task" }),
     ];
 
     renderListView({ tasks });
@@ -1462,7 +1462,7 @@ describe("ListView Hide Done Tasks", () => {
   it("shows archived section when selectedColumn is archived even with hide done active", () => {
     const tasks = [
       createMockTask({ id: "FN-001", column: "archived", title: "Archived Task" }),
-      createMockTask({ id: "FN-002", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-002", column: "triage", title: "Planning Task" }),
     ];
 
     renderListView({ tasks });
@@ -1652,8 +1652,8 @@ describe("ListView Collapsible Sections", () => {
 
   it("clicking section header toggles collapse and hides task rows", () => {
     const tasks = [
-      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task 1" }),
-      createMockTask({ id: "FN-002", column: "triage", title: "Triage Task 2" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Planning Task 1" }),
+      createMockTask({ id: "FN-002", column: "triage", title: "Planning Task 2" }),
     ];
 
     renderListView({ tasks });
@@ -1664,7 +1664,7 @@ describe("ListView Collapsible Sections", () => {
 
     // Find and click the triage section header
     const triageHeader = screen.getAllByRole("row").find(r =>
-      r.className.includes("list-section-header") && r.textContent?.includes("Triage")
+      r.className.includes("list-section-header") && r.textContent?.includes("Planning")
     );
     expect(triageHeader).toBeDefined();
     fireEvent.click(triageHeader!);
@@ -1683,14 +1683,14 @@ describe("ListView Collapsible Sections", () => {
 
   it("clicking again expands section and shows task rows", () => {
     const tasks = [
-      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Planning Task" }),
     ];
 
     renderListView({ tasks });
 
     // Find the triage section header
     let triageHeader = screen.getAllByRole("row").find(r =>
-      r.className.includes("list-section-header") && r.textContent?.includes("Triage")
+      r.className.includes("list-section-header") && r.textContent?.includes("Planning")
     );
 
     // Click to collapse
@@ -1707,7 +1707,7 @@ describe("ListView Collapsible Sections", () => {
 
     // Re-query for the header to get fresh DOM reference after re-render
     triageHeader = screen.getAllByRole("row").find(r =>
-      r.className.includes("list-section-header") && r.textContent?.includes("Triage")
+      r.className.includes("list-section-header") && r.textContent?.includes("Planning")
     );
 
     // Section header should not have collapsed class
@@ -1719,14 +1719,14 @@ describe("ListView Collapsible Sections", () => {
 
   it("collapse state persists to localStorage", () => {
     const tasks = [
-      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Planning Task" }),
     ];
 
     renderListView({ tasks });
 
     // Click to collapse
     const triageHeader = screen.getAllByRole("row").find(r =>
-      r.className.includes("list-section-header") && r.textContent?.includes("Triage")
+      r.className.includes("list-section-header") && r.textContent?.includes("Planning")
     );
     fireEvent.click(triageHeader!);
 
@@ -1742,28 +1742,28 @@ describe("ListView Collapsible Sections", () => {
     localStorage.setItem(scopedStorageKey("kb-dashboard-list-collapsed"), JSON.stringify(["triage"]));
 
     const tasks = [
-      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Planning Task" }),
       createMockTask({ id: "FN-002", column: "todo", title: "Todo Task" }),
     ];
 
     renderListView({ tasks });
 
-    // Triage task should be hidden initially (collapsed from localStorage)
+    // Planning task should be hidden initially (collapsed from localStorage)
     expect(screen.queryByText("FN-001")).toBeNull();
 
     // Todo task should be visible
     expect(screen.getByText("FN-002")).toBeDefined();
 
-    // Triage section header should have collapsed class
+    // Planning section header should have collapsed class
     const triageHeader = screen.getAllByRole("row").find(r =>
-      r.className.includes("list-section-header") && r.textContent?.includes("Triage")
+      r.className.includes("list-section-header") && r.textContent?.includes("Planning")
     );
     expect(triageHeader?.className).toContain("list-section-header--collapsed");
   });
 
   it("multiple sections can be collapsed independently", () => {
     const tasks = [
-      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Planning Task" }),
       createMockTask({ id: "FN-002", column: "todo", title: "Todo Task" }),
       createMockTask({ id: "FN-003", column: "in-progress", title: "In Progress Task" }),
     ];
@@ -1774,7 +1774,7 @@ describe("ListView Collapsible Sections", () => {
     const allHeaders = screen.getAllByRole("row").filter(r =>
       r.className.includes("list-section-header")
     );
-    const triageHeader = allHeaders.find(h => h.textContent?.includes("Triage"));
+    const triageHeader = allHeaders.find(h => h.textContent?.includes("Planning"));
     const todoHeader = allHeaders.find(h => h.textContent?.includes("Todo"));
 
     // Collapse triage section
@@ -1783,7 +1783,7 @@ describe("ListView Collapsible Sections", () => {
     // Collapse todo section
     fireEvent.click(todoHeader!);
 
-    // Triage and todo tasks should be hidden
+    // Planning and todo tasks should be hidden
     expect(screen.queryByText("FN-001")).toBeNull();
     expect(screen.queryByText("FN-002")).toBeNull();
 
@@ -1813,7 +1813,7 @@ describe("ListView Collapsible Sections", () => {
 
     // Collapse triage section
     const triageHeader = screen.getAllByRole("row").find(r =>
-      r.className.includes("list-section-header") && r.textContent?.includes("Triage")
+      r.className.includes("list-section-header") && r.textContent?.includes("Planning")
     );
     fireEvent.click(triageHeader!);
 
@@ -1841,7 +1841,7 @@ describe("ListView Collapsible Sections", () => {
 
     // Collapse triage section
     const triageHeader = screen.getAllByRole("row").find(r =>
-      r.className.includes("list-section-header") && r.textContent?.includes("Triage")
+      r.className.includes("list-section-header") && r.textContent?.includes("Planning")
     );
     fireEvent.click(triageHeader!);
 
@@ -1855,14 +1855,14 @@ describe("ListView Collapsible Sections", () => {
 
   it("section header has aria-expanded attribute for accessibility", () => {
     const tasks = [
-      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Planning Task" }),
     ];
 
     renderListView({ tasks });
 
     // Find triage section header
     const triageHeader = screen.getAllByRole("row").find(r =>
-      r.className.includes("list-section-header") && r.textContent?.includes("Triage")
+      r.className.includes("list-section-header") && r.textContent?.includes("Planning")
     );
 
     // Should have aria-expanded="true" when expanded
@@ -1878,7 +1878,7 @@ describe("ListView Collapsible Sections", () => {
   it("collapsed section hides No tasks placeholder", () => {
     // Create tasks in one column, leave another column empty
     const tasks = [
-      createMockTask({ id: "FN-001", column: "triage", title: "Triage Task" }),
+      createMockTask({ id: "FN-001", column: "triage", title: "Planning Task" }),
     ];
 
     renderListView({ tasks });
@@ -2376,7 +2376,7 @@ describe("ListView - Bulk Selection", () => {
         tasks: [createMockTask({ id: "FN-001", title: "Collapsible task" })],
       });
 
-      const sectionHeader = screen.getByRole("button", { name: /Triage/i });
+      const sectionHeader = screen.getByRole("button", { name: /Planning/i });
       expect(container.querySelector('.list-card[data-id="FN-001"]')).toBeInTheDocument();
 
       fireEvent.click(sectionHeader);

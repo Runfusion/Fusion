@@ -17,7 +17,7 @@
 // agent is expected to review each flagged item itself (diff the matching
 // main commit against HEAD, confirm its net contribution survived) and
 // restore anything silently dropped. No human handoff required; the audit
-// is only "clean" once the agent has triaged every item or reapplied any
+// is only "clean" once the agent has reviewed every item or reapplied any
 // losses as a follow-up commit on the same branch.
 //
 // Example:
@@ -105,5 +105,5 @@ if (overlaps.length === 0) {
 }
 
 const issues = dupes.length + overlaps.length;
-console.log(`Audit complete. ${issues} item(s) for the calling agent to triage.`);
+console.log(`Audit complete. ${issues} item(s) for the calling agent to review.`);
 process.exit(issues === 0 ? 0 : 1);

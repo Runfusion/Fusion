@@ -51,8 +51,8 @@ Defaults from `DEFAULT_GLOBAL_SETTINGS`; key scope from `GLOBAL_SETTINGS_KEYS`.
 | `modelOnboardingComplete` | `boolean` | `undefined` | Whether AI onboarding has been completed or dismissed. |
 | `executionGlobalProvider` | `string` | `undefined` | Global baseline provider for task execution. Project `executionProvider` overrides this. |
 | `executionGlobalModelId` | `string` | `undefined` | Global baseline model ID for task execution. |
-| `planningGlobalProvider` | `string` | `undefined` | Global baseline provider for planning/triage. Project `planningProvider` overrides this. |
-| `planningGlobalModelId` | `string` | `undefined` | Global baseline model ID for planning/triage. |
+| `planningGlobalProvider` | `string` | `undefined` | Global baseline provider for planning. Project `planningProvider` overrides this. |
+| `planningGlobalModelId` | `string` | `undefined` | Global baseline model ID for planning. |
 | `validatorGlobalProvider` | `string` | `undefined` | Global baseline provider for validator/reviewer runs. Project `validatorProvider` overrides this. |
 | `validatorGlobalModelId` | `string` | `undefined` | Global baseline model ID for validator/reviewer runs. |
 | `titleSummarizerGlobalProvider` | `string` | `undefined` | Global baseline provider for title summarization. Project `titleSummarizerProvider` overrides this. |
@@ -78,8 +78,8 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `globalPause` | `boolean` | `false` | Hard stop: terminate active engine sessions and pause scheduling immediately. |
 | `globalPauseReason` | `string` | `undefined` | Optional reason for `globalPause` (`"rate-limit"` for automatic pauses, `"manual"` for user-triggered pauses). Cleared on unpause. |
 | `enginePaused` | `boolean` | `false` | Soft pause: stop dispatching new work while letting active sessions finish. |
-| `maxConcurrent` | `number` | `2` | Max concurrent task-lane AI agents (triage, executor, merge). |
-| `maxTriageConcurrent` | `number` | `2` | Max concurrent triage/specification agents. |
+| `maxConcurrent` | `number` | `2` | Max concurrent task-lane AI agents (planning, executor, merge). |
+| `maxTriageConcurrent` | `number` | `2` | Max concurrent planning agents. |
 | `globalMaxConcurrent` | `number` | `4` | System-wide max concurrent agents across all projects. |
 | `maxWorktrees` | `number` | `4` | Max git worktrees. |
 | `pollIntervalMs` | `number` | `15000` | Scheduler poll interval (ms). |
@@ -100,10 +100,10 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `commitAuthorEnabled` | `boolean` | `true` | Apply explicit `--author` attribution on Fusion commits. |
 | `commitAuthorName` | `string` | `"Fusion"` | Commit author name when `commitAuthorEnabled` is true. |
 | `commitAuthorEmail` | `string` | `"noreply@runfusion.ai"` | Commit author email when `commitAuthorEnabled` is true. |
-| `planningProvider` | `string` | `undefined` | Provider for planning/triage agents. |
-| `planningModelId` | `string` | `undefined` | Model ID for planning/triage agents. |
-| `planningFallbackProvider` | `string` | `undefined` | Fallback provider for planning/triage. |
-| `planningFallbackModelId` | `string` | `undefined` | Fallback model ID for planning/triage. |
+| `planningProvider` | `string` | `undefined` | Provider for planning agents. |
+| `planningModelId` | `string` | `undefined` | Model ID for planning agents. |
+| `planningFallbackProvider` | `string` | `undefined` | Fallback provider for planning. |
+| `planningFallbackModelId` | `string` | `undefined` | Fallback model ID for planning. |
 | `defaultProviderOverride` | `string` | `undefined` | Project-level override for global default provider baseline. |
 | `defaultModelIdOverride` | `string` | `undefined` | Project-level override for global default model baseline. |
 | `executionProvider` | `string` | `undefined` | Provider for task execution agents. |
@@ -121,8 +121,8 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `buildRetryCount` | `number` | `0` | Build retry attempts during merge. |
 | `verificationFixRetries` | `number` | `3` | Auto-fix retry attempts when verification fails during merge. |
 | `buildTimeoutMs` | `number` | `300000` | Build timeout in milliseconds (5 minutes). |
-| `requirePlanApproval` | `boolean` | `false` | Require manual approval before triage → todo. |
-| `specStalenessEnabled` | `boolean` | `false` | Enforce automatic re-triage for stale specs. |
+| `requirePlanApproval` | `boolean` | `false` | Require manual approval before planning → todo. |
+| `specStalenessEnabled` | `boolean` | `false` | Enforce automatic re-planning for stale plans. |
 | `specStalenessMaxAgeMs` | `number` | `21600000` | Spec staleness threshold in ms (6 hours). |
 | `taskStuckTimeoutMs` | `number` | `undefined` | Inactivity timeout for stuck-task recovery. |
 | `aiSessionTtlMs` | `number` | `604800000` | TTL in ms for persisted planning/subtask/mission sessions (7 days). |
@@ -268,7 +268,7 @@ Short-lived token bounds are enforced server-side:
 
 Fusion uses a dual-scope model settings system with five lanes. Global settings provide baseline defaults, and project settings provide per-project overrides.
 
-### Triage/specification model
+### Planning model
 
 1. Per-task `planningModelProvider` + `planningModelId`
 2. Project `planningProvider` + `planningModelId`
@@ -442,11 +442,11 @@ Fusion supports fine-grained customization of AI agent prompts through the `prom
 | `executor-guardrails` | executor | Behavioral guardrails and constraints |
 | `executor-spawning` | executor | Instructions for spawning child agents |
 | `executor-completion` | executor | Completion criteria and signaling |
-| `triage-welcome` | triage | Introductory section for the triage/specification agent |
-| `triage-context` | triage | Context-gathering instructions |
+| `triage-welcome` | planning | Introductory section for the planning agent |
+| `triage-context` | planning | Context-gathering instructions |
 | `reviewer-verdict` | reviewer | Verdict criteria and format |
 | `merger-conflicts` | merger | Merge conflict resolution instructions |
-| `agent-generation-system` | — | System prompt for AI-assisted agent specification generation |
+| `agent-generation-system` | — | System prompt for AI-assisted agent plan generation |
 | `workflow-step-refine` | — | System prompt for refining workflow step descriptions into detailed agent prompts |
 
 ### How It Works
@@ -485,7 +485,7 @@ To clear all overrides, set `promptOverrides` to `null`:
     "promptOverrides": {
       "executor-welcome": "Custom executor welcome message for this project...",
       "executor-guardrails": "## Custom Guardrails\n- Project-specific rules...",
-      "triage-welcome": "Custom triage introduction..."
+      "triage-welcome": "Custom planning introduction..."
     }
   }
 }

@@ -191,7 +191,7 @@ You can create tasks from the board or CLI.
 
 1. Type a short request in the quick entry input.
 2. Press Enter.
-3. Task appears in **Triage** and the triage agent generates `PROMPT.md`.
+3. Task appears in **Planning** and the planning agent generates `PROMPT.md`.
 
 ### Option B: Plan Mode (Board)
 
@@ -231,8 +231,8 @@ fn task plan "Implement role-based access control"
 
 Fusion uses six columns:
 
-1. **Triage** — raw idea; AI writes spec
-2. **Todo** — specified and queued
+1. **Planning** — raw idea; AI writes plan
+2. **Todo** — planned and queued
 3. **In Progress** — executor implements in a dedicated worktree
 4. **In Review** — implementation complete, awaiting merge/finalization
 5. **Done** — merged and complete

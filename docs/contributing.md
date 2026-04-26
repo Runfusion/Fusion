@@ -31,7 +31,7 @@ pnpm build
 |---|---|
 | `@fusion/core` | Shared domain types, stores, persistence, and core utilities |
 | `@fusion/dashboard` | Express API + React UI (including dashboard TUI in CLI) |
-| `@fusion/engine` | Scheduling, triage, execution, merge orchestration |
+| `@fusion/engine` | Scheduling, planning, execution, merge orchestration |
 | `@fusion/desktop` | Electron shell around Fusion dashboard/client |
 | `@fusion/mobile` | Capacitor + PWA mobile packaging |
 | `@fusion/plugin-sdk` | Plugin SDK for building Fusion extensions |

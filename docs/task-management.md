@@ -12,7 +12,7 @@ Use the inline input on board/list view:
 
 - Type description
 - Press Enter
-- Task is created in `triage`
+- Task is created in `planning`
 
 ### 2) Plan Mode (AI interview)
 
@@ -55,7 +55,7 @@ fn task create "Bug" --attach screenshot.png --depends FN-002
 
 Fusion task columns:
 
-1. **triage** — idea intake; AI writes a full specification
+1. **planning** — idea intake; AI writes a full plan
 2. **todo** — ready for scheduling
 3. **in-progress** — executor active in isolated worktree
 4. **in-review** — implementation complete; awaiting finalization
@@ -139,9 +139,9 @@ The task detail modal exposes multiple tabs:
 - **Comments** — collaboration thread + steering controls
 - **Model** — per-task model overrides and thinking level
 
-## `PROMPT.md` Specification Structure
+## `PROMPT.md` Plan Structure
 
-After triage, each task gets a structured `PROMPT.md` with sections like:
+After planning, each task gets a structured `PROMPT.md` with sections like:
 
 - Mission
 - Dependencies
@@ -163,7 +163,7 @@ Steering comments can be injected mid-run into active executor sessions.
 
 ## Refinement Tasks
 
-`fn task refine <id>` creates a new triage task that depends on the original done/in-review task.
+`fn task refine <id>` creates a new planning task that depends on the original done/in-review task.
 
 Example:
 
@@ -175,7 +175,7 @@ Behavior:
 
 - New title format: `Refinement: <source label>`
 - New task depends on source task
-- Created in `triage`
+- Created in `planning`
 
 ## Archive and Restore
 
@@ -252,8 +252,8 @@ Review levels control the rigor of the review process for a task:
 | Level | Name | Description |
 |-------|------|-------------|
 | 0 | None | No review |
-| 1 | Plan Only | Review only the specification/plan |
-| 2 | Plan and Code | Review both the specification and implementation |
+| 1 | Plan Only | Review only the plan |
+| 2 | Plan and Code | Review both the plan and implementation |
 | 3 | Full | Full review with all checks |
 
 Review level can be set during task creation (in the New Task dialog under More options) or when editing a task (in the task detail modal).

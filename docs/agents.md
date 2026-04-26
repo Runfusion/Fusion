@@ -2,7 +2,7 @@
 
 [← Docs index](./README.md)
 
-Fusion uses multiple agent roles for triage, execution, review, and merge workflows.
+Fusion uses multiple agent roles for planning, execution, review, and merge workflows.
 
 ## Agent Field Parity Matrix
 
@@ -64,7 +64,7 @@ The `taskId` field is suppressed in API responses when the linked task is in a t
 - `GET /api/agents/stats` — `assignedTaskCount` excludes agents with terminal linked tasks
 
 **Non-terminal task statuses (taskId is preserved):**
-- `triage`
+- `planning`
 - `todo`
 - `in-progress`
 - `in-review`
@@ -126,12 +126,12 @@ Agent deletion is available from both the detail header lifecycle controls and t
 Fusion includes built-in templates for role prompts:
 
 - `default-executor`
-- `default-triage`
+- `default-planning`
 - `default-reviewer`
 - `default-merger`
 - `senior-engineer`
 - `strict-reviewer`
-- `concise-triage`
+- `concise-planning`
 
 These can be assigned per role using `agentPrompts.roleAssignments`.
 
@@ -235,7 +235,7 @@ agent-presets/
 ├── designer/soul.md
 ├── marketing-manager/soul.md
 ├── technical-writer/soul.md
-├── triage/soul.md
+├── planning/soul.md
 └── reviewer/soul.md
 ```
 
@@ -302,11 +302,11 @@ The **Prompts** section in the Settings modal provides a user-friendly interface
 | `executor-guardrails` | executor | Behavioral guardrails and constraints |
 | `executor-spawning` | executor | Instructions for spawning child agents |
 | `executor-completion` | executor | Completion criteria and signaling |
-| `triage-welcome` | triage | Introductory section for the triage/specification agent |
-| `triage-context` | triage | Context-gathering instructions |
+| `triage-welcome` | planning | Introductory section for the planning agent |
+| `triage-context` | planning | Context-gathering instructions |
 | `reviewer-verdict` | reviewer | Verdict criteria and format |
 | `merger-conflicts` | merger | Merge conflict resolution instructions |
-| `agent-generation-system` | — | System prompt for AI-assisted agent specification generation |
+| `agent-generation-system` | — | System prompt for AI-assisted agent plan generation |
 | `workflow-step-refine` | — | System prompt for refining workflow step descriptions |
 
 ### How It Works
@@ -433,7 +433,7 @@ Heartbeat runs from the Agents panel run on a **separate control-plane lane** th
 
 | Component | Path | Concurrency |
 |-----------|------|------------|
-| TriageProcessor | Task lane | Semaphore-gated |
+| PlanningProcessor | Task lane | Semaphore-gated |
 | TaskExecutor | Task lane | Semaphore-gated |
 | Scheduler | Task lane | Semaphore-gated |
 | onMerge | Task lane | Semaphore-gated |

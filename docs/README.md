@@ -2,7 +2,7 @@
 
 [← Back to repository root](../README.md)
 
-Fusion is an AI-orchestrated task board that turns ideas into reviewed, merged code using a structured workflow: **triage → todo → in-progress → in-review → done**.
+Fusion is an AI-orchestrated task board that turns ideas into reviewed, merged code using a structured workflow: **planning → todo → in-progress → in-review → done**.
 
 ![Fusion Dashboard Overview](screenshots/dashboard-overview.png)
 

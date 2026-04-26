@@ -23,7 +23,7 @@
 <br />
 
 <a href="https://runfusion.ai">
-  <img src="https://runfusion.ai/fusion-dashboard.png" alt="Fusion dashboard: Triage, Todo, In Progress, In Review, Done kanban columns with active task cards" width="900" />
+  <img src="https://runfusion.ai/fusion-dashboard.png" alt="Fusion dashboard: Planning, Todo, In Progress, In Review, Done kanban columns with active task cards" width="900" />
 </a>
 
 </div>
@@ -32,7 +32,7 @@
 
 ## Your entire dev environment. On a single pane of glass.
 
-Describe a task in plain language. A triage agent reads your project, understands context, and writes a full `PROMPT.md` spec — steps, file scope, acceptance criteria. Then Fusion plans, reviews, executes, and reviews again, in an isolated git worktree, with a human approval gate wherever you want one.
+Describe a task in plain language. A planning agent reads your project, understands context, and writes a full `PROMPT.md` plan — steps, file scope, acceptance criteria. Then Fusion plans, reviews, executes, and reviews again, in an isolated git worktree, with a human approval gate wherever you want one.
 
 One board. Controlled from anywhere. Laptop, Mac mini, Linux server, cloud VM, phone — all connected.
 
@@ -43,7 +43,7 @@ One board. Controlled from anywhere. Laptop, Mac mini, Linux server, cloud VM, p
 ## The flow
 
 ```
-  ①  Describe          ②  Triage             ③  The board           ④  Isolated worktree
+  ①  Describe          ②  Planning             ③  The board           ④  Isolated worktree
   ─────────────        ─────────────         ─────────────          ─────────────────────
   "Add dark mode   →   Agent writes    →   Plan → Review →    →   fusion/FN-123 branch
    toggle to           PROMPT.md           Execute → Review        concurrent, zero
@@ -65,7 +65,7 @@ Every task shows its plan, its reviews, its diffs, and its file changes in real 
 
 |  |  |
 |---|---|
-| 🧠 **AI specification** | Describe a task in plain language. Triage agents turn it into a `PROMPT.md` spec with steps, file scope, and acceptance criteria. |
+| 🧠 **AI planning** | Describe a task in plain language. Planning agents turn it into a `PROMPT.md` plan with steps, file scope, and acceptance criteria. |
 | 🔁 **Workflow gates** | Plan → Review → Execute → Review on every step. Pre-merge gates block bad code; post-merge gates run informational checks. |
 | 🌳 **Worktree isolation** | Each task runs in its own branch and worktree (`fusion/{task-id}`). Parallel tasks. Zero conflicts. |
 | ⚡ **Smart merge** | Passing every gate? Fusion squash-merges and moves on. Opt into manual approval anywhere. |
@@ -83,7 +83,7 @@ Every task shows its plan, its reviews, its diffs, and its file changes in real 
 
 ```mermaid
 graph TD
-    H((You)) -->|rough idea| T["Triage<br/><i>auto-specification</i>"]
+    H((You)) -->|rough idea| T["Planning<br/><i>auto-planning</i>"]
     T --> TD["Todo<br/><i>scheduled for execution</i>"]
     TD --> IP["In Progress<br/><i>for each step:<br/>plan, review, execute, review</i>"]
 
@@ -115,7 +115,7 @@ graph TD
     style D fill:#1a1a1a,stroke:#8b949e,color:#8b949e
 ```
 
-Tasks with dependencies are processed sequentially. Independent tasks run in parallel. Optionally require manual approval before tasks move from Triage to Todo (`requirePlanApproval` setting).
+Tasks with dependencies are processed sequentially. Independent tasks run in parallel. Optionally require manual approval before tasks move from Planning to Todo (`requirePlanApproval` setting).
 
 ---
 
@@ -306,7 +306,7 @@ For Capacitor + PWA workflow, see [MOBILE.md](./MOBILE.md).
 
 ## Core features
 
-- **AI Specification** — Triage agent generates detailed `PROMPT.md` with steps, file scope, and acceptance criteria
+- **AI Planning** — Planning agent generates detailed `PROMPT.md` with steps, file scope, and acceptance criteria
 - **Step-by-step Execution** — Plan → Review → Execute → Review cycle for each task step
 - **Git Worktree Isolation** — Each task runs in its own worktree (`fusion/{task-id}` branch)
 - **Workflow Steps** — Configurable quality gates (pre-merge: blocks merge; post-merge: informational)
@@ -331,7 +331,7 @@ Fusion uses a dual-scope model hierarchy with five independent lanes. Global set
 | Lane | Purpose | Global Baseline Keys | Project Override Keys |
 |------|---------|---------------------|----------------------|
 | Executor | Task execution agent | `executionGlobalProvider` + `executionGlobalModelId` | `executionProvider` + `executionModelId` |
-| Planning/Triage | Task specification agent | `planningGlobalProvider` + `planningGlobalModelId` | `planningProvider` + `planningModelId` |
+| Planning | Task planning agent | `planningGlobalProvider` + `planningGlobalModelId` | `planningProvider` + `planningModelId` |
 | Validator | Plan/code reviewer | `validatorGlobalProvider` + `validatorGlobalModelId` | `validatorProvider` + `validatorModelId` |
 | Title Summarization | Auto-title generation | `titleSummarizerGlobalProvider` + `titleSummarizerGlobalModelId` | `titleSummarizerProvider` + `titleSummarizerModelId` |
 | Workflow Step Refinement | AI prompt refinement | (uses `defaultProvider`/`defaultModelId`) | (uses `modelProvider`/`modelId` on WorkflowStep) |
@@ -403,7 +403,7 @@ Routines are AI agent tasks triggered by cron schedules, webhooks, or manual exe
 ## CLI quick examples
 
 ```bash
-fn task create "Fix the login bug"                    # Quick entry → triage
+fn task create "Fix the login bug"                    # Quick entry → planning
 fn task plan "Build auth system"                      # AI-guided planning
 fn task import owner/repo --labels bug                # Import GitHub issues
 fn task show FN-001                                   # View task details
@@ -431,7 +431,7 @@ fn skills install firebase/agent-skills               # Install agent skills
 |---------|-------------|
 | `@fusion/core` | Domain model — tasks, board columns, SQLite store |
 | `@fusion/dashboard` | Web UI — Express server + kanban board with SSE |
-| `@fusion/engine` | AI engine — triage, execution, scheduling, workflow steps |
+| `@fusion/engine` | AI engine — planning, execution, scheduling, workflow steps |
 | `@runfusion/fusion` | CLI + pi extension — published to npm |
 
 ---

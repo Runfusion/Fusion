@@ -37,7 +37,7 @@ Method used:
 | dashboard | 8 | `mission-routes.ts`, `script-store.ts`, `subtask-breakdown.ts`, `terminal.ts`, `plugins/{network,splash-screen,status-bar}.ts`, `test-request.ts` |
 | cli | 4 | `commands/settings-export.ts`, `commands/settings-import.ts`, `companies-sh-parser.ts`, `runtime/native-patch.ts` |
 
-### Finding 2.2 — Risk triage for key backend files
+### Finding 2.2 — Risk review for key backend files
 
 - **High**
   - `packages/dashboard/src/subtask-breakdown.ts` — AI/session orchestration and persistence interactions; only route-level behavior is exercised.
