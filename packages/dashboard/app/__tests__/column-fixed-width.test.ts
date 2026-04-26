@@ -36,20 +36,20 @@ describe("column fixed-width CSS", () => {
   });
 
   describe("desktop .board grid template", () => {
-    it("uses repeat(6, minmax(260px, 1fr)) for 6 columns", () => {
+    it("uses repeat(6, minmax(300px, 1fr)) for 6 columns", () => {
       expect(css).toContain(
-        "grid-template-columns: repeat(6, minmax(260px, 1fr))",
+        "grid-template-columns: repeat(6, minmax(300px, 1fr))",
       );
     });
   });
 
   describe("mobile .board > .column", () => {
-    it("has a fixed 280px width constraint", () => {
-      // Accept either `width: 280px` or both min-width + max-width: 280px
+    it("has a fixed 300px width constraint", () => {
+      // Accept either `width: 300px` or both min-width + max-width: 300px
       const hasFix =
-        mobileBlock.includes("width: 280px") ||
-        (mobileBlock.includes("min-width: 280px") &&
-          mobileBlock.includes("max-width: 280px"));
+        mobileBlock.includes("width: 300px") ||
+        (mobileBlock.includes("min-width: 300px") &&
+          mobileBlock.includes("max-width: 300px"));
       expect(hasFix).toBe(true);
     });
   });

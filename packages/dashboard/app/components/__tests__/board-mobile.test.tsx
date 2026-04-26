@@ -133,18 +133,18 @@ describe("Board and Column mobile CSS", () => {
     expectRuleToContain(mobileSection, ".board", "scroll-behavior: smooth;");
   });
 
-  it("contains .board > .column width: 280px in the mobile media block", () => {
+  it("contains .board > .column width: 300px in the mobile media block", () => {
     const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
-    expectRuleToContain(mobileSection, ".board > .column", "width: 280px;");
+    expectRuleToContain(mobileSection, ".board > .column", "width: 300px;");
   });
 
-  it("contains .board > .column min-width: 280px in the mobile media block", () => {
+  it("contains .board > .column min-width: 300px in the mobile media block", () => {
     const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
 
-    expectRuleToContain(mobileSection, ".board > .column", "min-width: 280px;");
+    expectRuleToContain(mobileSection, ".board > .column", "min-width: 300px;");
   });
 
   it("does not force .column-header min-height in the mobile media block", () => {

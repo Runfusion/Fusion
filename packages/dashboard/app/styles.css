@@ -478,7 +478,7 @@ body {
 /* === Board === */
 .board {
   display: grid;
-  grid-template-columns: repeat(6, minmax(260px, 1fr));
+  grid-template-columns: repeat(6, minmax(300px, 1fr));
   gap: var(--column-gap);
   padding: var(--board-padding);
   height: 100%;
@@ -2774,7 +2774,7 @@ input[type="range"]:focus-visible {
     overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
     scroll-snap-type: x mandatory;
-    scroll-padding-inline: calc(50% - 140px);
+    scroll-padding-inline: calc(50% - 150px);
     scroll-behavior: smooth;
     scrollbar-width: none;
     padding: var(--space-md);
@@ -2788,8 +2788,8 @@ input[type="range"]:focus-visible {
   }
 
   .board > .column {
-    width: 280px;
-    min-width: 280px;
+    width: 300px;
+    min-width: 300px;
     flex-shrink: 0;
     scroll-snap-align: center;
   }
