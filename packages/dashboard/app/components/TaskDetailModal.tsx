@@ -1537,6 +1537,7 @@ export function TaskDetailModal({
               <TaskTokenStatsPanel
                 tokenUsage={workingTask.tokenUsage}
                 loading={detailLoading}
+                task={workingTask}
               />
             </div>
           ) : (

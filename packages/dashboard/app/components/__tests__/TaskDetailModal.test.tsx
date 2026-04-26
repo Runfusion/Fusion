@@ -5710,9 +5710,12 @@ describe("TaskDetailModal", () => {
         description: "Loading spec test",
         column: "todo",
         dependencies: [],
-        steps: [],
+        steps: [{ name: "Plan", status: "in-progress" }],
         currentStep: 0,
-        log: [],
+        log: [{ timestamp: "2026-04-24T09:00:00.000Z", action: "[timing] setup in 120ms" }],
+        executionMode: "fast",
+        status: "executing",
+        assignedAgentId: "agent-loading",
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       } as Task;
@@ -5733,7 +5736,11 @@ describe("TaskDetailModal", () => {
       // Token stats now live in their own Stats tab — switch to it before
       // asserting on token-loading text.
       fireEvent.click(screen.getByRole("button", { name: "Stats" }));
+      expect(screen.getByText("Execution Timing")).toBeInTheDocument();
+      expect(screen.getByText("Execution Details")).toBeInTheDocument();
       expect(screen.getByText("Loading token statistics…")).toBeDefined();
+      expect(screen.getByText("Fast")).toBeInTheDocument();
+      expect(screen.getByText("executing")).toBeInTheDocument();
     });
 
     it("shows spec content after fetchTaskDetail resolves", async () => {
@@ -5755,6 +5762,25 @@ describe("TaskDetailModal", () => {
       const fullDetail: TaskDetail = {
         ...task,
         prompt: "# Async Spec\n\nThis is the loaded spec content.",
+        log: [
+          { timestamp: "2026-04-24T09:00:00.000Z", action: "[timing] prepare env in 120ms" },
+          { timestamp: "2026-04-24T09:01:00.000Z", action: "[timing] run tests in 3400ms" },
+        ],
+        workflowStepResults: [
+          {
+            workflowStepId: "WS-101",
+            workflowStepName: "Workflow QA",
+            status: "passed",
+            startedAt: "2026-04-24T09:10:00.000Z",
+            completedAt: "2026-04-24T09:10:07.000Z",
+          },
+        ],
+        executionMode: "fast",
+        status: "executing",
+        mergeRetries: 1,
+        workflowStepRetries: 2,
+        recoveryRetryCount: 3,
+        taskDoneRetryCount: 4,
         tokenUsage: {
           inputTokens: 1200,
           outputTokens: 450,
@@ -5795,6 +5821,14 @@ describe("TaskDetailModal", () => {
       // Token stats live behind the Stats tab now.
       fireEvent.click(screen.getByRole("button", { name: "Stats" }));
       expect(screen.queryByText("Loading token statistics…")).toBeNull();
+      expect(screen.getByText("Execution Timing")).toBeInTheDocument();
+      expect(screen.getByText("Execution Details")).toBeInTheDocument();
+      expect(screen.getByText("Timing events")).toBeInTheDocument();
+      expect(screen.getByText("Workflow runtime")).toBeInTheDocument();
+      expect(screen.getByText("Execution mode")).toBeInTheDocument();
+      expect(screen.getByText("Runtime status")).toBeInTheDocument();
+      expect(screen.getByText("Fast")).toBeInTheDocument();
+      expect(screen.getByText("executing")).toBeInTheDocument();
       expect(screen.getByText((1200).toLocaleString())).toBeInTheDocument();
       expect(screen.getByText((450).toLocaleString())).toBeInTheDocument();
       expect(screen.getByText((210).toLocaleString())).toBeInTheDocument();
