@@ -23,11 +23,27 @@ vi.mock("node:child_process", () => ({
   execSync: vi.fn(),
 }));
 
+const mocks = vi.hoisted(() => ({
+  writeFileSync: vi.fn(),
+  unlinkSync: vi.fn(),
+  existsSync: vi.fn(),
+  readFileSync: vi.fn(),
+  tmpdir: vi.fn(() => "/mock-tmp"),
+}));
+
+vi.mock("node:fs", () => ({
+  writeFileSync: mocks.writeFileSync,
+  unlinkSync: mocks.unlinkSync,
+  existsSync: mocks.existsSync,
+  readFileSync: mocks.readFileSync,
+}));
+
+vi.mock("node:os", () => ({
+  tmpdir: mocks.tmpdir,
+}));
+
 import spawn from "cross-spawn";
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import {
   spawnClaude,
   writeUserMessage,
@@ -44,6 +60,11 @@ import {
 describe("spawnClaude", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.writeFileSync.mockReset();
+    mocks.existsSync.mockReset();
+    mocks.readFileSync.mockReset();
+    mocks.tmpdir.mockReset();
+    mocks.tmpdir.mockReturnValue("/mock-tmp");
   });
 
   it("spawns claude with all required CLI flags", () => {
@@ -94,20 +115,27 @@ describe("spawnClaude", () => {
   it("writes system prompt to temp file and passes path via --append-system-prompt", () => {
     spawnClaude("claude-sonnet-4-5-20250929", "You are a helpful assistant.");
     const args = (spawn as any).mock.calls[0][1] as string[];
+    const expectedTmpFile = `/mock-tmp/pi-claude-cli-sysprompt-${process.pid}.txt`;
 
+    expect(mocks.writeFileSync).toHaveBeenCalledWith(
+      expectedTmpFile,
+      "You are a helpful assistant.",
+      "utf-8",
+    );
     expect(args).toContain("--append-system-prompt");
     const idx = args.indexOf("--append-system-prompt");
     expect(args[idx + 1]).toContain("pi-claude-cli-sysprompt-");
+    expect(args[idx + 1]).toBe(expectedTmpFile);
   });
 
   it("temp file contains the system prompt text", () => {
     spawnClaude("claude-sonnet-4-5-20250929", "You are a helpful assistant.");
-    const tmpFile = join(
-      tmpdir(),
-      `pi-claude-cli-sysprompt-${process.pid}.txt`,
+
+    expect(mocks.writeFileSync).toHaveBeenCalledWith(
+      `/mock-tmp/pi-claude-cli-sysprompt-${process.pid}.txt`,
+      "You are a helpful assistant.",
+      "utf-8",
     );
-    expect(existsSync(tmpFile)).toBe(true);
-    expect(readFileSync(tmpFile, "utf-8")).toBe("You are a helpful assistant.");
   });
 
   it("does not include --append-system-prompt when no system prompt", () => {
@@ -599,21 +627,26 @@ describe("resume session flag", () => {
 });
 
 describe("cleanupSystemPromptFile", () => {
-  const tmpFile = join(tmpdir(), `pi-claude-cli-sysprompt-${process.pid}.txt`);
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.unlinkSync.mockReset();
+    mocks.tmpdir.mockReset();
+    mocks.tmpdir.mockReturnValue("/mock-tmp");
+  });
 
   it("deletes the temp file when it exists", () => {
-    // Create the file by spawning with a system prompt
-    spawnClaude("claude-sonnet-4-5-20250929", "test prompt");
-    expect(existsSync(tmpFile)).toBe(true);
-
     cleanupSystemPromptFile();
-    expect(existsSync(tmpFile)).toBe(false);
+
+    expect(mocks.unlinkSync).toHaveBeenCalledWith(
+      `/mock-tmp/pi-claude-cli-sysprompt-${process.pid}.txt`,
+    );
   });
 
   it("does not throw when file does not exist", () => {
-    // Ensure file doesn't exist
-    cleanupSystemPromptFile();
-    // Call again — should not throw
+    mocks.unlinkSync.mockImplementation(() => {
+      throw new Error("ENOENT");
+    });
+
     expect(() => cleanupSystemPromptFile()).not.toThrow();
   });
 });
