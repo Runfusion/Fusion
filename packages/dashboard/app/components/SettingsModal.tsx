@@ -887,13 +887,13 @@ export function SettingsModal({
     },
     {
       laneId: "validator",
-      label: "Validator Model",
+      label: "Reviewer Model",
       globalProviderKey: "validatorGlobalProvider",
       globalModelKey: "validatorGlobalModelId",
       projectProviderKey: "validatorProvider",
       projectModelKey: "validatorModelId",
       helperText: "AI model used for code and specification review.",
-      fallbackOrder: "Project override → Global validator lane → Global default lane → Automatic resolution",
+      fallbackOrder: "Project override → Global reviewer lane → Global default lane → Automatic resolution",
     },
     {
       laneId: "summarization",
@@ -1701,10 +1701,10 @@ export function SettingsModal({
                   <small>Used if the planning model fails due to rate limits or provider overload. Defaults to the global fallback model.</small>
                 </div>
                 <div className="form-group">
-                  <label htmlFor="validatorFallbackModel">Validator Fallback Model</label>
+                  <label htmlFor="validatorFallbackModel">Reviewer Fallback Model</label>
                   <CustomModelDropdown
                     id="validatorFallbackModel"
-                    label="Validator Fallback Model"
+                    label="Reviewer Fallback Model"
                     models={availableModels}
                     value={form.validatorFallbackProvider && form.validatorFallbackModelId ? `${form.validatorFallbackProvider}/${form.validatorFallbackModelId}` : ""}
                     onChange={(val) => {
@@ -1725,7 +1725,7 @@ export function SettingsModal({
                     favoriteModels={favoriteModels}
                     onToggleModelFavorite={handleToggleModelFavorite}
                   />
-                  <small>Used if the validator model fails due to rate limits or provider overload. Defaults to the global fallback model.</small>
+                  <small>Used if the reviewer model fails due to rate limits or provider overload. Defaults to the global fallback model.</small>
                 </div>
               </>
             )}
@@ -1849,10 +1849,10 @@ export function SettingsModal({
                         />
                       </div>
                       <div className="form-group">
-                        <label htmlFor="preset-validator-model">Validator model</label>
+                        <label htmlFor="preset-validator-model">Reviewer model</label>
                         <CustomModelDropdown
                           id="preset-validator-model"
-                          label="Preset validator model"
+                          label="Preset reviewer model"
                           models={availableModels}
                           value={presetDraft.validatorProvider && presetDraft.validatorModelId ? `${presetDraft.validatorProvider}/${presetDraft.validatorModelId}` : ""}
                           onChange={(val) => {

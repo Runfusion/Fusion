@@ -2220,7 +2220,7 @@ describe("ListView - Bulk Selection", () => {
     // Verify the menu has the three options
     expect(menu.textContent).toContain("Plan");
     expect(menu.textContent).toContain("Executor");
-    expect(menu.textContent).toContain("Validator");
+    expect(menu.textContent).toContain("Reviewer");
   });
 
   describe("ListView Mobile Cards", () => {

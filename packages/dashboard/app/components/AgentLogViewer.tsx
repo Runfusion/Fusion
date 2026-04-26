@@ -200,7 +200,7 @@ export function AgentLogViewer({
     }
     if (hasValidatorOverride) {
       providers.push({
-        role: "Validator",
+        role: "Reviewer",
         provider: validatorModel!.provider!,
         modelId: validatorModel!.modelId,
       });
@@ -307,7 +307,7 @@ export function AgentLogViewer({
               )}
             </div>
             <div className="agent-log-model-group">
-              <span className="agent-log-model-label">Validator:</span>
+              <span className="agent-log-model-label">Reviewer:</span>
               {hasValidatorOverride ? (
                 <span className="agent-log-model-value">
                   <ProviderIcon provider={validatorModel.provider!} size="sm" />

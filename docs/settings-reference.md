@@ -112,7 +112,7 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `validatorModelId` | `string` | `undefined` | Model ID for plan/code reviewers. |
 | `validatorFallbackProvider` | `string` | `undefined` | Fallback provider for reviewers. |
 | `validatorFallbackModelId` | `string` | `undefined` | Fallback model ID for reviewers. |
-| `modelPresets` | `ModelPreset[]` | `[]` | Reusable executor/validator model presets. |
+| `modelPresets` | `ModelPreset[]` | `[]` | Reusable executor/reviewer model presets. |
 | `autoSelectModelPreset` | `boolean` | `false` | Auto-select presets by task size. |
 | `defaultPresetBySize` | `{ S?: string; M?: string; L?: string }` | `{}` | Mapping for `S`/`M`/`L` → preset ID. |
 | `autoResolveConflicts` | `boolean` | `true` | Enable automatic merge conflict resolution. |

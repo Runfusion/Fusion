@@ -121,7 +121,7 @@ describe("ModelSelectorTab", () => {
 
     await waitForSelectors();
 
-    expect(screen.getByLabelText("Validator Model")).toBeInTheDocument();
+    expect(screen.getByLabelText("Reviewer Model")).toBeInTheDocument();
     expect(screen.getByLabelText("Planning Model")).toBeInTheDocument();
     expect(screen.queryByText("Save")).not.toBeInTheDocument();
     expect(screen.queryByText("Reset")).not.toBeInTheDocument();
@@ -155,7 +155,7 @@ describe("ModelSelectorTab", () => {
     const executorSection = getSection("Executor Model");
     expect(within(executorSection!).getByText("Using default")).toBeInTheDocument();
 
-    const validatorSection = getSection("Validator Model");
+    const validatorSection = getSection("Reviewer Model");
     expect(within(validatorSection!).getByText("Using default")).toBeInTheDocument();
 
     const planningSection = getSection("Planning Model");
@@ -206,7 +206,7 @@ describe("ModelSelectorTab", () => {
 
     await waitForSelectors();
 
-    const validatorSection = getSection("Validator Model");
+    const validatorSection = getSection("Reviewer Model");
     expect(within(validatorSection!).getByText("Using default (openai/gpt-4o)")).toBeInTheDocument();
   });
 
@@ -365,7 +365,7 @@ describe("ModelSelectorTab", () => {
       }));
     });
 
-    await selectOption("Validator Model", "GPT-4o");
+    await selectOption("Reviewer Model", "GPT-4o");
 
     await waitFor(() => {
       expect(mockUpdateTask).toHaveBeenNthCalledWith(2, "FN-001", expectedModelCall({
@@ -441,7 +441,7 @@ describe("ModelSelectorTab", () => {
     render(<ModelSelectorTab task={taskWithExecutor} addToast={mockAddToast} />);
 
     await waitForSelectors();
-    await selectOption("Validator Model", "GPT-4o");
+    await selectOption("Reviewer Model", "GPT-4o");
 
     await waitFor(() => {
       expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", expectedModelCall({
@@ -469,7 +469,7 @@ describe("ModelSelectorTab", () => {
 
     await waitForSelectors();
 
-    await user.click(getSelector("Validator Model"));
+    await user.click(getSelector("Reviewer Model"));
     await user.click(getUseDefaultOption());
 
     await waitFor(() => {
@@ -517,7 +517,7 @@ describe("ModelSelectorTab", () => {
 
     await waitFor(() => {
       expect(getSelector("Executor Model")).toBeDisabled();
-      expect(getSelector("Validator Model")).toBeDisabled();
+      expect(getSelector("Reviewer Model")).toBeDisabled();
       expect(getSelector("Planning Model")).toBeDisabled();
     });
 
@@ -529,7 +529,7 @@ describe("ModelSelectorTab", () => {
 
     await waitFor(() => {
       expect(getSelector("Executor Model")).not.toBeDisabled();
-      expect(getSelector("Validator Model")).not.toBeDisabled();
+      expect(getSelector("Reviewer Model")).not.toBeDisabled();
       expect(getSelector("Planning Model")).not.toBeDisabled();
     });
   });
@@ -619,10 +619,10 @@ describe("ModelSelectorTab", () => {
     render(<ModelSelectorTab task={FAKE_TASK} addToast={mockAddToast} />);
 
     await waitForSelectors();
-    await selectOption("Validator Model", "GPT-4o");
+    await selectOption("Reviewer Model", "GPT-4o");
 
     await waitFor(() => {
-      expect(mockAddToast).toHaveBeenCalledWith("Validator model set to openai/gpt-4o", "success");
+      expect(mockAddToast).toHaveBeenCalledWith("Reviewer model set to openai/gpt-4o", "success");
     });
   });
 

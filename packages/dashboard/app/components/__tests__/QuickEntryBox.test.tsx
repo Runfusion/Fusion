@@ -797,7 +797,7 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("model-nested-menu")).toBeTruthy();
     });
 
-    it("shows Plan, Executor, and Validator options in model menu", () => {
+    it("shows Plan, Executor, and Reviewer options in model menu", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
@@ -837,7 +837,7 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("custom-model-dropdown-plan model")).toBeTruthy();
     });
 
-    it("clicking Validator opens submenu with CustomModelDropdown", () => {
+    it("clicking Reviewer opens submenu with CustomModelDropdown", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
@@ -913,7 +913,7 @@ describe("QuickEntryBox", () => {
       expect(planItem.classList.contains("model-menu-item--active")).toBe(true);
     });
 
-    it("selecting Validator model updates the Validator menu item value", () => {
+    it("selecting Reviewer model updates the Reviewer menu item value", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
@@ -928,7 +928,7 @@ describe("QuickEntryBox", () => {
       // Go back to top-level menu
       fireEvent.click(screen.getByTestId("model-submenu-back"));
 
-      // Validator menu item should show the selected model
+      // Reviewer menu item should show the selected model
       const validatorItem = screen.getByTestId("model-menu-validator");
       expect(validatorItem.textContent).toContain("anthropic/claude-sonnet-4-5");
       expect(validatorItem.classList.contains("model-menu-item--active")).toBe(true);

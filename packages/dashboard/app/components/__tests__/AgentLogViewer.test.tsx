@@ -335,10 +335,10 @@ describe("AgentLogViewer", () => {
       const header = container.querySelector("[data-testid='agent-log-model-header']");
       expect(header).toBeTruthy();
       expect(container.querySelector('[data-provider="openai"]')).toBeTruthy();
-      expect(header!.textContent).not.toContain("Validator:");
+      expect(header!.textContent).not.toContain("Reviewer:");
 
       fireEvent.click(screen.getByTestId("agent-log-model-expand"));
-      expect(header!.textContent).toContain("Validator:");
+      expect(header!.textContent).toContain("Reviewer:");
       expect(header!.textContent).toContain("openai/gpt-4o");
     });
 

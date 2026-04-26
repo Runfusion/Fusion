@@ -115,7 +115,7 @@ function selectionsEqual(a: ModelSelection, b: ModelSelection): boolean {
 function getSuccessToastMessage(target: "executor" | "validator" | "planning", selection: ModelSelection): string {
   const labels: Record<string, string> = {
     executor: "Executor",
-    validator: "Validator",
+    validator: "Reviewer",
     planning: "Planning",
   };
   const label = labels[target] || target;
@@ -480,7 +480,7 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings }: Mo
           </div>
 
           <div className="form-group">
-            <label htmlFor="validatorModel">Validator Model</label>
+            <label htmlFor="validatorModel">Reviewer Model</label>
             <div className="model-selector-current">
               {validatorUsingDefault ? (
                 <span className="model-badge model-badge-default">
@@ -495,12 +495,12 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings }: Mo
             </div>
             <CustomModelDropdown
               id="validatorModel"
-              label="Validator Model"
+              label="Reviewer Model"
               value={validatorValue}
               onChange={handleValidatorChange}
               models={availableModels}
               disabled={isSaving}
-              placeholder="Select validator model…"
+              placeholder="Select reviewer model…"
               favoriteProviders={favoriteProviders}
               onToggleFavorite={handleToggleFavorite}
               favoriteModels={favoriteModels}

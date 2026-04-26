@@ -701,7 +701,7 @@ export function ListView({
                 models={availableModels}
                 value={validatorModel}
                 onChange={setValidatorModel}
-                label="Validator Model"
+                label="Reviewer Model"
                 noChangeValue="__no_change__"
                 noChangeLabel="No change"
                 favoriteProviders={favoriteProviders}

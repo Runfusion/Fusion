@@ -74,9 +74,9 @@ vi.mock("../ModelSelectionModal", () => ({
         <div data-testid="modal-props-has-preset-change">{onPresetChange ? "yes" : "no"}</div>
         <button data-testid="modal-close" onClick={onClose}>Close</button>
         <button data-testid="modal-select-executor" onClick={() => onExecutorChange("anthropic/claude-sonnet-4-5")}>Select Executor</button>
-        <button data-testid="modal-select-validator" onClick={() => onValidatorChange("openai/gpt-4o")}>Select Validator</button>
+        <button data-testid="modal-select-validator" onClick={() => onValidatorChange("openai/gpt-4o")}>Select Reviewer</button>
         <button data-testid="modal-clear-executor" onClick={() => onExecutorChange("")}>Clear Executor</button>
-        <button data-testid="modal-clear-validator" onClick={() => onValidatorChange("")}>Clear Validator</button>
+        <button data-testid="modal-clear-validator" onClick={() => onValidatorChange("")}>Clear Reviewer</button>
         <button data-testid="modal-retry" onClick={onRetry}>Retry</button>
       </div>
     );

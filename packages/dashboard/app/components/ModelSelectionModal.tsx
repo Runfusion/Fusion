@@ -237,7 +237,7 @@ export function ModelSelectionModal({
                   <div className="task-detail-section">
                     <div className="inline-create-model-row">
                       <label htmlFor="model-selection-validator" className="inline-create-model-label">
-                        Validator Model
+                        Reviewer Model
                       </label>
                       <span
                         className={`model-badge ${hasValidatorOverride ? "model-badge-custom" : "model-badge-default"}`}
@@ -247,11 +247,11 @@ export function ModelSelectionModal({
                       </span>
                       <CustomModelDropdown
                         id="model-selection-validator"
-                        label="Validator Model"
+                        label="Reviewer Model"
                         value={validatorValue}
                         onChange={handleValidatorChange}
                         models={models}
-                        placeholder="Select validator model…"
+                        placeholder="Select reviewer model…"
                         favoriteProviders={favoriteProviders}
                         onToggleFavorite={onToggleFavorite}
                         favoriteModels={favoriteModels}

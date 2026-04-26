@@ -4891,7 +4891,7 @@ describe("TaskDetailModal", () => {
         );
       });
 
-      await user.click(screen.getByLabelText("Validator Model"));
+      await user.click(screen.getByLabelText("Reviewer Model"));
       await user.click(screen.getByText("GPT-4o"));
 
       await waitFor(() => {
@@ -4909,7 +4909,7 @@ describe("TaskDetailModal", () => {
 
       await waitFor(() => {
         expect(screen.getByLabelText("Executor Model")).toHaveTextContent("Claude Sonnet 4.5");
-        expect(screen.getByLabelText("Validator Model")).toHaveTextContent("GPT-4o");
+        expect(screen.getByLabelText("Reviewer Model")).toHaveTextContent("GPT-4o");
       });
     });
 

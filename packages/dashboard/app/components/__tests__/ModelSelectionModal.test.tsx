@@ -273,7 +273,7 @@ describe("ModelSelectionModal", () => {
       "anthropic/claude-sonnet-4-5",
     );
     expect(screen.getByTestId("dropdown-label-model-selection-validator").textContent).toBe(
-      "Validator Model",
+      "Reviewer Model",
     );
   });
 

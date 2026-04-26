@@ -1483,7 +1483,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               }}
             >
               {activeModelSubmenu === null ? (
-                // Top-level menu with Plan/Executor/Validator choices
+                // Top-level menu with Plan/Executor/Reviewer choices
                 <div className="model-menu-items">
                   <button
                     type="button"
@@ -1527,7 +1527,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                   >
                     <span className="model-menu-item-label">
                       <Brain size={12} style={{ verticalAlign: "middle", marginRight: 6 }} />
-                      Validator
+                      Reviewer
                     </span>
                     <span className="model-menu-item-value">
                       {hasValidatorOverride
@@ -1552,7 +1552,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                   <div className="model-submenu-header">
                     {activeModelSubmenu === "plan" && "Plan Model"}
                     {activeModelSubmenu === "executor" && "Executor Model"}
-                    {activeModelSubmenu === "validator" && "Validator Model"}
+                    {activeModelSubmenu === "validator" && "Reviewer Model"}
                   </div>
                   <CustomModelDropdown
                     models={loadedModels}

@@ -2395,7 +2395,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                                           </span>
                                           <span className="mission-validation-round__feature">{round.featureTitle}</span>
                                           <span className="mission-validation-round__attempts">
-                                            impl #{round.implementationAttempt} · validator #{round.validatorAttempt}
+                                            impl #{round.implementationAttempt} · reviewer #{round.validatorAttempt}
                                           </span>
                                         </div>
 

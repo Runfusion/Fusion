@@ -977,10 +977,10 @@ export function TaskForm({
               />
             </div>
             <div className="model-select-row">
-              <label htmlFor="validator-model" className="model-select-label">Validator</label>
+              <label htmlFor="validator-model" className="model-select-label">Reviewer</label>
               <CustomModelDropdown
                 id="validator-model"
-                label="Validator Model"
+                label="Reviewer Model"
                 value={validatorModel}
                 onChange={(value) => {
                   onPresetModeChange("custom");
