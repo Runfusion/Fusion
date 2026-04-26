@@ -1138,6 +1138,57 @@ describe("SettingsModal", () => {
       expect(devServerToggles[0]).toBeChecked();
     });
 
+    describe("Remote Access section visibility", () => {
+      it("hides Remote Access nav item when experimentalFeatures.remoteAccess is falsy", async () => {
+        mockFetchSettings.mockResolvedValue({
+          ...defaultSettings,
+          experimentalFeatures: {},
+        });
+
+        renderModal();
+        await waitForSettingsModalReady();
+
+        expect(screen.queryByRole("button", { name: /Remote Access/i })).not.toBeInTheDocument();
+      });
+
+      it("shows Remote Access nav item when experimentalFeatures.remoteAccess is true", async () => {
+        mockFetchSettings.mockResolvedValue({
+          ...defaultSettings,
+          experimentalFeatures: { remoteAccess: true },
+        });
+
+        renderModal();
+
+        expect(await screen.findByRole("button", { name: /Remote Access/i })).toBeInTheDocument();
+      });
+
+      it("shows Remote Access in KNOWN_EXPERIMENTAL_FEATURES toggle list", async () => {
+        mockFetchSettings.mockResolvedValue({
+          ...defaultSettings,
+          experimentalFeatures: {},
+        });
+
+        renderModal();
+
+        await openExperimentalFeaturesSection();
+
+        expect(screen.getByLabelText("Remote Access")).toBeInTheDocument();
+      });
+
+      it("falls back to the first selectable section when opening remote while remoteAccess is disabled", async () => {
+        mockFetchSettings.mockResolvedValue({
+          ...defaultSettings,
+          experimentalFeatures: {},
+        });
+
+        renderModal({ initialSection: "remote" });
+        await waitForSettingsModalReady();
+
+        expect(screen.queryByRole("button", { name: /Remote Access/i })).not.toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "Authentication" })).toBeInTheDocument();
+      });
+    });
+
     it("normalizes legacy devServer flag to canonical devServerView on save", async () => {
       mockFetchSettings.mockResolvedValue({
         ...defaultSettings,
@@ -1299,6 +1350,13 @@ describe("SettingsModal", () => {
   });
 
   describe("Remote section", () => {
+    beforeEach(() => {
+      mockFetchSettings.mockResolvedValue({
+        ...defaultSettings,
+        experimentalFeatures: { remoteAccess: true },
+      });
+    });
+
     const openRemoteSection = async () => {
       const [remoteSectionButton] = await screen.findAllByRole("button", { name: /Remote Access/i });
       await userEvent.click(remoteSectionButton);

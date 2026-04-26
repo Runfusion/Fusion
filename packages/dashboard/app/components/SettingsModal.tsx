@@ -101,6 +101,7 @@ const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
   insights: "Insights",
   roadmap: "Roadmaps",
   memoryView: "Memory Editor",
+  remoteAccess: "Remote Access",
   skillsView: "Skills View",
   nodesView: "Nodes View",
   devServerView: "Dev Server",
@@ -230,8 +231,18 @@ export function SettingsModal({
     refresh: refreshOverlapPathPicker,
   } = useWorkspaceFileBrowser("project", overlapPathPickerIndex !== null, projectId);
 
+  const remoteAccessEnabled = isExperimentalFeatureEnabled(form.experimentalFeatures ?? {}, "remoteAccess");
+  const visibleSections = SETTINGS_SECTIONS.filter((section) => section.id !== "remote" || remoteAccessEnabled);
+  const firstVisibleSectionId = visibleSections.find((section) => !section.isGroupHeader)?.id ?? "general";
+
   /** Get the scope of the currently active section */
-  const activeSectionScope = SETTINGS_SECTIONS.find((s) => s.id === activeSection)?.scope;
+  const activeSectionScope = visibleSections.find((s) => s.id === activeSection)?.scope;
+
+  useEffect(() => {
+    if (activeSection === "remote" && !remoteAccessEnabled) {
+      setActiveSection(firstVisibleSectionId);
+    }
+  }, [activeSection, remoteAccessEnabled, firstVisibleSectionId]);
 
   // Auth state (independent of the settings save flow)
   const [authProviders, setAuthProviders] = useState<AuthProvider[]>([]);
@@ -4023,7 +4034,7 @@ export function SettingsModal({
                   value={activeSection}
                   onChange={(event) => setActiveSection(event.target.value as SectionId)}
                 >
-                  {SETTINGS_SECTIONS.filter((section) => !section.isGroupHeader).map((section) => (
+                  {visibleSections.filter((section) => !section.isGroupHeader).map((section) => (
                     <option key={section.id} value={section.id}>
                       {section.label}
                     </option>
@@ -4032,7 +4043,7 @@ export function SettingsModal({
               </div>
             )}
             <nav className="settings-sidebar">
-              {SETTINGS_SECTIONS.map((section) => {
+              {visibleSections.map((section) => {
                 // Render group headers as non-clickable styled divs
                 if (section.isGroupHeader) {
                   return (
