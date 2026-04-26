@@ -803,8 +803,10 @@ describe("MailboxModal", () => {
       });
 
       // Inbox tab should have the unread badge
-      const inboxTab = screen.getByTestId("mailbox-agent-subtab-inbox");
-      expect(inboxTab.querySelector(".mailbox-tab-badge")?.textContent).toBe("3");
+      await waitFor(() => {
+        const inboxTab = screen.getByTestId("mailbox-agent-subtab-inbox");
+        expect(inboxTab.querySelector(".mailbox-tab-badge")?.textContent).toBe("3");
+      });
     });
   });
 

@@ -99,7 +99,7 @@ import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let createFnAgent: any = engineCreateFnAgent;
+const createFnAgent: any = engineCreateFnAgent;
 
 function ensureEngineReady(): Promise<void> {
   return Promise.resolve();
