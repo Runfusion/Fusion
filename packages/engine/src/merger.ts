@@ -1,8 +1,98 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { execSync, exec } from "node:child_process";
+import { execSync, exec, spawn } from "node:child_process";
 import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
+
+/**
+ * Run a verification command with a wallclock timeout that reaps the whole
+ * process group on expiry. Node's exec timeout only kills the immediate shell;
+ * vitest/pnpm workers can survive and accumulate across retries. Using
+ * detached + negative-pid signal terminates the full tree.
+ *
+ * Resolves with stdout/stderr/exitCode mirroring exec's promisified shape.
+ * Rejects with an Error tagged `code: "ETIMEDOUT"` and `killed: true` on
+ * timeout, matching exec's contract so callers don't need to special-case it.
+ */
+async function execWithProcessGroup(
+  command: string,
+  options: { cwd: string; timeout: number; maxBuffer: number },
+): Promise<{ stdout: string; stderr: string; bufferOverflow: boolean }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, {
+      cwd: options.cwd,
+      shell: true,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let stdoutOverflow = false;
+    let stderrOverflow = false;
+    let timedOut = false;
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      if (child.pid !== undefined) {
+        try { process.kill(-child.pid, "SIGTERM"); } catch { /* group may already be gone */ }
+        setTimeout(() => {
+          if (settled) return;
+          try { process.kill(-(child.pid as number), "SIGKILL"); } catch { /* ignore */ }
+        }, 5_000).unref();
+      }
+    }, options.timeout);
+    timer.unref();
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      if (stdoutOverflow) return;
+      if (stdout.length + chunk.length > options.maxBuffer) {
+        stdoutOverflow = true;
+        stdout += chunk.toString("utf-8", 0, options.maxBuffer - stdout.length);
+        return;
+      }
+      stdout += chunk.toString("utf-8");
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      if (stderrOverflow) return;
+      if (stderr.length + chunk.length > options.maxBuffer) {
+        stderrOverflow = true;
+        stderr += chunk.toString("utf-8", 0, options.maxBuffer - stderr.length);
+        return;
+      }
+      stderr += chunk.toString("utf-8");
+    });
+
+    const finish = (err: NodeJS.ErrnoException | null, code: number | null, signal: NodeJS.Signals | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(Object.assign(
+          new Error(`Command timed out after ${options.timeout}ms: ${command}`),
+          { code: "ETIMEDOUT", stdout, stderr, killed: true },
+        ));
+        return;
+      }
+      if (err) {
+        reject(Object.assign(err, { stdout, stderr }));
+        return;
+      }
+      if (code === 0) {
+        resolve({ stdout, stderr, bufferOverflow: stdoutOverflow || stderrOverflow });
+        return;
+      }
+      reject(Object.assign(
+        new Error(`Command failed (exit ${code ?? signal ?? "unknown"}): ${command}`),
+        { code: code ?? undefined, status: code, stdout, stderr },
+      ));
+    };
+
+    child.on("error", (err) => finish(err, null, null));
+    child.on("close", (code, signal) => finish(null, code, signal));
+  });
+}
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getTaskMergeBlocker, type TaskStore, type MergeResult, type MergeDetails, type WorkflowStep, type WorkflowStepResult, type Settings, type AgentPromptsConfig } from "@fusion/core";
@@ -70,6 +160,7 @@ const DEPENDENCY_SYNC_TRIGGER_PATTERNS = [
 ];
 
 const VERIFICATION_COMMAND_MAX_BUFFER = 50 * 1024 * 1024;
+const VERIFICATION_COMMAND_TIMEOUT_MS = 600_000;
 const VERIFICATION_LOG_MAX_CHARS = 20_000;
 const WORKFLOW_SCRIPT_OUTPUT_MAX_CHARS = 4_000;
 const PULL_REBASE_TIMEOUT_MS = 120_000;
@@ -612,10 +703,9 @@ async function runVerificationCommand(
 
   const verificationStartedAt = Date.now();
   try {
-    const { stdout, stderr } = await execAsync(command, {
+    const { stdout, stderr, bufferOverflow } = await execWithProcessGroup(command, {
       cwd: rootDir,
-      encoding: "utf-8",
-      timeout: 300_000,
+      timeout: VERIFICATION_COMMAND_TIMEOUT_MS,
       maxBuffer: VERIFICATION_COMMAND_MAX_BUFFER,
     });
 
@@ -627,8 +717,16 @@ async function runVerificationCommand(
     result.success = true;
 
     const verificationDurationMs = Date.now() - verificationStartedAt;
-    mergerLog.log(`${taskId}: ${type} command succeeded in ${verificationDurationMs}ms`);
-    await store.logEntry(taskId, `[timing] [verification] ${type} command succeeded (exit 0) in ${verificationDurationMs}ms`);
+    if (bufferOverflow) {
+      mergerLog.log(`${taskId}: ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`);
+      await store.logEntry(
+        taskId,
+        `[timing] [verification] ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`,
+      );
+    } else {
+      mergerLog.log(`${taskId}: ${type} command succeeded in ${verificationDurationMs}ms`);
+      await store.logEntry(taskId, `[timing] [verification] ${type} command succeeded (exit 0) in ${verificationDurationMs}ms`);
+    }
     return result;
   } catch (error: any) {
     throwIfAborted(signal, taskId);

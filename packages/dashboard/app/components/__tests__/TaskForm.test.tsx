@@ -697,8 +697,11 @@ describe("TaskForm preset selection (FN-819)", () => {
       expect(fetchSettings).toHaveBeenCalled();
     });
 
-    const presetSelect = document.getElementById("model-preset") as HTMLSelectElement;
-    expect(presetSelect).toBeTruthy();
+    const presetSelect = await waitFor(() => {
+      const element = document.getElementById("model-preset") as HTMLSelectElement | null;
+      expect(element).toBeTruthy();
+      return element as HTMLSelectElement;
+    });
     const options = Array.from(presetSelect.options);
     expect(options.find((o) => o.value === "default")).toBeTruthy();
     expect(options.find((o) => o.value === "fast")).toBeTruthy();
