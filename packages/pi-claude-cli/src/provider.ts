@@ -135,7 +135,6 @@ export function streamViaCli(
         newSessionId: !resumeSessionId ? options?.sessionId : undefined,
       });
       const getStderr = captureStderr(proc);
-      const spawnTime = Date.now();
 
       // Register in global process registry for teardown cleanup
       registerProcess(proc);

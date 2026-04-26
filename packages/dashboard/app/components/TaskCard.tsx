@@ -122,7 +122,7 @@ function getDoneCompletionMs(task: Task): number | null {
 }
 
 function getDoneProcessingStartMs(task: Task, completionMs: number): number | null {
-  const startCandidates = [task.updatedAt, task.createdAt]
+  const startCandidates = [task.createdAt]
     .map(parseTimestampToMs)
     .filter((value): value is number => value != null);
 

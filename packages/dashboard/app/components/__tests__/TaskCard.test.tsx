@@ -484,7 +484,7 @@ describe("TaskCard", () => {
         task={makeTask({
           column: "done",
           columnMovedAt: "2026-04-25T15:00:00.000Z",
-          updatedAt: "2026-04-25T14:00:00.000Z",
+          updatedAt: "2026-04-25T15:00:00.000Z",
           createdAt: "2026-04-25T13:00:00.000Z",
         })}
         onOpenDetail={noop}
@@ -494,9 +494,9 @@ describe("TaskCard", () => {
 
     const timer = container.querySelector(".card-time-indicator");
     expect(timer).not.toBeNull();
-    expect(timer?.textContent).toContain("1h");
-    expect(timer?.getAttribute("title")).toContain("Processing took 1h");
-    expect(timer?.getAttribute("aria-label")).toContain("Completed processing duration 1h");
+    expect(timer?.textContent).toContain("2h");
+    expect(timer?.getAttribute("title")).toContain("Processing took 2h");
+    expect(timer?.getAttribute("aria-label")).toContain("Completed processing duration 2h");
   });
 
   it("renders files-changed metadata and timer chip in the same footer row", () => {
@@ -508,7 +508,7 @@ describe("TaskCard", () => {
         task={makeTask({
           column: "done",
           columnMovedAt: "2026-04-25T15:00:00.000Z",
-          updatedAt: "2026-04-25T14:00:00.000Z",
+          updatedAt: "2026-04-25T15:00:00.000Z",
           createdAt: "2026-04-25T13:00:00.000Z",
           mergeDetails: {
             commitSha: "abc123",
@@ -581,31 +581,45 @@ describe("TaskCard", () => {
   });
 
   it.each([
-    { durationMs: 59_000, expected: "<1m" },
-    { durationMs: 60 * 60_000, expected: "1h" },
-    { durationMs: 24 * 60 * 60_000, expected: "1d" },
-  ])("formats done processing-duration label as $expected at boundary", ({ durationMs, expected }) => {
-    vi.useFakeTimers();
-    const completionTime = new Date("2026-04-25T20:00:00.000Z");
-    vi.setSystemTime(new Date("2026-04-25T23:00:00.000Z"));
+    {
+      createdAt: "2026-04-25T09:00:00.000Z",
+      columnMovedAt: "2026-04-25T09:00:59.000Z",
+      expected: "<1m",
+    },
+    {
+      createdAt: "2026-04-25T09:00:00.000Z",
+      columnMovedAt: "2026-04-25T10:00:00.000Z",
+      expected: "1h",
+    },
+    {
+      createdAt: "2026-04-25T09:00:00.000Z",
+      columnMovedAt: "2026-04-26T09:00:00.000Z",
+      expected: "1d",
+    },
+  ])(
+    "formats done processing-duration label as $expected at boundary",
+    ({ createdAt, columnMovedAt, expected }) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-04-26T12:00:00.000Z"));
 
-    const { container } = render(
-      <TaskCard
-        task={makeTask({
-          column: "done",
-          columnMovedAt: completionTime.toISOString(),
-          updatedAt: new Date(completionTime.getTime() - durationMs).toISOString(),
-          createdAt: "2026-04-25T09:00:00.000Z",
-        })}
-        onOpenDetail={noop}
-        addToast={noop}
-      />,
-    );
+      const { container } = render(
+        <TaskCard
+          task={makeTask({
+            column: "done",
+            columnMovedAt,
+            updatedAt: columnMovedAt,
+            createdAt,
+          })}
+          onOpenDetail={noop}
+          addToast={noop}
+        />,
+      );
 
-    const timer = container.querySelector(".card-time-indicator");
-    expect(timer).not.toBeNull();
-    expect(timer?.textContent).toContain(expected);
-  });
+      const timer = container.querySelector(".card-time-indicator");
+      expect(timer).not.toBeNull();
+      expect(timer?.textContent).toContain(expected);
+    },
+  );
 
   it("keeps done processing-duration timer stable when clock advances", () => {
     vi.useFakeTimers();
@@ -616,7 +630,7 @@ describe("TaskCard", () => {
         task={makeTask({
           column: "done",
           columnMovedAt: "2026-04-25T15:00:00.000Z",
-          updatedAt: "2026-04-25T14:00:00.000Z",
+          updatedAt: "2026-04-25T15:00:00.000Z",
           createdAt: "2026-04-25T13:00:00.000Z",
         })}
         onOpenDetail={noop}
@@ -624,13 +638,37 @@ describe("TaskCard", () => {
       />,
     );
 
-    expect(container.querySelector(".card-time-indicator")?.textContent).toContain("1h");
+    expect(container.querySelector(".card-time-indicator")?.textContent).toContain("2h");
 
     act(() => {
       vi.advanceTimersByTime(2 * 60 * 60_000);
     });
 
-    expect(container.querySelector(".card-time-indicator")?.textContent).toContain("1h");
+    expect(container.querySelector(".card-time-indicator")?.textContent).toContain("2h");
+  });
+
+  it("uses createdAt for done duration when updatedAt equals completion timestamp", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-25T18:00:00.000Z"));
+
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          column: "done",
+          createdAt: "2026-04-25T10:00:00.000Z",
+          columnMovedAt: "2026-04-25T12:30:00.000Z",
+          updatedAt: "2026-04-25T12:30:00.000Z",
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const timer = container.querySelector(".card-time-indicator");
+    expect(timer).not.toBeNull();
+    expect(timer?.textContent).toContain("2h");
+    expect(timer?.textContent).not.toContain("<1m");
+    expect(timer?.getAttribute("title")).toContain("Processing took 2h");
   });
 
   it("refreshes in-progress timer chip on 30s cadence", () => {
