@@ -3,7 +3,7 @@
  *
  * Evaluates whether a task's PROMPT.md has become stale based on file modification time.
  * When spec staleness enforcement is enabled, tasks whose specification age exceeds
- * the configured threshold must be re-triaged before execution.
+ * the configured threshold must be re-planned before execution.
  */
 
 import { stat } from "node:fs/promises";
@@ -21,7 +21,7 @@ const DEFAULT_SPEC_STALENESS_MAX_AGE_MS = 6 * 60 * 60 * 1000;
  * validation logic without throwing.
  */
 export interface SpecStalenessResult {
-  /** Whether the specification is considered stale and requires re-triaging. */
+  /** Whether the specification is considered stale and requires re-planning. */
   isStale: boolean;
   /** Age of the PROMPT.md in milliseconds at evaluation time. Undefined when skipped. */
   ageMs: number | undefined;
@@ -131,7 +131,7 @@ export async function evaluateSpecStaleness(
   const isStale = ageMs > maxAgeMs;
 
   const reason = isStale
-    ? `Specification stale (age=${ageMs}ms, max=${maxAgeMs}ms) — moved to triage for re-specification`
+    ? `Specification stale (age=${ageMs}ms, max=${maxAgeMs}ms) — moved to triage for re-planning`
     : "";
 
   return {

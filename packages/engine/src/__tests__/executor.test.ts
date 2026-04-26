@@ -34,7 +34,7 @@ vi.mock("../logger.js", () => {
     createLogger: vi.fn(() => createMockLogger()),
     schedulerLog: createMockLogger(),
     executorLog: createMockLogger(),
-    triageLog: createMockLogger(),
+    planLog: createMockLogger(),
     mergerLog: createMockLogger(),
     worktreePoolLog: createMockLogger(),
     reviewerLog: createMockLogger(),
@@ -5456,7 +5456,7 @@ describe("fn_task_add_dep tool", () => {
 
     await tools.fn_task_add_dep("call1", { task_id: "FN-OTHER", confirm: true });
 
-    expect(store.logEntry).toHaveBeenCalledWith("FN-TEST", "Added dependency on FN-OTHER — stopping execution for re-specification");
+    expect(store.logEntry).toHaveBeenCalledWith("FN-TEST", "Added dependency on FN-OTHER — stopping execution for re-planning");
   });
 
   it("appends to existing dependencies without overwriting when confirm=true", async () => {

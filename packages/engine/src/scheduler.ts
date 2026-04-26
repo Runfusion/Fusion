@@ -683,7 +683,7 @@ export class Scheduler {
         }
 
         // Stale spec enforcement: check if PROMPT.md has aged beyond the configured threshold.
-        // When enabled, stale tasks are moved back to triage with status "needs-respecify"
+        // When enabled, stale tasks are moved back to triage with status "needs-replan"
         // so they receive fresh specification before execution. This guard runs after
         // filesystem validation so missing/unreadable files skip staleness checks entirely.
         const promptPath = getPromptPath(this.store.getTasksDir(), task.id);
@@ -691,7 +691,7 @@ export class Scheduler {
         if (staleness.isStale) {
           schedulerLog.warn(`Task ${task.id} specification is stale — ${staleness.reason}`);
           await this.store.moveTask(task.id, "triage");
-          await this.store.updateTask(task.id, { status: "needs-respecify" });
+          await this.store.updateTask(task.id, { status: "needs-replan" });
           await this.store.logEntry(task.id, staleness.reason);
           continue;
         }

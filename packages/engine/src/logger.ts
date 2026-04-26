@@ -62,8 +62,8 @@ export const schedulerLog = createLogger("scheduler");
 /** Logger for the task executor subsystem. */
 export const executorLog = createLogger("executor");
 
-/** Logger for the triage processor subsystem. */
-export const triageLog = createLogger("triage");
+/** Logger for the plan processor subsystem. */
+export const planLog = createLogger("plan");
 
 /** Logger for the pi agent session subsystem. */
 export const piLog = createLogger("pi");

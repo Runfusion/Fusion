@@ -128,7 +128,7 @@ describe("evaluateSpecStaleness", () => {
       expect(result.reason).toContain("Specification stale");
       expect(result.reason).toContain(`age=${defaultMaxAgeMs + 1000}ms`);
       expect(result.reason).toContain(`max=${defaultMaxAgeMs}ms`);
-      expect(result.reason).toContain("moved to triage for re-specification");
+      expect(result.reason).toContain("moved to triage for re-planning");
     });
 
     it("uses custom specStalenessMaxAgeMs when set and valid", async () => {

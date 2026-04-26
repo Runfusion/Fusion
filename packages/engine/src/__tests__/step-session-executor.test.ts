@@ -566,7 +566,7 @@ vi.mock("../logger.js", () => {
     createLogger: vi.fn((prefix: string) => getLogger(prefix)),
     schedulerLog: getLogger("scheduler"),
     executorLog: getLogger("executor"),
-    triageLog: getLogger("triage"),
+    planLog: getLogger("plan"),
     mergerLog: getLogger("merger"),
     worktreePoolLog: getLogger("worktree-pool"),
     reviewerLog: getLogger("reviewer"),

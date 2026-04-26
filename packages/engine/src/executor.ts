@@ -271,7 +271,7 @@ When creating multiple related tasks, declare dependencies between them:
 \`fn_task_create(description="load door sounds", dependencies=[])\` → returns KB-050
 \`fn_task_create(description="play sound on door open/close", dependencies=["KB-050"])\`
 
-**Discovered a dependency:** \`fn_task_add_dep(task_id="KB-XXX")\` — use when you discover mid-execution that another task must be completed first. This will return a warning first — you must call again with \`confirm=true\` to proceed. Adding a dependency stops execution, discards current work, and moves the task to triage for re-specification.
+**Discovered a dependency:** \`fn_task_add_dep(task_id="KB-XXX")\` — use when you discover mid-execution that another task must be completed first. This will return a warning first — you must call again with \`confirm=true\` to proceed. Adding a dependency stops execution, discards current work, and moves the task to triage for re-planning.
 
 ## Cross-model review via fn_review_step tool
 
@@ -1267,13 +1267,13 @@ export class TaskExecutor {
     const audit = createRunAuditor(this.store, engineRunContext);
 
     // Stale spec enforcement: check if PROMPT.md has aged beyond the configured threshold.
-    // When enabled, stale tasks are moved back to triage with status "needs-respecify"
+    // When enabled, stale tasks are moved back to triage with status "needs-replan"
     // so they receive fresh specification before execution. This guard runs early in
     // execute() to prevent stale tasks from entering worktree creation or agent sessions.
     // If timestamp evaluation is skipped (missing/unreadable file), continue with execution
     // so existing filesystem validation paths remain authoritative.
     // Skip for tasks that are already in-progress, in-review, merging, or done —
-    // these should not be interrupted and sent back to triage for respecification.
+    // these should not be interrupted and sent back to triage for re-planning.
     const activeColumns = new Set(["in-progress", "in-review", "done"]);
     const activeMergeStatuses = new Set(["merging", "merging-pr"]);
     const isActiveTask = activeColumns.has(task.column) || activeMergeStatuses.has(task.status ?? "");
@@ -1283,9 +1283,9 @@ export class TaskExecutor {
       const staleness = await evaluateSpecStaleness({ settings, promptPath });
       if (staleness.isStale) {
         executorLog.warn(`Task ${task.id} specification is stale — ${staleness.reason}`);
-        // Move to triage first, then set status so the task enters triage with needs-respecify
+        // Move to triage first, then set status so the task enters triage with needs-replan
         await this.store.moveTask(task.id, "triage");
-        await this.store.updateTask(task.id, { status: "needs-respecify" });
+        await this.store.updateTask(task.id, { status: "needs-replan" });
         await this.store.logEntry(task.id, staleness.reason, undefined, this.currentRunContext);
         return;
       }
@@ -2749,7 +2749,7 @@ export class TaskExecutor {
 
         // Add the dependency
         await store.updateTask(taskId, { dependencies: [...existing, targetId] });
-        await store.logEntry(taskId, `Added dependency on ${targetId} — stopping execution for re-specification`);
+        await store.logEntry(taskId, `Added dependency on ${targetId} — stopping execution for re-planning`);
 
         // Trigger abort flow (same pattern as pausedAborted)
         this.depAborted.add(taskId);
@@ -2767,7 +2767,7 @@ export class TaskExecutor {
         return {
           content: [{
             type: "text" as const,
-            text: `Added dependency on ${targetId}. Stopping execution — task will move to triage for re-specification.`,
+            text: `Added dependency on ${targetId}. Stopping execution — task will move to triage for re-planning.`,
           }],
           details: {},
         };
@@ -3011,7 +3011,7 @@ export class TaskExecutor {
    * Shared between the try-block (graceful return) and catch-block (error) paths.
    */
   private async handleDepAbortCleanup(taskId: string, worktreePath: string): Promise<void> {
-    executorLog.log(`${taskId} dependency added — work discarded, moved to triage for re-specification`);
+    executorLog.log(`${taskId} dependency added — work discarded, moved to triage for re-planning`);
 
     // Remove worktree
     try {
@@ -3043,7 +3043,7 @@ export class TaskExecutor {
     // Update task: clear worktree and status, move to triage
     await this.store.updateTask(taskId, { worktree: null, status: null });
     await this.store.moveTask(taskId, "triage");
-    await this.store.logEntry(taskId, "Execution stopped — work discarded, moved to triage for re-specification");
+    await this.store.logEntry(taskId, "Execution stopped — work discarded, moved to triage for re-planning");
   }
 
   /**

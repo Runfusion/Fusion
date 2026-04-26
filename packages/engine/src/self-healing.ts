@@ -44,14 +44,14 @@ export interface SelfHealingOptions {
   getExecutingTaskIds?: () => Set<string>;
   /**
    * Recover a triage task whose spec was approved but whose final transition
-   * out of `status: "specifying"` never completed.
+   * out of `status: "planning"` never completed.
    */
   recoverApprovedTriageTask?: (task: Task) => Promise<boolean>;
   /**
    * Returns the set of task IDs currently being specified by triage.
    * Used to avoid recovering active triage sessions.
    */
-  getSpecifyingTaskIds?: () => Set<string>;
+  getPlanningTaskIds?: () => Set<string>;
   /**
    * Evict tasks from the triage processor's `processing` set that have been
    * there longer than the staleness threshold (hung promises from stuck kills).
@@ -151,7 +151,7 @@ export class SelfHealingManager {
    * has had a chance to resume orphaned sessions.
    *
    * This avoids waiting for the periodic maintenance interval before fixing
-   * stale in-progress/specifying tasks that no longer have a live worker.
+   * stale in-progress/planning tasks that no longer have a live worker.
    */
   async runStartupRecovery(): Promise<void> {
     // Each recovery step is isolated — one failure doesn't prevent subsequent steps.
@@ -165,7 +165,7 @@ export class SelfHealingManager {
       { name: "partial-progress-no-task-done", fn: () => this.recoverPartialProgressNoTaskDoneFailures().then(() => undefined) },
       { name: "orphaned-executions", fn: () => this.recoverOrphanedExecutions().then(() => undefined) },
       { name: "approved-triage", fn: () => this.recoverApprovedTriageTasks().then(() => undefined) },
-      { name: "orphaned-specifying", fn: () => this.recoverOrphanedSpecifyingTasks().then(() => undefined) },
+      { name: "orphaned-planning", fn: () => this.recoverOrphanedPlanningTasks().then(() => undefined) },
     ];
 
     for (const step of steps) {
@@ -552,7 +552,7 @@ export class SelfHealingManager {
         { name: "recover-partial-progress-no-task-done", fn: () => this.recoverPartialProgressNoTaskDoneFailures() },
         { name: "recover-orphaned-executions", fn: () => this.recoverOrphanedExecutions() },
         { name: "recover-approved-triage", fn: () => this.recoverApprovedTriageTasks() },
-        { name: "recover-orphaned-specifying", fn: () => this.recoverOrphanedSpecifyingTasks() },
+        { name: "recover-orphaned-planning", fn: () => this.recoverOrphanedPlanningTasks() },
       ];
       for (const fn of batch2Fns) {
         try {
@@ -1339,7 +1339,7 @@ export class SelfHealingManager {
 
   /**
    * Recover triage tasks that already have an approved specification but were
-   * left stuck in `status: "specifying"` without an active triage session.
+   * left stuck in `status: "planning"` without an active triage session.
    *
    * This catches the mirror-image of executor recovery: the review completed,
    * but the final transition to `todo` / `awaiting-approval` never happened.
@@ -1355,21 +1355,21 @@ export class SelfHealingManager {
       this.options.evictStaleTriageProcessing?.();
 
       const tasks = await this.store.listTasks({ column: "triage" });
-      const specifyingIds = this.options.getSpecifyingTaskIds?.() ?? new Set<string>();
+      const planningIds = this.options.getPlanningTaskIds?.() ?? new Set<string>();
       const now = Date.now();
 
       const orphanedApproved = tasks.filter((t) =>
         t.column === "triage" &&
-        t.status === "specifying" &&
+        t.status === "planning" &&
         !t.paused &&
-        !specifyingIds.has(t.id) &&
+        !planningIds.has(t.id) &&
         now - new Date(t.updatedAt).getTime() >= APPROVED_TRIAGE_RECOVERY_GRACE_MS &&
         hasLatestSpecReviewApproval(t),
       );
 
       if (orphanedApproved.length === 0) return 0;
 
-      log.warn(`Found ${orphanedApproved.length} approved triage task(s) stuck in specifying`);
+      log.warn(`Found ${orphanedApproved.length} approved triage task(s) stuck in planning`);
 
       let recovered = 0;
       for (const task of orphanedApproved) {
@@ -1379,7 +1379,7 @@ export class SelfHealingManager {
       }
 
       if (recovered > 0) {
-        log.log(`Recovered ${recovered} approved triage task(s) out of specifying`);
+        log.log(`Recovered ${recovered} approved triage task(s) out of planning`);
       }
       return recovered;
     } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
@@ -1389,7 +1389,7 @@ export class SelfHealingManager {
   }
 
   /**
-   * Recover triage tasks stuck in `status: "specifying"` whose agent session
+   * Recover triage tasks stuck in `status: "planning"` whose agent session
    * died before producing an approved spec.
    *
    * These tasks fall through two cracks:
@@ -1398,9 +1398,9 @@ export class SelfHealingManager {
    * - `recoverApprovedTriageTasks` only handles tasks with an approved spec.
    *
    * Recovery clears the status back to `null` so the next triage poll picks
-   * them up for a fresh specification attempt.
+   * them up for a fresh planning attempt.
    */
-  async recoverOrphanedSpecifyingTasks(): Promise<number> {
+  async recoverOrphanedPlanningTasks(): Promise<number> {
     try {
       // Evict stale entries from the triage processor's in-memory set before
       // checking — tasks with hung promises (from stuck kills) would otherwise
@@ -1408,43 +1408,43 @@ export class SelfHealingManager {
       this.options.evictStaleTriageProcessing?.();
 
       const tasks = await this.store.listTasks({ column: "triage" });
-      const specifyingIds = this.options.getSpecifyingTaskIds?.() ?? new Set<string>();
+      const planningIds = this.options.getPlanningTaskIds?.() ?? new Set<string>();
       const now = Date.now();
 
       const orphaned = tasks.filter((t) =>
         t.column === "triage" &&
-        t.status === "specifying" &&
+        t.status === "planning" &&
         !t.paused &&
-        !specifyingIds.has(t.id) &&
+        !planningIds.has(t.id) &&
         now - new Date(t.updatedAt).getTime() >= APPROVED_TRIAGE_RECOVERY_GRACE_MS &&
         !hasLatestSpecReviewApproval(t),
       );
 
       if (orphaned.length === 0) return 0;
 
-      log.warn(`Found ${orphaned.length} orphaned specifying triage task(s) without approval`);
+      log.warn(`Found ${orphaned.length} orphaned planning triage task(s) without approval`);
 
       let recovered = 0;
       for (const task of orphaned) {
         try {
-          log.log(`Recovering orphaned specifying task ${task.id}: ${task.title || task.description?.slice(0, 60) || "(untitled)"}`);
+          log.log(`Recovering orphaned planning task ${task.id}: ${task.title || task.description?.slice(0, 60) || "(untitled)"}`);
           await this.store.updateTask(task.id, { status: null });
           await this.store.logEntry(
             task.id,
-            "Auto-recovered orphaned specifying task — agent session lost, cleared for re-specification",
+            "Auto-recovered orphaned planning task — agent session lost, cleared for re-planning",
           );
           recovered++;
         } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
-          log.error(`Failed to recover orphaned specifying task ${task.id}: ${errorMessage}`);
+          log.error(`Failed to recover orphaned planning task ${task.id}: ${errorMessage}`);
         }
       }
 
       if (recovered > 0) {
-        log.log(`Recovered ${recovered} orphaned specifying task(s) — cleared for re-specification`);
+        log.log(`Recovered ${recovered} orphaned planning task(s) — cleared for re-planning`);
       }
       return recovered;
     } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
-      log.error(`Orphaned specifying task recovery failed: ${errorMessage}`);
+      log.error(`Orphaned planning task recovery failed: ${errorMessage}`);
       return 0;
     }
   }

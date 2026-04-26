@@ -19,7 +19,7 @@ vi.mock("../../logger.js", () => {
     runtimeLog: mockLogger,
     createLogger: () => mockLogger,
     schedulerLog: mockLogger,
-    triageLog: mockLogger,
+    planLog: mockLogger,
   };
 });
 

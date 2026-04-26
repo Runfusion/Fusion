@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { mkdir, writeFile, rm, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
-import { triageLog } from "../logger.js";
+import { planLog } from "../logger.js";
 
 const { mockReviewStep, mockCreateFnAgent } = vi.hoisted(() => ({
   mockReviewStep: vi.fn(),
@@ -182,7 +182,7 @@ describe("buildSpecificationPrompt", () => {
     expect(prompt).toContain("revising an existing task specification");
   });
 
-  it("generates fresh re-specification prompt when only feedback is provided", () => {
+  it("generates fresh re-planning prompt when only feedback is provided", () => {
     const feedback = "Start fresh and avoid the stale bootstrap assumption";
 
     const prompt = buildSpecificationPrompt(
@@ -1053,13 +1053,13 @@ describe("Re-specification flow", () => {
         outcome: "Please add more details about error handling",
       },
     ],
-    status: "needs-respecify",
+    status: "needs-replan",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };
 
-  it("detects needs-respecify status", () => {
-    expect(taskWithRevisionRequest.status).toBe("needs-respecify");
+  it("detects needs-replan status", () => {
+    expect(taskWithRevisionRequest.status).toBe("needs-replan");
   });
 
   it("extracts feedback from log entry", () => {
@@ -1155,7 +1155,7 @@ describe("requirePlanApproval setting", () => {
           steps: [],
           currentStep: 0,
           log: [],
-          status: "specifying",
+          status: "planning",
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
         },
@@ -1218,7 +1218,7 @@ describe("approved triage recovery", () => {
     await cleanupTriageFixtureRoot(rootDir);
   });
 
-  it("moves approved specifying task to todo during recovery", async () => {
+  it("moves approved planning task to todo during recovery", async () => {
     const store = createMockStore({
       getSettings: vi.fn().mockResolvedValue({
         maxConcurrent: 2,
@@ -1236,7 +1236,7 @@ describe("approved triage recovery", () => {
       id: "FN-001",
       description: "Recovered triage task",
       column: "triage",
-      status: "specifying",
+      status: "planning",
       dependencies: [],
       steps: [],
       currentStep: 0,
@@ -1259,7 +1259,7 @@ describe("approved triage recovery", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
-      "Auto-recovered approved specification stuck in specifying — moved to todo",
+      "Auto-recovered approved specification stuck in planning — moved to todo",
     );
   });
 
@@ -1280,7 +1280,7 @@ describe("approved triage recovery", () => {
       id: "FN-001",
       description: "Recovered triage task",
       column: "triage",
-      status: "specifying",
+      status: "planning",
       dependencies: [],
       steps: [],
       currentStep: 0,
@@ -1299,7 +1299,7 @@ describe("approved triage recovery", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
   });
 
-  it("moves approved specifying task to awaiting-approval when manual approval is required", async () => {
+  it("moves approved planning task to awaiting-approval when manual approval is required", async () => {
     const store = createMockStore({
       getSettings: vi.fn().mockResolvedValue({
         maxConcurrent: 2,
@@ -1316,7 +1316,7 @@ describe("approved triage recovery", () => {
       id: "FN-001",
       description: "Recovered triage task",
       column: "triage",
-      status: "specifying",
+      status: "planning",
       dependencies: [],
       steps: [],
       currentStep: 0,
@@ -1334,7 +1334,7 @@ describe("approved triage recovery", () => {
     });
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
-      "Auto-recovered approved specification stuck in specifying — awaiting manual approval",
+      "Auto-recovered approved specification stuck in planning — awaiting manual approval",
     );
   });
 });
@@ -2493,7 +2493,7 @@ describe("stale approval detection", () => {
 });
 
 describe("pause-abort status clearing (bug fix)", () => {
-  it("clears specifying status to null on global pause (not a no-op)", async () => {
+  it("clears planning status to null on global pause (not a no-op)", async () => {
     const settingsListeners: Array<(e: any) => void> = [];
 
     const store = {
@@ -2547,7 +2547,7 @@ describe("pause-abort status clearing (bug fix)", () => {
 });
 
 describe("stuck task detector integration", () => {
-  it("markStuckAborted clears specifying status to null for retry", async () => {
+  it("markStuckAborted clears planning status to null for retry", async () => {
     const store = {
       on: vi.fn(),
       getTask: vi.fn().mockResolvedValue({ ...mockTaskDetail }),
@@ -2632,7 +2632,7 @@ describe("stuck task detector integration", () => {
 
 describe("specifyTask — status restore failure diagnostics", () => {
   it("logs warning when status restore fails during pause abort", async () => {
-    const warnSpy = vi.spyOn(triageLog, "warn");
+    const warnSpy = vi.spyOn(planLog, "warn");
     const settingsListeners: Array<(e: any) => void> = [];
 
     const store = {
@@ -2686,7 +2686,7 @@ describe("specifyTask — status restore failure diagnostics", () => {
   });
 
   it("logs warning when status restore fails during stuck-detector abort", async () => {
-    const warnSpy = vi.spyOn(triageLog, "warn");
+    const warnSpy = vi.spyOn(planLog, "warn");
 
     const store = {
       on: vi.fn(),
@@ -2738,7 +2738,7 @@ describe("specifyTask — status restore failure diagnostics", () => {
 
   it("logs warning when logEntry fails during rate-limit retry", async () => {
     vi.useFakeTimers();
-    const warnSpy = vi.spyOn(triageLog, "warn");
+    const warnSpy = vi.spyOn(planLog, "warn");
 
     try {
       const task: Task = {
@@ -2795,7 +2795,7 @@ describe("specifyTask — status restore failure diagnostics", () => {
   });
 
   it("logs warning when transient-error retry status update fails", async () => {
-    const warnSpy = vi.spyOn(triageLog, "warn");
+    const warnSpy = vi.spyOn(planLog, "warn");
     const task: Task = {
       id: "FN-208",
       description: "Transient retry test",
@@ -3269,7 +3269,7 @@ describe("TriageProcessor delegation tools", () => {
         steps: [],
         currentStep: 0,
         log: [],
-        status: "specifying",
+        status: "planning",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }),

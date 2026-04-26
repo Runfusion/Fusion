@@ -3,7 +3,7 @@ import {
   createLogger,
   schedulerLog,
   executorLog,
-  triageLog,
+  planLog,
   mergerLog,
   worktreePoolLog,
   reviewerLog,
@@ -70,8 +70,8 @@ describe("createLogger", () => {
     executorLog.log("run");
     expect(errorSpy).toHaveBeenCalledWith("\u0000fnlvl=info\u0000[executor] run");
 
-    triageLog.log("spec");
-    expect(errorSpy).toHaveBeenCalledWith("\u0000fnlvl=info\u0000[triage] spec");
+    planLog.log("spec");
+    expect(errorSpy).toHaveBeenCalledWith("\u0000fnlvl=info\u0000[plan] spec");
 
     mergerLog.log("merge");
     expect(errorSpy).toHaveBeenCalledWith("\u0000fnlvl=info\u0000[merger] merge");

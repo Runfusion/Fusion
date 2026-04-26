@@ -830,8 +830,8 @@ describe("Triage re-pick after restart", () => {
     triage.stop();
 
     // Both triage tasks should have been picked up for specification
-    expect(store.updateTask).toHaveBeenCalledWith("FN-060", { status: "specifying" });
-    expect(store.updateTask).toHaveBeenCalledWith("FN-061", { status: "specifying" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-060", { status: "planning" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-061", { status: "planning" });
     expect(mockedCreateFnAgent).toHaveBeenCalledTimes(2);
   });
 
@@ -960,7 +960,7 @@ describe("Scheduler after restart", () => {
     await new Promise((r) => setTimeout(r, 100));
     triage.stop();
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-080", { status: "specifying" });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-080", { status: "planning" });
 
     // 2. Scheduler moves todo → in-progress
     vi.clearAllMocks();

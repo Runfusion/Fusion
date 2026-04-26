@@ -665,7 +665,7 @@ export class InProcessRuntime
         recoverFailedPreMergeStep: (task) => this.executor.recoverFailedPreMergeWorkflowStep(task),
         getExecutingTaskIds: () => this.executor.getExecutingTaskIds(),
         recoverApprovedTriageTask: (task) => this.triageProcessor?.recoverApprovedTask(task) ?? Promise.resolve(false),
-        getSpecifyingTaskIds: () => this.triageProcessor?.getProcessingTaskIds() ?? new Set<string>(),
+        getPlanningTaskIds: () => this.triageProcessor?.getProcessingTaskIds() ?? new Set<string>(),
         evictStaleTriageProcessing: () => this.triageProcessor?.evictStaleProcessing() ?? new Set<string>(),
       });
       this.selfHealingManager.start();
