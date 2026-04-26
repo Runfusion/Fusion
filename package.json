@@ -24,7 +24,7 @@
     "verify:workspace": "pnpm lint && pnpm test && pnpm build",
     "build:exe": "pnpm build && pnpm --filter @runfusion/fusion build:exe",
     "build:exe:all": "pnpm build && pnpm --filter @runfusion/fusion build:exe:all",
-    "test": "pnpm -r --workspace-concurrency=4 test",
+    "test": "pnpm sync:fusion-skill:check && pnpm -r --workspace-concurrency=4 test",
     "test:serial": "pnpm -r --workspace-concurrency=1 test",
     "test:fast": "pnpm -r --workspace-concurrency=4 test",
     "test:build": "pnpm --filter @fusion/dashboard test:build",
