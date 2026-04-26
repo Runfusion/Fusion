@@ -655,12 +655,12 @@ describe("PluginManager", () => {
 
     it("filters events by projectId in project-scoped mode", async () => {
       // Start with plugin disabled
-      vi.mocked(fetchPlugins).mockResolvedValueOnce([{ ...mockPlugins[0], enabled: false }]);
+      vi.mocked(fetchPlugins).mockResolvedValue([{ ...mockPlugins[0], enabled: false }]);
 
       render(<PluginManager addToast={addToast} projectId="proj-789" />);
 
       await waitFor(() => {
-        expect(fetchPlugins).toHaveBeenCalled();
+        expect(screen.getByText("Test Plugin A")).toBeTruthy();
       });
 
       // Verify initial state - toggle should NOT be checked

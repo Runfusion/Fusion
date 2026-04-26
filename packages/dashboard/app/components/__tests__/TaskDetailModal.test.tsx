@@ -1908,8 +1908,8 @@ describe("TaskDetailModal", () => {
       expect(header.textContent).toContain("openai/gpt-4o");
     });
 
-    // Planning/Triage model resolution tests
-    describe("Planning/Triage model resolution", () => {
+    // Planning model resolution tests
+    describe("Planning model resolution", () => {
       it("shows planning model from runtime triage log marker", async () => {
         const { fetchSettings } = await import("../../api");
         const { useAgentLogs } = await import("../../hooks/useAgentLogs");
@@ -1951,7 +1951,7 @@ describe("TaskDetailModal", () => {
           const header = container.querySelector("[data-testid='agent-log-model-header']");
           expect(header).toBeTruthy();
           // Planning should show the runtime triage marker, not settings default
-          expect(header!.textContent).toContain("Planning/Triage:");
+          expect(header!.textContent).toContain("Planning:");
           expect(header!.textContent).toContain("google/gemini-pro");
         });
 
@@ -2000,7 +2000,7 @@ describe("TaskDetailModal", () => {
           const header = container.querySelector("[data-testid='agent-log-model-header']");
           expect(header).toBeTruthy();
           // Planning should use planningProvider/planningModelId from settings
-          expect(header!.textContent).toContain("Planning/Triage:");
+          expect(header!.textContent).toContain("Planning:");
           expect(header!.textContent).toContain("openai/gpt-4o");
         });
 
@@ -2024,7 +2024,7 @@ describe("TaskDetailModal", () => {
         await waitFor(() => {
           const header = container.querySelector("[data-testid='agent-log-model-header']");
           expect(header).toBeTruthy();
-          expect(header!.textContent).toContain("Planning/Triage:");
+          expect(header!.textContent).toContain("Planning:");
           expect(header!.textContent).toContain("anthropic/claude-sonnet-4-5");
         });
 
@@ -2049,7 +2049,7 @@ describe("TaskDetailModal", () => {
         });
 
         const header = container.querySelector("[data-testid='agent-log-model-header']")!;
-        expect(header.textContent).toContain("Planning/Triage:");
+        expect(header.textContent).toContain("Planning:");
         const defaultBadges = header.querySelectorAll(".model-badge-default");
         // 3 default badges: executor, validator, planning
         expect(defaultBadges).toHaveLength(3);
@@ -2099,7 +2099,7 @@ describe("TaskDetailModal", () => {
           const header = container.querySelector("[data-testid='agent-log-model-header']");
           expect(header).toBeTruthy();
           // Per-task override should take precedence over settings
-          expect(header!.textContent).toContain("Planning/Triage:");
+          expect(header!.textContent).toContain("Planning:");
           expect(header!.textContent).toContain("google/gemini-2.5-pro");
         });
 

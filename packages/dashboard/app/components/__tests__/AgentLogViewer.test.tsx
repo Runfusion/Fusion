@@ -403,7 +403,7 @@ describe("AgentLogViewer", () => {
       expect(header!.textContent).toContain("Using default");
     });
 
-    it("renders model info header with planning/triage model when set", () => {
+    it("renders model info header with planning model when set", () => {
       const entries = [makeEntry()];
       const { container } = render(
         <AgentLogViewer
@@ -414,31 +414,31 @@ describe("AgentLogViewer", () => {
       );
       const header = container.querySelector("[data-testid='agent-log-model-header']");
       expect(header).toBeTruthy();
-      expect(header!.textContent).toContain("Planning/Triage:");
+      expect(header!.textContent).toContain("Planning:");
       expect(header!.textContent).toContain("anthropic/claude-opus-4");
       // Verify ProviderIcon is rendered for planning
       expect(container.querySelector('[data-provider="anthropic"]')).toBeTruthy();
     });
 
-    it("renders 'Using default' for planning/triage when no planning model is set", () => {
+    it("renders 'Using default' for planning when no planning model is set", () => {
       const entries = [makeEntry()];
       const { container } = render(
         <AgentLogViewer entries={entries} loading={false} planningModel={null} />
       );
       const header = container.querySelector("[data-testid='agent-log-model-header']");
       expect(header).toBeTruthy();
-      expect(header!.textContent).toContain("Planning/Triage:");
+      expect(header!.textContent).toContain("Planning:");
       expect(header!.textContent).toContain("Using default");
     });
 
-    it("renders 'Using default' for planning/triage when planningModel is undefined", () => {
+    it("renders 'Using default' for planning when planningModel is undefined", () => {
       const entries = [makeEntry()];
       const { container } = render(
         <AgentLogViewer entries={entries} loading={false} />
       );
       const header = container.querySelector("[data-testid='agent-log-model-header']");
       expect(header).toBeTruthy();
-      expect(header!.textContent).toContain("Planning/Triage:");
+      expect(header!.textContent).toContain("Planning:");
       expect(header!.textContent).toContain("Using default");
     });
 
@@ -459,7 +459,7 @@ describe("AgentLogViewer", () => {
       expect(header!.textContent).toContain("anthropic/claude-opus-4");
       expect(header!.textContent).toContain("Validator:");
       expect(header!.textContent).toContain("openai/gpt-4o");
-      expect(header!.textContent).toContain("Planning/Triage:");
+      expect(header!.textContent).toContain("Planning:");
       expect(header!.textContent).toContain("google/gemini-pro");
       // Verify all three ProviderIcons are rendered
       expect(container.querySelector('[data-provider="anthropic"]')).toBeTruthy();
@@ -478,7 +478,7 @@ describe("AgentLogViewer", () => {
       );
       const header = container.querySelector("[data-testid='agent-log-model-header']");
       expect(header).toBeTruthy();
-      expect(header!.textContent).toContain("Planning/Triage:");
+      expect(header!.textContent).toContain("Planning:");
       expect(header!.textContent).toContain("Using default");
     });
   });

@@ -239,7 +239,7 @@ export function AgentLogViewer({
           )}
         </div>
         <div className="agent-log-model-group">
-          <span className="agent-log-model-label">Planning/Triage:</span>
+          <span className="agent-log-model-label">Planning:</span>
           {hasPlanningOverride ? (
             <span className="agent-log-model-value">
               <ProviderIcon provider={planningModel.provider!} size="sm" />
