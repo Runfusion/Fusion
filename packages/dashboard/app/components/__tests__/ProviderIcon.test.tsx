@@ -38,6 +38,23 @@ describe("ProviderIcon", () => {
     expect(badgeGlyph).toHaveAttribute("stroke", "var(--provider-icon-contrast)");
   });
 
+  it("renders pi-claude-cli with Claude CLI icon, label, and provider color", () => {
+    render(<ProviderIcon provider="pi-claude-cli" />);
+    const svg = screen.getByTestId("claude-cli-icon");
+    expect(svg).toBeInTheDocument();
+    expect(screen.getByLabelText("Anthropic — via Claude CLI")).toBeInTheDocument();
+    const wrapper = svg.parentElement;
+    expect(wrapper).toHaveAttribute("data-provider", "pi-claude-cli");
+    expect(wrapper).toHaveStyle({ color: "var(--provider-anthropic)" });
+  });
+
+  it("normalizes PI-Claude-CLI provider name to lowercase alias", () => {
+    render(<ProviderIcon provider="PI-Claude-CLI" />);
+    const svg = screen.getByTestId("claude-cli-icon");
+    expect(svg).toBeInTheDocument();
+    expect(svg.parentElement).toHaveAttribute("data-provider", "pi-claude-cli");
+  });
+
   it("renders OpenAI brand icon for openai provider", () => {
     render(<ProviderIcon provider="openai" />);
     expect(screen.getByTestId("openai-icon")).toBeInTheDocument();

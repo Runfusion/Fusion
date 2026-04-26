@@ -236,6 +236,7 @@ const providerConfig: Record<
   // Branded provider colors are tokenized in app/styles.css for theme-system consistency.
   anthropic: { component: AnthropicIcon, color: "var(--provider-anthropic)" },
   "claude-cli": { component: ClaudeCliIcon, color: "var(--provider-anthropic)", label: "Anthropic — via Claude CLI" },
+  "pi-claude-cli": { component: ClaudeCliIcon, color: "var(--provider-anthropic)", label: "Anthropic — via Claude CLI" },
 
   openai: { component: OpenAIIcon, color: "var(--provider-openai)" },
   "openai-codex": { component: OpenAIIcon, color: "var(--provider-openai)", label: "OpenAI Codex" }, // OpenAI alias
