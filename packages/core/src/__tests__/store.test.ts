@@ -3474,6 +3474,21 @@ describe("TaskStore", () => {
       expect(unpaused.status).toBeUndefined();
     });
 
+    it("sets and clears paused status for in-review tasks", async () => {
+      const task = await createTestTask();
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+
+      const paused = await store.pauseTask(task.id, true);
+      expect(paused.paused).toBe(true);
+      expect(paused.status).toBe("paused");
+
+      const unpaused = await store.pauseTask(task.id, false);
+      expect(unpaused.paused).toBeUndefined();
+      expect(unpaused.status).toBeUndefined();
+    });
+
     it("round-trips pause/unpause correctly", async () => {
       const task = await createTestTask();
 

@@ -100,8 +100,14 @@ function createMockStore(initialSettings: Record<string, unknown>) {
 
   const store = {
     getSettings: vi.fn(async () => structuredClone(settings)),
-    listTasks: vi.fn(async () => []),
-    getTask: vi.fn(async (taskId: string) => ({ id: taskId, column: "in-review", mergeRetries: 0, status: null })),
+    listTasks: vi.fn(async (): Promise<Array<Record<string, unknown>>> => []),
+    getTask: vi.fn(async (taskId: string): Promise<Record<string, unknown>> => ({
+      id: taskId,
+      column: "in-review",
+      paused: false,
+      mergeRetries: 0,
+      status: null,
+    })),
     updateTask: vi.fn(async () => undefined),
     moveTask: vi.fn(async () => undefined),
     updateSettings: vi.fn(async (patch: Record<string, unknown>) => {
@@ -823,6 +829,223 @@ describe("ProjectEngine shutdown merge handling", () => {
     engine.enqueueMerge("FN-after-stop");
     expect(privateEngine.mergeQueue).toHaveLength(0);
     expect(mocks.aiMergeTask).toHaveBeenCalledTimes(mergeCallsBeforeRequeue);
+  });
+});
+
+describe("ProjectEngine paused in-review auto-merge behavior", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("does not enqueue paused tasks from task:moved into in-review", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+    const engine = createEngine();
+    const privateEngine = engine as unknown as { internalEnqueueMerge: (taskId: string) => void };
+    const enqueueSpy = vi.spyOn(privateEngine, "internalEnqueueMerge");
+
+    await engine.start();
+
+    const taskMovedHandler = mockStore.store.on.mock.calls.find((c: unknown[]) => c[0] === "task:moved")?.[1] as
+      | ((payload: { task: { id: string; column: string; paused?: boolean }; to: string }) => Promise<void>)
+      | undefined;
+
+    if (!taskMovedHandler) throw new Error("task:moved handler was not registered");
+
+    await taskMovedHandler({
+      task: { id: "FN-paused", column: "in-review", paused: true },
+      to: "in-review",
+    });
+
+    expect(enqueueSpy).not.toHaveBeenCalledWith("FN-paused");
+
+    await engine.stop();
+  });
+
+  it("re-enqueues an in-review task when it is unpaused", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+    const engine = createEngine();
+    const privateEngine = engine as unknown as { internalEnqueueMerge: (taskId: string) => void };
+    const enqueueSpy = vi.spyOn(privateEngine, "internalEnqueueMerge");
+
+    await engine.start();
+    enqueueSpy.mockClear();
+
+    const taskUpdatedHandler = mockStore.store.on.mock.calls.find((c: unknown[]) => c[0] === "task:updated")?.[1] as
+      | ((task: { id: string; column: string; paused?: boolean; status?: string | null }) => Promise<void>)
+      | undefined;
+    if (!taskUpdatedHandler) throw new Error("task:updated handler was not registered");
+
+    await taskUpdatedHandler({ id: "FN-unpause", column: "in-review", paused: true, status: "paused" });
+    await taskUpdatedHandler({ id: "FN-unpause", column: "in-review", paused: false, status: null });
+
+    expect(enqueueSpy).toHaveBeenCalledWith("FN-unpause");
+
+    await engine.stop();
+  });
+
+  it("logs and skips paused tasks dequeued for auto-merge", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mockStore.store.getTask.mockResolvedValueOnce({
+      id: "FN-paused",
+      column: "in-review",
+      paused: true,
+      mergeRetries: 0,
+      status: null,
+    });
+    mocks.currentStore = mockStore.store;
+
+    const logSpy = vi.spyOn(runtimeLog, "log").mockImplementation(() => {});
+    const engine = createEngine();
+    await engine.start();
+
+    engine.enqueueMerge("FN-paused");
+
+    await vi.waitFor(() => {
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Auto-merge skipping FN-paused — task is paused"));
+    });
+    expect(mocks.aiMergeTask).not.toHaveBeenCalled();
+
+    logSpy.mockRestore();
+    await engine.stop();
+  });
+
+  it("aborts and disposes active merge session when an in-review task is paused", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mockStore.store.getTask.mockResolvedValue({
+      id: "FN-active",
+      column: "in-review",
+      paused: false,
+      mergeRetries: 0,
+      status: null,
+    });
+    mocks.currentStore = mockStore.store;
+
+    let capturedSignal: AbortSignal | undefined;
+    const disposeSession = vi.fn();
+    mocks.aiMergeTask.mockImplementationOnce(async (...args: unknown[]) => {
+      const options = args[3] as { signal?: AbortSignal; onSession?: (session: { dispose: () => void }) => void };
+      capturedSignal = options.signal;
+      options.onSession?.({ dispose: disposeSession });
+      await new Promise<never>((_, reject) => {
+        options.signal?.addEventListener(
+          "abort",
+          () => {
+            const abortError = new Error("merge aborted");
+            abortError.name = "MergeAbortedError";
+            reject(abortError);
+          },
+          { once: true },
+        );
+      });
+    });
+
+    const engine = createEngine();
+    const privateEngine = engine as unknown as {
+      mergeQueue: string[];
+      mergeActive: Set<string>;
+      activeMergeSession: { dispose: () => void } | null;
+      mergeAbortController: AbortController | null;
+      activeMergeTaskId: string | null;
+    };
+
+    await engine.start();
+    engine.enqueueMerge("FN-active");
+
+    await vi.waitFor(() => {
+      expect(mocks.aiMergeTask).toHaveBeenCalledTimes(1);
+    });
+
+    const taskUpdatedHandler = mockStore.store.on.mock.calls.find((c: unknown[]) => c[0] === "task:updated")?.[1] as
+      | ((task: { id: string; column: string; paused?: boolean }) => void)
+      | undefined;
+    if (!taskUpdatedHandler) throw new Error("task:updated handler was not registered");
+
+    taskUpdatedHandler({ id: "FN-active", column: "in-review", paused: true });
+
+    await vi.waitFor(() => {
+      expect(capturedSignal?.aborted).toBe(true);
+    });
+    expect(disposeSession).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(privateEngine.mergeQueue).not.toContain("FN-active");
+      expect(privateEngine.mergeActive.has("FN-active")).toBe(false);
+      expect(privateEngine.activeMergeSession).toBeNull();
+      expect(privateEngine.mergeAbortController).toBeNull();
+      expect(privateEngine.activeMergeTaskId).toBeNull();
+    });
+
+    await engine.stop();
+  });
+
+  it("startup merge sweep skips paused in-review tasks", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mockStore.store.listTasks.mockResolvedValueOnce([
+      { id: "FN-paused", column: "in-review", paused: true, mergeRetries: 0, status: null },
+      { id: "FN-ready", column: "in-review", paused: false, mergeRetries: 0, status: null },
+    ]);
+    mocks.currentStore = mockStore.store;
+    const engine = createEngine();
+    const privateEngine = engine as unknown as { internalEnqueueMerge: (taskId: string) => void };
+    const enqueueSpy = vi.spyOn(privateEngine, "internalEnqueueMerge");
+
+    await engine.start();
+
+    expect(enqueueSpy).toHaveBeenCalledWith("FN-ready");
+    expect(enqueueSpy).not.toHaveBeenCalledWith("FN-paused");
+
+    await engine.stop();
+  });
+
+  it("global unpause sweep does not enqueue paused in-review tasks", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+    const engine = createEngine();
+    const privateEngine = engine as unknown as { internalEnqueueMerge: (taskId: string) => void };
+    const enqueueSpy = vi.spyOn(privateEngine, "internalEnqueueMerge");
+
+    await engine.start();
+    enqueueSpy.mockClear();
+    mockStore.store.listTasks.mockResolvedValueOnce([
+      { id: "FN-paused", column: "in-review", paused: true, mergeRetries: 0, status: null },
+      { id: "FN-ready", column: "in-review", paused: false, mergeRetries: 0, status: null },
+    ]);
+
+    await mockStore.emitSettingsUpdated(
+      { ...baseSettings, autoMerge: true, globalPause: false },
+      { ...baseSettings, autoMerge: true, globalPause: true },
+    );
+
+    expect(enqueueSpy).toHaveBeenCalledWith("FN-ready");
+    expect(enqueueSpy).not.toHaveBeenCalledWith("FN-paused");
+
+    await engine.stop();
+  });
+
+  it("engine unpause sweep does not enqueue paused in-review tasks", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mocks.currentStore = mockStore.store;
+    const engine = createEngine();
+    const privateEngine = engine as unknown as { internalEnqueueMerge: (taskId: string) => void };
+    const enqueueSpy = vi.spyOn(privateEngine, "internalEnqueueMerge");
+
+    await engine.start();
+    enqueueSpy.mockClear();
+    mockStore.store.listTasks.mockResolvedValueOnce([
+      { id: "FN-paused", column: "in-review", paused: true, mergeRetries: 0, status: null },
+      { id: "FN-ready", column: "in-review", paused: false, mergeRetries: 0, status: null },
+    ]);
+
+    await mockStore.emitSettingsUpdated(
+      { ...baseSettings, autoMerge: true, enginePaused: false },
+      { ...baseSettings, autoMerge: true, enginePaused: true },
+    );
+
+    expect(enqueueSpy).toHaveBeenCalledWith("FN-ready");
+    expect(enqueueSpy).not.toHaveBeenCalledWith("FN-paused");
+
+    await engine.stop();
   });
 });
 

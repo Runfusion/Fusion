@@ -1429,6 +1429,34 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    it("skips paused in-review tasks even when otherwise mergeable", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-352-paused",
+          column: "in-review",
+          paused: true,
+          status: "paused",
+          error: null,
+          worktree: "/tmp/test-project/.worktrees/fn-352-paused",
+          steps: [{ name: "Ship it", status: "done" }],
+          workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
+          mergeDetails: undefined,
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverMergeableReviewTasks();
+
+      expect(result).toBe(0);
+      expect(store.mergeTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
     it("ignores in-review tasks that are not yet mergeable", async () => {
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
@@ -1671,6 +1699,28 @@ describe("SelfHealingManager", () => {
       expect(store.updateTask).not.toHaveBeenCalled();
 
       managerWithoutCallback.stop();
+    });
+
+    it("skips paused tasks", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverFailedPreMergeStep: recoverFn,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        maxPostReviewFixes: 1,
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { ...baseTask, paused: true, status: "paused" },
+      ]);
+
+      const result = await managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps();
+
+      expect(result).toBe(0);
+      expect(recoverFn).not.toHaveBeenCalled();
+      expect(store.updateTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
     });
 
     it("skips tasks without a worktree (cannot re-execute safely)", async () => {

@@ -708,6 +708,7 @@ export class SelfHealingManager {
 
       const mergeable = tasks.filter((t) =>
         t.column === "in-review" &&
+        !t.paused &&
         Boolean(t.worktree) &&
         t.mergeDetails?.mergeConfirmed !== true &&
         getTaskMergeBlocker(t) === undefined,

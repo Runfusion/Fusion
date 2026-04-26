@@ -2828,9 +2828,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
 
       task.paused = paused || undefined;
-      // When pausing an in-progress task, set status so the UI can show the state.
+      // When pausing an in-progress/in-review task, set status so the UI can show the state.
       // When unpausing, clear the "paused" status.
-      if (task.column === "in-progress") {
+      if (task.column === "in-progress" || task.column === "in-review") {
         task.status = paused ? "paused" : undefined;
       }
       const now = new Date().toISOString();

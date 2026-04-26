@@ -123,8 +123,10 @@ export class ProjectEngine {
   // ── Auto-merge state ──
   private mergeQueue: string[] = [];
   private mergeActive = new Set<string>();
+  private pausedReviewTaskIds = new Set<string>();
   private mergeRunning = false;
   private activeMergeSession: { dispose: () => void } | null = null;
+  private activeMergeTaskId: string | null = null;
   private mergeAbortController: AbortController | null = null;
   private mergeRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -146,6 +148,7 @@ export class ProjectEngine {
   // Event handler references for cleanup
   private settingsHandlers: Array<(...args: any[]) => void> = [];
   private taskMovedHandler?: (...args: any[]) => void;
+  private taskUpdatedHandler?: (...args: any[]) => void;
 
   constructor(
     private config: ProjectRuntimeConfig,
@@ -252,8 +255,9 @@ export class ProjectEngine {
     // 5. Wire settings event listeners
     this.wireSettingsListeners(store);
 
-    // 6. Wire auto-merge on task:moved
+    // 6. Wire auto-merge on task:moved and task:updated pause interruptions
     this.wireAutoMerge(store, cwd);
+    this.wireTaskPauseMergeInterruption(store);
 
     // 7. Auto-merge startup sweep
     await this.startupMergeSweep(store);
@@ -283,6 +287,8 @@ export class ProjectEngine {
     // Abort active/pending merge work before tearing down sessions.
     this.mergeAbortController?.abort();
     this.mergeAbortController = null;
+    this.activeMergeTaskId = null;
+    this.pausedReviewTaskIds.clear();
 
     const queuedTaskIds = [...this.mergeQueue];
     this.mergeQueue.length = 0;
@@ -310,6 +316,9 @@ export class ProjectEngine {
       }
       if (this.taskMovedHandler) {
         store.off("task:moved", this.taskMovedHandler);
+      }
+      if (this.taskUpdatedHandler) {
+        store.off("task:updated", this.taskUpdatedHandler);
       }
     } catch {
       // Store may not be initialized if start() failed partway
@@ -851,6 +860,10 @@ export class ProjectEngine {
             if (!task || task.column !== "in-review") {
               continue;
             }
+            if (task.paused) {
+              runtimeLog.log(`Auto-merge skipping ${taskId} — task is paused`);
+              continue;
+            }
 
             // Intentional cast to access Task properties needed by merge validation
 
@@ -929,6 +942,7 @@ export class ProjectEngine {
           const mergeStrategy = this.options.getMergeStrategy?.(settings) ?? "direct";
 
           if (mergeStrategy === "pull-request" && this.options.processPullRequestMerge) {
+            this.activeMergeTaskId = taskId;
             runtimeLog.log(`${manualResolver ? "Manual" : "Auto"}-merge processing PR flow for ${taskId}...`);
             const result = await this.options.processPullRequestMerge(store, cwd, taskId);
             if (result === "merged") {
@@ -962,6 +976,7 @@ export class ProjectEngine {
             const usageLimitPauser = (this.runtime as any).usageLimitPauser;
 
             const rawMerge = () => {
+              this.activeMergeTaskId = taskId;
               this.mergeAbortController = new AbortController();
               return aiMergeTask(store, cwd, taskId, {
                 pool,
@@ -1121,6 +1136,9 @@ export class ProjectEngine {
             }
           }
         } finally {
+          if (this.activeMergeTaskId === taskId) {
+            this.activeMergeTaskId = null;
+          }
           this.mergeAbortController = null;
           this.mergeActive.delete(taskId);
           // If a manual merge was requested while this task was already in-flight,
@@ -1147,6 +1165,7 @@ export class ProjectEngine {
   private wireAutoMerge(store: TaskStore, _cwd: string): void {
     this.taskMovedHandler = async ({ task, to }: { task: Task; to: string }) => {
       if (to !== "in-review") return;
+      if (task.paused) return;
       if (this.options.getTaskMergeBlocker?.(task)) return;
       try {
         const settings = await store.getSettings();
@@ -1160,6 +1179,68 @@ export class ProjectEngine {
       }
     };
     store.on("task:moved", this.taskMovedHandler);
+  }
+
+  private wireTaskPauseMergeInterruption(store: TaskStore): void {
+    this.taskUpdatedHandler = async (task: Task) => {
+      if (task.column !== "in-review") {
+        this.pausedReviewTaskIds.delete(task.id);
+        return;
+      }
+
+      if (task.paused) {
+        this.pausedReviewTaskIds.add(task.id);
+
+        const queueLengthBefore = this.mergeQueue.length;
+        this.mergeQueue = this.mergeQueue.filter((queuedTaskId) => queuedTaskId !== task.id);
+        const removedFromQueue = this.mergeQueue.length !== queueLengthBefore;
+
+        if (removedFromQueue) {
+          this.mergeActive.delete(task.id);
+          runtimeLog.log(`Paused in-review task removed from merge queue: ${task.id}`);
+        }
+
+        if (this.activeMergeTaskId !== task.id) {
+          return;
+        }
+
+        runtimeLog.log(`Paused in-review task interrupting active merge: ${task.id}`);
+        this.mergeAbortController?.abort();
+        this.mergeAbortController = null;
+
+        if (this.activeMergeSession) {
+          this.activeMergeSession.dispose();
+          this.activeMergeSession = null;
+        }
+
+        this.mergeActive.delete(task.id);
+        return;
+      }
+
+      const wasPaused = this.pausedReviewTaskIds.delete(task.id);
+      if (!wasPaused) {
+        return;
+      }
+
+      try {
+        const settings = await store.getSettings();
+        if (settings.globalPause || settings.enginePaused || !settings.autoMerge) {
+          return;
+        }
+        if (this.options.getTaskMergeBlocker?.(task)) {
+          return;
+        }
+
+        runtimeLog.log(`Unpaused in-review task re-enqueued for auto-merge: ${task.id}`);
+        this.internalEnqueueMerge(task.id);
+      } catch (err: unknown) {
+        runtimeLog.warn(
+          `In-review unpause: failed to re-enqueue ${task.id} for auto-merge: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    };
+
+    store.on("task:updated", this.taskUpdatedHandler);
   }
 
   private async startupMergeSweep(store: TaskStore): Promise<void> {
@@ -1186,7 +1267,7 @@ export class ProjectEngine {
       if (!settings.autoMerge) return;
 
 
-      const eligible = tasks.filter((t) => this.canMergeTask(t as any));
+      const eligible = tasks.filter((t) => !t.paused && this.canMergeTask(t as any));
       if (eligible.length > 0) {
         runtimeLog.log(`Auto-merge startup sweep: enqueueing ${eligible.length} task(s)`);
         for (const t of eligible) {
@@ -1211,7 +1292,9 @@ export class ProjectEngine {
         if (!settings.globalPause && !settings.enginePaused && settings.autoMerge) {
           const tasks = await store.listTasks({ column: "in-review" });
           for (const t of tasks) {
-
+            if (t.paused) {
+              continue;
+            }
             if (this.canMergeTask(t as any)) {
               this.internalEnqueueMerge(t.id);
             }
@@ -1284,7 +1367,9 @@ export class ProjectEngine {
           try {
             const tasks = await store.listTasks({ column: "in-review" });
             for (const t of tasks) {
-
+              if (t.paused) {
+                continue;
+              }
               if (this.canMergeTask(t as any)) {
                 this.internalEnqueueMerge(t.id);
               }
@@ -1327,7 +1412,9 @@ export class ProjectEngine {
           try {
             const tasks = await store.listTasks({ column: "in-review" });
             for (const t of tasks) {
-
+              if (t.paused) {
+                continue;
+              }
               if (this.canMergeTask(t as any)) {
                 this.internalEnqueueMerge(t.id);
               }
