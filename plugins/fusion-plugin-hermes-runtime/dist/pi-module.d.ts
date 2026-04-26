@@ -8,12 +8,12 @@ export interface PiAgentResult {
 export interface PiAgentOptions {
     cwd: string;
     systemPrompt: string;
-    tools?: unknown;
+    tools?: "coding" | "readonly";
     customTools?: unknown;
     onText?: (text: string) => void;
     onThinking?: (text: string) => void;
-    onToolStart?: (toolName: string, args?: unknown) => void;
-    onToolEnd?: (toolName: string, result?: unknown) => void;
+    onToolStart?: (toolName: string, args?: Record<string, unknown>) => void;
+    onToolEnd?: (toolName: string, isError: boolean, result?: unknown) => void;
     defaultProvider?: string;
     defaultModelId?: string;
     fallbackProvider?: string;
