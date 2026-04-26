@@ -7,20 +7,14 @@ declare module "express" {
   }
 }
 import multer from "multer";
-import { createReadStream } from "node:fs";
-import * as fsPromises from "node:fs/promises";
 import { resolve, sep, join, isAbsolute } from "node:path";
 import * as nodeFs from "node:fs";
 
-const {
-  access,
-} = fsPromises;
 import type { TaskStore, ScheduleType, ActivityEventType, ModelPreset, RoutineTriggerType } from "@fusion/core";
 import { type Task, type PiExtensionEntry, type PiExtensionSettings, AutomationStore, RoutineStore, isWebhookTrigger, MemoryBackendError, listAgentMemoryFiles, readAgentMemoryFile, writeAgentMemoryFile, discoverPiExtensions, getFusionAgentDir, getLegacyPiAgentDir } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
 import { terminalSessionManager } from "./terminal.js";
 import { getTerminalService } from "./terminal-service.js";
-import { listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, searchWorkspaceFiles, copyWorkspaceFile, moveWorkspaceFile, deleteWorkspaceFile, renameWorkspaceFile, getWorkspaceFileForDownload, getWorkspaceFolderForZip, listProjectMarkdownFiles, FileServiceError, type MarkdownFileListResponse } from "./file-service.js";
 import { verifyWebhookSignature } from "./github-webhooks.js";
 import { AiSessionStore, SESSION_CLEANUP_DEFAULT_MAX_AGE_MS } from "./ai-session-store.js";
 import { getSession as getPlanningSession, cleanupSession as cleanupPlanningSession } from "./planning.js";
@@ -47,7 +41,7 @@ import { registerChatRoutes } from "./routes/register-chat-routes.js";
 import { registerSettingsMemoryRoutes } from "./routes/register-settings-memory-routes.js";
 import { registerMessagingScriptRoutes } from "./routes/register-messaging-scripts.js";
 import { registerGitGitHubRoutes, runGitCommand } from "./routes/register-git-github.js";
-import { registerFilesTerminalWorkspaceRoutes } from "./routes/register-files-terminal-workspaces.js";
+import { registerFileWorkspaceRoutes } from "./routes/register-file-workspace-routes.js";
 import { registerAgentsProjectsNodesRoutes } from "./routes/register-agents-projects-nodes.js";
 import { registerProjectRoutes } from "./routes/register-project-routes.js";
 import { registerNodeRoutes } from "./routes/register-node-routes.js";
@@ -939,15 +933,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     rethrowAsApiError,
   };
 
-  const sessionFilesCache = new Map<string, { files: string[]; expiresAt: number }>();
-  const fileDiffsCache = new Map<
-    string,
-    {
-      files: Array<{ path: string; status: "added" | "modified" | "deleted" | "renamed"; diff: string; oldPath?: string }>;
-      expiresAt: number;
-    }
-  >();
-
   // Get GitHub token from options or env
   const githubToken = options?.githubToken ?? process.env.GITHUB_TOKEN;
   const aiSessionStore = options?.aiSessionStore;
@@ -970,8 +955,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     runGitCommand,
     resolveDiffBase,
     trimTaskDetailActivityLog,
-    sessionFilesCache,
-    fileDiffsCache,
     triggerCommentWakeForAssignedAgent: (...args) => triggerCommentWakeForAssignedAgent(...args),
   });
   registerPlanningSubtaskRoutes(routeContext, {
@@ -987,7 +970,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
   registerMessagingScriptRoutes(routeContext);
   registerGitGitHubRoutes(routeContext);
-  registerFilesTerminalWorkspaceRoutes(routeContext);
+  registerFileWorkspaceRoutes(routeContext, {
+    runGitCommand,
+    resolveDiffBase,
+  });
   registerAgentsProjectsNodesRoutes(routeContext);
   registerPluginsAutomationRoutes(routeContext);
   registerProxyRoutes(routeContext);
@@ -1617,452 +1603,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw err;
       }
       rethrowAsApiError(err);
-    }
-  });
-
-  // ── Workspace File API Routes ─────────────────────────────────────
-
-  /**
-   * GET /api/workspaces
-   * List available file browser workspaces.
-   * Returns: { project: string; tasks: Array<{ id: string; title?: string; worktree: string }> }
-   */
-  router.get("/workspaces", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const tasks = await scopedStore.listTasks({ slim: true, includeArchived: false });
-
-      // Filter to tasks with valid worktrees, checking existence asynchronously
-      // to avoid blocking the event loop
-      const worktreeCheckPromises = tasks.map(async (task): Promise<{ id: string; title?: string; worktree: string } | null> => {
-        if (typeof task.worktree !== "string" || task.worktree.length === 0) {
-          return null;
-        }
-        try {
-          await access(task.worktree);
-          return {
-            id: task.id,
-            title: task.title,
-            worktree: task.worktree,
-          };
-        } catch {
-          return null;
-        }
-      });
-
-      const workspaceTasks = (await Promise.all(worktreeCheckPromises)).filter(
-        (t): t is { id: string; title?: string; worktree: string } => t !== null
-      );
-
-      res.json({
-        project: scopedStore.getRootDir(),
-        tasks: workspaceTasks,
-      });
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      rethrowAsApiError(err, "Internal server error");
-    }
-  });
-
-  /**
-   * GET /api/files
-   * List files in the requested workspace. Defaults to the project root when omitted.
-   * Query params: ?workspace=project|TASK-ID and ?path=relative/path for subdirectory navigation.
-   * Returns: { path: string; entries: FileNode[] }
-   */
-  router.get("/files", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const { path: subPath, workspace } = req.query;
-      const workspaceId = typeof workspace === "string" && workspace.length > 0 ? workspace : "project";
-      const result = await listWorkspaceFiles(scopedStore, workspaceId, typeof subPath === "string" ? subPath : undefined);
-      res.json(result);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if (err instanceof FileServiceError) {
-        const status = err.code === "ENOTASK" ? 404
-          : err.code === "ENOENT" ? 404
-          : err.code === "EACCES" ? 403
-          : 400;
-        throw new ApiError(status, err.message, { code: err.code });
-      } else {
-        rethrowAsApiError(err, "Internal server error");
-      }
-    }
-  });
-
-  /**
-   * GET /api/files/markdown-list
-   * Recursively list markdown files in the project workspace.
-   * Returns: { files: MarkdownFileEntry[] }
-   */
-  router.get("/files/markdown-list", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const showHiddenQuery = req.query.showHidden;
-      const showHidden = showHiddenQuery === "1" || showHiddenQuery === "true";
-      const result: MarkdownFileListResponse = await listProjectMarkdownFiles(scopedStore, { showHidden });
-      res.json(result);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if (err instanceof FileServiceError) {
-        const status = err.code === "ENOTASK" ? 404
-          : err.code === "ENOENT" ? 404
-          : err.code === "EACCES" ? 403
-          : 400;
-        throw new ApiError(status, err.message, { code: err.code });
-      } else {
-        rethrowAsApiError(err, "Internal server error");
-      }
-    }
-  });
-
-  /**
-   * GET /api/files/search
-   * Search for files matching a query in a workspace.
-   * Query params: q (required, search query), workspace (default "project"), projectId (optional)
-   * Returns: { files: Array<{ path: string; name: string }> }
-   */
-  router.get("/files/search", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const q = req.query.q;
-
-      if (!q || typeof q !== "string" || q.trim().length === 0) {
-        throw new ApiError(400, "Query parameter 'q' is required and must be a non-empty string");
-      }
-
-      const workspace = typeof req.query.workspace === "string" && req.query.workspace.length > 0
-        ? req.query.workspace
-        : "project";
-
-      const result = await searchWorkspaceFiles(scopedStore, workspace, q);
-      res.json(result);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if (err instanceof FileServiceError) {
-        const status = err.code === "ENOTASK" ? 404
-          : err.code === "ENOENT" ? 404
-          : err.code === "EACCES" ? 403
-          : 400;
-        throw new ApiError(status, err.message, { code: err.code });
-      } else {
-        rethrowAsApiError(err, "Internal server error");
-      }
-    }
-  });
-
-  /**
-   * GET /api/files/{*filepath}
-   * Read file contents from the requested workspace. Defaults to the project root when omitted.
-   * Query param: ?workspace=project|TASK-ID
-   * Returns: { content: string; mtime: string; size: number }
-   */
-  router.get("/files/{*filepath}", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const filePath = Array.isArray(req.params.filepath) ? req.params.filepath[0] : req.params.filepath ?? "";
-      const workspace = typeof req.query.workspace === "string" && req.query.workspace.length > 0
-        ? req.query.workspace
-        : "project";
-      const result = await readWorkspaceFile(scopedStore, workspace, filePath);
-      res.json(result);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if (err instanceof FileServiceError) {
-        const status = err.code === "ENOTASK" ? 404
-          : err.code === "ENOENT" ? 404
-          : err.code === "EACCES" ? 403
-          : err.code === "ETOOLARGE" ? 413
-          : err.code === "EINVAL" && (err instanceof Error ? err.message : String(err)).includes("Binary file") ? 415
-          : 400;
-        throw new ApiError(status, err.message, { code: err.code });
-      } else {
-        rethrowAsApiError(err, "Internal server error");
-      }
-    }
-  });
-
-  // ── File Operation Routes ─────────────────────────────────────────────
-  // IMPORTANT: Operation routes must be defined BEFORE the generic write route.
-  // Express matches routes in order, so wildcard routes would shadow specific
-  // operation routes if defined first (e.g., POST /files/somefolder/delete
-  // would match POST /files/{*filepath} with filepath="somefolder/delete").
-
-  /**
-   * Helper to extract filepath and workspace from request.
-   */
-  function extractFileParams(req: Request): { filePath: string; workspace: string } {
-    const filePath = Array.isArray(req.params.filepath) ? req.params.filepath[0] : req.params.filepath ?? "";
-    const workspace = typeof req.query.workspace === "string" && req.query.workspace.length > 0
-      ? req.query.workspace
-      : "project";
-    return { filePath, workspace };
-  }
-
-  /**
-   * POST /api/files/{*filepath}/copy
-   * Copy a file or directory to a new location within the workspace.
-   * Query param: ?workspace=project|TASK-ID
-   * Body: { destination: string }
-   * Returns: FileOperationResponse
-   */
-  router.post("/files/{*filepath}/copy", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const { filePath, workspace } = extractFileParams(req);
-      const { destination } = req.body;
-
-      if (!destination || typeof destination !== "string") {
-        throw badRequest("destination is required and must be a string");
-      }
-
-      const result = await copyWorkspaceFile(scopedStore, workspace, filePath, destination);
-      res.json(result);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if (err instanceof FileServiceError) {
-        const status = err.code === "ENOTASK" ? 404
-          : err.code === "ENOENT" ? 404
-          : err.code === "EEXIST" ? 409
-          : err.code === "EACCES" ? 403
-          : 400;
-        throw new ApiError(status, err.message, { code: err.code });
-      } else {
-        rethrowAsApiError(err, "Internal server error");
-      }
-    }
-  });
-
-  /**
-   * POST /api/files/{*filepath}/move
-   * Move a file or directory to a new location within the workspace.
-   * Query param: ?workspace=project|TASK-ID
-   * Body: { destination: string }
-   * Returns: FileOperationResponse
-   */
-  router.post("/files/{*filepath}/move", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const { filePath, workspace } = extractFileParams(req);
-      const { destination } = req.body;
-
-      if (!destination || typeof destination !== "string") {
-        throw badRequest("destination is required and must be a string");
-      }
-
-      const result = await moveWorkspaceFile(scopedStore, workspace, filePath, destination);
-      res.json(result);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if (err instanceof FileServiceError) {
-        const status = err.code === "ENOTASK" ? 404
-          : err.code === "ENOENT" ? 404
-          : err.code === "EEXIST" ? 409
-          : err.code === "EACCES" ? 403
-          : 400;
-        throw new ApiError(status, err.message, { code: err.code });
-      } else {
-        rethrowAsApiError(err, "Internal server error");
-      }
-    }
-  });
-
-  /**
-   * DELETE /api/files/{*filepath}
-   * Note: This conflicts with the existing GET endpoint for files.
-   * Instead, use POST /api/files/{*filepath}/delete to avoid route collision.
-   * Delete a file or directory within the workspace.
-   * Query param: ?workspace=project|TASK-ID
-   * Returns: FileOperationResponse
-   */
-  router.post("/files/{*filepath}/delete", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const { filePath, workspace } = extractFileParams(req);
-      const result = await deleteWorkspaceFile(scopedStore, workspace, filePath);
-      res.json(result);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if (err instanceof FileServiceError) {
-        const status = err.code === "ENOTASK" ? 404
-          : err.code === "ENOENT" ? 404
-          : err.code === "EACCES" ? 403
-          : 400;
-        throw new ApiError(status, err.message, { code: err.code });
-      } else {
-        rethrowAsApiError(err, "Internal server error");
-      }
-    }
-  });
-
-  /**
-   * POST /api/files/{*filepath}/rename
-   * Rename a file or directory within the workspace.
-   * Query param: ?workspace=project|TASK-ID
-   * Body: { newName: string }
-   * Returns: FileOperationResponse
-   */
-  router.post("/files/{*filepath}/rename", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const { filePath, workspace } = extractFileParams(req);
-      const { newName } = req.body;
-
-      if (!newName || typeof newName !== "string") {
-        throw badRequest("newName is required and must be a string");
-      }
-
-      const result = await renameWorkspaceFile(scopedStore, workspace, filePath, newName);
-      res.json(result);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if (err instanceof FileServiceError) {
-        const status = err.code === "ENOTASK" ? 404
-          : err.code === "ENOENT" ? 404
-          : err.code === "EEXIST" ? 409
-          : err.code === "EACCES" ? 403
-          : 400;
-        throw new ApiError(status, err.message, { code: err.code });
-      } else {
-        rethrowAsApiError(err, "Internal server error");
-      }
-    }
-  });
-
-  /**
-   * GET /api/files/{*filepath}/download
-   * Download a single file from the workspace.
-   * Query param: ?workspace=project|TASK-ID
-   * Streams the file with Content-Disposition header.
-   */
-  router.get("/files/{*filepath}/download", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const { filePath, workspace } = extractFileParams(req);
-      const { absolutePath, stats, fileName } = await getWorkspaceFileForDownload(scopedStore, workspace, filePath);
-
-      res.setHeader("Content-Type", "application/octet-stream");
-      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
-      res.setHeader("Content-Length", stats.size);
-      res.setHeader("Last-Modified", stats.mtime.toUTCString());
-
-      const stream = createReadStream(absolutePath);
-      stream.pipe(res);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if (err instanceof FileServiceError) {
-        const status = err.code === "ENOTASK" ? 404
-          : err.code === "ENOENT" ? 404
-          : err.code === "EISDIR" ? 400
-          : err.code === "EACCES" ? 403
-          : 400;
-        throw new ApiError(status, err.message, { code: err.code });
-      } else {
-        rethrowAsApiError(err, "Internal server error");
-      }
-    }
-  });
-
-  /**
-   * GET /api/files/{*filepath}/download-zip
-   * Download a folder as a ZIP archive from the workspace.
-   * Query param: ?workspace=project|TASK-ID
-   * Streams the ZIP archive with Content-Disposition header.
-   */
-  router.get("/files/{*filepath}/download-zip", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const { filePath, workspace } = extractFileParams(req);
-      const { absolutePath, dirName } = await getWorkspaceFolderForZip(scopedStore, workspace, filePath);
-
-      const archiver = await import("archiver");
-      const archive = archiver.default("zip", { zlib: { level: 6 } });
-
-      res.setHeader("Content-Type", "application/zip");
-      res.setHeader("Content-Disposition", `attachment; filename="${dirName}.zip"`);
-
-      archive.pipe(res);
-      archive.directory(absolutePath, dirName);
-      await archive.finalize();
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if (err instanceof FileServiceError) {
-        const status = err.code === "ENOTASK" ? 404
-          : err.code === "ENOENT" ? 404
-          : err.code === "ENOTDIR" ? 400
-          : err.code === "EACCES" ? 403
-          : 400;
-        throw new ApiError(status, err.message, { code: err.code });
-      } else {
-        rethrowAsApiError(err, "Internal server error");
-      }
-    }
-  });
-
-  // ── Generic File Write Route ────────────────────────────────────────────
-  // This route must be defined AFTER all operation routes to avoid shadowing.
-  // Express matches routes in order, so this wildcard route would catch
-  // /copy, /move, /delete, /rename, etc. if defined first.
-
-  /**
-   * POST /api/files/{*filepath}
-   * Write file contents to the requested workspace. Defaults to the project root when omitted.
-   * Query param: ?workspace=project|TASK-ID
-   * Body: { content: string }
-   * Returns: { success: true; mtime: string; size: number }
-   */
-  router.post("/files/{*filepath}", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const filePath = Array.isArray(req.params.filepath) ? req.params.filepath[0] : req.params.filepath ?? "";
-      const { content } = req.body;
-      const workspace = typeof req.query.workspace === "string" && req.query.workspace.length > 0
-        ? req.query.workspace
-        : "project";
-
-      if (typeof content !== "string") {
-        throw badRequest("content is required and must be a string");
-      }
-
-      const result = await writeWorkspaceFile(scopedStore, workspace, filePath, content);
-      res.json(result);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if (err instanceof FileServiceError) {
-        const status = err.code === "ENOTASK" ? 404
-          : err.code === "ENOENT" ? 404
-          : err.code === "EACCES" ? 403
-          : err.code === "ETOOLARGE" ? 413
-          : 400;
-        throw new ApiError(status, err.message, { code: err.code });
-      } else {
-        rethrowAsApiError(err, "Internal server error");
-      }
     }
   });
 

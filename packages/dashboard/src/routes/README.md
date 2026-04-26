@@ -10,7 +10,7 @@ Registrars should be typed as `ApiRouteRegistrar` so modules share one explicit 
 
 The context centralizes cross-cutting dependencies so registrars preserve behavior without re-implementing plumbing.
 
-Some registrars (for example `register-task-workflow-routes.ts`) also take a narrow dependency-injection object for non-context helpers that must stay source-of-truth in `routes.ts` (cache maps, git diff helpers, background refresh helpers, multer upload middleware). This avoids helper duplication while preserving runtime parity.
+Some registrars (for example `register-task-workflow-routes.ts` and `register-file-workspace-routes.ts`) also take a narrow dependency-injection object for non-context helpers that must stay source-of-truth in `routes.ts` (git diff helpers, background refresh helpers, multer upload middleware). This avoids helper duplication while preserving runtime parity.
 
 The context provides core cross-cutting plumbing:
 
@@ -32,7 +32,7 @@ The context provides core cross-cutting plumbing:
 - `register-discovery-routes.ts` — discovery routes (`/discovery/status|start|stop|nodes|connect`) with `options?.centralCore` reuse
 - `register-settings-sync-inbound-routes.ts` — inbound sync/auth endpoints (`/settings/sync-receive`, `/settings/auth-receive`, `/settings/auth-export`)
 - `register-settings-sync-helpers.ts` — shared sync-domain helpers (`fetchFromRemoteNode`, `readStoredAuthProvidersFromDisk`)
-- `register-task-workflow-routes.ts` — task/workflow domain (`/tasks*`, `/documents`, task comments/docs/checkout/spec/attachments, PR+issue status, task file/diff endpoints)
+- `register-task-workflow-routes.ts` — task/workflow domain (`/tasks*`, `/documents`, task comments/docs/checkout/spec/attachments, PR+issue status, task lifecycle/workflow endpoints)
 - `register-planning-subtask-routes.ts` — planning sessions and subtask breakdown routes
 - `register-chat-routes.ts` — chat session/list/mutation/stream routes
 - `register-messaging-scripts.ts` — scripts API and mailbox/message routes
@@ -43,7 +43,14 @@ The context provides core cross-cutting plumbing:
 - `register-model-routes.ts` — `/models` endpoint, favorites projection, and `useClaudeCli` filtering for `pi-claude-cli` entries
 - `register-auth-routes.ts` — auth/provider domain (`/auth/status`, `/auth/login`, `/auth/logout`, `/auth/api-key`, `/auth/claude-cli`, `/providers/claude-cli/status`)
 - `register-usage-routes.ts` — `/usage` endpoint with `fetchAllProviderUsage(options?.authStorage)` integration
-- `register-files-terminal-workspaces.ts` — files, terminal, workspace file operations
+- `register-file-workspace-routes.ts` — task/workspace file domain:
+  - Task files: `/tasks/:id/files`, `/tasks/:id/files/{*filepath}` (read/write)
+  - Workspace discovery/files: `/workspaces`, `/files`, `/files/markdown-list`, `/files/search`, `/files/{*filepath}`
+  - File operations: `/files/{*filepath}/copy|move|delete|rename`, `/files/{*filepath}/download`, `/files/{*filepath}/download-zip`
+  - Generic wildcard write: `/files/{*filepath}` (must remain after operation routes)
+  - Changed-file helpers: `/tasks/:id/session-files`, `/tasks/:id/file-diffs`
+  - Project markdown search: `/project-files/md`
+  - Caches: local `sessionFilesCache` and `fileDiffsCache` (10-second TTL)
 - `register-agent-core-routes.ts` — core agent CRUD, lookups, stats/org-tree, hierarchy aliases (`/agents/:id/children|employees`)
 - `register-agent-runtime-routes.ts` — agent runtime/control-plane, heartbeats/runs, access/permissions, soul/memory, revisions/budget/keys, task/inbox surfaces
 - `register-agent-reflection-rating-routes.ts` — reflection/performance/context endpoints and ratings APIs
@@ -57,7 +64,8 @@ The context provides core cross-cutting plumbing:
 Express matches in registration order. Keep registrar and in-registrar route ordering stable:
 
 1. **Specific operation routes before generic parameterized routes** (`/runs`, `/runs/:id`, `/copy`, `/delete` before `/:id` style handlers)
-2. **Specific operation routes before wildcard paths** (`/files/{*filepath}/copy|move|delete` before catch-all file write routes)
+2. **Specific operation routes before wildcard paths** (`/files/{*filepath}/copy|move|delete|rename|download|download-zip` before `POST /files/{*filepath}`)
+   - Why: Express route matching is first-win. If the wildcard write route is registered first, paths like `/files/somefolder/delete` will be treated as file writes instead of delete operations.
 3. **Do not move proxy/script/message/file wildcards ahead of specific routes**
 4. **Project/node/sync/discovery ordering constraints must stay intact**:
    - `/projects/across-nodes` and `/projects/detect` must be registered before `/projects/:id`

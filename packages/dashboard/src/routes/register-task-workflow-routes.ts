@@ -2,7 +2,6 @@ import { createReadStream } from "node:fs";
 import { access } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, Column } from "@fusion/core";
 import { COLUMNS, VALID_TRANSITIONS } from "@fusion/core";
-import { listFiles, readFile, writeFile, scanMarkdownFiles, FileServiceError } from "../file-service.js";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import type { ApiRoutesContext } from "./types.js";
 
@@ -15,8 +14,6 @@ interface TaskWorkflowRouteDeps {
   runGitCommand: (args: string[], cwd: string, timeoutMs: number) => Promise<string>;
   resolveDiffBase: (task: Task, cwd: string) => Promise<string | undefined>;
   trimTaskDetailActivityLog: (task: TaskDetail) => TaskDetail;
-  sessionFilesCache: Map<string, { files: string[]; expiresAt: number }>;
-  fileDiffsCache: Map<string, { files: Array<{ path: string; status: "added" | "modified" | "deleted" | "renamed"; diff: string; oldPath?: string }>; expiresAt: number }>;
   triggerCommentWakeForAssignedAgent: (scopedStore: TaskStore, task: Task, wake: { triggeringCommentType: "steering" | "task" | "pr"; triggeringCommentIds?: string[]; triggerDetail: string }) => Promise<void>;
 }
 
@@ -31,8 +28,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     runGitCommand,
     resolveDiffBase,
     trimTaskDetailActivityLog,
-    sessionFilesCache,
-    fileDiffsCache,
     triggerCommentWakeForAssignedAgent,
   } = deps;
   const TASK_DETAIL_ACTIVITY_LOG_LIMIT = taskDetailActivityLogLimit;
@@ -665,93 +660,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
-  router.get("/tasks/:id/session-files", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const task = await scopedStore.getTask(req.params.id);
-      if (!task) {
-        res.status(404).json({ error: "Task not found" });
-        return;
-      }
-      // Check worktree existence asynchronously to avoid blocking event loop
-      if (!task.worktree) {
-        res.json([]);
-        return;
-      }
-      let worktreeExists = false;
-      try {
-        await access(task.worktree);
-        worktreeExists = true;
-      } catch {
-        worktreeExists = false;
-      }
-      if (!worktreeExists) {
-        res.json([]);
-        return;
-      }
-      const worktree = task.worktree; // Capture after check
-
-      const cached = sessionFilesCache.get(task.id);
-      if (cached && cached.expiresAt > Date.now()) {
-        res.json(cached.files);
-        return;
-      }
-
-      let files: string[] = [];
-
-      try {
-        const fileSet = new Set<string>();
-        const baseRef = await resolveDiffBase(task, worktree);
-
-        if (baseRef) {
-          // Committed changes since baseRef
-          const committedOutput = (await runGitCommand(["diff", "--name-only", `${baseRef}..HEAD`], worktree, 5000)).trim();
-          for (const file of committedOutput.split("\n").filter(Boolean)) {
-            fileSet.add(file);
-          }
-        }
-
-        // Staged changes (in git index)
-        const stagedOutput = (await runGitCommand(["diff", "--cached", "--name-only"], worktree, 5000)).trim();
-        for (const file of stagedOutput.split("\n").filter(Boolean)) {
-          fileSet.add(file);
-        }
-
-        // Unstaged working tree changes
-        const workingTreeOutput = (await runGitCommand(["diff", "--name-only"], worktree, 5000)).trim();
-        for (const file of workingTreeOutput.split("\n").filter(Boolean)) {
-          fileSet.add(file);
-        }
-
-        // Untracked files (new files not yet staged)
-        const untrackedOutput = (await runGitCommand(["ls-files", "--others", "--exclude-standard"], worktree, 5000)).trim();
-        for (const file of untrackedOutput.split("\n").filter(Boolean)) {
-          fileSet.add(file);
-        }
-
-        files = Array.from(fileSet);
-      } catch {
-        files = [];
-      }
-
-      sessionFilesCache.set(task.id, {
-        files,
-        expiresAt: Date.now() + 10000,
-      });
-
-      res.json(files);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        throw notFound(`Task ${req.params.id} not found`);
-      } else {
-        rethrowAsApiError(err, "Internal server error");
-      }
-    }
-  });
-
   /**
    * GET /api/tasks/:id/workflow-results
    * Get workflow step execution results for a task.
@@ -1151,26 +1059,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw err;
       }
       throw new ApiError(500, err instanceof Error ? err.message : String(err));
-    }
-  });
-
-  // GET /project-files/md — List Markdown files in the project directory
-  router.get("/project-files/md", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const files = await scanMarkdownFiles(scopedStore);
-      const query = typeof req.query.q === "string" ? req.query.q.trim().toLowerCase() : "";
-
-      const filteredFiles = query.length > 0
-        ? files.filter((file) => file.name.toLowerCase().includes(query) || file.contentPreview.toLowerCase().includes(query))
-        : files;
-
-      res.json(filteredFiles);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      rethrowAsApiError(err, "Internal server error");
     }
   });
 
@@ -1737,102 +1625,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
-  // ── File API Routes ───────────────────────────────────────────────
-
-  /**
-   * GET /api/tasks/:id/files
-   * List files in task directory (or worktree if available).
-   * Query param: ?path=relative/path for subdirectory navigation.
-   * Returns: { path: string; entries: FileNode[] }
-   */
-  router.get("/tasks/:id/files", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const { path: subPath } = req.query;
-      const result = await listFiles(scopedStore, req.params.id, typeof subPath === "string" ? subPath : undefined);
-      res.json(result);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if (err instanceof FileServiceError) {
-        const status = err.code === "ENOTASK" ? 404
-          : err.code === "ENOENT" ? 404
-          : err.code === "EACCES" ? 403
-          : 400;
-        throw new ApiError(status, err.message, { code: err.code });
-      } else {
-        rethrowAsApiError(err, "Internal server error");
-      }
-    }
-  });
-
-  /**
-   * GET /api/tasks/:id/files/:filepath
-   * Read file contents.
-   * Returns: { content: string; mtime: string; size: number }
-   */
-  router.get("/tasks/:id/files/{*filepath}", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const filePath = Array.isArray(req.params.filepath) ? req.params.filepath[0] : req.params.filepath ?? "";
-      const result = await readFile(scopedStore, req.params.id, filePath);
-      res.json(result);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if (err instanceof FileServiceError) {
-        const errorWithCode = err as NodeJS.ErrnoException;
-      const status = errorWithCode.code === "ENOENT" ? 404
-          : err.code === "ENOTASK" ? 404
-          : err.code === "EACCES" ? 403
-          : err.code === "ETOOLARGE" ? 413
-          : err.code === "EINVAL" && (err instanceof Error ? err.message : String(err)).includes("Binary file") ? 415
-          : 400;
-        throw new ApiError(status, err.message, { code: err.code });
-      } else {
-        rethrowAsApiError(err, "Internal server error");
-      }
-    }
-  });
-
-  /**
-   * POST /api/tasks/:id/files/:filepath
-   * Write file contents.
-   * Body: { content: string }
-   * Returns: { success: true; mtime: string; size: number }
-   */
-  router.post("/tasks/:id/files/{*filepath}", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const filePath = Array.isArray(req.params.filepath) ? req.params.filepath[0] : req.params.filepath ?? "";
-      const { content } = req.body;
-      
-      if (typeof content !== "string") {
-        throw badRequest("content is required and must be a string");
-      }
-
-      const result = await writeFile(scopedStore, req.params.id, filePath, content);
-      res.json(result);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if (err instanceof FileServiceError) {
-        const errorWithCode = err as NodeJS.ErrnoException;
-      const status = errorWithCode.code === "ENOENT" ? 404
-          : err.code === "ENOTASK" ? 404
-          : err.code === "EACCES" ? 403
-          : err.code === "ETOOLARGE" ? 413
-          : 400;
-        throw new ApiError(status, err.message, { code: err.code });
-      } else {
-        rethrowAsApiError(err, "Internal server error");
-      }
-    }
-  });
-
   /**
    * GET /api/tasks/:id/diff
    * Fetch git diff for a task's changes.
@@ -2048,231 +1840,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw err;
       }
       rethrowAsApiError(err);
-    }
-  });
-
-  /**
-   * GET /api/tasks/:id/file-diffs
-   * Fetch changed files with individual git diffs for a task worktree.
-   * Uses the shared resolveDiffBase() helper so the board card count and the
-   * changed-files viewer always agree. Prefers live branch merge-base first,
-   * then falls back to task.baseCommitSha / HEAD~1.
-   * Returns: Array<{ path, status, diff, oldPath? }>
-   */
-  router.get("/tasks/:id/file-diffs", async (req, res) => {
-    try {
-      const { store: scopedStore } = await getProjectContext(req);
-      const task = await scopedStore.getTask(req.params.id);
-      if (!task) {
-        res.status(404).json({ error: "Task not found" });
-        return;
-      }
-
-      // Done tasks: diff from the squash commit's first parent.
-      // The merger only performs squash merges, so sha^..sha contains exactly
-      // this task's merged changes and excludes unrelated tasks merged in between.
-      if (task.column === "done" && task.mergeDetails?.commitSha) {
-        const rootDir = scopedStore.getRootDir();
-        const sha = task.mergeDetails.commitSha;
-
-        let mergeBase: string | undefined;
-
-        try {
-          mergeBase = (await runGitCommand(["rev-parse", `${sha}^`], rootDir, 5000)).trim();
-        } catch {
-          res.json([]);
-          return;
-        }
-
-        try {
-          const nameStatus = (await runGitCommand(["diff", "--name-status", `${mergeBase}..${sha}`], rootDir, 5000)).trim();
-          const doneFiles = [];
-          for (const line of nameStatus.split("\n").filter(Boolean)) {
-            const parts = line.split("\t");
-            const statusCode = parts[0] ?? "M";
-            const filePath = parts[1] ?? "";
-            let status: "added" | "modified" | "deleted" | "renamed" = "modified";
-            if (statusCode.startsWith("A")) status = "added";
-            else if (statusCode.startsWith("D")) status = "deleted";
-            else if (statusCode.startsWith("R")) status = "renamed";
-            let diff = "";
-            try {
-              diff = await runGitCommand(["diff", `${mergeBase}..${sha}`, "--", filePath], rootDir, 5000);
-            } catch { /* ignore */ }
-            doneFiles.push({ path: filePath, status, diff });
-          }
-          res.json(doneFiles);
-        } catch {
-          res.json([]);
-        }
-        return;
-      }
-
-      // Done tasks without a commit SHA: return safe, empty response.
-      // Do NOT fall through to worktree-based logic that could scan the
-      // entire repository when the worktree has been cleaned up.
-      if (task.column === "done") {
-        res.json([]);
-        return;
-      }
-
-      // Check worktree existence asynchronously to avoid blocking event loop
-      if (!task.worktree) {
-        res.json([]);
-        return;
-      }
-      let worktreeExists = false;
-      try {
-        await access(task.worktree);
-        worktreeExists = true;
-      } catch {
-        worktreeExists = false;
-      }
-      if (!worktreeExists) {
-        res.json([]);
-        return;
-      }
-      const worktree = task.worktree; // Capture after check
-
-      const cached = fileDiffsCache.get(task.id);
-      if (cached && cached.expiresAt > Date.now()) {
-        res.json(cached.files);
-        return;
-      }
-
-      const cwd = worktree;
-
-      // Resolve a diff base using the shared strategy so both endpoints
-      // always agree on which files have changed. Prefer live branch
-      // merge-base first, then task-scoped baseCommitSha when needed.
-      const diffBase = await resolveDiffBase(task, cwd);
-
-      // Collect file statuses from committed, staged, unstaged, and untracked changes.
-      // Deduplicate by path to match session-files.
-      const fileMap = new Map<string, { statusCode: string; oldPath?: string; isUntracked?: boolean }>();
-
-      if (diffBase) {
-        try {
-          const committedOutput = (await runGitCommand(["diff", "--name-status", `${diffBase}..HEAD`], cwd, 5000)).trim();
-          for (const line of committedOutput.split("\n").filter(Boolean)) {
-            const parts = line.split("\t");
-            const statusCode = parts[0] ?? "M";
-            if (statusCode.startsWith("R")) {
-              fileMap.set(parts[2] ?? parts[1] ?? "", { statusCode, oldPath: parts[1] });
-            } else {
-              fileMap.set(parts[1] ?? "", { statusCode });
-            }
-          }
-        } catch {
-          // committed diff failed — continue with working-tree only
-        }
-      }
-
-      // Staged changes (in git index)
-      try {
-        const stagedOutput = (await runGitCommand(["diff", "--cached", "--name-status"], cwd, 5000)).trim();
-        for (const line of stagedOutput.split("\n").filter(Boolean)) {
-          const parts = line.split("\t");
-          const statusCode = parts[0] ?? "M";
-          const filePath = parts[1] ?? "";
-          // Only add if not already in map (committed takes precedence)
-          if (filePath && !fileMap.has(filePath)) {
-            if (statusCode.startsWith("R")) {
-              fileMap.set(filePath, { statusCode, oldPath: parts[2] });
-            } else {
-              fileMap.set(filePath, { statusCode });
-            }
-          }
-        }
-      } catch {
-        // staged diff failed
-      }
-
-      // Unstaged working tree changes
-      try {
-        const workingTreeOutput = (await runGitCommand(["diff", "--name-status"], cwd, 5000)).trim();
-        for (const line of workingTreeOutput.split("\n").filter(Boolean)) {
-          const parts = line.split("\t");
-          const statusCode = parts[0] ?? "M";
-          const filePath = parts[1] ?? "";
-          // Only add if not already in map (committed/staged takes precedence)
-          if (filePath && !fileMap.has(filePath)) {
-            if (statusCode.startsWith("R")) {
-              fileMap.set(filePath, { statusCode, oldPath: parts[2] });
-            } else {
-              fileMap.set(filePath, { statusCode });
-            }
-          }
-        }
-      } catch {
-        // working tree diff failed
-      }
-
-      // Untracked files (new files not yet staged)
-      try {
-        const untrackedOutput = (await runGitCommand(["ls-files", "--others", "--exclude-standard"], cwd, 5000)).trim();
-        for (const line of untrackedOutput.split("\n").filter(Boolean)) {
-          // Only add if not already tracked (committed/staged/unstaged)
-          if (line && !fileMap.has(line)) {
-            fileMap.set(line, { statusCode: "U", isUntracked: true });
-          }
-        }
-      } catch {
-        // untracked listing failed
-      }
-
-      // Build the result array with per-file diffs using the two-dot range
-      // against the resolved merge-base.
-      const diffRange = diffBase ? `${diffBase}..HEAD` : "HEAD";
-
-      const files = [];
-      for (const [filePath, { statusCode, oldPath, isUntracked }] of fileMap.entries()) {
-        let status: "added" | "modified" | "deleted" | "renamed" = "modified";
-
-        if (statusCode.startsWith("A") || statusCode === "U") {
-          status = "added";
-        } else if (statusCode.startsWith("D")) {
-          status = "deleted";
-        } else if (statusCode.startsWith("R")) {
-          status = "renamed";
-        }
-
-        let diff = "";
-        try {
-          // For untracked files, generate synthetic diff against /dev/null
-          if (isUntracked) {
-            diff = await runGitCommand(["diff", "--no-index", "/dev/null", filePath], cwd, 5000).catch(() => "");
-          } else {
-            diff = await runGitCommand(["diff", diffRange, "--", filePath], cwd, 5000);
-          }
-        } catch {
-          diff = "";
-        }
-
-        // Skip files with empty diffs (mode-only changes, binary files)
-        // BUT keep untracked files which have synthetic diffs
-        if (!diff && !isUntracked) {
-          continue;
-        }
-
-        files.push(oldPath ? { path: filePath, status, diff, oldPath } : { path: filePath, status, diff });
-      }
-
-      fileDiffsCache.set(task.id, {
-        files,
-        expiresAt: Date.now() + 10000,
-      });
-
-      res.json(files);
-    } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        throw notFound(`Task ${req.params.id} not found`);
-      } else {
-        rethrowAsApiError(err, "Internal server error");
-      }
     }
   });
 
