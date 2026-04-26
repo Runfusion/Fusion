@@ -43,6 +43,10 @@ The context provides core cross-cutting plumbing:
 - `register-model-routes.ts` — `/models` endpoint, favorites projection, and `useClaudeCli` filtering for `pi-claude-cli` entries
 - `register-auth-routes.ts` — auth/provider domain (`/auth/status`, `/auth/login`, `/auth/logout`, `/auth/api-key`, `/auth/claude-cli`, `/providers/claude-cli/status`)
 - `register-usage-routes.ts` — `/usage` endpoint with `fetchAllProviderUsage(options?.authStorage)` integration
+- `register-files-terminal-workspaces.ts` — infrastructure aggregator for file/workspace + session-diff + terminal routes
+  - Calls `register-session-diff-routes.ts` first (session changed files + task diff endpoints)
+  - Calls `register-file-workspace-routes.ts` second (task/workspace file browsing and file operations)
+  - Calls `register-terminal-routes.ts` last (terminal command/session + PTY lifecycle endpoints)
 - `register-file-workspace-routes.ts` — task/workspace file domain:
   - Task files: `/tasks/:id/files`, `/tasks/:id/files/{*filepath}` (read/write)
   - Workspace discovery/files: `/workspaces`, `/files`, `/files/markdown-list`, `/files/search`, `/files/{*filepath}`
@@ -76,6 +80,28 @@ The context provides core cross-cutting plumbing:
     5. `GET /proxy/:nodeId/events` (SSE pass-through, 30s timeout, client-disconnect cleanup)
     6. `ALL /proxy/:nodeId/{*splat}` (generic wildcard forwarder)
   - Shared diagnostics: imports `emitRemoteRouteDiagnostic` and `classifyRemoteRouteError` from `routes/context.ts` so proxy and non-proxy registrars (for example mesh/sync routes) keep one diagnostic classification contract.
+
+## createApiRoutes mount sequence (current)
+
+`createApiRoutes()` mounts registrars in this precedence-sensitive order:
+
+1. `registerSettingsMemoryRoutes(...)`
+2. `registerTaskWorkflowRoutes(...)`
+3. `registerPlanningSubtaskRoutes(...)`
+4. `registerChatRoutes(...)`
+5. `registerMessagingScriptRoutes(...)`
+6. `registerGitGitHubRoutes(...)`
+7. `registerFilesTerminalWorkspaceRoutes(...)`
+8. `registerAgentsProjectsNodesRoutes(...)`
+9. `registerPluginsAutomationRoutes(...)`
+10. (later) `registerAgentSkillsRoutes(...)`
+11. (last) `registerProxyRoutes(...)`
+
+Compatibility re-exports that must remain on `routes.ts` for tests and existing importers:
+
+- `resolveDiffBase` + `ResolveDiffBaseTaskInput` (from `resolve-diff-base.ts`)
+- `__resetBatchImportRateLimiter` (from `register-git-github.ts`)
+- `__setCreateFnAgentForRefine` (defined in `routes.ts`)
 
 ## Ordering rules (critical)
 

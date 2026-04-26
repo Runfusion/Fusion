@@ -13,8 +13,6 @@ import * as nodeFs from "node:fs";
 import type { TaskStore, ScheduleType, ActivityEventType, ModelPreset, RoutineTriggerType } from "@fusion/core";
 import { type Task, type PiExtensionEntry, type PiExtensionSettings, AutomationStore, RoutineStore, isWebhookTrigger, MemoryBackendError, listAgentMemoryFiles, readAgentMemoryFile, writeAgentMemoryFile, discoverPiExtensions, getFusionAgentDir, getLegacyPiAgentDir } from "@fusion/core";
 import type { ServerOptions } from "./server.js";
-import { terminalSessionManager } from "./terminal.js";
-import { getTerminalService } from "./terminal-service.js";
 import { verifyWebhookSignature } from "./github-webhooks.js";
 import { AiSessionStore, SESSION_CLEANUP_DEFAULT_MAX_AGE_MS } from "./ai-session-store.js";
 import { getSession as getPlanningSession, cleanupSession as cleanupPlanningSession } from "./planning.js";
@@ -42,7 +40,7 @@ import { registerChatRoutes } from "./routes/register-chat-routes.js";
 import { registerSettingsMemoryRoutes } from "./routes/register-settings-memory-routes.js";
 import { registerMessagingScriptRoutes } from "./routes/register-messaging-scripts.js";
 import { registerGitGitHubRoutes } from "./routes/register-git-github.js";
-import { registerFileWorkspaceRoutes } from "./routes/register-file-workspace-routes.js";
+import { registerFilesTerminalWorkspaceRoutes } from "./routes/register-files-terminal-workspaces.js";
 import { registerAgentsProjectsNodesRoutes } from "./routes/register-agents-projects-nodes.js";
 import { registerProjectRoutes } from "./routes/register-project-routes.js";
 import { registerNodeRoutes } from "./routes/register-node-routes.js";
@@ -61,8 +59,6 @@ import { registerModelRoutes } from "./routes/register-model-routes.js";
 import { registerUsageRoutes } from "./routes/register-usage-routes.js";
 import { registerAuthRoutes } from "./routes/register-auth-routes.js";
 import { registerIntegratedRouters, registerIntegratedDevServerRouter } from "./routes/register-integrated-routers.js";
-import { registerTerminalRoutes } from "./routes/register-terminal-routes.js";
-import { registerSessionDiffRoutes } from "./routes/register-session-diff-routes.js";
 import { runGitCommand } from "./routes/resolve-diff-base.js";
 
 const TASK_DETAIL_ACTIVITY_LOG_LIMIT = 500;
@@ -894,8 +890,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   });
   registerMessagingScriptRoutes(routeContext);
   registerGitGitHubRoutes(routeContext);
-  registerSessionDiffRoutes(router, { getProjectContext });
-  registerFileWorkspaceRoutes(routeContext);
+  registerFilesTerminalWorkspaceRoutes(routeContext);
   registerAgentsProjectsNodesRoutes(routeContext);
   registerPluginsAutomationRoutes(routeContext);
 
@@ -1260,12 +1255,6 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
   // ---------- Auth routes ----------
   registerAuthRoutes(routeContext);
-
-  registerTerminalRoutes(router, {
-    getProjectContext,
-    terminalSessionManager,
-    getTerminalService,
-  });
 
   /**
    * POST /api/ai/refine-text
