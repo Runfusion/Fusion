@@ -1,7 +1,15 @@
 import "./TerminalModal.css";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { getErrorMessage } from "@fusion/core";
-import { X, Trash2, Terminal as TerminalIcon, RefreshCw, Minus, Plus } from "lucide-react";
+import {
+  X,
+  Trash2,
+  Terminal as TerminalIcon,
+  RefreshCw,
+  Minus,
+  Plus,
+  Keyboard,
+} from "lucide-react";
 import { useTerminal } from "../hooks/useTerminal";
 import { useTerminalSessions } from "../hooks/useTerminalSessions";
 import "@xterm/xterm/css/xterm.css";
@@ -17,6 +25,48 @@ const TERMINAL_FONT_SIZE_KEY = "kb-terminal-font-size";
 const DEFAULT_FONT_SIZE = 14;
 const MIN_TERMINAL_FONT_SIZE = 8;
 const MAX_TERMINAL_FONT_SIZE = 32;
+
+export function ctrlChar(key: string): string {
+  if (!key) {
+    return "";
+  }
+
+  const normalized = key.slice(0, 1).toUpperCase();
+
+  if (normalized === "[") {
+    return "\x1b";
+  }
+
+  if (normalized >= "A" && normalized <= "Z") {
+    return String.fromCharCode(normalized.charCodeAt(0) - 64);
+  }
+
+  return key;
+}
+
+export function altChar(key: string): string {
+  return `\x1b${key}`;
+}
+
+interface ShortcutKey {
+  label: string;
+  key: string;
+  description?: string;
+}
+
+export const SHORTCUT_KEYS: ShortcutKey[] = [
+  { label: "C", key: "c", description: "SigInt" },
+  { label: "D", key: "d", description: "EOF" },
+  { label: "Z", key: "z", description: "Suspend" },
+  { label: "L", key: "l", description: "Clear" },
+  { label: "R", key: "r", description: "Reverse search" },
+  { label: "A", key: "a", description: "Home" },
+  { label: "E", key: "e", description: "End" },
+  { label: "U", key: "u", description: "Kill line" },
+  { label: "K", key: "k", description: "Kill to EOL" },
+  { label: "W", key: "w", description: "Del word" },
+  { label: ".", key: ".", description: "Last argument" },
+];
 
 function clampTerminalFontSize(value: number): number {
   return Math.min(MAX_TERMINAL_FONT_SIZE, Math.max(MIN_TERMINAL_FONT_SIZE, value));
@@ -183,6 +233,8 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
   const [keyboardOverlap, setKeyboardOverlap] = useState(0);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const [fontSize, setFontSize] = useState<number>(() => readInitialTerminalFontSize());
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [stickyModifier, setStickyModifier] = useState<null | "ctrl" | "alt">(null);
   
   const terminalRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -618,6 +670,8 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
     hasInitialCommandRun.current = false;
     setError(null);
     setExitCode(null);
+    setShowShortcuts(false);
+    setStickyModifier(null);
   }, [isOpen]);
 
   // Subscribe to terminal data.
@@ -906,6 +960,37 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
     refitTerminal();
   }, [refitTerminal]);
 
+  const toggleModifier = useCallback((modifier: "ctrl" | "alt") => {
+    setStickyModifier((current) => (current === modifier ? null : modifier));
+  }, []);
+
+  const sendShortcutKey = useCallback(
+    (key: string) => {
+      if (stickyModifier === "ctrl") {
+        sendInput(ctrlChar(key));
+        setStickyModifier(null);
+        return;
+      }
+
+      if (stickyModifier === "alt") {
+        sendInput(altChar(key));
+        setStickyModifier(null);
+        return;
+      }
+
+      sendInput(key);
+    },
+    [sendInput, stickyModifier],
+  );
+
+  const sendLiteralShortcut = useCallback(
+    (value: string) => {
+      sendInput(value);
+      setStickyModifier(null);
+    },
+    [sendInput],
+  );
+
   if (!isOpen) return null;
 
   const getStatusIndicator = () => {
@@ -1036,6 +1121,16 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
               <span className="terminal-action-label">Clear</span>
             </button>
             <button
+              className="terminal-clear-btn"
+              onClick={() => setShowShortcuts((current) => !current)}
+              data-testid="terminal-shortcut-toggle"
+              title="Shortcuts"
+              aria-pressed={showShortcuts}
+            >
+              <Keyboard size={14} />
+              <span className="terminal-action-label">Shortcuts</span>
+            </button>
+            <button
               className="terminal-close"
               onClick={onClose}
               data-testid="terminal-close-btn"
@@ -1129,6 +1224,60 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
           />
         </div>
 
+        {showShortcuts && (
+          <div className="terminal-shortcut-panel" data-testid="terminal-shortcut-panel">
+            <div className="terminal-shortcut-modifier-row">
+              <button
+                type="button"
+                className={`terminal-shortcut-btn terminal-shortcut-btn--modifier ${
+                  stickyModifier === "ctrl" ? "is-active" : ""
+                }`}
+                data-testid="terminal-modifier-ctrl"
+                onClick={() => toggleModifier("ctrl")}
+                aria-pressed={stickyModifier === "ctrl"}
+              >
+                Ctrl
+              </button>
+              <button
+                type="button"
+                className={`terminal-shortcut-btn terminal-shortcut-btn--modifier ${
+                  stickyModifier === "alt" ? "is-active" : ""
+                }`}
+                data-testid="terminal-modifier-alt"
+                onClick={() => toggleModifier("alt")}
+                aria-pressed={stickyModifier === "alt"}
+              >
+                Alt
+              </button>
+              <button
+                type="button"
+                className="terminal-shortcut-btn"
+                onClick={() => sendLiteralShortcut("\x1b")}
+              >
+                ESC
+              </button>
+              <button
+                type="button"
+                className="terminal-shortcut-btn"
+                onClick={() => sendLiteralShortcut("\t")}
+              >
+                Tab
+              </button>
+            </div>
+            {SHORTCUT_KEYS.map((shortcut) => (
+              <button
+                key={shortcut.label}
+                type="button"
+                className="terminal-shortcut-btn"
+                onClick={() => sendShortcutKey(shortcut.key)}
+                title={shortcut.description}
+              >
+                {shortcut.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Connection status bar */}
         <div className="terminal-status-bar" data-testid="terminal-status-bar">
           <span className={`terminal-connection-status ${connectionStatus}`}>
@@ -1166,7 +1315,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
             </button>
           </span>
           <span className="terminal-shortcuts">
-            Ctrl++/- zoom • Ctrl+L clear • Esc close
+            Ctrl++/- zoom • ⌨ Shortcuts panel • Esc close
           </span>
         </div>
       </div>

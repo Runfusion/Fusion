@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
-import { TerminalModal, _resetInitialViewportHeight } from "../TerminalModal";
+import { TerminalModal, _resetInitialViewportHeight, ctrlChar, altChar } from "../TerminalModal";
 import * as useTerminalModule from "../../hooks/useTerminal";
 import * as useTerminalSessionsModule from "../../hooks/useTerminalSessions";
 import * as apiModule from "../../api";
@@ -63,6 +63,18 @@ const mockUseTerminalSessions = vi.mocked(useTerminalSessionsModule.useTerminalS
 const mockCreateTerminalSession = vi.mocked(apiModule.createTerminalSession);
 const mockKillPtyTerminalSession = vi.mocked(apiModule.killPtyTerminalSession);
 const TERMINAL_FONT_SIZE_KEY = "kb-terminal-font-size";
+
+describe("ctrlChar/altChar helpers", () => {
+  it("maps Ctrl+C/D/Z/L and Alt sequences correctly", () => {
+    expect(ctrlChar("c")).toBe("\x03");
+    expect(ctrlChar("d")).toBe("\x04");
+    expect(ctrlChar("z")).toBe("\x1a");
+    expect(ctrlChar("l")).toBe("\x0c");
+
+    expect(altChar("c")).toBe("\x1bc");
+    expect(altChar("[")).toBe("\x1b[");
+  });
+});
 
 // Default tab state
 const defaultTab = {
@@ -517,6 +529,104 @@ describe("TerminalModal", () => {
     // Verify xterm was opened with the terminal container div
     const terminalDiv = screen.getByTestId("terminal-xterm");
     expect(mockTerminalInstance.open).toHaveBeenCalledWith(terminalDiv);
+  });
+
+  describe("shortcut panel", () => {
+    it("is hidden by default and toggles from header action", async () => {
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      expect(screen.queryByTestId("terminal-shortcut-panel")).toBeNull();
+
+      fireEvent.click(screen.getByTestId("terminal-shortcut-toggle"));
+      expect(screen.getByTestId("terminal-shortcut-panel")).toBeTruthy();
+
+      fireEvent.click(screen.getByTestId("terminal-shortcut-toggle"));
+      expect(screen.queryByTestId("terminal-shortcut-panel")).toBeNull();
+    });
+
+    it("supports sticky modifier toggle semantics", async () => {
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      fireEvent.click(screen.getByTestId("terminal-shortcut-toggle"));
+
+      const ctrlBtn = screen.getByTestId("terminal-modifier-ctrl");
+      const altBtn = screen.getByTestId("terminal-modifier-alt");
+
+      fireEvent.click(ctrlBtn);
+      expect(ctrlBtn.getAttribute("aria-pressed")).toBe("true");
+
+      fireEvent.click(ctrlBtn);
+      expect(ctrlBtn.getAttribute("aria-pressed")).toBe("false");
+
+      fireEvent.click(ctrlBtn);
+      fireEvent.click(altBtn);
+      expect(ctrlBtn.getAttribute("aria-pressed")).toBe("false");
+      expect(altBtn.getAttribute("aria-pressed")).toBe("true");
+    });
+
+    it("sends modified and literal keys, then clears sticky modifier", async () => {
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      fireEvent.click(screen.getByTestId("terminal-shortcut-toggle"));
+
+      const ctrlBtn = screen.getByTestId("terminal-modifier-ctrl");
+      const altBtn = screen.getByTestId("terminal-modifier-alt");
+
+      fireEvent.click(ctrlBtn);
+      fireEvent.click(screen.getByRole("button", { name: "C" }));
+      expect(mockSendInput).toHaveBeenCalledWith("\x03");
+      expect(ctrlBtn.getAttribute("aria-pressed")).toBe("false");
+
+      fireEvent.click(altBtn);
+      fireEvent.click(screen.getByRole("button", { name: "D" }));
+      expect(mockSendInput).toHaveBeenCalledWith("\x1bd");
+      expect(altBtn.getAttribute("aria-pressed")).toBe("false");
+
+      fireEvent.click(screen.getByRole("button", { name: "Z" }));
+      expect(mockSendInput).toHaveBeenCalledWith("z");
+
+      fireEvent.click(screen.getByRole("button", { name: "ESC" }));
+      expect(mockSendInput).toHaveBeenCalledWith("\x1b");
+
+      fireEvent.click(screen.getByRole("button", { name: "Tab" }));
+      expect(mockSendInput).toHaveBeenCalledWith("\t");
+    });
+
+    it("renders shortcut controls on mobile viewport", async () => {
+      const previousInnerWidth = window.innerWidth;
+      const previousOntouchstart = window.ontouchstart;
+
+      Object.defineProperty(window, "innerWidth", {
+        value: 375,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(window, "ontouchstart", {
+        value: null,
+        writable: true,
+        configurable: true,
+      });
+
+      try {
+        render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+        fireEvent.click(screen.getByTestId("terminal-shortcut-toggle"));
+
+        expect(screen.getByTestId("terminal-shortcut-panel")).toBeTruthy();
+        expect(screen.getByTestId("terminal-modifier-ctrl")).toBeTruthy();
+        expect(screen.getByTestId("terminal-modifier-alt")).toBeTruthy();
+      } finally {
+        Object.defineProperty(window, "innerWidth", {
+          value: previousInnerWidth,
+          writable: true,
+          configurable: true,
+        });
+        Object.defineProperty(window, "ontouchstart", {
+          value: previousOntouchstart,
+          writable: true,
+          configurable: true,
+        });
+      }
+    });
   });
 
   describe("font size controls", () => {
