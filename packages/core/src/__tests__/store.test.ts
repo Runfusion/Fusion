@@ -56,8 +56,11 @@ describe("TaskStore", () => {
     // Some watcher/polling tests can leave an in-flight poll tick queued right
     // before teardown. Stop watching first and yield once so pending callbacks
     // settle before removing temp dirs.
+    //
+    // Use nextTick instead of setImmediate so this teardown cannot deadlock if
+    // fake timers are enabled by a test and not yet restored.
     store.stopWatching();
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => process.nextTick(resolve));
 
     store.close();
     await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });

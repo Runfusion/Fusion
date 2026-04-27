@@ -2421,7 +2421,11 @@ input[type="range"]:focus-visible {
   bottom: 0;
   z-index: 10000;
   background: var(--surface);
-  padding: var(--space-lg);
+  /* iOS PWA: pad inwards from notches / status bar / home indicator. */
+  padding: max(var(--space-lg), env(safe-area-inset-top, 0px))
+           max(var(--space-lg), env(safe-area-inset-right, 0px))
+           max(var(--space-lg), env(safe-area-inset-bottom, 0px))
+           max(var(--space-lg), env(safe-area-inset-left, 0px));
   display: flex;
   flex-direction: column;
 }
@@ -2438,15 +2442,15 @@ input[type="range"]:focus-visible {
 
 .description--fullscreen .refine-button {
   position: fixed;
-  top: 8px;
-  right: 8px;
+  top: max(8px, env(safe-area-inset-top, 0px));
+  right: max(8px, env(safe-area-inset-right, 0px));
   z-index: 10001;
 }
 
 .description--fullscreen .description-expand-btn {
   position: fixed;
-  top: 8px;
-  right: 40px;
+  top: max(8px, env(safe-area-inset-top, 0px));
+  right: calc(max(8px, env(safe-area-inset-right, 0px)) + 32px);
   z-index: 10001;
 }
 

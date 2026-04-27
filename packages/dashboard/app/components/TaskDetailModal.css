@@ -526,7 +526,11 @@
   flex-direction: column;
   min-height: 0;
   background: var(--surface);
-  padding: var(--space-lg);
+  /* iOS PWA: pad inwards from notches / status bar / home indicator. */
+  padding: max(var(--space-lg), env(safe-area-inset-top, 0px))
+           max(var(--space-lg), env(safe-area-inset-right, 0px))
+           max(var(--space-lg), env(safe-area-inset-bottom, 0px))
+           max(var(--space-lg), env(safe-area-inset-left, 0px));
 }
 
 .agent-log-viewer--fullscreen .agent-log-model-header {

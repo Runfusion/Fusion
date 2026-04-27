@@ -540,7 +540,11 @@
   bottom: 0;
   z-index: 10000;
   background: var(--surface);
-  padding: var(--space-lg);
+  /* iOS PWA: pad inwards from notches / status bar / home indicator. */
+  padding: max(var(--space-lg), env(safe-area-inset-top, 0px))
+           max(var(--space-lg), env(safe-area-inset-right, 0px))
+           max(var(--space-lg), env(safe-area-inset-bottom, 0px))
+           max(var(--space-lg), env(safe-area-inset-left, 0px));
   display: flex;
   flex-direction: column;
 }

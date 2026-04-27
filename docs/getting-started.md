@@ -2,133 +2,59 @@
 
 [← Docs index](./README.md)
 
-This guide gets Fusion running, explains first-run setup, and walks through your first task from creation to completion.
-
-## Prerequisites
-
-Fusion and `pi` are separate tools:
-
-- **Pi** is the AI agent runtime (similar to how Node.js is a runtime).
-- **Fusion** is the orchestrator built on top of that runtime (similar to a framework/tooling layer).
-
-Fusion requires `pi` because Fusion agents run through the pi runtime. You can also use pi by itself without Fusion if you prefer.
-
-1. Install pi:
-
-```bash
-npm i -g @mariozechner/pi-coding-agent
-```
-
-2. Authenticate pi (for example with `/login`) or configure provider API keys.
-
-```bash
-pi
-```
-
-### Optional: Install the Paperclip Runtime Plugin
-
-The Paperclip Runtime Plugin (`fusion-plugin-paperclip-runtime`) provides an alternative runtime adapter for AI agents. It wraps the same `pi` backend but registers as a discoverable plugin runtime, enabling runtime selection at the agent level.
-
-To install the plugin:
-
-```bash
-fn plugin install ./plugins/fusion-plugin-paperclip-runtime
-```
-
-After installation, select the Paperclip runtime for an agent by setting `runtimeHint` in the agent's `runtimeConfig`:
-
-```json
-{
-  "name": "Paperclip Executor",
-  "role": "executor",
-  "runtimeConfig": {
-    "runtimeHint": "paperclip"
-  }
-}
-```
-
-For details on runtime selection, fallback behavior, and constraints, see the [Paperclip Runtime Plugin documentation](../plugins/fusion-plugin-paperclip-runtime/README.md).
-
-### Optional: Install the Hermes Runtime Plugin (Experimental)
-
-The Hermes Runtime Plugin (`fusion-plugin-hermes-runtime`) registers an experimental runtime hint (`"hermes"`) so agents can explicitly target Hermes in runtime selection.
-
-Install the plugin:
-
-```bash
-fn plugin install ./plugins/fusion-plugin-hermes-runtime
-```
-
-Configure an agent to use Hermes:
-
-```json
-{
-  "name": "Hermes Executor",
-  "role": "executor",
-  "runtimeConfig": {
-    "runtimeHint": "hermes"
-  }
-}
-```
-
-> ℹ️ Hermes is experimental. Runtime registration, selection, and execution are supported through the Hermes plugin runtime adapter.
-
-For Hermes-specific details, see the [Hermes Runtime Plugin documentation](../plugins/fusion-plugin-hermes-runtime/README.md).
-
-### Optional: Install the OpenClaw Runtime Plugin (Experimental)
-
-The OpenClaw Runtime Plugin (`fusion-plugin-openclaw-runtime`) registers an experimental runtime hint (`"openclaw"`) so agents can explicitly target OpenClaw in runtime selection.
-
-Install the plugin:
-
-```bash
-fn plugin install ./plugins/fusion-plugin-openclaw-runtime
-```
-
-Configure an agent to use OpenClaw:
-
-```json
-{
-  "name": "OpenClaw Executor",
-  "role": "executor",
-  "runtimeConfig": {
-    "runtimeHint": "openclaw"
-  }
-}
-```
-
-> ℹ️ OpenClaw is experimental. Runtime registration, selection, and execution are supported through the OpenClaw plugin runtime adapter.
-
-For OpenClaw-specific details, see the [OpenClaw Runtime Plugin documentation](../plugins/fusion-plugin-openclaw-runtime/README.md).
+This guide walks you from install to your first task in Fusion.
 
 ## Install Fusion
 
-Fusion can be installed in two different ways depending on where you want to use it:
+Choose one of these install methods from the [README quick start](../README.md#quick-start):
 
-### Path A: Global CLI (required for `fn` in your shell)
+### Zero install (recommended)
 
-Install the published CLI package globally:
+Run Fusion directly from npm without a global install:
 
 ```bash
-npm i -g @runfusion/fusion
+npx runfusion.ai
+```
+
+This launches the dashboard immediately. You can also run subcommands the same way (for example, `npx runfusion.ai task create "fix X"`).
+
+### One-line installer (macOS & Linux)
+
+```bash
+curl -fsSL https://runfusion.ai/install.sh | sh
+fusion dashboard
+```
+
+### Homebrew (macOS & Linux)
+
+```bash
+brew tap runfusion/fusion
+brew install fusion
+fusion dashboard            # or: fn dashboard
+```
+
+### npm global
+
+```bash
+npm install -g @runfusion/fusion
+fn dashboard                # or: fusion dashboard
+```
+
+### From source (development)
+
+```bash
+pnpm dev dashboard
+```
+
+After installing, verify the CLI is available:
+
+```bash
 fn --help
+# or
+fusion --help
 ```
 
-This gives you the `fn` command in your terminal/shell.
-
-### Path B: Pi extension (optional — adds `/fn` inside pi sessions)
-
-Install Fusion as a pi extension:
-
-```bash
-pi install npm:@runfusion/fusion
-```
-
-This adds Fusion tools (`fn_task_create`, `fn_task_list`, etc.) and a `/fn` command inside pi chat sessions.
-
-> **Important:** `pi install npm:@runfusion/fusion` only provides the `/fn` command and Fusion tools *inside pi sessions*. It does **not** make the `fn` CLI available in your terminal. For that, you must also run `npm i -g @runfusion/fusion`.
-
-> **Windows troubleshooting:** If `fn` is not recognized after `npm install -g @runfusion/fusion`, check that the npm global bin directory is in your PATH. You can find it with `npm config get prefix` — the `fn` binary lives in the `bin` subdirectory of that path. The `fn plugin install` command requires the global CLI to be installed first.
+> **Optional — Pi extension:** To use Fusion tools inside [Pi](https://pi.dev) chat sessions, run `pi install npm:@runfusion/fusion`. This adds a `/fn` command and Fusion tools within pi. You do **not** need this to use Fusion — the global CLI and dashboard work standalone.
 
 ## Initialize a Project
 
@@ -148,64 +74,19 @@ Start the dashboard:
 fn dashboard
 ```
 
-On first launch, Fusion automatically opens the **onboarding wizard**. It guides you through three steps:
+On first launch, Fusion opens an onboarding wizard with three steps:
 
-1. **AI Setup** — Start with a simplified quick-start list of recommended providers (`anthropic`, `openai`, `google`, `gemini`, `ollama`), plus any providers you already connected. You only need one provider to get started. Additional providers and detailed setup guidance live under the **Advanced provider settings** disclosure. Authenticate via OAuth login (for supported providers like OpenAI Codex) or enter an API key directly.
+1. **AI Setup** — choose a provider and authenticate (you only need one to start)
+2. **GitHub (Optional)** — connect GitHub for issue import and PR workflows
+3. **First Task** — create your first task or import one from GitHub
 
-2. **GitHub (Optional)** — Connect GitHub to import issues and manage pull requests. This step is optional — you can continue without GitHub.
+The wizard is dismissible and non-blocking. You can skip it and continue using Fusion, then reopen it later from **Settings → Authentication**.
 
-3. **First Task** — Get started by creating your first task or importing from GitHub. If no project is currently selected, onboarding first prompts you to register/select a project directory before task actions are enabled.
-
-**The onboarding wizard is dismissible and non-blocking.** If you skip setup, you can complete it later — and you can always update your AI provider authentication anytime via **Settings → Authentication** in the dashboard:
-- Click **Skip for now** to dismiss the wizard — the dashboard remains fully usable
-- After dismissing, a **Continue Setup** banner appears at the top of the dashboard, letting you resume from where you left off
-- Re-open onboarding anytime from **Settings → Authentication → Reopen onboarding guide**
-
-When reopening onboarding, the wizard pre-populates your previously saved AI provider and default model, so you can quickly review or update your setup.
-
-Onboarding completion is tracked by `modelOnboardingComplete` in global settings.
-
-## Start the Dashboard
-
-Common startup options:
-
-```bash
-fn dashboard                       # default port 4040
-fn dashboard --port 5050           # custom port
-fn dashboard -p 5050               # short form for --port
-fn dashboard --interactive         # choose port interactively
-fn dashboard --paused              # start with automation paused
-fn dashboard --dev                 # run UI only (no engine)
-```
-
-On startup, Fusion prints a click-to-open URL that includes a bearer token:
-
-```
-→ http://localhost:4040
-Token:   fn_8f3a...
-Open:    http://localhost:4040/?token=fn_8f3a...
-```
-
-Click the **Open** link. Your browser captures the token into `localStorage`,
-strips it from the visible URL, and reuses it automatically on later loads.
-See [CLI reference → fn dashboard → Authentication](./cli-reference.md#fn-dashboard)
-for details, including token precedence (CLI/env overrides over the persisted
-`~/.fusion` token) and how to disable auth with `--no-auth` for strictly-local setups.
-
-Other launch modes:
-
-```bash
-fn dashboard --host 0.0.0.0            # expose on LAN (auth stays on by default)
-fn serve --port 5050 --host 0.0.0.0    # headless node (API + engine, no web UI)
-fn daemon --port 5050                  # daemon mode with token auth support
-fn desktop                             # launch Electron desktop app
-```
-
-If you plan to expose Fusion remotely, read the **[Remote Access runbook](./remote-access.md)** before enabling tunnels. It covers provider prerequisites, tokenized login-link security caveats, and operational troubleshooting.
+On startup, Fusion prints an `Open:` URL that includes a bearer token (for example, `http://localhost:4040/?token=fn_...`). Open that URL to sign in quickly.
 
 ## Create Your First Task
 
-You can create tasks from the board or CLI.
+Create tasks from the board or CLI.
 
 ### Option A: Quick Entry (Board)
 
@@ -219,33 +100,13 @@ Use the 💡 button to open AI planning mode:
 
 - Fusion asks clarifying questions
 - Produces a structured summary
-- Lets you create one task or break into multiple dependency-linked tasks
+- Lets you create one task or multiple dependency-linked tasks
 
 ### Option C: Subtask Breakdown (Board)
 
-Use the 🌳 button to:
+Use the 🌳 button to generate 2–5 subtasks, reorder them, and link dependencies before creating tasks.
 
-- Generate 2–5 subtasks
-- Reorder by drag-and-drop
-- Add dependency links before creating tasks
-
-### Option D: Expanded Controls (Board)
-
-Expand the quick entry panel (▼) to access additional controls:
-
-- **Refine** (✨) — Improve the description with AI
-- **Deps** (🔗) — Link existing tasks as dependencies
-- **Attach** — Add image attachments
-- **Models** (🧠) — Set per-task model overrides
-- **Agent** — Assign an agent to the task
-- **Save** — Create the task manually
-
-### Option E: CLI
-
-```bash
-fn task create "Fix flaky login test"
-fn task plan "Implement role-based access control"
-```
+You can also use expanded board controls (Refine, Deps, Attachments, model overrides, agent assignment) or the CLI (`fn task create`, `fn task plan`) when needed.
 
 ## Understand the Task Lifecycle
 
@@ -269,15 +130,9 @@ fn task pause FN-001
 fn task unpause FN-001
 ```
 
-## Dashboard Orientation (Annotated)
+## Next Steps
 
-![Dashboard board view with key UI areas](./screenshots/dashboard-overview.png)
-
-Suggested way to read the screen:
-
-- **Top bar:** global actions (settings, activity, mission/agent tools)
-- **Columns:** task lifecycle stages
-- **Task cards:** status, metadata, PR/issue badges
-- **Quick entry:** fastest way to create a new task
-
-Next: [Architecture](./architecture.md) for internals, or [Task Management](./task-management.md) for deeper task workflows.
+- [Architecture](./architecture.md) — system internals and package layout
+- [Task Management](./task-management.md) — deeper task workflow and lifecycle details
+- [Dashboard Guide](./dashboard-guide.md) — board and UI features
+- [Settings Reference](./settings-reference.md) — project and global configuration

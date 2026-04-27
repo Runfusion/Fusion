@@ -1341,8 +1341,37 @@ export class HeartbeatMonitor {
           // Execute
           await promptWithFallback(session, executionPrompt);
 
-          // Estimate output tokens (rough: ~4 chars per token)
-          const estimatedOutputTokens = Math.ceil(outputLength / 4);
+          // Capture real per-session token counts from pi-coding-agent's
+          // SessionStats. Falls back to a 4-chars-per-token estimate of output
+          // when the runtime doesn't expose stats. When this heartbeat is
+          // task-scoped, also accumulate the delta onto task.tokenUsage so the
+          // stats panel reflects heartbeat-driven runs.
+          let usageInput = 0;
+          let usageOutput = Math.ceil(outputLength / 4);
+          let usageCached = 0;
+          try {
+            const sessionStats = (session as unknown as {
+              getSessionStats?: () => { tokens?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } };
+            }).getSessionStats?.();
+            const tokens = sessionStats?.tokens;
+            if (tokens) {
+              usageInput = (tokens.input ?? 0) + (tokens.cacheWrite ?? 0);
+              usageOutput = tokens.output ?? usageOutput;
+              usageCached = tokens.cacheRead ?? 0;
+            }
+          } catch (statsErr) {
+            heartbeatLog.warn(`Agent ${agentId} session stats read failed: ${statsErr instanceof Error ? statsErr.message : String(statsErr)} — using estimated tokens`);
+          }
+
+          if (!isNoTaskRun && taskId) {
+            try {
+              const { accumulateSessionTokenUsage } = await import("./session-token-usage.js");
+              await accumulateSessionTokenUsage(taskStore, taskId, session);
+            } catch (accumulateErr) {
+              heartbeatLog.warn(`Agent ${agentId} task token usage accumulate failed: ${accumulateErr instanceof Error ? accumulateErr.message : String(accumulateErr)}`);
+            }
+          }
+
           await flushAgentLogger();
 
           // Mark messages as read after successful processing (only if messages were included in prompt)
@@ -1370,12 +1399,12 @@ export class HeartbeatMonitor {
 
           await this.completeRun(agentId, run.id, {
             status: "completed",
-            usageJson: { inputTokens: 0, outputTokens: estimatedOutputTokens, cachedTokens: 0 },
+            usageJson: { inputTokens: usageInput, outputTokens: usageOutput, cachedTokens: usageCached },
             resultJson: completionResultJson,
             stdoutExcerpt: stdoutExcerpt || undefined,
           });
 
-          heartbeatLog.log(`Heartbeat completed for ${agentId} (${toolCallCount} tool calls, ~${estimatedOutputTokens} output tokens)`);
+          heartbeatLog.log(`Heartbeat completed for ${agentId} (${toolCallCount} tool calls, ${usageInput} input + ${usageOutput} output + ${usageCached} cached tokens)`);
         } catch (err) {
           const errorDetail = formatError(err).detail;
           heartbeatLog.error(`Heartbeat execution failed for ${agentId}: ${errorDetail}`);

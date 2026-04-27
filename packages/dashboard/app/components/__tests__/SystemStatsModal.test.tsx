@@ -94,7 +94,7 @@ describe("SystemStatsModal", () => {
     });
 
     expect(screen.getByText("System Stats")).toBeDefined();
-    expect(screen.getByText("Process")).toBeDefined();
+    expect(await screen.findByText("Process")).toBeDefined();
     expect(screen.getByText("CPU & Load")).toBeDefined();
     expect(screen.getByText("System")).toBeDefined();
     expect(screen.getByText("Tasks")).toBeDefined();

@@ -110,9 +110,11 @@
 @media (max-width: 768px) {
   .background-tasks-indicator__popover {
     position: fixed;
-    bottom: 40px;
-    left: 8px;
-    right: 8px;
+    /* Add iOS home-indicator inset so the popover doesn't sit inside the
+       indicator zone on iPhone with viewport-fit=cover. */
+    bottom: calc(40px + env(safe-area-inset-bottom, 0px));
+    left: max(8px, env(safe-area-inset-left, 0px));
+    right: max(8px, env(safe-area-inset-right, 0px));
     min-width: auto;
     max-width: none;
   }
