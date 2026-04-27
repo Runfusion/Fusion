@@ -7,6 +7,7 @@ vi.mock("lucide-react", () => ({
   Plus: () => <span data-testid="icon-plus">+</span>,
   Clock: () => <span data-testid="icon-clock">Clock</span>,
   Play: () => <span data-testid="icon-play">Play</span>,
+  Loader2: () => <span data-testid="icon-loader">Load</span>,
   Pause: () => <span data-testid="icon-pause">Pause</span>,
   Pencil: () => <span data-testid="icon-pencil">Edit</span>,
   Trash2: () => <span data-testid="icon-trash">Delete</span>,
@@ -259,7 +260,7 @@ describe("ScheduledTasksModal", () => {
     });
   });
 
-  it("runs routines and shows success or failure toasts", async () => {
+  it("runs routines, shows toast, and renders inline output on the card", async () => {
     const routine = makeRoutine({ name: "My Routine" });
     mockFetchRoutines.mockResolvedValue([routine]);
     mockRunRoutine.mockResolvedValue({
@@ -282,6 +283,7 @@ describe("ScheduledTasksModal", () => {
     await waitFor(() => {
       expect(mockRunRoutine).toHaveBeenCalledWith("routine-001", { scope: "global" });
       expect(addToast).toHaveBeenCalledWith('"My Routine" completed successfully', "success");
+      expect(screen.getByText("Done")).toBeDefined();
     });
   });
 
