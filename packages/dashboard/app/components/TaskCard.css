@@ -980,6 +980,11 @@
     padding: calc(var(--space-xs) - (var(--space-xs) / 4)) var(--space-sm);
   }
 
+  .card-send-back-btn {
+    opacity: 1;
+    padding: calc(var(--space-xs) - (var(--space-xs) / 4)) var(--space-sm);
+  }
+
   /* Card: compact progress bar on narrow cards */
   .card-progress {
     gap: var(--space-xs);

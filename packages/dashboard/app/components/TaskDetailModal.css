@@ -724,13 +724,8 @@
 }
 
 @media (max-width: 768px) {
-  .detail-move-split-btn__main,
   .detail-move-split-btn__chevron {
-    min-height: calc(var(--space-lg) + var(--space-xl));
-  }
-
-  .detail-move-split-btn__chevron {
-    min-width: calc(var(--space-lg) + var(--space-xl));
+    min-width: calc(var(--space-md) + var(--space-sm));
   }
 }
 
