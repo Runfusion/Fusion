@@ -145,6 +145,11 @@ function makeInteractiveData(opts: {
   };
 }
 
+function setTerminalSize(instance: { stdout: unknown }, columns: number, rows: number) {
+  Object.defineProperty(instance.stdout as object, "columns", { value: columns, configurable: true });
+  Object.defineProperty(instance.stdout as object, "rows", { value: rows, configurable: true });
+}
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -602,5 +607,77 @@ describe("LogsPanel indicator", () => {
     // The selected entry shows the arrow; it should appear at least once
     expect(frame).toContain("▶");
     unmount();
+  });
+});
+
+describe("LogsPanel narrow formatting", () => {
+  it("shows a compact index instead of full timestamp in narrow terminals", async () => {
+    const controller = newController();
+    controller.setSystemInfo(makeSystemInfo());
+    controller.setActiveSection("logs");
+    controller.log("narrow entry", "scope");
+    controller.setSelectedLogIndex(0);
+
+    const rendered = render(renderDashboardAppNode(controller));
+    setTerminalSize(rendered, 60, 24);
+    rendered.rerender(renderDashboardAppNode(controller));
+    await new Promise((r) => setTimeout(r, 10));
+    const frame = rendered.lastFrame() ?? "";
+
+    expect(frame).toContain("narrow entry");
+    expect(frame).toMatch(/\s1\s[✓⚠✗]/);
+    expect(frame).not.toMatch(/\d{2}:\d{2}:\d{2}\.\d{3}/);
+    rendered.unmount();
+  });
+
+  it("truncates long prefixes in narrow mode and keeps wide mode formatting", async () => {
+    const prefix = "very-long-scope-name";
+
+    const narrowController = newController();
+    narrowController.setSystemInfo(makeSystemInfo());
+    narrowController.setActiveSection("logs");
+    narrowController.log("narrow prefix", prefix);
+    narrowController.setSelectedLogIndex(0);
+
+    const narrowRender = render(renderDashboardAppNode(narrowController));
+    setTerminalSize(narrowRender, 60, 24);
+    narrowRender.rerender(renderDashboardAppNode(narrowController));
+    await new Promise((r) => setTimeout(r, 10));
+    const narrowFrame = narrowRender.lastFrame() ?? "";
+    expect(narrowFrame).toContain("[very-…]");
+    narrowRender.unmount();
+
+    const wideController = newController();
+    wideController.setSystemInfo(makeSystemInfo());
+    wideController.setActiveSection("logs");
+    wideController.log("wide prefix", prefix);
+    wideController.setSelectedLogIndex(0);
+
+    const wideRender = render(renderDashboardAppNode(wideController));
+    setTerminalSize(wideRender, 120, 24);
+    wideRender.rerender(renderDashboardAppNode(wideController));
+    await new Promise((r) => setTimeout(r, 10));
+    const wideFrame = wideRender.lastFrame() ?? "";
+    expect(wideFrame).toContain("[very-long-sco");
+    expect(wideFrame).not.toContain("[very-…]");
+    wideRender.unmount();
+  });
+
+  it("preserves full timestamp formatting in wide terminals", async () => {
+    const controller = newController();
+    controller.setSystemInfo(makeSystemInfo());
+    controller.setActiveSection("logs");
+    controller.log("wide timestamp", "scope");
+    controller.setSelectedLogIndex(0);
+
+    const rendered = render(renderDashboardAppNode(controller));
+    setTerminalSize(rendered, 120, 24);
+    rendered.rerender(renderDashboardAppNode(controller));
+    await new Promise((r) => setTimeout(r, 10));
+    const frame = rendered.lastFrame() ?? "";
+
+    expect(frame).toContain("wide timestamp");
+    expect(frame).toMatch(/\d{2}:\d{2}:\d{2}\.\d{3}/);
+    rendered.unmount();
   });
 });

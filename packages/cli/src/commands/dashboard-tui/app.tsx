@@ -479,6 +479,21 @@ function SettingsPanel({ state, isFocused }: { state: DashboardState; isFocused:
 // Width of the prefix slot in log rows. Long prefixes are truncated; short
 // ones (and missing prefixes) are padded so the message column stays aligned.
 const PREFIX_WIDTH = 14;
+// Narrow-mode log layout: reduced widths to maximise message space.
+const NARROW_PREFIX_WIDTH = 8;
+
+function narrowTimestamp(index: number): string {
+  // Show a short 1-based index padded to 3 chars (e.g. "  1", " 42", "999").
+  return String(index + 1).padStart(3);
+}
+
+function narrowPrefix(prefix: string | undefined, maxWidth: number): string {
+  if (!prefix) return " ".repeat(maxWidth);
+  const bracketed = `[${prefix}]`;
+  if (bracketed.length <= maxWidth) return bracketed.padEnd(maxWidth);
+  // Truncate inside the brackets: "[long…]"
+  return `[${prefix.slice(0, maxWidth - 3)}…]`.padEnd(maxWidth);
+}
 
 function LevelBadge({ level }: { level: LogEntry["level"] }) {
   if (level === "error") return <Text color="red">✗</Text>;
@@ -500,6 +515,8 @@ function LogsPanel({
 }) {
   const { logsSeverityFilter, logsWrapEnabled, logsExpandedMode, selectedLogIndex } = state;
   const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+  const isNarrow = cols < NARROW_THRESHOLD;
   // Subtract the chrome (header ~2, status bar 1, panel borders/title ~3,
   // utilities/settings sub-row ~5) from live rows. Same heuristic the parent
   // grid used; keeping it co-located ensures we always read the freshest
@@ -554,16 +571,35 @@ function LogsPanel({
             const isSelected = absoluteIndex === cursor;
             const bg = isSelected ? "cyan" : undefined;
             const fg = isSelected ? "whiteBright" : undefined;
-            const ts = formatTimestamp(entry.timestamp);
             const lvl = entry.level === "error" ? "✗" : entry.level === "warn" ? "⚠" : "✓";
             const lvlColor = entry.level === "error" ? "red" : entry.level === "warn" ? "yellow" : "green";
+            const marker = isSelected ? "▶ " : "  ";
+
+            if (isNarrow) {
+              const idx = narrowTimestamp(absoluteIndex);
+              const pfx = narrowPrefix(entry.prefix, NARROW_PREFIX_WIDTH);
+              return (
+                <Text
+                  key={`${entry.timestamp.getTime()}-${displayIdx}`}
+                  backgroundColor={bg}
+                  wrap={logsWrapEnabled ? "wrap" : "truncate-end"}
+                >
+                  <Text color={isSelected ? "white" : "gray"} bold={isSelected}>{marker}</Text>
+                  <Text color={fg} dimColor={!isSelected}>{idx} </Text>
+                  <Text color={lvlColor}>{lvl}</Text>
+                  <Text color={fg} dimColor={!isSelected}>{` ${pfx} `}</Text>
+                  <Text color={fg} bold={isSelected}>{entry.message}</Text>
+                </Text>
+              );
+            }
+
+            const ts = formatTimestamp(entry.timestamp);
             // Pad/truncate prefix to a fixed slot so message column aligns
             // across rows (rows without a prefix get blank padding instead of
             // collapsing).
             const prefixSlot = entry.prefix
               ? `[${entry.prefix}]`.slice(0, PREFIX_WIDTH).padEnd(PREFIX_WIDTH)
               : " ".repeat(PREFIX_WIDTH);
-            const marker = isSelected ? "▶ " : "  ";
             return (
               <Text
                 key={`${entry.timestamp.getTime()}-${displayIdx}`}
@@ -1135,6 +1171,8 @@ function TaskDetailScreen({
   interactiveData: DashboardState["interactiveData"];
 }) {
   const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+  const isNarrow = cols < NARROW_THRESHOLD;
   // How many lines the log pane can show — leave room for header + steps + dividers.
   const rows = stdout?.rows ?? 24;
 
@@ -1386,6 +1424,18 @@ function TaskDetailScreen({
                     entry.level === "warn" ? "yellow" :
                     entry.level === "error" ? "red" :
                     entry.level === "debug" ? "gray" : "white";
+
+                  if (isNarrow) {
+                    const levelSymbol = entry.level === "error" ? "✗" : entry.level === "warn" ? "⚠" : "✓";
+                    return (
+                      <Box key={startIdx + i} flexDirection="row" gap={1} flexShrink={0}>
+                        <Text dimColor>{narrowTimestamp(startIdx + i)}</Text>
+                        <Text color={levelColor}>{levelSymbol}</Text>
+                        <Text wrap="wrap">{entry.text}</Text>
+                      </Box>
+                    );
+                  }
+
                   const levelLabel = entry.level.toUpperCase().padEnd(5);
                   return (
                     <Box key={startIdx + i} flexDirection="row" gap={1} flexShrink={0}>
