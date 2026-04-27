@@ -1,18 +1,7 @@
 /**
- * Paperclip Runtime Plugin - Type Definitions
- *
- * The plugin runtime contract is defined locally in this example plugin to avoid
- * a hard compile-time dependency on internal engine package exports.
+ * Paperclip Runtime Plugin - Local runtime interface types.
  */
 
-// ── Local Agent Runtime Contract ──────────────────────────────────────────────
-
-/** Minimal session shape used by the runtime adapter. */
-export interface AgentSession {
-  dispose?: () => Promise<void> | void;
-}
-
-/** Options for creating an agent session. Mirrors createFnAgent inputs used by the adapter. */
 export interface AgentRuntimeOptions {
   cwd: string;
   systemPrompt: string;
@@ -21,7 +10,7 @@ export interface AgentRuntimeOptions {
   onText?: (text: string) => void;
   onThinking?: (text: string) => void;
   onToolStart?: (toolName: string, args?: unknown) => void;
-  onToolEnd?: (toolName: string, result?: unknown) => void;
+  onToolEnd?: (toolName: string, isError: boolean, result?: unknown) => void;
   defaultProvider?: string;
   defaultModelId?: string;
   fallbackProvider?: string;
@@ -32,23 +21,47 @@ export interface AgentRuntimeOptions {
   skills?: string[];
 }
 
-/** Result of creating a session. */
+export interface PaperclipSession {
+  apiUrl: string;
+  apiKey: string | undefined;
+  agentId: string;
+  companyId: string;
+  sessionId: string;
+  systemPrompt: string;
+  cwd: string;
+  onText: ((text: string) => void) | undefined;
+  onThinking: ((text: string) => void) | undefined;
+  onToolStart: ((toolName: string, args?: unknown) => void) | undefined;
+  onToolEnd: ((toolName: string, isError: boolean, result?: unknown) => void) | undefined;
+  dispose?: () => void;
+}
+
 export interface AgentSessionResult {
-  session: AgentSession;
+  session: PaperclipSession;
   sessionFile?: string;
 }
 
-/** Agent runtime adapter interface. */
 export interface AgentRuntime {
   id: string;
   name: string;
   createSession(options: AgentRuntimeOptions): Promise<AgentSessionResult>;
-  promptWithFallback(session: AgentSession, prompt: string, options?: unknown): Promise<void>;
-  describeModel(session: AgentSession): string;
-  dispose?(session: AgentSession): Promise<void>;
+  promptWithFallback(session: PaperclipSession, prompt: string, options?: unknown): Promise<void>;
+  describeModel(session: PaperclipSession): string;
+  dispose?(session: PaperclipSession): Promise<void>;
 }
 
-// ── Plugin Registration Types (from @fusion/plugin-sdk) ─────────────────────
+export interface PaperclipRuntimeConfig {
+  apiUrl: string;
+  apiKey?: string;
+  agentId?: string;
+  companyId?: string;
+}
+
+export interface RuntimeLogger {
+  info: (message: string) => void;
+  warn: (message: string) => void;
+  error: (message: string) => void;
+}
 
 export type {
   PluginRuntimeManifestMetadata,

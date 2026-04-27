@@ -1,13 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-const { mockCreateFnAgent, mockPromptWithFallback, mockDescribeModel } = vi.hoisted(() => ({
-    mockCreateFnAgent: vi.fn(),
-    mockPromptWithFallback: vi.fn(),
-    mockDescribeModel: vi.fn().mockReturnValue("unknown model"),
+const { mockResolveGatewayConfig, mockCreateGatewaySession, mockPromptGateway, mockDescribeGatewayModel, mockProbeGateway, } = vi.hoisted(() => ({
+    mockResolveGatewayConfig: vi.fn().mockReturnValue({
+        gatewayUrl: "http://127.0.0.1:18789",
+        gatewayToken: undefined,
+        agentId: "main",
+    }),
+    mockCreateGatewaySession: vi.fn(),
+    mockPromptGateway: vi.fn(),
+    mockDescribeGatewayModel: vi.fn().mockReturnValue("openclaw/main"),
+    mockProbeGateway: vi.fn().mockResolvedValue(true),
 }));
 vi.mock("../pi-module.js", () => ({
-    createFnAgent: mockCreateFnAgent,
-    promptWithFallback: mockPromptWithFallback,
-    describeModel: mockDescribeModel,
+    resolveGatewayConfig: mockResolveGatewayConfig,
+    createGatewaySession: mockCreateGatewaySession,
+    promptGateway: mockPromptGateway,
+    describeGatewayModel: mockDescribeGatewayModel,
+    probeGateway: mockProbeGateway,
 }));
 import plugin, { openclawRuntimeMetadata, openclawRuntimeFactory, OPENCLAW_RUNTIME_ID } from "../index.js";
 import { OpenClawRuntimeAdapter } from "../runtime-adapter.js";
@@ -31,6 +39,7 @@ function createMockContext(overrides = {}) {
 describe("openclaw-runtime plugin", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mockProbeGateway.mockResolvedValue(true);
     });
     afterEach(() => {
         vi.restoreAllMocks();
@@ -59,13 +68,22 @@ describe("openclaw-runtime plugin", () => {
         });
     });
     describe("hooks", () => {
-        it("onLoad should log startup message and emit loaded event", async () => {
+        it("onLoad should probe gateway, log startup message, and emit loaded event", async () => {
             const ctx = createMockContext();
+            mockResolveGatewayConfig.mockReturnValue({
+                gatewayUrl: "http://localhost:18789",
+                gatewayToken: "secret-token",
+                agentId: "main",
+            });
             await plugin.hooks.onLoad?.(ctx);
-            expect(ctx.logger.info).toHaveBeenCalledWith("OpenClaw Runtime Plugin loaded");
+            expect(mockProbeGateway).toHaveBeenCalledWith("http://localhost:18789");
+            expect(ctx.logger.info).toHaveBeenCalledWith("OpenClaw Runtime Plugin loaded (gateway: http://localhost:18789, reachable: yes)");
+            expect(ctx.logger.info.mock.calls.join(" ")).not.toContain("secret-token");
             expect(ctx.emitEvent).toHaveBeenCalledWith("openclaw-runtime:loaded", {
                 runtimeId: OPENCLAW_RUNTIME_ID,
                 version: "0.1.0",
+                gatewayUrl: "http://localhost:18789",
+                gatewayReachable: true,
             });
         });
         it("onUnload should not throw", () => {
@@ -79,7 +97,18 @@ describe("openclaw-runtime plugin", () => {
             expect(typeof openclawRuntimeFactory).toBe("function");
         });
         it("runtime factory should return executable runtime adapter", async () => {
-            const runtime = (await openclawRuntimeFactory(createMockContext()));
+            const runtime = (await openclawRuntimeFactory(createMockContext({
+                settings: {
+                    gatewayUrl: "http://settings-gateway:18789",
+                    gatewayToken: "plugin-token",
+                    agentId: "ops",
+                },
+            })));
+            expect(mockResolveGatewayConfig).toHaveBeenCalledWith({
+                gatewayUrl: "http://settings-gateway:18789",
+                gatewayToken: "plugin-token",
+                agentId: "ops",
+            });
             expect(runtime).toBeInstanceOf(OpenClawRuntimeAdapter);
             expect(runtime.id).toBe("openclaw");
             expect(runtime.name).toBe("OpenClaw Runtime");

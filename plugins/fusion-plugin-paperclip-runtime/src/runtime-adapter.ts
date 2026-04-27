@@ -1,142 +1,195 @@
-/**
- * Paperclip Runtime Adapter
- *
- * Implements the AgentRuntime interface for Fusion's plugin system, providing
- * AI agent sessions backed by the user's configured pi provider and model.
- *
- * ## Responsibilities
- *
- * - Wraps `createFnAgent` from the engine's pi module
- * - Delegates `promptWithFallback` to the pi implementation
- * - Provides model description via pi's `describeModel`
- * - Handles session disposal when explicitly requested
- *
- * ## Usage
- *
- * ```typescript
- * import { PaperclipRuntimeAdapter } from "./runtime-adapter.js";
- *
- * const adapter = new PaperclipRuntimeAdapter();
- * const { session } = await adapter.createSession({
- *   cwd: process.cwd(),
- *   systemPrompt: "You are a helpful assistant",
- *   skills: ["bash", "read"],
- * });
- *
- * await adapter.promptWithFallback(session, "Hello, world!");
- * console.log(adapter.describeModel(session)); // e.g., "anthropic/claude-sonnet-4-5"
- *
- * await adapter.dispose(session);
- * ```
- */
-
+import { randomUUID } from "node:crypto";
+import {
+  ConflictError,
+  createIssue,
+  checkoutIssue,
+  getIssue,
+  getIssueComments,
+  invokeHeartbeat,
+  resolvePaperclipConfig,
+} from "./pi-module.js";
 import type {
   AgentRuntime,
   AgentRuntimeOptions,
-  AgentSession,
   AgentSessionResult,
+  PaperclipRuntimeConfig,
+  PaperclipSession,
+  RuntimeLogger,
 } from "./types.js";
 
-// ── Pi Module Seam ─────────────────────────────────────────────────────────────
-//
-// The pi functions are imported from a local seam module (pi-module.ts) which
-// re-exports them from the engine. This approach provides a mockable import path
-// for Vitest tests without relying on CommonJS require() which bypasses mocks.
-//
-// The seam module is at: ./pi-module.js
-//
-import { createFnAgent, promptWithFallback, describeModel } from "./pi-module.js";
+const POLL_INITIAL_INTERVAL_MS = 2_000;
+const POLL_MAX_INTERVAL_MS = 10_000;
+const POLL_TIMEOUT_MS = 120_000;
+const TERMINAL_STATUSES = new Set(["done", "cancelled", "in_review"]);
 
-/** Cached describeModel reference for synchronous describeModel() calls */
-const getModelDescription = describeModel;
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-/**
- * Paperclip runtime adapter implementing the Fusion AgentRuntime interface.
- *
- * This adapter wraps the existing pi agent creation and session management,
- * making it available through Fusion's plugin runtime system.
- *
- * ## Disposal Semantics
- *
- * The `dispose()` method is provided as an extension to the AgentRuntime interface.
- * Engine session consumers may call `dispose()` to clean up sessions when done.
- * If the session doesn't support disposal, this is a no-op.
- */
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function deriveIssueTitle(prompt: string): string {
+  const firstLine = prompt.split("\n").find((line) => line.trim() !== "") ?? "Fusion runtime prompt";
+  return firstLine.slice(0, 200);
+}
+
+function buildIssueDescription(session: PaperclipSession, prompt: string): string {
+  return [
+    `System Prompt:\n${session.systemPrompt}`,
+    `Working Directory: ${session.cwd}`,
+    `Prompt:\n${prompt}`,
+  ].join("\n\n");
+}
+
+function collectCommentText(comments: Array<Record<string, unknown>>): { text: string; thinking: string } {
+  const textParts: string[] = [];
+  const thinkingParts: string[] = [];
+
+  for (const comment of comments) {
+    const body = asString(comment.body)?.trim();
+    if (!body) {
+      continue;
+    }
+
+    textParts.push(body);
+
+    const kind = asString(comment.kind) ?? asString(comment.type);
+    if (kind === "thinking" || kind === "reasoning") {
+      thinkingParts.push(body);
+      continue;
+    }
+
+    if (body.toLowerCase().startsWith("thinking:")) {
+      thinkingParts.push(body.replace(/^thinking:\s*/i, ""));
+    }
+  }
+
+  return {
+    text: textParts.join("\n\n"),
+    thinking: thinkingParts.join("\n\n"),
+  };
+}
+
+function pickIssueId(issue: Record<string, unknown>): string {
+  const issueId = asString(issue.id);
+  if (!issueId) {
+    throw new Error("Paperclip createIssue response missing issue id");
+  }
+  return issueId;
+}
+
+function pickIssueStatus(issue: Record<string, unknown>): string {
+  return asString(issue.status) ?? "unknown";
+}
+
 export class PaperclipRuntimeAdapter implements AgentRuntime {
-  /** Unique runtime identifier */
   readonly id = "paperclip";
-
-  /** Human-readable runtime name */
   readonly name = "Paperclip Runtime";
 
-  /**
-   * Create a new agent session using the pi backend.
-   *
-   * @param options - Session creation options including cwd, systemPrompt, model selection, and skills
-   * @returns Promise resolving to the session result with session and optional sessionFile
-   */
+  private readonly config: PaperclipRuntimeConfig;
+  private readonly logger: RuntimeLogger;
+
+  constructor(config?: Partial<PaperclipRuntimeConfig>, logger?: RuntimeLogger) {
+    this.config = {
+      ...resolvePaperclipConfig(config as Record<string, unknown> | undefined),
+      ...config,
+    };
+    this.logger = logger ?? console;
+  }
+
   async createSession(options: AgentRuntimeOptions): Promise<AgentSessionResult> {
-    return createFnAgent({
-      cwd: options.cwd,
+    if (!this.config.agentId || !this.config.companyId) {
+      const missing = [!this.config.agentId ? "agentId" : null, !this.config.companyId ? "companyId" : null]
+        .filter(Boolean)
+        .join(", ");
+      throw new Error(
+        `Paperclip runtime is missing required config: ${missing}. Configure plugin settings (apiUrl, apiKey, agentId, companyId) or PAPERCLIP_* environment variables.`,
+      );
+    }
+
+    const session: PaperclipSession = {
+      apiUrl: this.config.apiUrl,
+      apiKey: this.config.apiKey,
+      agentId: this.config.agentId,
+      companyId: this.config.companyId,
+      sessionId: randomUUID(),
       systemPrompt: options.systemPrompt,
-      tools: options.tools,
-      customTools: options.customTools,
+      cwd: options.cwd,
       onText: options.onText,
       onThinking: options.onThinking,
       onToolStart: options.onToolStart,
       onToolEnd: options.onToolEnd,
-      defaultProvider: options.defaultProvider,
-      defaultModelId: options.defaultModelId,
-      fallbackProvider: options.fallbackProvider,
-      fallbackModelId: options.fallbackModelId,
-      defaultThinkingLevel: options.defaultThinkingLevel,
-      sessionManager: options.sessionManager,
-      skillSelection: options.skillSelection,
-      skills: options.skills,
+      dispose: () => undefined,
+    };
+
+    return {
+      session,
+      sessionFile: undefined,
+    };
+  }
+
+  async promptWithFallback(
+    session: PaperclipSession,
+    prompt: string,
+    _options?: unknown,
+  ): Promise<void> {
+    session.onToolStart?.("paperclip.issue", { sessionId: session.sessionId });
+
+    const createdIssue = await createIssue(session.apiUrl, session.apiKey, session.companyId, {
+      title: deriveIssueTitle(prompt),
+      description: buildIssueDescription(session, prompt),
+      status: "backlog",
+      assigneeAgentId: session.agentId,
+    });
+
+    const issueId = pickIssueId(createdIssue);
+
+    try {
+      await checkoutIssue(session.apiUrl, session.apiKey, issueId, session.agentId, session.sessionId);
+    } catch (error) {
+      if (error instanceof ConflictError) {
+        this.logger.warn(`Paperclip checkout conflict for issue ${issueId}; continuing: ${error.message}`);
+      } else {
+        throw error;
+      }
+    }
+
+    await invokeHeartbeat(session.apiUrl, session.apiKey, session.agentId);
+
+    let issue = createdIssue;
+    let status = pickIssueStatus(issue);
+    let intervalMs = POLL_INITIAL_INTERVAL_MS;
+    const startedAt = Date.now();
+
+    while (!TERMINAL_STATUSES.has(status) && Date.now() - startedAt < POLL_TIMEOUT_MS) {
+      await sleep(intervalMs);
+      issue = await getIssue(session.apiUrl, session.apiKey, issueId);
+      status = pickIssueStatus(issue);
+      intervalMs = Math.min(intervalMs * 2, POLL_MAX_INTERVAL_MS);
+    }
+
+    const comments = await getIssueComments(session.apiUrl, session.apiKey, issueId);
+    const { text, thinking } = collectCommentText(comments);
+    if (text) {
+      session.onText?.(text);
+    }
+    if (thinking) {
+      session.onThinking?.(thinking);
+    }
+
+    session.onToolEnd?.("paperclip.issue", false, {
+      issueId,
+      status,
     });
   }
 
-  /**
-   * Prompt the session with user input, with automatic retry and compaction.
-   *
-   * Delegates to the pi backend's promptWithFallback implementation which handles:
-   * - Automatic retry on transient errors
-   * - Context compaction on context limit errors
-   * - Model fallback on retryable model selection errors
-   *
-   * @param session - The agent session to prompt
-   * @param prompt - The prompt text
-   * @param options - Optional prompt options (e.g., images for vision)
-   */
-  async promptWithFallback(session: AgentSession, prompt: string, options?: unknown): Promise<void> {
-    return promptWithFallback(session, prompt, options);
+  describeModel(session: PaperclipSession): string {
+    return `paperclip/${session.agentId}`;
   }
 
-  /**
-   * Get a human-readable model description from a session.
-   *
-   * Returns the model in the format `"<provider>/<modelId>"`
-   * or `"unknown model"` when the session has no model set.
-   *
-   * @param session - The agent session to describe
-   * @returns Model description string
-   */
-  describeModel(session: AgentSession): string {
-    return getModelDescription(session);
-  }
-
-  /**
-   * Dispose of an agent session.
-   *
-   * Calls `session.dispose()` if the session supports disposal,
-   * otherwise this is a no-op. This extension method provides
-   * explicit cleanup semantics expected by engine session consumers.
-   *
-   * @param session - The agent session to dispose
-   */
-  async dispose(session: AgentSession): Promise<void> {
-    if (typeof (session as { dispose?: () => Promise<void> }).dispose === "function") {
-      await (session as { dispose: () => Promise<void> }).dispose();
-    }
+  async dispose(_session: PaperclipSession): Promise<void> {
+    // no-op: Paperclip manages run/session lifecycle server-side
   }
 }

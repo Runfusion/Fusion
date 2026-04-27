@@ -1,117 +1,106 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+
+const { mockProbePaperclipInstance, mockResolvePaperclipConfig, mockAdapterCtor, MockAdapter } = vi.hoisted(() => {
+  const mockProbe = vi.fn();
+  const mockResolve = vi.fn((settings?: Record<string, unknown>) => ({
+    apiUrl: "http://localhost:3100",
+    apiKey: undefined,
+    agentId: undefined,
+    companyId: undefined,
+    ...(settings ?? {}),
+  }));
+  const adapterCtor = vi.fn();
+  class Adapter {
+    readonly id = "paperclip";
+    readonly name = "Paperclip Runtime";
+    constructor(...args: unknown[]) {
+      adapterCtor(...args);
+    }
+  }
+
+  return {
+    mockProbePaperclipInstance: mockProbe,
+    mockResolvePaperclipConfig: mockResolve,
+    mockAdapterCtor: adapterCtor,
+    MockAdapter: Adapter,
+  };
+});
 
 vi.mock("../pi-module.js", () => ({
-  createFnAgent: vi.fn().mockResolvedValue({ session: {} }),
-  promptWithFallback: vi.fn(),
-  describeModel: vi.fn().mockReturnValue("mock/model"),
+  probePaperclipInstance: mockProbePaperclipInstance,
+  resolvePaperclipConfig: mockResolvePaperclipConfig,
+}));
+
+vi.mock("../runtime-adapter.js", () => ({
+  PaperclipRuntimeAdapter: MockAdapter,
 }));
 
 import plugin from "../index.js";
-import { PaperclipRuntimeAdapter } from "../runtime-adapter.js";
-
-// ── Test Suite ─────────────────────────────────────────────────────────────────
 
 describe("paperclip-runtime plugin", () => {
-  describe("plugin manifest identity", () => {
-    it("should export a valid FusionPlugin with correct manifest fields", () => {
-      expect(plugin.manifest.id).toBe("fusion-plugin-paperclip-runtime");
-      expect(plugin.manifest.name).toBe("Paperclip Runtime Plugin");
-      expect(plugin.manifest.version).toBe("1.0.0");
-      expect(plugin.manifest.description).toBe(
-        "Provides Paperclip runtime for Fusion AI agents",
-      );
-      expect(plugin.manifest.author).toBe("Fusion Team");
-      expect(plugin.state).toBe("installed");
-    });
-
-    it("should have runtime manifest metadata matching manifest.json", () => {
-      expect(plugin.manifest.runtime).toBeDefined();
-      expect(plugin.manifest.runtime!.runtimeId).toBe("paperclip");
-      expect(plugin.manifest.runtime!.name).toBe("Paperclip Runtime");
-      expect(plugin.manifest.runtime!.version).toBe("1.0.0");
-    });
-
-    it("should have fusionVersion requirement", () => {
-      expect(plugin.manifest.fusionVersion).toBe(">=0.1.0");
-    });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockProbePaperclipInstance.mockResolvedValue({ ok: true, deploymentMode: "local_trusted" });
   });
 
-  describe("runtime registration", () => {
-    it("should have runtime registration", () => {
-      expect(plugin.runtime).toBeDefined();
-    });
-
-    it("should have correct runtime metadata", () => {
-      const runtime = plugin.runtime!;
-      expect(runtime.metadata.runtimeId).toBe("paperclip");
-      expect(runtime.metadata.name).toBe("Paperclip Runtime");
-      expect(runtime.metadata.description).toBe(
-        "Paperclip-backed AI session using the user's configured pi provider and model",
-      );
-      expect(runtime.metadata.version).toBe("1.0.0");
-    });
-
-    it("should have a factory function", () => {
-      expect(plugin.runtime!.factory).toBeDefined();
-      expect(typeof plugin.runtime!.factory).toBe("function");
-    });
+  it("keeps manifest identity unchanged", () => {
+    expect(plugin.manifest.id).toBe("fusion-plugin-paperclip-runtime");
+    expect(plugin.manifest.runtime?.runtimeId).toBe("paperclip");
+    expect(plugin.manifest.name).toBe("Paperclip Runtime Plugin");
+    expect(plugin.runtime?.metadata.runtimeId).toBe("paperclip");
   });
 
-  describe("runtime factory invocation", () => {
-    it("should return a PaperclipRuntimeAdapter instance when factory is invoked", async () => {
-      const runtime = await plugin.runtime!.factory({} as any);
-      expect(runtime).toBeInstanceOf(PaperclipRuntimeAdapter);
-    });
+  it("factory resolves settings and passes config/logger to adapter", async () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const ctx = {
+      settings: {
+        apiUrl: "http://paperclip.example",
+        apiKey: "secret",
+        agentId: "AG-1",
+        companyId: "CO-1",
+      },
+      logger,
+    };
 
-    it("should return an adapter with correct id and name", async () => {
-      const runtime = (await plugin.runtime!.factory({} as any)) as PaperclipRuntimeAdapter;
-      expect(runtime.id).toBe("paperclip");
-      expect(runtime.name).toBe("Paperclip Runtime");
-    });
+    await plugin.runtime!.factory(ctx as any);
+
+    expect(mockResolvePaperclipConfig).toHaveBeenCalledWith(ctx.settings);
+    expect(mockAdapterCtor).toHaveBeenCalledWith(
+      {
+        apiUrl: "http://paperclip.example",
+        apiKey: "secret",
+        agentId: "AG-1",
+        companyId: "CO-1",
+      },
+      logger,
+    );
   });
 
-  describe("hooks", () => {
-    it("should have onLoad hook", () => {
-      expect(plugin.hooks.onLoad).toBeDefined();
-      expect(typeof plugin.hooks.onLoad).toBe("function");
-    });
+  it("onLoad probes Paperclip and logs success without leaking apiKey", async () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const ctx = {
+      settings: {
+        apiUrl: "http://paperclip.example",
+        apiKey: "super-secret",
+      },
+      logger,
+    };
 
-    it("onLoad should not throw when called with valid context", () => {
-      const mockLogger = {
-        info: () => {},
-        warn: () => {},
-        error: () => {},
-        debug: () => {},
-      };
-      const mockCtx = {
-        pluginId: "fusion-plugin-paperclip-runtime",
-        settings: {},
-        logger: mockLogger,
-        emitEvent: () => {},
-        taskStore: {},
-      };
+    await plugin.hooks.onLoad!(ctx as any);
 
-      expect(() => plugin.hooks.onLoad!(mockCtx as any)).not.toThrow();
-    });
+    expect(mockProbePaperclipInstance).toHaveBeenCalledWith("http://paperclip.example", "super-secret");
+    expect(logger.info).toHaveBeenCalledWith(
+      "Paperclip Runtime Plugin loaded (apiUrl=http://paperclip.example)",
+    );
+    expect(JSON.stringify(logger.info.mock.calls)).not.toContain("super-secret");
+  });
 
-    it("onLoad should call logger.info", () => {
-      const mockLogger = {
-        info: vi.fn(),
-        warn: vi.fn(),
-        error: vi.fn(),
-        debug: vi.fn(),
-      };
-      const mockCtx = {
-        pluginId: "fusion-plugin-paperclip-runtime",
-        settings: {},
-        logger: mockLogger,
-        emitEvent: () => {},
-        taskStore: {},
-      };
+  it("onLoad logs warning when probe fails", async () => {
+    mockProbePaperclipInstance.mockResolvedValue({ ok: false, error: "ECONNREFUSED" });
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
 
-      plugin.hooks.onLoad!(mockCtx as any);
+    await plugin.hooks.onLoad!({ settings: {}, logger } as any);
 
-      expect(mockLogger.info).toHaveBeenCalledWith("Paperclip Runtime Plugin loaded");
-    });
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("probe failed"));
   });
 });
