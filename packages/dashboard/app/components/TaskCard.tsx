@@ -151,11 +151,9 @@ function getDoneWorkflowRuntimeMs(task: Task): number | null {
 function formatElapsedDuration(elapsedMs: number): string {
   if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return "";
 
-  if (elapsedMs < 1000) return `${Math.round(elapsedMs)}ms`;
+  if (elapsedMs < 60_000) return "<1m";
 
   const elapsedSeconds = elapsedMs / 1000;
-  if (elapsedSeconds < 60) return `${elapsedSeconds.toFixed(1)}s`;
-
   const elapsedMinutes = Math.floor(elapsedSeconds / 60);
   if (elapsedMinutes < 60) {
     const remSeconds = Math.round(elapsedSeconds % 60);

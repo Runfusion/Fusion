@@ -416,6 +416,22 @@
   gap: var(--space-sm);
 }
 
+.settings-inline-link {
+  color: var(--todo);
+  text-decoration: none;
+  transition: text-decoration var(--transition-fast);
+}
+
+.settings-inline-link:hover {
+  text-decoration: underline;
+}
+
+.settings-inline-link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
 /* === Memory Settings === */
 .memory-status-message {
   display: flex;

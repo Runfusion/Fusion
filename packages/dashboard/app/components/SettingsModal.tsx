@@ -3181,7 +3181,12 @@ export function SettingsModal({
                 />
                 <small>
                   Your ntfy.sh topic name (1–64 alphanumeric/hyphen/underscore characters).{" "}
-                  <a href="https://ntfy.sh" target="_blank" rel="noopener noreferrer">
+                  <a
+                    href="https://ntfy.sh"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="settings-inline-link"
+                  >
                     Learn more about ntfy.sh
                   </a>
                 </small>

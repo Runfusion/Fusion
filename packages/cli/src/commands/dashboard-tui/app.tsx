@@ -53,6 +53,7 @@ import { SECTION_ORDER } from "./state.js";
 import type { LogEntry } from "./log-ring-buffer.js";
 import { FUSION_LOGO_LINES, FUSION_LOGO_LARGE_LINES, FUSION_TAGLINE, FUSION_URL, FUSION_VERSION } from "./logo.js";
 import { useProjects, useTasks } from "./hooks/use-projects.js";
+import { copyToClipboard } from "./utils.js";
 
 // ── Format helpers ────────────────────────────────────────────────────────────
 
@@ -623,7 +624,7 @@ function LogsPanel({
 function ExpandedLog({ entry, index, total }: { entry: LogEntry; index: number; total: number }) {
   return (
     <Box flexDirection="column" flexGrow={1} width="100%">
-      <Text dimColor>Entry {index + 1}/{total} · [Enter/Esc] close</Text>
+      <Text dimColor>Entry {index + 1}/{total} · [Enter/Esc] close · [c] copy</Text>
       <Box height={1} />
       <Box flexDirection="row" gap={1}>
         <Text dimColor>Time:</Text>
@@ -698,6 +699,7 @@ function HelpOverlay() {
     ["[↑/↓/k/j]", "Navigate list / log entries"],
     ["[Home / G]", "First / last log entry (Logs)"],
     ["[Enter/Space]", "Expand log entry (Logs)"],
+    ["[c]", "Copy selected log entry to clipboard (Logs)"],
     ["[w]", "Toggle word wrap (Logs / Files)"],
     ["[f]", "Cycle severity filter (Main, any panel)"],
     ["[Space]", "Toggle boolean (Settings)"],
@@ -4047,6 +4049,26 @@ export function DashboardApp({ controller }: DashboardAppProps) {
       // global Settings shortcut, so we don't bind it here.
       if (key.end || input === "G") {
         controller.setSelectedLogIndex(Math.max(0, filteredEntries.length - 1));
+        return;
+      }
+
+      if (input === "c" || input === "C") {
+        const target = filteredEntries[state.selectedLogIndex];
+        if (target) {
+          const ts = formatTimestamp(target.timestamp);
+          const prefix = target.prefix ? `[${target.prefix}] ` : "";
+          const text = `${ts} ${target.level.toUpperCase()} ${prefix}${target.message}`;
+          void copyToClipboard(text).then((ok) => {
+            if (ok) {
+              controller.log("Log entry copied to clipboard.", "clipboard");
+            } else {
+              controller.warn(
+                "Clipboard copy failed (no pbcopy/xclip/wl-copy/clip available).",
+                "clipboard",
+              );
+            }
+          });
+        }
         return;
       }
     }

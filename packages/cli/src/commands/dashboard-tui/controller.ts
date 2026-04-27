@@ -342,11 +342,24 @@ export class DashboardTUI {
     // If the cursor was sitting on the most recent entry (or there were no
     // entries yet), keep it pinned to the new tail so live logs follow the
     // latest event — same behavior as `tail -f` or k9s.
-    const beforeCount = this.getFilteredLogEntries().length;
+    const beforeEntries = this.getFilteredLogEntries();
+    const beforeCount = beforeEntries.length;
     const wasAtTail = beforeCount === 0 || this.selectedLogIndex === beforeCount - 1;
+    // While the user is reading a single entry in expanded mode, pin the
+    // cursor on that entry so streaming logs don't yank the view away.
+    // Track by reference so ring-buffer eviction shifts the index correctly.
+    const pinnedEntry = this.logsExpandedMode ? beforeEntries[this.selectedLogIndex] : undefined;
     this.logBuffer.push({ ...entry, timestamp: new Date() });
     const after = this.getFilteredLogEntries();
-    if (wasAtTail) {
+    if (pinnedEntry) {
+      const newIdx = after.indexOf(pinnedEntry);
+      if (newIdx >= 0) {
+        this.selectedLogIndex = newIdx;
+      } else {
+        // Pinned entry was evicted from the ring buffer — fall back to oldest.
+        this.selectedLogIndex = 0;
+      }
+    } else if (wasAtTail) {
       this.selectedLogIndex = Math.max(0, after.length - 1);
     } else {
       this.clampSelectedLogIndex(after);
