@@ -7,6 +7,7 @@ import type { Routine, RoutineExecutionResult, RoutineTriggerType } from "@fusio
 vi.mock("lucide-react", () => ({
   Plus: () => <span data-testid="icon-plus">+</span>,
   Play: () => <span data-testid="icon-play">▶</span>,
+  Loader2: () => <span data-testid="icon-loader">⟳</span>,
   Pause: () => <span data-testid="icon-pause">⏸</span>,
   Pencil: () => <span data-testid="icon-pencil">✎</span>,
   Trash2: () => <span data-testid="icon-trash">🗑</span>,
@@ -154,6 +155,34 @@ describe("RoutineCard", () => {
       expect(screen.getByText("My description")).toBeDefined();
     });
 
+    it("renders inline run output when lastRunOutput is successful", () => {
+      render(
+        <RoutineCard
+          routine={makeRoutine()}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          onRun={onRun}
+          onToggle={onToggle}
+          lastRunOutput={{ output: "hello", success: true }}
+        />,
+      );
+      expect(screen.getByText("hello")).toBeDefined();
+    });
+
+    it("renders inline run error when lastRunOutput fails", () => {
+      render(
+        <RoutineCard
+          routine={makeRoutine()}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          onRun={onRun}
+          onToggle={onToggle}
+          lastRunOutput={{ output: "", error: "boom", success: false }}
+        />,
+      );
+      expect(screen.getByText("boom")).toBeDefined();
+    });
+
     it("hides description when not present", () => {
       render(<RoutineCard routine={makeRoutine({ description: undefined })} onEdit={onEdit} onDelete={onDelete} onRun={onRun} onToggle={onToggle} />);
       expect(screen.queryByText("A test routine")).toBeNull();
@@ -173,6 +202,17 @@ describe("RoutineCard", () => {
     it("disables run button when running prop is true", () => {
       render(<RoutineCard routine={makeRoutine()} onEdit={onEdit} onDelete={onDelete} onRun={onRun} onToggle={onToggle} running={true} />);
       expect(screen.getByLabelText("Running…")).toBeDisabled();
+    });
+
+    it("shows loader icon instead of play icon when running", () => {
+      render(<RoutineCard routine={makeRoutine()} onEdit={onEdit} onDelete={onDelete} onRun={onRun} onToggle={onToggle} running={true} />);
+      expect(screen.getByTestId("icon-loader")).toBeDefined();
+      expect(screen.queryByTestId("icon-play")).toBeNull();
+    });
+
+    it("adds running class on the card wrapper when running", () => {
+      const { container } = render(<RoutineCard routine={makeRoutine()} onEdit={onEdit} onDelete={onDelete} onRun={onRun} onToggle={onToggle} running={true} />);
+      expect(container.querySelector(".routine-card.running")).toBeDefined();
     });
 
     it("clicking toggle button calls onToggle with the routine", () => {

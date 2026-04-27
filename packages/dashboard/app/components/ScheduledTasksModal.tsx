@@ -38,6 +38,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId }: ScheduledT
   const [routineView, setRoutineView] = useState<"list" | "create" | "edit">("list");
   const [editingRoutine, setEditingRoutine] = useState<Routine | undefined>();
   const [runningRoutineId, setRunningRoutineId] = useState<string | null>(null);
+  const [lastRunOutput, setLastRunOutput] = useState<Record<string, { output: string; error?: string; success: boolean }>>({});
 
   // Build scope options for API calls
   const scopeOptions = useMemo(() => ({
@@ -50,6 +51,22 @@ export function ScheduledTasksModal({ onClose, addToast, projectId }: ScheduledT
     try {
       const data = await fetchRoutines(scopeOptions);
       setRoutines(data);
+      setLastRunOutput((previous) => {
+        const next = { ...previous };
+        for (const routine of data) {
+          const pendingOutput = next[routine.id];
+          if (!pendingOutput || !routine.lastRunResult) continue;
+          const reflected = routine.lastRunResult;
+          if (
+            reflected.success === pendingOutput.success
+            && (reflected.output || "") === pendingOutput.output
+            && (reflected.error || "") === (pendingOutput.error || "")
+          ) {
+            delete next[routine.id];
+          }
+        }
+        return next;
+      });
     } catch (err) {
       addToast(getErrorMessage(err) || "Failed to load routines", "error");
     }
@@ -145,6 +162,14 @@ export function ScheduledTasksModal({ onClose, addToast, projectId }: ScheduledT
       setRunningRoutineId(routine.id);
       try {
         const { result } = await runRoutine(routine.id, scopeOptions);
+        setLastRunOutput((previous) => ({
+          ...previous,
+          [routine.id]: {
+            output: result.output || "",
+            error: result.error,
+            success: result.success,
+          },
+        }));
         if (result.success) {
           addToast(`"${routine.name}" completed successfully`, "success");
         } else {
@@ -181,6 +206,12 @@ export function ScheduledTasksModal({ onClose, addToast, projectId }: ScheduledT
     setEditingRoutine(undefined);
   }, []);
 
+  useEffect(() => {
+    if (routineView !== "list") {
+      setLastRunOutput({});
+    }
+  }, [routineView]);
+
   // ── Scope switch handler ───────────────────────────────────────────────
 
   const handleScopeSwitch = useCallback((scope: SchedulingScope) => {
@@ -188,6 +219,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId }: ScheduledT
     // Reset to list view when switching scope
     setRoutineView("list");
     setEditingRoutine(undefined);
+    setLastRunOutput({});
   }, []);
 
   // ── Render content ─────────────────────────────────────────────────────
@@ -238,6 +270,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId }: ScheduledT
             onRun={handleRunRoutine}
             onToggle={handleToggleRoutine}
             running={runningRoutineId === r.id}
+            lastRunOutput={lastRunOutput[r.id] ?? null}
           />
         ))}
       </div>

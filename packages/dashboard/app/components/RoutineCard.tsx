@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Play, Pause, Pencil, Trash2, Clock, CheckCircle, XCircle, ChevronDown, ChevronUp, Calendar, Webhook, Code, Zap, Globe, Folder, Layers } from "lucide-react";
+import { Play, Pause, Pencil, Trash2, Clock, CheckCircle, XCircle, ChevronDown, ChevronUp, Calendar, Webhook, Code, Zap, Globe, Folder, Layers, Loader2 } from "lucide-react";
 import type { Routine, RoutineExecutionResult, RoutineTriggerType, RoutineCatchUpPolicy, RoutineExecutionPolicy } from "@fusion/core";
 
 /**
@@ -82,6 +82,8 @@ interface RoutineCardProps {
   onToggle: (routine: Routine) => void;
   /** Whether a manual run is currently in progress. */
   running?: boolean;
+  /** Latest manual-run output shown inline until refreshed routine data catches up. */
+  lastRunOutput?: { output: string; error?: string; success: boolean } | null;
 }
 
 function RunResultBadge({ result }: { result: RoutineExecutionResult }) {
@@ -141,7 +143,7 @@ function RunHistoryItem({ result, index }: { result: RoutineExecutionResult; ind
   );
 }
 
-export function RoutineCard({ routine, onEdit, onDelete, onRun, onToggle, running }: RoutineCardProps) {
+export function RoutineCard({ routine, onEdit, onDelete, onRun, onToggle, running, lastRunOutput }: RoutineCardProps) {
   const [showHistory, setShowHistory] = useState(false);
 
   const handleDelete = useCallback(() => {
@@ -159,7 +161,7 @@ export function RoutineCard({ routine, onEdit, onDelete, onRun, onToggle, runnin
     : routine.cronExpression || "";
 
   return (
-    <div className={`routine-card${routine.enabled ? "" : " disabled"}`}>
+    <div className={`routine-card${routine.enabled ? "" : " disabled"}${running ? " running" : ""}`}>
       <div className="routine-card-header">
         <div className="routine-card-info">
           <div className="routine-card-name-row">
@@ -193,7 +195,7 @@ export function RoutineCard({ routine, onEdit, onDelete, onRun, onToggle, runnin
             title={running ? "Running…" : "Run now"}
             aria-label={running ? "Running…" : `Run ${routine.name} now`}
           >
-            <Play size={14} />
+            {running ? <Loader2 size={14} className="spinner" /> : <Play size={14} />}
           </button>
           <button
             className="btn-icon"
@@ -276,6 +278,17 @@ export function RoutineCard({ routine, onEdit, onDelete, onRun, onToggle, runnin
           <span>{routine.runCount}</span>
         </div>
       </div>
+
+      {lastRunOutput && (
+        <div className={`routine-run-output ${lastRunOutput.success ? "success" : "failure"}`}>
+          {lastRunOutput.output && (
+            <pre className="routine-run-output-text">{lastRunOutput.output}</pre>
+          )}
+          {lastRunOutput.error && (
+            <div className="routine-run-output-error">{lastRunOutput.error}</div>
+          )}
+        </div>
+      )}
 
       {routine.runHistory.length > 0 && (
         <div className="routine-card-history">
