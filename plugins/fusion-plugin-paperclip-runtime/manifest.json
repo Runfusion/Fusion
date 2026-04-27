@@ -9,7 +9,7 @@
   "runtime": {
     "runtimeId": "paperclip",
     "name": "Paperclip Runtime",
-    "description": "Paperclip-backed AI session using the user's configured pi provider and model",
+    "description": "Paperclip-backed AI session via Paperclip REST API",
     "version": "1.0.0"
   }
 }

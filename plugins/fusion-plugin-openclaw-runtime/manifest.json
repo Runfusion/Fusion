@@ -8,7 +8,7 @@
   "runtime": {
     "runtimeId": "openclaw",
     "name": "OpenClaw Runtime",
-    "description": "OpenClaw-backed AI session using the user's configured pi provider and model",
+    "description": "OpenClaw-backed AI session using the local OpenClaw gateway",
     "version": "0.1.0"
   }
 }

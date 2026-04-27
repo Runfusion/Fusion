@@ -8,7 +8,7 @@
   "runtime": {
     "runtimeId": "hermes",
     "name": "Hermes Runtime",
-    "description": "Hermes-backed AI session using the user's configured pi provider and model",
+    "description": "Hermes raw-model runtime using pi-ai direct streaming",
     "version": "0.1.0"
   }
 }
