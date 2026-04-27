@@ -1349,12 +1349,12 @@ export function QuickChatFAB({
                             {renderAssistantMessageContent(message.content, forcePlain)}
                             <button
                               type="button"
-                              className={`btn btn-icon quick-chat-message-render-toggle${forcePlain ? " quick-chat-message-render-toggle--plain" : ""}`}
+                              className={`quick-chat-message-render-toggle${forcePlain ? " quick-chat-message-render-toggle--plain" : ""}`}
                               data-testid="quick-chat-message-render-toggle"
                               aria-label={forcePlain ? "Show rendered markdown" : "Show plain text"}
                               onClick={() => toggleMessageRenderMode(message.id)}
                             >
-                              {forcePlain ? <EyeOff size={12} /> : <Eye size={12} />}
+                              {forcePlain ? <EyeOff size={14} /> : <Eye size={14} />}
                             </button>
                           </>
                         )}
@@ -1375,12 +1375,12 @@ export function QuickChatFAB({
                         </div>
                         <button
                           type="button"
-                          className={`btn btn-icon quick-chat-message-render-toggle${plainTextMessageIds.has("__streaming__") ? " quick-chat-message-render-toggle--plain" : ""}`}
+                          className={`quick-chat-message-render-toggle${plainTextMessageIds.has("__streaming__") ? " quick-chat-message-render-toggle--plain" : ""}`}
                           data-testid="quick-chat-message-render-toggle"
                           aria-label={plainTextMessageIds.has("__streaming__") ? "Show rendered markdown" : "Show plain text"}
                           onClick={() => toggleMessageRenderMode("__streaming__")}
                         >
-                          {plainTextMessageIds.has("__streaming__") ? <EyeOff size={12} /> : <Eye size={12} />}
+                          {plainTextMessageIds.has("__streaming__") ? <EyeOff size={14} /> : <Eye size={14} />}
                         </button>
                       </>
                     ) : (

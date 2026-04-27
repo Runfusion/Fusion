@@ -248,16 +248,21 @@ describe("QuickChatFAB", () => {
 
     const toggles = screen.getAllByTestId("quick-chat-message-render-toggle");
     expect(toggles).toHaveLength(2);
+    expect(toggles[0]).not.toHaveClass("btn");
+    expect(toggles[0]).not.toHaveClass("btn-icon");
+    expect(toggles[0].querySelector("svg")).toBeInTheDocument();
     expect(within(firstAssistantBubble).getByText("Bold", { selector: "strong" })).toBeInTheDocument();
     expect(within(secondAssistantBubble).getByText("Bold", { selector: "strong" })).toBeInTheDocument();
 
     fireEvent.click(toggles[0]);
 
+    expect(toggles[0]).toHaveClass("quick-chat-message-render-toggle--plain");
     expect(within(firstAssistantBubble).getByText(/\*\*Bold\*\* one/)).toBeInTheDocument();
     expect(within(firstAssistantBubble).queryByText("Bold", { selector: "strong" })).toBeNull();
     expect(within(secondAssistantBubble).getByText("Bold", { selector: "strong" })).toBeInTheDocument();
 
     fireEvent.click(toggles[0]);
+    expect(toggles[0]).not.toHaveClass("quick-chat-message-render-toggle--plain");
     expect(within(firstAssistantBubble).getByText("Bold", { selector: "strong" })).toBeInTheDocument();
     expect(within(userBubble).getByText(/\*\*User\*\* plain/)).toBeInTheDocument();
   });

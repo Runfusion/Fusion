@@ -293,11 +293,12 @@
   justify-content: center;
   opacity: 0;
   transition: opacity var(--transition-fast);
-  color: var(--text-tertiary);
+  color: var(--text-muted);
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
+  outline: none;
 }
 
 .quick-chat-panel-message--received:hover .quick-chat-message-render-toggle,
@@ -313,6 +314,11 @@
 .quick-chat-message-render-toggle:hover {
   background: var(--surface-hover);
   color: var(--text);
+}
+
+.quick-chat-message-render-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
 }
 
 .quick-chat-panel-input {
