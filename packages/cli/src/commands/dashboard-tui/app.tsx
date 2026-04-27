@@ -51,7 +51,7 @@ import type {
 } from "./state.js";
 import { SECTION_ORDER } from "./state.js";
 import type { LogEntry } from "./log-ring-buffer.js";
-import { FUSION_LOGO_LINES, FUSION_LOGO_LARGE_LINES, FUSION_TAGLINE } from "./logo.js";
+import { FUSION_LOGO_LINES, FUSION_LOGO_LARGE_LINES, FUSION_TAGLINE, FUSION_URL, FUSION_VERSION } from "./logo.js";
 import { useProjects, useTasks } from "./hooks/use-projects.js";
 
 // ── Format helpers ────────────────────────────────────────────────────────────
@@ -139,6 +139,8 @@ function SplashScreen({ loadingStatus }: { loadingStatus: string }) {
         <AnimatedFusionLogo lines={large ? FUSION_LOGO_LARGE_LINES : FUSION_LOGO_LINES} />
       )}
       <Text color="cyanBright" dimColor>{FUSION_TAGLINE}</Text>
+      <Text color="cyanBright" dimColor>{FUSION_URL}</Text>
+      <Text color="cyanBright" dimColor>{`v${FUSION_VERSION}`}</Text>
       <Box height={1} />
       <Box flexDirection="row" gap={1}>
         <Text color="cyanBright"><Spinner type="dots" /></Text>
@@ -204,6 +206,10 @@ function SystemPanel({ state, isFocused }: { state: DashboardState; isFocused: b
         <Text dimColor>System information not available.</Text>
       ) : (
         <Box flexDirection="column">
+          <Box flexDirection="row" gap={1}>
+            <Text dimColor>Version:</Text>
+            <Text>{`v${FUSION_VERSION}`}</Text>
+          </Box>
           <Box flexDirection="row" gap={1}>
             <Text dimColor>Host:</Text>
             <Text>{info.host}</Text>
@@ -791,7 +797,7 @@ function StatusBar({ state, controller: _controller }: { state: DashboardState; 
 
   const statusParts: string[] = [];
   if (systemInfo) {
-    statusParts.push(systemInfo.baseUrl);
+    statusParts.push(`${systemInfo.baseUrl} v${FUSION_VERSION}`);
     statusParts.push(formatUptime(Date.now() - systemInfo.startTimeMs));
   }
 

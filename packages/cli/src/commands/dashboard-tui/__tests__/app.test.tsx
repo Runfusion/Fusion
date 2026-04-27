@@ -165,7 +165,8 @@ describe("DashboardApp smoke", () => {
     const frame = lastFrame() ?? "";
     // Splash can render either the compact text mark or the expanded block-art logo.
     expect(frame).toMatch(/FUSION|███████╗/);
-    expect(frame).toContain("AI coding agent dashboard");
+    expect(frame).toContain("multi node agent orchestrator");
+    expect(frame).toContain("runfusion.ai");
     unmount();
   });
 
