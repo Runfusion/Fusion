@@ -181,16 +181,20 @@ function Panel({ title, isFocused, children, flexGrow, flexShrink, width }: Pane
       borderColor={isFocused ? "cyanBright" : "gray"}
       flexDirection="column"
       flexGrow={flexGrow}
-      flexShrink={flexShrink}
+      // Default flexShrink to 1. Yoga's default is 0 (unlike CSS), so without
+      // this a panel whose intrinsic content height exceeds its container —
+      // common at narrow widths where Text wraps — refuses to shrink, the
+      // frame grows past terminal rows, and Ink scrolls the top (header) off.
+      flexShrink={flexShrink ?? 1}
       width={width}
       overflow="hidden"
     >
-      <Box paddingX={1}>
+      <Box paddingX={1} flexShrink={0}>
         <Text bold={isFocused} color={isFocused ? "cyanBright" : undefined} dimColor={!isFocused}>
           {title}
         </Text>
       </Box>
-      <Box flexDirection="column" paddingX={1} flexGrow={1} overflow="hidden">
+      <Box flexDirection="column" paddingX={1} flexGrow={1} flexShrink={1} overflow="hidden">
         {children}
       </Box>
     </Box>
@@ -795,11 +799,19 @@ function StatusModeSingle({
   controller: DashboardTUI;
 }) {
   const focused = state.activeSection;
+  const { stdout } = useStdout();
+  // Cap the middle pane so a panel's intrinsic content height (e.g. LogsPanel's
+  // own rowBudget computation) can never exceed terminal rows. Without this,
+  // Ink writes a frame taller than the terminal under tmux narrow panes and the
+  // top row (header) scrolls off — and stays off across re-renders.
+  const rows = stdout?.rows ?? 24;
+  const cols = stdout?.columns ?? 80;
+  const middleHeight = Math.max(1, rows - 2);
 
   const activePanel = () => {
     switch (focused) {
       case "system": return <SystemPanel state={state} isFocused />;
-      case "logs": return <LogsPanel state={state} isFocused />;
+      case "logs": return <LogsPanel state={state} isFocused availableRows={middleHeight - 4} />;
       case "utilities": return <UtilitiesPanel state={state} isFocused />;
       case "stats": return <StatsPanel state={state} isFocused />;
       case "settings": return <SettingsPanel state={state} isFocused />;
@@ -807,14 +819,14 @@ function StatusModeSingle({
   };
 
   return (
-    <Box flexDirection="column" flexGrow={1}>
-      <Box flexShrink={0}>
+    <Box flexDirection="column" height={rows} width={cols} overflow="hidden">
+      <Box height={1} flexShrink={0} overflow="hidden">
         <MainHeader state={state} />
       </Box>
-      <Box flexGrow={1} flexDirection="column" overflow="hidden">
+      <Box height={middleHeight} flexShrink={0} flexDirection="column" overflow="hidden">
         {activePanel()}
       </Box>
-      <Box flexShrink={0}>
+      <Box height={1} flexShrink={0} overflow="hidden">
         <StatusBar state={state} controller={controller} />
       </Box>
     </Box>
