@@ -80,6 +80,73 @@ function buildEntryRenderKeys(entries: AgentLogEntry[]): string[] {
   });
 }
 
+function isToolLikeType(type: AgentLogEntry["type"]): boolean {
+  return type === "tool" || type === "tool_result" || type === "tool_error";
+}
+
+function shouldShowBadge(entry: AgentLogEntry, previousEntry?: AgentLogEntry): boolean {
+  if (!entry.agent) return false;
+  if (isToolLikeType(entry.type)) return true;
+  return !previousEntry || previousEntry.agent !== entry.agent || previousEntry.type !== entry.type;
+}
+
+type AgentLogRenderGroup =
+  | {
+    kind: "single";
+    entry: AgentLogEntry;
+    key: string;
+    showBadge: boolean;
+  }
+  | {
+    kind: "text" | "thinking";
+    entries: AgentLogEntry[];
+    key: string;
+    showBadge: boolean;
+  };
+
+function buildRenderGroups(entries: AgentLogEntry[], entryKeys: string[]): AgentLogRenderGroup[] {
+  const groups: AgentLogRenderGroup[] = [];
+
+  for (let i = 0; i < entries.length; i += 1) {
+    const entry = entries[i];
+    const rowKey = entryKeys[i] ?? `${getEntrySignature(entry)}|fallback`;
+    const previousEntry = i > 0 ? entries[i - 1] : undefined;
+    const showBadge = shouldShowBadge(entry, previousEntry);
+
+    if (entry.type === "text" || entry.type === "thinking") {
+      const groupedEntries: AgentLogEntry[] = [entry];
+      let j = i + 1;
+      while (j < entries.length) {
+        const nextEntry = entries[j];
+        if (nextEntry.type !== entry.type || nextEntry.agent !== entry.agent) {
+          break;
+        }
+        groupedEntries.push(nextEntry);
+        j += 1;
+      }
+
+      const endKey = entryKeys[j - 1] ?? `${getEntrySignature(entries[j - 1])}|fallback`;
+      groups.push({
+        kind: entry.type,
+        entries: groupedEntries,
+        key: `${rowKey}->${endKey}`,
+        showBadge,
+      });
+      i = j - 1;
+      continue;
+    }
+
+    groups.push({
+      kind: "single",
+      entry,
+      key: rowKey,
+      showBadge,
+    });
+  }
+
+  return groups;
+}
+
 interface ModelInfo {
   provider?: string;
   modelId?: string;
@@ -106,6 +173,7 @@ interface AgentLogViewerProps {
  *
  * Features:
  * - Displays entries in chronological order (oldest first, newest last)
+ * - Coalesces consecutive same-agent `text`/`thinking` chunks into continuous groups
  * - Auto-scrolls to keep latest entries visible when streaming
  * - Supports toggling between markdown-formatted and plain-text rendering
  * - "Load More" button to fetch older entries when pagination is enabled
@@ -142,6 +210,11 @@ export function AgentLogViewer({
   const chronologicalEntryKeys = useMemo(
     () => buildEntryRenderKeys(entries),
     [entries],
+  );
+
+  const renderGroups = useMemo(
+    () => buildRenderGroups(entries, chronologicalEntryKeys),
+    [entries, chronologicalEntryKeys],
   );
 
   // Keep live-follow pinned to the bottom when new streamed entries append.
@@ -391,83 +464,84 @@ export function AgentLogViewer({
           </div>
         )}
 
-        {entries.map((entry, i) => {
-          const rowKey = chronologicalEntryKeys[i] ?? `${getEntrySignature(entry)}|fallback`;
-          const prev = entries[i - 1];
-          const isBlockLevel = entry.type === "tool" || entry.type === "tool_result" || entry.type === "tool_error";
-          const showBadge = entry.agent
-            ? isBlockLevel || !prev || prev.agent !== entry.agent || prev.type !== entry.type
-            : false;
-
-          const timestampSpan = showBadge ? (
+        {renderGroups.map((group) => {
+          const firstEntry = group.kind === "single" ? group.entry : group.entries[0];
+          const timestampSpan = group.showBadge ? (
             <span className="agent-log-timestamp" data-testid="agent-log-timestamp">
-              {formatTimestamp(entry.timestamp)}
+              {formatTimestamp(firstEntry.timestamp)}
             </span>
           ) : null;
 
-          const agentBadge = showBadge ? (
+          const agentBadge = group.showBadge ? (
             <span className="agent-log-badge-row">
-              <span className="agent-log-agent-badge">[{AGENT_DISPLAY_NAMES[entry.agent!] ?? entry.agent}]</span>
+              <span className="agent-log-agent-badge">[{AGENT_DISPLAY_NAMES[firstEntry.agent!] ?? firstEntry.agent}]</span>
               {timestampSpan}
             </span>
           ) : null;
 
-          if (entry.type === "tool") {
-            return (
-              <div key={rowKey} className="agent-log-tool">
-                {agentBadge}⚡ {entry.text}
-                {entry.detail && <span className="agent-log-tool-detail">— {entry.detail}</span>}
-              </div>
-            );
+          if (group.kind === "single") {
+            const { entry } = group;
+
+            if (entry.type === "tool") {
+              return (
+                <div key={group.key} className="agent-log-tool">
+                  {agentBadge}⚡ {entry.text}
+                  {entry.detail && <span className="agent-log-tool-detail">— {entry.detail}</span>}
+                </div>
+              );
+            }
+
+            if (entry.type === "tool_result") {
+              return (
+                <div key={group.key} className="agent-log-tool-result">
+                  {agentBadge}✓ {entry.text}
+                  {entry.detail && <span className="agent-log-tool-detail">— {entry.detail}</span>}
+                </div>
+              );
+            }
+
+            if (entry.type === "tool_error") {
+              return (
+                <div key={group.key} className="agent-log-tool-error">
+                  {agentBadge}✗ {entry.text}
+                  {entry.detail && <span className="agent-log-tool-detail">— {entry.detail}</span>}
+                </div>
+              );
+            }
           }
 
-          if (entry.type === "thinking") {
+          const groupedText = group.kind === "single"
+            ? firstEntry.text
+            : group.entries.map((entry) => entry.text).join("");
+
+          if (group.kind === "thinking") {
             return (
-              <div key={rowKey} className="agent-log-thinking">
+              <div key={group.key} className="agent-log-thinking">
                 {agentBadge}
                 {renderMarkdown ? (
                   <div className="markdown-body">
                     <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                      {entry.text}
+                      {groupedText}
                     </ReactMarkdown>
                   </div>
                 ) : (
-                  entry.text
+                  groupedText
                 )}
               </div>
             );
           }
 
-          if (entry.type === "tool_result") {
-            return (
-              <div key={rowKey} className="agent-log-tool-result">
-                {agentBadge}✓ {entry.text}
-                {entry.detail && <span className="agent-log-tool-detail">— {entry.detail}</span>}
-              </div>
-            );
-          }
-
-          if (entry.type === "tool_error") {
-            return (
-              <div key={rowKey} className="agent-log-tool-error">
-                {agentBadge}✗ {entry.text}
-                {entry.detail && <span className="agent-log-tool-detail">— {entry.detail}</span>}
-              </div>
-            );
-          }
-
-          // Default: text entries
           return (
-            <div key={rowKey} className="agent-log-text">
+            <div key={group.key} className="agent-log-text">
               {agentBadge}
               {renderMarkdown ? (
                 <div className="markdown-body">
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                    {entry.text}
+                    {groupedText}
                   </ReactMarkdown>
                 </div>
               ) : (
-                entry.text
+                groupedText
               )}
             </div>
           );

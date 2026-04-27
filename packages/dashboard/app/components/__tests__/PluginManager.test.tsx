@@ -203,7 +203,8 @@ describe("PluginManager", () => {
       expect(fetchPlugins).toHaveBeenCalled();
     });
 
-    const hermesCard = screen.getByText("Hermes Runtime").closest(".plugin-bundled-runtime-item");
+    const hermesLabel = await screen.findByText("Hermes Runtime");
+    const hermesCard = hermesLabel.closest(".plugin-bundled-runtime-item");
     expect(hermesCard).toBeTruthy();
 
     const installButton = within(hermesCard as HTMLElement).getByRole("button", { name: /Install Hermes Runtime/i });

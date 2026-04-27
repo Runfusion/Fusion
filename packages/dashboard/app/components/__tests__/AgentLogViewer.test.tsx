@@ -53,22 +53,21 @@ describe("AgentLogViewer", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it("renders text entries in chronological order (oldest first)", () => {
+  it("renders grouped text entries in chronological order (oldest first)", () => {
     const entries = [
-      makeEntry({ text: "first chunk" }),
-      makeEntry({ text: "second chunk" }),
+      makeEntry({ text: "first chunk", agent: "executor" }),
+      makeEntry({ text: " second chunk", agent: "executor" }),
     ];
     const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
     const textSpans = container.querySelectorAll(".agent-log-text");
-    expect(textSpans).toHaveLength(2);
-    expect(textSpans[0].textContent).toContain("first chunk");
-    expect(textSpans[1].textContent).toContain("second chunk");
+    expect(textSpans).toHaveLength(1);
+    expect(textSpans[0].textContent).toContain("first chunk second chunk");
   });
 
   it("keeps existing DOM rows stable when a new live entry appears at the bottom", () => {
     const initialEntries = [
-      makeEntry({ text: "first chunk", timestamp: "2026-01-01T00:00:00Z" }),
-      makeEntry({ text: "second chunk", timestamp: "2026-01-01T00:00:01Z" }),
+      makeEntry({ text: "first chunk", timestamp: "2026-01-01T00:00:00Z", agent: "triage" }),
+      makeEntry({ text: "second chunk", timestamp: "2026-01-01T00:00:01Z", agent: "executor" }),
     ];
 
     const { container, rerender } = render(
@@ -83,7 +82,7 @@ describe("AgentLogViewer", () => {
 
     const withLiveUpdate = [
       ...initialEntries,
-      makeEntry({ text: "third chunk", timestamp: "2026-01-01T00:00:02Z" }),
+      makeEntry({ text: "third chunk", timestamp: "2026-01-01T00:00:02Z", agent: "reviewer" }),
     ];
 
     rerender(<AgentLogViewer entries={withLiveUpdate} loading={false} />);
@@ -119,7 +118,7 @@ describe("AgentLogViewer", () => {
       />,
     );
 
-    expect(container.querySelectorAll(".agent-log-text")).toHaveLength(3);
+    expect(container.querySelectorAll(".agent-log-text")).toHaveLength(1);
     expect(
       consoleErrorSpy.mock.calls.some((call) =>
         String(call[0]).includes("Encountered two children with the same key"),
@@ -153,6 +152,77 @@ describe("AgentLogViewer", () => {
 
     const toolDivs = container.querySelectorAll(".agent-log-tool");
     expect(toolDivs).toHaveLength(1);
+  });
+
+  describe("entry grouping", () => {
+    it("groups consecutive text entries from the same agent into one container", () => {
+      const entries = [
+        makeEntry({ text: "hello", agent: "executor" }),
+        makeEntry({ text: " world", agent: "executor" }),
+        makeEntry({ text: "!", agent: "executor" }),
+      ];
+
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const textRows = container.querySelectorAll(".agent-log-text");
+      expect(textRows).toHaveLength(1);
+      expect(textRows[0].textContent).toContain("hello world!");
+    });
+
+    it("groups consecutive thinking entries from the same agent into one container", () => {
+      const entries = [
+        makeEntry({ text: "think", type: "thinking", agent: "triage" }),
+        makeEntry({ text: "ing", type: "thinking", agent: "triage" }),
+      ];
+
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const thinkingRows = container.querySelectorAll(".agent-log-thinking");
+      expect(thinkingRows).toHaveLength(1);
+      expect(thinkingRows[0].textContent).toContain("thinking");
+    });
+
+    it("does not group text across tool entries", () => {
+      const entries = [
+        makeEntry({ text: "part 1", type: "text", agent: "executor" }),
+        makeEntry({ text: "Read", type: "tool", agent: "executor" }),
+        makeEntry({ text: " part 2", type: "text", agent: "executor" }),
+      ];
+
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      expect(container.querySelectorAll(".agent-log-text")).toHaveLength(2);
+      expect(container.querySelectorAll(".agent-log-tool")).toHaveLength(1);
+    });
+
+    it("does not group text entries from different agents", () => {
+      const entries = [
+        makeEntry({ text: "triage", agent: "triage" }),
+        makeEntry({ text: "executor", agent: "executor" }),
+      ];
+
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      expect(container.querySelectorAll(".agent-log-text")).toHaveLength(2);
+    });
+
+    it("does not group entries across text and thinking type boundaries", () => {
+      const entries = [
+        makeEntry({ text: "text", type: "text", agent: "executor" }),
+        makeEntry({ text: "thought", type: "thinking", agent: "executor" }),
+      ];
+
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      expect(container.querySelectorAll(".agent-log-text")).toHaveLength(1);
+      expect(container.querySelectorAll(".agent-log-thinking")).toHaveLength(1);
+    });
+
+    it("shows badge and timestamp only once at the start of a grouped text run", () => {
+      const entries = [
+        makeEntry({ text: "a", type: "text", agent: "executor", timestamp: "2026-01-01T00:00:00Z" }),
+        makeEntry({ text: "b", type: "text", agent: "executor", timestamp: "2026-01-01T00:00:01Z" }),
+      ];
+
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      expect(container.querySelectorAll(".agent-log-agent-badge")).toHaveLength(1);
+      expect(container.querySelectorAll(".agent-log-timestamp")).toHaveLength(1);
+    });
   });
 
   it("renders tool entry detail when present", () => {
@@ -1284,6 +1354,37 @@ describe("AgentLogViewer", () => {
       expect(textSpans[0].querySelector(".markdown-body")).toBeNull();
       expect(textSpans[0].querySelector("strong")).toBeNull();
       expect(textSpans[0].querySelector("em")).toBeNull();
+    });
+
+    it("concatenates grouped text into a single markdown render", () => {
+      const entries = [
+        makeEntry({ text: "**bold", type: "text", agent: "executor" }),
+        makeEntry({ text: "** text", type: "text", agent: "executor" }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+
+      const textRows = container.querySelectorAll(".agent-log-text");
+      expect(textRows).toHaveLength(1);
+      expect(textRows[0].querySelectorAll(".markdown-body")).toHaveLength(1);
+      const strong = textRows[0].querySelector("strong");
+      expect(strong).toBeTruthy();
+      expect(strong!.textContent).toBe("bold");
+    });
+
+    it("joins grouped chunks inline in plain text mode", () => {
+      const entries = [
+        makeEntry({ text: "hello", type: "text", agent: "executor" }),
+        makeEntry({ text: " world", type: "text", agent: "executor" }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const toggle = container.querySelector("[data-testid='agent-log-mode-toggle']") as HTMLButtonElement;
+
+      fireEvent.click(toggle);
+
+      const textRows = container.querySelectorAll(".agent-log-text");
+      expect(textRows).toHaveLength(1);
+      expect(textRows[0].querySelector(".markdown-body")).toBeNull();
+      expect(textRows[0].textContent).toContain("hello world");
     });
 
     it("toggles back to markdown mode from plain text", () => {
