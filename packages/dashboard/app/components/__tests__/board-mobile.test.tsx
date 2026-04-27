@@ -118,6 +118,24 @@ beforeEach(() => {
   }
 });
 
+describe("Board desktop column width CSS", () => {
+  it("keeps desktop board columns equal width via 6x minmax(300px, 1fr) grid", () => {
+    const css = loadAllAppCss();
+
+    expectRuleToContain(css, ".board", "grid-template-columns: repeat(6, minmax(300px, 1fr));");
+  });
+
+  it("constrains header content so actions cannot stretch column width", () => {
+    const css = loadAllAppCss();
+
+    expectRuleToContain(css, ".column-header", "min-width: 0;");
+    expectRuleToContain(css, ".column-header h2", "min-width: 0;");
+    expectRuleToContain(css, ".column-header h2", "overflow: hidden;");
+    expectRuleToContain(css, ".column-header h2", "text-overflow: ellipsis;");
+    expectRuleToContain(css, ".column-header h2", "white-space: nowrap;");
+  });
+});
+
 describe("Board and Column mobile CSS", () => {
   it("contains .board scroll-snap-type: x mandatory in the mobile media block", () => {
     const css = loadAllAppCss();
