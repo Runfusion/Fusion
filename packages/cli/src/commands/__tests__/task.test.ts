@@ -922,12 +922,26 @@ describe("runTaskImportGitHubInteractive", () => {
       description: "Description 1\n\nSource: https://github.com/owner/repo/issues/1",
       column: "triage",
       dependencies: [],
+      sourceIssue: {
+        provider: "github",
+        repository: "owner/repo",
+        externalIssueId: "1",
+        issueNumber: 1,
+        url: "https://github.com/owner/repo/issues/1",
+      },
     });
     expect(mockCreateTask).toHaveBeenCalledWith({
       title: "Third Issue",
       description: "Description 3\n\nSource: https://github.com/owner/repo/issues/3",
       column: "triage",
       dependencies: [],
+      sourceIssue: {
+        provider: "github",
+        repository: "owner/repo",
+        externalIssueId: "3",
+        issueNumber: 3,
+        url: "https://github.com/owner/repo/issues/3",
+      },
     });
   });
 
@@ -978,6 +992,13 @@ describe("runTaskImportGitHubInteractive", () => {
       description: "Description 2\n\nSource: https://github.com/owner/repo/issues/2",
       column: "triage",
       dependencies: [],
+      sourceIssue: {
+        provider: "github",
+        repository: "owner/repo",
+        externalIssueId: "2",
+        issueNumber: 2,
+        url: "https://github.com/owner/repo/issues/2",
+      },
     });
 
     const skipLine = logSpy.mock.calls.find(
@@ -1224,6 +1245,13 @@ describe("runTaskImportFromGitHub", () => {
       description: "Description 1\n\nSource: https://github.com/owner/repo/issues/1",
       column: "triage",
       dependencies: [],
+      sourceIssue: {
+        provider: "github",
+        repository: "owner/repo",
+        externalIssueId: "1",
+        issueNumber: 1,
+        url: "https://github.com/owner/repo/issues/1",
+      },
     });
 
     const successLine = logSpy.mock.calls.find(
@@ -1299,6 +1327,13 @@ describe("runTaskImportFromGitHub", () => {
       description: "(no description)\n\nSource: https://github.com/owner/repo/issues/1",
       column: "triage",
       dependencies: [],
+      sourceIssue: {
+        provider: "github",
+        repository: "owner/repo",
+        externalIssueId: "1",
+        issueNumber: 1,
+        url: "https://github.com/owner/repo/issues/1",
+      },
     });
   });
 
@@ -1313,6 +1348,13 @@ describe("runTaskImportFromGitHub", () => {
       description: expect.stringContaining("Body"),
       column: "triage",
       dependencies: [],
+      sourceIssue: {
+        provider: "github",
+        repository: "owner/repo",
+        externalIssueId: "1",
+        issueNumber: 1,
+        url: "https://github.com/owner/repo/issues/1",
+      },
     });
   });
 });

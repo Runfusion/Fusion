@@ -820,6 +820,13 @@ export async function runTaskImportGitHubInteractive(
       description,
       column: "triage",
       dependencies: [],
+      sourceIssue: {
+        provider: "github",
+        repository: `${owner}/${repo}`,
+        externalIssueId: String(issue.number),
+        issueNumber: issue.number,
+        url: issue.html_url,
+      },
     });
 
     const label = task.title || task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "");
@@ -956,6 +963,13 @@ export async function runTaskImportFromGitHub(
       description,
       column: "triage",
       dependencies: [],
+      sourceIssue: {
+        provider: "github",
+        repository: `${owner}/${repo}`,
+        externalIssueId: String(issue.number),
+        issueNumber: issue.number,
+        url: issue.html_url,
+      },
     });
 
     const label = task.title || task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "");

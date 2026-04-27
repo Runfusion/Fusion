@@ -6146,6 +6146,13 @@ describe("POST /github/issues/import", () => {
       description: "Test body\n\nSource: https://github.com/owner/repo/issues/1",
       column: "triage",
       dependencies: [],
+      sourceIssue: {
+        provider: "github",
+        repository: "owner/repo",
+        externalIssueId: "1",
+        issueNumber: 1,
+        url: "https://github.com/owner/repo/issues/1",
+      },
     });
   });
 
@@ -6240,6 +6247,13 @@ describe("POST /github/issues/import", () => {
       description: expect.stringContaining("Source:"),
       column: "triage",
       dependencies: [],
+      sourceIssue: {
+        provider: "github",
+        repository: "owner/repo",
+        externalIssueId: "1",
+        issueNumber: 1,
+        url: "https://github.com/owner/repo/issues/1",
+      },
     });
   });
 });
@@ -6317,6 +6331,33 @@ describe("POST /github/issues/batch-import", () => {
     expect(res.body.results.every((r: { success: boolean }) => r.success)).toBe(true);
     expect(throttledSpy).toHaveBeenCalledTimes(3);
     expect(store.createTask).toHaveBeenCalledTimes(3);
+    expect(store.createTask).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      sourceIssue: {
+        provider: "github",
+        repository: "owner/repo",
+        externalIssueId: "1",
+        issueNumber: 1,
+        url: "https://github.com/owner/repo/issues/1",
+      },
+    }));
+    expect(store.createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      sourceIssue: {
+        provider: "github",
+        repository: "owner/repo",
+        externalIssueId: "2",
+        issueNumber: 2,
+        url: "https://github.com/owner/repo/issues/2",
+      },
+    }));
+    expect(store.createTask).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      sourceIssue: {
+        provider: "github",
+        repository: "owner/repo",
+        externalIssueId: "3",
+        issueNumber: 3,
+        url: "https://github.com/owner/repo/issues/3",
+      },
+    }));
   });
 
   it("skips already-imported issues", async () => {

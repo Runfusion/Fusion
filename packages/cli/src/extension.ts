@@ -801,6 +801,13 @@ export default function kbExtension(pi: ExtensionAPI) {
           description,
           column: "triage",
           dependencies: [],
+          sourceIssue: {
+            provider: "github",
+            repository: `${owner}/${repo}`,
+            externalIssueId: String(issue.number),
+            issueNumber: issue.number,
+            url: issue.html_url,
+          },
         });
 
         await store.logEntry(task.id, "Imported from GitHub", sourceUrl);
@@ -887,6 +894,13 @@ export default function kbExtension(pi: ExtensionAPI) {
         description,
         column: "triage",
         dependencies: [],
+        sourceIssue: {
+          provider: "github",
+          repository: `${owner}/${repo}`,
+          externalIssueId: String(issue.number),
+          issueNumber: issue.number,
+          url: issue.html_url,
+        },
       });
 
       await store.logEntry(task.id, "Imported from GitHub", sourceUrl);
