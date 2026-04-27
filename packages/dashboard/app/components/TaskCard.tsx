@@ -1,6 +1,6 @@
 import "./TaskCard.css";
 import { memo, useCallback, useState, useRef, useEffect, useMemo } from "react";
-import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2 } from "lucide-react";
+import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, Zap } from "lucide-react";
 import type { Task, TaskDetail, Column, PrInfo, IssueInfo, TaskPriority } from "@fusion/core";
 import { COLUMN_LABELS, DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, VALID_TRANSITIONS, getErrorMessage } from "@fusion/core";
 import { fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent } from "../api";
@@ -143,6 +143,24 @@ function formatElapsedDuration(elapsedMs: number): string {
 
   const elapsedDays = Math.floor(elapsedHours / 24);
   return `${elapsedDays}d`;
+}
+
+function formatCompactTokenCount(value: number): string {
+  if (!Number.isFinite(value) || value < 0) {
+    return "0";
+  }
+
+  if (value < 1_000) {
+    return String(value);
+  }
+
+  const trimTrailingDecimal = (formatted: string) => formatted.replace(/\.0$/, "");
+
+  if (value < 1_000_000) {
+    return `${trimTrailingDecimal((value / 1_000).toFixed(1))}k`;
+  }
+
+  return `${trimTrailingDecimal((value / 1_000_000).toFixed(1))}M`;
 }
 
 interface TaskCardProps {
@@ -333,6 +351,8 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previousTask.missionId === nextTask.missionId &&
     previousTask.assignedAgentId === nextTask.assignedAgentId &&
     previousTask.mergeRetries === nextTask.mergeRetries &&
+    previousTask.tokenUsage?.totalTokens === nextTask.tokenUsage?.totalTokens &&
+    previousTask.tokenUsage?.lastUsedAt === nextTask.tokenUsage?.lastUsedAt &&
     areAttachmentsEqual(previousTask.attachments, nextTask.attachments) &&
     areCommentsEqual(previousTask.comments, nextTask.comments) &&
     areTaskDependenciesEqual(previousTask.dependencies, nextTask.dependencies) &&
@@ -1037,6 +1057,18 @@ function TaskCardComponent({
     return null;
   })();
 
+  const tokenUsageIndicator = task.tokenUsage ? (
+    <span
+      className="card-token-usage"
+      title={`${task.tokenUsage.totalTokens.toLocaleString()} tokens`}
+      aria-label={`Token usage ${formatCompactTokenCount(task.tokenUsage.totalTokens)} tokens`}
+    >
+      <Zap size={12} />
+      <span className="card-token-usage-value">{formatCompactTokenCount(task.tokenUsage.totalTokens)}</span>
+      <span>tokens</span>
+    </span>
+  ) : null;
+
   if (isEditing) {
     return (
       <div
@@ -1309,9 +1341,10 @@ function TaskCardComponent({
           </>
         );
       })()}
-      {(filesChangedButton || timeIndicator) && (
+      {(filesChangedButton || timeIndicator || tokenUsageIndicator) && (
         <div className="card-footer-row">
           {filesChangedButton}
+          {tokenUsageIndicator}
           {timeIndicator && (
             <span
               className="card-time-indicator"
@@ -1382,6 +1415,11 @@ const MAX_TITLE_LENGTH = 140;
 function truncate(s: string | undefined, max: number): string {
   if (!s) return "";
   return s.length > max ? s.slice(0, max) + "…" : s;
+}
+
+/** @internal Test helper to verify TaskCard memo comparator behavior */
+export function __test_areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): boolean {
+  return areTaskCardPropsEqual(previous, next);
 }
 
 export const TaskCard = memo(TaskCardComponent, areTaskCardPropsEqual);

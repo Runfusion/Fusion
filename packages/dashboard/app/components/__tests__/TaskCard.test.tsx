@@ -1,6 +1,6 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
-import { TaskCard } from "../TaskCard";
+import { TaskCard, __test_areTaskCardPropsEqual } from "../TaskCard";
 import type { Task } from "@fusion/core";
 
 // Mock lucide-react to avoid SVG rendering issues in test env
@@ -16,6 +16,7 @@ vi.mock("lucide-react", () => ({
   Target: () => null,
   Bot: () => null,
   Trash2: () => null,
+  Zap: () => null,
 }));
 
 vi.mock("../ProviderIcon", () => ({
@@ -47,6 +48,15 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 
 const noop = () => {};
 
+const tokenUsageFixture = {
+  inputTokens: 50_000,
+  outputTokens: 30_000,
+  cachedTokens: 10_000,
+  totalTokens: 90_000,
+  firstUsedAt: "2026-04-26T10:00:00.000Z",
+  lastUsedAt: "2026-04-26T10:30:00.000Z",
+} as const;
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -55,6 +65,33 @@ describe("TaskCard", () => {
   it("renders the card ID text", () => {
     render(<TaskCard task={makeTask()} onOpenDetail={noop} addToast={noop} />);
     expect(screen.getByText("FN-001")).toBeDefined();
+  });
+
+  it("renders token usage indicator when task has token usage", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({ tokenUsage: { ...tokenUsageFixture } })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const tokenUsage = container.querySelector(".card-token-usage");
+    expect(tokenUsage).not.toBeNull();
+    expect(tokenUsage?.textContent).toContain("90k");
+    expect(tokenUsage?.textContent).toContain("tokens");
+  });
+
+  it("does not render token usage indicator when tokenUsage is undefined", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({ tokenUsage: undefined })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card-token-usage")).toBeNull();
   });
 
   it("renders the status badge when task.status is set", () => {
@@ -700,6 +737,32 @@ describe("TaskCard", () => {
     });
 
     expect(container.querySelector(".card-time-indicator")?.textContent).toContain("1m");
+  });
+});
+
+describe("TaskCard memo comparator", () => {
+  it("detects token usage changes", () => {
+    type ComparatorProps = Parameters<typeof __test_areTaskCardPropsEqual>[0];
+
+    const baseTask = makeTask({ tokenUsage: { ...tokenUsageFixture } });
+    const baseProps: ComparatorProps = {
+      task: baseTask,
+      onOpenDetail: noop,
+      addToast: noop,
+    };
+
+    const totalTokenChange: ComparatorProps = {
+      ...baseProps,
+      task: makeTask({ tokenUsage: { ...tokenUsageFixture, totalTokens: 95_000 } }),
+    };
+
+    const lastUsedAtChange: ComparatorProps = {
+      ...baseProps,
+      task: makeTask({ tokenUsage: { ...tokenUsageFixture, lastUsedAt: "2026-04-26T10:35:00.000Z" } }),
+    };
+
+    expect(__test_areTaskCardPropsEqual(baseProps, totalTokenChange)).toBe(false);
+    expect(__test_areTaskCardPropsEqual(baseProps, lastUsedAtChange)).toBe(false);
   });
 });
 

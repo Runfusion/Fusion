@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 const requestedMaxWorkers = Number.parseInt(process.env.VITEST_MAX_WORKERS ?? "2", 10);
@@ -5,6 +6,11 @@ const maxWorkers = Math.max(1, Math.min(4, Number.isFinite(requestedMaxWorkers) 
 process.env.VITEST_MAX_WORKERS = String(maxWorkers);
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@fusion/engine": fileURLToPath(new URL("../../packages/engine/src/index.ts", import.meta.url)),
+    },
+  },
   test: {
     include: ["src/**/*.test.ts"],
     pool: "threads",

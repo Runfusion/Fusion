@@ -49,8 +49,8 @@ vi.mock("../agent-session-helpers.js", async () => {
   };
 });
 vi.mock("node:child_process", () => {
-  const { promisify } = require("node:util");
   const { EventEmitter } = require("node:events");
+  const { promisify } = require("node:util");
   const execSyncFn = vi.fn().mockReturnValue(Buffer.from(""));
   const execFn: any = vi.fn((cmd: any, opts: any, cb: any) => {
     const callback = typeof opts === "function" ? opts : cb;
@@ -78,18 +78,19 @@ vi.mock("node:child_process", () => {
         }
       });
     });
+
   // spawn() is used by the merger's verification runner. Route it through the
   // same execSyncFn mock so a single mockedExecSync.mockImplementation controls
   // both git calls (execSync) and verification commands (spawn). Throwing from
   // execSyncFn ⇒ child emits non-zero close; returning normally ⇒ exit 0.
-  const spawnFn: any = vi.fn((cmd: any, _opts: any) => {
+  const spawnFn: any = vi.fn((cmd: any, opts: any) => {
     const child: any = new EventEmitter();
     child.pid = 1234;
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
     queueMicrotask(() => {
       try {
-        const out = execSyncFn(cmd, _opts);
+        const out = execSyncFn(cmd, opts);
         if (out !== undefined && out !== null) {
           child.stdout.emit("data", Buffer.from(out.toString()));
         }
@@ -102,6 +103,7 @@ vi.mock("node:child_process", () => {
     });
     return child;
   });
+
   return { execSync: execSyncFn, exec: execFn, spawn: spawnFn };
 });
 vi.mock("node:fs", () => ({

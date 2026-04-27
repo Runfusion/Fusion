@@ -478,6 +478,21 @@
   opacity: 0.7;
 }
 
+.card-token-usage {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.card-token-usage-value {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
 .card-time-indicator {
   display: inline-flex;
   align-items: center;
@@ -980,6 +995,10 @@
   .card-footer-row {
     margin-top: var(--space-xs);
     gap: var(--space-xs);
+  }
+
+  .card-token-usage {
+    font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
   }
 
   .card-time-indicator {
