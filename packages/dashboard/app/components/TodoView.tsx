@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus,
   Trash2,
@@ -9,8 +9,12 @@ import {
   ChevronDown,
   Loader2,
   ListChecks,
+  Bot,
+  PlusCircle,
 } from "lucide-react";
-import type { TodoItem, TodoList } from "@fusion/core";
+import { getErrorMessage, type Task, type TaskCreateInput, type TodoItem, type TodoList } from "@fusion/core";
+import { createTask, fetchAgents } from "../api";
+import type { Agent } from "../api";
 import { useTodoLists } from "../hooks/useTodoLists";
 import { useConfirm } from "../hooks/useConfirm";
 import "./TodoView.css";
@@ -58,6 +62,11 @@ export function TodoView({ projectId, addToast }: TodoViewProps) {
   const [newListTitle, setNewListTitle] = useState("");
   const [isAddingList, setIsAddingList] = useState(false);
   const [newItemText, setNewItemText] = useState("");
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [agentsLoading, setAgentsLoading] = useState(false);
+  const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const [activeItemForAgent, setActiveItemForAgent] = useState<string | null>(null);
+  const agentPickerRef = useRef<HTMLDivElement>(null);
   const { confirm } = useConfirm();
 
   const selectedList = useMemo(
@@ -88,6 +97,21 @@ export function TodoView({ projectId, addToast }: TodoViewProps) {
     setSelectedListId(listId);
   }
 
+  const loadAgents = useCallback(async () => {
+    setAgentsLoading(true);
+    try {
+      const loadedAgents = await fetchAgents(undefined, projectId);
+      setAgents(loadedAgents);
+      setShowAgentPicker(true);
+    } catch (err) {
+      addToast(`Failed to load agents: ${getErrorMessage(err)}`, "error");
+      setShowAgentPicker(false);
+      setActiveItemForAgent(null);
+    } finally {
+      setAgentsLoading(false);
+    }
+  }, [projectId, addToast]);
+
   useEffect(() => {
     setEditingListId(null);
     setEditingListTitle("");
@@ -96,7 +120,27 @@ export function TodoView({ projectId, addToast }: TodoViewProps) {
     setEditingItemId(null);
     setEditingItemText("");
     setNewItemText("");
+    setShowAgentPicker(false);
+    setActiveItemForAgent(null);
   }, [selectedListId]);
+
+  useEffect(() => {
+    if (!showAgentPicker) {
+      return;
+    }
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (agentPickerRef.current && !agentPickerRef.current.contains(event.target as Node)) {
+        setShowAgentPicker(false);
+        setActiveItemForAgent(null);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showAgentPicker]);
 
   function handleStartRenameList(list: TodoList): void {
     resetItemDraftState();
@@ -211,6 +255,37 @@ export function TodoView({ projectId, addToast }: TodoViewProps) {
     [ids[index], ids[targetIndex]] = [ids[targetIndex], ids[index]];
     await reorderItems(ids);
   }
+
+  const handleCreateTaskFromItem = useCallback(async (item: TodoItem) => {
+    try {
+      const input: TaskCreateInput = {
+        description: item.text,
+        column: "triage",
+      };
+      const task: Task = await createTask(input, projectId);
+      addToast(`Created ${task.id} from todo`, "success");
+    } catch (err) {
+      addToast(`Failed to create task: ${getErrorMessage(err)}`, "error");
+    }
+  }, [projectId, addToast]);
+
+  const handleCreateTaskAndAssign = useCallback(async (item: TodoItem, agentId: string) => {
+    try {
+      const input: TaskCreateInput = {
+        description: item.text,
+        column: "triage",
+        assignedAgentId: agentId,
+      };
+      const task: Task = await createTask(input, projectId);
+      const assignedAgent = agents.find((agent) => agent.id === agentId);
+      const agentLabel = assignedAgent?.name ?? agentId;
+      addToast(`Created ${task.id} and assigned to ${agentLabel}`, "success");
+      setShowAgentPicker(false);
+      setActiveItemForAgent(null);
+    } catch (err) {
+      addToast(`Failed to create and assign task: ${getErrorMessage(err)}`, "error");
+    }
+  }, [projectId, addToast, agents]);
 
   if (loading) {
     return (
@@ -547,6 +622,65 @@ export function TodoView({ projectId, addToast }: TodoViewProps) {
                                 >
                                   <ChevronDown size={14} />
                                 </button>
+                              </div>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-icon todo-icon-btn"
+                                onClick={() => {
+                                  void handleCreateTaskFromItem(item);
+                                }}
+                                aria-label={`Create task from ${item.text}`}
+                                data-testid={`create-task-from-${item.id}`}
+                              >
+                                <PlusCircle size={14} />
+                              </button>
+                              <div
+                                className="todo-agent-picker-trigger"
+                                ref={activeItemForAgent === item.id ? agentPickerRef : undefined}
+                              >
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-icon todo-icon-btn"
+                                  onClick={() => {
+                                    setActiveItemForAgent(item.id);
+                                    void loadAgents();
+                                  }}
+                                  aria-label={`Assign ${item.text} to agent`}
+                                  data-testid={`assign-agent-for-${item.id}`}
+                                >
+                                  <Bot size={14} />
+                                </button>
+                                {showAgentPicker && activeItemForAgent === item.id && (
+                                  <div
+                                    className="todo-agent-picker-dropdown"
+                                    onMouseDown={(event) => {
+                                      event.preventDefault();
+                                    }}
+                                  >
+                                    {agentsLoading ? (
+                                      <div className="todo-agent-picker-loading">Loading agents...</div>
+                                    ) : agents.filter((agent) => agent.state !== "terminated").length > 0 ? (
+                                      agents
+                                        .filter((agent) => agent.state !== "terminated")
+                                        .map((agent) => (
+                                          <button
+                                            type="button"
+                                            key={agent.id}
+                                            className="todo-agent-picker-item"
+                                            onClick={() => {
+                                              void handleCreateTaskAndAssign(item, agent.id);
+                                            }}
+                                          >
+                                            <Bot size={14} />
+                                            <span>{agent.name}</span>
+                                            <span className="todo-agent-picker-role">{agent.role}</span>
+                                          </button>
+                                        ))
+                                    ) : (
+                                      <div className="todo-agent-picker-empty">No agents available</div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                               <button
                                 type="button"

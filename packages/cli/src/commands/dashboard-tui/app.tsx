@@ -756,50 +756,24 @@ function StatusModeGrid({
   controller: DashboardTUI;
 }) {
   const focused = state.activeSection;
-  const { stdout } = useStdout();
-  // Pin every row to an explicit height with overflow:hidden — same reasoning
-  // as StatusModeSingle. Without this, a panel whose intrinsic content (e.g.
-  // wrapped Text or many StatRows in a narrow column) outgrows its slot
-  // pushes the frame past terminal rows; Ink then scrolls the top off and
-  // panel headers (Logs especially, top of the right column) disappear.
-  const rows = stdout?.rows ?? 24;
-  const cols = stdout?.columns ?? 80;
-  const middleHeight = Math.max(1, rows - 2);
-  // Right column splits vertically: Logs on top, Utilities+Settings beneath.
-  // Reserve a fixed slot for the bottom row so Logs gets a stable, knowable
-  // height we can hand to its rowBudget calculation.
-  const bottomRowHeight = Math.min(10, Math.max(6, Math.floor(middleHeight * 0.35)));
-  const logsHeight = Math.max(1, middleHeight - bottomRowHeight);
-  // Logs Panel chrome: border(2) + title(1) + filter row(1) = 4.
-  const logsAvailableRows = Math.max(1, logsHeight - 4);
-  // Left column splits 50/50 between System and Stats.
-  const leftTopHeight = Math.floor(middleHeight / 2);
-  const leftBottomHeight = middleHeight - leftTopHeight;
 
   return (
-    <Box flexDirection="column" height={rows} width={cols} overflow="hidden">
-      <Box height={1} flexShrink={0} overflow="hidden">
+    <Box flexDirection="column" flexGrow={1}>
+      <Box flexShrink={0}>
         <MainHeader state={state} />
       </Box>
 
-      <Box height={middleHeight} flexShrink={0} flexDirection="row" overflow="hidden">
-        <Box flexDirection="column" width="45%" flexShrink={0} overflow="hidden">
-          <Box height={leftTopHeight} flexShrink={0} flexDirection="column" overflow="hidden">
-            <SystemPanel state={state} isFocused={focused === "system"} />
-          </Box>
-          <Box height={leftBottomHeight} flexShrink={0} flexDirection="column" overflow="hidden">
-            <StatsPanel state={state} isFocused={focused === "stats"} />
-          </Box>
+      <Box flexDirection="row" flexGrow={1} overflow="hidden">
+        <Box flexDirection="column" width="45%" flexGrow={0} flexShrink={1} overflow="hidden">
+          <SystemPanel state={state} isFocused={focused === "system"} />
+          <StatsPanel state={state} isFocused={focused === "stats"} />
         </Box>
-        <Box flexDirection="column" width="55%" flexShrink={0} overflow="hidden">
-          <Box height={logsHeight} flexShrink={0} flexDirection="column" overflow="hidden">
-            <LogsPanel
-              state={state}
-              isFocused={focused === "logs"}
-              availableRows={logsAvailableRows}
-            />
-          </Box>
-          <Box height={bottomRowHeight} flexShrink={0} flexDirection="row" overflow="hidden">
+        <Box flexDirection="column" width="55%" flexGrow={0} flexShrink={1} overflow="hidden">
+          <LogsPanel
+            state={state}
+            isFocused={focused === "logs"}
+          />
+          <Box flexDirection="row" overflow="hidden">
             <Box flexDirection="column" flexGrow={1} overflow="hidden">
               <UtilitiesPanel state={state} isFocused={focused === "utilities"} />
             </Box>
@@ -810,7 +784,7 @@ function StatusModeGrid({
         </Box>
       </Box>
 
-      <Box height={1} flexShrink={0} overflow="hidden">
+      <Box flexShrink={0}>
         <StatusBar state={state} controller={controller} />
       </Box>
     </Box>

@@ -205,6 +205,7 @@
 }
 
 .todo-item {
+  position: relative;
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -272,6 +273,68 @@
 .todo-item-reorder-btn {
   min-height: var(--space-xl);
   min-width: var(--space-xl);
+}
+
+.todo-agent-picker-trigger {
+  position: relative;
+}
+
+.todo-agent-picker-dropdown {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+  min-width: calc(var(--space-2xl) * 6 + var(--space-md));
+  max-height: calc(var(--space-2xl) * 7 + var(--space-md));
+  overflow-y: auto;
+  padding: var(--space-xs);
+  border: calc(var(--space-xs) / 4) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.todo-agent-picker-item {
+  width: 100%;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  padding: var(--space-sm);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.todo-agent-picker-item:hover {
+  background: var(--card-hover);
+}
+
+.todo-agent-picker-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.todo-agent-picker-role {
+  color: var(--text-muted);
+  font-size: calc(var(--space-md) - (var(--space-xs) / 4));
+  text-transform: uppercase;
+  letter-spacing: calc(var(--space-xs) / 8);
+}
+
+.todo-agent-picker-loading,
+.todo-agent-picker-empty {
+  color: var(--text-muted);
+  padding: var(--space-sm);
+  font-size: calc(var(--space-md) + (var(--space-xs) / 8));
 }
 
 .todo-error-banner {
@@ -366,5 +429,20 @@
   .todo-item-checkbox {
     width: calc(var(--space-2xl) + var(--space-xs));
     height: calc(var(--space-2xl) + var(--space-xs));
+  }
+
+  .todo-agent-picker-trigger {
+    position: static;
+  }
+
+  .todo-agent-picker-dropdown {
+    left: 0;
+    right: 0;
+    min-width: 100%;
+    max-height: calc(var(--space-2xl) * 8);
+  }
+
+  .todo-agent-picker-item {
+    min-height: calc(var(--space-2xl) + var(--space-xs));
   }
 }

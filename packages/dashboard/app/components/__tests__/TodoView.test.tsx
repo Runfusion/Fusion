@@ -3,6 +3,8 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { TodoView } from "../TodoView";
 
 const mockUseTodoLists = vi.fn();
+const mockCreateTask = vi.fn();
+const mockFetchAgents = vi.fn();
 
 vi.mock("../../hooks/useTodoLists", () => ({
   useTodoLists: (...args: unknown[]) => mockUseTodoLists(...args),
@@ -12,6 +14,11 @@ const mockConfirm = vi.fn();
 
 vi.mock("../../hooks/useConfirm", () => ({
   useConfirm: () => ({ confirm: mockConfirm }),
+}));
+
+vi.mock("../../api", () => ({
+  createTask: (...args: unknown[]) => mockCreateTask(...args),
+  fetchAgents: (...args: unknown[]) => mockFetchAgents(...args),
 }));
 
 vi.mock("lucide-react", () => ({
@@ -24,6 +31,8 @@ vi.mock("lucide-react", () => ({
   ChevronDown: () => <span data-testid="icon-chevron-down" />,
   Loader2: () => <span data-testid="icon-loader" />,
   ListChecks: () => <span data-testid="icon-list-checks" />,
+  Bot: () => <span data-testid="icon-bot" />,
+  PlusCircle: () => <span data-testid="icon-plus-circle" />,
 }));
 
 function createMockTodoLists(overrides: Record<string, unknown> = {}) {
@@ -60,6 +69,11 @@ describe("TodoView", () => {
     vi.clearAllMocks();
     mockConfirm.mockReset();
     mockConfirm.mockResolvedValue(true);
+    mockCreateTask.mockResolvedValue({ id: "FN-999" });
+    mockFetchAgents.mockResolvedValue([
+      { id: "agent-1", name: "Builder", role: "engineer", state: "active" },
+      { id: "agent-2", name: "Terminated", role: "reviewer", state: "terminated" },
+    ]);
     mockUseTodoLists.mockReturnValue(createMockTodoLists());
   });
 
@@ -391,5 +405,75 @@ describe("TodoView", () => {
     render(<TodoView addToast={addToast} />);
     const selectedButton = screen.getByTestId("todo-list-list-1");
     expect(selectedButton.closest(".todo-list-item")).toHaveClass("todo-list-item--active");
+  });
+
+  it("Create Task button renders for each todo item", () => {
+    render(<TodoView addToast={addToast} />);
+
+    expect(screen.getByTestId("create-task-from-item-1")).toBeInTheDocument();
+    expect(screen.getByTestId("create-task-from-item-2")).toBeInTheDocument();
+  });
+
+  it("Assign to Agent button renders for each todo item", () => {
+    render(<TodoView addToast={addToast} />);
+
+    expect(screen.getByTestId("assign-agent-for-item-1")).toBeInTheDocument();
+    expect(screen.getByTestId("assign-agent-for-item-2")).toBeInTheDocument();
+  });
+
+  it("clicking Create Task button calls createTask with item text", async () => {
+    mockCreateTask.mockResolvedValueOnce({ id: "FN-123" });
+    render(<TodoView addToast={addToast} projectId="project-1" />);
+
+    fireEvent.click(screen.getByTestId("create-task-from-item-1"));
+
+    await waitFor(() => {
+      expect(mockCreateTask).toHaveBeenCalledWith(
+        { description: "Buy groceries", column: "triage" },
+        "project-1",
+      );
+    });
+    expect(addToast).toHaveBeenCalledWith("Created FN-123 from todo", "success");
+  });
+
+  it("clicking Assign to Agent button opens agent picker", async () => {
+    render(<TodoView addToast={addToast} projectId="project-1" />);
+
+    fireEvent.click(screen.getByTestId("assign-agent-for-item-1"));
+
+    await waitFor(() => {
+      expect(mockFetchAgents).toHaveBeenCalledWith(undefined, "project-1");
+    });
+    expect(screen.getByText("Builder")).toBeInTheDocument();
+    expect(screen.queryByText("Terminated")).not.toBeInTheDocument();
+  });
+
+  it("selecting an agent creates task assigned to that agent", async () => {
+    mockCreateTask.mockResolvedValueOnce({ id: "FN-234" });
+    render(<TodoView addToast={addToast} projectId="project-1" />);
+
+    fireEvent.click(screen.getByTestId("assign-agent-for-item-1"));
+
+    const agentButton = await screen.findByRole("button", { name: /Builder/i });
+    fireEvent.click(agentButton);
+
+    await waitFor(() => {
+      expect(mockCreateTask).toHaveBeenCalledWith(
+        { description: "Buy groceries", column: "triage", assignedAgentId: "agent-1" },
+        "project-1",
+      );
+    });
+    expect(addToast).toHaveBeenCalledWith("Created FN-234 and assigned to Builder", "success");
+  });
+
+  it("error handling shows error toast", async () => {
+    mockCreateTask.mockRejectedValueOnce(new Error("boom"));
+    render(<TodoView addToast={addToast} />);
+
+    fireEvent.click(screen.getByTestId("create-task-from-item-1"));
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith("Failed to create task: boom", "error");
+    });
   });
 });
