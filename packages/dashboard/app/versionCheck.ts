@@ -1,6 +1,19 @@
 declare const __BUILD_VERSION__: string;
 
 const RELOAD_FLAG = "fusion:version-reload";
+const VERSION_UPDATE_FLAG = "fusion:version-update";
+
+export function consumeVersionUpdateFlag(): boolean {
+  try {
+    if (sessionStorage.getItem(VERSION_UPDATE_FLAG)) {
+      sessionStorage.removeItem(VERSION_UPDATE_FLAG);
+      return true;
+    }
+  } catch {
+    // ignore (e.g. storage disabled)
+  }
+  return false;
+}
 
 function reloadOnce(reason: string): void {
   if (sessionStorage.getItem(RELOAD_FLAG)) {
@@ -54,6 +67,11 @@ async function checkVersion(): Promise<void> {
   try {
     const remote = await fetchRemoteVersion();
     if (remote && remote !== __BUILD_VERSION__) {
+      try {
+        sessionStorage.setItem(VERSION_UPDATE_FLAG, "1");
+      } catch {
+        // ignore
+      }
       reloadOnce(`build version changed: ${__BUILD_VERSION__} -> ${remote}`);
     }
   } finally {

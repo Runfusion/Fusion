@@ -43,6 +43,11 @@
   color: var(--text-secondary);
 }
 
+.dashboard-loader__message--update {
+  color: var(--accent, var(--text));
+  font-weight: 500;
+}
+
 .dashboard-loader__steps {
   display: flex;
   flex-direction: column;

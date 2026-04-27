@@ -1,4 +1,6 @@
 import { Loader2 } from "lucide-react";
+import { useState } from "react";
+import { consumeVersionUpdateFlag } from "../versionCheck";
 import "./DashboardLoader.css";
 
 export type DashboardLoaderStage = "projects" | "project" | "tasks" | "ready";
@@ -38,17 +40,26 @@ function getStepState(stepId: LoaderStep["id"], stage: DashboardLoaderStage): "d
 }
 
 export function DashboardLoader({ stage }: DashboardLoaderProps) {
+  const [isVersionUpdate] = useState(() => consumeVersionUpdateFlag());
+
   return (
     <div
       className="dashboard-loader"
       role="status"
       aria-live="polite"
-      aria-label="Loading Fusion dashboard"
+      aria-label={isVersionUpdate ? "Updating Fusion dashboard" : "Loading Fusion dashboard"}
       data-stage={stage}
+      data-version-update={isVersionUpdate ? "true" : undefined}
     >
       <div className="dashboard-loader__content">
         <h1 className="dashboard-loader__logo">Fusion</h1>
-        <p className="dashboard-loader__message">Initializing dashboard...</p>
+        {isVersionUpdate ? (
+          <p className="dashboard-loader__message dashboard-loader__message--update">
+            Updating to a new version...
+          </p>
+        ) : (
+          <p className="dashboard-loader__message">Initializing dashboard...</p>
+        )}
 
         <ol className="dashboard-loader__steps" aria-label="Dashboard loading progress">
           {LOADER_STEPS.map((step) => {
