@@ -768,6 +768,11 @@
     display: none;
   }
 
+  .chat-thread[style*="--keyboard-overlap"] {
+    height: calc(var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px))) - var(--header-height));
+    max-height: calc(var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px))) - var(--header-height));
+  }
+
   /* On mobile, the "New Chat" affordance moves to a full-width pinned
      footer. The desktop top-header button is hidden to free the screen
      space for the search field and session list. */

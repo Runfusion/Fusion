@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
@@ -19,6 +20,7 @@ import { FN_AGENT_ID, useQuickChat, type ChatMessageInfo, type ToolCallInfo } fr
 import { useAgents } from "../hooks/useAgents";
 import { FileMentionPopup } from "./FileMentionPopup";
 import { useFileMention } from "../hooks/useFileMention";
+import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 
 interface QuickChatFABProps {
   projectId?: string;
@@ -608,6 +610,16 @@ export function QuickChatFAB({
         }
       }
     : setInternalOpen;
+
+  const { keyboardOverlap, viewportHeight } = useMobileKeyboard({ enabled: isOpen });
+
+  const keyboardPanelStyle: CSSProperties =
+    keyboardOverlap > 0
+      ? ({
+          "--keyboard-overlap": `${keyboardOverlap}px`,
+          ...(viewportHeight !== null ? { "--vv-height": `${viewportHeight}px` } : {}),
+        } as CSSProperties)
+      : {};
 
   const [chatMode, setChatMode] = useState<"agent" | "model">("agent");
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
@@ -1205,6 +1217,7 @@ export function QuickChatFAB({
             right: position.x,
             bottom: panelY,
             ...(shouldApplyDesktopPanelSize ? { width: panelSize.width, height: panelSize.height } : {}),
+            ...keyboardPanelStyle,
           }}
         >
           {shouldApplyDesktopPanelSize && (

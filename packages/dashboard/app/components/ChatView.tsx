@@ -1,6 +1,6 @@
 // ChatView.css is imported eagerly from App.tsx to avoid a flash of
 // unstyled content when the lazy chunk loads. Do not re-import here.
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
@@ -28,6 +28,7 @@ import { CustomModelDropdown } from "./CustomModelDropdown";
 import { AgentMentionPopup } from "./AgentMentionPopup";
 import { FileMentionPopup } from "./FileMentionPopup";
 import { useFileMention } from "../hooks/useFileMention";
+import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 
 export interface ChatViewProps {
   projectId?: string;
@@ -512,6 +513,17 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
   const mentionCursorPosRef = useRef(0);
   const mode = useViewportMode();
   const isMobile = mode === "mobile";
+  const { keyboardOverlap, viewportHeight } = useMobileKeyboard({
+    enabled: isMobile && !!activeSession,
+  });
+
+  const threadKeyboardStyle: CSSProperties =
+    keyboardOverlap > 0
+      ? ({
+          "--keyboard-overlap": `${keyboardOverlap}px`,
+          ...(viewportHeight !== null ? { "--vv-height": `${viewportHeight}px` } : {}),
+        } as CSSProperties)
+      : {};
 
   const filteredSkills = useMemo(() => {
     const normalizedFilter = skillFilter.trim().toLowerCase();
@@ -559,6 +571,19 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingText]);
+
+  useEffect(() => {
+    if (keyboardOverlap <= 0) {
+      return;
+    }
+
+    const messagesContainer = messagesContainerRef.current;
+    if (!messagesContainer) {
+      return;
+    }
+
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  }, [keyboardOverlap]);
 
   // Close context menu on outside click
   useEffect(() => {
@@ -1206,7 +1231,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
       )}
 
       {/* Thread */}
-      <div className="chat-thread">
+      <div className="chat-thread" style={threadKeyboardStyle}>
         {/* Header - always rendered in desktop/tablet, only rendered in mobile when viewing a thread */}
         {(activeSession || !isMobile) && (
           <div className="chat-thread-header">

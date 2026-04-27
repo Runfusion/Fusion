@@ -3,7 +3,7 @@
  * new chat dialog, and input handling.
  */
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "@testing-library/user-event";
 import { ChatView } from "../ChatView";
@@ -1840,6 +1840,72 @@ describe("ChatView sidebar structure", () => {
 });
 
 describe("ChatView mobile behavior", () => {
+  let savedVisualViewport: typeof window.visualViewport;
+  let savedInnerHeight: number;
+  let savedOntouchstart: typeof window.ontouchstart;
+
+  beforeEach(() => {
+    savedVisualViewport = window.visualViewport;
+    savedInnerHeight = window.innerHeight;
+    savedOntouchstart = window.ontouchstart;
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "visualViewport", {
+      value: savedVisualViewport,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(window, "innerHeight", {
+      value: savedInnerHeight,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(window, "ontouchstart", {
+      value: savedOntouchstart,
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  function mockMobileVisualViewport({
+    innerHeight,
+    vvHeight,
+  }: {
+    innerHeight: number;
+    vvHeight: number;
+  }) {
+    (window as any).ontouchstart = null;
+    Object.defineProperty(window, "innerHeight", {
+      value: innerHeight,
+      writable: true,
+      configurable: true,
+    });
+
+    const listeners: Record<string, Array<() => void>> = {
+      resize: [],
+      scroll: [],
+    };
+
+    const mockVV = {
+      width: 375,
+      height: vvHeight,
+      offsetTop: 0,
+      offsetLeft: 0,
+      addEventListener: vi.fn((event: string, cb: () => void) => {
+        listeners[event]?.push(cb);
+      }),
+      removeEventListener: vi.fn(),
+    };
+
+    Object.defineProperty(window, "visualViewport", {
+      value: mockVV,
+      writable: true,
+      configurable: true,
+    });
+
+    return { listeners, mockVV };
+  }
   function ensureMatchMedia() {
     if (!window.matchMedia) {
       Object.defineProperty(window, "matchMedia", {
@@ -1935,6 +2001,135 @@ describe("ChatView mobile behavior", () => {
 
       // Back button should trigger selectSession("") to return to list view
       expect(selectSession).toHaveBeenCalledWith("");
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+
+  it("mobile mode: sets and clears keyboard overlap CSS vars on chat thread", async () => {
+    const restoreMatchMedia = mockMobileViewport();
+    const { listeners, mockVV } = mockMobileVisualViewport({
+      innerHeight: 844,
+      vvHeight: 844,
+    });
+
+    try {
+      setupMockChat({
+        activeSession: activeSessionFixture,
+        messages: [{ id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hello", createdAt: "2026-04-08T00:00:00.000Z" }],
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const thread = document.querySelector(".chat-thread") as HTMLDivElement;
+      expect(thread).toBeInTheDocument();
+      expect(thread.style.getPropertyValue("--keyboard-overlap")).toBe("");
+
+      Object.defineProperty(window, "innerHeight", {
+        value: 560,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(mockVV, "height", {
+        value: 560,
+        writable: true,
+        configurable: true,
+      });
+
+      act(() => {
+        for (const cb of listeners.resize) cb();
+      });
+
+      await waitFor(() => {
+        expect(thread.style.getPropertyValue("--keyboard-overlap")).toBe("284px");
+        expect(thread.style.getPropertyValue("--vv-height")).toBe("560px");
+      });
+
+      Object.defineProperty(mockVV, "height", {
+        value: 844,
+        writable: true,
+        configurable: true,
+      });
+
+      act(() => {
+        for (const cb of listeners.resize) cb();
+      });
+
+      await waitFor(() => {
+        expect(thread.style.getPropertyValue("--keyboard-overlap")).toBe("");
+        expect(thread.style.getPropertyValue("--vv-height")).toBe("");
+      });
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+
+  it("mobile mode: scrolls messages container to bottom when keyboard opens", async () => {
+    const restoreMatchMedia = mockMobileViewport();
+    const { listeners, mockVV } = mockMobileVisualViewport({
+      innerHeight: 800,
+      vvHeight: 800,
+    });
+
+    try {
+      setupMockChat({
+        activeSession: activeSessionFixture,
+        messages: [{ id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hello", createdAt: "2026-04-08T00:00:00.000Z" }],
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const messagesContainer = document.querySelector(".chat-messages") as HTMLDivElement;
+      expect(messagesContainer).toBeInTheDocument();
+
+      Object.defineProperty(messagesContainer, "scrollHeight", {
+        value: 900,
+        configurable: true,
+      });
+      messagesContainer.scrollTop = 0;
+
+      Object.defineProperty(window, "innerHeight", {
+        value: 560,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(mockVV, "height", {
+        value: 560,
+        writable: true,
+        configurable: true,
+      });
+
+      act(() => {
+        for (const cb of listeners.resize) cb();
+      });
+
+      await waitFor(() => {
+        expect(messagesContainer.scrollTop).toBe(900);
+      });
+    } finally {
+      restoreMatchMedia();
+    }
+  });
+
+  it("mobile mode: does not subscribe to keyboard tracking without active session", async () => {
+    const restoreMatchMedia = mockMobileViewport();
+    const { mockVV } = mockMobileVisualViewport({
+      innerHeight: 800,
+      vvHeight: 600,
+    });
+
+    try {
+      setupMockChat({
+        activeSession: null,
+        sessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
+        filteredSessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", updatedAt: "2026-04-08T00:00:00.000Z" }],
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(mockVV.addEventListener).not.toHaveBeenCalled();
+      });
     } finally {
       restoreMatchMedia();
     }
@@ -2052,5 +2247,9 @@ describe("ChatView mobile CSS contract", () => {
 
   it("mobile does not override assistant render toggle visibility", () => {
     expect(mobileRuleNotContains(".chat-message-render-toggle", "display: inline-flex")).toBe(true);
+  });
+
+  it("mobile includes keyboard-aware chat-thread height rule", () => {
+    expect(css).toMatch(/\.chat-thread\[style\*=\"--keyboard-overlap\"\]\s*\{[^}]*--vv-height/);
   });
 });

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { Agent, ChatSession } from "../../api";
 import * as apiModule from "../../api";
 import { useAgents } from "../../hooks/useAgents";
@@ -1522,6 +1522,164 @@ describe("QuickChatFAB", () => {
       expect(fab.style.right).toBe(initialFabRight);
       expect(fab.style.bottom).toBe(initialFabBottom);
       expect(parseFloat(panel.style.width)).toBeGreaterThan(320);
+    });
+  });
+
+  describe("mobile keyboard overlap", () => {
+    let savedVisualViewport: typeof window.visualViewport;
+    let savedInnerWidth: number;
+    let savedInnerHeight: number;
+    let savedOntouchstart: typeof window.ontouchstart;
+
+    beforeEach(() => {
+      savedVisualViewport = window.visualViewport;
+      savedInnerWidth = window.innerWidth;
+      savedInnerHeight = window.innerHeight;
+      savedOntouchstart = window.ontouchstart;
+    });
+
+    afterEach(() => {
+      Object.defineProperty(window, "visualViewport", {
+        value: savedVisualViewport,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(window, "innerWidth", {
+        value: savedInnerWidth,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(window, "innerHeight", {
+        value: savedInnerHeight,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(window, "ontouchstart", {
+        value: savedOntouchstart,
+        writable: true,
+        configurable: true,
+      });
+    });
+
+    function mockMobileVisualViewport({
+      innerHeight,
+      vvHeight,
+    }: {
+      innerHeight: number;
+      vvHeight: number;
+    }) {
+      (window as any).ontouchstart = null;
+      Object.defineProperty(window, "innerWidth", {
+        value: 375,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(window, "innerHeight", {
+        value: innerHeight,
+        writable: true,
+        configurable: true,
+      });
+
+      const listeners: Record<string, Array<() => void>> = {
+        resize: [],
+        scroll: [],
+      };
+
+      const mockVV = {
+        width: 375,
+        height: vvHeight,
+        offsetTop: 0,
+        offsetLeft: 0,
+        addEventListener: vi.fn((event: string, cb: () => void) => {
+          listeners[event]?.push(cb);
+        }),
+        removeEventListener: vi.fn(),
+      };
+
+      Object.defineProperty(window, "visualViewport", {
+        value: mockVV,
+        writable: true,
+        configurable: true,
+      });
+
+      return { listeners, mockVV };
+    }
+
+    it("sets keyboard overlap CSS variable when mobile viewport shrinks", async () => {
+      const { listeners, mockVV } = mockMobileVisualViewport({
+        innerHeight: 844,
+        vvHeight: 844,
+      });
+
+      render(<QuickChatFAB addToast={addToast} open={true} onOpenChange={vi.fn()} />);
+
+      const panel = await screen.findByTestId("quick-chat-panel");
+      expect(panel.style.getPropertyValue("--keyboard-overlap")).toBe("");
+
+      Object.defineProperty(window, "innerHeight", {
+        value: 560,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(mockVV, "height", {
+        value: 560,
+        writable: true,
+        configurable: true,
+      });
+
+      act(() => {
+        for (const cb of listeners.resize) cb();
+      });
+
+      await waitFor(() => {
+        expect(panel.style.getPropertyValue("--keyboard-overlap")).toBe("284px");
+        expect(panel.style.getPropertyValue("--vv-height")).toBe("560px");
+      });
+    });
+
+    it("clears keyboard overlap CSS variable when keyboard closes", async () => {
+      const { listeners, mockVV } = mockMobileVisualViewport({
+        innerHeight: 800,
+        vvHeight: 600,
+      });
+
+      render(<QuickChatFAB addToast={addToast} open={true} onOpenChange={vi.fn()} />);
+
+      const panel = await screen.findByTestId("quick-chat-panel");
+
+      await waitFor(() => {
+        expect(panel.style.getPropertyValue("--keyboard-overlap")).toBe("200px");
+      });
+
+      Object.defineProperty(mockVV, "height", {
+        value: 800,
+        writable: true,
+        configurable: true,
+      });
+
+      act(() => {
+        for (const cb of listeners.resize) cb();
+      });
+
+      await waitFor(() => {
+        expect(panel.style.getPropertyValue("--keyboard-overlap")).toBe("");
+        expect(panel.style.getPropertyValue("--vv-height")).toBe("");
+      });
+    });
+
+    it("does not subscribe to keyboard tracking while panel is closed", async () => {
+      const { mockVV } = mockMobileVisualViewport({
+        innerHeight: 800,
+        vvHeight: 600,
+      });
+
+      render(<QuickChatFAB addToast={addToast} open={false} onOpenChange={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("quick-chat-panel")).toBeNull();
+      });
+
+      expect(mockVV.addEventListener).not.toHaveBeenCalled();
     });
   });
 
