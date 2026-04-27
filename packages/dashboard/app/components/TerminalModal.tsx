@@ -1046,9 +1046,10 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
     }
   };
 
-  // Determine loading state — when bootstrapError or xtermInitError is set, we are NOT loading
-  // (we have a definitive error to show instead of an indefinite spinner).
-  const isLoading = !isReady || (!activeTab && !bootstrapError) || (!xtermReady && !xtermInitError);
+  // Determine loading state for session bootstrap only.
+  // Once a tab exists we keep the xterm container visible while UI init runs,
+  // avoiding a retry-loop spinner flash after bootstrap recovery.
+  const isLoading = !isReady || (!activeTab && !bootstrapError);
 
   return (
     <div

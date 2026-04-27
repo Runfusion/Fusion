@@ -3,6 +3,18 @@ import { Box, Text, useInput, useApp, useStdout } from "ink";
 import Spinner from "ink-spinner";
 import TextInput from "ink-text-input";
 import { spawn } from "node:child_process";
+import { appendFileSync } from "node:fs";
+
+const TUI_DEBUG_LOG = process.env.FUSION_TUI_DEBUG_LOG;
+function tuiDebug(tag: string, data: Record<string, unknown>): void {
+  if (!TUI_DEBUG_LOG) return;
+  try {
+    const line = `${new Date().toISOString()} [${tag}] ${JSON.stringify(data)}\n`;
+    appendFileSync(TUI_DEBUG_LOG, line);
+  } catch {
+    // best-effort
+  }
+}
 
 // Open a URL in the user's default browser. Uses the platform-native opener
 // (macOS `open`, Windows `start`, Linux `xdg-open`). Detached + ignored stdio
@@ -210,64 +222,41 @@ function SystemPanel({ state, isFocused }: { state: DashboardState; isFocused: b
       {!info ? (
         <Text dimColor>System information not available.</Text>
       ) : (
-        <Box flexDirection="column">
-          <Box flexDirection="row" gap={1}>
-            <Text dimColor>Version:</Text>
-            <Text>{`v${FUSION_VERSION}`}</Text>
+        <Box flexDirection="row" gap={2} flexWrap="wrap">
+          <Box flexDirection="row" gap={1} flexShrink={0}>
+            <Text dimColor>v</Text>
+            <Text>{FUSION_VERSION}</Text>
           </Box>
-          <Box flexDirection="row" gap={1}>
-            <Text dimColor>Host:</Text>
-            <Text>{info.host}</Text>
+          <Box flexDirection="row" gap={1} flexShrink={0}>
+            <Text dimColor>URL</Text>
+            <Text color="cyanBright" wrap="truncate-end">{info.baseUrl}</Text>
           </Box>
-          <Box flexDirection="row" gap={1}>
-            <Text dimColor>Port:</Text>
-            <Text>{info.port}</Text>
-          </Box>
-          <Box flexDirection="row" gap={1}>
-            <Text dimColor>URL:</Text>
-            <Text color="cyanBright">{info.baseUrl}</Text>
-          </Box>
-          {info.authEnabled ? (
-            <>
-              <Box flexDirection="row" gap={1}>
-                <Text dimColor>Auth:</Text>
-                <Text color="yellow">bearer token required</Text>
-              </Box>
-              {info.authToken && (
-                <Box flexDirection="row" gap={1}>
-                  <Text dimColor>Token:</Text>
-                  <Text wrap="truncate" color="yellow">{info.authToken}</Text>
-                </Box>
-              )}
-              {info.tokenizedUrl && (
-                <Box flexDirection="row" gap={1}>
-                  <Text dimColor>Open:</Text>
-                  <Text wrap="truncate" color="white">{info.tokenizedUrl}</Text>
-                </Box>
-              )}
-            </>
-          ) : (
-            <>
-              <Box flexDirection="row" gap={1}>
-                <Text dimColor>Auth:</Text>
-                <Text color="yellow">no auth</Text>
-              </Box>
-            </>
-          )}
-          <Box flexDirection="row" gap={1}>
-            <Text dimColor>Engine:</Text>
+          <Box flexDirection="row" gap={1} flexShrink={0}>
+            <Text dimColor>Engine</Text>
             {info.engineMode === "dev" && <Text color="yellow">dev</Text>}
             {info.engineMode === "paused" && <Text color="yellow">paused</Text>}
             {info.engineMode === "active" && <Text color="green">active</Text>}
           </Box>
-          <Box flexDirection="row" gap={1}>
-            <Text dimColor>Watcher:</Text>
+          <Box flexDirection="row" gap={1} flexShrink={0}>
+            <Text dimColor>Watcher</Text>
             {info.fileWatcher ? <Text color="green">active</Text> : <Text color="red">inactive</Text>}
           </Box>
-          <Box flexDirection="row" gap={1}>
-            <Text dimColor>Uptime:</Text>
+          <Box flexDirection="row" gap={1} flexShrink={0}>
+            <Text dimColor>Uptime</Text>
             <Text>{formatUptime(Date.now() - info.startTimeMs)}</Text>
           </Box>
+          <Box flexDirection="row" gap={1} flexShrink={0}>
+            <Text dimColor>Auth</Text>
+            {info.authEnabled
+              ? <Text color="yellow">bearer</Text>
+              : <Text color="yellow">none</Text>}
+          </Box>
+          {info.authToken && (
+            <Box flexDirection="row" gap={1} flexShrink={1}>
+              <Text dimColor>Token</Text>
+              <Text wrap="truncate-end" color="yellow">{info.authToken}</Text>
+            </Box>
+          )}
         </Box>
       )}
     </Panel>
@@ -331,23 +320,13 @@ function StatRow({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-function SectionHeader({ title }: { title: string }) {
-  return (
-    <Box flexDirection="row" gap={1}>
-      <Text bold color="cyanBright">{title}</Text>
-    </Box>
-  );
-}
-
 function StatsPanel({ state, isFocused }: { state: DashboardState; isFocused: boolean }) {
-  const stats = state.taskStats;
   const sys = state.systemStats;
   return (
     <Panel title="Stats" isFocused={isFocused} flexGrow={1}>
       <Box flexDirection="column">
-        {sys && (
+        {sys ? (
           <>
-            <SectionHeader title="Process" />
             <StatRow label="RSS">
               <Text color={rssColor(sys.rss, sys.systemTotalMem)}>
                 {formatBytes(sys.rss)}
@@ -365,15 +344,6 @@ function StatsPanel({ state, isFocused }: { state: DashboardState; isFocused: bo
               <Text dimColor>/</Text>
               <Text>{formatBytes(sys.heapTotal)}</Text>
             </StatRow>
-            <StatRow label="">
-              <Text dimColor>limit</Text>
-              <Text>{formatBytes(sys.heapLimit)}</Text>
-            </StatRow>
-            <StatRow label="External">
-              <Text>{formatBytes(sys.external)}</Text>
-              <Text dimColor>buffers</Text>
-              <Text>{formatBytes(sys.arrayBuffers)}</Text>
-            </StatRow>
             <StatRow label="CPU">
               <Text color={cpuColor(sys.cpuPercent, sys.cpuCount)}>
                 {sys.cpuPercent.toFixed(1)}%
@@ -381,60 +351,22 @@ function StatsPanel({ state, isFocused }: { state: DashboardState; isFocused: bo
               <Text dimColor>load</Text>
               <Text>{sys.loadAvg.map((n) => n.toFixed(2)).join(" ")}</Text>
             </StatRow>
-
-            <SectionHeader title="System" />
             <StatRow label="MEM">
               <Text color={sysMemColor(sys.systemTotalMem - sys.systemFreeMem, sys.systemTotalMem)}>
                 {formatBytes(sys.systemTotalMem - sys.systemFreeMem)}
               </Text>
-              <Text dimColor>used</Text>
-              <Text>{formatBytes(sys.systemFreeMem)}</Text>
-              <Text dimColor>free</Text>
+              <Text dimColor>/</Text>
+              <Text>{formatBytes(sys.systemTotalMem)}</Text>
               {sys.systemTotalMem > 0 && (
                 <Text color={sysMemColor(sys.systemTotalMem - sys.systemFreeMem, sys.systemTotalMem)}>
                   {((sys.systemTotalMem - sys.systemFreeMem) / sys.systemTotalMem * 100).toFixed(1)}%
                 </Text>
               )}
             </StatRow>
-            <StatRow label="Cores">
-              <Text>{sys.cpuCount}</Text>
-              <Text dimColor>{sys.platform}</Text>
-            </StatRow>
-            <StatRow label="Node">
-              <Text>{sys.nodeVersion}</Text>
-              <Text dimColor>pid</Text>
-              <Text>{sys.pid}</Text>
-            </StatRow>
           </>
+        ) : (
+          <Text dimColor>Stats not available.</Text>
         )}
-        {stats && (
-          <>
-            <SectionHeader title="Tasks" />
-            {Object.entries(stats.byColumn).map(([col, count]) => {
-              const name = col.replace(/-/g, " ");
-              const isActive = (col === "in-progress" || col === "in-review") && count > 0;
-              return (
-                <StatRow key={col} label={name}>
-                  <Text color={isActive ? "green" : undefined}>{count}</Text>
-                </StatRow>
-              );
-            })}
-
-            <SectionHeader title="Agents" />
-            <StatRow label="idle">
-              <Text>{stats.agents.idle}</Text>
-            </StatRow>
-            <StatRow label="active">
-              <Text color="green">{stats.agents.active}</Text>
-            </StatRow>
-            <StatRow label="error">
-              <Text color={stats.agents.error > 0 ? "red" : undefined}>
-                {stats.agents.error}
-              </Text>
-            </StatRow>
-          </>
-        )}
-        {!sys && !stats && <Text dimColor>Stats not available.</Text>}
       </Box>
     </Panel>
   );
@@ -756,30 +688,45 @@ function StatusModeGrid({
   controller: DashboardTUI;
 }) {
   const focused = state.activeSection;
+  const { stdout } = useStdout();
+  const rows = stdout?.rows ?? 24;
+  const cols = stdout?.columns ?? 80;
+  // Top row: System (narrow) + Logs (wide).
+  // Bottom row: Stats + Utilities + Settings, all the same fixed height so
+  // they line up. ~8 rows fits Stats (4 stat rows + chrome 3) and a few
+  // utility/settings entries — anything more is clipped.
+  const middleHeight = Math.max(1, rows - 2);
+  const bottomShare = Math.min(10, Math.max(6, Math.floor(middleHeight * 0.35)));
+  const topShare = Math.max(1, middleHeight - bottomShare);
+  // LogsPanel chrome: border 2 + title 1 + filter 1 = 4.
+  const logsAvailableRows = Math.max(1, topShare - 4);
+  tuiDebug("StatusModeGrid", { cols, rows, middleHeight, topShare, bottomShare, focused });
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      <Box flexShrink={0}>
-        <MainHeader state={state} />
-      </Box>
-
-      <Box flexDirection="row" flexGrow={1} overflow="hidden">
-        <Box flexDirection="column" width="45%" flexGrow={0} flexShrink={1} overflow="hidden">
+      <Box flexDirection="column" flexGrow={1} overflow="hidden">
+        {/* System: full width, short height (border 2 + 1-2 wrapped content rows). */}
+        <Box flexShrink={0} overflow="hidden">
           <SystemPanel state={state} isFocused={focused === "system"} />
-          <StatsPanel state={state} isFocused={focused === "stats"} />
         </Box>
-        <Box flexDirection="column" width="55%" flexGrow={0} flexShrink={1} overflow="hidden">
+        {/* Logs: fills remaining vertical space. */}
+        <Box flexGrow={1} flexShrink={1} flexDirection="column" overflow="hidden">
           <LogsPanel
             state={state}
             isFocused={focused === "logs"}
+            availableRows={logsAvailableRows}
           />
-          <Box flexDirection="row" overflow="hidden">
-            <Box flexDirection="column" flexGrow={1} overflow="hidden">
-              <UtilitiesPanel state={state} isFocused={focused === "utilities"} />
-            </Box>
-            <Box flexDirection="column" flexGrow={1} overflow="hidden">
-              <SettingsPanel state={state} isFocused={focused === "settings"} />
-            </Box>
+        </Box>
+        {/* Bottom row: Stats + Utilities + Settings, equal-width. */}
+        <Box flexDirection="row" flexShrink={0} overflow="hidden">
+          <Box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
+            <StatsPanel state={state} isFocused={focused === "stats"} />
+          </Box>
+          <Box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
+            <UtilitiesPanel state={state} isFocused={focused === "utilities"} />
+          </Box>
+          <Box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
+            <SettingsPanel state={state} isFocused={focused === "settings"} />
           </Box>
         </Box>
       </Box>
@@ -800,18 +747,18 @@ function StatusModeSingle({
 }) {
   const focused = state.activeSection;
   const { stdout } = useStdout();
-  // Cap the middle pane so a panel's intrinsic content height (e.g. LogsPanel's
-  // own rowBudget computation) can never exceed terminal rows. Without this,
-  // Ink writes a frame taller than the terminal under tmux narrow panes and the
-  // top row (header) scrolls off — and stays off across re-renders.
   const rows = stdout?.rows ?? 24;
   const cols = stdout?.columns ?? 80;
-  const middleHeight = Math.max(1, rows - 2);
+  // LogsPanel's row budget needs an explicit cap so it doesn't try to render
+  // more entries than will fit. Header(1) + StatusBar(1) + Panel chrome(3)
+  // + filter row(1) = 6.
+  const logsAvailableRows = Math.max(1, rows - 6);
+  tuiDebug("StatusModeSingle", { cols, rows, logsAvailableRows, focused });
 
   const activePanel = () => {
     switch (focused) {
       case "system": return <SystemPanel state={state} isFocused />;
-      case "logs": return <LogsPanel state={state} isFocused availableRows={middleHeight - 4} />;
+      case "logs": return <LogsPanel state={state} isFocused availableRows={logsAvailableRows} />;
       case "utilities": return <UtilitiesPanel state={state} isFocused />;
       case "stats": return <StatsPanel state={state} isFocused />;
       case "settings": return <SettingsPanel state={state} isFocused />;
@@ -819,14 +766,11 @@ function StatusModeSingle({
   };
 
   return (
-    <Box flexDirection="column" height={rows} width={cols} overflow="hidden">
-      <Box height={1} flexShrink={0} overflow="hidden">
-        <MainHeader state={state} />
-      </Box>
-      <Box height={middleHeight} flexShrink={0} flexDirection="column" overflow="hidden">
+    <Box flexDirection="column" flexGrow={1}>
+      <Box flexGrow={1} flexDirection="column" overflow="hidden">
         {activePanel()}
       </Box>
-      <Box height={1} flexShrink={0} overflow="hidden">
+      <Box flexShrink={0}>
         <StatusBar state={state} controller={controller} />
       </Box>
     </Box>
@@ -874,6 +818,14 @@ function MainHeader({ state }: { state: DashboardState }) {
   const interactiveView = state.interactiveView;
   const { stdout } = useStdout();
   const cols = stdout?.columns ?? 80;
+  const rows = stdout?.rows ?? 24;
+  tuiDebug("MainHeader", {
+    cols,
+    rows,
+    mode: state.mode,
+    view: state.interactiveView,
+    activeSection: state.activeSection,
+  });
   // Single unified tab strip. "Main" is the status mode; the rest are
   // interactive views. Active key matches the current mode/view.
   type Tab =
@@ -3798,7 +3750,6 @@ function InteractiveMode({ state, controller }: { state: DashboardState; control
   if (state.interactiveData === null) {
     return (
       <Box flexDirection="column" flexGrow={1}>
-        <MainHeader state={state} />
         <Box justifyContent="center" alignItems="center" flexGrow={1}>
           <Text dimColor>Interactive mode unavailable — no data source</Text>
         </Box>
@@ -3808,9 +3759,6 @@ function InteractiveMode({ state, controller }: { state: DashboardState; control
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      <Box flexShrink={0}>
-        <MainHeader state={state} />
-      </Box>
       <Box height={1} flexShrink={0} />
       <Box flexGrow={1} overflow="hidden">
         {state.interactiveView === "board" && <BoardView state={state} controller={controller} />}
@@ -4108,16 +4056,51 @@ export function DashboardApp({ controller }: DashboardAppProps) {
   }
 
   const isNarrow = cols < 80 || rows < 20;
+  tuiDebug("DashboardApp", {
+    cols,
+    rows,
+    isNarrow,
+    mode: state.mode,
+    layoutKey,
+    resizeTick,
+    hasSystemInfo: Boolean(state.systemInfo),
+  });
+
+  // Pin explicit heights on both children so the layout is fully deterministic
+  // and Yoga has no freedom to redistribute rows. Header always occupies row 0;
+  // the body fills rows 1..(rows-1). With overflow:hidden everywhere, content
+  // that exceeds its slot is clipped — the header can't be pushed off.
+  const headerHeight = 1;
+  const bodyHeight = Math.max(0, rows - headerHeight);
 
   return (
     <Box key={layoutKey} flexDirection="column" height={rows} width={cols} overflow="hidden">
-      {state.mode === "interactive" ? (
-        <InteractiveMode state={state} controller={controller} />
-      ) : isNarrow ? (
-        <StatusModeSingle state={state} controller={controller} />
-      ) : (
-        <StatusModeGrid state={state} controller={controller} />
-      )}
+      <Box
+        height={headerHeight}
+        width={cols}
+        flexShrink={0}
+        flexGrow={0}
+        flexDirection="row"
+        overflow="hidden"
+      >
+        <MainHeader state={state} />
+      </Box>
+      <Box
+        height={bodyHeight}
+        width={cols}
+        flexShrink={0}
+        flexGrow={0}
+        flexDirection="column"
+        overflow="hidden"
+      >
+        {state.mode === "interactive" ? (
+          <InteractiveMode state={state} controller={controller} />
+        ) : isNarrow ? (
+          <StatusModeSingle state={state} controller={controller} />
+        ) : (
+          <StatusModeGrid state={state} controller={controller} />
+        )}
+      </Box>
       {state.showHelp && (
         <Box position="absolute" marginTop={3} marginLeft={4}>
           <HelpOverlay />

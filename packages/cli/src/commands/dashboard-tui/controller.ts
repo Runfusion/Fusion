@@ -1,6 +1,18 @@
 import os from "node:os";
 import v8 from "node:v8";
 import { execSync } from "node:child_process";
+import { appendFileSync } from "node:fs";
+
+const TUI_DEBUG_LOG = process.env.FUSION_TUI_DEBUG_LOG;
+function tuiDebug(tag: string, data: Record<string, unknown>): void {
+  if (!TUI_DEBUG_LOG) return;
+  try {
+    const line = `${new Date().toISOString()} [${tag}] ${JSON.stringify(data)}\n`;
+    appendFileSync(TUI_DEBUG_LOG, line);
+  } catch {
+    // best-effort
+  }
+}
 import { LogRingBuffer } from "./log-ring-buffer.js";
 import type { LogEntry } from "./log-ring-buffer.js";
 import type {
@@ -626,6 +638,12 @@ export class DashboardTUI {
   // Order: wipe → reset Ink's tracking → record dims → notify so React
   // reads fresh dims and rerenders cleanly.
   private recoverFrame(cols: number, rows: number): void {
+    tuiDebug("recoverFrame", {
+      cols,
+      rows,
+      prevCols: this.lastObservedCols,
+      prevRows: this.lastObservedRows,
+    });
     if (process.stdout?.isTTY && typeof process.stdout.write === "function") {
       try {
         process.stdout.write("\x1b[2J\x1b[H");
