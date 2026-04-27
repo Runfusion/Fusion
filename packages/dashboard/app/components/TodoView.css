@@ -42,6 +42,8 @@
   padding-right: var(--space-lg);
   overflow-y: auto;
   flex-shrink: 0;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 45%, transparent) transparent;
 }
 
 .todo-view-main {
@@ -50,6 +52,25 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 45%, transparent) transparent;
+}
+
+.todo-view-sidebar::-webkit-scrollbar,
+.todo-view-main::-webkit-scrollbar {
+  width: var(--space-sm);
+  height: var(--space-sm);
+}
+
+.todo-view-sidebar::-webkit-scrollbar-thumb,
+.todo-view-main::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  border-radius: var(--radius-pill);
+}
+
+.todo-view-sidebar::-webkit-scrollbar-track,
+.todo-view-main::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .todo-sidebar-header {
@@ -200,8 +221,8 @@
 
 .todo-item-checkbox {
   margin: 0;
-  width: var(--space-md);
-  height: var(--space-md);
+  width: var(--space-lg);
+  height: var(--space-lg);
   accent-color: var(--todo);
   cursor: pointer;
 }
@@ -337,7 +358,13 @@
     width: 100%;
   }
 
+  .todo-list-item-actions,
   .todo-item-actions {
     opacity: 1;
+  }
+
+  .todo-item-checkbox {
+    width: calc(var(--space-2xl) + var(--space-xs));
+    height: calc(var(--space-2xl) + var(--space-xs));
   }
 }

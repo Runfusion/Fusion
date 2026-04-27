@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Plus,
   Trash2,
@@ -67,7 +67,37 @@ export function TodoView({ projectId, addToast }: TodoViewProps) {
     [items, selectedListId],
   );
 
+  function resetListDraftState(): void {
+    setEditingListId(null);
+    setEditingListTitle("");
+    setNewListTitle("");
+    setIsAddingList(false);
+  }
+
+  function resetItemDraftState(): void {
+    setEditingItemId(null);
+    setEditingItemText("");
+    setNewItemText("");
+  }
+
+  function handleSelectList(listId: string): void {
+    resetListDraftState();
+    resetItemDraftState();
+    setSelectedListId(listId);
+  }
+
+  useEffect(() => {
+    setEditingListId(null);
+    setEditingListTitle("");
+    setNewListTitle("");
+    setIsAddingList(false);
+    setEditingItemId(null);
+    setEditingItemText("");
+    setNewItemText("");
+  }, [selectedListId]);
+
   function handleStartRenameList(list: TodoList): void {
+    resetItemDraftState();
     setEditingListId(list.id);
     setEditingListTitle(list.title);
     setIsAddingList(false);
@@ -96,6 +126,7 @@ export function TodoView({ projectId, addToast }: TodoViewProps) {
   }
 
   function handleStartEditItem(item: TodoItem): void {
+    resetListDraftState();
     setEditingItemId(item.id);
     setEditingItemText(item.text);
   }
@@ -203,6 +234,7 @@ export function TodoView({ projectId, addToast }: TodoViewProps) {
               type="button"
               className="btn btn-sm btn-icon todo-add-list-btn"
               onClick={() => {
+                resetItemDraftState();
                 setIsAddingList(true);
                 setEditingListId(null);
               }}
@@ -256,20 +288,23 @@ export function TodoView({ projectId, addToast }: TodoViewProps) {
             </div>
           )}
 
-          {lists.length === 0 ? (
+          {lists.length === 0 && !isAddingList ? (
             <div className="todo-empty-state">
               <ListChecks aria-hidden="true" />
               <p>No todo lists yet. Create one to get started.</p>
               <button
                 type="button"
                 className="btn btn-sm"
-                onClick={() => setIsAddingList(true)}
+                onClick={() => {
+                  resetItemDraftState();
+                  setIsAddingList(true);
+                }}
               >
                 Create List
               </button>
             </div>
           ) : (
-            <div className="todo-list-items">
+            <div className="todo-list-items" role="list" aria-label="Todo lists">
               {lists.map((list) => {
                 const isActive = list.id === selectedListId;
                 const isEditing = list.id === editingListId;
@@ -278,6 +313,7 @@ export function TodoView({ projectId, addToast }: TodoViewProps) {
                   <div
                     key={list.id}
                     className={`todo-list-item${isActive ? " todo-list-item--active" : ""}`}
+                    role="listitem"
                   >
                     {isEditing ? (
                       <>
@@ -320,7 +356,9 @@ export function TodoView({ projectId, addToast }: TodoViewProps) {
                         <button
                           type="button"
                           className="todo-list-select-btn"
-                          onClick={() => setSelectedListId(list.id)}
+                          onClick={() => handleSelectList(list.id)}
+                          aria-label={`Select list ${list.title}`}
+                          aria-current={isActive ? "true" : undefined}
                           data-testid={`todo-list-${list.id}`}
                         >
                           <span className="todo-list-item-name">{list.title}</span>
@@ -388,6 +426,9 @@ export function TodoView({ projectId, addToast }: TodoViewProps) {
                   onKeyDown={(event) => {
                     if (event.key === "Enter") {
                       void handleAddItem();
+                    }
+                    if (event.key === "Escape") {
+                      setNewItemText("");
                     }
                   }}
                   data-testid="new-item-input"
