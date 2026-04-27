@@ -2908,6 +2908,9 @@ export class TaskExecutor {
               // Global validator lane
               globalValidatorProvider: settings.validatorGlobalProvider,
               globalValidatorModelId: settings.validatorGlobalModelId,
+              // Project-level default override (fallback before execution defaults)
+              projectDefaultOverrideProvider: settings.defaultProviderOverride,
+              projectDefaultOverrideModelId: settings.defaultModelIdOverride,
               store,
               taskId,
               task: detail,

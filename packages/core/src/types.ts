@@ -1352,9 +1352,7 @@ export interface ProjectSettings {
   /** Project-level override for the base default AI model provider.
    *  When set, this overrides the global `defaultProvider`/`defaultModelId` baseline
    *  for all lanes that don't have their own explicit project override.
-   *  Must be set together with `defaultModelIdOverride`.
-   *  NOTE: This is a schema/persistence contract only. Runtime fallback precedence
-   *  logic is deferred to FN-1711. */
+   *  Must be set together with `defaultModelIdOverride`. */
   defaultProviderOverride?: string;
   /** Project-level override for the base default AI model ID.
    *  Must be set together with `defaultProviderOverride`. */
@@ -1364,9 +1362,7 @@ export interface ProjectSettings {
    *  Must be set together with `executionModelId`. Falls back to
    *  `executionGlobalProvider`/`executionGlobalModelId` or
    *  `defaultProviderOverride`/`defaultModelIdOverride` or
-   *  `defaultProvider`/`defaultModelId` when undefined.
-   *  NOTE: This is a schema/persistence contract only. Runtime fallback precedence
-   *  logic is deferred to FN-1711. */
+   *  `defaultProvider`/`defaultModelId` when undefined. */
   executionProvider?: string;
   /** Project-level AI model ID for task execution.
    *  Must be set together with `executionProvider`. */

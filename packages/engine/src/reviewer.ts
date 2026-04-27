@@ -201,10 +201,14 @@ export interface ReviewOptions {
   projectValidatorProvider?: string;
   /** Project-level validator model ID override. Takes precedence over global validator lane. */
   projectValidatorModelId?: string;
-  /** Global validator lane provider. Takes precedence over execution defaults. */
+  /** Global validator lane provider. Takes precedence over project default override + execution defaults. */
   globalValidatorProvider?: string;
-  /** Global validator lane model ID. Takes precedence over execution defaults. */
+  /** Global validator lane model ID. Takes precedence over project default override + execution defaults. */
   globalValidatorModelId?: string;
+  /** Project-level default provider override, used when validator lanes are absent. */
+  projectDefaultOverrideProvider?: string;
+  /** Project-level default model override, used when validator lanes are absent. */
+  projectDefaultOverrideModelId?: string;
   /** Fallback model provider used when the primary reviewer model hits a retryable provider-side error. */
   fallbackProvider?: string;
   /** Fallback model ID used with `fallbackProvider`. */
@@ -269,21 +273,26 @@ export async function reviewStep(
   // 1. Task-level validator override pair (taskValidatorProvider + taskValidatorModelId)
   // 2. Project-level validator override pair (projectValidatorProvider + projectValidatorModelId)
   // 3. Global validator lane pair (globalValidatorProvider + globalValidatorModelId)
-  // 4. Execution default pair (defaultProvider + defaultModelId)
+  // 4. Project default override pair (projectDefaultOverrideProvider + projectDefaultOverrideModelId)
+  // 5. Execution default pair (defaultProvider + defaultModelId)
   const validatorProvider = options.taskValidatorProvider && options.taskValidatorModelId
     ? options.taskValidatorProvider
     : (options.projectValidatorProvider && options.projectValidatorModelId
         ? options.projectValidatorProvider
         : (options.globalValidatorProvider && options.globalValidatorModelId
             ? options.globalValidatorProvider
-            : options.defaultProvider));
+            : (options.projectDefaultOverrideProvider && options.projectDefaultOverrideModelId
+                ? options.projectDefaultOverrideProvider
+                : options.defaultProvider)));
   const validatorModelId = options.taskValidatorProvider && options.taskValidatorModelId
     ? options.taskValidatorModelId
     : (options.projectValidatorProvider && options.projectValidatorModelId
         ? options.projectValidatorModelId
         : (options.globalValidatorProvider && options.globalValidatorModelId
             ? options.globalValidatorModelId
-            : options.defaultModelId));
+            : (options.projectDefaultOverrideProvider && options.projectDefaultOverrideModelId
+                ? options.projectDefaultOverrideModelId
+                : options.defaultModelId)));
 
   // Resolve validator fallback using lane hierarchy:
   // 1. Project-level validator fallback (projectValidatorFallbackProvider + projectValidatorFallbackModelId)

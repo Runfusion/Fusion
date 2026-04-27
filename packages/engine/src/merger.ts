@@ -922,8 +922,12 @@ A merge has been applied and the verification command failed. Your job is to fix
       onThinking: logger.onThinking,
       onToolStart: logger.onToolStart,
       onToolEnd: logger.onToolEnd,
-      defaultProvider: settings.defaultProvider,
-      defaultModelId: settings.defaultModelId,
+      defaultProvider: settings.defaultProviderOverride && settings.defaultModelIdOverride
+        ? settings.defaultProviderOverride
+        : settings.defaultProvider,
+      defaultModelId: settings.defaultProviderOverride && settings.defaultModelIdOverride
+        ? settings.defaultModelIdOverride
+        : settings.defaultModelId,
       defaultThinkingLevel: settings.defaultThinkingLevel,
       // Skill selection: use assigned agent skills if available, otherwise role fallback
       ...(skillContext?.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
@@ -1808,8 +1812,12 @@ You are assisting with a paused \`git pull --rebase\`.
     onThinking: agentLogger.onThinking,
     onToolStart: agentLogger.onToolStart,
     onToolEnd: agentLogger.onToolEnd,
-    defaultProvider: settings.defaultProvider,
-    defaultModelId: settings.defaultModelId,
+    defaultProvider: settings.defaultProviderOverride && settings.defaultModelIdOverride
+      ? settings.defaultProviderOverride
+      : settings.defaultProvider,
+    defaultModelId: settings.defaultProviderOverride && settings.defaultModelIdOverride
+      ? settings.defaultModelIdOverride
+      : settings.defaultModelId,
     defaultThinkingLevel: settings.defaultThinkingLevel,
   });
 
@@ -3490,8 +3498,12 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     onThinking: agentLogger.onThinking,
     onToolStart: agentLogger.onToolStart,
     onToolEnd: agentLogger.onToolEnd,
-    defaultProvider: settings.defaultProvider,
-    defaultModelId: settings.defaultModelId,
+    defaultProvider: settings.defaultProviderOverride && settings.defaultModelIdOverride
+      ? settings.defaultProviderOverride
+      : settings.defaultProvider,
+    defaultModelId: settings.defaultProviderOverride && settings.defaultModelIdOverride
+      ? settings.defaultModelIdOverride
+      : settings.defaultModelId,
     defaultThinkingLevel: settings.defaultThinkingLevel,
     // Skill selection: use assigned agent skills if available, otherwise role fallback
     ...(skillContext?.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),

@@ -909,23 +909,28 @@ export class TriageProcessor {
           onToolEnd: agentLogger.onToolEnd,
           // Resolve planning model using canonical lane hierarchy:
           // 1. Task planning override pair (planningModelProvider + planningModelId)
-          // 2. Project planning override pair (planningProvider + planningModelId)
+          // 2. Project planning lane pair (planningProvider + planningModelId)
           // 3. Global planning lane pair (planningGlobalProvider + planningGlobalModelId)
-          // 4. Default pair (defaultProvider + defaultModelId)
+          // 4. Project default override pair (defaultProviderOverride + defaultModelIdOverride)
+          // 5. Global default pair (defaultProvider + defaultModelId)
           defaultProvider: task.planningModelProvider && task.planningModelId
             ? task.planningModelProvider
             : (settings.planningProvider && settings.planningModelId
                 ? settings.planningProvider
                 : (settings.planningGlobalProvider && settings.planningGlobalModelId
                     ? settings.planningGlobalProvider
-                    : settings.defaultProvider)),
+                    : (settings.defaultProviderOverride && settings.defaultModelIdOverride
+                        ? settings.defaultProviderOverride
+                        : settings.defaultProvider))),
           defaultModelId: task.planningModelProvider && task.planningModelId
             ? task.planningModelId
             : (settings.planningProvider && settings.planningModelId
                 ? settings.planningModelId
                 : (settings.planningGlobalProvider && settings.planningGlobalModelId
                     ? settings.planningGlobalModelId
-                    : settings.defaultModelId)),
+                    : (settings.defaultProviderOverride && settings.defaultModelIdOverride
+                        ? settings.defaultModelIdOverride
+                        : settings.defaultModelId))),
           fallbackProvider: settings.planningFallbackProvider && settings.planningFallbackModelId
             ? settings.planningFallbackProvider
             : settings.fallbackProvider,
@@ -1711,6 +1716,9 @@ export class TriageProcessor {
               // Global validator lane
               globalValidatorProvider: currentSettings.validatorGlobalProvider,
               globalValidatorModelId: currentSettings.validatorGlobalModelId,
+              // Project-level default override (fallback before execution defaults)
+              projectDefaultOverrideProvider: currentSettings.defaultProviderOverride,
+              projectDefaultOverrideModelId: currentSettings.defaultModelIdOverride,
               defaultThinkingLevel: currentSettings.defaultThinkingLevel,
               store,
               taskId,

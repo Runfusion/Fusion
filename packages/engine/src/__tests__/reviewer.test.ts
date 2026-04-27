@@ -425,6 +425,51 @@ describe("reviewStep — validator model overrides", () => {
     expect(opts.defaultModelId).toBe("gemini-2.5");
   });
 
+  it("uses project default override when validator lanes are absent", async () => {
+    mockedCreateFnAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nLooks good."),
+    );
+
+    await reviewStep(
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
+      undefined,
+      {
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+        projectDefaultOverrideProvider: "openai",
+        projectDefaultOverrideModelId: "gpt-4o",
+        // No validator lanes set
+      },
+    );
+
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+    const opts = mockedCreateFnAgent.mock.calls[0][0];
+    expect(opts.defaultProvider).toBe("openai");
+    expect(opts.defaultModelId).toBe("gpt-4o");
+  });
+
+  it("falls through to execution default when project default override is incomplete", async () => {
+    mockedCreateFnAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nLooks good."),
+    );
+
+    await reviewStep(
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
+      undefined,
+      {
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet-4-5",
+        projectDefaultOverrideProvider: "openai",
+        // projectDefaultOverrideModelId intentionally omitted
+      },
+    );
+
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+    const opts = mockedCreateFnAgent.mock.calls[0][0];
+    expect(opts.defaultProvider).toBe("anthropic");
+    expect(opts.defaultModelId).toBe("claude-sonnet-4-5");
+  });
+
   it("falls back to execution default when no validator lanes are set", async () => {
     mockedCreateFnAgent.mockResolvedValue(
       createMockSession("### Verdict: APPROVE\n### Summary\nLooks good."),

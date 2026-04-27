@@ -2195,9 +2195,139 @@ describe("taskCreate tool model inheritance", () => {
       );
     });
 
-    it("falls back to global defaults when neither task nor settings have planning model", async () => {
+    it("uses project default override when planning lanes are absent", async () => {
       const task = {
         id: "FN-402",
+        description: "Test fallback to project default override",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+
+      const mockDispose = vi.fn();
+      const mockPrompt = vi.fn().mockResolvedValue(undefined);
+      const mockGetLeafId = vi.fn().mockReturnValue(null);
+      const mockNavigateTree = vi.fn();
+
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          pollIntervalMs: 10000,
+          groupOverlappingFiles: false,
+          autoMerge: true,
+          defaultProvider: "anthropic",
+          defaultModelId: "claude-sonnet-4-5",
+          defaultProviderOverride: "openai",
+          defaultModelIdOverride: "gpt-4o",
+          // No planningProvider/planningModelId set
+        } as Settings),
+      });
+
+      mockCreateFnAgent.mockResolvedValue({
+        session: {
+          prompt: mockPrompt,
+          dispose: mockDispose,
+          sessionManager: {
+            getLeafId: mockGetLeafId,
+            navigateTree: mockNavigateTree,
+          },
+        },
+      });
+
+      const { promptWithFallback } = await import("../pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("test stop after model check"),
+      );
+
+      const processor = new TriageProcessor(store, "/test/root", {
+        pollIntervalMs: 100_000,
+      });
+
+      await processor.specifyTask(task);
+
+      // Should use project default override when planning lanes are absent
+      expect(mockCreateFnAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultProvider: "openai",
+          defaultModelId: "gpt-4o",
+        }),
+      );
+    });
+
+    it("falls through to global default when project default override is incomplete", async () => {
+      const task = {
+        id: "FN-403",
+        description: "Test fallback when project default override is incomplete",
+        column: "triage",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as unknown as Task;
+
+      const mockDispose = vi.fn();
+      const mockPrompt = vi.fn().mockResolvedValue(undefined);
+      const mockGetLeafId = vi.fn().mockReturnValue(null);
+      const mockNavigateTree = vi.fn();
+
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          pollIntervalMs: 10000,
+          groupOverlappingFiles: false,
+          autoMerge: true,
+          defaultProvider: "anthropic",
+          defaultModelId: "claude-sonnet-4-5",
+          defaultProviderOverride: "openai",
+          // defaultModelIdOverride intentionally omitted
+          // No planningProvider/planningModelId set
+        } as Settings),
+      });
+
+      mockCreateFnAgent.mockResolvedValue({
+        session: {
+          prompt: mockPrompt,
+          dispose: mockDispose,
+          sessionManager: {
+            getLeafId: mockGetLeafId,
+            navigateTree: mockNavigateTree,
+          },
+        },
+      });
+
+      const { promptWithFallback } = await import("../pi.js");
+      (promptWithFallback as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("test stop after model check"),
+      );
+
+      const processor = new TriageProcessor(store, "/test/root", {
+        pollIntervalMs: 100_000,
+      });
+
+      await processor.specifyTask(task);
+
+      // Incomplete override should fall through to global defaults
+      expect(mockCreateFnAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultProvider: "anthropic",
+          defaultModelId: "claude-sonnet-4-5",
+        }),
+      );
+    });
+
+    it("falls back to global defaults when neither task nor settings have planning model", async () => {
+      const task = {
+        id: "FN-404",
         description: "Test fallback to global defaults",
         column: "triage",
         dependencies: [],

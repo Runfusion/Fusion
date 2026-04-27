@@ -6331,7 +6331,7 @@ describe("aiMergeTask — in-merge verification fix", () => {
       return Buffer.from("");
     });
 
-    mockedCreateFnAgent.mockImplementation(async (opts: any) => {
+    mockedCreateFnAgent.mockImplementation(async (_opts: any) => {
       return {
         session: {
           prompt: vi.fn().mockResolvedValue(undefined),
@@ -6360,6 +6360,61 @@ describe("aiMergeTask — in-merge verification fix", () => {
     const fixAgentCall = mockedCreateFnAgent.mock.calls[1];
     expect(fixAgentCall[0].defaultProvider).toBe("anthropic");
     expect(fixAgentCall[0].defaultModelId).toBe("claude-sonnet-4-5");
+  });
+
+  it("uses project default override for merge agent model", async () => {
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("vitest run")) {
+        const err = new Error("Test failed") as any;
+        err.status = 1;
+        err.stdout = "";
+        err.stderr = "";
+        throw err;
+      }
+      if (cmdStr.includes("diff --cached --quiet")) return "1" as any;
+      if (cmdStr.includes("diff --cached")) return "" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      if (cmdStr === "git rev-parse HEAD" || cmdStr.startsWith("git rev-parse HEAD ")) return "mergedcommit123";
+      return Buffer.from("");
+    });
+
+    mockedCreateFnAgent.mockImplementation(async (_opts: any) => {
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+        },
+      } as any;
+    });
+
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      testCommand: "vitest run",
+      verificationFixRetries: 0,
+      defaultProvider: "anthropic",
+      defaultModelId: "claude-sonnet-4-5",
+      defaultProviderOverride: "openai",
+      defaultModelIdOverride: "gpt-4o",
+    });
+
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toMatchObject({
+      name: "VerificationError",
+    });
+
+    const mergeAgentCall = mockedCreateFnAgent.mock.calls[0];
+    expect(mergeAgentCall[0].defaultProvider).toBe("openai");
+    expect(mergeAgentCall[0].defaultModelId).toBe("gpt-4o");
   });
 
   it("fix agent session is disposed", async () => {
