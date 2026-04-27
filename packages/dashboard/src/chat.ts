@@ -25,11 +25,10 @@ import { EventEmitter } from "node:events";
 import { join, resolve, relative } from "node:path";
 import { SessionEventBuffer } from "./sse-buffer.js";
 
-import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
+import * as engine from "@fusion/engine";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
-const engineExports = engine as Record<string, unknown>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let createFnAgent: any = engine.createFnAgent;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

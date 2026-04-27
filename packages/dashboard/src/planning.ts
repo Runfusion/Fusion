@@ -30,49 +30,12 @@ import {
   resetDiagnosticsSink,
   nonfatal,
 } from "./ai-session-diagnostics.js";
-import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
+import * as engine from "@fusion/engine";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let createFnAgent: any = engine.createFnAgent;
-
-const engineExports = engine as Record<string, unknown>;
-const engineIsNtfyEventEnabled =
-  ("isNtfyEventEnabled" in engineExports &&
-  typeof engineExports["isNtfyEventEnabled"] === "function"
-    ? engineExports["isNtfyEventEnabled"]
-    : (events: NtfyNotificationEvent[] | undefined, event: NtfyNotificationEvent) =>
-        Array.isArray(events) && events.includes(event)) as (
-    events: NtfyNotificationEvent[] | undefined,
-    event: NtfyNotificationEvent
-  ) => boolean;
-const engineBuildNtfyClickUrl =
-  ("buildNtfyClickUrl" in engineExports &&
-  typeof engineExports["buildNtfyClickUrl"] === "function"
-    ? engineExports["buildNtfyClickUrl"]
-    : (_options: { dashboardHost?: string; projectId?: string; taskId?: string }) => undefined) as (
-    options: { dashboardHost?: string; projectId?: string; taskId?: string }
-  ) => string | undefined;
-const engineSendNtfyNotification =
-  ("sendNtfyNotification" in engineExports &&
-  typeof engineExports["sendNtfyNotification"] === "function"
-    ? engineExports["sendNtfyNotification"]
-    : async (_input: {
-        ntfyBaseUrl?: string;
-        topic: string;
-        title: string;
-        message: string;
-        priority?: "low" | "default" | "high" | "urgent";
-        clickUrl?: string;
-      }) => {}) as (input: {
-    ntfyBaseUrl?: string;
-    topic: string;
-    title: string;
-    message: string;
-    priority?: "low" | "default" | "high" | "urgent";
-    clickUrl?: string;
-  }) => Promise<void>;
 
 interface PlanningNtfyConfig {
   enabled: boolean;
