@@ -220,7 +220,7 @@ fn — AI-orchestrated task board
 
 Usage:
   fn                                  Launch the dashboard (same as fn dashboard)
-  fn init [opts]                      Initialize a new fn project in the current directory
+  fn init [opts]                      Initialize a new fn project (--name, --path, --git)
   fn dashboard                        Start the board web UI
   fn dashboard --paused               Start with automation paused
   fn dashboard --dev                  Start web UI only (no AI engine)
@@ -495,8 +495,9 @@ async function main() {
         const name = nameIdx !== -1 && nameIdx + 1 < args.length ? args[nameIdx + 1] : undefined;
         const pathIdx = args.indexOf("--path");
         const path = pathIdx !== -1 && pathIdx + 1 < args.length ? args[pathIdx + 1] : undefined;
+        const git = args.includes("--git");
 
-        await runInit({ name, path });
+        await runInit({ name, path, git });
         break;
       }
 

@@ -15,6 +15,7 @@ import { promisify } from "node:util";
 const execAsync = promisify(exec);
 import { CentralCore, QMD_INSTALL_COMMAND, isQmdAvailable } from "@fusion/core";
 import { maybeInstallClaudeSkillForNewProject } from "./claude-skills-runner.js";
+import { isGitRepo } from "./git.js";
 import {
   installBundledFusionSkill,
   type SkillInstallResult,
@@ -26,6 +27,8 @@ export interface InitOptions {
   name?: string;
   /** Path to initialize (defaults to cwd) */
   path?: string;
+  /** Initialize a git repository if one does not exist */
+  git?: boolean;
 }
 
 /**
@@ -76,6 +79,14 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
   if (!existsSync(fusionDir)) {
     mkdirSync(fusionDir, { recursive: true });
     console.log(`  ✓ Created .fusion/ directory`);
+  }
+
+  const hasGitRepo = await isGitRepo(cwd);
+  if (!hasGitRepo && options.git) {
+    await initializeGitRepo(cwd);
+    console.log(`  ✓ Initialized git repository`);
+  } else if (!hasGitRepo) {
+    console.log(`  ⚠ Not a git repository. Run 'fn init --git' to auto-initialize one.`);
   }
 
   // Add local Fusion/Pi storage directories to .gitignore
@@ -212,6 +223,55 @@ async function addLocalStorageToGitignore(cwd: string): Promise<void> {
     // Best-effort: don't fail init if we can't write to .gitignore
     console.log(`  ⚠ Could not update .gitignore (best-effort)`);
   }
+}
+
+async function initializeGitRepo(cwd: string): Promise<void> {
+  await execAsync("git init", { cwd, timeout: 10_000 });
+
+  try {
+    const { stdout } = await execAsync("git symbolic-ref --quiet --short HEAD", {
+      cwd,
+      timeout: 10_000,
+    });
+    if (stdout.trim() !== "main") {
+      await execAsync("git checkout -b main", { cwd, timeout: 10_000 });
+    }
+  } catch {
+    // Older git versions or detached/unborn states may fail symbolic-ref.
+    // Best-effort: create/switch to main.
+    try {
+      await execAsync("git checkout -b main", { cwd, timeout: 10_000 });
+    } catch {
+      await execAsync("git checkout main", { cwd, timeout: 10_000 });
+    }
+  }
+
+  await ensureGitConfig(cwd, "user.name", "Fusion");
+  await ensureGitConfig(cwd, "user.email", "noreply@runfusion.ai");
+
+  const gitkeepPath = join(cwd, ".gitkeep");
+  if (!existsSync(gitkeepPath)) {
+    writeFileSync(gitkeepPath, "\n");
+  }
+
+  await execAsync("git add .gitkeep", { cwd, timeout: 10_000 });
+  await execAsync('git commit --allow-empty -m "chore: initial commit"', {
+    cwd,
+    timeout: 10_000,
+  });
+}
+
+async function ensureGitConfig(cwd: string, key: string, value: string): Promise<void> {
+  try {
+    const { stdout } = await execAsync(`git config --get ${key}`, { cwd, timeout: 10_000 });
+    if (stdout.trim().length > 0) {
+      return;
+    }
+  } catch {
+    // Missing config; set a local default.
+  }
+
+  await execAsync(`git config ${key} "${value}"`, { cwd, timeout: 10_000 });
 }
 
 async function warnIfQmdMissing(): Promise<void> {

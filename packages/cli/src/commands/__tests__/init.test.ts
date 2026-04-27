@@ -7,6 +7,10 @@ import { mkdtempSync, existsSync, rmSync, writeFileSync, mkdirSync, readFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInit } from "../init.js";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+
+const execAsync = promisify(exec);
 
 const mockCentralInit = vi.fn();
 const mockCentralClose = vi.fn();
@@ -29,6 +33,11 @@ vi.mock("@fusion/core", () => ({
 
 function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
+}
+
+async function git(command: string, cwd: string): Promise<string> {
+  const { stdout } = await execAsync(command, { cwd, timeout: 10_000 });
+  return stdout.trim();
 }
 
 describe("init command", () => {
@@ -246,5 +255,52 @@ describe("init command", () => {
     const piMatches = content.match(/\.pi/g);
     expect(fusionMatches).toHaveLength(1);
     expect(piMatches).toHaveLength(1);
+  });
+
+  it("initializes git when --git is enabled in a non-git directory", async () => {
+    expect(existsSync(join(tempProjectDir, ".git"))).toBe(false);
+
+    await runInit({ path: tempProjectDir, git: true });
+
+    expect(existsSync(join(tempProjectDir, ".git"))).toBe(true);
+  });
+
+  it("creates an initial commit when --git initializes a repository", async () => {
+    await runInit({ path: tempProjectDir, git: true });
+
+    const commitCount = await git("git rev-list --count HEAD", tempProjectDir);
+    expect(Number(commitCount)).toBeGreaterThanOrEqual(1);
+  });
+
+  it("does not reinitialize git when repository already exists", async () => {
+    await git("git init", tempProjectDir);
+    await git("git checkout -b main", tempProjectDir);
+    await git('git config user.name "Existing User"', tempProjectDir);
+    await git('git config user.email "existing@example.com"', tempProjectDir);
+    writeFileSync(join(tempProjectDir, "README.md"), "# Existing Repo\n");
+    await git("git add README.md", tempProjectDir);
+    await git('git commit -m "existing commit"', tempProjectDir);
+
+    await runInit({ path: tempProjectDir, git: true });
+
+    const commitCount = await git("git rev-list --count HEAD", tempProjectDir);
+    expect(Number(commitCount)).toBe(1);
+  });
+
+  it("does not create git repository without --git and logs a hint", async () => {
+    const originalLog = console.log;
+    const logs: string[] = [];
+    console.log = (...args: unknown[]) => {
+      logs.push(args.join(" "));
+    };
+
+    try {
+      await runInit({ path: tempProjectDir });
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(existsSync(join(tempProjectDir, ".git"))).toBe(false);
+    expect(logs.join("\n")).toContain("Not a git repository. Run 'fn init --git' to auto-initialize one.");
   });
 });
