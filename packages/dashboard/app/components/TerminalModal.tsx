@@ -243,6 +243,14 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
   const hasInitialCommandRun = useRef<string | false>(false);
   const xtermInitializedRef = useRef<string | false>(false);
   const resizeRef = useRef<((cols: number, rows: number) => void) | null>(null);
+  // Latest sendInput, kept in a ref so the xterm.onData listener bound at
+  // init time always calls the current function without needing to re-bind
+  // (which under StrictMode/Vite Fast Refresh could leak a stale listener
+  // on the same xterm instance and cause per-character input doubling).
+  const sendInputRef = useRef<(data: string) => void>(() => {});
+  // Window resize listener tied to the live xterm instance — tracked here so
+  // it can be removed in step with xterm disposal (modal close, tab switch).
+  const windowResizeListenerRef = useRef<(() => void) | null>(null);
   const keyboardOverlapRef = useRef(0);
   const fontSizeRef = useRef(fontSize);
   /** Tracks a pending requestAnimationFrame for deferred xterm re-fit. */
@@ -389,6 +397,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
   // Keep a ref to resize so the viewport-change effect can call it
   // without needing resize as a dependency (avoids ordering issues).
   resizeRef.current = resize;
+  sendInputRef.current = sendInput;
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -444,6 +453,10 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
       xtermRef.current = null;
       fitAddonRef.current = null;
       xtermInitializedRef.current = false;
+      if (windowResizeListenerRef.current) {
+        window.removeEventListener("resize", windowResizeListenerRef.current);
+        windowResizeListenerRef.current = null;
+      }
       setXtermReady(false);
       setXtermInitError(null);
     }
@@ -586,6 +599,43 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
           });
         }
 
+        // Wire user input forwarding (xterm → server) once, here, while we
+        // still hold a live reference to the freshly-created xterm. Doing
+        // this in a separate effect is fragile under StrictMode/Vite Fast
+        // Refresh: the effect can re-run and attach a second listener to the
+        // same xterm instance, which produces per-character input doubling
+        // (every keystroke calls sendInput twice → server pty.write twice →
+        // shell echoes the doubled byte → "aabbcc" on screen). Binding here
+        // ties the listener's lifetime to the xterm; xterm.dispose() removes
+        // it. The handler reads sendInput via a ref so updates to that
+        // function don't require re-binding.
+        terminal.onData((data) => {
+          if (xtermInitializedRef.current !== currentSessionId) return;
+          sendInputRef.current(data);
+        });
+
+        // Window resize listener bound to this xterm. Tracked in a ref so it
+        // can be removed when xterm is disposed (modal close, tab switch).
+        const resizeHandler = () => {
+          if (xtermInitializedRef.current !== currentSessionId) return;
+          if (fitAddonRef.current && xtermRef.current) {
+            try {
+              (fitAddonRef.current as InstanceType<typeof FitAddon>).fit();
+              const { cols, rows } = xtermRef.current;
+              resizeRef.current?.(cols, rows);
+            } catch {
+              // Ignore fit errors during viewport transitions.
+            }
+          }
+        };
+        window.addEventListener("resize", resizeHandler);
+        // Replace any stale listener (defensive: e.g. a previous xterm whose
+        // disposal path didn't clear this ref). Removes before re-registering.
+        if (windowResizeListenerRef.current) {
+          window.removeEventListener("resize", windowResizeListenerRef.current);
+        }
+        windowResizeListenerRef.current = resizeHandler;
+
         // Signal that xterm is ready so lifecycle effects can subscribe.
         setXtermReady(true);
         // Clear any prior xterm init error
@@ -613,46 +663,8 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
     };
   }, [fitAndResizeForSession, isOpen, isReady, activeTab?.sessionId, projectId]);
 
-  // Keep user input forwarding and resize publishing attached to the current
-  // xterm instance/session. This prevents unrelated rerenders (tab title or
-  // status updates) from silently dropping onData -> sendInput wiring.
-  useEffect(() => {
-    if (!isOpen || !xtermReady || !activeTab?.sessionId || !xtermRef.current) {
-      return;
-    }
-
-    const expectedSessionId = activeTab.sessionId;
-    const terminal = xtermRef.current;
-
-    const dataHandler = terminal.onData((data) => {
-      if (xtermInitializedRef.current !== expectedSessionId) {
-        return;
-      }
-      sendInput(data);
-    });
-
-    const resizeHandler = () => {
-      if (xtermInitializedRef.current !== expectedSessionId) {
-        return;
-      }
-      if (fitAddonRef.current && xtermRef.current) {
-        try {
-          (fitAddonRef.current as InstanceType<typeof FitAddon>).fit();
-          const { cols, rows } = xtermRef.current;
-          resize(cols, rows);
-        } catch {
-          // Ignore fit errors
-        }
-      }
-    };
-
-    window.addEventListener("resize", resizeHandler);
-
-    return () => {
-      dataHandler.dispose();
-      window.removeEventListener("resize", resizeHandler);
-    };
-  }, [isOpen, xtermReady, activeTab?.sessionId, sendInput, resize]);
+  // (Input forwarding + window resize listener are wired inside initTerminal
+  // so they share the xterm instance's lifetime — see comment there.)
 
   // Cleanup xterm when modal closes
   useEffect(() => {
@@ -665,6 +677,10 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
     }
     fitAddonRef.current = null;
     xtermInitializedRef.current = false;
+    if (windowResizeListenerRef.current) {
+      window.removeEventListener("resize", windowResizeListenerRef.current);
+      windowResizeListenerRef.current = null;
+    }
     setXtermReady(false);
     setXtermInitError(null);
     hasInitialCommandRun.current = false;
@@ -893,6 +909,10 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
       }
       fitAddonRef.current = null;
       xtermInitializedRef.current = false;
+      if (windowResizeListenerRef.current) {
+        window.removeEventListener("resize", windowResizeListenerRef.current);
+        windowResizeListenerRef.current = null;
+      }
       setXtermReady(false);
       setXtermInitError(null);
 
@@ -941,6 +961,10 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
     }
     fitAddonRef.current = null;
     xtermInitializedRef.current = false;
+    if (windowResizeListenerRef.current) {
+      window.removeEventListener("resize", windowResizeListenerRef.current);
+      windowResizeListenerRef.current = null;
+    }
     // Clear error state and reset readiness so the init effect re-runs
     setXtermInitError(null);
     setXtermReady(false);
