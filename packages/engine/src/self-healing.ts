@@ -15,11 +15,11 @@
 
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { getTaskMergeBlocker, type TaskStore, type Settings, type Task, type MergeDetails } from "@fusion/core";
 import { createLogger } from "./logger.js";
-import { scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
+import { getRegisteredWorktreePaths, scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
 
 const log = createLogger("self-healing");
 const execAsync = promisify(exec);
@@ -1463,17 +1463,29 @@ export class SelfHealingManager {
     }
   }
 
-  /** Remove orphaned worktrees not assigned to any active task. */
+  /**
+   * Remove orphaned worktrees not assigned to any active task.
+   *
+   * When `recycleWorktrees` is OFF: removes registered idle worktrees too —
+   * they would otherwise pile up since the pool isn't keeping them.
+   *
+   * When `recycleWorktrees` is ON: leaves registered idle worktrees alone
+   * (the pool wants them for reuse) but still reaps unregistered stale dirs
+   * left behind by killed runs (e.g., `clear-hawk-broken`, `*-bak`). Those
+   * dirs can never be recycled — they aren't git worktrees — so they only
+   * waste disk.
+   */
   private async cleanupOrphans(): Promise<number> {
     try {
+      const settings = await this.store.getSettings();
+
+      if (settings.recycleWorktrees) {
+        // Recycle on: only sweep unregistered stale dirs.
+        return await this.reapUnregisteredOrphans();
+      }
+
       const orphaned = await scanIdleWorktrees(this.options.rootDir, this.store);
       if (orphaned.length === 0) return 0;
-
-      // Only clean up if recycling is disabled — otherwise they belong in the pool
-      const settings = await this.store.getSettings();
-      if (settings.recycleWorktrees) {
-        return 0;
-      }
 
       let cleaned = 0;
       for (const worktreePath of orphaned) {
@@ -1498,6 +1510,52 @@ export class SelfHealingManager {
       log.error(`Orphan cleanup failed: ${errorMessage}`);
       return 0;
     }
+  }
+
+  /**
+   * Sweep unregistered stale directories under `<rootDir>/.worktrees/` —
+   * directories that exist on disk but are NOT registered git worktrees.
+   * Safe to run alongside `recycleWorktrees: true` because the pool only
+   * tracks registered idle worktrees, never these orphans.
+   */
+  private async reapUnregisteredOrphans(): Promise<number> {
+    const worktreesDir = join(this.options.rootDir, ".worktrees");
+    if (!existsSync(worktreesDir)) return 0;
+
+    let dirs: string[];
+    try {
+      dirs = readdirSync(worktreesDir, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => join(worktreesDir, e.name));
+    } catch (err: unknown) {
+      log.warn(`Failed to read .worktrees/ for unregistered orphan reap: ${err instanceof Error ? err.message : String(err)}`);
+      return 0;
+    }
+    if (dirs.length === 0) return 0;
+
+    const registered = await getRegisteredWorktreePaths(this.options.rootDir);
+    const unregistered = dirs.filter((d) => !registered.has(resolve(d)));
+
+    let cleaned = 0;
+    for (const path of unregistered) {
+      const rel = relative(worktreesDir, path);
+      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+        log.warn(`Refusing to remove path outside .worktrees: ${path}`);
+        continue;
+      }
+      try {
+        rmSync(path, { recursive: true, force: true });
+        log.log(`Cleaned unregistered worktree dir: ${path}`);
+        cleaned++;
+      } catch (err: unknown) {
+        log.warn(`Failed to remove unregistered worktree dir ${path}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    if (cleaned > 0) {
+      log.log(`Cleaned ${cleaned} unregistered worktree dir(s) (recycle mode preserves registered idle worktrees)`);
+    }
+    return cleaned;
   }
 
   /**

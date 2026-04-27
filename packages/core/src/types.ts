@@ -815,6 +815,13 @@ export interface Task {
    *  failures. Capped by `MAX_TASK_DONE_RETRIES`; when exhausted the task stays
    *  in `in-review` for human inspection. Cleared on successful completion. */
   taskDoneRetryCount?: number;
+  /** Number of times this task has bounced from `in-review` back to `in-progress`
+   *  due to a deterministic verification failure during auto-merge. Incremented
+   *  by the auto-merge error handler (project-engine.ts). When this reaches
+   *  `MAX_VERIFICATION_FAILURE_BOUNCES`, the task is marked failed and a
+   *  follow-up triage task is created so a human / fresh agent can investigate
+   *  rather than endlessly re-attempting the same fix. */
+  verificationFailureCount?: number;
   /** ISO-8601 timestamp indicating when the task becomes eligible for the next
    *  recovery retry. Scheduler and triage processor skip tasks whose
    *  `nextRecoveryAt` is still in the future. Cleared alongside `recoveryRetryCount`. */

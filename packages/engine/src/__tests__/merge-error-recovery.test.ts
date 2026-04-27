@@ -30,10 +30,12 @@ import { aiMergeTask } from "../merger.js";
 
 type MockTask = {
   id: string;
+  title?: string;
   column: "in-review";
   mergeRetries: number;
   status: string | null;
   error: string | null;
+  verificationFailureCount?: number;
   updatedAt: string;
   log: Array<{ action?: string }>;
 };
@@ -46,6 +48,7 @@ type MockTaskStore = {
   moveTask: ReturnType<typeof vi.fn>;
   logEntry: ReturnType<typeof vi.fn>;
   getActiveMergingTask: ReturnType<typeof vi.fn>;
+  createTask: ReturnType<typeof vi.fn>;
 };
 
 const TASK_ID = "FN-2084";
@@ -94,6 +97,10 @@ function makeStore({
     moveTask: vi.fn(async () => undefined),
     logEntry: vi.fn(async () => undefined),
     getActiveMergingTask: vi.fn(() => null),
+    createTask: vi.fn(async (input: { description: string }) => ({
+      id: "FN-9999",
+      description: input.description,
+    })),
   };
 }
 
@@ -253,21 +260,59 @@ describe("ProjectEngine merge error recovery", () => {
 
     expect(store.addTaskComment).toHaveBeenCalledWith(
       TASK_ID,
-      expect.stringContaining("Deterministic test verification failed during merge."),
+      expect.stringContaining("Deterministic test verification failed during merge"),
       "agent",
     );
     expect(store.updateTask).toHaveBeenCalledWith(TASK_ID, {
       status: null,
       mergeRetries: 0,
       error: null,
+      verificationFailureCount: 1,
     });
     expect(store.moveTask).toHaveBeenCalledWith(TASK_ID, "in-progress");
     expect(store.logEntry).toHaveBeenCalledWith(
       TASK_ID,
-      "Deterministic test verification failed — moved back to in-progress for remediation",
+      "Deterministic test verification failed (1/3) — moved back to in-progress for remediation",
     );
     expect(logSpy).toHaveBeenCalledWith(
-      `Auto-merge: ${TASK_ID} deterministic test verification failed — moved to in-progress`,
+      `Auto-merge: ${TASK_ID} deterministic test verification failed (1/3) — moved to in-progress`,
+    );
+  });
+
+  it("caps verification-failure bounces and creates a follow-up task", async () => {
+    const verificationError = new Error("Deterministic test verification failed");
+    verificationError.name = "VerificationError";
+    vi.mocked(aiMergeTask).mockRejectedValueOnce(verificationError);
+
+    // Task already bounced 2 times — this attempt would push it to 3 (the cap)
+    const store = makeStore({
+      tasks: [
+        makeTask({ verificationFailureCount: 2, title: "do the thing" }),
+      ],
+    });
+    const engine = createEngine(store);
+
+    await runMergeCycle(engine);
+
+    // Original task is failed (not bounced back)
+    expect(store.moveTask).not.toHaveBeenCalledWith(TASK_ID, "in-progress");
+    expect(store.updateTask).toHaveBeenCalledWith(TASK_ID, expect.objectContaining({
+      status: "failed",
+      verificationFailureCount: 3,
+    }));
+
+    // Follow-up triage task created with context
+    expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      column: "triage",
+      priority: "high",
+      description: expect.stringContaining(TASK_ID),
+    }));
+
+    // Comment links the follow-up
+    expect(store.addTaskComment).toHaveBeenCalledWith(
+      TASK_ID,
+      expect.stringContaining("FN-9999"),
+      "agent",
     );
   });
 

@@ -142,6 +142,12 @@ export class ProjectEngine {
   private shuttingDown = false;
 
   private static readonly MAX_AUTO_MERGE_RETRIES = 3;
+  /** Cap on outer in-review→in-progress bounces caused by deterministic
+   *  verification failures during auto-merge. After this many failed merges
+   *  for the same task, we stop bouncing it back, mark it failed, and create
+   *  a follow-up triage task so a fresh agent (or human) can investigate
+   *  the underlying flake/regression instead of looping forever. */
+  private static readonly MAX_VERIFICATION_FAILURE_BOUNCES = 3;
   /** 30-minute cooldown before a retry-exhausted task gets another sweep attempt */
   private static readonly AUTO_MERGE_COOLDOWN_MS = 30 * 60 * 1000;
 
@@ -1051,22 +1057,75 @@ export class ProjectEngine {
 
           if (taskOnErr && isVerificationError) {
             const failedKind = errorMsg.includes("build verification") ? "build" : "test";
+            const previousBounces = taskOnErr.verificationFailureCount ?? 0;
+            const nextBounces = previousBounces + 1;
+            const cap = ProjectEngine.MAX_VERIFICATION_FAILURE_BOUNCES;
+
+            if (nextBounces >= cap) {
+              // Cap reached — stop bouncing the task and create a follow-up.
+              // The original task stays in in-review with status=failed so a
+              // human can inspect; the follow-up captures the failure context
+              // so a fresh agent can investigate (often a flaky test or an
+              // unrelated regression that won't be fixed by re-running this
+              // task's branch).
+              try {
+                await store.updateTask(taskId, {
+                  status: "failed",
+                  verificationFailureCount: nextBounces,
+                  error: `Deterministic ${failedKind} verification failed ${nextBounces}× — auto-merge giving up to avoid infinite retry loop. See follow-up task for investigation.`,
+                });
+                const followUpDescription =
+                  `Investigate repeated ${failedKind} verification failure on ${taskId} (${taskOnErr.title || "untitled"}). ` +
+                  `Auto-merge attempted to fix and re-verify ${nextBounces} times without success — likely a flaky test or unrelated regression rather than a fix this task can produce on its own. ` +
+                  `Look at the most recent [verification] log entries on ${taskId} for the failing command and output, then either fix the underlying issue or quarantine the flake.`;
+                const followUp = await store.createTask({
+                  description: followUpDescription,
+                  column: "triage",
+                  priority: "high",
+                });
+                await store.addTaskComment(
+                  taskId,
+                  `Auto-merge giving up after ${nextBounces} verification-failure bounces. Created follow-up ${followUp.id} to investigate.`,
+                  "agent",
+                );
+                await store.logEntry(
+                  taskId,
+                  `Auto-merge gave up after ${nextBounces} verification-failure bounces — created follow-up ${followUp.id}`,
+                  "VerificationError",
+                );
+                runtimeLog.warn(
+                  `Auto-merge: ${taskId} hit verification-failure cap (${nextBounces}/${cap}) — failed task and created follow-up ${followUp.id}`,
+                );
+              } catch (followUpErr) {
+                runtimeLog.error(
+                  `Auto-merge: failed to fail-and-followup ${taskId} after verification cap: ${followUpErr instanceof Error ? followUpErr.message : String(followUpErr)}`,
+                );
+              }
+              continue;
+            }
+
+            // Under cap — bounce back as before, but record the increment.
             try {
               await store.addTaskComment(
                 taskId,
-                `Deterministic ${failedKind} verification failed during merge. ` +
+                `Deterministic ${failedKind} verification failed during merge (attempt ${nextBounces}/${cap}). ` +
                   `See the prior [verification] log entry for the truncated command output. ` +
                   `Please fix the failing ${failedKind} and push the update so the merge can retry.`,
                 "agent",
               );
-              await store.updateTask(taskId, { status: null, mergeRetries: 0, error: null });
+              await store.updateTask(taskId, {
+                status: null,
+                mergeRetries: 0,
+                error: null,
+                verificationFailureCount: nextBounces,
+              });
               await store.moveTask(taskId, "in-progress");
               await store.logEntry(
                 taskId,
-                `Deterministic ${failedKind} verification failed — moved back to in-progress for remediation`,
+                `Deterministic ${failedKind} verification failed (${nextBounces}/${cap}) — moved back to in-progress for remediation`,
               );
               runtimeLog.log(
-                `Auto-merge: ${taskId} deterministic ${failedKind} verification failed — moved to in-progress`,
+                `Auto-merge: ${taskId} deterministic ${failedKind} verification failed (${nextBounces}/${cap}) — moved to in-progress`,
               );
             } catch {
               runtimeLog.error(

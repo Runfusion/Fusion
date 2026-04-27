@@ -1836,6 +1836,15 @@ export class Database {
       });
     }
 
+    // Outer verification-failure bounce counter — counts in-review→in-progress
+    // returns triggered by VerificationError. Capped to prevent infinite
+    // re-merge loops on flaky tests (see project-engine.ts auto-merge handler).
+    if (version < 48) {
+      this.applyMigration(48, () => {
+        this.addColumnIfMissing("tasks", "verificationFailureCount", "INTEGER DEFAULT 0");
+      });
+    }
+
   }
 
   /**
