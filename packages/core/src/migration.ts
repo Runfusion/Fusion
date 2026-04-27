@@ -11,7 +11,7 @@
  */
 
 import { existsSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, resolve, basename, dirname } from "node:path";
 import type { CentralCore } from "./central-core.js";
 import { CentralCore as CentralCoreClass } from "./central-core.js";
@@ -194,8 +194,12 @@ export class FirstRunDetector {
     let current = resolve(startDir);
     const home = homedir();
     const root = dirname(current) === current ? current : "/"; // Handle Windows vs Unix root
+    // Also stop at the OS temp directory — it is a shared system boundary and
+    // should never itself host a project; stopping here prevents the walk from
+    // picking up stale .fusion/ directories left by other processes in /tmp.
+    const systemTmp = resolve(tmpdir());
 
-    while (current !== home && current !== root) {
+    while (current !== home && current !== root && current !== systemTmp) {
       if (visited.has(current)) break;
       visited.add(current);
 
