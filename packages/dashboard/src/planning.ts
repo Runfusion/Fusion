@@ -30,12 +30,12 @@ import {
   resetDiagnosticsSink,
   nonfatal,
 } from "./ai-session-diagnostics.js";
-import * as engine from "@fusion/engine";
+import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let createFnAgent: any = engine.createFnAgent;
+let createFnAgent: any = engineCreateFnAgent;
 
 interface PlanningNtfyConfig {
   enabled: boolean;

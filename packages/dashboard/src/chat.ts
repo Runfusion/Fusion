@@ -25,12 +25,12 @@ import { EventEmitter } from "node:events";
 import { join, resolve, relative } from "node:path";
 import { SessionEventBuffer } from "./sse-buffer.js";
 
-import * as engine from "@fusion/engine";
+import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let createFnAgent: any = engine.createFnAgent;
+let createFnAgent: any = engineCreateFnAgent;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let buildAgentChatPromptFn: any;
 
