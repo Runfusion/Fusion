@@ -231,10 +231,6 @@
 .btn-icon:active {
   opacity: 0.7;
 }
-.btn-icon--terminal {
-  position: relative;
-}
-
 .btn-icon--terminal:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -283,6 +279,33 @@
   .btn-icon--stopped:hover {
     color: var(--color-error);
   }
+}
+
+/* Split-button for terminal + scripts controls */
+.terminal-split-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-md);
+}
+
+.terminal-split-btn__main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.terminal-split-btn__chevron {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  min-width: 28px;
+  padding: 0;
+}
+
+.terminal-split-btn__divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  flex-shrink: 0;
 }
 
 /* Split-button for engine controls */

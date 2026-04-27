@@ -177,10 +177,11 @@ describe("Header", () => {
     });
   });
 
-  describe("terminal button", () => {
-    it("renders terminal button with correct title on desktop", () => {
-      renderHeader({ onToggleTerminal: noop }, "desktop");
+  describe("terminal split button", () => {
+    it("renders terminal main button and scripts chevron on desktop", () => {
+      renderHeader({ onToggleTerminal: noop, onOpenScripts: noop, onRunScript: noop }, "desktop");
       expect(screen.getByTitle("Open Terminal")).toBeDefined();
+      expect(screen.getByTestId("scripts-btn")).toBeDefined();
     });
 
     it("does not render terminal button inline on mobile", () => {
@@ -188,11 +189,91 @@ describe("Header", () => {
       expect(screen.queryByTitle("Open Terminal")).toBeNull();
     });
 
-    it("calls onToggleTerminal when terminal button is clicked", () => {
+    it("clicking main button calls onToggleTerminal without opening scripts dropdown", () => {
       const onToggleTerminal = vi.fn();
-      renderHeader({ onToggleTerminal }, "desktop");
-      fireEvent.click(screen.getByTitle("Open Terminal"));
-      expect(onToggleTerminal).toHaveBeenCalled();
+      renderHeader({ onToggleTerminal, onOpenScripts: noop, onRunScript: noop }, "desktop");
+      fireEvent.click(screen.getByTestId("terminal-toggle-btn"));
+      expect(onToggleTerminal).toHaveBeenCalledTimes(1);
+      expect(screen.queryByTestId("quick-scripts-dropdown")).toBeNull();
+    });
+
+    it("clicking scripts chevron opens dropdown without calling onToggleTerminal", async () => {
+      const onToggleTerminal = vi.fn();
+      renderHeader({ onToggleTerminal, onOpenScripts: noop, onRunScript: noop }, "desktop");
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+
+      expect(onToggleTerminal).not.toHaveBeenCalled();
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-scripts-dropdown")).toBeDefined();
+      });
+    });
+
+    it("fetches scripts and runs selected script from dropdown", async () => {
+      mockFetchScripts.mockResolvedValue({ build: "pnpm build" });
+      const onRunScript = vi.fn();
+
+      renderHeader({ onToggleTerminal: noop, onOpenScripts: noop, onRunScript, projectId: "proj-1" }, "desktop");
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-script-item-build")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByTestId("quick-script-item-build"));
+      expect(onRunScript).toHaveBeenCalledWith("build", "pnpm build");
+      expect(screen.queryByTestId("quick-scripts-dropdown")).toBeNull();
+    });
+
+    it("shows loading state while scripts are fetching", () => {
+      mockFetchScripts.mockImplementation(() => new Promise(() => {}));
+      renderHeader({ onToggleTerminal: noop, onOpenScripts: noop, onRunScript: noop }, "desktop");
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      expect(screen.getByTestId("quick-scripts-loading")).toBeDefined();
+    });
+
+    it("shows empty state when no scripts are configured", async () => {
+      mockFetchScripts.mockResolvedValue({});
+      renderHeader({ onToggleTerminal: noop, onOpenScripts: noop, onRunScript: noop }, "desktop");
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-scripts-empty")).toBeDefined();
+      });
+    });
+
+    it("shows manage scripts footer when scripts exist", async () => {
+      mockFetchScripts.mockResolvedValue({ test: "pnpm test" });
+      renderHeader({ onToggleTerminal: noop, onOpenScripts: noop, onRunScript: noop }, "desktop");
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-scripts-manage")).toBeDefined();
+      });
+    });
+
+    it("supports keyboard navigation in scripts dropdown", async () => {
+      mockFetchScripts.mockResolvedValue({ alpha: "echo alpha", beta: "echo beta" });
+      const onRunScript = vi.fn();
+
+      renderHeader({ onToggleTerminal: noop, onOpenScripts: noop, onRunScript }, "desktop");
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-script-item-alpha")).toBeDefined();
+      });
+
+      const menu = screen.getByTestId("quick-scripts-dropdown");
+      fireEvent.keyDown(menu, { key: "ArrowDown" });
+      fireEvent.keyDown(menu, { key: "Enter" });
+      expect(onRunScript).toHaveBeenCalledWith("alpha", "echo alpha");
+
+      fireEvent.click(screen.getByTestId("scripts-btn"));
+      await waitFor(() => {
+        expect(screen.getByTestId("quick-scripts-dropdown")).toBeDefined();
+      });
+      fireEvent.keyDown(screen.getByTestId("quick-scripts-dropdown"), { key: "Escape" });
+      await waitFor(() => {
+        expect(screen.queryByTestId("quick-scripts-dropdown")).toBeNull();
+      });
     });
 
     it("is always enabled regardless of task state", () => {
