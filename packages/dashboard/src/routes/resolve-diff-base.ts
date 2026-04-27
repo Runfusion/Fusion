@@ -47,6 +47,12 @@ export interface ResolveDiffBaseTaskInput {
  * 2. **Task-scoped baseCommitSha** — If merge-base is unavailable or equals
  *    `headRef`, use `baseCommitSha` when still an ancestor of `headRef`.
  * 3. **headRef~1** — Last-resort fallback.
+ *
+ * Note: callers must validate the worktree still belongs to the task (e.g.
+ * compare `git rev-parse --abbrev-ref HEAD` to `task.branch`) before invoking
+ * this. After worktree-pool reassignment the same path may host a foreign
+ * branch, in which case `baseCommitSha..HEAD` would surface other tasks'
+ * commits and this function has no way to detect that.
  */
 export async function resolveDiffBase(
   task: ResolveDiffBaseTaskInput,

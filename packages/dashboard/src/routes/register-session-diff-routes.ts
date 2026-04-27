@@ -8,6 +8,28 @@ export interface SessionDiffRouteDeps {
   getProjectContext: (req: Request) => Promise<ProjectContext>;
 }
 
+/**
+ * Confirm the worktree's current branch still matches the task's recorded
+ * branch. Worktrees from the recycle pool can be reassigned to a different
+ * task after a merge; without this check the diff endpoints would happily
+ * read another task's branch state and surface its commits as the original
+ * task's "files changed" list. Returns true when no validation is possible
+ * (e.g. task.branch was never set) so we don't break tests/legacy tasks.
+ */
+async function worktreeStillBelongsToTask(
+  worktree: string,
+  expectedBranch: string | undefined | null,
+): Promise<boolean> {
+  if (!expectedBranch) return true;
+  try {
+    const actual = (await runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], worktree, 5000)).trim();
+    if (!actual || actual === "HEAD") return true; // detached HEAD — can't validate
+    return actual === expectedBranch;
+  } catch {
+    return true; // best-effort: never block diff just because rev-parse failed
+  }
+}
+
 const sessionFilesCache = new Map<string, { files: string[]; expiresAt: number }>();
 const fileDiffsCache = new Map<
   string,
@@ -56,6 +78,12 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
       }
 
       const worktree = task.worktree;
+      if (!(await worktreeStillBelongsToTask(worktree, task.branch))) {
+        // Pool likely reassigned this path to another task — return empty
+        // rather than diffing against a foreign branch's HEAD.
+        res.json([]);
+        return;
+      }
       const cached = sessionFilesCache.get(task.id);
       if (cached && cached.expiresAt > Date.now()) {
         res.json(cached.files);
@@ -203,6 +231,10 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
         worktreeExists = false;
       }
       if (!worktreeExists) {
+        res.json({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
+        return;
+      }
+      if (!(await worktreeStillBelongsToTask(resolvedWorktree, task.branch))) {
         res.json({ files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } });
         return;
       }
@@ -380,6 +412,10 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
       }
 
       const worktree = task.worktree;
+      if (!(await worktreeStillBelongsToTask(worktree, task.branch))) {
+        res.json([]);
+        return;
+      }
       const cached = fileDiffsCache.get(task.id);
       if (cached && cached.expiresAt > Date.now()) {
         res.json(cached.files);

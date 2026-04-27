@@ -2834,6 +2834,14 @@ export async function aiMergeTask(
     } else if (options.pool && settings.recycleWorktrees) {
       options.pool.release(worktreePath);
       result.worktreeRemoved = false;
+      // Detach the path from this task so future diff queries don't read
+      // a foreign branch's state once the pool reassigns this worktree.
+      try {
+        await store.updateTask(taskId, { worktree: null, branch: null });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        mergerLog.warn(`${taskId}: failed to clear worktree pointer after pool release: ${msg}`);
+      }
     } else {
       try {
         await execAsync(`git worktree remove "${worktreePath}" --force`, {
@@ -2842,6 +2850,12 @@ export async function aiMergeTask(
         // Audit trail: record worktree removal (FN-1404)
         await audit.git({ type: "worktree:remove", target: worktreePath });
         result.worktreeRemoved = true;
+        try {
+          await store.updateTask(taskId, { worktree: null, branch: null });
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          mergerLog.warn(`${taskId}: failed to clear worktree pointer after removal: ${msg}`);
+        }
       } catch { /* non-fatal */ }
     }
   }

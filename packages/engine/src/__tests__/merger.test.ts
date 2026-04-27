@@ -358,6 +358,29 @@ describe("aiMergeTask — conditional worktree cleanup", () => {
     expect(result.worktreeRemoved).toBe(true);
   });
 
+  it("clears task.worktree/branch after the worktree is removed", async () => {
+    const worktreePath = "/tmp/root/.worktrees/KB-050";
+    const store = createMockStore(
+      { id: "FN-050", worktree: worktreePath },
+      [
+        { id: "FN-050", worktree: worktreePath, column: "in-review" } as Task,
+      ],
+    );
+
+    await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    // The dashboard's diff endpoint reads task.worktree to decide whether to
+    // run a live git diff; leaving it set after removal would point at a
+    // foreign branch (when the path is recycled) and surface other tasks'
+    // commits as if they belonged to FN-050.
+    const updateCalls = (store.updateTask as any).mock.calls;
+    const cleared = updateCalls.find(
+      ([id, patch]: [string, any]) =>
+        id === "FN-050" && patch && patch.worktree === null && patch.branch === null,
+    );
+    expect(cleared).toBeDefined();
+  });
+
   it("always deletes the branch regardless of worktree sharing", async () => {
     const worktreePath = "/tmp/root/.worktrees/KB-050";
     const store = createMockStore(
@@ -4049,7 +4072,7 @@ describe("resolveTaskDiffBaseRef", () => {
     expect(diffBase).toBe("parent-123");
   });
 
-  it("returns undefined when no merge base or fallback refs are available", async () => {
+  it("returns undefined when no merge base, no valid baseCommitSha, and no parent commit are available", async () => {
     mockedExecSync.mockImplementation((cmd: any) => {
       const cmdStr = String(cmd);
       if (cmdStr === 'git merge-base "HEAD" "main"') {
