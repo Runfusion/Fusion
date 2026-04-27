@@ -617,6 +617,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
         defaultAgentStore,
         defaultMessageStore,
         chatStore,
+        options?.automationStore,
       )(req, res);
       return;
     }
@@ -628,12 +629,14 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       let scopedStore: TaskStore;
       let agentStore;
       let messageStore: MessageStore | undefined;
+      let automationStore: AutomationStore | undefined;
       if (engineManager) {
         const engine = engineManager.getEngine(projectId);
         scopedStore = engine?.getTaskStore() ?? await getOrCreateProjectStore(projectId);
         // Use the engine's stores if available
         agentStore = engine?.getAgentStore();
         messageStore = engine?.getMessageStore();
+        automationStore = engine?.getAutomationStore();
       } else {
         scopedStore = await getOrCreateProjectStore(projectId);
       }
@@ -642,6 +645,9 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
         const { AgentStore: AgentStoreClass } = await import("@fusion/core");
         agentStore = new AgentStoreClass({ rootDir: scopedStore.getFusionDir() });
         await agentStore.init();
+      }
+      if (!automationStore) {
+        automationStore = options?.automationStore;
       }
       createSSE(
         scopedStore,
@@ -654,6 +660,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
         agentStore,
         messageStore,
         chatStore,
+        automationStore,
       )(req, res);
     } catch (err: unknown) {
       sendErrorResponse(res, 500, err instanceof Error ? err.message : "Failed to open project event stream");

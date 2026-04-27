@@ -10,6 +10,7 @@ import type {
   MissionValidatorRun,
   FixFeatureCreatedPayload,
   ChatStore,
+  AutomationStore,
 } from "@fusion/core";
 import type { AiSessionStore } from "./ai-session-store.js";
 
@@ -285,6 +286,7 @@ export function createSSE(
   agentStore?: AgentStore,
   messageStore?: MessageStore,
   chatStore?: ChatStore,
+  automationStore?: AutomationStore,
 ) {
   const { projectId } = options ?? {};
 
@@ -519,6 +521,23 @@ export function createSSE(
       send(`event: chat:message:deleted\ndata: ${JSON.stringify({ id: messageId })}\n\n`);
     };
 
+    // --- Automation store event handlers ---
+    const onScheduleCreated = (schedule: unknown) => {
+      send(`event: schedule:created\ndata: ${JSON.stringify(schedule)}\n\n`);
+    };
+
+    const onScheduleUpdated = (schedule: unknown) => {
+      send(`event: schedule:updated\ndata: ${JSON.stringify(schedule)}\n\n`);
+    };
+
+    const onScheduleDeleted = (schedule: unknown) => {
+      send(`event: schedule:deleted\ndata: ${JSON.stringify(schedule)}\n\n`);
+    };
+
+    const onScheduleRun = (data: unknown) => {
+      send(`event: schedule:run\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
     // --- Cleanup (all handlers are defined above, safe to reference) ---
 
     let cleaned = false;
@@ -602,6 +621,12 @@ export function createSSE(
         chatStore.off("chat:session:deleted", onChatSessionDeleted);
         chatStore.off("chat:message:added", onChatMessageAdded);
         chatStore.off("chat:message:deleted", onChatMessageDeleted);
+      }
+      if (automationStore) {
+        automationStore.off("schedule:created", onScheduleCreated);
+        automationStore.off("schedule:updated", onScheduleUpdated);
+        automationStore.off("schedule:deleted", onScheduleDeleted);
+        automationStore.off("schedule:run", onScheduleRun);
       }
     }
 
@@ -692,6 +717,13 @@ export function createSSE(
       chatStore.on("chat:session:deleted", onChatSessionDeleted);
       chatStore.on("chat:message:added", onChatMessageAdded);
       chatStore.on("chat:message:deleted", onChatMessageDeleted);
+    }
+
+    if (automationStore) {
+      automationStore.on("schedule:created", onScheduleCreated);
+      automationStore.on("schedule:updated", onScheduleUpdated);
+      automationStore.on("schedule:deleted", onScheduleDeleted);
+      automationStore.on("schedule:run", onScheduleRun);
     }
 
     // Heartbeat every 30s to keep connection alive.

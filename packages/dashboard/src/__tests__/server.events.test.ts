@@ -109,6 +109,20 @@ describe("server events endpoint integration", () => {
     expect(app).toBeDefined();
   });
 
+  it("wires automationStore into SSE events endpoint", () => {
+    const store = createMockStore();
+    const mockAutomationStore = {
+      on: vi.fn(),
+      off: vi.fn(),
+    };
+
+    const app = createServer(store, {
+      automationStore: mockAutomationStore as any,
+    });
+
+    expect(app).toBeDefined();
+  });
+
   describe("SSE project-scoped event routing", () => {
     // Note: Full SSE streaming tests are complex due to connection timeouts.
     // These tests verify the endpoint routes are properly configured.

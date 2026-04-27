@@ -430,7 +430,7 @@ Key server capabilities:
 
 ### Real-time channels
 - **SSE**: `/api/events` (`sse.ts`)
-  - Emits `task:*`, mission events, AI session updates
+  - Emits `task:*`, mission events, AI session updates, and automation schedule events (`schedule:created`, `schedule:updated`, `schedule:deleted`, `schedule:run`)
   - Project-scoped: resolves project context from query param or engine manager
 - **Chat streaming**: `/api/chat/sessions/:id/messages` (`routes.ts` + `chat.ts`)
   - Streams assistant responses as SSE events for chat sessions
