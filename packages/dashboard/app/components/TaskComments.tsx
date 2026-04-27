@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { Task, TaskComment } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
+import "./TaskComments.css";
 import { addSteeringComment, updateTaskComment, deleteTaskComment } from "../api";
 import type { ToastType } from "../hooks/useToast";
 
@@ -143,7 +144,7 @@ export function TaskComments({ task, onTaskUpdated, addToast, currentAuthor = "u
                       value={editingText}
                       onChange={(event) => setEditingText(event.target.value)}
                       rows={3}
-                      className="spec-editor-feedback"
+                      className="comments-textarea"
                     />
                     <div className="comments-edit-actions">
                       <button
@@ -183,7 +184,7 @@ export function TaskComments({ task, onTaskUpdated, addToast, currentAuthor = "u
           onKeyDown={handleKeyDown}
           rows={3}
           placeholder={placeholder}
-          className="spec-editor-feedback"
+          className="comments-textarea"
         />
         <div className="comments-footer-row">
           <span className={`comments-char-count${isOverLimit ? " comments-char-count--over" : ""}`}>

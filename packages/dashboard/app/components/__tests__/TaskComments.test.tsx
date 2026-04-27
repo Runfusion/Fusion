@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { loadAllAppCssBaseOnly } from "../../test/cssFixture";
 import { TaskComments } from "../TaskComments";
 
 vi.mock("../../api", () => ({
@@ -213,6 +214,31 @@ describe("TaskComments", () => {
 
       expect(screen.getByText("User comment")).toBeTruthy();
       expect(screen.getByText("Agent guidance")).toBeTruthy();
+    });
+  });
+
+  describe("CSS styling", () => {
+    const css = loadAllAppCssBaseOnly();
+
+    it.each([
+      {
+        selector: "comments-textarea",
+        assertions: [/\.comments-textarea\s*\{[^}]*background:\s*var\(--surface\);/, /\.comments-textarea\s*\{[^}]*border:\s*var\(--btn-border-width\)\s+solid\s+var\(--border\);/],
+      },
+      {
+        selector: "ai-guidance-badge",
+        assertions: [/\.ai-guidance-badge\s*\{[^}]*color:\s*var\(--color-info\);/],
+      },
+    ])("uses tokenized styles for $selector", ({ assertions }) => {
+      for (const assertion of assertions) {
+        expect(css).toMatch(assertion);
+      }
+    });
+
+    it("does not rely on spec-editor-feedback for comment textareas", () => {
+      expect(css).toMatch(/\.comments-textarea\s*\{/);
+      expect(css).not.toContain(".comments-compose-form .spec-editor-feedback");
+      expect(css).not.toContain(".comments-edit-form .spec-editor-feedback");
     });
   });
 });
