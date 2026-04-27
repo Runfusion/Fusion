@@ -44,9 +44,14 @@
 
 /* Position set via inline style from useDraggable */
 .quick-chat-panel {
+  --quick-chat-min-width: 280px;
+  --quick-chat-min-height: 260px;
+
   position: fixed;
   width: 320px;
   height: 400px;
+  min-width: var(--quick-chat-min-width);
+  min-height: var(--quick-chat-min-height);
   display: flex;
   flex-direction: column;
   background: var(--surface);
@@ -55,6 +60,36 @@
   box-shadow: var(--shadow-lg);
   overflow: hidden;
   z-index: 1001;
+}
+
+.quick-chat-resize-handle {
+  position: absolute;
+  z-index: 2;
+  background: transparent;
+}
+
+.quick-chat-resize-handle[data-resize-direction="n"] {
+  cursor: ns-resize;
+  top: 0;
+  left: 6px;
+  right: 6px;
+  height: 6px;
+}
+
+.quick-chat-resize-handle[data-resize-direction="w"] {
+  cursor: ew-resize;
+  top: 6px;
+  left: 0;
+  bottom: 6px;
+  width: 6px;
+}
+
+.quick-chat-resize-handle[data-resize-direction="nw"] {
+  cursor: nwse-resize;
+  top: 0;
+  left: 0;
+  width: 10px;
+  height: 10px;
 }
 
 .quick-chat-panel-header {
@@ -336,6 +371,10 @@
     border-radius: 0;
     border: none;
     z-index: 1100;
+  }
+
+  .quick-chat-resize-handle {
+    display: none;
   }
 
   .quick-chat-panel-messages {

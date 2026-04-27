@@ -245,6 +245,26 @@ interface Position {
   y: number;
 }
 
+interface PanelSize {
+  width: number;
+  height: number;
+}
+
+type ResizeDirection = "n" | "w" | "nw";
+
+const QUICK_CHAT_DEFAULT_PANEL_SIZE: PanelSize = {
+  width: 320,
+  height: 400,
+};
+
+const QUICK_CHAT_MIN_PANEL_SIZE: PanelSize = {
+  width: 280,
+  height: 260,
+};
+
+const QUICK_CHAT_DESKTOP_BREAKPOINT = 768;
+const QUICK_CHAT_VIEWPORT_PADDING = 8;
+
 /**
  * Custom hook for draggable behavior.
  * Positions are stored as right/bottom offsets (matching the current positioning model).
@@ -416,6 +436,153 @@ function useDraggable(projectId?: string, externalDidDragRef?: React.MutableRefO
   };
 }
 
+function usePanelResize(projectId: string | undefined, panelRight: number, panelBottom: number) {
+  const storageKey = `fusion-quick-chat-size-${projectId || "default"}`;
+
+  const isDesktopViewport = useCallback(
+    () => typeof window !== "undefined" && window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT,
+    [],
+  );
+
+  const clampPanelSize = useCallback(
+    (size: PanelSize): PanelSize => {
+      if (typeof window === "undefined") {
+        return size;
+      }
+
+      const maxWidth = Math.max(
+        QUICK_CHAT_MIN_PANEL_SIZE.width,
+        window.innerWidth - panelRight - QUICK_CHAT_VIEWPORT_PADDING,
+      );
+      const maxHeight = Math.max(
+        QUICK_CHAT_MIN_PANEL_SIZE.height,
+        window.innerHeight - panelBottom - QUICK_CHAT_VIEWPORT_PADDING,
+      );
+
+      return {
+        width: Math.max(QUICK_CHAT_MIN_PANEL_SIZE.width, Math.min(maxWidth, size.width)),
+        height: Math.max(QUICK_CHAT_MIN_PANEL_SIZE.height, Math.min(maxHeight, size.height)),
+      };
+    },
+    [panelBottom, panelRight],
+  );
+
+  const [panelSize, setPanelSize] = useState<PanelSize>(() => {
+    if (typeof window === "undefined" || window.innerWidth <= QUICK_CHAT_DESKTOP_BREAKPOINT) {
+      return QUICK_CHAT_DEFAULT_PANEL_SIZE;
+    }
+
+    try {
+      const rawSize = localStorage.getItem(storageKey);
+      if (!rawSize) {
+        return QUICK_CHAT_DEFAULT_PANEL_SIZE;
+      }
+
+      const parsed = JSON.parse(rawSize) as Partial<PanelSize>;
+      if (typeof parsed.width !== "number" || typeof parsed.height !== "number") {
+        return QUICK_CHAT_DEFAULT_PANEL_SIZE;
+      }
+
+      return {
+        width: parsed.width,
+        height: parsed.height,
+      };
+    } catch {
+      return QUICK_CHAT_DEFAULT_PANEL_SIZE;
+    }
+  });
+
+  useEffect(() => {
+    if (!isDesktopViewport()) {
+      return;
+    }
+
+    setPanelSize((current) => clampPanelSize(current));
+  }, [clampPanelSize, isDesktopViewport]);
+
+  useEffect(() => {
+    if (!isDesktopViewport()) {
+      return;
+    }
+
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(panelSize));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [isDesktopViewport, panelSize, storageKey]);
+
+  const handleResizeStart = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!isDesktopViewport()) {
+        return;
+      }
+
+      const direction = event.currentTarget.dataset.resizeDirection as ResizeDirection | undefined;
+      if (!direction) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const resizeHandle = event.currentTarget;
+
+      if (typeof resizeHandle.setPointerCapture === "function") {
+        resizeHandle.setPointerCapture(event.pointerId);
+      }
+
+      const resizeStart = {
+        pointerX: event.clientX,
+        pointerY: event.clientY,
+        width: panelSize.width,
+        height: panelSize.height,
+      };
+
+      document.body.style.userSelect = "none";
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        let nextWidth = resizeStart.width;
+        let nextHeight = resizeStart.height;
+
+        if (direction.includes("w")) {
+          nextWidth = resizeStart.width + (resizeStart.pointerX - moveEvent.clientX);
+        }
+
+        if (direction.includes("n")) {
+          nextHeight = resizeStart.height + (resizeStart.pointerY - moveEvent.clientY);
+        }
+
+        setPanelSize(
+          clampPanelSize({
+            width: nextWidth,
+            height: nextHeight,
+          }),
+        );
+      };
+
+      const handlePointerUp = (upEvent: PointerEvent) => {
+        if (typeof resizeHandle.releasePointerCapture === "function") {
+          resizeHandle.releasePointerCapture(upEvent.pointerId);
+        }
+
+        document.body.style.userSelect = "";
+        document.removeEventListener("pointermove", handlePointerMove);
+        document.removeEventListener("pointerup", handlePointerUp);
+      };
+
+      document.addEventListener("pointermove", handlePointerMove);
+      document.addEventListener("pointerup", handlePointerUp);
+    },
+    [clampPanelSize, isDesktopViewport, panelSize.height, panelSize.width],
+  );
+
+  return {
+    panelSize,
+    handleResizeStart,
+  };
+}
+
 export function QuickChatFAB({
   projectId,
   addToast,
@@ -489,6 +656,11 @@ export function QuickChatFAB({
     handlePointerMove,
     handlePointerUp,
   } = useDraggable(projectId, didDragRef);
+
+  // Panel stays 60px above FAB (FAB is 48px tall + 12px gap)
+  const panelY = position.y + 60;
+  const { panelSize, handleResizeStart } = usePanelResize(projectId, position.x, panelY);
+  const shouldApplyDesktopPanelSize = typeof window !== "undefined" && window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT;
 
   // Chat session hook
   const {
@@ -1004,9 +1176,6 @@ export function QuickChatFAB({
     setIsOpen((prev) => !prev);
   }, [setIsOpen]);
 
-  // Calculate panel position: 60px above the FAB (FAB is 48px tall + 12px gap)
-  const panelY = position.y + 60;
-
   return (
     <>
       {showFAB && (
@@ -1032,8 +1201,35 @@ export function QuickChatFAB({
           className="quick-chat-panel"
           ref={panelRef}
           data-testid="quick-chat-panel"
-          style={{ right: position.x, bottom: panelY }}
+          style={{
+            right: position.x,
+            bottom: panelY,
+            ...(shouldApplyDesktopPanelSize ? { width: panelSize.width, height: panelSize.height } : {}),
+          }}
         >
+          {shouldApplyDesktopPanelSize && (
+            <>
+              <div
+                className="quick-chat-resize-handle"
+                data-resize-direction="n"
+                onPointerDown={handleResizeStart}
+                aria-hidden="true"
+              />
+              <div
+                className="quick-chat-resize-handle"
+                data-resize-direction="w"
+                onPointerDown={handleResizeStart}
+                aria-hidden="true"
+              />
+              <div
+                className="quick-chat-resize-handle"
+                data-resize-direction="nw"
+                onPointerDown={handleResizeStart}
+                aria-hidden="true"
+              />
+            </>
+          )}
+
           <div className="quick-chat-panel-header">
             <div style={headerTitleWrapStyle}>
               <h3>Quick Chat</h3>

@@ -1348,6 +1348,178 @@ describe("QuickChatFAB", () => {
     });
   });
 
+  describe("panel resizing", () => {
+    const localStorageMock = {
+      store: {} as Record<string, string>,
+      getItem: vi.fn((key: string) => localStorageMock.store[key] ?? null),
+      setItem: vi.fn((key: string, value: string) => { localStorageMock.store[key] = value; }),
+      removeItem: vi.fn((key: string) => { delete localStorageMock.store[key]; }),
+      clear: vi.fn(() => { localStorageMock.store = {}; }),
+    };
+
+    let originalInnerWidth: number;
+    let originalInnerHeight: number;
+
+    beforeEach(() => {
+      originalInnerWidth = window.innerWidth;
+      originalInnerHeight = window.innerHeight;
+      Object.defineProperty(window, "innerWidth", { value: 1200, writable: true });
+      Object.defineProperty(window, "innerHeight", { value: 900, writable: true });
+      vi.stubGlobal("localStorage", localStorageMock);
+      localStorageMock.store = {};
+      localStorageMock.getItem.mockClear();
+      localStorageMock.setItem.mockClear();
+    });
+
+    afterEach(() => {
+      Object.defineProperty(window, "innerWidth", { value: originalInnerWidth, writable: true });
+      Object.defineProperty(window, "innerHeight", { value: originalInnerHeight, writable: true });
+      vi.unstubAllGlobals();
+    });
+
+    it("renders default desktop panel dimensions", () => {
+      render(<QuickChatFAB addToast={addToast} projectId="proj-123" open={true} />);
+
+      const panel = screen.getByTestId("quick-chat-panel");
+      expect(panel.style.width).toBe("320px");
+      expect(panel.style.height).toBe("400px");
+    });
+
+    it("persists panel size when a resize handle is dragged", () => {
+      render(<QuickChatFAB addToast={addToast} projectId="proj-123" open={true} />);
+
+      const panel = screen.getByTestId("quick-chat-panel");
+      const leftHandle = panel.querySelector('[data-resize-direction="w"]');
+      expect(leftHandle).not.toBeNull();
+
+      fireEvent.pointerDown(leftHandle!, {
+        clientX: 400,
+        clientY: 250,
+        pointerId: 7,
+        button: 0,
+      });
+
+      fireEvent.pointerMove(document, {
+        clientX: 320,
+        clientY: 250,
+        pointerId: 7,
+      });
+
+      fireEvent.pointerUp(document, {
+        clientX: 320,
+        clientY: 250,
+        pointerId: 7,
+      });
+
+      expect(localStorageMock.setItem).toHaveBeenCalledWith(
+        "fusion-quick-chat-size-proj-123",
+        expect.stringContaining('"width":'),
+      );
+      expect(parseFloat(panel.style.width)).toBeGreaterThan(320);
+      expect(panel.style.height).toBe("400px");
+    });
+
+    it("restores panel size from localStorage on desktop mount", () => {
+      localStorageMock.store["fusion-quick-chat-size-proj-123"] = JSON.stringify({ width: 470, height: 520 });
+
+      render(<QuickChatFAB addToast={addToast} projectId="proj-123" open={true} />);
+
+      const panel = screen.getByTestId("quick-chat-panel");
+      expect(panel.style.width).toBe("470px");
+      expect(panel.style.height).toBe("520px");
+    });
+
+    it("does not render resize handles on mobile viewport", () => {
+      Object.defineProperty(window, "innerWidth", { value: 640, writable: true });
+
+      render(<QuickChatFAB addToast={addToast} projectId="proj-123" open={true} />);
+
+      const panel = screen.getByTestId("quick-chat-panel");
+      expect(panel.querySelector('[data-resize-direction="n"]')).toBeNull();
+      expect(panel.querySelector('[data-resize-direction="w"]')).toBeNull();
+      expect(panel.querySelector('[data-resize-direction="nw"]')).toBeNull();
+      expect(panel.style.width).toBe("");
+      expect(panel.style.height).toBe("");
+    });
+
+    it("clamps resized panel dimensions to min and viewport max bounds", () => {
+      Object.defineProperty(window, "innerWidth", { value: 900, writable: true });
+      Object.defineProperty(window, "innerHeight", { value: 700, writable: true });
+
+      render(<QuickChatFAB addToast={addToast} projectId="proj-123" open={true} />);
+
+      const panel = screen.getByTestId("quick-chat-panel");
+      const cornerHandle = panel.querySelector('[data-resize-direction="nw"]');
+      expect(cornerHandle).not.toBeNull();
+
+      fireEvent.pointerDown(cornerHandle!, {
+        clientX: 450,
+        clientY: 320,
+        pointerId: 9,
+        button: 0,
+      });
+
+      // Drag down-right to force min clamp
+      fireEvent.pointerMove(document, {
+        clientX: 1200,
+        clientY: 1200,
+        pointerId: 9,
+      });
+      expect(panel.style.width).toBe("280px");
+      expect(panel.style.height).toBe("260px");
+
+      // Drag up-left to force viewport-max clamp
+      fireEvent.pointerMove(document, {
+        clientX: -1200,
+        clientY: -1200,
+        pointerId: 9,
+      });
+
+      fireEvent.pointerUp(document, {
+        clientX: -1200,
+        clientY: -1200,
+        pointerId: 9,
+      });
+
+      const maxWidth = 900 - 24 - 8;
+      const maxHeight = 700 - (24 + 60) - 8;
+      expect(panel.style.width).toBe(`${maxWidth}px`);
+      expect(panel.style.height).toBe(`${maxHeight}px`);
+    });
+
+    it("resizing the panel does not change FAB drag position", () => {
+      render(<QuickChatFAB addToast={addToast} projectId="proj-123" open={true} />);
+
+      const fab = screen.getByTestId("quick-chat-fab");
+      const panel = screen.getByTestId("quick-chat-panel");
+      const initialFabRight = fab.style.right;
+      const initialFabBottom = fab.style.bottom;
+      const leftHandle = panel.querySelector('[data-resize-direction="w"]');
+      expect(leftHandle).not.toBeNull();
+
+      fireEvent.pointerDown(leftHandle!, {
+        clientX: 400,
+        clientY: 280,
+        pointerId: 11,
+        button: 0,
+      });
+      fireEvent.pointerMove(document, {
+        clientX: 300,
+        clientY: 280,
+        pointerId: 11,
+      });
+      fireEvent.pointerUp(document, {
+        clientX: 300,
+        clientY: 280,
+        pointerId: 11,
+      });
+
+      expect(fab.style.right).toBe(initialFabRight);
+      expect(fab.style.bottom).toBe(initialFabBottom);
+      expect(parseFloat(panel.style.width)).toBeGreaterThan(320);
+    });
+  });
+
   // Drag-related tests
   describe("draggable behavior", () => {
     const localStorageMock = {
@@ -1447,8 +1619,11 @@ describe("QuickChatFAB", () => {
       // Should have toggled panel (treated as click)
       expect(onOpenChange).toHaveBeenCalledWith(true);
 
-      // Should NOT have saved position to localStorage (was a click, not a drag)
-      expect(localStorageMock.setItem).not.toHaveBeenCalled();
+      // Should NOT have saved FAB position to localStorage (was a click, not a drag)
+      expect(localStorageMock.setItem).not.toHaveBeenCalledWith(
+        "fusion-quick-chat-position-proj-123",
+        expect.any(String),
+      );
     });
 
     it("FAB position is loaded from localStorage on mount", async () => {
@@ -1496,7 +1671,10 @@ describe("QuickChatFAB", () => {
       });
 
       // Desktop: position should be clamped to at least 8px from edges
-      const savedPosition = JSON.parse(localStorageMock.setItem.mock.calls[0]?.[1] || "{}");
+      const positionCall = localStorageMock.setItem.mock.calls.find(
+        ([key]) => key === "fusion-quick-chat-position-proj-123",
+      );
+      const savedPosition = JSON.parse(positionCall?.[1] || "{}");
       expect(savedPosition.x).toBeGreaterThanOrEqual(8);
       expect(savedPosition.y).toBeGreaterThanOrEqual(8);
     });
@@ -1533,7 +1711,10 @@ describe("QuickChatFAB", () => {
       });
 
       // Mobile (375px <= 768px): position should be clamped to at least 4px from edges
-      const savedPosition = JSON.parse(localStorageMock.setItem.mock.calls[0]?.[1] || "{}");
+      const positionCall = localStorageMock.setItem.mock.calls.find(
+        ([key]) => key === "fusion-quick-chat-position-proj-123",
+      );
+      const savedPosition = JSON.parse(positionCall?.[1] || "{}");
       expect(savedPosition.x).toBeGreaterThanOrEqual(4);
       expect(savedPosition.y).toBeGreaterThanOrEqual(4);
     });
@@ -1570,7 +1751,10 @@ describe("QuickChatFAB", () => {
       });
 
       // Desktop: position should be clamped to at least 8px from edges
-      const savedPosition = JSON.parse(localStorageMock.setItem.mock.calls[0]?.[1] || "{}");
+      const positionCall = localStorageMock.setItem.mock.calls.find(
+        ([key]) => key === "fusion-quick-chat-position-proj-123",
+      );
+      const savedPosition = JSON.parse(positionCall?.[1] || "{}");
       expect(savedPosition.x).toBeGreaterThanOrEqual(8);
       expect(savedPosition.y).toBeGreaterThanOrEqual(8);
     });
