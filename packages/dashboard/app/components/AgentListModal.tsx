@@ -58,15 +58,28 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
 
   const [editingRoleForAgent, setEditingRoleForAgent] = useState<string | null>(null);
   const roleSelectRef = useRef<HTMLSelectElement>(null);
+  const [transitioningAgentIds, setTransitioningAgentIds] = useState<Set<string>>(new Set());
+  const [optimisticStateOverrides, setOptimisticStateOverrides] = useState<Map<string, AgentState>>(new Map());
+
+  const optimisticAgents = useMemo(() => {
+    if (optimisticStateOverrides.size === 0) {
+      return agents;
+    }
+
+    return agents.map((agent) => {
+      const optimisticState = optimisticStateOverrides.get(agent.id);
+      return optimisticState ? { ...agent, state: optimisticState } : agent;
+    });
+  }, [agents, optimisticStateOverrides]);
 
   // Filter agents for display: hide terminated agents in default "All States" view
   // but show them when the user explicitly filters to "terminated"
   const displayAgents = useMemo(() => {
     if (filterState === "all") {
-      return agents.filter(a => a.state !== "terminated");
+      return optimisticAgents.filter((a) => a.state !== "terminated");
     }
-    return agents;
-  }, [agents, filterState]);
+    return optimisticAgents;
+  }, [optimisticAgents, filterState]);
 
   const loadAgents = useCallback(async () => {
     setIsLoading(true);
@@ -115,12 +128,37 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
   };
 
   const handleStateChange = async (agentId: string, newState: AgentState) => {
+    if (transitioningAgentIds.has(agentId)) return;
+
+    setTransitioningAgentIds((prev) => new Set(prev).add(agentId));
+    setOptimisticStateOverrides((prev) => {
+      const next = new Map(prev);
+      next.set(agentId, newState);
+      return next;
+    });
+
     try {
       await updateAgentState(agentId, newState, projectId);
       addToast(`Agent state updated to ${newState}`, "success");
-      void loadAgents();
+      await loadAgents();
+      setOptimisticStateOverrides((prev) => {
+        const next = new Map(prev);
+        next.delete(agentId);
+        return next;
+      });
     } catch (err) {
+      setOptimisticStateOverrides((prev) => {
+        const next = new Map(prev);
+        next.delete(agentId);
+        return next;
+      });
       addToast(`Failed to update state: ${getErrorMessage(err)}`, "error");
+    } finally {
+      setTransitioningAgentIds((prev) => {
+        const next = new Set(prev);
+        next.delete(agentId);
+        return next;
+      });
     }
   };
 
@@ -318,6 +356,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm"
                             onClick={() => void handleStateChange(agent.id, "active")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Activate"
                           >
                             <Play size={14} />
@@ -336,6 +375,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm"
                             onClick={() => void handleStateChange(agent.id, "paused")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Pause"
                           >
                             <Pause size={14} />
@@ -343,6 +383,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm btn--danger"
                             onClick={() => void handleStateChange(agent.id, "terminated")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Stop"
                           >
                             <Square size={14} />
@@ -354,6 +395,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm"
                             onClick={() => void handleStateChange(agent.id, "active")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Resume"
                           >
                             <Play size={14} />
@@ -361,6 +403,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm btn--danger"
                             onClick={() => void handleStateChange(agent.id, "terminated")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Stop"
                           >
                             <Square size={14} />
@@ -372,6 +415,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm"
                             onClick={() => void handleStateChange(agent.id, "paused")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Pause"
                           >
                             <Pause size={14} />
@@ -379,6 +423,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm btn--danger"
                             onClick={() => void handleStateChange(agent.id, "terminated")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Stop"
                           >
                             <Square size={14} />
@@ -390,6 +435,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm"
                             onClick={() => void handleStateChange(agent.id, "active")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Retry"
                           >
                             <Play size={14} />
@@ -397,6 +443,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm btn--danger"
                             onClick={() => void handleStateChange(agent.id, "terminated")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Stop"
                           >
                             <Square size={14} />
@@ -499,6 +546,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm"
                             onClick={() => void handleStateChange(agent.id, "active")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Activate"
                           >
                             <Play size={14} /> Start
@@ -517,6 +565,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm"
                             onClick={() => void handleStateChange(agent.id, "paused")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Pause"
                           >
                             <Pause size={14} /> Pause
@@ -524,6 +573,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm btn--danger"
                             onClick={() => void handleStateChange(agent.id, "terminated")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Stop"
                           >
                             <Square size={14} /> Stop
@@ -535,6 +585,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm"
                             onClick={() => void handleStateChange(agent.id, "active")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Resume"
                           >
                             <Play size={14} /> Resume
@@ -542,6 +593,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm btn--danger"
                             onClick={() => void handleStateChange(agent.id, "terminated")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Stop"
                           >
                             <Square size={14} /> Stop
@@ -553,6 +605,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm"
                             onClick={() => void handleStateChange(agent.id, "paused")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Pause"
                           >
                             <Pause size={14} /> Pause
@@ -560,6 +613,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm btn--danger"
                             onClick={() => void handleStateChange(agent.id, "terminated")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Stop"
                           >
                             <Square size={14} /> Stop
@@ -571,6 +625,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm"
                             onClick={() => void handleStateChange(agent.id, "active")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Retry"
                           >
                             <Play size={14} /> Retry
@@ -578,6 +633,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm btn--danger"
                             onClick={() => void handleStateChange(agent.id, "terminated")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Stop"
                           >
                             <Square size={14} /> Stop
@@ -589,6 +645,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                           <button
                             className="btn btn--sm btn--primary"
                             onClick={() => void handleStateChange(agent.id, "active")}
+                            disabled={transitioningAgentIds.has(agent.id)}
                             title="Start"
                           >
                             <Play size={14} /> Start

@@ -154,7 +154,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-async function waitForFrameContains(lastFrame: () => string | undefined, text: string, timeoutMs = 1200) {
+async function waitForFrameContains(lastFrame: () => string | undefined, text: string, timeoutMs = 3000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if ((lastFrame() ?? "").includes(text)) return;

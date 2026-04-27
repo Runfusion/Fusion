@@ -536,6 +536,93 @@ describe("AgentDetailView", () => {
     });
   });
 
+  it("optimistically updates the detail header state before API resolves", async () => {
+    let resolveTransition: (() => void) | null = null;
+    const transitionPromise = new Promise<AgentDetail>((resolve) => {
+      resolveTransition = () => resolve(createMockAgent({ state: "paused" }));
+    });
+    mockUpdateAgentState.mockImplementationOnce(() => transitionPromise);
+
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />
+    );
+
+    const pauseButton = await screen.findByText("Pause");
+    await userEvent.click(pauseButton);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("paused").length).toBeGreaterThan(0);
+      expect(screen.getByText("Resume")).toBeInTheDocument();
+    });
+
+    resolveTransition?.();
+    await waitFor(() => {
+      expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-001", "paused", undefined);
+    });
+  });
+
+  it("rolls back optimistic detail state when API call fails", async () => {
+    let rejectTransition: ((error: Error) => void) | null = null;
+    const transitionPromise = new Promise<AgentDetail>((_, reject) => {
+      rejectTransition = reject;
+    });
+    mockUpdateAgentState.mockImplementationOnce(() => transitionPromise);
+
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />
+    );
+
+    await userEvent.click(await screen.findByText("Pause"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Resume")).toBeInTheDocument();
+    });
+
+    rejectTransition?.(new Error("State change failed"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Pause")).toBeInTheDocument();
+      expect(screen.getAllByText("active").length).toBeGreaterThan(0);
+    });
+  });
+
+  it("disables lifecycle transition buttons while state transition is in-flight", async () => {
+    let resolveTransition: (() => void) | null = null;
+    const transitionPromise = new Promise<AgentDetail>((resolve) => {
+      resolveTransition = () => resolve(createMockAgent({ state: "paused" }));
+    });
+    mockUpdateAgentState.mockImplementationOnce(() => transitionPromise);
+
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />
+    );
+
+    await userEvent.click(await screen.findByText("Pause"));
+
+    await waitFor(() => {
+      const resumeButton = screen.getByText("Resume").closest("button") as HTMLButtonElement | null;
+      expect(resumeButton).toBeTruthy();
+      expect(resumeButton?.disabled).toBe(true);
+    });
+
+    resolveTransition?.();
+    await waitFor(() => {
+      expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-001", "paused", undefined);
+    });
+  });
+
   it("shows Resume button for paused agent", async () => {
     mockFetchAgent.mockResolvedValue(createMockAgent({ state: "paused" }));
 

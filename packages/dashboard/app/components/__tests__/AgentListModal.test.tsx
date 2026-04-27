@@ -634,6 +634,120 @@ describe("AgentListModal", () => {
       });
     });
 
+    it("optimistically updates list card state before API resolves", async () => {
+      let resolveTransition: (() => void) | null = null;
+      const transitionPromise = new Promise<Agent>((resolve) => {
+        resolveTransition = () => resolve({ ...mockAgents[0], state: "active" });
+      });
+      mockUpdateAgentState.mockImplementationOnce(() => transitionPromise);
+
+      render(
+        <AgentListModal
+          isOpen={true}
+          onClose={mockOnClose}
+          addToast={mockAddToast}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTitle("Activate")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByTitle("Activate"));
+
+      await waitFor(() => {
+        const agentCards = Array.from(document.querySelectorAll(".agent-card"));
+        const targetCard = agentCards.find((card) => card.textContent?.includes("agent-001"));
+        expect(targetCard?.textContent).toContain("active");
+        expect(targetCard?.querySelector('[title="Pause"]')).toBeTruthy();
+      });
+
+      resolveTransition?.();
+      await waitFor(() => {
+        expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-001", "active", undefined);
+      });
+    });
+
+    it("rolls back optimistic list state when API call fails", async () => {
+      let rejectTransition: ((error: Error) => void) | null = null;
+      const transitionPromise = new Promise<Agent>((_, reject) => {
+        rejectTransition = reject;
+      });
+      mockUpdateAgentState.mockImplementationOnce(() => transitionPromise);
+
+      render(
+        <AgentListModal
+          isOpen={true}
+          onClose={mockOnClose}
+          addToast={mockAddToast}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTitle("Activate")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByTitle("Activate"));
+
+      await waitFor(() => {
+        const agentCards = Array.from(document.querySelectorAll(".agent-card"));
+        const targetCard = agentCards.find((card) => card.textContent?.includes("agent-001"));
+        expect(targetCard?.textContent).toContain("active");
+      });
+
+      rejectTransition?.(new Error("Invalid transition"));
+
+      await waitFor(() => {
+        const agentCards = Array.from(document.querySelectorAll(".agent-card"));
+        const targetCard = agentCards.find((card) => card.textContent?.includes("agent-001"));
+        expect(targetCard?.textContent).toContain("idle");
+      });
+    });
+
+    it("prevents concurrent state changes while transition is in-flight", async () => {
+      let resolveTransition: (() => void) | null = null;
+      const transitionPromise = new Promise<Agent>((resolve) => {
+        resolveTransition = () => resolve({ ...mockAgents[0], state: "active" });
+      });
+      mockUpdateAgentState.mockImplementationOnce(() => transitionPromise);
+
+      render(
+        <AgentListModal
+          isOpen={true}
+          onClose={mockOnClose}
+          addToast={mockAddToast}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTitle("Activate")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByTitle("Activate"));
+
+      await waitFor(() => {
+        const agentCards = Array.from(document.querySelectorAll(".agent-card"));
+        const targetCard = agentCards.find((card) => card.textContent?.includes("agent-001"));
+        const pauseButton = targetCard?.querySelector('[title="Pause"]') as HTMLButtonElement | null;
+        expect(pauseButton).toBeTruthy();
+        expect(pauseButton?.disabled).toBe(true);
+      });
+
+      const agentCards = Array.from(document.querySelectorAll(".agent-card"));
+      const targetCard = agentCards.find((card) => card.textContent?.includes("agent-001"));
+      const pauseButton = targetCard?.querySelector('[title="Pause"]') as HTMLButtonElement | null;
+      if (pauseButton) {
+        fireEvent.click(pauseButton);
+      }
+
+      expect(mockUpdateAgentState).toHaveBeenCalledTimes(1);
+
+      resolveTransition?.();
+      await waitFor(() => {
+        expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-001", "active", undefined);
+      });
+    });
+
     it("handles state change errors gracefully", async () => {
       mockUpdateAgentState.mockRejectedValue(new Error("Invalid transition"));
 

@@ -254,7 +254,7 @@ function OrgChartNode({
 export function AgentsView({ addToast, projectId }: AgentsViewProps) {
   const [showSystemAgents, setShowSystemAgents] = useState(false);
   const [filterState, setFilterState] = useState<AgentState | "all">("all");
-  const { agents, activeAgents, stats, isLoading, loadAgents } = useAgents(projectId, {
+  const { agents, stats, isLoading, loadAgents } = useAgents(projectId, {
     filterState,
     showSystemAgents,
   });
@@ -300,6 +300,8 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
   const [isSavingMultiplier, setIsSavingMultiplier] = useState(false);
   /** Agent IDs with an in-flight state transition (for optimistic update guard) */
   const [transitioningAgentIds, setTransitioningAgentIds] = useState<Set<string>>(new Set());
+  /** Optimistic state overrides keyed by agent ID while pause/resume/start API call is in-flight */
+  const [optimisticStateOverrides, setOptimisticStateOverrides] = useState<Map<string, AgentState>>(new Map());
   const isMountedRef = useRef(true);
 
   useEffect(() => {
@@ -338,14 +340,34 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
     }
   }, [projectId, addToast]);
 
-  const hierarchy = useAgentHierarchy(agents, projectId);
+  const optimisticAgents = useMemo(() => {
+    if (optimisticStateOverrides.size === 0) {
+      return agents;
+    }
+
+    return agents.map((agent) => {
+      const optimisticState = optimisticStateOverrides.get(agent.id);
+      return optimisticState ? { ...agent, state: optimisticState } : agent;
+    });
+  }, [agents, optimisticStateOverrides]);
+
+  const hierarchy = useAgentHierarchy(optimisticAgents, projectId);
 
   // Filter agents for display. "All States" means all non-ephemeral agents,
   // including disabled/terminated agents that still carry configuration.
   // When "Show system agents" is enabled, include ephemeral/internal agents.
   const displayAgents = useMemo(() => {
-    return agents.filter((agent) => showSystemAgents || !isEphemeralAgent(agent));
-  }, [agents, showSystemAgents]);
+    return optimisticAgents.filter((agent) => showSystemAgents || !isEphemeralAgent(agent));
+  }, [optimisticAgents, showSystemAgents]);
+
+  const displayActiveAgents = useMemo(() => {
+    return optimisticAgents.filter((agent) => {
+      if (agent.state !== "active" && agent.state !== "running") {
+        return false;
+      }
+      return showSystemAgents || !isEphemeralAgent(agent);
+    });
+  }, [optimisticAgents, showSystemAgents]);
 
   // Filter org tree to exclude ephemeral agents in default view.
   const displayOrgTree = useMemo(() => {
@@ -440,15 +462,36 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
 
   const handleStateChange = async (agentId: string, newState: AgentState) => {
     if (transitioningAgentIds.has(agentId)) return;
-    setTransitioningAgentIds(prev => new Set(prev).add(agentId));
+
+    setTransitioningAgentIds((prev) => new Set(prev).add(agentId));
+    setOptimisticStateOverrides((prev) => {
+      const next = new Map(prev);
+      next.set(agentId, newState);
+      return next;
+    });
+
     try {
       await updateAgentState(agentId, newState, projectId);
       addToast(`Agent state updated to ${newState}`, "success");
-      void loadAgents();
+      await loadAgents();
+      setOptimisticStateOverrides((prev) => {
+        const next = new Map(prev);
+        next.delete(agentId);
+        return next;
+      });
     } catch (err) {
+      setOptimisticStateOverrides((prev) => {
+        const next = new Map(prev);
+        next.delete(agentId);
+        return next;
+      });
       addToast(`Failed to update state: ${getErrorMessage(err)}`, "error");
     } finally {
-      setTransitioningAgentIds(prev => { const next = new Set(prev); next.delete(agentId); return next; });
+      setTransitioningAgentIds((prev) => {
+        const next = new Set(prev);
+        next.delete(agentId);
+        return next;
+      });
     }
   };
 
@@ -1263,7 +1306,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
         )}
 
         {/* Secondary sections after the main collection */}
-        <ActiveAgentsPanel agents={activeAgents} projectId={projectId} onAgentSelect={setSelectedAgentId} />
+        <ActiveAgentsPanel agents={displayActiveAgents} projectId={projectId} onAgentSelect={setSelectedAgentId} />
       </div>
 
       {/* Agent Detail Modal */}

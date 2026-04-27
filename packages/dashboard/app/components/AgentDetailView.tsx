@@ -122,6 +122,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isTransitioning, setIsTransitioning] = useState(false);
   const logContainerRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   const addToastRef = useRef(addToast);
@@ -307,12 +308,23 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
   }, [agent?.taskId, activeTab, projectId]);
 
   const handleStateChange = async (newState: AgentState) => {
+    if (isTransitioning || !agentRef.current) return;
+
+    const previousState = agentRef.current.state;
+    if (previousState === newState) return;
+
+    setIsTransitioning(true);
+    setAgent((prev) => (prev ? { ...prev, state: newState } : prev));
+
     try {
       await updateAgentState(agentId, newState, projectId);
       addToast(`Agent state updated to ${newState}`, "success");
       void loadAgent();
     } catch (err) {
+      setAgent((prev) => (prev ? { ...prev, state: previousState } : prev));
       addToast(`Failed to update state: ${getErrorMessage(err)}`, "error");
+    } finally {
+      setIsTransitioning(false);
     }
   };
 
@@ -400,7 +412,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
             {/* State-dependent action buttons */}
             {agent.state === "idle" && (
               <>
-                <button className="btn btn--primary btn--compact" onClick={() => void handleStateChange("active")}>
+                <button className="btn btn--primary btn--compact" onClick={() => void handleStateChange("active")} disabled={isTransitioning}>
                   <Play size={14} />
                   Start
                 </button>
@@ -411,24 +423,24 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
               </>
             )}
             {agent.state === "active" && (
-              <button className="btn btn--compact" onClick={() => void handleStateChange("paused")}>
+              <button className="btn btn--compact" onClick={() => void handleStateChange("paused")} disabled={isTransitioning}>
                 <Pause size={14} />
                 Pause
               </button>
             )}
             {agent.state === "paused" && (
-              <button className="btn btn--primary btn--compact" onClick={() => void handleStateChange("active")}>
+              <button className="btn btn--primary btn--compact" onClick={() => void handleStateChange("active")} disabled={isTransitioning}>
                 <Play size={14} />
                 Resume
               </button>
             )}
             {agent.state === "running" && (
               <>
-                <button className="btn btn--compact" onClick={() => void handleStateChange("paused")}>
+                <button className="btn btn--compact" onClick={() => void handleStateChange("paused")} disabled={isTransitioning}>
                   <Pause size={14} />
                   Pause
                 </button>
-                <button className="btn btn--danger btn--compact" onClick={() => void handleStateChange("terminated")}>
+                <button className="btn btn--danger btn--compact" onClick={() => void handleStateChange("terminated")} disabled={isTransitioning}>
                   <Square size={14} />
                   Stop
                 </button>
@@ -436,11 +448,11 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
             )}
             {agent.state === "error" && (
               <>
-                <button className="btn btn--primary btn--compact" onClick={() => void handleStateChange("active")}>
+                <button className="btn btn--primary btn--compact" onClick={() => void handleStateChange("active")} disabled={isTransitioning}>
                   <Play size={14} />
                   Retry
                 </button>
-                <button className="btn btn--danger btn--compact" onClick={() => void handleStateChange("terminated")}>
+                <button className="btn btn--danger btn--compact" onClick={() => void handleStateChange("terminated")} disabled={isTransitioning}>
                   <Square size={14} />
                   Stop
                 </button>
@@ -448,7 +460,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
             )}
             {agent.state === "terminated" && (
               <>
-                <button className="btn btn--primary btn--compact" onClick={() => void handleStateChange("active")}>
+                <button className="btn btn--primary btn--compact" onClick={() => void handleStateChange("active")} disabled={isTransitioning}>
                   <Play size={14} />
                   Start
                 </button>
