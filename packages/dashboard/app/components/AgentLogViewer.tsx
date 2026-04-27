@@ -268,10 +268,8 @@ export function AgentLogViewer({
 
   return (
     <div
-      ref={containerRef}
       className={`agent-log-viewer agent-log-viewer--streaming${isFullscreen ? " agent-log-viewer--fullscreen" : ""}`}
       data-testid="agent-log-viewer"
-      onScroll={handleScroll}
     >
       {/* Model info header */}
       <div className="agent-log-model-header" data-testid="agent-log-model-header">
@@ -357,66 +355,106 @@ export function AgentLogViewer({
         )}
       </div>
 
-      {/* Pagination summary */}
-      {totalCount !== null && (
-        <div className="agent-log-summary" data-testid="agent-log-summary">
-          Showing {entries.length} of {totalCount} entries
-        </div>
-      )}
+      <div
+        ref={containerRef}
+        className="agent-log-viewer-scroll"
+        onScroll={handleScroll}
+      >
+        {/* Pagination summary */}
+        {totalCount !== null && (
+          <div className="agent-log-summary" data-testid="agent-log-summary">
+            Showing {entries.length} of {totalCount} entries
+          </div>
+        )}
 
-      {hasMore && onLoadMore && (
-        <div className="agent-log-load-more" data-testid="agent-log-load-more">
-          <button
-            className="agent-log-mode-toggle"
-            onClick={onLoadMore}
-            disabled={loadingMore}
-            data-testid="agent-log-load-more-button"
-          >
-            {loadingMore ? (
-              <>
-                <Loader2 size={14} className="animate-spin" />
-                Loading…
-              </>
-            ) : (
-              "Load More"
-            )}
-          </button>
-        </div>
-      )}
+        {hasMore && onLoadMore && (
+          <div className="agent-log-load-more" data-testid="agent-log-load-more">
+            <button
+              className="agent-log-mode-toggle"
+              onClick={onLoadMore}
+              disabled={loadingMore}
+              data-testid="agent-log-load-more-button"
+            >
+              {loadingMore ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  Loading…
+                </>
+              ) : (
+                "Load More"
+              )}
+            </button>
+          </div>
+        )}
 
-      {entries.map((entry, i) => {
-        const rowKey = chronologicalEntryKeys[i] ?? `${getEntrySignature(entry)}|fallback`;
-        const prev = entries[i - 1];
-        const isBlockLevel = entry.type === "tool" || entry.type === "tool_result" || entry.type === "tool_error";
-        const showBadge = entry.agent
-          ? isBlockLevel || !prev || prev.agent !== entry.agent || prev.type !== entry.type
-          : false;
+        {entries.map((entry, i) => {
+          const rowKey = chronologicalEntryKeys[i] ?? `${getEntrySignature(entry)}|fallback`;
+          const prev = entries[i - 1];
+          const isBlockLevel = entry.type === "tool" || entry.type === "tool_result" || entry.type === "tool_error";
+          const showBadge = entry.agent
+            ? isBlockLevel || !prev || prev.agent !== entry.agent || prev.type !== entry.type
+            : false;
 
-        const timestampSpan = showBadge ? (
-          <span className="agent-log-timestamp" data-testid="agent-log-timestamp">
-            {formatTimestamp(entry.timestamp)}
-          </span>
-        ) : null;
+          const timestampSpan = showBadge ? (
+            <span className="agent-log-timestamp" data-testid="agent-log-timestamp">
+              {formatTimestamp(entry.timestamp)}
+            </span>
+          ) : null;
 
-        const agentBadge = showBadge ? (
-          <span className="agent-log-badge-row">
-            <span className="agent-log-agent-badge">[{entry.agent}]</span>
-            {timestampSpan}
-          </span>
-        ) : null;
+          const agentBadge = showBadge ? (
+            <span className="agent-log-badge-row">
+              <span className="agent-log-agent-badge">[{entry.agent}]</span>
+              {timestampSpan}
+            </span>
+          ) : null;
 
-        if (entry.type === "tool") {
+          if (entry.type === "tool") {
+            return (
+              <div key={rowKey} className="agent-log-tool">
+                {agentBadge}⚡ {entry.text}
+                {entry.detail && <span className="agent-log-tool-detail">— {entry.detail}</span>}
+              </div>
+            );
+          }
+
+          if (entry.type === "thinking") {
+            return (
+              <div key={rowKey} className="agent-log-thinking">
+                {agentBadge}
+                {renderMarkdown ? (
+                  <div className="markdown-body">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                      {entry.text}
+                    </ReactMarkdown>
+                  </div>
+                ) : (
+                  entry.text
+                )}
+              </div>
+            );
+          }
+
+          if (entry.type === "tool_result") {
+            return (
+              <div key={rowKey} className="agent-log-tool-result">
+                {agentBadge}✓ {entry.text}
+                {entry.detail && <span className="agent-log-tool-detail">— {entry.detail}</span>}
+              </div>
+            );
+          }
+
+          if (entry.type === "tool_error") {
+            return (
+              <div key={rowKey} className="agent-log-tool-error">
+                {agentBadge}✗ {entry.text}
+                {entry.detail && <span className="agent-log-tool-detail">— {entry.detail}</span>}
+              </div>
+            );
+          }
+
+          // Default: text entries
           return (
-            <div key={rowKey} className="agent-log-tool">
-              {agentBadge}⚡ {entry.text}
-              {entry.detail && <span className="agent-log-tool-detail">— {entry.detail}</span>}
-            </div>
-          );
-        }
-
-        if (entry.type === "thinking") {
-          return (
-            <div key={rowKey} className="agent-log-thinking">
+            <div key={rowKey} className="agent-log-text">
               {agentBadge}
               {renderMarkdown ? (
                 <div className="markdown-body">
@@ -429,54 +467,20 @@ export function AgentLogViewer({
               )}
             </div>
           );
-        }
+        })}
 
-        if (entry.type === "tool_result") {
-          return (
-            <div key={rowKey} className="agent-log-tool-result">
-              {agentBadge}✓ {entry.text}
-              {entry.detail && <span className="agent-log-tool-detail">— {entry.detail}</span>}
-            </div>
-          );
-        }
-
-        if (entry.type === "tool_error") {
-          return (
-            <div key={rowKey} className="agent-log-tool-error">
-              {agentBadge}✗ {entry.text}
-              {entry.detail && <span className="agent-log-tool-detail">— {entry.detail}</span>}
-            </div>
-          );
-        }
-
-        // Default: text entries
-        return (
-          <div key={rowKey} className="agent-log-text">
-            {agentBadge}
-            {renderMarkdown ? (
-              <div className="markdown-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                  {entry.text}
-                </ReactMarkdown>
-              </div>
-            ) : (
-              entry.text
-            )}
-          </div>
-        );
-      })}
-
-      {!isFollowing && (
-        <button
-          type="button"
-          className="agent-log-return-to-live"
-          onClick={scrollToLive}
-          data-testid="agent-log-return-to-live"
-        >
-          <ChevronDown size={12} />
-          <span>Live</span>
-        </button>
-      )}
+        {!isFollowing && (
+          <button
+            type="button"
+            className="agent-log-return-to-live"
+            onClick={scrollToLive}
+            data-testid="agent-log-return-to-live"
+          >
+            <ChevronDown size={12} />
+            <span>Live</span>
+          </button>
+        )}
+      </div>
     </div>
   );
 }

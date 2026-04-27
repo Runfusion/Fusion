@@ -232,6 +232,16 @@
 }
 
 .detail-section--agent-log .agent-log-viewer {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.agent-log-viewer-scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -241,8 +251,6 @@
   line-height: 1.5;
   color: var(--text);
   padding: var(--space-md);
-  background: var(--bg-secondary);
-  border-radius: var(--radius-sm);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: break-word;
@@ -474,20 +482,23 @@
   position: fixed;
   inset: 0;
   z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   background: var(--surface);
-  overflow-y: auto;
-  overflow-x: hidden;
   padding: var(--space-lg);
 }
 
 .agent-log-viewer--fullscreen .agent-log-model-header {
-  position: sticky;
-  top: 0;
+  margin-bottom: 0;
   background: var(--surface);
-  z-index: 1;
-  padding-bottom: var(--space-md);
-  margin-bottom: var(--space-md);
-  border-bottom: 1px solid var(--border);
+  border: 1px solid var(--border);
+}
+
+.agent-log-viewer--fullscreen .agent-log-viewer-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .detail-spec-edit-trigger {

@@ -25,6 +25,10 @@ function makeEntry(overrides: Partial<AgentLogEntry> = {}): AgentLogEntry {
   };
 }
 
+function getScrollContainer(container: HTMLElement): HTMLDivElement {
+  return container.querySelector(".agent-log-viewer-scroll") as HTMLDivElement;
+}
+
 describe("AgentLogViewer", () => {
   it("shows loading message when loading with no entries", () => {
     render(<AgentLogViewer entries={[]} loading={true} />);
@@ -736,21 +740,21 @@ describe("AgentLogViewer", () => {
   });
 
   describe("horizontal overflow prevention", () => {
-    it("uses the viewer class for overflow-x handling", () => {
+    it("uses the scroll container class for overflow-x handling", () => {
       const longString = "A".repeat(300);
       const entries = [makeEntry({ text: longString })];
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
-      const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLElement;
-      expect(viewer.classList.contains("agent-log-viewer")).toBe(true);
-      expect(viewer.style.overflowX).toBe("");
+      const scrollContainer = getScrollContainer(container);
+      expect(scrollContainer.classList.contains("agent-log-viewer-scroll")).toBe(true);
+      expect(scrollContainer.style.overflowX).toBe("");
     });
 
-    it("uses the viewer class for overflow-wrap handling", () => {
+    it("uses the scroll container class for overflow-wrap handling", () => {
       const entries = [makeEntry({ text: "x".repeat(250) })];
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
-      const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLElement;
-      expect(viewer.classList.contains("agent-log-viewer")).toBe(true);
-      expect(viewer.style.overflowWrap).toBe("");
+      const scrollContainer = getScrollContainer(container);
+      expect(scrollContainer.classList.contains("agent-log-viewer-scroll")).toBe(true);
+      expect(scrollContainer.style.overflowWrap).toBe("");
     });
 
     it("renders pre elements with overflow-x auto for internal scrolling", () => {
@@ -783,13 +787,13 @@ describe("AgentLogViewer", () => {
       expect(viewer.style.maxHeight).toBe("");
     });
 
-    it("uses class-based overflow-y scrolling", () => {
+    it("uses class-based overflow-y scrolling on the entries container", () => {
       const entries = [makeEntry()];
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
-      const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLElement;
+      const scrollContainer = getScrollContainer(container);
       // Scrolling behavior is now defined in CSS.
-      expect(viewer.classList.contains("agent-log-viewer")).toBe(true);
-      expect(viewer.style.overflowY).toBe("");
+      expect(scrollContainer.classList.contains("agent-log-viewer-scroll")).toBe(true);
+      expect(scrollContainer.style.overflowY).toBe("");
     });
 
     it("uses agent-log-viewer--streaming class when entries are present", () => {
@@ -808,6 +812,67 @@ describe("AgentLogViewer", () => {
     });
   });
 
+  describe("sticky header layout", () => {
+    it("renders the model header as a sibling of the scroll container", () => {
+      const entries = [makeEntry()];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLElement;
+      const header = screen.getByTestId("agent-log-model-header");
+      const scrollContainer = getScrollContainer(container);
+
+      expect(header.parentElement).toBe(viewer);
+      expect(scrollContainer.parentElement).toBe(viewer);
+      expect(scrollContainer.contains(header)).toBe(false);
+    });
+
+    it("renders log entry rows inside the scroll container", () => {
+      const entries = [
+        makeEntry({ type: "text", text: "hello" }),
+        makeEntry({ type: "tool", text: "Bash" }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const scrollContainer = getScrollContainer(container);
+
+      expect(scrollContainer.querySelector(".agent-log-text")).toBeTruthy();
+      expect(scrollContainer.querySelector(".agent-log-tool")).toBeTruthy();
+    });
+
+    it("renders pagination summary and load-more controls inside the scroll container", () => {
+      const entries = [makeEntry({ text: "hello" })];
+      const { container } = render(
+        <AgentLogViewer
+          entries={entries}
+          loading={false}
+          totalCount={42}
+          hasMore={true}
+          onLoadMore={() => {}}
+        />,
+      );
+      const scrollContainer = getScrollContainer(container);
+
+      expect(scrollContainer.querySelector("[data-testid='agent-log-summary']")).toBeTruthy();
+      expect(scrollContainer.querySelector("[data-testid='agent-log-load-more']")).toBeTruthy();
+    });
+
+    it("renders the return-to-live button inside the scroll container", () => {
+      const entries = [
+        makeEntry({ text: "first", timestamp: "2026-01-01T00:00:00Z" }),
+        makeEntry({ text: "second", timestamp: "2026-01-01T00:00:01Z" }),
+      ];
+      const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
+      const scrollContainer = getScrollContainer(container);
+
+      Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 1000 });
+      Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 200 });
+
+      scrollContainer.scrollTop = 300;
+      fireEvent.scroll(scrollContainer);
+
+      const returnToLive = screen.getByTestId("agent-log-return-to-live");
+      expect(returnToLive.parentElement).toBe(scrollContainer);
+    });
+  });
+
   describe("auto-scroll behavior", () => {
     it("scrolls to bottom when streaming updates arrive and user is near the bottom", () => {
       const initialEntries = [
@@ -819,7 +884,7 @@ describe("AgentLogViewer", () => {
       ];
 
       const { rerender, container } = render(<AgentLogViewer entries={initialEntries} loading={false} />);
-      const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLDivElement;
+      const viewer = getScrollContainer(container);
 
       let scrollHeight = 600;
       Object.defineProperty(viewer, "scrollHeight", {
@@ -846,7 +911,7 @@ describe("AgentLogViewer", () => {
       ];
 
       const { rerender, container } = render(<AgentLogViewer entries={initialEntries} loading={false} />);
-      const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLDivElement;
+      const viewer = getScrollContainer(container);
 
       let scrollHeight = 1000;
       Object.defineProperty(viewer, "scrollHeight", {
@@ -873,7 +938,7 @@ describe("AgentLogViewer", () => {
       ];
 
       const { rerender, container } = render(<AgentLogViewer entries={initialEntries} loading={false} />);
-      const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLDivElement;
+      const viewer = getScrollContainer(container);
 
       let scrollHeight = 900;
       Object.defineProperty(viewer, "scrollHeight", {
@@ -897,7 +962,7 @@ describe("AgentLogViewer", () => {
         makeEntry({ text: "second", timestamp: "2026-01-01T00:00:01Z" }),
       ];
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
-      const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLDivElement;
+      const viewer = getScrollContainer(container);
 
       Object.defineProperty(viewer, "scrollHeight", { configurable: true, value: 1000 });
       Object.defineProperty(viewer, "clientHeight", { configurable: true, value: 200 });
@@ -914,7 +979,7 @@ describe("AgentLogViewer", () => {
         makeEntry({ text: "second", timestamp: "2026-01-01T00:00:01Z" }),
       ];
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
-      const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLDivElement;
+      const viewer = getScrollContainer(container);
 
       Object.defineProperty(viewer, "scrollHeight", { configurable: true, value: 1000 });
       Object.defineProperty(viewer, "clientHeight", { configurable: true, value: 200 });
@@ -931,7 +996,7 @@ describe("AgentLogViewer", () => {
         makeEntry({ text: "second", timestamp: "2026-01-01T00:00:01Z" }),
       ];
       const { container } = render(<AgentLogViewer entries={entries} loading={false} />);
-      const viewer = container.querySelector("[data-testid='agent-log-viewer']") as HTMLDivElement;
+      const viewer = getScrollContainer(container);
 
       Object.defineProperty(viewer, "scrollHeight", { configurable: true, value: 1000 });
       Object.defineProperty(viewer, "clientHeight", { configurable: true, value: 200 });
