@@ -397,6 +397,9 @@
   .quick-chat-panel-header {
     flex-wrap: wrap;
     row-gap: var(--space-sm);
+    /* iOS PWA: status bar (black-translucent) overlays the panel from top: 0,
+       clipping the close button. Reserve top inset on mobile. */
+    padding-top: calc(10px + env(safe-area-inset-top, 0px));
   }
 
   .quick-chat-panel-header-actions {

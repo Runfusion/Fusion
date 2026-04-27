@@ -2768,6 +2768,9 @@ input[type="range"]:focus-visible {
     max-height: 100dvh;
     border-radius: 0;
     border: none;
+    /* iOS PWA status bar (black-translucent) overlays content; reserve top
+       inset so headers / close buttons aren't clipped behind it. */
+    padding-top: env(safe-area-inset-top, 0px);
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 
