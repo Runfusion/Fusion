@@ -526,6 +526,7 @@ body {
   align-items: center;
   gap: var(--space-sm);
   padding: calc(var(--space-lg) - 2px) calc(var(--space-lg) - 2px) 0;
+  min-width: 0;
 }
 
 .column-dot {
@@ -556,6 +557,10 @@ body {
   font-size: 14px;
   font-weight: 600;
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .column-count {
@@ -2571,7 +2576,7 @@ input[type="range"]:focus-visible {
   gap: 6px;
   cursor: pointer;
   user-select: none;
-  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .auto-merge-toggle input {
