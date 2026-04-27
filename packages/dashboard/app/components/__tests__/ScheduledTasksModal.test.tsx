@@ -27,6 +27,12 @@ vi.mock("lucide-react", () => ({
 
 vi.mock("@fusion/core", () => ({}));
 
+const mockConfirm = vi.fn();
+
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: mockConfirm }),
+}));
+
 const mockFetchAutomations = vi.fn();
 const mockCreateAutomation = vi.fn();
 const mockUpdateAutomation = vi.fn();
@@ -101,6 +107,8 @@ describe("ScheduledTasksModal", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConfirm.mockReset();
+    mockConfirm.mockResolvedValue(true);
     mockFetchAutomations.mockResolvedValue([]);
     mockFetchRoutines.mockResolvedValue([]);
   });
@@ -291,7 +299,6 @@ describe("ScheduledTasksModal", () => {
     const routine = makeRoutine({ name: "My Routine" });
     mockFetchRoutines.mockResolvedValue([routine]);
     mockDeleteRoutine.mockResolvedValue(undefined);
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(<ScheduledTasksModal onClose={onClose} addToast={addToast} />);
 
@@ -301,10 +308,14 @@ describe("ScheduledTasksModal", () => {
     fireEvent.click(screen.getByLabelText("Delete My Routine"));
 
     await waitFor(() => {
+      expect(mockConfirm).toHaveBeenCalledWith({
+        title: "Delete Routine",
+        message: 'Delete routine "My Routine"? This cannot be undone.',
+        danger: true,
+      });
       expect(mockDeleteRoutine).toHaveBeenCalledWith("routine-001", { scope: "global" });
       expect(addToast).toHaveBeenCalledWith('Deleted "My Routine"', "success");
     });
-    confirmSpy.mockRestore();
   });
 
   it("toggles routines through updateRoutine", async () => {

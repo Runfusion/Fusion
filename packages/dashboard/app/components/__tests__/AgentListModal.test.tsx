@@ -15,6 +15,12 @@ vi.mock("../../api", () => ({
   deleteAgent: vi.fn(),
 }));
 
+const mockConfirm = vi.fn();
+
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: mockConfirm }),
+}));
+
 const mockFetchAgents = vi.mocked(apiModule.fetchAgents);
 const mockCreateAgent = vi.mocked(apiModule.createAgent);
 const mockUpdateAgentState = vi.mocked(apiModule.updateAgentState);
@@ -72,6 +78,8 @@ describe("AgentListModal", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConfirm.mockReset();
+    mockConfirm.mockResolvedValue(true);
     mockFetchAgents.mockResolvedValue(mockAgents);
     mockCreateAgent.mockResolvedValue(mockAgents[0]);
     mockUpdateAgentState.mockResolvedValue({ ...mockAgents[0], state: "active" });
@@ -829,7 +837,7 @@ describe("AgentListModal", () => {
     });
 
     it("confirms before deleting terminated agent (from terminated filter)", async () => {
-      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+      mockConfirm.mockResolvedValueOnce(false);
 
       render(
         <AgentListModal
@@ -861,16 +869,15 @@ describe("AgentListModal", () => {
       const terminatedDeleteBtn = terminatedCard?.querySelector('[title="Delete"]') as HTMLElement;
       fireEvent.click(terminatedDeleteBtn);
 
-      expect(confirmSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Test Agent 4")
-      );
+      expect(mockConfirm).toHaveBeenCalledWith({
+        title: "Delete Agent",
+        message: 'Delete agent "Test Agent 4"? This cannot be undone.',
+        danger: true,
+      });
       expect(mockDeleteAgent).not.toHaveBeenCalled();
-
-      confirmSpy.mockRestore();
     });
 
     it("deletes terminated agent after confirmation (from terminated filter)", async () => {
-      vi.spyOn(window, "confirm").mockReturnValue(true);
 
       render(
         <AgentListModal
@@ -912,7 +919,6 @@ describe("AgentListModal", () => {
     });
 
     it("deletes idle agent after confirmation (from default view)", async () => {
-      vi.spyOn(window, "confirm").mockReturnValue(true);
 
       render(
         <AgentListModal
@@ -950,7 +956,6 @@ describe("AgentListModal", () => {
 
     it("handles deletion error gracefully", async () => {
       mockDeleteAgent.mockRejectedValue(new Error("Delete failed"));
-      vi.spyOn(window, "confirm").mockReturnValue(true);
 
       render(
         <AgentListModal

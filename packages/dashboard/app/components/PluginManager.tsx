@@ -17,6 +17,7 @@ import { fetchPlugins, installPlugin, enablePlugin, disablePlugin, uninstallPlug
 import { DirectoryPicker } from "./DirectoryPicker";
 import type { PluginInstallation, PluginState } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
+import { useConfirm } from "../hooks/useConfirm";
 import { subscribeSse } from "../sse-bus";
 
 /** Normalized plugin lifecycle payload from SSE plugin:lifecycle events */
@@ -84,6 +85,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
   const [pluginSettings, setPluginSettings] = useState<Record<string, unknown>>({});
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [installingBundledPluginId, setInstallingBundledPluginId] = useState<string | null>(null);
+  const { confirm } = useConfirm();
 
   const loadPlugins = useCallback(async () => {
     try {
@@ -248,7 +250,12 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
   };
 
   const handleUninstall = async (plugin: PluginInstallation) => {
-    if (!confirm(`Are you sure you want to uninstall "${plugin.name}"?`)) {
+    const shouldUninstall = await confirm({
+      title: "Uninstall Plugin",
+      message: `Are you sure you want to uninstall "${plugin.name}"?`,
+      danger: true,
+    });
+    if (!shouldUninstall) {
       return;
     }
 

@@ -109,6 +109,12 @@ vi.mock("../../api", () => ({
   refineTask: vi.fn(),
 }));
 
+const mockConfirm = vi.fn();
+
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: mockConfirm }),
+}));
+
 // Import components AFTER mocking
 import { PlanningModeModal } from "../PlanningModeModal";
 import { SubtaskBreakdownModal } from "../SubtaskBreakdownModal";
@@ -143,8 +149,8 @@ describe("ModalReentry", () => {
     mockAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
     mockReleaseSessionLock.mockResolvedValue(undefined);
     mockForceAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
-
-    vi.stubGlobal("confirm", vi.fn(() => true));
+    mockConfirm.mockReset();
+    mockConfirm.mockResolvedValue(true);
   });
 
   // ─── PlanningModeModal ───────────────────────────────────────────────
@@ -202,7 +208,7 @@ describe("ModalReentry", () => {
     });
 
     it("saves description to localStorage on cancel", async () => {
-      vi.stubGlobal("confirm", vi.fn(() => true));
+      mockConfirm.mockResolvedValue(true);
 
       const { unmount } = render(<PlanningModeModal {...defaultProps} />);
 
@@ -223,7 +229,7 @@ describe("ModalReentry", () => {
     });
 
     it("does not save empty description to localStorage on cancel", async () => {
-      vi.stubGlobal("confirm", vi.fn(() => true));
+      mockConfirm.mockResolvedValue(true);
 
       const { unmount } = render(<PlanningModeModal {...defaultProps} />);
 
@@ -297,7 +303,7 @@ describe("ModalReentry", () => {
     });
 
     it("saves description to localStorage on close", async () => {
-      vi.stubGlobal("confirm", vi.fn(() => true));
+      mockConfirm.mockResolvedValue(true);
 
       // Set up the stream so the modal can start
       mockConnectSubtaskStream.mockImplementation((_sid, _pid, handlers) => {
@@ -373,7 +379,7 @@ describe("ModalReentry", () => {
     });
 
     it("saves goal to localStorage on cancel", async () => {
-      vi.stubGlobal("confirm", vi.fn(() => true));
+      mockConfirm.mockResolvedValue(true);
 
       const { unmount } = render(<MissionInterviewModal {...defaultProps} />);
 
@@ -394,7 +400,7 @@ describe("ModalReentry", () => {
     });
 
     it("does not save empty goal to localStorage on cancel", async () => {
-      vi.stubGlobal("confirm", vi.fn(() => true));
+      mockConfirm.mockResolvedValue(true);
 
       const { unmount } = render(<MissionInterviewModal {...defaultProps} />);
 

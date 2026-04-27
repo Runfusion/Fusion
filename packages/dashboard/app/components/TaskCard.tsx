@@ -14,6 +14,7 @@ import { useTaskDiffStats } from "../hooks/useTaskDiffStats";
 import { isTaskStuck } from "../utils/taskStuck";
 import { getUnifiedTaskProgress } from "../utils/taskProgress";
 import type { ToastType } from "../hooks/useToast";
+import { useConfirm } from "../hooks/useConfirm";
 
 // ── Mission title caching ───────────────────────────────────────────────────
 
@@ -424,6 +425,7 @@ function TaskCardComponent({
   const sendBackRef = useRef<HTMLDivElement>(null);
   const [isInViewport, setIsInViewport] = useState(false);
   const { badgeUpdates, subscribeToBadge, unsubscribeFromBadge } = useBadgeWebSocket(projectId);
+  const { confirm } = useConfirm();
 
   // Touch gesture detection refs
   const touchStartPosRef = useRef<{ x: number; y: number; time: number } | null>(null);
@@ -945,17 +947,23 @@ function TaskCardComponent({
     });
   }, [addToast, onUnarchiveTask, task.id]);
 
-  const handleDeleteClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+  const handleDeleteClick = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     if (!onDeleteTask) return;
 
-    if (!window.confirm(`Delete ${task.id}?`)) {
+    const shouldDelete = await confirm({
+      title: "Delete Task",
+      message: `Delete ${task.id}?`,
+      danger: true,
+    });
+    if (!shouldDelete) {
       return;
     }
 
-    void onDeleteTask(task.id).then(() => {
+    try {
+      await onDeleteTask(task.id);
       addToast(`Deleted ${task.id}`, "success");
-    }).catch((err) => {
+    } catch (err) {
       const conflict = extractDependencyDeleteConflict(err);
       if (!conflict || conflict.dependentIds.length === 0) {
         addToast(`Failed to delete ${task.id}: ${getErrorMessage(err)}`, "error");
@@ -963,21 +971,25 @@ function TaskCardComponent({
       }
 
       const dependentList = conflict.dependentIds.join(", ");
-      const confirmed = window.confirm(
-        `${task.id} is a dependency of ${dependentList}.\n\n` +
-        "Delete anyway by removing these dependency references first?",
-      );
+      const confirmed = await confirm({
+        title: "Force Delete Task",
+        message:
+          `${task.id} is a dependency of ${dependentList}.\n\n` +
+          "Delete anyway by removing these dependency references first?",
+        danger: true,
+      });
       if (!confirmed) {
         return;
       }
 
-      void onDeleteTask(task.id, { removeDependencyReferences: true }).then(() => {
+      try {
+        await onDeleteTask(task.id, { removeDependencyReferences: true });
         addToast(`Deleted ${task.id} after removing dependency references`, "success");
-      }).catch((retryErr) => {
+      } catch (retryErr) {
         addToast(`Failed to delete ${task.id}: ${getErrorMessage(retryErr)}`, "error");
-      });
-    });
-  }, [addToast, onDeleteTask, task.id]);
+      }
+    }
+  }, [addToast, confirm, onDeleteTask, task.id]);
 
   const handleOpenFiles = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();

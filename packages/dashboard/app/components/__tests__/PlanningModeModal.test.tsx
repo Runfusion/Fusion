@@ -68,6 +68,12 @@ vi.mock("../../api", () => ({
   duplicateTask: vi.fn().mockResolvedValue({}),
 }));
 
+const mockConfirm = vi.fn();
+
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: mockConfirm }),
+}));
+
 const mockTasks: Task[] = [
   {
     id: "FN-001",
@@ -181,10 +187,11 @@ describe("PlanningModeModal", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConfirm.mockReset();
+    mockConfirm.mockResolvedValue(true);
     MockEventSource.reset();
     vi.stubGlobal("EventSource", MockEventSource as any);
     window.sessionStorage.clear();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     
     // Default mock for streaming
     mockStartPlanningStreaming.mockResolvedValue({ sessionId: "session-123" });
@@ -1740,9 +1747,7 @@ describe("PlanningModeModal", () => {
 
   describe("Modal close behavior", () => {
     it("no confirmation shown when no progress made (initial state)", () => {
-      const confirmSpy = vi.spyOn(window, "confirm");
-
-      render(
+            render(
         <PlanningModeModal
           isOpen={true}
           onClose={mockOnClose}
@@ -1755,15 +1760,13 @@ describe("PlanningModeModal", () => {
       const closeButton = screen.getByLabelText("Close");
       fireEvent.click(closeButton);
 
-      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(mockConfirm).not.toHaveBeenCalled();
       expect(mockCancelPlanning).not.toHaveBeenCalled();
       expect(mockOnClose).toHaveBeenCalled();
     });
 
     it("closes active question session and abandons server session", async () => {
-      const confirmSpy = vi.spyOn(window, "confirm");
-
-      render(
+            render(
         <PlanningModeModal
           isOpen={true}
           onClose={mockOnClose}
@@ -1783,16 +1786,14 @@ describe("PlanningModeModal", () => {
 
       fireEvent.click(screen.getByLabelText("Close"));
 
-      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(mockConfirm).not.toHaveBeenCalled();
       // Closing an active session should abandon it on the server
       expect(mockCancelPlanning).toHaveBeenCalledTimes(1);
       expect(mockOnClose).toHaveBeenCalled();
     });
 
     it("closes summary view and abandons server session", async () => {
-      const confirmSpy = vi.spyOn(window, "confirm");
-
-      mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+            mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
         setTimeout(() => {
           handlers.onSummary?.(mockSummary);
         }, 10);
@@ -1823,16 +1824,14 @@ describe("PlanningModeModal", () => {
 
       fireEvent.click(screen.getByLabelText("Close"));
 
-      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(mockConfirm).not.toHaveBeenCalled();
       // Closing an active session should abandon it on the server
       expect(mockCancelPlanning).toHaveBeenCalledTimes(1);
       expect(mockOnClose).toHaveBeenCalled();
     });
 
     it("closes via overlay and abandons server session", async () => {
-      const confirmSpy = vi.spyOn(window, "confirm");
-
-      const { container } = render(
+            const { container } = render(
         <PlanningModeModal
           isOpen={true}
           onClose={mockOnClose}
@@ -1854,16 +1853,14 @@ describe("PlanningModeModal", () => {
       expect(overlay).not.toBeNull();
       fireEvent.click(overlay!);
 
-      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(mockConfirm).not.toHaveBeenCalled();
       // Closing an active session should abandon it on the server
       expect(mockCancelPlanning).toHaveBeenCalledTimes(1);
       expect(mockOnClose).toHaveBeenCalled();
     });
 
     it("closes during loading state and abandons server session", async () => {
-      const confirmSpy = vi.spyOn(window, "confirm");
-
-      mockConnectPlanningStream.mockImplementationOnce(() => ({
+            mockConnectPlanningStream.mockImplementationOnce(() => ({
         close: vi.fn(),
         isConnected: vi.fn().mockReturnValue(true),
       }));
@@ -1888,7 +1885,7 @@ describe("PlanningModeModal", () => {
 
       fireEvent.click(screen.getByLabelText("Close"));
 
-      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(mockConfirm).not.toHaveBeenCalled();
       // Closing an active session should abandon it on the server
       expect(mockCancelPlanning).toHaveBeenCalledTimes(1);
       expect(mockOnClose).toHaveBeenCalled();

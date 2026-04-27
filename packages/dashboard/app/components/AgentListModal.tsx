@@ -11,6 +11,7 @@ import { getScopedItem, setScopedItem } from "../utils/projectStorage";
 import { getAgentHealthStatus } from "../utils/agentHealth";
 import { getErrorMessage } from "@fusion/core";
 import type { AgentHealthStatus } from "../utils/agentHealth";
+import { useConfirm } from "../hooks/useConfirm";
 
 interface AgentListModalProps {
   isOpen: boolean;
@@ -60,6 +61,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
   const roleSelectRef = useRef<HTMLSelectElement>(null);
   const [transitioningAgentIds, setTransitioningAgentIds] = useState<Set<string>>(new Set());
   const [optimisticStateOverrides, setOptimisticStateOverrides] = useState<Map<string, AgentState>>(new Map());
+  const { confirm } = useConfirm();
 
   const optimisticAgents = useMemo(() => {
     if (optimisticStateOverrides.size === 0) {
@@ -163,7 +165,12 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
   };
 
   const handleDelete = async (agentId: string, agentName: string) => {
-    if (!confirm(`Delete agent "${agentName}"? This cannot be undone.`)) return;
+    const shouldDelete = await confirm({
+      title: "Delete Agent",
+      message: `Delete agent "${agentName}"? This cannot be undone.`,
+      danger: true,
+    });
+    if (!shouldDelete) return;
     try {
       await deleteAgent(agentId, projectId);
       addToast(`Agent "${agentName}" deleted`, "success");

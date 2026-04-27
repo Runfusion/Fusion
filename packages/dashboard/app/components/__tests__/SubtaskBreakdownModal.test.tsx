@@ -32,6 +32,12 @@ vi.mock("../../hooks/modalPersistence", () => ({
   clearSubtaskDescription: vi.fn(),
 }));
 
+const mockConfirm = vi.fn();
+
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: mockConfirm }),
+}));
+
 const SAMPLE_SUBTASKS = [
   { id: "subtask-1", title: "First", description: "Do first", suggestedSize: "S" as const, dependsOn: [] },
   { id: "subtask-2", title: "Second", description: "Do second", suggestedSize: "M" as const, dependsOn: ["subtask-1"] },
@@ -72,7 +78,8 @@ describe("SubtaskBreakdownModal", () => {
     mockAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
     mockReleaseSessionLock.mockResolvedValue(undefined);
     mockForceAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
-    vi.stubGlobal("confirm", vi.fn(() => true));
+    mockConfirm.mockReset();
+    mockConfirm.mockResolvedValue(true);
   });
 
   afterEach(() => {

@@ -31,6 +31,7 @@ import { useProjects } from "./hooks/useProjects";
 import { useNodes } from "./hooks/useNodes";
 import { useCurrentProject } from "./hooks/useCurrentProject";
 import { ToastProvider, useToast } from "./hooks/useToast";
+import { ConfirmDialogProvider } from "./hooks/useConfirm";
 import { useTheme } from "./hooks/useTheme";
 import { useModalManager } from "./hooks/useModalManager";
 import { useAppSettings } from "./hooks/useAppSettings";
@@ -977,7 +978,9 @@ export function App() {
   return (
     <ToastProvider>
       <NodeProvider>
-        <AppInner />
+        <ConfirmDialogProvider>
+          <AppInner />
+        </ConfirmDialogProvider>
       </NodeProvider>
     </ToastProvider>
   );

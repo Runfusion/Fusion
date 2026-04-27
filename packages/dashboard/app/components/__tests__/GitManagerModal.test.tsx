@@ -39,6 +39,12 @@ vi.mock("../../api", async () => {
   };
 });
 
+const mockConfirm = vi.fn();
+
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: mockConfirm }),
+}));
+
 import {
   fetchGitStatus,
   fetchGitCommits,
@@ -107,6 +113,8 @@ const mockTasks: Task[] = [
 describe("GitManagerModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConfirm.mockReset();
+    mockConfirm.mockResolvedValue(true);
 
     // Default mock implementations
     (fetchGitStatus as any).mockResolvedValue({
@@ -691,7 +699,7 @@ describe("GitManagerModal", () => {
 
   it("calls deleteBranch when delete button clicked", async () => {
     // Mock confirm
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockConfirm.mockResolvedValue(true);
 
     render(
       <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
@@ -1067,7 +1075,7 @@ describe("GitManagerModal", () => {
 
   it("drops a stash with confirmation", async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockConfirm.mockResolvedValue(true);
 
     render(
       <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
@@ -1308,7 +1316,7 @@ describe("GitManagerModal", () => {
 
   it("removes a remote with confirmation", async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockConfirm.mockResolvedValue(true);
     (fetchGitRemotesDetailed as any).mockResolvedValue([
       { name: "origin", fetchUrl: "https://github.com/dustinbyrne/kb.git", pushUrl: "https://github.com/dustinbyrne/kb.git" },
     ]);
@@ -1327,7 +1335,11 @@ describe("GitManagerModal", () => {
     await user.click(removeButton);
 
     await waitFor(() => {
-      expect(window.confirm).toHaveBeenCalledWith("Are you sure you want to remove remote 'origin'?");
+      expect(mockConfirm).toHaveBeenCalledWith({
+        title: "Remove Remote",
+        message: "Are you sure you want to remove remote 'origin'?",
+        danger: true,
+      });
       expectLatestCallStartsWith(removeGitRemote as any, "origin");
       expect(mockAddToast).toHaveBeenCalledWith("Remote 'origin' removed", "success");
     });
@@ -2403,7 +2415,7 @@ describe("GitManagerModal", () => {
 
     it("passes projectId to removeGitRemote when removing a remote", async () => {
       const user = userEvent.setup();
-      vi.spyOn(window, "confirm").mockReturnValue(true);
+      mockConfirm.mockResolvedValue(true);
       (fetchGitRemotesDetailed as any).mockResolvedValue([
         {
           name: "origin",

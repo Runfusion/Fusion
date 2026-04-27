@@ -1,5 +1,6 @@
 import { memo, useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useFlashOnIncrease } from "../hooks/useFlashOnIncrease";
+import { useConfirm } from "../hooks/useConfirm";
 import type { Task, TaskDetail, Column as ColumnType, TaskCreateInput } from "@fusion/core";
 import { COLUMN_LABELS, COLUMN_DESCRIPTIONS, getErrorMessage } from "@fusion/core";
 import { TaskCard } from "./TaskCard";
@@ -75,6 +76,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
   const [isMovingAllToTodo, setIsMovingAllToTodo] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const countFlashing = useFlashOnIncrease(tasks.length);
+  const { confirm } = useConfirm();
 
   // Close the column dropdown menu when the user clicks anywhere else.
   useEffect(() => {
@@ -165,9 +167,10 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
     setIsMenuOpen(false);
     if (tasks.length === 0) return;
 
-    const confirmed = window.confirm(
-      `Move all ${tasks.length} todo task${tasks.length === 1 ? "" : "s"} back to planning to be replanned?`,
-    );
+    const confirmed = await confirm({
+      title: "Replan All Tasks",
+      message: `Move all ${tasks.length} todo task${tasks.length === 1 ? "" : "s"} back to planning to be replanned?`,
+    });
     if (!confirmed) return;
 
     setIsReplanning(true);
@@ -186,7 +189,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
     } finally {
       setIsReplanning(false);
     }
-  }, [tasks, onMoveTask, addToast]);
+  }, [tasks, onMoveTask, addToast, confirm]);
 
   const pauseEligibleTasks = useMemo(() => tasks.filter((task) => !task.paused), [tasks]);
   const pauseEligibleCount = pauseEligibleTasks.length;
@@ -199,9 +202,11 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
     setIsMenuOpen(false);
     if (pauseEligibleCount === 0) return;
 
-    const confirmed = window.confirm(
-      `Stop all ${pauseEligibleCount} ${COLUMN_LABELS[column].toLowerCase()} task${pauseEligibleCount === 1 ? "" : "s"}?`,
-    );
+    const confirmed = await confirm({
+      title: "Stop All Tasks",
+      message: `Stop all ${pauseEligibleCount} ${COLUMN_LABELS[column].toLowerCase()} task${pauseEligibleCount === 1 ? "" : "s"}?`,
+      danger: true,
+    });
     if (!confirmed) return;
 
     setIsPausingAll(true);
@@ -219,15 +224,16 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
     } finally {
       setIsPausingAll(false);
     }
-  }, [onPauseTask, pauseEligibleCount, column, pauseEligibleTasks, addToast]);
+  }, [onPauseTask, pauseEligibleCount, column, pauseEligibleTasks, addToast, confirm]);
 
   const handleMoveAllToTodo = useCallback(async () => {
     setIsMenuOpen(false);
     if (tasks.length === 0) return;
 
-    const confirmed = window.confirm(
-      `Move all ${tasks.length} ${COLUMN_LABELS[column].toLowerCase()} task${tasks.length === 1 ? "" : "s"} to Todo?`,
-    );
+    const confirmed = await confirm({
+      title: "Move All to Todo",
+      message: `Move all ${tasks.length} ${COLUMN_LABELS[column].toLowerCase()} task${tasks.length === 1 ? "" : "s"} to Todo?`,
+    });
     if (!confirmed) return;
 
     setIsMovingAllToTodo(true);
@@ -245,13 +251,17 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
     } finally {
       setIsMovingAllToTodo(false);
     }
-  }, [tasks, column, onMoveTask, addToast]);
+  }, [tasks, column, onMoveTask, addToast, confirm]);
 
   const handleArchiveAll = useCallback(async () => {
     if (!onArchiveAllDone) return;
     if (tasks.length === 0) return;
 
-    const confirmed = window.confirm(`Archive all ${tasks.length} done tasks?`);
+    const confirmed = await confirm({
+      title: "Archive All Done",
+      message: `Archive all ${tasks.length} done tasks?`,
+      danger: true,
+    });
     if (!confirmed) return;
 
     try {
@@ -260,7 +270,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, onMoveTask, 
     } catch (err) {
       addToast(getErrorMessage(err) || "Failed to archive tasks", "error");
     }
-  }, [onArchiveAllDone, tasks.length, addToast]);
+  }, [onArchiveAllDone, tasks.length, addToast, confirm]);
 
   return (
     <div

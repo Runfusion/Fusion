@@ -26,6 +26,12 @@ vi.mock("../AgentDetailView", () => ({
   AgentDetailView: ({ agentId }: { agentId: string }) => <div data-testid="agent-detail-view">Agent detail: {agentId}</div>,
 }));
 
+const mockConfirm = vi.fn();
+
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: mockConfirm }),
+}));
+
 const mockFetchAgents = vi.mocked(apiModule.fetchAgents);
 const mockCreateAgent = vi.mocked(apiModule.createAgent);
 const mockUpdateAgent = vi.mocked(apiModule.updateAgent);
@@ -91,6 +97,8 @@ describe("AgentsView", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConfirm.mockReset();
+    mockConfirm.mockResolvedValue(true);
     localStorage.clear();
     mockFetchAgents.mockResolvedValue(mockAgents);
     mockFetchAgentStats.mockResolvedValue({ total: 4, byState: {}, byRole: {} });
@@ -1376,7 +1384,7 @@ describe("AgentsView", () => {
     });
 
     it("confirms before deleting terminated agent (from terminated filter)", async () => {
-      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+      mockConfirm.mockResolvedValueOnce(false);
 
       render(<AgentsView addToast={mockAddToast} />);
       await openControlsPanel();
@@ -1398,16 +1406,15 @@ describe("AgentsView", () => {
         fireEvent.click(terminatedDeleteBtn);
       });
 
-      expect(confirmSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Test Agent 4")
-      );
+      expect(mockConfirm).toHaveBeenCalledWith({
+        title: "Delete Agent",
+        message: 'Delete agent "Test Agent 4"? This cannot be undone.',
+        danger: true,
+      });
       expect(mockDeleteAgent).not.toHaveBeenCalled();
-
-      confirmSpy.mockRestore();
     });
 
     it("deletes terminated agent after confirmation (from terminated filter)", async () => {
-      vi.spyOn(window, "confirm").mockReturnValue(true);
 
       render(<AgentsView addToast={mockAddToast} />);
       await openControlsPanel();
@@ -1440,7 +1447,6 @@ describe("AgentsView", () => {
     });
 
     it("deletes idle agent after confirmation (from default view)", async () => {
-      vi.spyOn(window, "confirm").mockReturnValue(true);
 
       render(<AgentsView addToast={mockAddToast} />);
 

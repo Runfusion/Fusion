@@ -90,6 +90,12 @@ vi.mock("../SkillMultiselect", () => ({
   ),
 }));
 
+const mockConfirm = vi.fn();
+
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: mockConfirm }),
+}));
+
 import { fetchAgent, fetchAgents, updateAgent, updateAgentState, deleteAgent, fetchAgentChildren, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchDiscoveredSkills, fetchModels, fetchPluginRuntimes, fetchAgentLogsWithMeta } from "../../api";
 
 const mockFetchAgent = vi.mocked(fetchAgent);
@@ -161,6 +167,8 @@ describe("AgentDetailView", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConfirm.mockReset();
+    mockConfirm.mockResolvedValue(true);
     const mockAgent = createMockAgent();
     mockFetchAgent.mockResolvedValue(mockAgent);
     mockFetchAgents.mockResolvedValue([
@@ -1144,7 +1152,6 @@ describe("AgentDetailView", () => {
       mockFetchAgent.mockResolvedValue(createMockAgent({ state: "idle" }));
       const addToast = vi.fn();
       const onClose = vi.fn();
-      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
       const user = userEvent.setup();
 
       render(
@@ -1160,20 +1167,22 @@ describe("AgentDetailView", () => {
       await user.click(await screen.findByRole("button", { name: "Delete Agent" }));
 
       await waitFor(() => {
-        expect(confirmSpy).toHaveBeenCalledWith('Delete agent "Test Agent"? This cannot be undone.');
+        expect(mockConfirm).toHaveBeenCalledWith({
+          title: "Delete Agent",
+          message: 'Delete agent "Test Agent"? This cannot be undone.',
+          danger: true,
+        });
         expect(mockDeleteAgent).toHaveBeenCalledWith("agent-001", "proj_123");
         expect(addToast).toHaveBeenCalledWith('Agent "Test Agent" deleted', "success");
         expect(onClose).toHaveBeenCalledTimes(1);
       });
-
-      confirmSpy.mockRestore();
     });
 
     it("does not delete from Settings when confirmation is canceled", async () => {
+      mockConfirm.mockResolvedValueOnce(false);
       mockFetchAgent.mockResolvedValue(createMockAgent({ state: "idle" }));
       const addToast = vi.fn();
       const onClose = vi.fn();
-      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
       const user = userEvent.setup();
 
       render(
@@ -1189,13 +1198,11 @@ describe("AgentDetailView", () => {
       await user.click(await screen.findByRole("button", { name: "Delete Agent" }));
 
       await waitFor(() => {
-        expect(confirmSpy).toHaveBeenCalled();
+        expect(mockConfirm).toHaveBeenCalled();
       });
       expect(mockDeleteAgent).not.toHaveBeenCalled();
       expect(onClose).not.toHaveBeenCalled();
       expect(addToast).not.toHaveBeenCalledWith(expect.stringContaining("deleted"), "success");
-
-      confirmSpy.mockRestore();
     });
 
     it("shows settings delete control as unavailable for non-deletable states", async () => {

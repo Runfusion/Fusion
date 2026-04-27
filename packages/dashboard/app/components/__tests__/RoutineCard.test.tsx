@@ -25,6 +25,12 @@ vi.mock("lucide-react", () => ({
 // Mock @fusion/core (no runtime values needed)
 vi.mock("@fusion/core", () => ({}));
 
+const mockConfirm = vi.fn();
+
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: mockConfirm }),
+}));
+
 function makeRoutine(overrides: Partial<Routine> = {}): Routine {
   return {
     id: "routine-001",
@@ -61,6 +67,8 @@ describe("RoutineCard", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConfirm.mockReset();
+    mockConfirm.mockResolvedValue(true);
   });
 
   // ── Rendering ─────────────────────────────────────────────────────────
@@ -231,26 +239,27 @@ describe("RoutineCard", () => {
 
     it("clicking delete button shows confirm dialog and calls onDelete on confirm", async () => {
       const routine = makeRoutine({ name: "My Routine" });
-      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
       render(<RoutineCard routine={routine} onEdit={onEdit} onDelete={onDelete} onRun={onRun} onToggle={onToggle} />);
       fireEvent.click(screen.getByLabelText("Delete My Routine"));
       await waitFor(() => {
-        expect(confirmSpy).toHaveBeenCalled();
+        expect(mockConfirm).toHaveBeenCalledWith({
+          title: "Delete Routine",
+          message: 'Delete routine "My Routine"? This cannot be undone.',
+          danger: true,
+        });
       });
       expect(onDelete).toHaveBeenCalledWith(routine);
-      confirmSpy.mockRestore();
     });
 
     it("clicking delete button does not call onDelete when confirm is cancelled", async () => {
+      mockConfirm.mockResolvedValueOnce(false);
       const routine = makeRoutine({ name: "My Routine" });
-      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
       render(<RoutineCard routine={routine} onEdit={onEdit} onDelete={onDelete} onRun={onRun} onToggle={onToggle} />);
       fireEvent.click(screen.getByLabelText("Delete My Routine"));
       await waitFor(() => {
-        expect(confirmSpy).toHaveBeenCalled();
+        expect(mockConfirm).toHaveBeenCalled();
       });
       expect(onDelete).not.toHaveBeenCalled();
-      confirmSpy.mockRestore();
     });
   });
 

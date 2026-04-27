@@ -21,6 +21,7 @@ import { SkillMultiselect } from "./SkillMultiselect";
 import { subscribeSse } from "../sse-bus";
 import { DEFAULT_HEARTBEAT_INTERVAL_MS, formatHeartbeatInterval, resolveHeartbeatIntervalMs } from "../utils/heartbeatIntervals";
 import { CustomModelDropdown } from "./CustomModelDropdown";
+import { useConfirm } from "../hooks/useConfirm";
 
 /**
  * Simple className utility - joins class names conditionally
@@ -118,6 +119,7 @@ function pickDefaultAgentMemoryPath(files: MemoryFileInfo[], currentPath: string
 
 export function AgentDetailView({ agentId, projectId, onClose, addToast, onChildClick }: AgentDetailViewProps) {
   const [agent, setAgent] = useState<AgentDetail | null>(null);
+  const { confirm } = useConfirm();
   const [logs, setLogs] = useState<AgentLogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
@@ -329,7 +331,13 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
   };
 
   const handleDelete = async () => {
-    if (!agent || !confirm(`Delete agent "${agent.name}"? This cannot be undone.`)) return;
+    if (!agent) return;
+    const shouldDelete = await confirm({
+      title: "Delete Agent",
+      message: `Delete agent "${agent.name}"? This cannot be undone.`,
+      danger: true,
+    });
+    if (!shouldDelete) return;
     try {
       await deleteAgent(agentId, projectId);
       addToast(`Agent "${agent.name}" deleted`, "success");
@@ -1058,6 +1066,7 @@ function RunsTab({
   agentName?: string;
 }) {
   const [runs, setRuns] = useState<AgentHeartbeatRun[]>([]);
+  const { confirm } = useConfirm();
   const [isLoadingRuns, setIsLoadingRuns] = useState(true);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [runLogs, setRunLogs] = useState<AgentLogEntry[]>([]);
@@ -1133,7 +1142,12 @@ function RunsTab({
   };
 
   const handleStopRun = async () => {
-    if (!confirm("Stop the active run? The agent's work will be interrupted.")) {
+    const shouldStop = await confirm({
+      title: "Stop Active Run",
+      message: "Stop the active run? The agent's work will be interrupted.",
+      danger: true,
+    });
+    if (!shouldStop) {
       return;
     }
 

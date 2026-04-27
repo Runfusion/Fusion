@@ -1,0 +1,22 @@
+.confirm-dialog {
+  width: min(420px, calc(100vw - var(--space-2xl)));
+}
+
+.confirm-dialog__body {
+  color: var(--text-muted);
+  line-height: 1.5;
+  padding: 0 var(--space-xl) var(--space-lg);
+  white-space: pre-wrap;
+}
+
+.confirm-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+@media (max-width: 768px) {
+  .confirm-dialog {
+    width: min(100vw - var(--space-md), 100%);
+  }
+}

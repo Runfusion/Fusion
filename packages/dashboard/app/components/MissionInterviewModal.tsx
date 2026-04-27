@@ -48,6 +48,7 @@ import { ConversationHistory } from "./ConversationHistory";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { useSessionLock } from "../hooks/useSessionLock";
 import { useAiSessionSync } from "../hooks/useAiSessionSync";
+import { useConfirm } from "../hooks/useConfirm";
 import { getSessionTabId } from "../utils/getSessionTabId";
 
 // Helper functions for model selection
@@ -138,6 +139,7 @@ export function MissionInterviewModal({
     broadcastUnlock,
     broadcastHeartbeat,
   } = useAiSessionSync();
+  const { confirm } = useConfirm();
 
   // Model selection state
   const [modelProvider, setModelProvider] = useState<string | undefined>(undefined);
@@ -519,7 +521,12 @@ export function MissionInterviewModal({
     }
 
     if (hasProgress) {
-      if (!confirm("Are you sure you want to close? Your interview progress will be lost.")) {
+      const shouldClose = await confirm({
+        title: "Close Interview",
+        message: "Are you sure you want to close? Your interview progress will be lost.",
+        danger: true,
+      });
+      if (!shouldClose) {
         return;
       }
     }
@@ -551,7 +558,7 @@ export function MissionInterviewModal({
     currentSessionIdRef.current = null;
     setLockSessionId(null);
     onClose();
-  }, [missionGoal, hasProgress, view, onClose, projectId, sessionTabId]);
+  }, [missionGoal, hasProgress, view, onClose, projectId, sessionTabId, confirm]);
 
   // Escape key handler
   useEffect(() => {
@@ -559,19 +566,13 @@ export function MissionInterviewModal({
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (hasProgress) {
-          if (confirm("Are you sure you want to close? Your interview progress will be lost.")) {
-            handleCancel();
-          }
-        } else {
-          handleCancel();
-        }
+        void handleCancel();
       }
     };
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, hasProgress, handleCancel]);
+  }, [isOpen, handleCancel]);
 
   const handleSubmitResponse = useCallback(
     async (responses: QuestionResponse) => {

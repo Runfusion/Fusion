@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { Play, Pause, Pencil, Trash2, Clock, CheckCircle, XCircle, ChevronDown, ChevronUp, Calendar, Webhook, Code, Zap, Globe, Folder, Layers, Loader2 } from "lucide-react";
 import type { Routine, RoutineExecutionResult, RoutineTriggerType, RoutineCatchUpPolicy, RoutineExecutionPolicy } from "@fusion/core";
+import { useConfirm } from "../hooks/useConfirm";
 
 /**
  * Format a duration in milliseconds to a human-readable string.
@@ -145,12 +146,18 @@ function RunHistoryItem({ result, index }: { result: RoutineExecutionResult; ind
 
 export function RoutineCard({ routine, onEdit, onDelete, onRun, onToggle, running, lastRunOutput }: RoutineCardProps) {
   const [showHistory, setShowHistory] = useState(false);
+  const { confirm } = useConfirm();
 
-  const handleDelete = useCallback(() => {
-    if (window.confirm(`Delete routine "${routine.name}"? This cannot be undone.`)) {
+  const handleDelete = useCallback(async () => {
+    const shouldDelete = await confirm({
+      title: "Delete Routine",
+      message: `Delete routine "${routine.name}"? This cannot be undone.`,
+      danger: true,
+    });
+    if (shouldDelete) {
       onDelete(routine);
     }
-  }, [routine, onDelete]);
+  }, [routine, onDelete, confirm]);
 
   const triggerColor = TRIGGER_TYPE_COLORS[routine.trigger.type];
   const TriggerIcon = TRIGGER_TYPE_ICONS[routine.trigger.type];

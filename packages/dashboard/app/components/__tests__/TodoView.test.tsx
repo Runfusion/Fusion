@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { TodoView } from "../TodoView";
 
 const mockUseTodoLists = vi.fn();
 
 vi.mock("../../hooks/useTodoLists", () => ({
   useTodoLists: (...args: unknown[]) => mockUseTodoLists(...args),
+}));
+
+const mockConfirm = vi.fn();
+
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: mockConfirm }),
 }));
 
 vi.mock("lucide-react", () => ({
@@ -52,7 +58,8 @@ describe("TodoView", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockConfirm.mockReset();
+    mockConfirm.mockResolvedValue(true);
     mockUseTodoLists.mockReturnValue(createMockTodoLists());
   });
 
@@ -158,24 +165,34 @@ describe("TodoView", () => {
     }
   });
 
-  it("clicking trash icon on list calls deleteList", () => {
+  it("clicking trash icon on list calls deleteList", async () => {
     const state = createMockTodoLists();
     mockUseTodoLists.mockReturnValue(state);
 
     render(<TodoView addToast={addToast} />);
     fireEvent.click(screen.getByTestId("delete-list-button-list-1"));
 
-    expect(state.deleteList).toHaveBeenCalledWith("list-1");
+    await waitFor(() => {
+      expect(state.deleteList).toHaveBeenCalledWith("list-1");
+    });
+    expect(mockConfirm).toHaveBeenCalledWith({
+      title: "Delete List",
+      message: "Delete this list and all its items?",
+      danger: true,
+    });
   });
 
-  it("does not delete a list when confirmation is canceled", () => {
-    vi.mocked(window.confirm).mockReturnValueOnce(false);
+  it("does not delete a list when confirmation is canceled", async () => {
+    mockConfirm.mockResolvedValueOnce(false);
     const state = createMockTodoLists();
     mockUseTodoLists.mockReturnValue(state);
 
     render(<TodoView addToast={addToast} />);
     fireEvent.click(screen.getByTestId("delete-list-button-list-1"));
 
+    await waitFor(() => {
+      expect(mockConfirm).toHaveBeenCalled();
+    });
     expect(state.deleteList).not.toHaveBeenCalled();
   });
 

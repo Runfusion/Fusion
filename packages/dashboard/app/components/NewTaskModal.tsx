@@ -9,6 +9,7 @@ import { Bot } from "lucide-react";
 import { useSetupReadiness } from "../hooks/useSetupReadiness";
 import { SetupWarningBanner } from "./SetupWarningBanner";
 import { TaskForm, type PendingImage } from "./TaskForm";
+import { useConfirm } from "../hooks/useConfirm";
 
 interface NewTaskModalProps {
   isOpen: boolean;
@@ -22,6 +23,7 @@ interface NewTaskModalProps {
 }
 
 export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, addToast, onPlanningMode, onSubtaskBreakdown }: NewTaskModalProps) {
+  const { confirm } = useConfirm();
   const [description, setDescription] = useState("");
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
@@ -153,9 +155,14 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setHasDirtyState(isDirty);
   }, [description, dependencies, pendingImages, executorModel, validatorModel, planningModel, thinkingLevel, selectedWorkflowSteps, selectedAgentId, reviewLevel, priority]);
 
-  const handleClose = useCallback(() => {
+  const handleClose = useCallback(async () => {
     if (hasDirtyState) {
-      if (!confirm("You have unsaved changes. Discard them?")) return;
+      const shouldDiscard = await confirm({
+        title: "Discard Changes",
+        message: "You have unsaved changes. Discard them?",
+        danger: true,
+      });
+      if (!shouldDiscard) return;
     }
     // Clean up object URLs
     pendingImages.forEach((img) => URL.revokeObjectURL(img.previewUrl));
@@ -177,7 +184,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setPriority(DEFAULT_TASK_PRIORITY);
     setHasDirtyState(false);
     onClose();
-  }, [hasDirtyState, onClose, pendingImages]);
+  }, [hasDirtyState, onClose, pendingImages, confirm]);
 
   const handleSubmit = useCallback(async () => {
     const trimmedDesc = description.trim();

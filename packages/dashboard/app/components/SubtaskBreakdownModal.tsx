@@ -21,6 +21,7 @@ import { CheckCircle, Loader2, ListTree, Plus, Trash2, X, GripVertical, ArrowUp,
 import { ConversationHistory } from "./ConversationHistory";
 import { useSessionLock } from "../hooks/useSessionLock";
 import { useAiSessionSync } from "../hooks/useAiSessionSync";
+import { useConfirm } from "../hooks/useConfirm";
 import { getSessionTabId } from "../utils/getSessionTabId";
 
 interface SubtaskBreakdownModalProps {
@@ -119,6 +120,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
 
   const showSendToBackgroundButton = view.type === "generating" || view.type === "editing" || view.type === "error";
   const activeLockInfo = sessionId ? activeTabMap.get(sessionId) : null;
+  const { confirm } = useConfirm();
   const activeRemoteTab = activeLockInfo && activeLockInfo.tabId !== sessionTabId;
   const activeInAnotherTab = Boolean(activeRemoteTab && !activeLockInfo.stale);
   const allowTakeover = isLockedByOther && (!activeRemoteTab || activeLockInfo.stale);
@@ -149,8 +151,16 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
   }, [onClose]);
 
   const handleClose = useCallback(async () => {
-    if ((dirty || view.type === "editing" || view.type === "creating") && !confirm("Close subtask breakdown? Unsaved changes will be lost.")) {
-      return;
+    const hasUnsavedChanges = dirty || view.type === "editing" || view.type === "creating";
+    if (hasUnsavedChanges) {
+      const shouldClose = await confirm({
+        title: "Discard Changes",
+        message: "Close subtask breakdown? Unsaved changes will be lost.",
+        danger: true,
+      });
+      if (!shouldClose) {
+        return;
+      }
     }
     if (sessionId) {
       try {
@@ -161,7 +171,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
     }
     resetState();
     onClose();
-  }, [dirty, onClose, resetState, sessionId, sessionTabId, view.type, projectId]);
+  }, [dirty, onClose, resetState, sessionId, sessionTabId, view.type, projectId, confirm]);
 
   const connectToSubtaskStream = useCallback(
     (activeSessionId: string) => {

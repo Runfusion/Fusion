@@ -4,6 +4,7 @@ import "./RoadmapsView.css";
 import type { ToastType } from "../hooks/useToast";
 import { useRoadmaps, type FeatureSuggestion, type MilestoneSuggestion, type SuggestionDraftPatch } from "../hooks/useRoadmaps";
 import { useViewportMode } from "../hooks/useViewportMode";
+import { useConfirm } from "../hooks/useConfirm";
 import type {
   Roadmap,
   RoadmapMilestone,
@@ -1405,6 +1406,7 @@ function CreateFeatureForm({
 // ── Main Component ────────────────────────────────────────────────────
 
 export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
+  const { confirm } = useConfirm();
   const isMobile = useViewportMode() === "mobile";
 
   const {
@@ -1782,7 +1784,12 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
 
   const handleDeleteRoadmap = useCallback(
     async (roadmapId: string) => {
-      if (!window.confirm("Delete this roadmap? This cannot be undone.")) return;
+      const shouldDelete = await confirm({
+        title: "Delete Roadmap",
+        message: "Delete this roadmap? This cannot be undone.",
+        danger: true,
+      });
+      if (!shouldDelete) return;
       try {
         await deleteRoadmap(roadmapId, {
           onError: (err) => addToast(err.message, "error"),
@@ -1792,7 +1799,7 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
         // Error handled in callback
       }
     },
-    [deleteRoadmap, addToast]
+    [deleteRoadmap, addToast, confirm]
   );
 
   // Handoff handlers
@@ -1875,7 +1882,12 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
 
   const handleDeleteMilestone = useCallback(
     async (milestoneId: string) => {
-      if (!window.confirm("Delete this milestone and all its features?")) return;
+      const shouldDelete = await confirm({
+        title: "Delete Milestone",
+        message: "Delete this milestone and all its features?",
+        danger: true,
+      });
+      if (!shouldDelete) return;
       try {
         await deleteMilestone(milestoneId, {
           onError: (err) => addToast(err.message, "error"),
@@ -1885,7 +1897,7 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
         // Error handled in callback
       }
     },
-    [deleteMilestone, addToast]
+    [deleteMilestone, addToast, confirm]
   );
 
   const handleCreateMilestone = useCallback(
@@ -1936,7 +1948,12 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
 
   const handleDeleteFeature = useCallback(
     async (featureId: string) => {
-      if (!window.confirm("Delete this feature?")) return;
+      const shouldDelete = await confirm({
+        title: "Delete Feature",
+        message: "Delete this feature?",
+        danger: true,
+      });
+      if (!shouldDelete) return;
       try {
         await deleteFeature(featureId, {
           onError: (err) => addToast(err.message, "error"),
@@ -1946,7 +1963,7 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
         // Error handled in callback
       }
     },
-    [deleteFeature, addToast]
+    [deleteFeature, addToast, confirm]
   );
 
   // Milestone suggestion handlers
