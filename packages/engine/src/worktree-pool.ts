@@ -7,6 +7,20 @@ import { worktreePoolLog } from "./logger.js";
 
 const execAsync = promisify(exec);
 
+export async function isGitRepository(dir: string): Promise<boolean> {
+  try {
+    await execAsync("git rev-parse --git-dir", {
+      cwd: dir,
+      encoding: "utf-8",
+    });
+    return true;
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    worktreePoolLog.log(`isGitRepository check failed for ${dir}: ${errorMessage}`);
+    return false;
+  }
+}
+
 export async function getRegisteredWorktreePaths(rootDir: string): Promise<Set<string>> {
   try {
     const { stdout } = await execAsync("git worktree list --porcelain", {

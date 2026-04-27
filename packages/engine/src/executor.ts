@@ -16,7 +16,7 @@ import { buildSessionSkillContext } from "./session-skill-context.js";
 import { reviewStep, type ReviewVerdict } from "./reviewer.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@mariozechner/pi-coding-agent";
 import { PRIORITY_EXECUTE, type AgentSemaphore } from "./concurrency.js";
-import { getRegisteredWorktreePaths, isRegisteredGitWorktree, isUsableTaskWorktree, type WorktreePool } from "./worktree-pool.js";
+import { getRegisteredWorktreePaths, isGitRepository, isRegisteredGitWorktree, isUsableTaskWorktree, type WorktreePool } from "./worktree-pool.js";
 import { AgentLogger } from "./agent-logger.js";
 import { executorLog, reviewerLog, formatError } from "./logger.js";
 import { TokenCapDetector } from "./token-cap-detector.js";
@@ -1354,6 +1354,16 @@ export class TaskExecutor {
       if (unmetDeps.length > 0) {
         executorLog.log(`${task.id} blocked by: ${unmetDeps.join(", ")} — deferring`);
         return;
+      }
+
+      if (!await isGitRepository(this.rootDir)) {
+        await this.store.logEntry(
+          task.id,
+          "Cannot execute task: project directory is not a Git repository. Fusion requires a Git repository for worktree-based task execution.",
+        );
+        throw new Error(
+          "Project directory is not a Git repository. Fusion requires a Git repository for worktree creation. Initialize with 'git init' or run from a Git project directory.",
+        );
       }
 
       // Create or reuse worktree — try pool first when recycling is enabled
@@ -4067,6 +4077,12 @@ and show an appropriate message to the user.\`
     } catch (initialError: unknown) {
       const conflictInfo = this.extractWorktreeConflictInfo(initialError);
 
+      if (conflictInfo.type === "not-git-repo") {
+        throw new NonRetryableWorktreeError(
+          "Project directory is not a Git repository. Fusion requires a Git repository for worktree creation. Initialize with 'git init' or run from a Git project directory.",
+        );
+      }
+
       // Handle "already used by worktree" conflict
       if (conflictInfo.type === "already-used" && conflictInfo.path) {
         const result = await this.handleWorktreeConflict(
@@ -4119,6 +4135,12 @@ and show an appropriate message to the user.\`
         const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
         // Check if the fallback also hit an "already used" conflict
         const fallbackConflictInfo = this.extractWorktreeConflictInfo(fallbackError);
+        if (fallbackConflictInfo.type === "not-git-repo") {
+          throw new NonRetryableWorktreeError(
+            "Project directory is not a Git repository. Fusion requires a Git repository for worktree creation. Initialize with 'git init' or run from a Git project directory.",
+          );
+        }
+
         if (fallbackConflictInfo.type === "already-used" && fallbackConflictInfo.path) {
           const result = await this.handleWorktreeConflict(
             fallbackConflictInfo.path,
@@ -4391,7 +4413,7 @@ and show an appropriate message to the user.\`
    * - "working tree already exists"
    */
   private extractWorktreeConflictInfo(error: unknown): {
-    type: "already-used" | "invalid-reference" | "leading-directories" | "already-exists" | "unknown";
+    type: "already-used" | "invalid-reference" | "leading-directories" | "already-exists" | "not-git-repo" | "unknown";
     path?: string;
     message?: string;
   } {
@@ -4430,6 +4452,11 @@ and show an appropriate message to the user.\`
     // Pattern: working tree already exists
     if (output.match(/working tree already exists/i)) {
       return { type: "already-exists", message: output };
+    }
+
+    // Pattern: not a git repository / not a git repo
+    if (output.match(/not a git repo(sitory)?/i)) {
+      return { type: "not-git-repo", message: output };
     }
 
     return { type: "unknown", message: output };

@@ -48,6 +48,7 @@ vi.mock("node:fs", () => ({
 import {
   WorktreePool,
   getRegisteredWorktreePaths,
+  isGitRepository,
   scanIdleWorktrees,
   cleanupOrphanedWorktrees,
   reapOrphanWorktrees,
@@ -405,6 +406,49 @@ describe("WorktreePool", () => {
       pool.rehydrate(["/tmp/existing", "/tmp/new"]);
       expect(pool.size).toBe(2);
     });
+  });
+});
+
+describe("isGitRepository", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns true when git rev-parse succeeds", async () => {
+    mockedExecSync.mockImplementation((cmd: any) => {
+      if (String(cmd) === "git rev-parse --git-dir") {
+        return Buffer.from(".git\n");
+      }
+      return Buffer.from("");
+    });
+
+    await expect(isGitRepository("/tmp/repo")).resolves.toBe(true);
+  });
+
+  it("returns false when target directory is not a git repository", async () => {
+    mockedExecSync.mockImplementation((cmd: any, opts?: any) => {
+      if (String(cmd) === "git rev-parse --git-dir" && opts?.cwd === "/tmp/plain") {
+        const error: any = new Error("fatal: not a git repository");
+        error.stderr = Buffer.from("fatal: not a git repository");
+        throw error;
+      }
+      return Buffer.from("");
+    });
+
+    await expect(isGitRepository("/tmp/plain")).resolves.toBe(false);
+  });
+
+  it("returns false when directory does not exist", async () => {
+    mockedExecSync.mockImplementation((cmd: any, opts?: any) => {
+      if (String(cmd) === "git rev-parse --git-dir" && opts?.cwd === "/tmp/missing") {
+        const error: any = new Error("spawn ENOENT");
+        error.code = "ENOENT";
+        throw error;
+      }
+      return Buffer.from("");
+    });
+
+    await expect(isGitRepository("/tmp/missing")).resolves.toBe(false);
   });
 });
 

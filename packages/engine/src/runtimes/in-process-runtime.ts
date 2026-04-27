@@ -14,7 +14,7 @@ import type {
 import { isEphemeralAgent } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
 import { TaskExecutor, type TaskExecutorOptions } from "../executor.js";
-import { WorktreePool } from "../worktree-pool.js";
+import { WorktreePool, isGitRepository } from "../worktree-pool.js";
 import { AgentSemaphore } from "../concurrency.js";
 import { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "../agent-heartbeat.js";
 import { RoutineRunner, type RoutineRunnerOptions } from "../routine-runner.js";
@@ -195,6 +195,14 @@ export class InProcessRuntime
         // Non-fatal — log and continue; a missed orphan is better than a failed start.
         const msg = err instanceof Error ? err.message : String(err);
         runtimeLog.warn(`reapOrphanWorktrees failed (continuing): ${msg}`);
+      }
+
+      if (!(await isGitRepository(this.config.workingDirectory))) {
+        runtimeLog.warn(
+          `Project directory "${this.config.workingDirectory}" is not a Git repository. ` +
+          `Task execution will fail until a Git repository is initialized. ` +
+          `Run 'git init' in the project directory to enable worktree-based task execution.`,
+        );
       }
 
       this.worktreePool = new WorktreePool();

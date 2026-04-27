@@ -871,6 +871,101 @@ describe("TaskExecutor worktree recovery", () => {
     );
   });
 
+  it("fails fast with a clear error when rootDir is not a git repository", async () => {
+    const store = createMockStore();
+    const onError = vi.fn();
+
+    mockedExecSync.mockImplementation((cmd: string | string[]) => {
+      const command = typeof cmd === "string" ? cmd : cmd[0];
+      if (command === "git rev-parse --git-dir") {
+        const error: any = new Error("fatal: not a git repository (or any of the parent directories): .git");
+        error.stderr = Buffer.from("fatal: not a git repository (or any of the parent directories): .git");
+        throw error;
+      }
+      return Buffer.from("");
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test", { onError });
+    await executor.execute(makeTask());
+
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-050",
+      expect.stringContaining("Cannot execute task: project directory is not a Git repository"),
+    );
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-050",
+      expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining("not a Git repository"),
+      }),
+    );
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "FN-050" }),
+      expect.objectContaining({ message: expect.stringContaining("not a Git repository") }),
+    );
+  });
+
+  it("does not attempt git worktree add when rootDir is not a git repository", async () => {
+    const store = createMockStore();
+
+    mockedExecSync.mockImplementation((cmd: string | string[]) => {
+      const command = typeof cmd === "string" ? cmd : cmd[0];
+      if (command === "git rev-parse --git-dir") {
+        const error: any = new Error("fatal: not a git repository");
+        error.stderr = Buffer.from("fatal: not a git repository");
+        throw error;
+      }
+      return Buffer.from("");
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute(makeTask());
+
+    const worktreeAddCalls = mockedExecSync.mock.calls.filter(
+      (call) => typeof call[0] === "string" && call[0].includes("git worktree add"),
+    );
+    expect(worktreeAddCalls).toHaveLength(0);
+  });
+
+  it("extractWorktreeConflictInfo classifies not-a-git-repository errors", () => {
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    const error: any = new Error("fatal: not a git repository");
+    error.stderr = Buffer.from("fatal: not a git repository");
+
+    const conflictInfo = (executor as any).extractWorktreeConflictInfo(error);
+    expect(conflictInfo.type).toBe("not-git-repo");
+    expect(conflictInfo.message).toContain("not a git repository");
+  });
+
+  it("treats not-a-git-repository as non-retryable in tryCreateWorktree flow", async () => {
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    mockedExecSync.mockImplementation((cmd: string | string[]) => {
+      const command = typeof cmd === "string" ? cmd : cmd[0];
+      if (command === "git worktree list --porcelain") {
+        return Buffer.from(["worktree /tmp/test", "HEAD abc123", "branch refs/heads/main", ""].join("\n"));
+      }
+      if (command.includes("git worktree add -b")) {
+        const error: any = new Error("fatal: not a git repository (or any of the parent directories): .git");
+        error.stderr = Buffer.from("fatal: not a git repository (or any of the parent directories): .git");
+        throw error;
+      }
+      return Buffer.from("");
+    });
+
+    await expect(
+      (executor as any).createWorktree("fusion/fn-050", "/tmp/test/.worktrees/swift-falcon", "FN-050"),
+    ).rejects.toThrow("not a Git repository");
+
+    const worktreeAddCalls = mockedExecSync.mock.calls.filter(
+      (call) => typeof call[0] === "string" && call[0].includes("git worktree add -b"),
+    );
+    expect(worktreeAddCalls).toHaveLength(1);
+  });
+
   it("recovers from worktree conflict and retries", async () => {
     const store = createMockStore();
     let callCount = 0;
