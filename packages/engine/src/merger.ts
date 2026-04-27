@@ -16,9 +16,17 @@ const execAsync = promisify(exec);
  */
 async function execWithProcessGroup(
   command: string,
-  options: { cwd: string; timeout: number; maxBuffer: number },
-): Promise<{ stdout: string; stderr: string; bufferOverflow: boolean }> {
+  options: { cwd: string; timeout: number; maxBuffer: number; signal?: AbortSignal },
+): Promise<{ stdout: string; stderr: string; bufferOverflow: boolean; aborted?: boolean }> {
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      reject(Object.assign(
+        new Error(`Command aborted before start: ${command}`),
+        { code: "ABORT_ERR", aborted: true, stdout: "", stderr: "" },
+      ));
+      return;
+    }
+
     const child = spawn(command, {
       cwd: options.cwd,
       shell: true,
@@ -31,19 +39,33 @@ async function execWithProcessGroup(
     let stdoutOverflow = false;
     let stderrOverflow = false;
     let timedOut = false;
+    let aborted = false;
     let settled = false;
+
+    const killTree = (sig: NodeJS.Signals) => {
+      if (child.pid === undefined) return;
+      try { process.kill(-child.pid, sig); } catch { /* group may already be gone */ }
+    };
 
     const timer = setTimeout(() => {
       timedOut = true;
-      if (child.pid !== undefined) {
-        try { process.kill(-child.pid, "SIGTERM"); } catch { /* group may already be gone */ }
-        setTimeout(() => {
-          if (settled) return;
-          try { process.kill(-(child.pid as number), "SIGKILL"); } catch { /* ignore */ }
-        }, 5_000).unref();
-      }
+      killTree("SIGTERM");
+      setTimeout(() => {
+        if (settled) return;
+        killTree("SIGKILL");
+      }, 5_000).unref();
     }, options.timeout);
     timer.unref();
+
+    const onAbort = () => {
+      aborted = true;
+      killTree("SIGTERM");
+      setTimeout(() => {
+        if (settled) return;
+        killTree("SIGKILL");
+      }, 5_000).unref();
+    };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
 
     child.stdout?.on("data", (chunk: Buffer) => {
       if (stdoutOverflow) return;
@@ -68,6 +90,14 @@ async function execWithProcessGroup(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
+      if (aborted) {
+        reject(Object.assign(
+          new Error(`Command aborted: ${command}`),
+          { code: "ABORT_ERR", aborted: true, stdout, stderr, killed: true },
+        ));
+        return;
+      }
       if (timedOut) {
         reject(Object.assign(
           new Error(`Command timed out after ${options.timeout}ms: ${command}`),
@@ -707,6 +737,7 @@ async function runVerificationCommand(
       cwd: rootDir,
       timeout: VERIFICATION_COMMAND_TIMEOUT_MS,
       maxBuffer: VERIFICATION_COMMAND_MAX_BUFFER,
+      signal,
     });
 
     throwIfAborted(signal, taskId);

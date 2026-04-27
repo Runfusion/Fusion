@@ -1327,9 +1327,17 @@ export class ProjectEngine {
   // ── Settings event listeners ──
 
   private wireSettingsListeners(store: TaskStore): void {
-    // 1. Global pause — terminate active merge session
+    // 1. Global pause — terminate active merge session AND abort any running
+    // deterministic verification (pnpm test/build). The abort controller gates
+    // both the AI merge agent and the spawned child processes; without it,
+    // verification commands keep churning until they finish naturally.
     const onGlobalPause = ({ settings, previous }: { settings: Settings; previous: Settings }) => {
       if (settings.globalPause && !previous.globalPause) {
+        if (this.mergeAbortController) {
+          runtimeLog.log("Global pause — aborting in-flight merge verification");
+          this.mergeAbortController.abort();
+          this.mergeAbortController = null;
+        }
         if (this.activeMergeSession) {
           runtimeLog.log("Global pause — terminating active merge session");
           this.activeMergeSession.dispose();
