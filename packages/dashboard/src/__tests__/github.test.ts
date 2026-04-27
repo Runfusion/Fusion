@@ -408,6 +408,71 @@ describe("GitHubClient", () => {
     });
   });
 
+  describe("commentOnIssue", () => {
+    it("posts comment via gh CLI when auth is available", async () => {
+      mockRunGh.mockReturnValue("commented");
+
+      await client.commentOnIssue("owner", "repo", 123, "Done ✅");
+
+      expect(mockRunGh).toHaveBeenCalledWith([
+        "issue",
+        "comment",
+        "123",
+        "--repo",
+        "owner/repo",
+        "--body",
+        "Done ✅",
+      ]);
+    });
+
+    it("falls back to REST API when gh CLI is unavailable and token exists", async () => {
+      mockIsGhAvailable.mockReturnValue(false);
+      const clientWithToken = new GitHubClient("ghp_token");
+      const fetchSpy = vi.spyOn(clientWithToken, "fetchThrottled").mockResolvedValue({
+        success: true,
+        data: { id: 77 },
+      });
+
+      await clientWithToken.commentOnIssue("owner", "repo", 77, "Completed");
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://api.github.com/repos/owner/repo/issues/77/comments",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ body: "Completed" }),
+        },
+      );
+    });
+
+    it("falls back to REST API when gh CLI call fails and token exists", async () => {
+      mockRunGh.mockImplementation(() => {
+        throw new Error("gh failed");
+      });
+      const clientWithToken = new GitHubClient("ghp_token");
+      const fetchSpy = vi.spyOn(clientWithToken, "fetchThrottled").mockResolvedValue({
+        success: true,
+        data: { id: 78 },
+      });
+
+      await clientWithToken.commentOnIssue("owner", "repo", 78, "Completed");
+
+      expect(fetchSpy).toHaveBeenCalled();
+    });
+
+    it("throws when neither gh auth nor token is available", async () => {
+      mockIsGhAvailable.mockReturnValue(false);
+      mockIsGhAuthenticated.mockReturnValue(false);
+      const unauthClient = new GitHubClient();
+
+      await expect(unauthClient.commentOnIssue("owner", "repo", 1, "Done")).rejects.toThrow(
+        "GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided.",
+      );
+    });
+  });
+
   describe("getBatchIssueStatus", () => {
     it("uses the REST issues list endpoint for recent requested issues", async () => {
       mockRunGhJsonAsync.mockResolvedValue([

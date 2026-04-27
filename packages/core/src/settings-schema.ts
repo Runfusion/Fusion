@@ -127,6 +127,8 @@ export const DEFAULT_PROJECT_SETTINGS = {
   archiveAgentLogMode: "compact",
   autoUpdatePrStatus: false,
   autoCreatePr: false,
+  githubCommentOnDone: false,
+  githubCommentTemplate: undefined,
   autoBackupEnabled: false,
   autoBackupSchedule: "0 2 * * *",
   autoBackupRetention: 7,

@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type Router } from "express";
 import { randomUUID } from "node:crypto";
 import { join, dirname } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
@@ -966,14 +966,15 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   });
 
   // REST API
-  app.use("/api", createApiRoutes(store, {
+  const apiRouter = createApiRoutes(store, {
     ...options,
     runtimeLogger,
     aiSessionStore,
     chatStore,
     chatManager,
     skillsAdapter: options?.skillsAdapter,
-  }));
+  });
+  app.use("/api", apiRouter);
 
   // API 404 Handler - Return JSON for unmatched API routes (instead of falling through to SPA)
   app.use("/api", (_req: express.Request, res: express.Response) => {
@@ -1046,6 +1047,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     server.once("close", () => {
       clearAiSessionCleanupInterval();
       aiSessionStore.stopScheduledCleanup();
+      (apiRouter as Router & { dispose?: () => void }).dispose?.();
       void stopAllDevServers().catch((error) => {
         runtimeLogger.warn("Failed to shutdown dev-server managers", {
           message: "Failed to shutdown dev-server managers",

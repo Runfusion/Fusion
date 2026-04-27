@@ -829,6 +829,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     resolveAutomationStore,
     resolveRoutineStore,
     resolveRoutineRunner,
+    registerDispose,
+    dispose,
   } = createApiRoutesContext(store, options);
   const summarizeDiagnostics = createSessionDiagnostics("ai-summarize");
 
@@ -853,6 +855,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     resolveAutomationStore,
     resolveRoutineStore,
     resolveRoutineRunner,
+    registerDispose,
+    dispose,
     rethrowAsApiError,
   };
 
@@ -3726,6 +3730,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   // the wildcard /proxy/:nodeId/{*splat} route in Express match order.
   registerProxyRoutes(router, { store, runtimeLogger });
 
+  (router as Router & { dispose?: () => void }).dispose = dispose;
   return router;
 }
 

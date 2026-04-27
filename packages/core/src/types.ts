@@ -1487,6 +1487,12 @@ export interface ProjectSettings {
   /** When true, automatically create GitHub PRs for completed tasks.
    *  Default: false. */
   autoCreatePr?: boolean;
+  /** When true, automatically post a comment to the originating GitHub issue
+   *  when an imported task is moved to done. Default: false. */
+  githubCommentOnDone?: boolean;
+  /** Optional template used for GitHub issue comments posted on task completion.
+   *  Supports `{taskId}` and `{taskTitle}` placeholders. */
+  githubCommentTemplate?: string;
   /** When true, automatic database backups are enabled. Default: false. */
   autoBackupEnabled?: boolean;
   /** Cron expression for backup schedule. Default: "0 2 * * *" (daily at 2 AM). */

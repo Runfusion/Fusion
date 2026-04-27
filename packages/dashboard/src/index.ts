@@ -14,6 +14,7 @@ export { createSkillsAdapter, getProjectSettingsPath, type SkillsAdapter, type D
 export { GitHubClient, isPrMergeReady, type PrMergeStatus, type PrCheckStatus, type ReviewDecision, type MergePrParams, type FindPrParams } from "./github.js";
 export { rateLimit, RATE_LIMITS, type RateLimitOptions } from "./rate-limit.js";
 export { GitHubPollingService, type GitHubPollingServiceOptions, type TaskWatchInput, type WatchedBadgeType } from "./github-poll.js";
+export { GitHubIssueCommentService, DEFAULT_COMMENT_TEMPLATE } from "./github-issue-comment.js";
 export {
   ApiError,
   type ApiErrorResponse,

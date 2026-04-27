@@ -12,6 +12,7 @@ import {
   unauthorized,
 } from "../api-error.js";
 import { GitHubClient, parseBadgeUrl } from "../github.js";
+import { GitHubIssueCommentService } from "../github-issue-comment.js";
 import { githubRateLimiter } from "../github-poll.js";
 import {
   classifyWebhookEvent,
@@ -1043,8 +1044,17 @@ export async function refreshIssueInBackground(
 }
 
 export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
-  const { router, getProjectContext, rethrowAsApiError } = ctx;
+  const { router, getProjectContext, rethrowAsApiError, store } = ctx;
   const githubToken = ctx.options?.githubToken ?? process.env.GITHUB_TOKEN;
+  if (typeof (store as Partial<{ on: unknown; off: unknown }>).on === "function" &&
+      typeof (store as Partial<{ off: unknown }>).off === "function") {
+    const githubIssueCommentService = new GitHubIssueCommentService(
+      store,
+      () => ctx.options?.githubToken ?? process.env.GITHUB_TOKEN,
+    );
+    githubIssueCommentService.start();
+    ctx.registerDispose(() => githubIssueCommentService.stop());
+  }
 
   /**
    * GET /api/git/remotes

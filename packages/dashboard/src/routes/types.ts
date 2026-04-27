@@ -56,6 +56,8 @@ export interface ApiRoutesContext {
   resolveAutomationStore(req: Request, scope: ScopeValue | undefined): AutomationStore;
   resolveRoutineStore(req: Request, scope: ScopeValue | undefined): RoutineStore;
   resolveRoutineRunner(req: Request, scope: ScopeValue | undefined): NonNullable<ServerOptions["routineRunner"]>;
+  registerDispose(callback: () => void): void;
+  dispose(): void;
   rethrowAsApiError(error: unknown, fallbackMessage?: string): never;
 }
 

@@ -172,6 +172,7 @@ export function createApiRoutesContext(store: TaskStore, options?: ServerOptions
 
   const resolveScopedStore = (req: Request): Promise<TaskStore> => getScopedStore(req, store);
   const resolveProjectContext = (req: Request): Promise<ProjectContext> => getProjectContext(req, store, options);
+  const disposeCallbacks: Array<() => void> = [];
 
   function emitAuthSyncAuditLog(input: AuthSyncAuditLogInput): void {
     const logger = runtimeLogger.child("settings-sync").child("auth");
@@ -316,6 +317,20 @@ export function createApiRoutesContext(store: TaskStore, options?: ServerOptions
     resolveAutomationStore,
     resolveRoutineStore,
     resolveRoutineRunner,
+    registerDispose: (callback) => {
+      disposeCallbacks.push(callback);
+    },
+    dispose: () => {
+      while (disposeCallbacks.length > 0) {
+        const callback = disposeCallbacks.pop();
+        if (!callback) continue;
+        try {
+          callback();
+        } catch {
+          // best-effort cleanup
+        }
+      }
+    },
     rethrowAsApiError,
   };
 }

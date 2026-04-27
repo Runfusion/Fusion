@@ -925,6 +925,47 @@ export class GitHubClient {
     return response.json() as Promise<PrComment[]>;
   }
 
+  async commentOnIssue(owner: string, repo: string, issueNumber: number, body: string): Promise<void> {
+    if (this.hasGhAuth()) {
+      try {
+        runGh([
+          "issue",
+          "comment",
+          String(issueNumber),
+          "--repo",
+          `${owner}/${repo}`,
+          "--body",
+          body,
+        ]);
+        return;
+      } catch (err) {
+        if (!this.token) {
+          throw new Error(getGhErrorMessage(err));
+        }
+      }
+    }
+
+    if (!this.token) {
+      throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided.");
+    }
+
+    const url = `${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${issueNumber}/comments`;
+    const result = await this.fetchThrottled<{ id: number }>(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ body }),
+      },
+    );
+
+    if (!result.success) {
+      throw new Error(result.error ?? "Failed to comment on GitHub issue");
+    }
+  }
+
   /**
    * Fetch current issue status using gh CLI if available, otherwise REST API.
    * Returns null if the issue is not found or is a pull request.
