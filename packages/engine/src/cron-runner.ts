@@ -4,6 +4,7 @@ import type { TaskStore } from "@fusion/core";
 import type { AutomationStore } from "@fusion/core";
 import type { ScheduledTask, AutomationRunResult, AutomationStep, AutomationStepResult, Column, TaskCreateInput } from "@fusion/core";
 import { createLogger } from "./logger.js";
+import { defaultShell } from "./shell-utils.js";
 
 const execAsync = promisify(exec);
 const log = createLogger("cron-runner");
@@ -266,7 +267,7 @@ export class CronRunner {
       const { stdout, stderr } = await execAsync(schedule.command, {
         timeout: timeoutMs,
         maxBuffer: MAX_BUFFER,
-        shell: "/bin/sh",
+        shell: defaultShell,
       });
 
       const output = truncateOutput(stdout, stderr);
@@ -421,7 +422,7 @@ export class CronRunner {
       const { stdout, stderr } = await execAsync(step.command, {
         timeout: timeoutMs,
         maxBuffer: MAX_BUFFER,
-        shell: "/bin/sh",
+        shell: defaultShell,
       });
 
       return {

@@ -3976,11 +3976,13 @@ async function executeSingleCommand(
   const { promisify } = await import("node:util");
   const execAsyncFn = promisify(exec);
 
+  const isWindows = process.platform === "win32";
+
   try {
     const { stdout, stderr } = await execAsyncFn(command, {
       timeout: timeoutMs ?? DEFAULT_AUTOMATION_TIMEOUT_MS,
       maxBuffer: AUTOMATION_MAX_BUFFER,
-      shell: "/bin/sh",
+      shell: isWindows ? "cmd.exe" : "/bin/sh",
     });
 
     return {

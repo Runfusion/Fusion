@@ -24,6 +24,7 @@ import type {
 import type { HeartbeatMonitor } from "./agent-heartbeat.js";
 import type { AiPromptExecutor } from "./cron-runner.js";
 import { createLogger } from "./logger.js";
+import { defaultShell } from "./shell-utils.js";
 
 const log = createLogger("routine-runner");
 const execAsync = promisify(exec);
@@ -264,7 +265,7 @@ export class RoutineRunner {
       const { stdout, stderr } = await execAsync(command, {
         timeout: timeoutMs ?? DEFAULT_TIMEOUT_MS,
         maxBuffer: MAX_BUFFER,
-        shell: "/bin/sh",
+        shell: defaultShell,
       });
 
       return {
