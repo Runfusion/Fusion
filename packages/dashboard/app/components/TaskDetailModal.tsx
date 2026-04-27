@@ -1229,6 +1229,11 @@ export function TaskDetailModal({
   }, [workingTask.modelProvider, workingTask.validatorModelProvider, workingTask.planningModelProvider]);
 
   const transitions = VALID_TRANSITIONS[task.column] || [];
+  const inReviewMoveTransitions: Column[] = ["todo", "in-progress"];
+  const moveTransitions = task.column === "in-review" ? inReviewMoveTransitions : transitions;
+  const primaryMoveTransition = moveTransitions[0];
+  const secondaryMoveTransitions = moveTransitions.slice(1);
+  const hasSecondaryMoveOptions = secondaryMoveTransitions.length > 0;
   const prAutomationStatusLabels: Record<string, string> = {
     "creating-pr": "Creating PR…",
     "awaiting-pr-checks": "Awaiting PR checks",
@@ -2075,90 +2080,98 @@ export function TaskDetailModal({
               {/* Move dropdown — column transitions and merge actions */}
               <div className="detail-move-dropdown" ref={moveMenuRef}>
                 {task.column === "in-review" ? (
-                  <>
-                    {/* In-review: show merge controls inline with Move dropdown for secondary moves */}
-                    <div className="detail-move-actions-in-review">
+                  <div className="detail-move-actions-in-review">
+                    <div className="detail-move-split-btn">
                       <button
-                        className="btn btn-sm"
-                        onClick={() => {
-                          setShowMoveMenu((prev) => !prev);
-                          setShowActionsMenu(false);
-                        }}
-                        aria-haspopup="menu"
-                        aria-expanded={showMoveMenu}
+                        className="btn btn-primary btn-sm detail-move-split-btn__main"
+                        onClick={() => primaryMoveTransition && handleMoveMenuItemClick(primaryMoveTransition)}
+                        disabled={!primaryMoveTransition}
                       >
-                        Move
-                        <ChevronDown size={12} />
+                        Move to {primaryMoveTransition ? COLUMN_LABELS[primaryMoveTransition] : ""}
                       </button>
-                      {prAutomationLabel ? (
-                        <button className="btn btn-primary btn-sm" disabled>
-                          {prAutomationLabel}
-                        </button>
-                      ) : (
-                        <button className="btn btn-primary btn-sm" onClick={handleMergeMenuItemClick}>
-                          Merge &amp; Close
-                        </button>
+                      {hasSecondaryMoveOptions && (
+                        <>
+                          <span className="detail-move-split-btn__divider" aria-hidden="true" />
+                          <button
+                            className="btn btn-primary btn-sm detail-move-split-btn__chevron"
+                            onClick={() => {
+                              setShowMoveMenu((prev) => !prev);
+                              setShowActionsMenu(false);
+                            }}
+                            aria-label="More move options"
+                            aria-haspopup="menu"
+                            aria-expanded={showMoveMenu}
+                          >
+                            <ChevronDown size={12} />
+                          </button>
+                        </>
+                      )}
+                      {showMoveMenu && hasSecondaryMoveOptions && (
+                        <div className="detail-move-menu detail-move-split-btn__menu" role="menu">
+                          {secondaryMoveTransitions.map((col) => (
+                            <button
+                              key={col}
+                              className="detail-move-menu-item"
+                              role="menuitem"
+                              onClick={() => handleMoveMenuItemClick(col)}
+                            >
+                              {col === "in-progress" ? "Back to In Progress" : `Move to ${COLUMN_LABELS[col]}`}
+                            </button>
+                          ))}
+                        </div>
                       )}
                     </div>
-                    {showMoveMenu && (
-                      <div className="detail-move-menu" role="menu">
-                        <button
-                          className="detail-move-menu-item"
-                          role="menuitem"
-                          onClick={() => handleMoveMenuItemClick("todo")}
-                        >
-                          Move to Todo
-                        </button>
-                        <button
-                          className="detail-move-menu-item"
-                          role="menuitem"
-                          onClick={() => handleMoveMenuItemClick("in-progress")}
-                        >
-                          Back to In Progress
-                        </button>
-                      </div>
+                    {prAutomationLabel ? (
+                      <button className="btn btn-primary btn-sm" disabled>
+                        {prAutomationLabel}
+                      </button>
+                    ) : (
+                      <button className="btn btn-primary btn-sm" onClick={handleMergeMenuItemClick}>
+                        Merge &amp; Close
+                      </button>
                     )}
-                  </>
+                  </div>
                 ) : (
-                  /* Other columns: primary action is the first transition, dropdown for more */
-                  <>
+                  <div className="detail-move-split-btn">
                     <button
-                      className="btn btn-primary btn-sm"
-                      onClick={() => handleMoveMenuItemClick(transitions[0])}
-                      disabled={transitions.length === 0}
+                      className="btn btn-primary btn-sm detail-move-split-btn__main"
+                      onClick={() => primaryMoveTransition && handleMoveMenuItemClick(primaryMoveTransition)}
+                      disabled={!primaryMoveTransition}
                     >
-                      Move to {transitions.length > 0 ? COLUMN_LABELS[transitions[0]] : ""}
+                      Move to {primaryMoveTransition ? COLUMN_LABELS[primaryMoveTransition] : ""}
                     </button>
-                    {transitions.length > 1 && (
+                    {hasSecondaryMoveOptions && (
                       <>
+                        <span className="detail-move-split-btn__divider" aria-hidden="true" />
                         <button
-                          className="btn btn-sm"
+                          className="btn btn-primary btn-sm detail-move-split-btn__chevron"
                           onClick={() => {
                             setShowMoveMenu((prev) => !prev);
                             setShowActionsMenu(false);
                           }}
+                          aria-label="More move options"
                           aria-haspopup="menu"
                           aria-expanded={showMoveMenu}
                         >
                           <ChevronDown size={12} />
                         </button>
-                        {showMoveMenu && (
-                          <div className="detail-move-menu" role="menu">
-                            {transitions.map((col) => (
-                              <button
-                                key={col}
-                                className="detail-move-menu-item"
-                                role="menuitem"
-                                onClick={() => handleMoveMenuItemClick(col)}
-                              >
-                                Move to {COLUMN_LABELS[col]}
-                              </button>
-                            ))}
-                          </div>
-                        )}
                       </>
                     )}
-                  </>
+                    {showMoveMenu && hasSecondaryMoveOptions && (
+                      <div className="detail-move-menu detail-move-split-btn__menu" role="menu">
+                        {secondaryMoveTransitions.map((col) => (
+                          <button
+                            key={col}
+                            className="detail-move-menu-item"
+                            role="menuitem"
+                            onClick={() => handleMoveMenuItemClick(col)}
+                          >
+                            Move to {COLUMN_LABELS[col]}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             </>

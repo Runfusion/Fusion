@@ -591,16 +591,55 @@
 
 .detail-move-actions-in-review {
   display: flex;
-  gap: 10px;
+  gap: var(--space-md);
   align-items: center;
+}
+
+.detail-move-split-btn {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  border-radius: var(--radius-md);
+}
+
+.detail-move-split-btn__main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.detail-move-split-btn__main:focus-visible,
+.detail-move-split-btn__chevron:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+
+.detail-move-split-btn__chevron {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  min-width: calc(var(--space-xs) + var(--space-sm) + var(--space-md));
+  padding: 0;
+}
+
+.detail-move-split-btn__divider {
+  width: 1px;
+  height: calc(var(--space-sm) + var(--space-xs));
+  align-self: center;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+@media (hover: hover) {
+  .detail-move-split-btn__chevron:hover {
+    background: var(--cta-bg-hover, var(--cta-bg));
+  }
 }
 
 .detail-actions-menu,
 .detail-move-menu {
   position: absolute;
-  bottom: calc(100% + 4px);
+  bottom: calc(100% + var(--space-xs));
   z-index: 50;
-  min-width: 140px;
+  min-width: calc(var(--space-2xl) + var(--space-2xl) + var(--space-md));
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -616,11 +655,15 @@
   right: 0;
 }
 
+.detail-move-split-btn__menu {
+  right: 0;
+}
+
 .detail-actions-menu-item,
 .detail-move-menu-item {
   display: block;
   width: 100%;
-  padding: 8px 12px;
+  padding: var(--space-sm) var(--space-md);
   font-size: 13px;
   font-weight: 400;
   color: var(--text);
@@ -628,7 +671,7 @@
   border: none;
   cursor: pointer;
   text-align: left;
-  transition: background 0.1s;
+  transition: background var(--transition-fast);
 }
 
 .detail-actions-menu-item:hover,
@@ -640,6 +683,17 @@
 .detail-move-menu-item:focus {
   outline: none;
   background: var(--surface-hover);
+}
+
+@media (max-width: 768px) {
+  .detail-move-split-btn__main,
+  .detail-move-split-btn__chevron {
+    min-height: calc(var(--space-lg) + var(--space-xl));
+  }
+
+  .detail-move-split-btn__chevron {
+    min-width: calc(var(--space-lg) + var(--space-xl));
+  }
 }
 
 .detail-actions-menu-item-danger {
