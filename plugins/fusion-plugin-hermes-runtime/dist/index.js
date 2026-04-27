@@ -5,6 +5,7 @@
  * discovery and session execution pipeline.
  */
 import { definePlugin } from "@fusion/plugin-sdk";
+import { resolveModelConfig } from "./pi-module.js";
 import { HermesRuntimeAdapter } from "./runtime-adapter.js";
 // ── Hermes Runtime Metadata ───────────────────────────────────────────────────
 const HERMES_RUNTIME_ID = "hermes";
@@ -12,12 +13,18 @@ const HERMES_RUNTIME_VERSION = "0.1.0";
 const hermesRuntimeMetadata = {
     runtimeId: HERMES_RUNTIME_ID,
     name: "Hermes Runtime",
-    description: "Hermes-backed AI session using the user's configured pi provider and model",
+    description: "Hermes raw-model runtime using pi-ai direct streaming",
     version: HERMES_RUNTIME_VERSION,
 };
 // ── Hermes Runtime Factory ────────────────────────────────────────────────────
-const hermesRuntimeFactory = async () => {
-    return new HermesRuntimeAdapter();
+const hermesRuntimeFactory = async (ctx) => {
+    const config = resolveModelConfig(ctx.settings);
+    return new HermesRuntimeAdapter({
+        provider: config.provider,
+        modelId: config.modelId,
+        apiKey: config.apiKey,
+        thinkingLevel: config.thinkingLevel,
+    });
 };
 // ── Plugin Definition ─────────────────────────────────────────────────────────
 const plugin = definePlugin({
@@ -33,7 +40,8 @@ const plugin = definePlugin({
     state: "installed",
     hooks: {
         onLoad: (ctx) => {
-            ctx.logger.info("Hermes Runtime Plugin loaded");
+            const config = resolveModelConfig(ctx.settings);
+            ctx.logger.info(`Hermes Runtime Plugin loaded — using ${config.provider}/${config.modelId}`);
             ctx.emitEvent("hermes-runtime:loaded", {
                 runtimeId: HERMES_RUNTIME_ID,
                 version: HERMES_RUNTIME_VERSION,

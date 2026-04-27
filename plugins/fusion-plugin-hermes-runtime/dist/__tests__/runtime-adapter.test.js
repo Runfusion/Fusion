@@ -1,80 +1,90 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { HermesRuntimeAdapter } from "../runtime-adapter.js";
-const { mockCreateFnAgent, mockPromptWithFallback, mockDescribeModel } = vi.hoisted(() => ({
-    mockCreateFnAgent: vi.fn(),
-    mockPromptWithFallback: vi.fn(),
-    mockDescribeModel: vi.fn(),
+const { mockCreateStreamSession, mockStreamPrompt, mockDescribeStreamModel, } = vi.hoisted(() => ({
+    mockCreateStreamSession: vi.fn(),
+    mockStreamPrompt: vi.fn(),
+    mockDescribeStreamModel: vi.fn(),
 }));
 vi.mock("../pi-module.js", () => ({
-    createFnAgent: mockCreateFnAgent,
-    promptWithFallback: mockPromptWithFallback,
-    describeModel: mockDescribeModel,
+    createStreamSession: mockCreateStreamSession,
+    streamPrompt: mockStreamPrompt,
+    describeStreamModel: mockDescribeStreamModel,
 }));
 describe("HermesRuntimeAdapter", () => {
-    let adapter;
     beforeEach(() => {
         vi.clearAllMocks();
-        mockDescribeModel.mockReturnValue("mock/anthropic-claude");
-        adapter = new HermesRuntimeAdapter();
-    });
-    afterEach(() => {
-        vi.restoreAllMocks();
     });
     it("has stable runtime identity", () => {
+        const adapter = new HermesRuntimeAdapter({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
         expect(adapter.id).toBe("hermes");
         expect(adapter.name).toBe("Hermes Runtime");
     });
-    it("delegates createSession to createFnAgent with mapped options", async () => {
-        const mockSession = { dispose: vi.fn() };
-        mockCreateFnAgent.mockResolvedValue({ session: mockSession, sessionFile: "/tmp/session.json" });
+    it("createSession passes model config/systemPrompt/callbacks and returns undefined sessionFile", async () => {
+        const adapter = new HermesRuntimeAdapter({
+            provider: "openai",
+            modelId: "gpt-5",
+            apiKey: "secret",
+            thinkingLevel: "high",
+        });
+        const session = { messages: [], dispose: vi.fn() };
+        mockCreateStreamSession.mockReturnValue(session);
+        const onText = vi.fn();
+        const onThinking = vi.fn();
+        const onToolStart = vi.fn();
+        const onToolEnd = vi.fn();
         const result = await adapter.createSession({
-            cwd: "/project",
-            systemPrompt: "You are helpful",
-            defaultProvider: "anthropic",
-            defaultModelId: "claude-sonnet-4-5",
-            fallbackProvider: "openai",
-            fallbackModelId: "gpt-4o",
+            cwd: "/tmp/project",
+            systemPrompt: "You are Hermes",
+            tools: "coding",
+            customTools: [{ name: "ignored" }],
+            sessionManager: { foo: "bar" },
+            skillSelection: { all: true },
             skills: ["bash"],
+            onText,
+            onThinking,
+            onToolStart,
+            onToolEnd,
         });
-        expect(mockCreateFnAgent).toHaveBeenCalledWith({
-            cwd: "/project",
-            systemPrompt: "You are helpful",
-            tools: undefined,
-            customTools: undefined,
-            onText: undefined,
-            onThinking: undefined,
-            onToolStart: undefined,
-            onToolEnd: undefined,
-            defaultProvider: "anthropic",
-            defaultModelId: "claude-sonnet-4-5",
-            fallbackProvider: "openai",
-            fallbackModelId: "gpt-4o",
-            defaultThinkingLevel: undefined,
-            sessionManager: undefined,
-            skillSelection: undefined,
-            skills: ["bash"],
+        expect(mockCreateStreamSession).toHaveBeenCalledWith({
+            provider: "openai",
+            modelId: "gpt-5",
+            apiKey: "secret",
+            thinkingLevel: "high",
+            systemPrompt: "You are Hermes",
+            callbacks: {
+                onText,
+                onThinking,
+                onToolStart,
+                onToolEnd,
+            },
         });
-        expect(result.session).toBe(mockSession);
-        expect(result.sessionFile).toBe("/tmp/session.json");
+        expect(result).toEqual({ session, sessionFile: undefined });
+        expect(JSON.stringify(mockCreateStreamSession.mock.calls[0][0])).not.toContain("/tmp/project");
+        expect(JSON.stringify(mockCreateStreamSession.mock.calls[0][0])).not.toContain("coding");
     });
-    it("delegates promptWithFallback to pi seam", async () => {
-        const session = { id: "s-1" };
-        mockPromptWithFallback.mockResolvedValue(undefined);
-        await adapter.promptWithFallback(session, "Hello", { images: [] });
-        expect(mockPromptWithFallback).toHaveBeenCalledWith(session, "Hello", { images: [] });
+    it("promptWithFallback appends user message then delegates to streamPrompt", async () => {
+        const adapter = new HermesRuntimeAdapter({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
+        const session = { messages: [], dispose: vi.fn() };
+        await adapter.promptWithFallback(session, "Hello from Hermes");
+        expect(session.messages).toEqual([{ role: "user", content: "Hello from Hermes" }]);
+        expect(mockStreamPrompt).toHaveBeenCalledWith(session, {
+            role: "user",
+            content: "Hello from Hermes",
+        });
     });
-    it("delegates describeModel to pi seam", () => {
-        const session = { id: "s-2" };
-        mockDescribeModel.mockReturnValue("anthropic/claude-sonnet-4-5");
-        const result = adapter.describeModel(session);
-        expect(mockDescribeModel).toHaveBeenCalledWith(session);
-        expect(result).toBe("anthropic/claude-sonnet-4-5");
+    it("describeModel delegates to describeStreamModel", () => {
+        const adapter = new HermesRuntimeAdapter({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
+        const session = { messages: [], dispose: vi.fn() };
+        mockDescribeStreamModel.mockReturnValue("anthropic/claude-sonnet-4-5");
+        expect(adapter.describeModel(session)).toBe("anthropic/claude-sonnet-4-5");
+        expect(mockDescribeStreamModel).toHaveBeenCalledWith(session);
     });
-    it("dispose calls session.dispose when present and no-ops otherwise", async () => {
-        const disposeMock = vi.fn().mockResolvedValue(undefined);
-        await adapter.dispose({ dispose: disposeMock });
-        await expect(adapter.dispose({ id: "no-dispose" })).resolves.toBeUndefined();
-        expect(disposeMock).toHaveBeenCalledTimes(1);
+    it("dispose is a no-op when missing and calls dispose when present", async () => {
+        const adapter = new HermesRuntimeAdapter({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
+        const dispose = vi.fn();
+        await expect(adapter.dispose({ messages: [], dispose })).resolves.toBeUndefined();
+        await expect(adapter.dispose({ messages: [] })).resolves.toBeUndefined();
+        expect(dispose).toHaveBeenCalledTimes(1);
     });
 });
 //# sourceMappingURL=runtime-adapter.test.js.map

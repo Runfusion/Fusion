@@ -3,47 +3,55 @@ import type {
   AgentRuntimeOptions,
   AgentSession,
   AgentSessionResult,
+  HermesModelConfig,
 } from "./types.js";
-import { createFnAgent, describeModel, promptWithFallback } from "./pi-module.js";
-
-const getModelDescription = describeModel;
+import { createStreamSession, describeStreamModel, streamPrompt } from "./pi-module.js";
 
 export class HermesRuntimeAdapter implements AgentRuntime {
   readonly id = "hermes";
   readonly name = "Hermes Runtime";
 
+  constructor(
+    private readonly config: HermesModelConfig = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+    },
+  ) {}
+
   async createSession(options: AgentRuntimeOptions): Promise<AgentSessionResult> {
-    return createFnAgent({
-      cwd: options.cwd,
+    const session = createStreamSession({
+      provider: this.config.provider,
+      modelId: this.config.modelId,
+      apiKey: this.config.apiKey,
+      thinkingLevel: this.config.thinkingLevel,
       systemPrompt: options.systemPrompt,
-      tools: options.tools,
-      customTools: options.customTools,
-      onText: options.onText,
-      onThinking: options.onThinking,
-      onToolStart: options.onToolStart,
-      onToolEnd: options.onToolEnd,
-      defaultProvider: options.defaultProvider,
-      defaultModelId: options.defaultModelId,
-      fallbackProvider: options.fallbackProvider,
-      fallbackModelId: options.fallbackModelId,
-      defaultThinkingLevel: options.defaultThinkingLevel,
-      sessionManager: options.sessionManager,
-      skillSelection: options.skillSelection,
-      skills: options.skills,
+      callbacks: {
+        onText: options.onText,
+        onThinking: options.onThinking,
+        onToolStart: options.onToolStart,
+        onToolEnd: options.onToolEnd,
+      },
     });
+
+    return {
+      session,
+      sessionFile: undefined,
+    };
   }
 
-  async promptWithFallback(session: AgentSession, prompt: string, options?: unknown): Promise<void> {
-    return promptWithFallback(session, prompt, options);
+  async promptWithFallback(session: AgentSession, prompt: string, _options?: unknown): Promise<void> {
+    const userMessage = { role: "user", content: prompt };
+    session.messages.push(userMessage);
+    await streamPrompt(session, userMessage as any);
   }
 
   describeModel(session: AgentSession): string {
-    return getModelDescription(session);
+    return describeStreamModel(session);
   }
 
   async dispose(session: AgentSession): Promise<void> {
-    if (typeof (session as { dispose?: () => Promise<void> }).dispose === "function") {
-      await (session as { dispose: () => Promise<void> }).dispose();
+    if (typeof session.dispose === "function") {
+      session.dispose();
     }
   }
 }

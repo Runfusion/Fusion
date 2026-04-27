@@ -1,60 +1,80 @@
 # Hermes Runtime Plugin
 
-Provides an executable Hermes runtime plugin for Fusion. This package enables runtime registration, discovery, and session execution so agents configured with `runtimeConfig.runtimeHint: "hermes"` can run through the standard runtime adapter contract.
+Hermes is a **raw-model runtime** plugin for Fusion. It creates and manages LLM sessions directly through [`@mariozechner/pi-ai`](https://www.npmjs.com/package/@mariozechner/pi-ai), without using Fusion's internal Pi coding-agent pipeline.
 
-## Overview
+## What it does
 
-This plugin follows the runtime adapter pattern used by other executable plugin runtimes:
+- Resolves provider/model settings from plugin settings, environment variables, and defaults
+- Creates in-memory streaming sessions with `streamSimple(...)`
+- Maintains conversation history (`messages`) inside the plugin session
+- Streams text/thinking/tool-call deltas through runtime callbacks
+- Exposes model description as `<provider>/<modelId>`
 
-- Registers Hermes runtime metadata for resolver discovery
-- Creates executable runtime sessions via `createFnAgent`
-- Delegates prompt execution through `promptWithFallback`
-- Exposes model descriptions through `describeModel`
-- Supports best-effort session disposal via `dispose()`
+## How it differs from the default Pi runtime
 
-## Installation
+| Runtime | Behavior |
+| --- | --- |
+| Default Pi runtime (`pi`) | Full coding-agent flow (`createFnAgent`, tool execution, skill/session manager integration) |
+| Hermes runtime (`hermes`) | Direct pi-ai model streaming (no coding-agent tool execution pipeline) |
 
-### Option 1: Copy to plugins directory
+Hermes is intentionally lightweight: it does not execute tools or perform filesystem workflows like the coding agent.
 
-```bash
-cp -r fusion-plugin-hermes-runtime ~/.fusion/plugins/
-```
+## Configuration
 
-### Option 2: Install via CLI
+Hermes resolves settings in this order:
 
-```bash
-fn plugin install ./plugins/fusion-plugin-hermes-runtime
-```
+1. Plugin settings (`ctx.settings`)
+2. Environment variables
+3. Built-in defaults
 
-## Runtime Metadata
-
-- **Plugin ID:** `fusion-plugin-hermes-runtime`
-- **Package name:** `@fusion-plugin-examples/hermes-runtime`
-- **Runtime ID:** `hermes`
-- **Runtime name:** `Hermes Runtime`
-- **Version:** `0.1.0`
-- **Description:** Hermes-backed AI session using the user's configured pi provider and model
-
-## Agent Configuration
-
-Configure an agent to target Hermes via `runtimeConfig.runtimeHint`:
+### Plugin settings
 
 ```json
 {
-  "name": "Hermes Executor",
-  "role": "executor",
-  "runtimeConfig": {
-    "runtimeHint": "hermes"
-  }
+  "provider": "anthropic",
+  "modelId": "claude-sonnet-4-5",
+  "apiKey": "...optional...",
+  "thinkingLevel": "medium"
 }
 ```
 
-## Local Development
+### Environment variable fallbacks
+
+- `HERMES_PROVIDER`
+- `HERMES_MODEL_ID`
+- `HERMES_API_KEY`
+- `HERMES_THINKING_LEVEL`
+
+### Defaults
+
+- `provider`: `anthropic`
+- `modelId`: `claude-sonnet-4-5`
+- `apiKey`: `undefined`
+- `thinkingLevel`: `undefined`
+
+## Runtime contract notes
+
+Hermes accepts the standard `AgentRuntimeOptions` shape for compatibility, but these Pi-specific fields are **silently ignored**:
+
+- `cwd`
+- `tools`
+- `skills`
+- `customTools`
+- `sessionManager`
+- `skillSelection`
+
+The runtime returns `sessionFile: undefined` because Hermes sessions are in-memory.
+
+## Metadata
+
+- **Plugin ID:** `fusion-plugin-hermes-runtime`
+- **Runtime ID:** `hermes`
+- **Runtime name:** `Hermes Runtime`
+- **Package:** `@fusion-plugin-examples/hermes-runtime`
+
+## Development
 
 ```bash
-# Run plugin tests
 pnpm --filter @fusion-plugin-examples/hermes-runtime test
-
-# Build plugin output to dist/
 pnpm --filter @fusion-plugin-examples/hermes-runtime build
 ```

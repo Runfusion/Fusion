@@ -1,37 +1,44 @@
-import { createFnAgent, describeModel, promptWithFallback } from "./pi-module.js";
-const getModelDescription = describeModel;
+import { createStreamSession, describeStreamModel, streamPrompt } from "./pi-module.js";
 export class HermesRuntimeAdapter {
+    config;
     id = "hermes";
     name = "Hermes Runtime";
-    async createSession(options) {
-        return createFnAgent({
-            cwd: options.cwd,
-            systemPrompt: options.systemPrompt,
-            tools: options.tools,
-            customTools: options.customTools,
-            onText: options.onText,
-            onThinking: options.onThinking,
-            onToolStart: options.onToolStart,
-            onToolEnd: options.onToolEnd,
-            defaultProvider: options.defaultProvider,
-            defaultModelId: options.defaultModelId,
-            fallbackProvider: options.fallbackProvider,
-            fallbackModelId: options.fallbackModelId,
-            defaultThinkingLevel: options.defaultThinkingLevel,
-            sessionManager: options.sessionManager,
-            skillSelection: options.skillSelection,
-            skills: options.skills,
-        });
+    constructor(config = {
+        provider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+    }) {
+        this.config = config;
     }
-    async promptWithFallback(session, prompt, options) {
-        return promptWithFallback(session, prompt, options);
+    async createSession(options) {
+        const session = createStreamSession({
+            provider: this.config.provider,
+            modelId: this.config.modelId,
+            apiKey: this.config.apiKey,
+            thinkingLevel: this.config.thinkingLevel,
+            systemPrompt: options.systemPrompt,
+            callbacks: {
+                onText: options.onText,
+                onThinking: options.onThinking,
+                onToolStart: options.onToolStart,
+                onToolEnd: options.onToolEnd,
+            },
+        });
+        return {
+            session,
+            sessionFile: undefined,
+        };
+    }
+    async promptWithFallback(session, prompt, _options) {
+        const userMessage = { role: "user", content: prompt };
+        session.messages.push(userMessage);
+        await streamPrompt(session, userMessage);
     }
     describeModel(session) {
-        return getModelDescription(session);
+        return describeStreamModel(session);
     }
     async dispose(session) {
         if (typeof session.dispose === "function") {
-            await session.dispose();
+            session.dispose();
         }
     }
 }

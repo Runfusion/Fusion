@@ -21,8 +21,8 @@
     "test": "vitest run --silent=passed-only --reporter=dot"
   },
   "dependencies": {
-    "@fusion/engine": "workspace:*",
-    "@fusion/plugin-sdk": "workspace:*"
+    "@fusion/plugin-sdk": "workspace:*",
+    "@mariozechner/pi-ai": "^0.70.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",

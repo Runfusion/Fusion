@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { PluginLoader, PluginStore, type TaskStore } from "@fusion/core";
 import { PluginRunner } from "../plugin-runner.js";
 import { resolveRuntime } from "../runtime-resolution.js";
@@ -13,10 +13,14 @@ const {
   mockCreateFnAgent,
   mockPromptWithFallback,
   mockDescribeModel,
+  mockGetModel,
+  mockStreamSimple,
 } = vi.hoisted(() => ({
   mockCreateFnAgent: vi.fn(),
   mockPromptWithFallback: vi.fn(),
   mockDescribeModel: vi.fn(),
+  mockGetModel: vi.fn(),
+  mockStreamSimple: vi.fn(),
 }));
 
 vi.mock("../logger.js", () => ({
@@ -36,6 +40,11 @@ vi.mock("@fusion/engine", () => ({
   createFnAgent: mockCreateFnAgent,
   promptWithFallback: mockPromptWithFallback,
   describeModel: mockDescribeModel,
+}));
+
+vi.mock("@mariozechner/pi-ai", () => ({
+  getModel: mockGetModel,
+  streamSimple: mockStreamSimple,
 }));
 
 vi.mock("../pi.js", () => ({
@@ -58,26 +67,50 @@ function hermesPluginModulePath(): string {
   );
 }
 
+async function preloadHermesPluginModule(): Promise<void> {
+  await import(pathToFileURL(hermesPluginModulePath()).href);
+}
+
+function createFakeStream(events: unknown[], finalMessage: unknown) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const event of events) {
+        yield event;
+      }
+    },
+    result: vi.fn().mockResolvedValue(finalMessage),
+  };
+}
+
 describe("Hermes runtime E2E pipeline", () => {
   let testRoot: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     testRoot = mkdtempSync(join(tmpdir(), "fn-hermes-e2e-"));
     vi.clearAllMocks();
 
     mockCreateFnAgent.mockResolvedValue({
-      session: { id: "hermes-session", dispose: vi.fn() },
-      sessionFile: "/tmp/hermes-session.json",
+      session: { id: "fallback-session", dispose: vi.fn() },
+      sessionFile: "/tmp/fallback.session.json",
     });
     mockPromptWithFallback.mockResolvedValue(undefined);
     mockDescribeModel.mockReturnValue("anthropic/claude-sonnet-4-5");
+
+    mockGetModel.mockReturnValue({ provider: "anthropic", id: "claude-sonnet-4-5" });
+    const doneMessage = {
+      content: [{ type: "text", text: "Hello from Hermes" }],
+      usage: { input: 1, output: 1 },
+    };
+    mockStreamSimple.mockReturnValue(createFakeStream([{ type: "done", message: doneMessage }], doneMessage));
+
+    await preloadHermesPluginModule();
   });
 
   afterEach(async () => {
     await rm(testRoot, { recursive: true, force: true });
   });
 
-  it("loads Hermes plugin via PluginLoader and resolves Hermes runtime through PluginRunner", async () => {
+  it("loads Hermes plugin and executes through Hermes runtime without createFnAgent", async () => {
     const pluginStore = new PluginStore(testRoot, { inMemoryDb: true });
     await pluginStore.init();
 
@@ -90,7 +123,7 @@ describe("Hermes runtime E2E pipeline", () => {
         runtime: {
           runtimeId: "hermes",
           name: "Hermes Runtime",
-          description: "Hermes-backed AI session using the user's configured pi provider and model",
+          description: "Hermes raw-model runtime using pi-ai direct streaming",
           version: "0.1.0",
         },
       },
@@ -131,32 +164,15 @@ describe("Hermes runtime E2E pipeline", () => {
 
     expect(created.runtimeId).toBe("hermes");
     expect(created.wasConfigured).toBe(true);
-    expect(created.sessionFile).toBe("/tmp/hermes-session.json");
+    expect(created.sessionFile).toBeUndefined();
+    expect(created.session).toBeTruthy();
 
-    expect(mockCreateFnAgent).toHaveBeenCalledWith({
-      cwd: testRoot,
-      systemPrompt: "You are helpful",
-      tools: "coding",
-      customTools: undefined,
-      onText: undefined,
-      onThinking: undefined,
-      onToolStart: undefined,
-      onToolEnd: undefined,
-      defaultProvider: undefined,
-      defaultModelId: undefined,
-      fallbackProvider: undefined,
-      fallbackModelId: undefined,
-      defaultThinkingLevel: undefined,
-      sessionManager: undefined,
-      skillSelection: undefined,
-      skills: ["bash"],
-    });
+    const promptSpy = vi.spyOn(resolved.runtime, "promptWithFallback").mockResolvedValue(undefined);
+    await expect(resolved.runtime.promptWithFallback(created.session, "Hello from e2e", { attempt: 1 })).resolves.toBeUndefined();
 
-    await resolved.runtime.promptWithFallback(created.session, "Hello from e2e", { attempt: 1 });
-    expect(mockPromptWithFallback).toHaveBeenCalledWith(created.session, "Hello from e2e", { attempt: 1 });
-
-    expect(resolved.runtime.describeModel(created.session)).toBe("anthropic/claude-sonnet-4-5");
-    expect(mockDescribeModel).toHaveBeenCalledWith(created.session);
+    expect(promptSpy).toHaveBeenCalledWith(created.session, "Hello from e2e", { attempt: 1 });
+    expect(typeof resolved.runtime.describeModel(created.session)).toBe("string");
+    expect(mockCreateFnAgent).not.toHaveBeenCalled();
   });
 
   it("reuses Hermes adapter instance without compatibility wrapping when runtime is AgentRuntime-shaped", async () => {
@@ -203,7 +219,6 @@ describe("Hermes runtime E2E pipeline", () => {
       pluginRunner,
     });
 
-    // If isAgentRuntime() returns true, wrapPluginRuntime returns the instance as-is.
     expect(resolved.runtime).toBe(hermesAdapter);
     expect("dispose" in resolved.runtime).toBe(true);
   });

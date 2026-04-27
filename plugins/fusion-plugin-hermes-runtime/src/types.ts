@@ -5,12 +5,33 @@
  * internal engine exports.
  */
 
-/** Minimal session shape used by the runtime adapter. */
-export interface AgentSession {
-  dispose?: () => Promise<void> | void;
+export interface HermesCallbacks {
+  onText?: (text: string) => void;
+  onThinking?: (text: string) => void;
+  onToolStart?: (toolName: string, args?: unknown) => void;
+  onToolEnd?: (toolName: string, isError: boolean, result?: unknown) => void;
 }
 
-/** Options for creating an agent session. Mirrors createFnAgent inputs used by the adapter. */
+export interface HermesStreamSession {
+  model: unknown;
+  systemPrompt: string;
+  messages: unknown[];
+  apiKey: string | undefined;
+  thinkingLevel: string | undefined;
+  sessionId: string;
+  lastModelDescription: string;
+  callbacks: HermesCallbacks;
+  usage?: unknown;
+  dispose(): void;
+}
+
+export type AgentSession = HermesStreamSession;
+
+/**
+ * Options for creating an agent session.
+ * Mirrors the engine's runtime options shape. Hermes accepts these options
+ * for compatibility and silently ignores Pi-specific fields.
+ */
 export interface AgentRuntimeOptions {
   cwd: string;
   systemPrompt: string;
@@ -18,7 +39,7 @@ export interface AgentRuntimeOptions {
   customTools?: unknown;
   onText?: (text: string) => void;
   onThinking?: (text: string) => void;
-  onToolStart?: (toolName: string, args?: Record<string, unknown>) => void;
+  onToolStart?: (toolName: string, args?: unknown) => void;
   onToolEnd?: (toolName: string, isError: boolean, result?: unknown) => void;
   defaultProvider?: string;
   defaultModelId?: string;
@@ -44,4 +65,18 @@ export interface AgentRuntime {
   promptWithFallback(session: AgentSession, prompt: string, options?: unknown): Promise<void>;
   describeModel(session: AgentSession): string;
   dispose?(session: AgentSession): Promise<void>;
+}
+
+export interface HermesModelConfig {
+  provider: string;
+  modelId: string;
+  apiKey?: string;
+  thinkingLevel?: string;
+}
+
+export interface ResolvedModelConfig {
+  provider: string;
+  modelId: string;
+  apiKey: string | undefined;
+  thinkingLevel: string | undefined;
 }

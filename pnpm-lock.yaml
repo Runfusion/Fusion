@@ -518,12 +518,12 @@ importers:
 
   plugins/fusion-plugin-hermes-runtime:
     dependencies:
-      '@fusion/engine':
-        specifier: workspace:*
-        version: link:../../packages/engine
       '@fusion/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
+      '@mariozechner/pi-ai':
+        specifier: ^0.70.0
+        version: 0.70.0(@modelcontextprotocol/sdk@1.28.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
     devDependencies:
       '@types/node':
         specifier: ^25.5.2
@@ -553,9 +553,6 @@ importers:
 
   plugins/fusion-plugin-paperclip-runtime:
     dependencies:
-      '@fusion/engine':
-        specifier: workspace:*
-        version: link:../../packages/engine
       '@fusion/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
