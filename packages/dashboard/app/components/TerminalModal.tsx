@@ -758,7 +758,27 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
     }
 
     xtermRef.current.options.fontSize = fontSize;
-    refitTerminal();
+
+    // Defer fit until the next frame so layout reflects the new font metrics
+    // before FitAddon measures rows/cols. Reuse pendingFitRef so font-size and
+    // visualViewport-triggered fits are coalesced into a single scheduled fit.
+    if (pendingFitRef.current !== null) {
+      cancelAnimationFrame(pendingFitRef.current);
+      pendingFitRef.current = null;
+    }
+
+    const frame = requestAnimationFrame(() => {
+      pendingFitRef.current = null;
+      refitTerminal();
+    });
+    pendingFitRef.current = frame;
+
+    return () => {
+      if (pendingFitRef.current === frame) {
+        cancelAnimationFrame(frame);
+        pendingFitRef.current = null;
+      }
+    };
   }, [fontSize, xtermReady, refitTerminal]);
 
   // Handle keyboard shortcuts (zoom)
@@ -772,7 +792,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
       if (e.code === "Equal" || e.code === "NumpadAdd") {
         e.preventDefault();
         setFontSize((current) => clampTerminalFontSize(current + 1));
-        refitTerminal();
         return;
       }
 
@@ -780,7 +799,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
       if (e.code === "Minus" || e.code === "NumpadSubtract") {
         e.preventDefault();
         setFontSize((current) => clampTerminalFontSize(current - 1));
-        refitTerminal();
         return;
       }
 
@@ -788,7 +806,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
       if (e.code === "Digit0" || e.code === "Numpad0") {
         e.preventDefault();
         setFontSize(DEFAULT_FONT_SIZE);
-        refitTerminal();
         return;
       }
     };
@@ -976,13 +993,11 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
 
   const handleIncreaseFontSize = useCallback(() => {
     setFontSize((current) => clampTerminalFontSize(current + 1));
-    refitTerminal();
-  }, [refitTerminal]);
+  }, []);
 
   const handleDecreaseFontSize = useCallback(() => {
     setFontSize((current) => clampTerminalFontSize(current - 1));
-    refitTerminal();
-  }, [refitTerminal]);
+  }, []);
 
   const toggleModifier = useCallback((modifier: "ctrl" | "alt") => {
     setStickyModifier((current) => (current === modifier ? null : modifier));

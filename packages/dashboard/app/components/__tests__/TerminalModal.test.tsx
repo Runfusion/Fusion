@@ -21,6 +21,8 @@ vi.mock("../../api", () => ({
 }));
 
 // Mock xterm modules to prevent DOM errors in jsdom
+const mockFitAddonFit = vi.fn();
+
 const mockTerminalInstance = {
   loadAddon: vi.fn(),
   open: vi.fn(),
@@ -40,7 +42,7 @@ vi.mock("@xterm/xterm", () => ({
 
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: vi.fn(() => ({
-    fit: vi.fn(),
+    fit: mockFitAddonFit,
     dispose: vi.fn(),
   })),
 }));
@@ -120,6 +122,7 @@ describe("TerminalModal", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFitAddonFit.mockClear();
     window.localStorage.removeItem(TERMINAL_FONT_SIZE_KEY);
     mockTerminalInstance.options.fontSize = 14;
     mockCreateTerminalSession.mockResolvedValue({
@@ -640,25 +643,37 @@ describe("TerminalModal", () => {
       });
     });
 
-    it("increases font size via button and persists to localStorage", async () => {
+    it("increases font size via button, persists, and refits xterm", async () => {
       render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("terminal-font-size-value").textContent).toBe("14px");
+      });
+      const fitCallBaseline = mockFitAddonFit.mock.calls.length;
 
       fireEvent.click(screen.getByTestId("terminal-font-size-increase"));
 
       await waitFor(() => {
         expect(screen.getByTestId("terminal-font-size-value").textContent).toBe("15px");
         expect(window.localStorage.getItem(TERMINAL_FONT_SIZE_KEY)).toBe("15");
+        expect(mockFitAddonFit.mock.calls.length).toBeGreaterThan(fitCallBaseline);
       });
     });
 
-    it("decreases font size via button and persists to localStorage", async () => {
+    it("decreases font size via button, persists, and refits xterm", async () => {
       render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("terminal-font-size-value").textContent).toBe("14px");
+      });
+      const fitCallBaseline = mockFitAddonFit.mock.calls.length;
 
       fireEvent.click(screen.getByTestId("terminal-font-size-decrease"));
 
       await waitFor(() => {
         expect(screen.getByTestId("terminal-font-size-value").textContent).toBe("13px");
         expect(window.localStorage.getItem(TERMINAL_FONT_SIZE_KEY)).toBe("13");
+        expect(mockFitAddonFit.mock.calls.length).toBeGreaterThan(fitCallBaseline);
       });
     });
 
@@ -698,23 +713,39 @@ describe("TerminalModal", () => {
       });
     });
 
-    it("keeps keyboard zoom shortcuts wired to shared font-size state", async () => {
+    it("keeps keyboard zoom shortcuts wired to shared font-size state and refits xterm", async () => {
       render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("terminal-font-size-value").textContent).toBe("14px");
+      });
+
+      const baseline = mockFitAddonFit.mock.calls.length;
+
+      fireEvent.keyDown(window, { ctrlKey: true, code: "Equal" });
+      await waitFor(() => {
+        expect(screen.getByTestId("terminal-font-size-value").textContent).toBe("15px");
+        expect(mockFitAddonFit.mock.calls.length).toBeGreaterThan(baseline);
+      });
+
+      const afterEqual = mockFitAddonFit.mock.calls.length;
+      fireEvent.keyDown(window, { ctrlKey: true, code: "Minus" });
+      await waitFor(() => {
+        expect(screen.getByTestId("terminal-font-size-value").textContent).toBe("14px");
+        expect(mockFitAddonFit.mock.calls.length).toBeGreaterThan(afterEqual);
+      });
 
       fireEvent.keyDown(window, { ctrlKey: true, code: "Equal" });
       await waitFor(() => {
         expect(screen.getByTestId("terminal-font-size-value").textContent).toBe("15px");
       });
 
-      fireEvent.keyDown(window, { ctrlKey: true, code: "Minus" });
-      await waitFor(() => {
-        expect(screen.getByTestId("terminal-font-size-value").textContent).toBe("14px");
-      });
-
+      const afterSecondEqual = mockFitAddonFit.mock.calls.length;
       fireEvent.keyDown(window, { ctrlKey: true, code: "Digit0" });
       await waitFor(() => {
         expect(screen.getByTestId("terminal-font-size-value").textContent).toBe("14px");
         expect(window.localStorage.getItem(TERMINAL_FONT_SIZE_KEY)).toBe("14");
+        expect(mockFitAddonFit.mock.calls.length).toBeGreaterThan(afterSecondEqual);
       });
     });
   });
