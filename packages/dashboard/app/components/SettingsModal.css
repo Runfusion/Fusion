@@ -193,7 +193,7 @@
 }
 
 .settings-plugins-subsection-btn:hover {
-  background: var(--surface-hover, color-mix(in srgb, var(--text-muted) 8%, transparent));
+  background: var(--surface-hover);
   color: var(--text);
 }
 

@@ -276,7 +276,7 @@
 }
 
 .quick-chat-message-render-toggle:hover {
-  background: var(--surface-hover, color-mix(in srgb, var(--surface) 70%, transparent));
+  background: var(--surface-hover);
   color: var(--text);
 }
 
