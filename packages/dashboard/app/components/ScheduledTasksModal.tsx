@@ -254,30 +254,18 @@ export function ScheduledTasksModal({ onClose, addToast, projectId }: ScheduledT
   return (
     <div className="modal-overlay open" onClick={handleOverlayClick}>
       <div className="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="schedules-modal-title">
-        <div className="modal-header scheduling-modal-header">
-          <div className="scheduling-header-main-row">
-            <div className="detail-title-row">
-              <Zap size={20} className="icon-triage" />
-              <h3 id="schedules-modal-title">Automations</h3>
-            </div>
-            <div className="modal-header-actions">
-              {isShowingList && (
-                <button
-                  className="btn btn-primary btn-sm"
-                  onClick={() => setRoutineView("create")}
-                  aria-label="Create new automation"
-                >
-                  <Plus size={14} />
-                  New Automation
-                </button>
-              )}
-              <button className="modal-close" onClick={onClose} aria-label="Close">
-                <X size={20} />
-              </button>
-            </div>
+        <div className="modal-header">
+          <div className="detail-title-row">
+            <Zap size={20} className="icon-triage" />
+            <h3 id="schedules-modal-title">Automations</h3>
           </div>
+          <button className="modal-close" onClick={onClose} aria-label="Close">
+            <X size={20} />
+          </button>
+        </div>
 
-          <div className="scheduling-header-scope-row" role="group" aria-label="Scheduling scope">
+        <div className="scheduling-toolbar" aria-live="polite">
+          <div className="scheduling-toolbar-left" role="group" aria-label="Scheduling scope">
             <div className="scheduling-scope-selector">
               <button
                 type="button"
@@ -300,30 +288,26 @@ export function ScheduledTasksModal({ onClose, addToast, projectId }: ScheduledT
                 Project
               </button>
             </div>
+            <span className="scheduling-count">
+              <Zap size={14} />
+              {routines.length} automation{routines.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          <div className="scheduling-toolbar-right">
+            {isShowingList && (
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={() => setRoutineView("create")}
+                aria-label="Create new automation"
+              >
+                <Plus size={14} />
+                New Automation
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="scheduling-summary" aria-live="polite">
-          <Zap size={14} />
-          <span>{routines.length} automation{routines.length === 1 ? "" : "s"}</span>
-        </div>
-        <div className="detail-tabs" role="tablist">
-          <button
-            className="detail-tab detail-tab-active"
-            role="tab"
-            id="tab-routines"
-            aria-selected="true"
-            aria-controls="scheduled-tasks-content"
-            onClick={() => {
-              setRoutineView("list");
-              setEditingRoutine(undefined);
-            }}
-          >
-            <Zap size={14} /> Routines
-          </button>
-        </div>
-
-        <div className="schedule-modal-content" role="tabpanel" id="scheduled-tasks-content">
+        <div className="schedule-modal-content" id="scheduled-tasks-content">
           {renderContent()}
         </div>
       </div>

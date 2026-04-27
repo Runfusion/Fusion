@@ -109,11 +109,12 @@ describe("ScheduledTasksModal", () => {
 
     expect(screen.getByText("Automations")).toBeDefined();
     expect(screen.getByRole("dialog").getAttribute("aria-labelledby")).toBe("schedules-modal-title");
+    expect(screen.getByRole("button", { name: "Close" })).toBeDefined();
     await waitFor(() => {
       expect(screen.getByText("No automations yet")).toBeDefined();
     });
     expect(screen.getByText("Create your first automation")).toBeDefined();
-    expect(screen.getByText("Routines")).toBeDefined();
+    expect(screen.getByText("0 automations")).toBeDefined();
     expect(mockFetchAutomations).not.toHaveBeenCalled();
   });
 
@@ -131,7 +132,7 @@ describe("ScheduledTasksModal", () => {
     expect(screen.getByText("New Automation")).toBeDefined();
   });
 
-  it("renders scope controls in a dedicated header row", async () => {
+  it("renders scope controls in the toolbar below the modal header", async () => {
     mockFetchRoutines.mockResolvedValue([makeRoutine({ name: "Scoped Routine" })]);
     const { container } = render(<ScheduledTasksModal onClose={onClose} addToast={addToast} />);
 
@@ -139,15 +140,21 @@ describe("ScheduledTasksModal", () => {
       expect(screen.getByText("Scoped Routine")).toBeDefined();
     });
 
-    const headerActions = container.querySelector(".scheduling-header-main-row .modal-header-actions");
-    const scopeRow = container.querySelector(".scheduling-header-scope-row");
+    const header = container.querySelector(".modal-header");
+    const toolbar = container.querySelector(".scheduling-toolbar");
+    const toolbarLeft = container.querySelector(".scheduling-toolbar-left");
+    const toolbarRight = container.querySelector(".scheduling-toolbar-right");
     const scopeSelector = container.querySelector(".scheduling-scope-selector");
+    const newAutomationButton = screen.getByRole("button", { name: /new automation/i });
 
-    expect(headerActions).toBeTruthy();
-    expect(scopeRow).toBeTruthy();
+    expect(header).toBeTruthy();
+    expect(toolbar).toBeTruthy();
+    expect(toolbarLeft).toBeTruthy();
+    expect(toolbarRight).toBeTruthy();
     expect(scopeSelector).toBeTruthy();
-    expect(scopeRow?.contains(scopeSelector as Node)).toBe(true);
-    expect(headerActions?.contains(scopeSelector as Node)).toBe(false);
+    expect(toolbarLeft?.contains(scopeSelector as Node)).toBe(true);
+    expect(header?.contains(scopeSelector as Node)).toBe(false);
+    expect(toolbarRight?.contains(newAutomationButton)).toBe(true);
   });
 
   it("uses routine APIs with global scope by default", async () => {

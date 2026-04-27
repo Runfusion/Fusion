@@ -57,48 +57,43 @@
 
 /* ── Scheduled Tasks ──────────────────────────────────────────────── */
 
-/* Automation count summary in scheduled tasks modal */
-.scheduling-summary {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: var(--space-sm) var(--space-lg);
-  font-size: var(--text-xs, 12px);
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
-}
-
-.schedule-modal-content {
-  padding: var(--space-lg) 20px;
-  overflow-y: auto;
-  max-height: 70vh;
-}
-
-/* Scheduling modal header */
-.scheduling-modal-header {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--space-sm);
-}
-
-.scheduling-header-main-row {
+/* Scheduling toolbar below modal header */
+.scheduling-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-md);
+  padding: var(--space-sm) var(--modal-padding, var(--space-lg));
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
 }
 
-.scheduling-header-main-row .detail-title-row {
+.scheduling-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
   min-width: 0;
 }
 
-.scheduling-header-scope-row {
+.scheduling-toolbar-right {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  padding-top: var(--space-sm);
-  border-top: 1px solid var(--border);
+  gap: var(--space-sm);
+}
+
+.scheduling-count {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--text-xs, 12px);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.schedule-modal-content {
+  padding: var(--space-lg) var(--space-xl);
+  overflow-y: auto;
+  max-height: 70vh;
 }
 
 /* Scheduling scope selector */
@@ -815,18 +810,19 @@
     padding-right: var(--space-lg);
   }
 
-  .scheduling-header-main-row {
-    align-items: flex-start;
-  }
-
-  .scheduling-modal-header .modal-header-actions {
+  .scheduling-toolbar {
     flex-wrap: wrap;
-    justify-content: flex-end;
     gap: var(--space-sm);
   }
 
-  .scheduling-header-scope-row {
-    padding-top: var(--space-sm);
+  .scheduling-toolbar-left {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+
+  .scheduling-toolbar-right {
+    flex: 1 1 100%;
+    justify-content: flex-end;
   }
 
   .scheduling-scope-selector {
@@ -837,10 +833,6 @@
   .scope-btn {
     flex: 1;
     justify-content: center;
-  }
-
-  .detail-tabs {
-    padding: 0 var(--space-lg);
   }
 }
 
