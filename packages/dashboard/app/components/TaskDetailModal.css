@@ -45,7 +45,26 @@
   padding: 20px;
   overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
   flex: 1;
+}
+
+.detail-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.detail-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.detail-body::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.detail-body::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 
 /* When the Agent Log tab is active, switch to flex layout so the log section
@@ -241,11 +260,13 @@
   overflow: hidden;
 }
 
-.agent-log-viewer-scroll {
+.detail-section--agent-log .agent-log-viewer-scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.5;
@@ -254,6 +275,23 @@
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: break-word;
+}
+
+.detail-section--agent-log .agent-log-viewer-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.detail-section--agent-log .agent-log-viewer-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.detail-section--agent-log .agent-log-viewer-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.detail-section--agent-log .agent-log-viewer-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 
 .agent-log-model-header {

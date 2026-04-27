@@ -104,6 +104,15 @@ function getCssRuleBlock(css: string, selector: string): string {
   return ruleMatch?.[1] ?? "";
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function expectBaseRule(css: string, selector: string, declaration: string): void {
+  const pattern = new RegExp(`${escapeRegExp(selector)}\\s*\\{[^}]*${escapeRegExp(declaration)}`);
+  expect(pattern.test(css)).toBe(true);
+}
+
 function readDashboardStylesSource(): string {
   return loadAllAppCss();
 }
@@ -117,6 +126,26 @@ describe("TaskDetailModal", () => {
   afterEach(() => {
     clearAuthToken();
     localStorage.removeItem("fn.authToken");
+  });
+
+  it("styles detail-body scrollbar rules", () => {
+    const css = loadAllAppCss();
+
+    expectBaseRule(css, ".detail-body", "scrollbar-color: var(--border) transparent;");
+    expectBaseRule(css, ".detail-body", "scrollbar-width: thin;");
+    expectBaseRule(css, ".detail-body::-webkit-scrollbar", "width: 6px;");
+    expectBaseRule(css, ".detail-body::-webkit-scrollbar-track", "background: transparent;");
+    expectBaseRule(css, ".detail-body::-webkit-scrollbar-thumb", "background: var(--border);");
+    expectBaseRule(css, ".detail-body::-webkit-scrollbar-thumb:hover", "background: var(--text-muted);");
+  });
+
+  it("styles agent log viewer scroll container scrollbar rules", () => {
+    const css = loadAllAppCss();
+
+    expectBaseRule(css, ".detail-section--agent-log .agent-log-viewer-scroll", "scrollbar-color: var(--border) transparent;");
+    expectBaseRule(css, ".detail-section--agent-log .agent-log-viewer-scroll", "scrollbar-width: thin;");
+    expectBaseRule(css, ".detail-section--agent-log .agent-log-viewer-scroll::-webkit-scrollbar", "width: 6px;");
+    expectBaseRule(css, ".detail-section--agent-log .agent-log-viewer-scroll::-webkit-scrollbar-thumb", "background: var(--border);");
   });
 
   it("renders markdown-body without detail-prompt class when prompt exists", () => {
