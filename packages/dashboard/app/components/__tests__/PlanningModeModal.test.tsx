@@ -1850,6 +1850,9 @@ describe("PlanningModeModal", () => {
 
       const overlay = container.querySelector(".modal-overlay");
       expect(overlay).not.toBeNull();
+      // Simulate a real overlay click — both mousedown and click must originate
+      // on the overlay, otherwise the dismissal guard suppresses close.
+      fireEvent.mouseDown(overlay!);
       fireEvent.click(overlay!);
 
       expect(mockConfirm).not.toHaveBeenCalled();
@@ -1890,7 +1893,10 @@ describe("PlanningModeModal", () => {
       expect(mockOnClose).toHaveBeenCalled();
     });
 
-    it("sends active session to background without canceling", async () => {
+    it("close (X) drops the local stream but preserves the server session", async () => {
+      // The "Send to background" button was removed — closing the modal now
+      // has the same semantics: tear down the SSE stream, keep the persisted
+      // session alive so the user can reopen and resume it.
       const closeSpy = vi.fn();
 
       mockConnectPlanningStream.mockImplementationOnce(() => ({
@@ -1916,7 +1922,7 @@ describe("PlanningModeModal", () => {
         expect(screen.getByText("Generating next question...")).toBeDefined();
       });
 
-      fireEvent.click(screen.getByLabelText("Send to background"));
+      fireEvent.click(screen.getByLabelText("Close"));
 
       expect(closeSpy).toHaveBeenCalledTimes(1);
       expect(mockCancelPlanning).not.toHaveBeenCalled();

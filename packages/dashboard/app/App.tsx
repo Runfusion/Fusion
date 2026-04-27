@@ -505,11 +505,17 @@ function AppInner() {
     }
   }, [handleChangeTaskView, modalManager]);
 
+  // Dismissing the "needs input" banner only hides the prompt — it must NOT
+  // delete the underlying session. Sessions remain accessible from the
+  // Planning modal's sidebar (or the AI background tasks pill) so the user
+  // can return to them later. The banner already tracks dismissals locally
+  // via its own `dismissedIds` set, so these handlers are intentional no-ops.
+  const handleDismissNeedingInputSession = useCallback(() => {
+    // intentional no-op
+  }, []);
   const handleDismissAllNeedingInputSessions = useCallback(() => {
-    for (const session of sessionsNeedingInput) {
-      bgDismiss(session.id);
-    }
-  }, [bgDismiss, sessionsNeedingInput]);
+    // intentional no-op
+  }, []);
 
   const showBackendConnectionErrorPage =
     !projectsLoading &&
@@ -853,7 +859,7 @@ function AppInner() {
         <SessionNotificationBanner
           sessions={sessionsNeedingInput}
           onResumeSession={handleOpenBackgroundSession}
-          onDismissSession={bgDismiss}
+          onDismissSession={handleDismissNeedingInputSession}
           onDismissAll={handleDismissAllNeedingInputSessions}
         />
       )}

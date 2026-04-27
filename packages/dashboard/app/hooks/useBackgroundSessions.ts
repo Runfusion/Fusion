@@ -263,8 +263,15 @@ export function useBackgroundSessions(projectId?: string): UseBackgroundSessions
         "ai_session:updated": handleUpdated,
         "ai_session:deleted": handleDeleted,
       },
+      // When the SSE channel reconnects after a drop, pull the authoritative
+      // list. Without this, terminal events (deleted/completed) emitted while
+      // the channel was down stay invisible to this hook and the AI pill
+      // count gets stuck on stale sessions.
+      onReconnect: () => {
+        refresh();
+      },
     });
-  }, [broadcastCompleted, broadcastUpdate, projectId]);
+  }, [broadcastCompleted, broadcastUpdate, projectId, refresh]);
 
   const dismissSession = useCallback(async (id: string) => {
     // Find the session to determine its type

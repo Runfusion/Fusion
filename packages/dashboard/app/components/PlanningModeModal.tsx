@@ -29,7 +29,7 @@ import {
   getPlanningDescription,
   clearPlanningDescription,
 } from "../hooks/modalPersistence";
-import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, ListTree, GripVertical, ArrowUp, ArrowDown, Plus, Trash2, Minimize2, RefreshCw, Lock, ChevronLeft, MessageSquarePlus, AlertCircle, Clock, HelpCircle } from "lucide-react";
+import { Lightbulb, X, Loader2, CheckCircle, ArrowLeft, ArrowRight, Sparkles, ListTree, GripVertical, ArrowUp, ArrowDown, Plus, Trash2, RefreshCw, Lock, ChevronLeft, MessageSquarePlus, AlertCircle, Clock, HelpCircle } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ConversationHistory } from "./ConversationHistory";
 import { useSessionLock } from "../hooks/useSessionLock";
@@ -106,6 +106,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
   const streamConnectionRef = useRef<{ close: () => void; isConnected: () => boolean } | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
   const [lockSessionId, setLockSessionId] = useState<string | null>(resumeSessionId ?? null);
@@ -140,6 +141,82 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   // `mobileShowDetail` toggles between list (false) and detail (true).
   const [mobileShowDetail, setMobileShowDetail] = useState<boolean>(Boolean(resumeSessionId));
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  // Track whether the mousedown that initiated a click came from inside the
+  // modal. Resizing via the bottom-right grip can release the mouse outside
+  // the modal element; without this guard, that release fires a click whose
+  // target is the overlay and would dismiss the modal mid-resize.
+  const overlayMouseDownOnSelfRef = useRef(false);
+  const thinkingOutputRef = useRef<HTMLDivElement>(null);
+
+  // Persist user-chosen modal size across opens. The CSS `resize: both` lets
+  // the user drag the bottom-right corner; we capture the resulting inline
+  // width/height via ResizeObserver and replay them on the next mount. Stored
+  // in localStorage as raw pixels — the CSS max-* / min-* still clamp at
+  // render time, so saving an out-of-range value on one viewport won't break
+  // the modal on a smaller one.
+  const SIZE_STORAGE_KEY = "fusion:planning-modal-size";
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const node = modalRef.current;
+    if (!node) return;
+
+    // Apply the persisted size on open.
+    try {
+      const raw = localStorage.getItem(SIZE_STORAGE_KEY);
+      if (raw) {
+        const { width, height } = JSON.parse(raw) as { width?: number; height?: number };
+        if (typeof width === "number" && width > 0) node.style.width = `${width}px`;
+        if (typeof height === "number" && height > 0) node.style.height = `${height}px`;
+      }
+    } catch {
+      // ignore corrupted entry
+    }
+
+    // jsdom (and very old browsers) lacks ResizeObserver — gracefully skip
+    // persistence rather than throw. Restoration above still runs.
+    if (typeof ResizeObserver === "undefined") return;
+
+    let lastSavedW = node.offsetWidth;
+    let lastSavedH = node.offsetHeight;
+    let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const observer = new ResizeObserver(() => {
+      const w = node.offsetWidth;
+      const h = node.offsetHeight;
+      if (w === lastSavedW && h === lastSavedH) return;
+      lastSavedW = w;
+      lastSavedH = h;
+      // Debounce so we don't spam localStorage during the drag.
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        try {
+          localStorage.setItem(SIZE_STORAGE_KEY, JSON.stringify({ width: w, height: h }));
+        } catch {
+          // quota / private mode — best-effort
+        }
+      }, 200);
+    });
+
+    observer.observe(node);
+    return () => {
+      observer.disconnect();
+      if (saveTimer) clearTimeout(saveTimer);
+    };
+  }, [isOpen]);
+
+  // Keep the streaming AI thinking pane pinned to the bottom as new tokens
+  // arrive. If the user has scrolled up to read earlier output, we leave the
+  // scroll position alone — only auto-follow when they're already near the
+  // tail. The 32px slack accounts for line-height jitter.
+  useEffect(() => {
+    const node = thinkingOutputRef.current;
+    if (!node) return;
+    const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
+    if (distanceFromBottom < 32) {
+      node.scrollTop = node.scrollHeight;
+    }
+  }, [streamingOutput]);
 
   const resetDetailState = useCallback(() => {
     setInitialPlan("");
@@ -436,7 +513,11 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       try {
         const session = await fetchAiSession(sessionId);
         if (!session) {
-          setError("Session not found");
+          // The session was deleted (commonly: this tab just turned it into
+          // tasks via Create Task / Create Tasks). Quietly fall back to the
+          // new-session view rather than surfacing a scary error banner.
+          setSelectedSessionId(null);
+          setMobileShowDetail(false);
           setView({ type: "initial" });
           return;
         }
@@ -493,6 +574,24 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     void loadSession(resumeSessionId);
   }, [isOpen, resumeSessionId, loadSession]);
 
+  // Re-sync the selected session whenever the modal is reopened. Without this,
+  // a session that progressed (or completed) on the server while the modal was
+  // closed — or whose terminal SSE event we missed because the stream had been
+  // torn down on close — keeps showing its stale view (e.g. stuck on "loading"
+  // even though `awaiting_input` is already persisted). Hard reload used to be
+  // the only fix; this effect makes close+reopen equivalent.
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!selectedSessionId) return;
+    if (resumeSessionId && resumeSessionId === selectedSessionId) return; // resume effect handles this case
+    if (streamConnectionRef.current?.isConnected()) return;
+    void loadSession(selectedSessionId);
+    // We intentionally do not depend on selectedSessionId here — handleSelectSession
+    // already drives loadSession when the user picks a different row. This effect
+    // only needs to fire on the open transition.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
   // Load + maintain the planning sessions list (sidebar).
   const refreshSessionsList = useCallback(async () => {
     setSessionsLoading(true);
@@ -548,8 +647,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         "ai_session:updated": handleUpdated,
         "ai_session:deleted": handleDeleted,
       },
+      // Re-fetch on reconnect so terminal events that fired while the
+      // channel was down don't leave stale rows in the sidebar.
+      onReconnect: () => {
+        void refreshSessionsList();
+      },
     });
-  }, [isOpen, projectId]);
+  }, [isOpen, projectId, refreshSessionsList]);
 
   // Sidebar handlers
   const handleSelectSession = useCallback(
@@ -600,6 +704,17 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         // best-effort: SSE will reconcile if the delete actually succeeded
       }
 
+      // Broadcast completion so sibling consumers (BackgroundTasksIndicator's
+      // useBackgroundSessions hook, other tabs) prune this session from their
+      // active lists. The server-side SSE delete event covers the in-flight
+      // path, but the cross-tab broadcast is what keeps the footer pill in
+      // lockstep when this modal initiates the delete.
+      broadcastCompleted({
+        sessionId,
+        status: "complete",
+        timestamp: Date.now(),
+      });
+
       setPlanningSessions((prev) => prev.filter((s) => s.id !== sessionId));
 
       if (selectedSessionId === sessionId) {
@@ -611,7 +726,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       }
       setPendingDeleteId(null);
     },
-    [planningSessions, projectId, resetDetailState, selectedSessionId, sessionTabId],
+    [broadcastCompleted, planningSessions, projectId, resetDetailState, selectedSessionId, sessionTabId],
   );
 
   // Reset hasAutoStarted when modal closes
@@ -692,12 +807,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [isOpen]);
-
-  const handleSendToBackground = useCallback(() => {
-    streamConnectionRef.current?.close();
-    streamConnectionRef.current = null;
-    onClose();
-  }, [onClose]);
 
   // Close the modal without abandoning the active server session. Sessions
   // remain in the list and can be resumed later. Only an explicit Delete
@@ -866,14 +975,26 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setView({ type: "loading" });
 
     try {
-      const task = await createTaskFromPlanning(view.session.sessionId, editedSummary ?? undefined, projectId);
+      const completedSessionId = view.session.sessionId;
+      const task = await createTaskFromPlanning(completedSessionId, editedSummary ?? undefined, projectId);
       onTaskCreated(task);
+      // The server cleans up the planning session after task creation. Drop
+      // the local selection so a future reopen doesn't try to fetch a deleted
+      // id (which would otherwise show "Session not found"). Also broadcast
+      // completion so the footer's useBackgroundSessions prunes its count.
+      setSelectedSessionId(null);
+      setPlanningSessions((prev) => prev.filter((s) => s.id !== completedSessionId));
+      broadcastCompleted({
+        sessionId: completedSessionId,
+        status: "complete",
+        timestamp: Date.now(),
+      });
       handleClose();
     } catch (err) {
       setError(getErrorMessage(err) || "Failed to create task");
       setView({ type: "summary", session: view.session, summary: view.summary });
     }
-  }, [editedSummary, view, projectId, onTaskCreated, handleClose]);
+  }, [broadcastCompleted, editedSummary, view, projectId, onTaskCreated, handleClose]);
 
   const handleStartBreakdown = useCallback(async () => {
     if (view.type !== "summary") return;
@@ -903,8 +1024,17 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setView({ type: "creating" });
 
     try {
-      const result = await createTasksFromPlanning(view.sessionId, view.subtasks, projectId);
+      const completedSessionId = view.sessionId;
+      const result = await createTasksFromPlanning(completedSessionId, view.subtasks, projectId);
       onTasksCreated(result.tasks);
+      // Server cleans up the planning session after task creation; mirror that
+      // locally so reopen doesn't try to load a 404 and the footer count drops.
+      setPlanningSessions((prev) => prev.filter((s) => s.id !== completedSessionId));
+      broadcastCompleted({
+        sessionId: completedSessionId,
+        status: "complete",
+        timestamp: Date.now(),
+      });
       // Reset and close
       setInitialPlan("");
       setView({ type: "initial" });
@@ -917,12 +1047,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setPlanningModelId(undefined);
       currentSessionIdRef.current = null;
       setLockSessionId(null);
+      setSelectedSessionId(null);
       onClose();
     } catch (err) {
       setError(getErrorMessage(err) || "Failed to create tasks");
       setView({ type: "breakdown", sessionId: view.sessionId, subtasks: view.subtasks, dirty: view.dirty });
     }
-  }, [view, onTasksCreated, onClose, projectId]);
+  }, [broadcastCompleted, view, onTasksCreated, onClose, projectId]);
 
   const handleBack = useCallback(() => {
     if (view.type === "question" && responseHistory.length > 0) {
@@ -942,9 +1073,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     return 3;
   };
 
-  const showSendToBackgroundButton =
-    view.type === "loading" || view.type === "question" || view.type === "summary" || view.type === "error";
-
   const activeLockInfo = lockSessionId ? activeTabMap.get(lockSessionId) : null;
   const activeRemoteTab = activeLockInfo && activeLockInfo.tabId !== sessionTabId;
   const activeInAnotherTab = Boolean(activeRemoteTab && !activeLockInfo.stale);
@@ -953,8 +1081,21 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay open" onClick={(e) => e.target === e.currentTarget && handleClose()} role="dialog" aria-modal="true">
-      <div className="modal modal-lg planning-modal">
+    <div
+      className="modal-overlay open"
+      onMouseDown={(e) => {
+        overlayMouseDownOnSelfRef.current = e.target === e.currentTarget;
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && overlayMouseDownOnSelfRef.current) {
+          handleClose();
+        }
+        overlayMouseDownOnSelfRef.current = false;
+      }}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div className="modal modal-lg planning-modal" ref={modalRef}>
         <div className="modal-header">
           <div className="detail-title-row">
             {mobileShowDetail && (
@@ -971,16 +1112,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             <h3>Planning Mode</h3>
           </div>
           <div className="modal-header-actions">
-            {showSendToBackgroundButton && (
-              <button
-                className="modal-send-to-background"
-                onClick={handleSendToBackground}
-                title="Send to background"
-                aria-label="Send to background"
-              >
-                <Minimize2 size={16} />
-              </button>
-            )}
             <button className="modal-close" onClick={handleClose} aria-label="Close">
               <X size={20} />
             </button>
@@ -1138,7 +1269,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                   {showThinking ? "Hide thinking" : "Show thinking"}
                 </button>
                 {showThinking && streamingOutput && (
-                  <div className="planning-thinking-output">
+                  <div className="planning-thinking-output" ref={thinkingOutputRef}>
                     <pre>{streamingOutput}</pre>
                   </div>
                 )}

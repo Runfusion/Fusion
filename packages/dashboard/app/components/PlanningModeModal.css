@@ -39,7 +39,7 @@
 }
 
 .planning-modal {
-  width: min(95vw, 960px);
+  width: min(95vw, 1200px);
   max-width: 95vw;
   min-width: 360px;
   height: 85vh;
@@ -247,6 +247,9 @@
 }
 
 .planning-mobile-back {
+  /* Visible only on mobile (see media query below). On desktop the sidebar
+     is always visible alongside the detail pane, so a back button is never
+     needed. */
   display: none;
   background: none;
   border: none;
@@ -276,7 +279,9 @@
   .planning-modal-body--show-list .planning-detail {
     display: none;
   }
-  .planning-modal-body--show-detail .planning-mobile-back {
+  /* Show back button on mobile whenever it's rendered (the React component
+     only renders it when `mobileShowDetail` is true). */
+  .planning-mobile-back {
     display: inline-flex;
   }
   /* Always keep delete button visible on mobile (no hover) */
