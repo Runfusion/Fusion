@@ -1,5 +1,12 @@
 # @fusion/dashboard
 
+## 1.0.0
+
+### Patch Changes
+
+- @fusion/core@1.0.0
+- @fusion/engine@1.0.0
+
 ## 0.4.1
 
 ### Patch Changes

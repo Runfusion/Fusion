@@ -2,6 +2,56 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 1.0.0
+
+### @fusion/dashboard
+
+#### Patch Changes
+
+- @fusion/core@1.0.0
+- @fusion/engine@1.0.0
+
+### @fusion/engine
+
+#### Patch Changes
+
+- @fusion/core@1.0.0
+- @fusion/pi-claude-cli@1.0.0
+
+### @fusion/plugin-sdk
+
+#### Patch Changes
+
+- @fusion/core@1.0.0
+
+### @runfusion/fusion
+
+#### Minor Changes
+
+- b969635: v0.5.0: status terminology refresh (planning/replan), Reviewer rename, in-review pause behavior, dashboard-tui resize hardening, dev-server experimental toggle fix, and version reporting fix.
+
+#### Patch Changes
+
+- 112ad67: Fix experimental feature save normalization so disabling Dev Server clears the legacy `devServer` alias (`null` delete) alongside canonical `devServerView`, preventing stale nav visibility after save.
+- 16ec204: Fix dashboard health/version reporting to read the version from package.json instead of relying on npm_package_version with a stale hardcoded fallback.
+- 79ce48c: Fix pausing behavior for in-review tasks so stop fully halts merge activity. Paused in-review tasks are now marked with paused status, removed from merge queues, active merge sessions are aborted/disposed, self-healing recovery skips paused tasks, and unpausing re-enqueues eligible review tasks for auto-merge.
+- c85ffa9: Rename status values: specifying→planning, needs-respecify→needs-replan. Display label "Triage"→"Planning". Includes DB migration for existing records.
+- 03a48ae: Update dashboard and CLI status strings: specifying→planning, needs-respecify→needs-replan. Update user-facing text from "triage/specify" terminology to "planning/replan" terminology.
+- c1b0121: Rename "Validator" to "Reviewer" across all dashboard UI labels and descriptions.
+
+### runfusion.ai
+
+#### Patch Changes
+
+- Updated dependencies [112ad67]
+- Updated dependencies [16ec204]
+- Updated dependencies [79ce48c]
+- Updated dependencies [c85ffa9]
+- Updated dependencies [03a48ae]
+- Updated dependencies [c1b0121]
+- Updated dependencies [b969635]
+  - @runfusion/fusion@1.0.0
+
 ## 0.4.1
 
 ### @fusion/dashboard

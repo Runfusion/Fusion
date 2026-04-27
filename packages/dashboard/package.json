@@ -1,6 +1,6 @@
 {
   "name": "@fusion/dashboard",
-  "version": "0.4.1",
+  "version": "1.0.0",
   "license": "MIT",
   "description": "Fusion dashboard: React UI and HTTP API server for monitoring and controlling the Fusion AI coding agent.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -36,7 +36,7 @@
     "build:client": "vite build",
     "dev": "pnpm build && pnpm typecheck && pnpm dev:serve",
     "dev:serve": "vite dev",
-"test": "vitest run --silent=passed-only --reporter=dot --exclude '**/build-output.test.ts'",
+    "test": "vitest run --silent=passed-only --reporter=dot --exclude '**/build-output.test.ts'",
     "test:build": "vitest run --silent=passed-only --reporter=dot app/__tests__/build-output.test.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.app.json"
   },
