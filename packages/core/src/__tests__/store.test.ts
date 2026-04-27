@@ -9818,7 +9818,7 @@ describe("RunMutationContext", () => {
     const localRoot = makeTmpDir();
     const localGlobal = makeTmpDir();
     try {
-      const localStore = new TaskStore(localRoot, localGlobal);
+      const localStore = new TaskStore(localRoot, localGlobal, { inMemoryDb: true });
       await localStore.init();
 
       const task = await localStore.createTask({ description: "Test task" });
