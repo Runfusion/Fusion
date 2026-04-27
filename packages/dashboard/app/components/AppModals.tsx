@@ -232,6 +232,7 @@ export function AppModals({
         isOpen={modalManager.usageOpen}
         onClose={modalManager.closeUsage}
         projectId={projectId}
+        anchorRect={modalManager.usageAnchorRect}
       />
 
       {modalManager.schedulesOpen && (

@@ -1,14 +1,17 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import type { CSSProperties } from "react";
 import { X, RefreshCw, Activity, TrendingUp, CheckCircle, AlertTriangle, Eye, EyeOff } from "lucide-react";
 import type { ProviderUsage, UsageWindow } from "../api";
 import { useUsageData } from "../hooks/useUsageData";
 import { ProviderIcon } from "./ProviderIcon";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
+import "./UsageIndicator.css";
 
 interface UsageIndicatorProps {
   isOpen: boolean;
   onClose: () => void;
   projectId?: string;
+  anchorRect?: DOMRect | null;
 }
 
 /**
@@ -428,12 +431,15 @@ function UsageSkeleton() {
  * Shows hourly and weekly usage windows with percentage bars,
  * reset timers, and pace indicators.
  */
-export function UsageIndicator({ isOpen, onClose, projectId }: UsageIndicatorProps) {
+export function UsageIndicator({ isOpen, onClose, projectId, anchorRect }: UsageIndicatorProps) {
   const { providers, loading, error, lastUpdated, refresh } = useUsageData({
     autoRefresh: isOpen, // Only poll when modal is open
   });
 
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isDesktopViewport, setIsDesktopViewport] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth >= 769 : false
+  );
   const [viewMode, setViewMode] = useState<'used' | 'remaining'>('used');
   const [hiddenWindows, setHiddenWindowsState] = useState<Record<string, string[]>>(() =>
     getHiddenWindows(projectId)
@@ -455,6 +461,19 @@ export function UsageIndicator({ isOpen, onClose, projectId }: UsageIndicatorPro
       hasCompletedInitialFetchRef.current = true;
     }
   }, [providers.length]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleResize = () => {
+      setIsDesktopViewport(window.innerWidth >= 769);
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   // Trigger refresh when modal opens (isOpen transitions from false to true)
   useEffect(() => {
@@ -560,9 +579,30 @@ export function UsageIndicator({ isOpen, onClose, projectId }: UsageIndicatorPro
 
   if (!isOpen) return null;
 
-  return (
-    <div className="modal-overlay open" onClick={handleOverlayClick} data-testid="usage-modal-overlay">
-      <div className="modal usage-modal" data-testid="usage-modal">
+  const showDesktopPopover = Boolean(anchorRect && isDesktopViewport);
+  const desktopGap = 8;
+  const maxTopPadding = 12;
+  const desktopTop = showDesktopPopover
+    ? Math.min((anchorRect?.bottom ?? 0) + desktopGap, window.innerHeight - maxTopPadding)
+    : undefined;
+  const desktopRight = showDesktopPopover
+    ? Math.max(window.innerWidth - (anchorRect?.right ?? 0), 0)
+    : undefined;
+
+  const usageContent = (
+      <div
+        className={`usage-modal${showDesktopPopover ? " usage-modal--popover" : " modal"}`}
+        data-testid="usage-modal"
+        style={
+          showDesktopPopover
+            ? ({
+                position: "fixed",
+                top: desktopTop,
+                right: desktopRight,
+              } as CSSProperties)
+            : undefined
+        }
+      >
         <div className="modal-header">
           <div className="usage-header">
             <Activity size={18} className="usage-header-icon" />
@@ -656,6 +696,24 @@ export function UsageIndicator({ isOpen, onClose, projectId }: UsageIndicatorPro
           </div>
         </div>
       </div>
+  );
+
+  if (showDesktopPopover) {
+    return (
+      <>
+        <div
+          className="usage-popover-backdrop"
+          onClick={onClose}
+          data-testid="usage-modal-overlay"
+        />
+        {usageContent}
+      </>
+    );
+  }
+
+  return (
+    <div className="modal-overlay open" onClick={handleOverlayClick} data-testid="usage-modal-overlay">
+      {usageContent}
     </div>
   );
 }

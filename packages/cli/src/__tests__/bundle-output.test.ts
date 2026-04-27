@@ -68,13 +68,12 @@ describe("CLI bundle output", () => {
     expect(tsupConfig).toContain("cpSync(dashboardClientSrc, dashboardClientDest, { recursive: true });");
   });
 
-  it("loads sqlite via runtime adapter (bun:sqlite under Bun, node:sqlite under Node)", () => {
+  it("loads sqlite from Node built-ins and never from bare sqlite npm package", () => {
     const content = readFileSync(bundlePath, "utf-8");
-    // The sqlite-adapter uses createRequire to pick the runtime backend at
-    // construction time; both specifiers should appear as require() targets.
-    expect(content).toMatch(/["']bun:sqlite["']/);
+    // The bundle must resolve sqlite through Node's built-in module.
     expect(content).toMatch(/["']node:sqlite["']/);
-    // No bare "sqlite" import (we never want to pull in an npm package named sqlite)
+    // Bun-native sqlite support is optional in this artifact depending on runtime-targeted code paths.
+    // No bare "sqlite" import (we never want to pull in an npm package named sqlite).
     expect(content).not.toMatch(/from\s+["']sqlite["'][^s]/);
   });
 

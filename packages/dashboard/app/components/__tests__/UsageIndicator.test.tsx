@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { UsageIndicator } from "../UsageIndicator";
-import "../PlanningModeModal.css";
+import "../UsageIndicator.css";
 import * as useUsageDataModule from "../../hooks/useUsageData";
 import type { ProviderUsage } from "../../api";
 import { scopedKey } from "../../utils/projectStorage";
@@ -13,6 +13,21 @@ vi.mock("../../hooks/useUsageData", () => ({
 
 const mockUseUsageData = vi.mocked(useUsageDataModule.useUsageData);
 const TEST_PROJECT_ID = "proj-123";
+
+function createAnchorRect(partial: Partial<DOMRect> = {}): DOMRect {
+  return {
+    x: 900,
+    y: 50,
+    top: 50,
+    bottom: 80,
+    left: 900,
+    right: 940,
+    width: 40,
+    height: 30,
+    toJSON: () => ({}),
+    ...partial,
+  } as DOMRect;
+}
 const USAGE_VIEW_MODE_KEY = scopedKey("kb-usage-view-mode", TEST_PROJECT_ID);
 const USAGE_HIDDEN_WINDOWS_KEY = scopedKey("kb-usage-hidden-windows", TEST_PROJECT_ID);
 
@@ -95,10 +110,18 @@ describe("UsageIndicator", () => {
       refresh: mockRefresh,
     });
 
-    render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
+    render(
+      <UsageIndicator
+        isOpen={true}
+        onClose={mockOnClose}
+        projectId={TEST_PROJECT_ID}
+        anchorRect={createAnchorRect()}
+      />
+    );
 
     expect(screen.getByTestId("usage-modal")).toBeInTheDocument();
     expect(screen.getByText("Usage")).toBeInTheDocument();
+    expect(screen.getByTestId("usage-modal")).toHaveClass("usage-modal--popover");
   });
 
   it("renders provider cards with correct data", () => {
@@ -208,6 +231,45 @@ describe("UsageIndicator", () => {
     expect(mockOnClose).toHaveBeenCalledTimes(1);
   });
 
+  it("renders as popover below anchor on desktop when anchorRect provided", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(
+      <UsageIndicator
+        isOpen={true}
+        onClose={mockOnClose}
+        projectId={TEST_PROJECT_ID}
+        anchorRect={createAnchorRect()}
+      />
+    );
+
+    const modal = screen.getByTestId("usage-modal") as HTMLElement;
+    expect(modal).toHaveClass("usage-modal--popover");
+    expect(modal.style.top).toBe("88px");
+    expect(modal.style.right).toBe("84px");
+  });
+
+  it("renders as full-screen modal when anchorRect is null", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} anchorRect={null} />);
+
+    expect(screen.getByTestId("usage-modal")).toHaveClass("modal");
+    expect(screen.getByTestId("usage-modal")).not.toHaveClass("usage-modal--popover");
+  });
+
   it("calls onClose when overlay is clicked", () => {
     mockUseUsageData.mockReturnValue({
       providers: mockProviders,
@@ -222,6 +284,28 @@ describe("UsageIndicator", () => {
     const overlay = screen.getByTestId("usage-modal-overlay");
     fireEvent.click(overlay);
 
+    expect(mockOnClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onClose when desktop popover backdrop is clicked", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(
+      <UsageIndicator
+        isOpen={true}
+        onClose={mockOnClose}
+        projectId={TEST_PROJECT_ID}
+        anchorRect={createAnchorRect()}
+      />
+    );
+
+    fireEvent.click(screen.getByTestId("usage-modal-overlay"));
     expect(mockOnClose).toHaveBeenCalledTimes(1);
   });
 

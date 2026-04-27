@@ -298,19 +298,49 @@ describe("Header", () => {
       expect(screen.getByTestId("overflow-usage-btn")).toBeDefined();
     });
 
-    it("calls onOpenUsage when usage button is clicked on desktop", () => {
+    it("calls onOpenUsage with button bounds when usage button is clicked on desktop", () => {
       const onOpenUsage = vi.fn();
       renderHeader({ onOpenUsage }, "desktop");
-      fireEvent.click(screen.getByTestId("desktop-header-usage-btn"));
-      expect(onOpenUsage).toHaveBeenCalled();
+
+      const usageButton = screen.getByTestId("desktop-header-usage-btn") as HTMLButtonElement;
+      const mockRect = {
+        top: 12,
+        bottom: 52,
+        left: 820,
+        right: 860,
+        width: 40,
+        height: 40,
+        x: 820,
+        y: 12,
+        toJSON: () => ({}),
+      } as DOMRect;
+      usageButton.getBoundingClientRect = vi.fn(() => mockRect);
+
+      fireEvent.click(usageButton);
+      expect(onOpenUsage).toHaveBeenCalledWith(mockRect);
     });
 
-    it("calls onOpenUsage when usage button in overflow menu is clicked", () => {
+    it("calls onOpenUsage with button bounds when usage button in overflow menu is clicked", () => {
       const onOpenUsage = vi.fn();
       renderHeader({ onOpenUsage }, "mobile");
       fireEvent.click(screen.getByTitle("More header actions"));
-      fireEvent.click(screen.getByTestId("overflow-usage-btn"));
-      expect(onOpenUsage).toHaveBeenCalled();
+
+      const usageButton = screen.getByTestId("overflow-usage-btn") as HTMLButtonElement;
+      const mockRect = {
+        top: 100,
+        bottom: 132,
+        left: 20,
+        right: 180,
+        width: 160,
+        height: 32,
+        x: 20,
+        y: 100,
+        toJSON: () => ({}),
+      } as DOMRect;
+      usageButton.getBoundingClientRect = vi.fn(() => mockRect);
+
+      fireEvent.click(usageButton);
+      expect(onOpenUsage).toHaveBeenCalledWith(mockRect);
     });
   });
 

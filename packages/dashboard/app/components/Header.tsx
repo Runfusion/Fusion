@@ -163,7 +163,7 @@ export interface HeaderProps {
   onResumePlanning?: () => void;
   /** Number of active planning sessions. When > 0, shows a badge on the Planning button. */
   activePlanningSessionCount?: number;
-  onOpenUsage?: () => void;
+  onOpenUsage?: (anchorRect?: DOMRect | null) => void;
   onOpenActivityLog?: () => void;
   /** Opens the mailbox view */
   onOpenMailbox?: () => void;
@@ -757,7 +757,7 @@ export function Header({
         {isMobile && hideFullNav && onOpenUsage && (
           <button
             className="btn-icon"
-            onClick={onOpenUsage}
+            onClick={(event) => onOpenUsage(event.currentTarget.getBoundingClientRect())}
             title="View usage"
             data-testid="mobile-header-usage-btn"
           >
@@ -948,7 +948,7 @@ export function Header({
         {!isCompact && onOpenUsage && (
           <button
             className="btn-icon"
-            onClick={onOpenUsage}
+            onClick={(event) => onOpenUsage(event.currentTarget.getBoundingClientRect())}
             title="View usage"
             data-testid="desktop-header-usage-btn"
           >
@@ -1368,7 +1368,9 @@ export function Header({
             {onOpenUsage && (
               <button
                 className="mobile-overflow-item"
-                onClick={() => handleOverflowAction(onOpenUsage)}
+                onClick={(event) =>
+                  handleOverflowAction(() => onOpenUsage(event.currentTarget.getBoundingClientRect()))
+                }
                 role="menuitem"
                 data-testid="overflow-usage-btn"
               >

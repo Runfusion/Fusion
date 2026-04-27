@@ -895,7 +895,7 @@ function AppInner() {
         onOpenPlanning={modalManager.openPlanning}
         onResumePlanning={modalManager.resumePlanning}
         activePlanningSessionCount={bgPlanningSessions.length}
-        onOpenUsage={modalManager.openUsage}
+        onOpenUsage={() => modalManager.openUsage(null)}
         onViewAllProjects={handleViewAllProjects}
         onRunScript={modalManager.runScript}
         projectId={currentProject?.id}

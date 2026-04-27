@@ -36,6 +36,7 @@ export interface ModalManager {
   schedulesOpen: boolean;
   githubImportOpen: boolean;
   usageOpen: boolean;
+  usageAnchorRect: DOMRect | null;
   terminalOpen: boolean;
   terminalInitialCommand: string | undefined;
   filesOpen: boolean;
@@ -77,7 +78,7 @@ export interface ModalManager {
   openGitHubImport: () => void;
   closeGitHubImport: () => void;
 
-  openUsage: () => void;
+  openUsage: (anchorRect?: DOMRect | null) => void;
   closeUsage: () => void;
 
   toggleTerminal: () => void;
@@ -138,6 +139,7 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const [schedulesOpen, setSchedulesOpen] = useState(false);
   const [githubImportOpen, setGitHubImportOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [usageAnchorRect, setUsageAnchorRect] = useState<DOMRect | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalInitialCommand, setTerminalInitialCommand] = useState<string | undefined>(undefined);
   const [filesOpen, setFilesOpen] = useState(false);
@@ -238,8 +240,14 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const openGitHubImport = useCallback(() => setGitHubImportOpen(true), []);
   const closeGitHubImport = useCallback(() => setGitHubImportOpen(false), []);
 
-  const openUsage = useCallback(() => setUsageOpen(true), []);
-  const closeUsage = useCallback(() => setUsageOpen(false), []);
+  const openUsage = useCallback((anchorRect?: DOMRect | null) => {
+    setUsageAnchorRect(anchorRect ?? null);
+    setUsageOpen(true);
+  }, []);
+  const closeUsage = useCallback(() => {
+    setUsageOpen(false);
+    setUsageAnchorRect(null);
+  }, []);
 
   const toggleTerminal = useCallback(() => {
     setTerminalOpen((prev) => !prev);
@@ -316,6 +324,7 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     schedulesOpen,
     githubImportOpen,
     usageOpen,
+    usageAnchorRect,
     terminalOpen,
     terminalInitialCommand,
     filesOpen,
