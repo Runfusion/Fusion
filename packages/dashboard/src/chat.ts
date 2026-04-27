@@ -25,7 +25,7 @@ import { EventEmitter } from "node:events";
 import { join, resolve, relative } from "node:path";
 import { SessionEventBuffer } from "./sse-buffer.js";
 
-import * as engine from "@fusion/engine";
+import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AgentResult = any;
@@ -33,13 +33,7 @@ const engineExports = engine as Record<string, unknown>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let createFnAgent: any = engine.createFnAgent;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const defaultBuildAgentChatPromptFn: any =
-  "buildAgentChatPrompt" in engineExports &&
-  typeof engineExports["buildAgentChatPrompt"] === "function"
-    ? engineExports["buildAgentChatPrompt"]
-    : undefined;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let buildAgentChatPromptFn: any = defaultBuildAgentChatPromptFn;
+let buildAgentChatPromptFn: any;
 
 /**
  * Diagnostics logger for the chat module.
@@ -904,7 +898,7 @@ export function __setBuildAgentChatPrompt(mock: typeof buildAgentChatPromptFn): 
 export function __resetChatState(): void {
   chatStreamManager.reset();
   rateLimits.clear();
-  buildAgentChatPromptFn = defaultBuildAgentChatPromptFn;
+  buildAgentChatPromptFn = undefined;
 
   // Reset diagnostics logger to default
   __setChatDiagnostics(null);
