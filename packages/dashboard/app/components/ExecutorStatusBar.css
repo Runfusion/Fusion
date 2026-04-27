@@ -268,7 +268,7 @@
     font-size: 11px;
     height: calc(var(--space-lg) * 2 + var(--space-xs));
     overflow: hidden;
-    bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
+    bottom: calc(var(--mobile-nav-height) + var(--standalone-bottom-gap));
   }
 
   .executor-status-bar__segment {

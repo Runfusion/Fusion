@@ -325,6 +325,19 @@ describe("CronRunner", () => {
       );
     });
 
+    it("clears inFlight even when recordRun throws", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({ command: "echo in-flight-cleanup" });
+      const automationStore = createMockAutomationStore([schedule]);
+      (automationStore.recordRun as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("record failed"));
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(runner["inFlight"].has(schedule.id)).toBe(false);
+    });
+
     it("captures stderr output", async () => {
       const store = createMockStore();
       const schedule = createMockSchedule({ command: "echo err >&2" });
@@ -606,6 +619,22 @@ describe("CronRunner", () => {
       expect(result.stepResults).toBeUndefined();
     });
 
+    it("falls back to legacy mode when steps array is empty", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "echo empty-steps-fallback",
+        steps: [],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("empty-steps-fallback");
+      expect(result.stepResults).toBeUndefined();
+    });
+
     it("executes multiple command steps sequentially", async () => {
       const store = createMockStore();
       const schedule = createMockSchedule({
@@ -668,6 +697,33 @@ describe("CronRunner", () => {
       expect(result.stepResults![0].success).toBe(false);
       expect(result.stepResults![1].success).toBe(true);
       expect(result.stepResults![1].output).toContain("continued");
+    });
+
+    it("continueOnFailure also advances after a create-task failure", async () => {
+      const store = createMockStore();
+      const schedule = createMockSchedule({
+        command: "",
+        steps: [
+          makeStep({
+            type: "create-task",
+            name: "Invalid create task",
+            taskDescription: "",
+            continueOnFailure: true,
+            command: undefined,
+          }),
+          makeStep({ name: "Still runs", command: "echo still-ran" }),
+        ],
+      });
+      const automationStore = createMockAutomationStore([schedule]);
+      runner = new CronRunner(store, automationStore);
+
+      const result = await runner.executeSchedule(schedule);
+
+      expect(result.success).toBe(false);
+      expect(result.stepResults).toHaveLength(2);
+      expect(result.stepResults![0].success).toBe(false);
+      expect(result.stepResults![1].success).toBe(true);
+      expect(result.stepResults![1].output).toContain("still-ran");
     });
 
     it("uses per-step timeout override", async () => {

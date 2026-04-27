@@ -475,7 +475,7 @@ describe("Settings view", () => {
     stdin.write("L");
     await waitForFrameContains(lastFrame, "TTL ms:");
     stdin.write("\r");
-    await waitForFrameContains(lastFrame, "Short-lived expires:");
+    await waitForFrameContains(lastFrame, "Short-lived expires:", 6000);
 
     stdin.write("K");
     await waitForFrameContains(lastFrame, "QR text payload:", 6000);

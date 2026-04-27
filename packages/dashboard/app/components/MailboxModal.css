@@ -682,7 +682,7 @@
     overflow-y: auto;
     padding: var(--space-md);
     /* Account for mobile nav bar at bottom */
-    padding-bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap) + var(--space-lg));
+    padding-bottom: calc(var(--mobile-nav-height) + var(--standalone-bottom-gap) + var(--space-lg));
   }
 
   .mailbox-view .mailbox-split-layout {

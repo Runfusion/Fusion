@@ -2621,8 +2621,8 @@ input[type="range"]:focus-visible {
 
 @media (display-mode: standalone) {
   :root {
-    /* PWA standalone mode: 8px extra breathing room for iOS home indicator */
-    --standalone-bottom-gap: 8px;
+    /* PWA standalone mode: rely on env(safe-area-inset-bottom) alone; no extra gap */
+    --standalone-bottom-gap: 0px;
   }
 }
 

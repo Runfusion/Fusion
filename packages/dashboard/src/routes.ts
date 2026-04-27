@@ -1750,11 +1750,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       const startedAt = new Date().toISOString();
+      const scopedStore = await getScopedStore(req);
       let result: import("@fusion/core").AutomationRunResult;
 
       if (schedule.steps && schedule.steps.length > 0) {
         // Multi-step execution
-        result = await executeScheduleSteps(schedule, startedAt);
+        result = await executeScheduleSteps(schedule, startedAt, scopedStore);
       } else {
         // Legacy single-command execution
         result = await executeSingleCommand(schedule.command, schedule.timeoutMs, startedAt);
@@ -3867,6 +3868,28 @@ function validateAutomationSteps(steps: unknown[]): string | null {
   return null;
 }
 
+const DEFAULT_AUTOMATION_TIMEOUT_MS = 5 * 60 * 1000;
+const AUTOMATION_MAX_BUFFER = 1024 * 1024;
+const AUTOMATION_MAX_OUTPUT = 10240;
+const MANUAL_RUN_AI_SYSTEM_PROMPT = [
+  "You are an AI automation agent executing a scheduled task.",
+  "You have read-only access to the project files.",
+  "Execute the prompt precisely and return concise, structured results.",
+  "When analyzing code or data, provide actionable summaries.",
+].join("\n");
+
+function truncateAutomationOutput(stdout: string, stderr: string): string {
+  let output = stdout;
+  if (stderr) {
+    output += stdout ? "\n--- stderr ---\n" : "";
+    output += stderr;
+  }
+  if (output.length > AUTOMATION_MAX_OUTPUT) {
+    return output.slice(0, AUTOMATION_MAX_OUTPUT) + "\n[output truncated]";
+  }
+  return output;
+}
+
 /**
  * Execute a single shell command (used by manual run endpoint).
  */
@@ -3878,49 +3901,157 @@ async function executeSingleCommand(
   const { exec } = await import("node:child_process");
   const { promisify } = await import("node:util");
   const execAsyncFn = promisify(exec);
-  const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
-  const MAX_BUFFER = 1024 * 1024;
-  const MAX_OUTPUT = 10240;
 
   try {
     const { stdout, stderr } = await execAsyncFn(command, {
-      timeout: timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      maxBuffer: MAX_BUFFER,
+      timeout: timeoutMs ?? DEFAULT_AUTOMATION_TIMEOUT_MS,
+      maxBuffer: AUTOMATION_MAX_BUFFER,
       shell: "/bin/sh",
     });
 
-    let output = stdout;
-    if (stderr) {
-      output += stdout ? "\n--- stderr ---\n" : "";
-      output += stderr;
-    }
-    if (output.length > MAX_OUTPUT) {
-      output = output.slice(0, MAX_OUTPUT) + "\n[output truncated]";
-    }
-
-    return { success: true, output, startedAt, completedAt: new Date().toISOString() };
+    return {
+      success: true,
+      output: truncateAutomationOutput(stdout, stderr),
+      startedAt,
+      completedAt: new Date().toISOString(),
+    };
   } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        throw err;
-      }
+    if (err instanceof ApiError) {
+      throw err;
+    }
     const execErr = err as NodeJS.ErrnoException & { stdout?: string; stderr?: string; killed?: boolean };
-    const stdout = execErr.stdout ?? "";
-    const stderr = execErr.stderr ?? "";
-    let output = stdout;
-    if (stderr) {
-      output += stdout ? "\n--- stderr ---\n" : "";
-      output += stderr;
-    }
-    if (output.length > MAX_OUTPUT) {
-      output = output.slice(0, MAX_OUTPUT) + "\n[output truncated]";
-    }
 
     return {
       success: false,
-      output,
+      output: truncateAutomationOutput(execErr.stdout ?? "", execErr.stderr ?? ""),
       error: execErr.killed
-        ? `Command timed out after ${(timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000}s`
+        ? `Command timed out after ${(timeoutMs ?? DEFAULT_AUTOMATION_TIMEOUT_MS) / 1000}s`
         : (err instanceof Error ? err.message : String(err)),
+      startedAt,
+      completedAt: new Date().toISOString(),
+    };
+  }
+}
+
+async function executeAiPromptStep(
+  step: import("@fusion/core").AutomationStep,
+  timeoutMs: number,
+  startedAt: string,
+  taskStore: TaskStore,
+): Promise<import("@fusion/core").AutomationStepResult> {
+  if (!step.prompt?.trim()) {
+    return {
+      stepId: step.id,
+      stepName: step.name,
+      stepIndex: 0,
+      success: false,
+      output: "",
+      error: "AI prompt step has no prompt specified",
+      startedAt,
+      completedAt: new Date().toISOString(),
+    };
+  }
+
+  const { createFnAgent, promptWithFallback } = await import("@fusion/engine");
+  const settings = await taskStore.getSettings();
+  const modelProvider = step.modelProvider?.trim() || settings.defaultProvider;
+  const modelId = step.modelId?.trim() || settings.defaultModelId;
+  let responseText = "";
+
+  const { session } = await createFnAgent({
+    cwd: process.cwd(),
+    systemPrompt: MANUAL_RUN_AI_SYSTEM_PROMPT,
+    tools: "readonly",
+    defaultProvider: modelProvider,
+    defaultModelId: modelId,
+    onText: (delta: string) => {
+      responseText += delta;
+    },
+  });
+
+  try {
+    const promptPromise = promptWithFallback(session, step.prompt);
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      setTimeout(() => reject(new Error(`AI prompt step timed out after ${timeoutMs / 1000}s`)), timeoutMs);
+    });
+
+    await Promise.race([promptPromise, timeoutPromise]);
+
+    return {
+      stepId: step.id,
+      stepName: step.name,
+      stepIndex: 0,
+      success: true,
+      output: responseText.length > AUTOMATION_MAX_OUTPUT
+        ? responseText.slice(0, AUTOMATION_MAX_OUTPUT) + "\n[output truncated]"
+        : responseText,
+      startedAt,
+      completedAt: new Date().toISOString(),
+    };
+  } catch (err: unknown) {
+    return {
+      stepId: step.id,
+      stepName: step.name,
+      stepIndex: 0,
+      success: false,
+      output: "",
+      error: err instanceof Error ? err.message : String(err),
+      startedAt,
+      completedAt: new Date().toISOString(),
+    };
+  } finally {
+    try {
+      session.dispose();
+    } catch {
+      // best-effort cleanup
+    }
+  }
+}
+
+async function executeCreateTaskStep(
+  step: import("@fusion/core").AutomationStep,
+  startedAt: string,
+  taskStore: TaskStore,
+): Promise<import("@fusion/core").AutomationStepResult> {
+  if (!step.taskDescription?.trim()) {
+    return {
+      stepId: step.id,
+      stepName: step.name,
+      stepIndex: 0,
+      success: false,
+      output: "",
+      error: "Create-task step has no task description specified",
+      startedAt,
+      completedAt: new Date().toISOString(),
+    };
+  }
+
+  try {
+    const task = await taskStore.createTask({
+      title: step.taskTitle?.trim() || undefined,
+      description: step.taskDescription.trim(),
+      column: (step.taskColumn as import("@fusion/core").Column) || "triage",
+      modelProvider: step.modelProvider?.trim() || undefined,
+      modelId: step.modelId?.trim() || undefined,
+    });
+
+    return {
+      stepId: step.id,
+      stepName: step.name,
+      stepIndex: 0,
+      success: true,
+      output: `Created task ${task.id}: ${task.title || task.description.slice(0, 80)}`,
+      startedAt,
+      completedAt: new Date().toISOString(),
+    };
+  } catch (err: unknown) {
+    return {
+      stepId: step.id,
+      stepName: step.name,
+      stepIndex: 0,
+      success: false,
+      output: "",
+      error: err instanceof Error ? err.message : String(err),
       startedAt,
       completedAt: new Date().toISOString(),
     };
@@ -3933,6 +4064,7 @@ async function executeSingleCommand(
 async function executeScheduleSteps(
   schedule: import("@fusion/core").ScheduledTask,
   startedAt: string,
+  taskStore: TaskStore,
 ): Promise<import("@fusion/core").AutomationRunResult> {
   const steps = schedule.steps!;
   const stepResults: import("@fusion/core").AutomationStepResult[] = [];
@@ -3942,7 +4074,7 @@ async function executeScheduleSteps(
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
     const stepStartedAt = new Date().toISOString();
-    const timeoutMs = step.timeoutMs ?? schedule.timeoutMs ?? 300000;
+    const timeoutMs = step.timeoutMs ?? schedule.timeoutMs ?? DEFAULT_AUTOMATION_TIMEOUT_MS;
 
     let stepResult: import("@fusion/core").AutomationStepResult;
 
@@ -3959,22 +4091,11 @@ async function executeScheduleSteps(
         completedAt: cmdResult.completedAt,
       };
     } else if (step.type === "ai-prompt") {
-      // AI prompt steps return a placeholder in manual run mode
-      const model = step.modelProvider && step.modelId
-        ? `${step.modelProvider}/${step.modelId}`
-        : "default";
-      stepResult = {
-        stepId: step.id,
-        stepName: step.name,
-        stepIndex: i,
-        success: !!step.prompt?.trim(),
-        output: step.prompt?.trim()
-          ? `[AI prompt step — model: ${model}]\nPrompt: ${step.prompt}`
-          : "",
-        error: step.prompt?.trim() ? undefined : "AI prompt step has no prompt specified",
-        startedAt: stepStartedAt,
-        completedAt: new Date().toISOString(),
-      };
+      stepResult = await executeAiPromptStep(step, timeoutMs, stepStartedAt, taskStore);
+      stepResult.stepIndex = i;
+    } else if (step.type === "create-task") {
+      stepResult = await executeCreateTaskStep(step, stepStartedAt, taskStore);
+      stepResult.stepIndex = i;
     } else {
       stepResult = {
         stepId: step.id,
@@ -4007,8 +4128,8 @@ async function executeScheduleSteps(
     if (sr.error) outputParts.push(`Error: ${sr.error}`);
   }
   let output = outputParts.join("\n");
-  if (output.length > 10240) {
-    output = output.slice(0, 10240) + "\n[output truncated]";
+  if (output.length > AUTOMATION_MAX_OUTPUT) {
+    output = output.slice(0, AUTOMATION_MAX_OUTPUT) + "\n[output truncated]";
   }
 
   const failedSteps = stepResults.filter((sr) => !sr.success);

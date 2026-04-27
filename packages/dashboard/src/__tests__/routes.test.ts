@@ -73,12 +73,13 @@ vi.mock("@fusion/core", async () => {
 });
 
 vi.mock("@fusion/engine", () => ({
-  createFnAgent: vi.fn(async () => ({
+  createFnAgent: vi.fn(async (options?: { onText?: (delta: string) => void }) => ({
     session: {
       state: {
         messages: [] as Array<{ role: string; content: string }>,
       },
       prompt: vi.fn(async function (this: { state?: { messages?: Array<{ role: string; content: string }> } }, message: string) {
+        options?.onText?.("mock-ai-output");
         const messages = this.state?.messages ?? [];
         messages.push({ role: "user", content: message });
         messages.push({
@@ -99,6 +100,9 @@ vi.mock("@fusion/engine", () => ({
       dispose: vi.fn(),
     },
   })),
+  promptWithFallback: vi.fn(async (session: { prompt: (message: string) => Promise<void> }, prompt: string) => {
+    await session.prompt(prompt);
+  }),
   AgentReflectionService: class MockAgentReflectionService {
     async generateReflection(): Promise<import("@fusion/core").AgentReflection | null> {
       throw new Error("Reflection service unavailable in route tests");
@@ -11661,7 +11665,7 @@ describe("Automation routes", () => {
     const app = express();
     app.use(express.json());
     app.use("/api", createApiRoutes(store, { automationStore: automationStore as any }));
-    return { app, automationStore };
+    return { app, automationStore, store };
   }
 
   describe("GET /automations", () => {
@@ -11813,6 +11817,126 @@ describe("Automation routes", () => {
           success: expect.any(Boolean),
           startedAt: expect.any(String),
           completedAt: expect.any(String),
+        }),
+      );
+    });
+
+    it("executes ai-prompt steps during manual runs", async () => {
+      const mockStore = createMockAutomationStore();
+      mockStore.getSchedule.mockResolvedValue({
+        ...FAKE_SCHEDULE,
+        command: "",
+        steps: [
+          {
+            id: "step-ai",
+            type: "ai-prompt",
+            name: "AI analysis",
+            prompt: "Summarize repository status",
+          },
+        ],
+      });
+
+      const { app } = buildApp(mockStore);
+      const res = await REQUEST(app, "POST", "/api/automations/sched-001/run");
+
+      expect(res.status).toBe(200);
+      expect(res.body.result.stepResults).toHaveLength(1);
+      expect(res.body.result.stepResults[0]).toEqual(
+        expect.objectContaining({
+          stepName: "AI analysis",
+          success: true,
+          output: expect.stringContaining("mock-ai-output"),
+        }),
+      );
+      expect(mockStore.recordRun).toHaveBeenCalledWith(
+        "sched-001",
+        expect.objectContaining({
+          stepResults: expect.arrayContaining([
+            expect.objectContaining({ stepName: "AI analysis", success: true }),
+          ]),
+        }),
+      );
+    });
+
+    it("executes create-task steps during manual runs", async () => {
+      const mockStore = createMockAutomationStore();
+      mockStore.getSchedule.mockResolvedValue({
+        ...FAKE_SCHEDULE,
+        command: "",
+        steps: [
+          {
+            id: "step-task",
+            type: "create-task",
+            name: "Create follow-up",
+            taskTitle: "Weekly report",
+            taskDescription: "Create weekly maintenance report",
+            taskColumn: "todo",
+          },
+        ],
+      });
+
+      const { app, store } = buildApp(mockStore);
+      (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: "FN-9001",
+        title: "Weekly report",
+        description: "Create weekly maintenance report",
+      });
+
+      const res = await REQUEST(app, "POST", "/api/automations/sched-001/run");
+
+      expect(res.status).toBe(200);
+      expect(store.createTask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Weekly report",
+          description: "Create weekly maintenance report",
+          column: "todo",
+        }),
+      );
+      expect(res.body.result.stepResults[0]).toEqual(
+        expect.objectContaining({
+          stepName: "Create follow-up",
+          success: true,
+          output: expect.stringContaining("Created task FN-9001"),
+        }),
+      );
+    });
+
+    it("respects continueOnFailure for create-task failures", async () => {
+      const mockStore = createMockAutomationStore();
+      mockStore.getSchedule.mockResolvedValue({
+        ...FAKE_SCHEDULE,
+        command: "",
+        steps: [
+          {
+            id: "step-bad-task",
+            type: "create-task",
+            name: "Broken task",
+            taskDescription: "",
+            continueOnFailure: true,
+          },
+          {
+            id: "step-next",
+            type: "command",
+            name: "Still run command",
+            command: "echo after-failure",
+          },
+        ],
+      });
+
+      const { app } = buildApp(mockStore);
+      const res = await REQUEST(app, "POST", "/api/automations/sched-001/run");
+
+      expect(res.status).toBe(200);
+      expect(res.body.result.success).toBe(false);
+      expect(res.body.result.stepResults).toHaveLength(2);
+      expect(res.body.result.stepResults[0]).toEqual(
+        expect.objectContaining({ stepName: "Broken task", success: false }),
+      );
+      expect(res.body.result.stepResults[1]).toEqual(
+        expect.objectContaining({
+          stepName: "Still run command",
+          success: true,
+          output: expect.stringContaining("after-failure"),
         }),
       );
     });

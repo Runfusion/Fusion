@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import type { ScheduledTask, AutomationRunResult, AutomationStep } from "../automation.js";
+import { AUTOMATION_PRESETS } from "../automation.js";
 import { randomUUID } from "node:crypto";
 
 /** Create a test automation step. */
@@ -76,6 +77,18 @@ describe("AutomationStore", () => {
       const fromDate = new Date("2026-01-01T00:00:00Z");
       const next = store.computeNextRun("0 * * * *", fromDate);
       expect(new Date(next).getTime()).toBeGreaterThan(fromDate.getTime());
+    });
+
+    it("computes valid next runs for every automation preset", () => {
+      const fromDate = new Date("2026-01-01T12:30:00.000Z");
+
+      for (const [preset, cron] of Object.entries(AUTOMATION_PRESETS)) {
+        const nextRun = store.computeNextRun(cron, fromDate);
+        const nextTime = Date.parse(nextRun);
+
+        expect(Number.isNaN(nextTime), `${preset} should produce a valid ISO date`).toBe(false);
+        expect(nextTime, `${preset} should advance beyond fromDate`).toBeGreaterThan(fromDate.getTime());
+      }
     });
 
     it("computes correct next run for hourly", () => {
@@ -495,6 +508,29 @@ describe("AutomationStore", () => {
       expect(updated.nextRunAt).toBeTruthy();
     });
 
+    it("advances nextRunAt forward after recording a run", async () => {
+      const schedule = await store.createSchedule({
+        name: "Advance test",
+        command: "echo",
+        scheduleType: "every15Minutes",
+      });
+      const originalNext = schedule.nextRunAt;
+
+      const result: AutomationRunResult = {
+        success: true,
+        output: "ok",
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+      };
+
+      const updated = await store.recordRun(schedule.id, result);
+      expect(updated.nextRunAt).toBeTruthy();
+      expect(Date.parse(updated.nextRunAt!)).toBeGreaterThan(Date.now() - 1_000);
+      if (originalNext) {
+        expect(Date.parse(updated.nextRunAt!)).toBeGreaterThanOrEqual(Date.parse(originalNext));
+      }
+    });
+
     it("records a failed run", async () => {
       const schedule = await store.createSchedule({
         name: "Fail test",
@@ -564,37 +600,34 @@ describe("AutomationStore", () => {
 
   describe("getDueSchedules", () => {
     it("returns schedules that are due", async () => {
-      const schedule = await store.createSchedule({
+      const dueSchedule = await store.createSchedule({
         name: "Due test",
         command: "echo",
         scheduleType: "hourly",
       });
-
-      // Record a run result to force nextRunAt to be recomputed
-      // Then use recordRun which sets nextRunAt properly
-      const pastDate = new Date(Date.now() - 60000).toISOString();
-      await store.recordRun(schedule.id, {
-        success: true,
-        output: "ok",
-        startedAt: pastDate,
-        completedAt: pastDate,
+      const futureSchedule = await store.createSchedule({
+        name: "Not due",
+        command: "echo",
+        scheduleType: "hourly",
       });
 
-      // Now manually set nextRunAt in the past (the store's internal DB is shared)
-      // We need to access the DB through the store — let's use a workaround
-      // by using recordRun which already recomputes nextRunAt. Instead,
-      // test by creating a schedule whose nextRunAt is already in the past.
-      // The simplest way is: the schedule was just created with nextRunAt
-      // in the future. We can't easily make it past via public API.
-      // Let's just test that getDueSchedules works with disabled/enabled correctly.
-      
-      // For the actual due test, verify the schedule is NOT due (nextRunAt is in the future)
+      const nowIso = new Date().toISOString();
+      const pastIso = new Date(Date.now() - 60_000).toISOString();
+      const futureIso = new Date(Date.now() + 60_000).toISOString();
+
+      // Explicitly set due boundary values to validate ISO string comparisons in SQLite
+      store["db"].prepare("UPDATE automations SET nextRunAt = ? WHERE id = ?").run(nowIso, dueSchedule.id);
+      store["db"].prepare("UPDATE automations SET nextRunAt = ? WHERE id = ?").run(futureIso, futureSchedule.id);
+
       const due = await store.getDueSchedules("project");
-      // The schedule's nextRunAt is in the future after recordRun, so it shouldn't be due
-      // Instead, let's verify it returns enabled schedules only
-      expect(Array.isArray(due)).toBe(true);
-      // The schedule has nextRunAt in the future, so it should not be returned
-      expect(due.some((d) => d.id === schedule.id)).toBe(false);
+
+      expect(due.some((d) => d.id === dueSchedule.id)).toBe(true);
+      expect(due.some((d) => d.id === futureSchedule.id)).toBe(false);
+
+      // Move due schedule farther into the past and ensure it's still due
+      store["db"].prepare("UPDATE automations SET nextRunAt = ? WHERE id = ?").run(pastIso, dueSchedule.id);
+      const stillDue = await store.getDueSchedules("project");
+      expect(stillDue.some((d) => d.id === dueSchedule.id)).toBe(true);
     });
 
     it("excludes disabled schedules", async () => {
@@ -619,6 +652,27 @@ describe("AutomationStore", () => {
       // nextRunAt is in the future by default
       const due = await store.getDueSchedules("project");
       expect(due.some((d) => d.id === schedule.id)).toBe(false);
+    });
+
+    it("reenabled schedules re-enter due detection with a recomputed nextRunAt", async () => {
+      const schedule = await store.createSchedule({
+        name: "Disable-enable lifecycle",
+        command: "echo",
+        scheduleType: "hourly",
+      });
+
+      const disabled = await store.updateSchedule(schedule.id, { enabled: false });
+      expect(disabled.nextRunAt).toBeUndefined();
+
+      const reenabled = await store.updateSchedule(schedule.id, { enabled: true });
+      expect(reenabled.nextRunAt).toBeTruthy();
+
+      // Force due state and verify it is detected now that schedule is enabled again
+      const pastIso = new Date(Date.now() - 30_000).toISOString();
+      store["db"].prepare("UPDATE automations SET nextRunAt = ? WHERE id = ?").run(pastIso, schedule.id);
+
+      const due = await store.getDueSchedules("project");
+      expect(due.some((d) => d.id === schedule.id)).toBe(true);
     });
   });
 

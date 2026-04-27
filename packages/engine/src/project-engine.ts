@@ -53,6 +53,23 @@ interface RemoteLifecycleEvaluation {
 const isRemoteActive = (ra: Settings["remoteAccess"] | undefined): boolean =>
   ra?.activeProvider != null && (ra.providers[ra.activeProvider]?.enabled ?? false);
 
+function formatErrorDetails(error: unknown): { message: string; detail: string } {
+  if (error instanceof Error) {
+    return {
+      message: error.message || error.name,
+      detail: error.stack ?? `${error.name}: ${error.message}`,
+    };
+  }
+  const detail = String(error);
+  return { message: detail, detail };
+}
+
+export interface AutomationSubsystemHealth {
+  status: "not-initialized" | "initializing" | "ready" | "degraded";
+  message: string;
+  updatedAt: string;
+}
+
 export interface ProjectEngineOptions {
   /** Project identifier for notification deep links */
   projectId?: string;
@@ -118,6 +135,11 @@ export class ProjectEngine {
     reason: "not_attempted",
     at: new Date().toISOString(),
     provider: null,
+  };
+  private automationSubsystemHealth: AutomationSubsystemHealth = {
+    status: "not-initialized",
+    message: "Automation subsystem has not been initialized",
+    updatedAt: new Date().toISOString(),
   };
 
   // ── Auto-merge state ──
@@ -204,8 +226,13 @@ export class ProjectEngine {
     }
 
     // 4. Initialize AutomationStore + CronRunner
+    this.setAutomationSubsystemHealth(
+      "initializing",
+      "Initializing AutomationStore and CronRunner",
+    );
     try {
-      const { AutomationStore } = await import("@fusion/core");
+      const coreAutomationModule = await import("@fusion/core");
+      const { AutomationStore } = coreAutomationModule;
       this.automationStore = new AutomationStore(cwd);
       await this.automationStore.init();
 
@@ -217,44 +244,73 @@ export class ProjectEngine {
       });
 
       const settings = await store.getSettings();
+      const startupSyncFailures: string[] = [];
 
       // Sync insight extraction automation on startup
-      try {
-        const { syncInsightExtractionAutomation } = await import("@fusion/core");
-        if (typeof syncInsightExtractionAutomation === "function") {
-          await syncInsightExtractionAutomation(this.automationStore, settings);
+      if (typeof coreAutomationModule.syncInsightExtractionAutomation === "function") {
+        try {
+          await coreAutomationModule.syncInsightExtractionAutomation(this.automationStore, settings);
+        } catch (err) {
+          const { message, detail } = formatErrorDetails(err);
+          startupSyncFailures.push(`insight extraction: ${message}`);
+          runtimeLog.warn(`Insight extraction automation startup sync failed:\n${detail}`);
         }
-      } catch {
-        // syncInsightExtractionAutomation may not be exported yet
+      } else {
+        runtimeLog.warn("syncInsightExtractionAutomation is unavailable; skipping startup sync");
       }
 
       // Sync auto-summarize automation on startup
-      try {
-        const { syncAutoSummarizeAutomation } = await import("@fusion/core");
-        if (typeof syncAutoSummarizeAutomation === "function") {
-          await syncAutoSummarizeAutomation(this.automationStore, settings);
+      if (typeof coreAutomationModule.syncAutoSummarizeAutomation === "function") {
+        try {
+          await coreAutomationModule.syncAutoSummarizeAutomation(this.automationStore, settings);
+        } catch (err) {
+          const { message, detail } = formatErrorDetails(err);
+          startupSyncFailures.push(`auto-summarize: ${message}`);
+          runtimeLog.warn(`Auto-summarize automation startup sync failed:\n${detail}`);
         }
-      } catch {
-        // syncAutoSummarizeAutomation may not be exported yet
+      } else {
+        runtimeLog.warn("syncAutoSummarizeAutomation is unavailable; skipping startup sync");
       }
 
       // Sync memory dreams automation on startup
-      try {
-        const { syncMemoryDreamsAutomation } = await import("@fusion/core");
-        if (typeof syncMemoryDreamsAutomation === "function") {
-          await syncMemoryDreamsAutomation(this.automationStore, settings);
+      if (typeof coreAutomationModule.syncMemoryDreamsAutomation === "function") {
+        try {
+          await coreAutomationModule.syncMemoryDreamsAutomation(this.automationStore, settings);
+        } catch (err) {
+          const { message, detail } = formatErrorDetails(err);
+          startupSyncFailures.push(`memory dreams: ${message}`);
+          runtimeLog.warn(`Memory dreams automation startup sync failed:\n${detail}`);
         }
-      } catch {
-        // syncMemoryDreamsAutomation may not be exported yet
+      } else {
+        runtimeLog.warn("syncMemoryDreamsAutomation is unavailable; skipping startup sync");
       }
 
       this.cronRunner.start();
+
+      if (startupSyncFailures.length > 0) {
+        this.setAutomationSubsystemHealth(
+          "degraded",
+          `CronRunner started with startup sync warnings: ${startupSyncFailures.join("; ")}`,
+        );
+      } else {
+        this.setAutomationSubsystemHealth(
+          "ready",
+          "CronRunner initialized and startup automation sync completed",
+        );
+      }
+
       runtimeLog.log("CronRunner initialized and started");
     } catch (err) {
       // Non-fatal — automations are optional
-      runtimeLog.warn(
-        "AutomationStore/CronRunner initialization failed (continuing without automations):",
-        err instanceof Error ? err.message : err,
+      const { message, detail } = formatErrorDetails(err);
+      this.cronRunner = undefined;
+      this.automationStore = undefined;
+      this.setAutomationSubsystemHealth(
+        "degraded",
+        `AutomationStore/CronRunner initialization failed: ${message}`,
+      );
+      runtimeLog.error(
+        `AutomationStore/CronRunner initialization failed (continuing without automations):\n${detail}`,
       );
     }
 
@@ -333,6 +389,7 @@ export class ProjectEngine {
     // Stop auxiliary subsystems
     this.notifier?.stop();
     this.cronRunner?.stop();
+    this.setAutomationSubsystemHealth("not-initialized", "Automation subsystem stopped");
 
     const tunnelManager = this.remoteTunnelManager;
     this.remoteTunnelManager = undefined;
@@ -412,6 +469,13 @@ export class ProjectEngine {
   /** Get the AutomationStore (if initialized). */
   getAutomationStore(): AutomationStoreType | undefined {
     return this.automationStore;
+  }
+
+  /**
+   * Get the automation subsystem health for diagnostics and status reporting.
+   */
+  getAutomationSubsystemHealth(): AutomationSubsystemHealth {
+    return { ...this.automationSubsystemHealth };
   }
 
   /** Get the RoutineStore (if initialized). */
@@ -552,6 +616,17 @@ export class ProjectEngine {
       provider,
       message,
       at: new Date().toISOString(),
+    };
+  }
+
+  private setAutomationSubsystemHealth(
+    status: AutomationSubsystemHealth["status"],
+    message: string,
+  ): void {
+    this.automationSubsystemHealth = {
+      status,
+      message,
+      updatedAt: new Date().toISOString(),
     };
   }
 
@@ -1558,10 +1633,12 @@ export class ProjectEngine {
           runtimeLog.log("Memory dreams automation synced with settings");
         }
       } catch (err) {
-        runtimeLog.warn(
-          "Failed to sync memory maintenance automation:",
-          err instanceof Error ? err.message : err,
+        const { message, detail } = formatErrorDetails(err);
+        this.setAutomationSubsystemHealth(
+          "degraded",
+          `Failed to sync memory maintenance automation: ${message}`,
         );
+        runtimeLog.warn(`Failed to sync memory maintenance automation:\n${detail}`);
       }
     };
     store.on("settings:updated", onInsightSettingsChange);
@@ -1592,10 +1669,12 @@ export class ProjectEngine {
           runtimeLog.log("Auto-summarize automation synced with settings");
         }
       } catch (err) {
-        runtimeLog.warn(
-          "Failed to sync auto-summarize automation:",
-          err instanceof Error ? err.message : err,
+        const { message, detail } = formatErrorDetails(err);
+        this.setAutomationSubsystemHealth(
+          "degraded",
+          `Failed to sync auto-summarize automation: ${message}`,
         );
+        runtimeLog.warn(`Failed to sync auto-summarize automation:\n${detail}`);
       }
     };
     store.on("settings:updated", onAutoSummarizeSettingsChange);
