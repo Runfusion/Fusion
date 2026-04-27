@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ScheduleCard } from "../ScheduleCard";
 import type { ScheduledTask, AutomationRunResult } from "@fusion/core";
 
@@ -15,6 +15,12 @@ vi.mock("lucide-react", () => ({
   ChevronDown: () => <span data-testid="icon-down">▼</span>,
   ChevronUp: () => <span data-testid="icon-up">▲</span>,
   Layers: () => <span data-testid="icon-layers">≡</span>,
+}));
+
+const mockConfirm = vi.fn();
+
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: mockConfirm }),
 }));
 
 function makeResult(overrides: Partial<AutomationRunResult> = {}): AutomationRunResult {
@@ -52,6 +58,8 @@ describe("ScheduleCard", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConfirm.mockReset();
+    mockConfirm.mockResolvedValue(true);
   });
 
   it("displays schedule name", () => {
@@ -158,27 +166,33 @@ describe("ScheduleCard", () => {
       expect(onEdit).toHaveBeenCalledWith(schedule);
     });
 
-    it("calls onDelete after confirm when delete button is clicked", () => {
-      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    it("calls onDelete after confirm when delete button is clicked", async () => {
       const schedule = makeSchedule();
       render(
         <ScheduleCard schedule={schedule} onEdit={onEdit} onDelete={onDelete} onRun={onRun} onToggle={onToggle} />
       );
       fireEvent.click(screen.getByLabelText(`Delete ${schedule.name}`));
-      expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("Update Dependencies"));
+      await waitFor(() => {
+        expect(mockConfirm).toHaveBeenCalledWith({
+          title: "Delete Schedule",
+          message: `Delete schedule "${schedule.name}"? This cannot be undone.`,
+          danger: true,
+        });
+      });
       expect(onDelete).toHaveBeenCalledWith(schedule);
-      confirmSpy.mockRestore();
     });
 
-    it("does not call onDelete when confirm is cancelled", () => {
-      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    it("does not call onDelete when confirm is cancelled", async () => {
+      mockConfirm.mockResolvedValueOnce(false);
       const schedule = makeSchedule();
       render(
         <ScheduleCard schedule={schedule} onEdit={onEdit} onDelete={onDelete} onRun={onRun} onToggle={onToggle} />
       );
       fireEvent.click(screen.getByLabelText(`Delete ${schedule.name}`));
+      await waitFor(() => {
+        expect(mockConfirm).toHaveBeenCalled();
+      });
       expect(onDelete).not.toHaveBeenCalled();
-      confirmSpy.mockRestore();
     });
   });
 

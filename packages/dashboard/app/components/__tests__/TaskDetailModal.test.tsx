@@ -75,6 +75,12 @@ vi.mock("../../hooks/usePluginUiSlots", () => ({
   usePluginUiSlots: (...args: unknown[]) => mockUsePluginUiSlots(...args),
 }));
 
+const mockConfirm = vi.fn();
+
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: mockConfirm }),
+}));
+
 function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
     id: "FN-099",
@@ -119,6 +125,8 @@ function readDashboardStylesSource(): string {
 
 describe("TaskDetailModal", () => {
   beforeEach(() => {
+    mockConfirm.mockReset();
+    mockConfirm.mockResolvedValue(true);
     clearAuthToken();
     localStorage.removeItem("fn.authToken");
   });
@@ -1046,7 +1054,7 @@ describe("TaskDetailModal", () => {
       const { uploadAttachment } = await import("../../api");
       const mockUpload = vi.mocked(uploadAttachment);
       let resolveUpload!: (value: any) => void;
-      mockUpload.mockReturnValueOnce(
+      mockUpload.mockResolvedValueOnce(
         new Promise((resolve) => {
           resolveUpload = resolve;
         }),
@@ -2475,9 +2483,9 @@ describe("TaskDetailModal", () => {
         .mockRejectedValueOnce(conflict)
         .mockResolvedValueOnce({} as Task);
 
-      vi.spyOn(window, "confirm")
-        .mockReturnValueOnce(true)
-        .mockReturnValueOnce(true);
+      mockConfirm
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true);
 
       render(
         <TaskDetailModal
@@ -2495,11 +2503,16 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
       await waitFor(() => {
-        expect(window.confirm).toHaveBeenNthCalledWith(1, "Delete FN-099?");
-        expect(window.confirm).toHaveBeenNthCalledWith(
-          2,
-          "FN-099 is a dependency of FN-100, FN-101.\n\nDelete anyway by removing these dependency references first?",
-        );
+        expect(mockConfirm).toHaveBeenNthCalledWith(1, {
+          title: "Delete Task",
+          message: "Delete FN-099?",
+          danger: true,
+        });
+        expect(mockConfirm).toHaveBeenNthCalledWith(2, {
+          title: "Force Delete Task",
+          message: "FN-099 is a dependency of FN-100, FN-101.\n\nDelete anyway by removing these dependency references first?",
+          danger: true,
+        });
       });
 
       await waitFor(() => {
@@ -2519,9 +2532,9 @@ describe("TaskDetailModal", () => {
       conflict.details = { code: "TASK_HAS_DEPENDENTS", dependentIds: ["FN-102"] };
       onDeleteTask.mockRejectedValue(conflict);
 
-      vi.spyOn(window, "confirm")
-        .mockReturnValueOnce(true)
-        .mockReturnValueOnce(false);
+      mockConfirm
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
 
       render(
         <TaskDetailModal
@@ -2555,9 +2568,9 @@ describe("TaskDetailModal", () => {
         .mockRejectedValueOnce(conflict)
         .mockRejectedValueOnce(new Error("Retry failed"));
 
-      vi.spyOn(window, "confirm")
-        .mockReturnValueOnce(true)
-        .mockReturnValueOnce(true);
+      mockConfirm
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true);
 
       render(
         <TaskDetailModal
@@ -3410,8 +3423,7 @@ describe("TaskDetailModal", () => {
       const onClose = vi.fn();
 
       // Mock confirm to return true
-      const originalConfirm = window.confirm;
-      window.confirm = vi.fn(() => true);
+            mockConfirm.mockResolvedValue(true);
 
       render(
         <TaskDetailModal
@@ -3432,9 +3444,11 @@ describe("TaskDetailModal", () => {
 
       fireEvent.click(screen.getByText("Reject Plan"));
 
-      expect(window.confirm).toHaveBeenCalledWith(
-        "Reject this plan? The specification will be discarded and regenerated."
-      );
+      expect(mockConfirm).toHaveBeenCalledWith({
+        title: "Reject Plan",
+        message: "Reject this plan? The specification will be discarded and regenerated.",
+        danger: true,
+      });
 
       await waitFor(() => {
         expect(mockRejectPlan).toHaveBeenCalledWith("FN-001", undefined);
@@ -3445,7 +3459,6 @@ describe("TaskDetailModal", () => {
       );
       expect(onClose).toHaveBeenCalled();
 
-      window.confirm = originalConfirm;
     });
 
     it("does not call rejectPlan API when Reject Plan is cancelled", async () => {
@@ -3456,8 +3469,7 @@ describe("TaskDetailModal", () => {
       const addToast = vi.fn();
 
       // Mock confirm to return false
-      const originalConfirm = window.confirm;
-      window.confirm = vi.fn(() => false);
+            mockConfirm.mockResolvedValue(false);
 
       render(
         <TaskDetailModal
@@ -3477,11 +3489,10 @@ describe("TaskDetailModal", () => {
 
       fireEvent.click(screen.getByText("Reject Plan"));
 
-      expect(window.confirm).toHaveBeenCalled();
+      expect(mockConfirm).toHaveBeenCalled();
       expect(mockRejectPlan).not.toHaveBeenCalled();
       expect(addToast).not.toHaveBeenCalled();
 
-      window.confirm = originalConfirm;
     });
 
     it("shows error toast when approvePlan fails", async () => {
@@ -3523,8 +3534,7 @@ describe("TaskDetailModal", () => {
       const addToast = vi.fn();
 
       // Mock confirm to return true
-      const originalConfirm = window.confirm;
-      window.confirm = vi.fn(() => true);
+            mockConfirm.mockResolvedValue(true);
 
       render(
         <TaskDetailModal
@@ -3549,7 +3559,6 @@ describe("TaskDetailModal", () => {
         expect(addToast).toHaveBeenCalledWith("Server error", "error");
       });
 
-      window.confirm = originalConfirm;
     });
   });
 
@@ -3595,8 +3604,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("clicking Duplicate shows confirmation dialog", () => {
-      const originalConfirm = window.confirm;
-      window.confirm = vi.fn(() => false);
+            mockConfirm.mockResolvedValue(false);
 
       render(
         <TaskDetailModal
@@ -3617,16 +3625,15 @@ describe("TaskDetailModal", () => {
 
       fireEvent.click(screen.getByRole("menuitem", { name: "Duplicate" }));
 
-      expect(window.confirm).toHaveBeenCalledWith(
-        "Duplicate FN-001? This will create a new task in Triage with the same description and prompt."
-      );
+      expect(mockConfirm).toHaveBeenCalledWith({
+        title: "Duplicate Task",
+        message: "Duplicate FN-001? This will create a new task in Triage with the same description and prompt.",
+      });
 
-      window.confirm = originalConfirm;
     });
 
     it("confirming duplicate calls onDuplicateTask and closes modal", async () => {
-      const originalConfirm = window.confirm;
-      window.confirm = vi.fn(() => true);
+            mockConfirm.mockResolvedValue(true);
 
       const mockDuplicate = vi.fn().mockResolvedValue({ id: "FN-002" } as Task);
       const onClose = vi.fn();
@@ -3655,12 +3662,10 @@ describe("TaskDetailModal", () => {
         expect(onClose).toHaveBeenCalled();
       });
 
-      window.confirm = originalConfirm;
     });
 
     it("successful duplicate shows success toast with new task ID", async () => {
-      const originalConfirm = window.confirm;
-      window.confirm = vi.fn(() => true);
+            mockConfirm.mockResolvedValue(true);
 
       const mockDuplicate = vi.fn().mockResolvedValue({ id: "FN-002" } as Task);
       const addToast = vi.fn();
@@ -3688,12 +3693,10 @@ describe("TaskDetailModal", () => {
         expect(addToast).toHaveBeenCalledWith("Duplicated FN-001 → FN-002", "success");
       });
 
-      window.confirm = originalConfirm;
     });
 
     it("cancelling confirmation does not call onDuplicateTask", () => {
-      const originalConfirm = window.confirm;
-      window.confirm = vi.fn(() => false);
+            mockConfirm.mockResolvedValue(false);
 
       const mockDuplicate = vi.fn().mockResolvedValue({ id: "FN-002" } as Task);
 
@@ -3718,12 +3721,10 @@ describe("TaskDetailModal", () => {
 
       expect(mockDuplicate).not.toHaveBeenCalled();
 
-      window.confirm = originalConfirm;
     });
 
     it("shows error toast when duplicate fails", async () => {
-      const originalConfirm = window.confirm;
-      window.confirm = vi.fn(() => true);
+            mockConfirm.mockResolvedValue(true);
 
       const mockDuplicate = vi.fn().mockRejectedValue(new Error("Duplicate failed"));
       const addToast = vi.fn();
@@ -3751,7 +3752,6 @@ describe("TaskDetailModal", () => {
         expect(addToast).toHaveBeenCalledWith("Duplicate failed", "error");
       });
 
-      window.confirm = originalConfirm;
     });
   });
 
@@ -5316,7 +5316,7 @@ describe("TaskDetailModal", () => {
       const { fetchWorkflowResults } = await import("../../api");
       const mockFetch = vi.mocked(fetchWorkflowResults);
       // Never resolve to keep loading state
-      mockFetch.mockReturnValueOnce(new Promise(() => {}));
+      mockFetch.mockResolvedValueOnce(new Promise(() => {}));
 
       render(
         <TaskDetailModal
@@ -5717,7 +5717,7 @@ describe("TaskDetailModal", () => {
       const { fetchTaskDetail } = await import("../../api");
       const mockFetch = vi.mocked(fetchTaskDetail);
       // Set up a pending promise so loading state persists
-      mockFetch.mockReturnValueOnce(new Promise(() => {}));
+      mockFetch.mockResolvedValueOnce(new Promise(() => {}));
 
       const task: Task = {
         id: "FN-203",

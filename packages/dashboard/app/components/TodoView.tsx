@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import type { TodoItem, TodoList } from "@fusion/core";
 import { useTodoLists } from "../hooks/useTodoLists";
+import { useConfirm } from "../hooks/useConfirm";
 import "./TodoView.css";
 
 interface TodoViewProps {
@@ -57,6 +58,7 @@ export function TodoView({ projectId, addToast }: TodoViewProps) {
   const [newListTitle, setNewListTitle] = useState("");
   const [isAddingList, setIsAddingList] = useState(false);
   const [newItemText, setNewItemText] = useState("");
+  const { confirm } = useConfirm();
 
   const selectedList = useMemo(
     () => lists.find((list) => list.id === selectedListId) ?? null,
@@ -179,7 +181,11 @@ export function TodoView({ projectId, addToast }: TodoViewProps) {
   }
 
   async function handleDeleteList(id: string): Promise<void> {
-    const shouldDelete = window.confirm("Delete this list and all its items?");
+    const shouldDelete = await confirm({
+      title: "Delete List",
+      message: "Delete this list and all its items?",
+      danger: true,
+    });
     if (!shouldDelete) {
       return;
     }

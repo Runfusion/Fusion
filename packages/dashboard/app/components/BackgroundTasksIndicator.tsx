@@ -3,6 +3,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { Lightbulb, Layers, Target, Loader2, HelpCircle, X, Lock, AlertCircle } from "lucide-react";
 import type { AiSessionSummary } from "../api";
 import { useAiSessionSync } from "../hooks/useAiSessionSync";
+import { useConfirm } from "../hooks/useConfirm";
 import { getSessionTabId } from "../utils/getSessionTabId";
 
 interface BackgroundTasksIndicatorProps {
@@ -36,6 +37,7 @@ export function BackgroundTasksIndicator({
   onOpenSession,
   onDismissSession,
 }: BackgroundTasksIndicatorProps) {
+  const { confirm } = useConfirm();
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [recentlyUpdated, setRecentlyUpdated] = useState<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
@@ -152,12 +154,15 @@ export function BackgroundTasksIndicator({
                       : undefined,
                     transform: isUpdated ? "translateY(-1px)" : undefined,
                   }}
-                  onClick={() => {
-                    if (
-                      activeElsewhere &&
-                      !window.confirm("This session is active in another tab. Open anyway?")
-                    ) {
-                      return;
+                  onClick={async () => {
+                    if (activeElsewhere) {
+                      const shouldOpen = await confirm({
+                        title: "Open Active Session",
+                        message: "This session is active in another tab. Open anyway?",
+                      });
+                      if (!shouldOpen) {
+                        return;
+                      }
                     }
 
                     onOpenSession(session);

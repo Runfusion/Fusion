@@ -35,6 +35,12 @@ vi.mock("../../api", () => ({
   updateGlobalSettings: vi.fn().mockResolvedValue({}),
 }));
 
+const mockConfirm = vi.fn();
+
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: mockConfirm }),
+}));
+
 function makeTask(id: string): Task {
   return {
     id,
@@ -69,6 +75,8 @@ function renderNewTaskModal(props = {}) {
 describe("NewTaskModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConfirm.mockReset();
+    mockConfirm.mockResolvedValue(true);
   });
 
   it("renders all form fields when open", async () => {
@@ -230,22 +238,24 @@ describe("NewTaskModal", () => {
     });
   });
 
-  it("confirms before closing with dirty state", () => {
+  it("confirms before closing with dirty state", async () => {
     const { props } = renderNewTaskModal();
-    
+
     const descTextarea = screen.getByRole('textbox');
     fireEvent.change(descTextarea, { target: { value: "Test description" } });
-    
-    // Mock confirm to return false (cancel)
-    const originalConfirm = window.confirm;
-    window.confirm = vi.fn().mockReturnValue(false);
-    
+
+    mockConfirm.mockResolvedValueOnce(false);
+
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    
-    expect(window.confirm).toHaveBeenCalledWith("You have unsaved changes. Discard them?");
+
+    await waitFor(() => {
+      expect(mockConfirm).toHaveBeenCalledWith({
+        title: "Discard Changes",
+        message: "You have unsaved changes. Discard them?",
+        danger: true,
+      });
+    });
     expect(props.onClose).not.toHaveBeenCalled();
-    
-    window.confirm = originalConfirm;
   });
 
   it("closes without confirm when state is not dirty", () => {
@@ -772,19 +782,22 @@ describe("NewTaskModal", () => {
       });
     });
 
-    it("treats non-default priority as dirty state on cancel", () => {
+    it("treats non-default priority as dirty state on cancel", async () => {
       renderNewTaskModal();
 
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
       fireEvent.change(screen.getByTestId("task-priority-select"), { target: { value: "high" } });
-
-      const originalConfirm = window.confirm;
-      window.confirm = vi.fn().mockReturnValue(false);
+      mockConfirm.mockResolvedValueOnce(false);
 
       fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
-      expect(window.confirm).toHaveBeenCalledWith("You have unsaved changes. Discard them?");
-      window.confirm = originalConfirm;
+      await waitFor(() => {
+        expect(mockConfirm).toHaveBeenCalledWith({
+          title: "Discard Changes",
+          message: "You have unsaved changes. Discard them?",
+          danger: true,
+        });
+      });
     });
   });
 
@@ -956,16 +969,16 @@ describe("NewTaskModal", () => {
 
       fireEvent.click(screen.getByText("Executor Bot"));
 
-      // Mock confirm to return true (confirm discard)
-      const originalConfirm = window.confirm;
-      window.confirm = vi.fn().mockReturnValue(true);
-
       // Try to close - should show confirm
       fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
-      expect(window.confirm).toHaveBeenCalledWith("You have unsaved changes. Discard them?");
-
-      window.confirm = originalConfirm;
+      await waitFor(() => {
+        expect(mockConfirm).toHaveBeenCalledWith({
+          title: "Discard Changes",
+          message: "You have unsaved changes. Discard them?",
+          danger: true,
+        });
+      });
     });
 
     it("resets agent selection after successful task creation", async () => {

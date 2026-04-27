@@ -132,7 +132,8 @@ describe("Agent runs UI — static analysis", () => {
 
     it("wires a stop run handler", () => {
       expect(agentDetailViewContent).toMatch(/handleStopRun|handleStop/);
-      expect(agentDetailViewContent).toMatch(/confirm\("Stop the active run\?/);
+      expect(agentDetailViewContent).toMatch(/title:\s*"Stop Active Run"/);
+      expect(agentDetailViewContent).toMatch(/message:\s*"Stop the active run\? The agent's work will be interrupted\."/);
     });
 
     it("references stopAgentRun and stop button copy", () => {

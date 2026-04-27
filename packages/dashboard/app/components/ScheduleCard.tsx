@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { Play, Pause, Pencil, Trash2, Clock, CheckCircle, XCircle, ChevronDown, ChevronUp, Layers, Globe, Folder } from "lucide-react";
 import type { ScheduledTask, AutomationRunResult, AutomationStepResult } from "@fusion/core";
+import { useConfirm } from "../hooks/useConfirm";
 
 /**
  * Format a duration in milliseconds to a human-readable string.
@@ -144,12 +145,18 @@ function RunHistoryItem({ result, index }: { result: AutomationRunResult; index:
 
 export function ScheduleCard({ schedule, onEdit, onDelete, onRun, onToggle, running }: ScheduleCardProps) {
   const [showHistory, setShowHistory] = useState(false);
+  const { confirm } = useConfirm();
 
-  const handleDelete = useCallback(() => {
-    if (window.confirm(`Delete schedule "${schedule.name}"? This cannot be undone.`)) {
+  const handleDelete = useCallback(async () => {
+    const shouldDelete = await confirm({
+      title: "Delete Schedule",
+      message: `Delete schedule "${schedule.name}"? This cannot be undone.`,
+      danger: true,
+    });
+    if (shouldDelete) {
       onDelete(schedule);
     }
-  }, [schedule, onDelete]);
+  }, [schedule, onDelete, confirm]);
 
   const typeColor = SCHEDULE_TYPE_COLORS[schedule.scheduleType] ?? SCHEDULE_TYPE_COLORS.custom;
 

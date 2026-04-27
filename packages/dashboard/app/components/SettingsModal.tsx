@@ -21,6 +21,7 @@ import { LoginInstructions } from "./LoginInstructions";
 import { ProviderIcon } from "./ProviderIcon";
 import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPresets";
 import { appendTokenQuery } from "../auth";
+import { useConfirm } from "../hooks/useConfirm";
 
 /**
  * Settings sections configuration.
@@ -182,6 +183,7 @@ export function SettingsModal({
   onColorThemeChange,
   onReopenOnboarding,
 }: SettingsModalProps) {
+  const { confirm } = useConfirm();
   const [form, setForm] = useState<SettingsFormState>({
     maxConcurrent: 2,
     maxTriageConcurrent: 2,
@@ -1793,9 +1795,16 @@ export function SettingsModal({
                           <button
                             type="button"
                             className="btn btn-sm"
-                            onClick={() => {
-                              if (inUsePresetIds.has(preset.id) && !confirm(`Preset "${preset.name}" is used in auto-selection. Delete it anyway?`)) {
-                                return;
+                            onClick={async () => {
+                              if (inUsePresetIds.has(preset.id)) {
+                                const shouldDelete = await confirm({
+                                  title: "Delete Preset",
+                                  message: `Preset "${preset.name}" is used in auto-selection. Delete it anyway?`,
+                                  danger: true,
+                                });
+                                if (!shouldDelete) {
+                                  return;
+                                }
                               }
                               setForm((current) => ({
                                 ...current,

@@ -10,6 +10,7 @@ import { AgentMetricsBar } from "./AgentMetricsBar";
 import { AgentTokenStatsPanel } from "./AgentTokenStatsPanel";
 import { AgentEmptyState } from "./AgentEmptyState";
 import { useAgents } from "../hooks/useAgents";
+import { useConfirm } from "../hooks/useConfirm";
 import { useAgentHierarchy } from "../hooks/useAgentHierarchy";
 import type { AgentNode } from "../hooks/useAgentHierarchy";
 import { NewAgentDialog } from "./NewAgentDialog";
@@ -270,6 +271,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
   const [isOrgTreeLoading, setIsOrgTreeLoading] = useState(false);
   const [isControlsPanelOpen, setIsControlsPanelOpen] = useState(false);
   const controlsPanelRef = useRef<HTMLDivElement>(null);
+  const { confirm } = useConfirm();
   const controlsTriggerRef = useRef<HTMLButtonElement>(null);
   const controlsPanelId = useId();
 
@@ -496,7 +498,12 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
   };
 
   const handleDelete = async (agentId: string, agentName: string) => {
-    if (!confirm(`Delete agent "${agentName}"? This cannot be undone.`)) return;
+    const shouldDelete = await confirm({
+      title: "Delete Agent",
+      message: `Delete agent "${agentName}"? This cannot be undone.`,
+      danger: true,
+    });
+    if (!shouldDelete) return;
     try {
       await deleteAgent(agentId, projectId);
       addToast(`Agent "${agentName}" deleted`, "success");

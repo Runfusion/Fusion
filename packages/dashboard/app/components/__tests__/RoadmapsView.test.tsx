@@ -31,6 +31,12 @@ vi.mock("../../api", () => ({
 }));
 
 // Mock lucide-react icons
+const mockConfirm = vi.fn();
+
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: mockConfirm }),
+}));
+
 vi.mock("lucide-react", () => ({
   Plus: ({ size, ...props }: { size?: number }) => (
     <svg data-testid="plus-icon" {...props}>{`Plus ${size || 16}`}</svg>
@@ -129,10 +135,11 @@ const mockAddToast = vi.fn();
 describe("RoadmapsView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConfirm.mockReset();
+    mockConfirm.mockResolvedValue(true);
     mockViewport("desktop");
     (api.fetchRoadmaps as ReturnType<typeof vi.fn>).mockResolvedValue(mockRoadmaps);
     (api.fetchRoadmap as ReturnType<typeof vi.fn>).mockResolvedValue(mockRoadmapHierarchy);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -283,14 +290,18 @@ describe("RoadmapsView", () => {
     fireEvent.click(deleteBtn);
 
     await waitFor(() => {
-      expect(window.confirm).toHaveBeenCalled();
+      expect(mockConfirm).toHaveBeenCalledWith({
+        title: "Delete Roadmap",
+        message: "Delete this roadmap? This cannot be undone.",
+        danger: true,
+      });
       expect(api.deleteRoadmap).toHaveBeenCalledWith("RM-001", undefined);
       expect(mockAddToast).toHaveBeenCalledWith("Roadmap deleted", "success");
     });
   });
 
   it("cancels roadmap deletion when not confirmed", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+    mockConfirm.mockResolvedValueOnce(false);
 
     render(<RoadmapsView addToast={mockAddToast} />);
 
@@ -413,7 +424,11 @@ describe("RoadmapsView", () => {
     fireEvent.click(deleteBtn);
 
     await waitFor(() => {
-      expect(window.confirm).toHaveBeenCalled();
+      expect(mockConfirm).toHaveBeenCalledWith({
+        title: "Delete Milestone",
+        message: "Delete this milestone and all its features?",
+        danger: true,
+      });
       expect(api.deleteRoadmapMilestone).toHaveBeenCalledWith("RMS-001", undefined);
       expect(mockAddToast).toHaveBeenCalledWith("Milestone deleted", "success");
     });
@@ -485,7 +500,11 @@ describe("RoadmapsView", () => {
     fireEvent.click(deleteBtn);
 
     await waitFor(() => {
-      expect(window.confirm).toHaveBeenCalled();
+      expect(mockConfirm).toHaveBeenCalledWith({
+        title: "Delete Feature",
+        message: "Delete this feature?",
+        danger: true,
+      });
       expect(api.deleteRoadmapFeature).toHaveBeenCalledWith("RF-001", undefined);
       expect(mockAddToast).toHaveBeenCalledWith("Feature deleted", "success");
     });

@@ -80,6 +80,12 @@ vi.mock("../../api", () => ({
   })),
 }));
 
+const mockConfirm = vi.fn();
+
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: mockConfirm }),
+}));
+
 // Import after vi.mock so the mock is in place
 import { PluginManager, STATE_COLORS } from "../PluginManager";
 import {
@@ -103,6 +109,8 @@ function expectEventsUrl(url: string, projectId?: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockConfirm.mockReset();
+  mockConfirm.mockResolvedValue(true);
   window.sessionStorage.clear();
   
   // Default implementations
@@ -350,7 +358,7 @@ describe("PluginManager", () => {
 
   it("asks for confirmation before uninstalling", async () => {
     vi.mocked(fetchPlugins).mockResolvedValueOnce(mockPlugins);
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    mockConfirm.mockResolvedValueOnce(false);
 
     render(<PluginManager addToast={addToast} />);
 
@@ -361,14 +369,17 @@ describe("PluginManager", () => {
     const uninstallButtons = screen.getAllByTitle("Uninstall");
     await userEvent.click(uninstallButtons[0]);
 
-    expect(confirmSpy).toHaveBeenCalled();
+    expect(mockConfirm).toHaveBeenCalledWith({
+      title: "Uninstall Plugin",
+      message: 'Are you sure you want to uninstall "Test Plugin A"?',
+      danger: true,
+    });
     expect(uninstallPlugin).not.toHaveBeenCalled();
   });
 
   it("calls uninstallPlugin when confirmed", async () => {
     vi.mocked(fetchPlugins).mockResolvedValueOnce(mockPlugins);
     vi.mocked(uninstallPlugin).mockResolvedValueOnce(undefined);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(<PluginManager addToast={addToast} />);
 

@@ -9,6 +9,7 @@ import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask,
 import type { WorkflowStepResult } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { useAgentLogs } from "../hooks/useAgentLogs";
+import { useConfirm } from "../hooks/useConfirm";
 import { AgentLogViewer } from "./AgentLogViewer";
 import { ModelSelectorTab } from "./ModelSelectorTab";
 import { PrSection } from "./PrSection";
@@ -762,6 +763,7 @@ export function TaskDetailModal({
   }, [isEditing, handleEditKeyDown]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { confirm } = useConfirm();
   const {
     entries: agentLogEntries,
     loading: agentLogLoading,
@@ -803,7 +805,12 @@ export function TaskDetailModal({
   );
 
   const handleDelete = useCallback(async () => {
-    if (!confirm(`Delete ${task.id}?`)) return;
+    const shouldDelete = await confirm({
+      title: "Delete Task",
+      message: `Delete ${task.id}?`,
+      danger: true,
+    });
+    if (!shouldDelete) return;
     try {
       await onDeleteTask(task.id);
       onClose();
@@ -816,10 +823,13 @@ export function TaskDetailModal({
       }
 
       const dependentList = conflict.dependentIds.join(", ");
-      const confirmed = confirm(
-        `${task.id} is a dependency of ${dependentList}.\n\n` +
-        "Delete anyway by removing these dependency references first?",
-      );
+      const confirmed = await confirm({
+        title: "Force Delete Task",
+        message:
+          `${task.id} is a dependency of ${dependentList}.\n\n` +
+          "Delete anyway by removing these dependency references first?",
+        danger: true,
+      });
       if (!confirmed) {
         return;
       }
@@ -832,10 +842,14 @@ export function TaskDetailModal({
         addToast(getErrorMessage(retryErr), "error");
       }
     }
-  }, [task.id, onDeleteTask, onClose, addToast]);
+  }, [task.id, onDeleteTask, onClose, addToast, confirm]);
 
-  const handleMerge = useCallback(() => {
-    if (!confirm(`Merge ${task.id} into the current branch?`)) return;
+  const handleMerge = useCallback(async () => {
+    const shouldMerge = await confirm({
+      title: "Merge Task",
+      message: `Merge ${task.id} into the current branch?`,
+    });
+    if (!shouldMerge) return;
     onClose();
     addToast(`Merging ${task.id}...`, "info");
     onMergeTask(task.id)
@@ -848,7 +862,7 @@ export function TaskDetailModal({
       .catch((err) => {
         addToast(getErrorMessage(err), "error");
       });
-  }, [task.id, onMergeTask, onClose, addToast]);
+  }, [task.id, onMergeTask, onClose, addToast, confirm]);
 
   const handleRetry = useCallback(() => {
     if (!onRetryTask) return;
@@ -864,7 +878,11 @@ export function TaskDetailModal({
 
   const handleDuplicate = useCallback(async () => {
     if (!onDuplicateTask) return;
-    if (!confirm(`Duplicate ${task.id}? This will create a new task in Triage with the same description and prompt.`)) return;
+    const shouldDuplicate = await confirm({
+      title: "Duplicate Task",
+      message: `Duplicate ${task.id}? This will create a new task in Triage with the same description and prompt.`,
+    });
+    if (!shouldDuplicate) return;
     try {
       const newTask = await onDuplicateTask(task.id);
       onClose();
@@ -872,7 +890,7 @@ export function TaskDetailModal({
     } catch (err) {
       addToast(getErrorMessage(err), "error");
     }
-  }, [task.id, onDuplicateTask, onClose, addToast]);
+  }, [task.id, onDuplicateTask, onClose, addToast, confirm]);
 
   const handleTogglePause = useCallback(async () => {
     try {
@@ -900,7 +918,12 @@ export function TaskDetailModal({
   }, [task.id, onClose, addToast]);
 
   const handleRejectPlan = useCallback(async () => {
-    if (!confirm("Reject this plan? The specification will be discarded and regenerated.")) return;
+    const shouldReject = await confirm({
+      title: "Reject Plan",
+      message: "Reject this plan? The specification will be discarded and regenerated.",
+      danger: true,
+    });
+    if (!shouldReject) return;
     try {
       await rejectPlan(task.id, projectId);
       addToast(`Plan rejected — ${task.id} returned to Planning for replanning`, "info");
@@ -908,10 +931,14 @@ export function TaskDetailModal({
     } catch (err) {
       addToast(getErrorMessage(err), "error");
     }
-  }, [task.id, onClose, addToast]);
+  }, [task.id, onClose, addToast, confirm]);
 
   const handleRespecify = useCallback(async () => {
-    if (!confirm("Rebuild the plan for this task? The task will move to planning for replanning.")) return;
+    const shouldRebuild = await confirm({
+      title: "Rebuild Plan",
+      message: "Rebuild the plan for this task? The task will move to planning for replanning.",
+    });
+    if (!shouldRebuild) return;
     try {
       await rebuildTaskSpec(task.id, projectId);
       onClose();
@@ -919,7 +946,7 @@ export function TaskDetailModal({
     } catch (err) {
       addToast(getErrorMessage(err), "error");
     }
-  }, [task.id, projectId, onClose, addToast]);
+  }, [task.id, projectId, onClose, addToast, confirm]);
 
   const handleOpenRefineModal = useCallback(() => {
     setShowRefineModal(true);
@@ -945,8 +972,8 @@ export function TaskDetailModal({
 
   const handleMergeMenuItemClick = useCallback(() => {
     closeMenus();
-    handleMerge();
-  }, [closeMenus]);
+    void handleMerge();
+  }, [closeMenus, handleMerge]);
 
   const handleCloseRefineModal = useCallback(() => {
     setShowRefineModal(false);

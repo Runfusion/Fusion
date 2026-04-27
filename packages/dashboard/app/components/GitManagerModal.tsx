@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { Task } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
+import { useConfirm } from "../hooks/useConfirm";
 import type {
   GitStatus,
   GitCommit,
@@ -171,6 +172,7 @@ interface GitManagerModalProps {
 // ── Main Component ────────────────────────────────────────────────
 
 export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, projectId }: GitManagerModalProps) {
+  const confirmContext = useConfirm();
   const [activeSection, setActiveSection] = useState<SectionId>("status");
   const [loading, setLoading] = useState(false);
   const [sectionError, setSectionError] = useState<string | null>(null);
@@ -344,7 +346,12 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   }, [addToast, projectId]);
 
   const handleDiscardChanges = useCallback(async (files: string[]) => {
-    if (!confirm(`Discard changes to ${files.length} file(s)? This cannot be undone.`)) return;
+    const shouldDiscard = await confirmContext.confirm({
+      title: "Discard Changes",
+      message: `Discard changes to ${files.length} file(s)? This cannot be undone.`,
+      danger: true,
+    });
+    if (!shouldDiscard) return;
     try {
       await discardChanges(files, projectId);
       addToast(`Discarded changes to ${files.length} file(s)`, "success");
@@ -358,7 +365,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     } catch (err) {
       addToast(getErrorMessage(err) || "Failed to discard changes", "error");
     }
-  }, [addToast, projectId]);
+  }, [addToast, projectId, confirm]);
 
   const handleCommit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -518,7 +525,12 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   }, [addToast, projectId]);
 
   const handleDeleteBranch = useCallback(async (name: string) => {
-    if (!confirm(`Delete branch "${name}"?`)) return;
+    const shouldDelete = await confirmContext.confirm({
+      title: "Delete Branch",
+      message: `Delete branch "${name}"?`,
+      danger: true,
+    });
+    if (!shouldDelete) return;
     setLoading(true);
     try {
       await deleteBranch(name, undefined, projectId);
@@ -527,7 +539,12 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
       setBranches(branchesData);
     } catch (err) {
       if (getErrorMessage(err).includes("not fully merged")) {
-        if (confirm("Branch has unmerged commits. Force delete?")) {
+        const shouldForceDelete = await confirmContext.confirm({
+          title: "Force Delete Branch",
+          message: "Branch has unmerged commits. Force delete?",
+          danger: true,
+        });
+        if (shouldForceDelete) {
           try {
             await deleteBranch(name, true, projectId);
             addToast(`Force deleted branch ${name}`, "success");
@@ -543,7 +560,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     } finally {
       setLoading(false);
     }
-  }, [addToast, projectId]);
+  }, [addToast, projectId, confirm]);
 
   const filteredBranches = useMemo(() => {
     if (!branchSearch.trim()) return branches;
@@ -639,7 +656,12 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   }, [addToast, projectId]);
 
   const handleDropStash = useCallback(async (index: number) => {
-    if (!confirm(`Drop stash@{${index}}? This cannot be undone.`)) return;
+    const shouldDrop = await confirmContext.confirm({
+      title: "Drop Stash",
+      message: `Drop stash@{${index}}? This cannot be undone.`,
+      danger: true,
+    });
+    if (!shouldDrop) return;
     setStashLoading(`drop-${index}`);
     try {
       await dropStash(index, projectId);
@@ -651,7 +673,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     } finally {
       setStashLoading(null);
     }
-  }, [addToast, projectId]);
+  }, [addToast, projectId, confirm]);
 
   // ── Remote Handlers ─────────────────────────────────────────────
 
@@ -1870,6 +1892,8 @@ function RemotesPanel({
     }
   };
 
+  const confirmContextRemote = useConfirm();
+
   const handleAddRemote = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newRemoteName.trim() || !newRemoteUrl.trim()) return;
@@ -1890,7 +1914,12 @@ function RemotesPanel({
   };
 
   const handleRemoveRemote = async (name: string) => {
-    if (!confirm(`Are you sure you want to remove remote '${name}'?`)) return;
+    const shouldRemove = await confirmContextRemote.confirm({
+      title: "Remove Remote",
+      message: `Are you sure you want to remove remote '${name}'?`,
+      danger: true,
+    });
+    if (!shouldRemove) return;
 
     setRemoteActionLoading(`remove-${name}`);
     try {

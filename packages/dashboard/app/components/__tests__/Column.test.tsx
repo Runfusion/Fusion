@@ -52,6 +52,12 @@ vi.mock("../../hooks/usePluginUiSlots", () => ({
   usePluginUiSlots: (...args: unknown[]) => mockUsePluginUiSlots(...args),
 }));
 
+const mockConfirm = vi.fn();
+
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: mockConfirm }),
+}));
+
 function makeTask(id: string): Task {
   return {
     id,
@@ -70,6 +76,8 @@ function makeTask(id: string): Task {
 
 beforeEach(() => {
   taskCardRenderSpy.mockClear();
+  mockConfirm.mockReset();
+  mockConfirm.mockResolvedValue(true);
 });
 
 const defaultProps = {
@@ -318,7 +326,6 @@ describe("Column in-progress/in-review bulk actions", () => {
 
   it.each(["in-progress", "in-review"] as const)("Stop All pauses only non-paused tasks in %s", async (column) => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const onPauseTask = vi.fn().mockResolvedValue({} as Task);
 
     render(
@@ -343,8 +350,11 @@ describe("Column in-progress/in-review bulk actions", () => {
     expect(onPauseTask).toHaveBeenCalledWith("FN-001");
     expect(onPauseTask).toHaveBeenCalledWith("FN-003");
     expect(screen.queryByRole("menu")).toBeNull();
-
-    confirmSpy.mockRestore();
+    expect(mockConfirm).toHaveBeenCalledWith({
+      title: "Stop All Tasks",
+      message: `Stop all 2 ${column === "in-progress" ? "in progress" : "in review"} tasks?`,
+      danger: true,
+    });
   });
 
   it.each(["in-progress", "in-review"] as const)("disables Stop All when %s is empty", async (column) => {
@@ -386,7 +396,6 @@ describe("Column in-progress/in-review bulk actions", () => {
 
   it.each(["in-progress", "in-review"] as const)("Move All to Todo moves every task in %s", async (column) => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const onMoveTask = vi.fn().mockResolvedValue({} as Task);
 
     render(
@@ -411,8 +420,10 @@ describe("Column in-progress/in-review bulk actions", () => {
     expect(onMoveTask).toHaveBeenCalledWith("FN-001", "todo");
     expect(onMoveTask).toHaveBeenCalledWith("FN-002", "todo");
     expect(screen.queryByRole("menu")).toBeNull();
-
-    confirmSpy.mockRestore();
+    expect(mockConfirm).toHaveBeenCalledWith({
+      title: "Move All to Todo",
+      message: `Move all 2 ${column === "in-progress" ? "in progress" : "in review"} tasks to Todo?`,
+    });
   });
 });
 

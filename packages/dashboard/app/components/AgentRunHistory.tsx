@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { CheckCircle, XCircle, Loader2, Square, Clock } from "lucide-react";
 import type { AgentHeartbeatRun } from "../api";
 import { fetchAgentRuns, stopAgentRun } from "../api";
+import { useConfirm } from "../hooks/useConfirm";
 
 interface AgentRunHistoryProps {
   agentId: string;
@@ -19,6 +20,7 @@ const STATUS_ICONS: Record<string, { icon: typeof CheckCircle; color: string }> 
 
 export function AgentRunHistory({ agentId, projectId, onRunClick }: AgentRunHistoryProps) {
   const [runs, setRuns] = useState<AgentHeartbeatRun[]>([]);
+  const { confirm } = useConfirm();
   const [isLoading, setIsLoading] = useState(true);
 
   const loadRuns = useCallback(async () => {
@@ -38,7 +40,12 @@ export function AgentRunHistory({ agentId, projectId, onRunClick }: AgentRunHist
   }, [loadRuns]);
 
   const handleStop = useCallback(async () => {
-    if (!confirm("Stop this run?")) {
+    const shouldStop = await confirm({
+      title: "Stop Run",
+      message: "Stop this run?",
+      danger: true,
+    });
+    if (!shouldStop) {
       return;
     }
 
@@ -48,7 +55,7 @@ export function AgentRunHistory({ agentId, projectId, onRunClick }: AgentRunHist
     } catch {
       // No-op: keep history view usable even if stop fails.
     }
-  }, [agentId, projectId, loadRuns]);
+  }, [agentId, projectId, loadRuns, confirm]);
 
   if (isLoading) {
     return <div className="agent-run-loading"><Loader2 className="animate-spin" size={20} /> Loading runs...</div>;
