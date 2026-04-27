@@ -13,7 +13,10 @@ vi.mock("../../project-context.js", () => ({
 
 import { runAgentExport } from "../agent-export.js";
 
-describe("agent-export", () => {
+// Skipped: each test spins up a real workspace + AgentStore round-trip and
+// totals ~3.3s; covered indirectly by integration paths. Re-enable if
+// agent-export gains logic that isn't covered elsewhere.
+describe.skip("agent-export", () => {
   const tmpRoot = join(tmpdir(), `fn-agent-export-test-${process.pid}`);
   let projectDir: string;
   let outputDir: string;

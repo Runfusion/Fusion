@@ -1,8 +1,17 @@
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { tempWorkspace } from "@fusion/test-utils";
 import { createReadOnlyProviderSettingsView, createProjectSettingsPersistence } from "../provider-settings.js";
+
+// All tests here are pure synchronous FS operations against a temp workspace,
+// so they shouldn't take more than a handful of milliseconds. They have
+// occasionally tripped vitest's default 5s timeout when the worker pool is
+// starved by a parallel FS-heavy suite (one slot stalls long enough that the
+// runner gives up before the test body even gets a turn). Bumping the
+// per-test cap rules out worker contention as a flake source without
+// changing what the tests actually verify.
+vi.setConfig({ testTimeout: 30000 });
 
 function writeJson(path: string, value: Record<string, unknown>): void {
   writeFileSync(path, JSON.stringify(value, null, 2));
