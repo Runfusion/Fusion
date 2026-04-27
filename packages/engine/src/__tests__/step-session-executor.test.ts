@@ -757,6 +757,128 @@ describe("StepSessionExecutor", () => {
       expect(onStepStart).toHaveBeenNthCalledWith(3, 2);
     });
 
+    it("includes token usage from session stats on successful step completion", async () => {
+      const prompt = makeStepPrompt("FN-001", 1);
+      const task = makeTaskDetail({
+        prompt,
+        steps: [{ name: "Step 0", status: "pending" }],
+      });
+      const settings = makeSettings({ maxParallelSteps: 1 });
+
+      const session = {
+        ...makeMockSession(),
+        getSessionStats: vi.fn().mockReturnValue({
+          tokens: {
+            input: 25,
+            output: 11,
+            cacheRead: 4,
+            cacheWrite: 2,
+            total: 42,
+          },
+        }),
+      };
+      mockedCreateFnAgent.mockResolvedValue({ session } as any);
+
+      const executor = new StepSessionExecutor({
+        taskDetail: task,
+        worktreePath: "/project/.worktrees/main",
+        rootDir: "/project",
+        settings,
+      });
+
+      const results = await executor.executeAll();
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({
+        stepIndex: 0,
+        success: true,
+        retries: 0,
+        tokenUsage: {
+          inputTokens: 25,
+          outputTokens: 11,
+          cachedTokens: 6,
+          totalTokens: 42,
+        },
+      });
+      expect(session.getSessionStats).toHaveBeenCalled();
+    });
+
+    it("includes token usage from session stats on failed step completion", async () => {
+      const prompt = makeStepPrompt("FN-001", 1);
+      const task = makeTaskDetail({
+        prompt,
+        steps: [{ name: "Step 0", status: "pending" }],
+      });
+      const settings = makeSettings({ maxParallelSteps: 1 });
+
+      const session = {
+        ...makeMockSession(() => Promise.reject(new Error("step failed"))),
+        getSessionStats: vi.fn().mockReturnValue({
+          tokens: {
+            input: 19,
+            output: 7,
+            cacheRead: 3,
+            cacheWrite: 0,
+            total: 29,
+          },
+        }),
+      };
+      mockedCreateFnAgent.mockResolvedValue({ session } as any);
+
+      const executor = new StepSessionExecutor({
+        taskDetail: task,
+        worktreePath: "/project/.worktrees/main",
+        rootDir: "/project",
+        settings,
+      });
+
+      const executePromise = executor.executeAll();
+      await vi.runAllTimersAsync();
+      const results = await executePromise;
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({
+        stepIndex: 0,
+        success: false,
+        error: "step failed",
+        tokenUsage: {
+          inputTokens: 19,
+          outputTokens: 7,
+          cachedTokens: 3,
+          totalTokens: 29,
+        },
+      });
+      expect(session.getSessionStats).toHaveBeenCalled();
+    });
+
+    it("keeps token usage undefined when session stats are unavailable", async () => {
+      const prompt = makeStepPrompt("FN-001", 1);
+      const task = makeTaskDetail({
+        prompt,
+        steps: [{ name: "Step 0", status: "pending" }],
+      });
+      const settings = makeSettings({ maxParallelSteps: 1 });
+
+      const session = {
+        ...makeMockSession(),
+        getSessionStats: vi.fn().mockReturnValue(undefined),
+      };
+      mockedCreateFnAgent.mockResolvedValue({ session } as any);
+
+      const executor = new StepSessionExecutor({
+        taskDetail: task,
+        worktreePath: "/project/.worktrees/main",
+        rootDir: "/project",
+        settings,
+      });
+
+      const results = await executor.executeAll();
+
+      expect(results).toHaveLength(1);
+      expect(results[0].tokenUsage).toBeUndefined();
+      expect(session.getSessionStats).toHaveBeenCalled();
+    });
+
     it("step failure with retry: fails first 2 attempts, succeeds on 3rd", async () => {
       const prompt = makeStepPrompt("FN-001", 2);
       const task = makeTaskDetail({ prompt, steps: [

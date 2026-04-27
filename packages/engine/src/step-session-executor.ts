@@ -58,6 +58,13 @@ export interface StepResult {
   error?: string;
   /** Number of retry attempts made (0 = first attempt succeeded). */
   retries: number;
+  /** Optional per-step token usage extracted from session stats. */
+  tokenUsage?: {
+    inputTokens: number;
+    outputTokens: number;
+    cachedTokens: number;
+    totalTokens: number;
+  };
 }
 
 /** A group of step indices that can run in parallel. */
@@ -793,6 +800,56 @@ export class StepSessionExecutor {
     stepExecLog.log(`Cleanup complete for task ${this.options.taskDetail.id}`);
   }
 
+  private async extractTokenUsageFromSession(session: AgentSession | null | undefined): Promise<StepResult["tokenUsage"] | undefined> {
+    if (!session) return undefined;
+
+    try {
+      const statsResult = (session as AgentSession & {
+        getSessionStats?: () =>
+          | {
+              tokens?: {
+                input?: number;
+                output?: number;
+                cacheRead?: number;
+                cacheWrite?: number;
+                total?: number;
+              };
+            }
+          | Promise<{
+              tokens?: {
+                input?: number;
+                output?: number;
+                cacheRead?: number;
+                cacheWrite?: number;
+                total?: number;
+              };
+            }>;
+      }).getSessionStats?.();
+
+      const stats = await Promise.resolve(statsResult);
+      const tokens = stats?.tokens;
+      if (!tokens) return undefined;
+
+      const inputTokens = tokens.input ?? 0;
+      const outputTokens = tokens.output ?? 0;
+      const cacheReadTokens = tokens.cacheRead ?? 0;
+      const cacheWriteTokens = tokens.cacheWrite ?? 0;
+      const cachedTokens = cacheReadTokens + cacheWriteTokens;
+      const totalTokens = tokens.total ?? (inputTokens + outputTokens + cachedTokens);
+
+      return {
+        inputTokens,
+        outputTokens,
+        cachedTokens,
+        totalTokens,
+      };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      stepExecLog.warn(`Failed to read session stats for step token usage: ${message}`);
+      return undefined;
+    }
+  }
+
   // ── Internal: Step Execution ────────────────────────────────────────
 
   /**
@@ -973,7 +1030,12 @@ export class StepSessionExecutor {
           // the error is stored on session.state.error instead of being thrown.
           checkSessionError(session);
 
-          const result: StepResult = { stepIndex, success: true, retries };
+          const result: StepResult = {
+            stepIndex,
+            success: true,
+            retries,
+            tokenUsage: await this.extractTokenUsageFromSession(session),
+          };
           this.options.onStepComplete?.(stepIndex, result);
           return result;
         } catch (err: unknown) {
@@ -1008,7 +1070,12 @@ export class StepSessionExecutor {
                 `[step-exec] Reduced-prompt recovery succeeded for step ${stepIndex}`,
                 "text",
               );
-              const result: StepResult = { stepIndex, success: true, retries };
+              const result: StepResult = {
+                stepIndex,
+                success: true,
+                retries,
+                tokenUsage: await this.extractTokenUsageFromSession(session),
+              };
               this.options.onStepComplete?.(stepIndex, result);
               return result;
             } catch (reducedErr: unknown) {
@@ -1034,6 +1101,7 @@ export class StepSessionExecutor {
               success: false,
               error: errorMessage,
               retries,
+              tokenUsage: await this.extractTokenUsageFromSession(session),
             };
             this.options.onStepComplete?.(stepIndex, result);
             return result;

@@ -5,7 +5,7 @@ const execAsync = promisify(exec);
 import { isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import type { TaskStore, Task, TaskDetail, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext } from "@fusion/core";
+import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext } from "@fusion/core";
 import { buildExecutionMemoryInstructions, getTaskMergeBlocker, resolveAgentPrompt, type RunCommandResult } from "@fusion/core";
 import { findWorktreeUser } from "./merger.js";
 import { generateWorktreeName, slugify } from "./worktree-names.js";
@@ -489,8 +489,8 @@ export class TaskExecutor {
   private loopRecoveryState = new Map<string, { attempts: number; pending: boolean }>();
   /** Spawned child agent IDs per parent task ID. Used for lifecycle tracking. */
   private spawnedAgents = new Map<string, Set<string>>();
-  /** Per-task baseline of agent cumulative token counters used for delta persistence. */
-  private tokenUsageBaselines = new Map<string, { agentId: string; inputTokens: number; outputTokens: number }>();
+  /** Per-task baseline of session stats used for delta persistence across repeated updates. */
+  private tokenUsageBaselines = new Map<string, { inputTokens: number; outputTokens: number; cachedTokens: number; totalTokens: number }>();
 
   private async finalizeAlreadyReviewedTask(taskId: string): Promise<"merged" | "blocked" | "missing"> {
     const latestTask = await this.store.getTask(taskId);
@@ -877,78 +877,107 @@ export class TaskExecutor {
     return getTaskCompletionBlockerForStore(this.store, task);
   }
 
-  private async initializeTokenUsageBaseline(taskId: string, task?: Task): Promise<void> {
-    if (!this.options.agentStore) return;
+  private accumulateTokenUsage(
+    existing: TaskTokenUsage | undefined,
+    delta: Pick<TaskTokenUsage, "inputTokens" | "outputTokens" | "cachedTokens" | "totalTokens"> | undefined,
+    timestamp = new Date().toISOString(),
+  ): TaskTokenUsage | undefined {
+    if (!delta) return existing;
 
-    const currentTask = task ?? await this.store.getTask(taskId);
-    const assignedAgentId = currentTask.assignedAgentId?.trim();
-    if (!assignedAgentId) return;
+    const merged: TaskTokenUsage = {
+      inputTokens: (existing?.inputTokens ?? 0) + delta.inputTokens,
+      outputTokens: (existing?.outputTokens ?? 0) + delta.outputTokens,
+      cachedTokens: (existing?.cachedTokens ?? 0) + delta.cachedTokens,
+      totalTokens: (existing?.totalTokens ?? 0) + delta.totalTokens,
+      firstUsedAt: existing?.firstUsedAt ?? timestamp,
+      lastUsedAt: timestamp,
+    };
 
-    const existing = this.tokenUsageBaselines.get(taskId);
-    if (existing?.agentId === assignedAgentId) return;
-
-    const agent = await this.options.agentStore.getAgent(assignedAgentId);
-    if (!agent) return;
-
-    this.tokenUsageBaselines.set(taskId, {
-      agentId: assignedAgentId,
-      inputTokens: agent.totalInputTokens ?? 0,
-      outputTokens: agent.totalOutputTokens ?? 0,
-    });
+    return merged;
   }
 
-  private async persistTokenUsage(taskId: string): Promise<void> {
-    if (!this.options.agentStore) return;
+  private async extractSessionTokenUsage(
+    session: AgentSession | undefined,
+  ): Promise<Pick<TaskTokenUsage, "inputTokens" | "outputTokens" | "cachedTokens" | "totalTokens"> | undefined> {
+    if (!session) return undefined;
 
-    const task = await this.store.getTask(taskId);
-    const assignedAgentId = task.assignedAgentId?.trim();
-    if (!assignedAgentId) return;
+    try {
+      const statsResult = (session as AgentSession & {
+        getSessionStats?: () =>
+          | {
+              tokens?: {
+                input?: number;
+                output?: number;
+                cacheRead?: number;
+                cacheWrite?: number;
+                total?: number;
+              };
+            }
+          | Promise<{
+              tokens?: {
+                input?: number;
+                output?: number;
+                cacheRead?: number;
+                cacheWrite?: number;
+                total?: number;
+              };
+            }>;
+      }).getSessionStats?.();
+      const stats = await Promise.resolve(statsResult);
+      const tokens = stats?.tokens;
+      if (!tokens) return undefined;
 
-    const agent = await this.options.agentStore.getAgent(assignedAgentId);
-    if (!agent) return;
+      const inputTokens = tokens.input ?? 0;
+      const outputTokens = tokens.output ?? 0;
+      const cacheReadTokens = tokens.cacheRead ?? 0;
+      const cacheWriteTokens = tokens.cacheWrite ?? 0;
+      const cachedTokens = cacheReadTokens + cacheWriteTokens;
+      const totalTokens = tokens.total ?? (inputTokens + outputTokens + cachedTokens);
 
-    const currentInputTokens = agent.totalInputTokens ?? 0;
-    const currentOutputTokens = agent.totalOutputTokens ?? 0;
-    const baseline = this.tokenUsageBaselines.get(taskId);
-
-    if (!baseline || baseline.agentId !== assignedAgentId) {
-      this.tokenUsageBaselines.set(taskId, {
-        agentId: assignedAgentId,
-        inputTokens: currentInputTokens,
-        outputTokens: currentOutputTokens,
-      });
-      return;
-    }
-
-    const inputDelta = Math.max(0, currentInputTokens - baseline.inputTokens);
-    const outputDelta = Math.max(0, currentOutputTokens - baseline.outputTokens);
-
-    this.tokenUsageBaselines.set(taskId, {
-      agentId: assignedAgentId,
-      inputTokens: currentInputTokens,
-      outputTokens: currentOutputTokens,
-    });
-
-    if (inputDelta === 0 && outputDelta === 0 && !task.tokenUsage) {
-      return;
-    }
-
-    const now = new Date().toISOString();
-    const mergedInputTokens = (task.tokenUsage?.inputTokens ?? 0) + inputDelta;
-    const mergedOutputTokens = (task.tokenUsage?.outputTokens ?? 0) + outputDelta;
-    const cachedTokens = task.tokenUsage?.cachedTokens ?? 0;
-    const totalTokens = mergedInputTokens + mergedOutputTokens + cachedTokens;
-
-    await this.store.updateTask(taskId, {
-      tokenUsage: {
-        inputTokens: mergedInputTokens,
-        outputTokens: mergedOutputTokens,
+      return {
+        inputTokens,
+        outputTokens,
         cachedTokens,
         totalTokens,
-        firstUsedAt: task.tokenUsage?.firstUsedAt ?? now,
-        lastUsedAt: now,
-      },
-    });
+      };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      executorLog.warn(`Failed to read session stats for token usage: ${message}`);
+      return undefined;
+    }
+  }
+
+  private async persistTokenUsage(taskId: string, session?: AgentSession): Promise<void> {
+    const activeSession = session ?? this.activeSessions.get(taskId)?.session;
+    const currentUsage = await this.extractSessionTokenUsage(activeSession);
+    if (!currentUsage) return;
+
+    const baseline = this.tokenUsageBaselines.get(taskId);
+    this.tokenUsageBaselines.set(taskId, currentUsage);
+
+    const delta = baseline
+      ? {
+          inputTokens: Math.max(0, currentUsage.inputTokens - baseline.inputTokens),
+          outputTokens: Math.max(0, currentUsage.outputTokens - baseline.outputTokens),
+          cachedTokens: Math.max(0, currentUsage.cachedTokens - baseline.cachedTokens),
+          totalTokens: Math.max(0, currentUsage.totalTokens - baseline.totalTokens),
+        }
+      : currentUsage;
+
+    if (
+      delta.inputTokens === 0
+      && delta.outputTokens === 0
+      && delta.cachedTokens === 0
+      && delta.totalTokens === 0
+    ) {
+      return;
+    }
+
+    const task = await this.store.getTask(taskId);
+    const merged = this.accumulateTokenUsage(task.tokenUsage, delta);
+    if (!merged) return;
+
+    await this.store.updateTask(taskId, { tokenUsage: merged });
   }
 
   /**
@@ -1543,7 +1572,6 @@ export class TaskExecutor {
 
       const detail = await this.store.getTask(task.id);
       executorLog.log(`${task.id}: fetched task detail (${detail.steps.length} steps, prompt length=${detail.prompt?.length ?? 0})`);
-      await this.initializeTokenUsageBaseline(task.id, detail);
 
       // Initialize steps from PROMPT.md if empty
       if (detail.steps.length === 0) {
@@ -1574,6 +1602,9 @@ export class TaskExecutor {
           ? await this.options.agentStore.getAgent(detail.assignedAgentId).catch(() => null)
           : null;
         const stepSessionRuntimeHint = extractRuntimeHint(stepSessionAgent?.runtimeConfig);
+
+        let accumulatedStepTokenUsage = detail.tokenUsage;
+        const tokenUsageRecordedSteps = new Set<number>();
 
         const stepExecutor = new StepSessionExecutor({
           store: this.store,
@@ -1609,7 +1640,18 @@ export class TaskExecutor {
             } catch (err) {
               executorLog.warn(`${task.id}: failed to update step ${stepIndex} status: ${err}`);
             }
-            this.persistTokenUsage(task.id).catch((err) => {
+
+            if (!result.tokenUsage) {
+              return;
+            }
+
+            accumulatedStepTokenUsage = this.accumulateTokenUsage(accumulatedStepTokenUsage, result.tokenUsage);
+            tokenUsageRecordedSteps.add(stepIndex);
+            if (!accumulatedStepTokenUsage) {
+              return;
+            }
+
+            this.store.updateTask(task.id, { tokenUsage: accumulatedStepTokenUsage }).catch((err) => {
               executorLog.warn(`${task.id}: failed to persist token usage on step ${stepIndex} complete: ${err}`);
             });
           },
@@ -1635,6 +1677,17 @@ export class TaskExecutor {
             stuckRequeue = this.stuckAborted.get(task.id) ?? true;
             this.stuckAborted.delete(task.id);
             return;
+          }
+
+          for (const result of results) {
+            if (!result.tokenUsage || tokenUsageRecordedSteps.has(result.stepIndex)) {
+              continue;
+            }
+            accumulatedStepTokenUsage = this.accumulateTokenUsage(accumulatedStepTokenUsage, result.tokenUsage);
+          }
+
+          if (accumulatedStepTokenUsage) {
+            await this.store.updateTask(task.id, { tokenUsage: accumulatedStepTokenUsage });
           }
 
           const allSuccess = results.every(r => r.success);
@@ -1674,7 +1727,6 @@ export class TaskExecutor {
             // Reset retry counters on success
             await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null });
 
-            await this.persistTokenUsage(task.id);
             await this.store.moveTask(task.id, "in-review");
             // Audit trail: record task move (FN-1404)
             await audit.database({ type: "task:move", target: task.id, metadata: { to: "in-review" } });
@@ -1684,7 +1736,6 @@ export class TaskExecutor {
             const failedSteps = results.filter(r => !r.success);
             const errorSummary = failedSteps.map(r => `Step ${r.stepIndex}: ${r.error || "unknown error"}`).join("; ");
             await this.store.updateTask(task.id, { status: "failed", error: errorSummary });
-            await this.persistTokenUsage(task.id);
             await this.store.moveTask(task.id, "in-review");
             executorLog.log(`✗ ${task.id} step-session failed → in-review: ${errorSummary}`);
             this.options.onError?.(task, new Error(errorSummary));
@@ -1766,7 +1817,9 @@ export class TaskExecutor {
               recoveryRetryCount: null,
               nextRecoveryAt: null,
             });
-            await this.persistTokenUsage(task.id);
+            if (accumulatedStepTokenUsage) {
+              await this.store.updateTask(task.id, { tokenUsage: accumulatedStepTokenUsage });
+            }
             await this.store.moveTask(task.id, "in-review");
             executorLog.log(`✗ ${task.id} transient retries exhausted → in-review`);
             this.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
@@ -1774,7 +1827,9 @@ export class TaskExecutor {
             executorLog.error(`✗ ${task.id} step-session execution failed:`, errorDetail);
             await this.store.logEntry(task.id, `Step-session execution failed: ${errorMessage}`, errorStack ?? errorDetail, this.currentRunContext);
             await this.store.updateTask(task.id, { status: "failed", error: errorMessage });
-            await this.persistTokenUsage(task.id);
+            if (accumulatedStepTokenUsage) {
+              await this.store.updateTask(task.id, { tokenUsage: accumulatedStepTokenUsage });
+            }
             await this.store.moveTask(task.id, "in-review");
             executorLog.log(`✗ ${task.id} step-session execution failed → in-review`);
             this.options.onError?.(task, err instanceof Error ? err : new Error(errorMessage));
@@ -2183,6 +2238,7 @@ export class TaskExecutor {
 
               // Dispose old session and create a fresh one
               this.activeSessions.delete(task.id);
+              this.tokenUsageBaselines.delete(task.id);
               session.dispose();
 
               const { session: retrySession, sessionFile: retrySessionFile } = await createResolvedAgentSession({
@@ -2312,6 +2368,10 @@ export class TaskExecutor {
           this.activeSessions.delete(task.id);
           stuckDetector?.untrackTask(task.id);
           await agentLogger.flush();
+          await this.persistTokenUsage(task.id, session).catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            executorLog.warn(`${task.id}: failed to persist final single-session token usage before dispose: ${msg}`);
+          });
           session.dispose();
           // Terminate all spawned child agents when parent session ends
           await this.terminateAllChildren(task.id);
