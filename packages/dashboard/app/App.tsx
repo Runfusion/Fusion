@@ -393,6 +393,7 @@ function AppInner() {
   // Auth and onboarding bootstrap logic extracted to a dedicated hook.
   useAuthOnboarding({
     projectId: currentProject?.id,
+    setupWizardOpen: modalManager.setupWizardOpen,
     openModelOnboarding: modalManager.openModelOnboarding,
     openSettings: modalManager.openSettings,
   });

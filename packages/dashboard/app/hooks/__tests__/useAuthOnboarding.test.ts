@@ -49,6 +49,7 @@ describe("useAuthOnboarding", () => {
     renderHook(() =>
       useAuthOnboarding({
         projectId: "proj_123",
+        setupWizardOpen: false,
         openModelOnboarding,
         openSettings,
       }),
@@ -76,6 +77,7 @@ describe("useAuthOnboarding", () => {
     renderHook(() =>
       useAuthOnboarding({
         projectId: "proj_123",
+        setupWizardOpen: false,
         openModelOnboarding,
         openSettings,
       }),
@@ -101,6 +103,7 @@ describe("useAuthOnboarding", () => {
     renderHook(() =>
       useAuthOnboarding({
         projectId: "proj_123",
+        setupWizardOpen: false,
         openModelOnboarding,
         openSettings,
       }),
@@ -127,6 +130,7 @@ describe("useAuthOnboarding", () => {
     renderHook(() =>
       useAuthOnboarding({
         projectId: "proj_123",
+        setupWizardOpen: false,
         openModelOnboarding,
         openSettings,
       }),
@@ -152,6 +156,7 @@ describe("useAuthOnboarding", () => {
     renderHook(() =>
       useAuthOnboarding({
         projectId: "proj_123",
+        setupWizardOpen: false,
         openModelOnboarding,
         openSettings,
       }),
@@ -173,6 +178,7 @@ describe("useAuthOnboarding", () => {
     renderHook(() =>
       useAuthOnboarding({
         projectId: "proj_123",
+        setupWizardOpen: false,
         openModelOnboarding,
         openSettings,
       }),
@@ -185,6 +191,66 @@ describe("useAuthOnboarding", () => {
     expect(openModelOnboarding).not.toHaveBeenCalled();
     expect(openSettings).not.toHaveBeenCalled();
     expect(mockFetchGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it("does not auto-trigger model onboarding when setupWizardOpen is true", async () => {
+    mockFetchAuthStatus.mockResolvedValue({
+      providers: [{ id: "openai", name: "OpenAI", authenticated: false }],
+    });
+    mockFetchGlobalSettings.mockResolvedValue({
+      modelOnboardingComplete: false,
+      defaultProvider: undefined,
+      defaultModelId: undefined,
+    } as never);
+
+    renderHook(() =>
+      useAuthOnboarding({
+        projectId: "proj_123",
+        setupWizardOpen: true,
+        openModelOnboarding,
+        openSettings,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(openModelOnboarding).not.toHaveBeenCalled();
+      expect(mockFetchAuthStatus).not.toHaveBeenCalled();
+    });
+  });
+
+  it("auto-triggers model onboarding when setupWizardOpen transitions from true to false", async () => {
+    mockFetchAuthStatus.mockResolvedValue({
+      providers: [{ id: "openai", name: "OpenAI", authenticated: false }],
+    });
+    mockFetchGlobalSettings.mockResolvedValue({
+      modelOnboardingComplete: false,
+      defaultProvider: undefined,
+      defaultModelId: undefined,
+    } as never);
+
+    const { rerender } = renderHook(
+      ({ setupWizardOpen }: { setupWizardOpen: boolean }) =>
+        useAuthOnboarding({
+          projectId: "proj_123",
+          setupWizardOpen,
+          openModelOnboarding,
+          openSettings,
+        }),
+      {
+        initialProps: { setupWizardOpen: true },
+      },
+    );
+
+    await waitFor(() => {
+      expect(openModelOnboarding).not.toHaveBeenCalled();
+      expect(mockFetchAuthStatus).not.toHaveBeenCalled();
+    });
+
+    rerender({ setupWizardOpen: false });
+
+    await waitFor(() => {
+      expect(openModelOnboarding).toHaveBeenCalledTimes(1);
+    });
   });
 
   // --- One-shot guard ---
@@ -204,6 +270,7 @@ describe("useAuthOnboarding", () => {
       ({ projectId }: { projectId: string }) =>
         useAuthOnboarding({
           projectId,
+          setupWizardOpen: false,
           openModelOnboarding,
           openSettings,
         }),
@@ -238,6 +305,7 @@ describe("useAuthOnboarding", () => {
       ({ open }: { open: () => void }) =>
         useAuthOnboarding({
           projectId: "proj_123",
+          setupWizardOpen: false,
           openModelOnboarding: open,
           openSettings,
         }),
@@ -273,6 +341,7 @@ describe("useAuthOnboarding", () => {
       ({ open }: { open: (section?: string) => void }) =>
         useAuthOnboarding({
           projectId: "proj_123",
+          setupWizardOpen: false,
           openModelOnboarding,
           openSettings: open,
         }),
@@ -311,6 +380,7 @@ describe("useAuthOnboarding", () => {
     renderHook(() =>
       useAuthOnboarding({
         projectId: "proj_123",
+        setupWizardOpen: false,
         openModelOnboarding,
         openSettings,
       }),
@@ -341,6 +411,7 @@ describe("useAuthOnboarding", () => {
     renderHook(() =>
       useAuthOnboarding({
         projectId: "proj_123",
+        setupWizardOpen: false,
         openModelOnboarding,
         openSettings,
       }),

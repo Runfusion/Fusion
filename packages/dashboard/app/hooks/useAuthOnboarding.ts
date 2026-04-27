@@ -6,6 +6,7 @@ import type { SectionId } from "../components/SettingsModal";
 
 export interface UseAuthOnboardingOptions {
   projectId?: string;
+  setupWizardOpen: boolean;
   openModelOnboarding: () => void;
   openSettings: (section?: SectionId) => void;
 }
@@ -24,6 +25,7 @@ export interface UseAuthOnboardingOptions {
  */
 export function useAuthOnboarding({
   projectId,
+  setupWizardOpen,
   openModelOnboarding,
   openSettings,
 }: UseAuthOnboardingOptions): void {
@@ -32,6 +34,9 @@ export function useAuthOnboarding({
   const hasTriggeredRef = useRef(false);
 
   useEffect(() => {
+    // Defer auto-triggering while setup wizard is open.
+    // Important: this must run before consuming the one-shot flag.
+    if (setupWizardOpen) return;
     // Skip if we've already triggered (one-shot guard)
     if (hasTriggeredRef.current) return;
     // Mark as triggered immediately to prevent any race condition on re-runs
@@ -82,5 +87,5 @@ export function useAuthOnboarding({
         // Fail silently - non-blocking behavior preserves dashboard usability.
         // Onboarding can be manually triggered later via Settings if needed.
       });
-  }, [projectId, openModelOnboarding, openSettings]);
+  }, [projectId, setupWizardOpen, openModelOnboarding, openSettings]);
 }
