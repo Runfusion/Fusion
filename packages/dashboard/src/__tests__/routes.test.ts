@@ -3127,6 +3127,26 @@ describe("PATCH /tasks/:id", () => {
     expect(store.updateTask).not.toHaveBeenCalled();
   });
 
+  it("returns 400 for empty nodeId string", async () => {
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({ nodeId: "" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("nodeId must be a non-empty string");
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for non-string nodeId", async () => {
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({ nodeId: 123 }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("nodeId must be a string or null");
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
   it("forwards sourceIssue object updates to store.updateTask", async () => {
     const sourceIssue = {
       provider: "github",

@@ -165,7 +165,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-type TabId = "definition" | "logs" | "changes" | "comments" | "model" | "routing" | "workflow" | "documents" | "stats" | `plugin-${string}`;
+type TabId = "definition" | "logs" | "changes" | "comments" | "model" | "workflow" | "documents" | "stats" | "routing" | `plugin-${string}`;
 
 interface TaskDetailModalProps {
   task: Task | TaskDetail;
@@ -1483,12 +1483,6 @@ export function TaskDetailModal({
               Model
             </button>
             <button
-              className={`detail-tab${activeTab === "routing" ? " detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("routing")}
-            >
-              Routing
-            </button>
-            <button
               className={`detail-tab${activeTab === "workflow" ? " detail-tab-active" : ""}`}
               onClick={() => setActiveTab("workflow")}
             >
@@ -1499,6 +1493,12 @@ export function TaskDetailModal({
               onClick={() => setActiveTab("stats")}
             >
               Stats
+            </button>
+            <button
+              className={`detail-tab${activeTab === "routing" ? " detail-tab-active" : ""}`}
+              onClick={() => setActiveTab("routing")}
+            >
+              Routing
             </button>
             {/* Plugin tabs */}
             {pluginTabSlots.map((entry, index) => {
@@ -1531,8 +1531,6 @@ export function TaskDetailModal({
             <div className="detail-section">
               <ModelSelectorTab task={task} addToast={addToast} onTaskUpdated={onTaskUpdated} settings={settings} />
             </div>
-          ) : activeTab === "routing" ? (
-            <RoutingTab task={task} settings={settings} projectId={projectId} />
           ) : activeTab === "logs" ? (
             <div className={`detail-section${logSubview === "agent-log" ? " detail-section--agent-log" : ""}`}>
               <div className="log-subview-toggle">
@@ -1613,6 +1611,15 @@ export function TaskDetailModal({
                 tokenUsage={workingTask.tokenUsage}
                 loading={detailLoading}
                 task={workingTask}
+              />
+            </div>
+          ) : activeTab === "routing" ? (
+            <div className="detail-section">
+              <RoutingTab
+                task={task}
+                settings={settings}
+                addToast={addToast}
+                onTaskUpdated={onTaskUpdated}
               />
             </div>
           ) : (

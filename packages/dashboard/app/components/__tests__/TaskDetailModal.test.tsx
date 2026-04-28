@@ -1660,8 +1660,8 @@ describe("TaskDetailModal", () => {
 
       // For an in-progress task (no workflow steps, no merge commit), the
       // top-level tabs are: Definition, Logs, Changes, Comments, Documents,
-      // Model, Routing, Workflow, Stats.
-      const tabTexts = ["Definition", "Logs", "Changes", "Comments", "Documents", "Model", "Routing", "Workflow", "Stats"];
+      // Model, Workflow, Stats, Routing.
+      const tabTexts = ["Definition", "Logs", "Changes", "Comments", "Documents", "Model", "Workflow", "Stats", "Routing"];
       const tabs = screen.getAllByRole("button").filter((b) =>
         tabTexts.includes(b.textContent || "")
       );
@@ -1672,9 +1672,9 @@ describe("TaskDetailModal", () => {
       expect(tabs[3].textContent).toBe("Comments");
       expect(tabs[4].textContent).toBe("Documents");
       expect(tabs[5].textContent).toBe("Model");
-      expect(tabs[6].textContent).toBe("Routing");
-      expect(tabs[7].textContent).toBe("Workflow");
-      expect(tabs[8].textContent).toBe("Stats");
+      expect(tabs[6].textContent).toBe("Workflow");
+      expect(tabs[7].textContent).toBe("Stats");
+      expect(tabs[8].textContent).toBe("Routing");
 
       // Activity and Agent Log are NOT top-level tabs (they are subviews inside Logs)
       expect(container.querySelectorAll(".detail-tab").length).toBe(9);
@@ -3168,7 +3168,7 @@ describe("TaskDetailModal", () => {
       );
 
       // In-progress tasks show exactly 9 tabs:
-      // Definition, Logs, Changes, Comments, Documents, Model, Routing, Workflow, Stats
+      // Definition, Logs, Changes, Comments, Documents, Model, Workflow, Stats, Routing
       const tabs = container.querySelectorAll(".detail-tab");
       expect(tabs.length).toBe(9);
       expect(tabs[0].textContent).toBe("Definition");
@@ -3177,9 +3177,9 @@ describe("TaskDetailModal", () => {
       expect(tabs[3].textContent).toBe("Comments");
       expect(tabs[4].textContent).toBe("Documents");
       expect(tabs[5].textContent).toBe("Model");
-      expect(tabs[6].textContent).toBe("Routing");
-      expect(tabs[7].textContent).toBe("Workflow");
-      expect(tabs[8].textContent).toBe("Stats");
+      expect(tabs[6].textContent).toBe("Workflow");
+      expect(tabs[7].textContent).toBe("Stats");
+      expect(tabs[8].textContent).toBe("Routing");
       // Commits tab should NOT be present for non-done tasks
       expect(screen.queryByText("Commits")).toBeNull();
     });
@@ -3197,7 +3197,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // In-progress task with workflow steps: 9 tabs (Routing between Model and Workflow, Stats last)
+      // In-progress task with workflow steps: 9 tabs (Workflow after Model, Stats then Routing)
       const tabs = container.querySelectorAll(".detail-tab");
       expect(tabs.length).toBe(9);
       expect(tabs[0].textContent).toBe("Definition");
@@ -3206,9 +3206,9 @@ describe("TaskDetailModal", () => {
       expect(tabs[3].textContent).toBe("Comments");
       expect(tabs[4].textContent).toBe("Documents");
       expect(tabs[5].textContent).toBe("Model");
-      expect(tabs[6].textContent).toBe("Routing");
-      expect(tabs[7].textContent).toBe("Workflow");
-      expect(tabs[8].textContent).toBe("Stats");
+      expect(tabs[6].textContent).toBe("Workflow");
+      expect(tabs[7].textContent).toBe("Stats");
+      expect(tabs[8].textContent).toBe("Routing");
     });
 
     it("does NOT show Commits tab for done task with mergeDetails.commitSha (changes merged into Changes tab)", () => {
@@ -3227,7 +3227,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Done task with commit SHA: Definition, Logs, Changes, Comments, Documents, Model, Routing, Workflow, Stats (9 tabs, no Commits)
+      // Done task with commit SHA: Definition, Logs, Changes, Comments, Documents, Model, Workflow, Stats, Routing (9 tabs, no Commits)
       const tabs = container.querySelectorAll(".detail-tab");
       expect(tabs.length).toBe(9);
       expect(tabs[0].textContent).toBe("Definition");
@@ -3236,9 +3236,9 @@ describe("TaskDetailModal", () => {
       expect(tabs[3].textContent).toBe("Comments");
       expect(tabs[4].textContent).toBe("Documents");
       expect(tabs[5].textContent).toBe("Model");
-      expect(tabs[6].textContent).toBe("Routing");
-      expect(tabs[7].textContent).toBe("Workflow");
-      expect(tabs[8].textContent).toBe("Stats");
+      expect(tabs[6].textContent).toBe("Workflow");
+      expect(tabs[7].textContent).toBe("Stats");
+      expect(tabs[8].textContent).toBe("Routing");
       // Commits tab should NOT be present
       expect(screen.queryByText("Commits")).toBeNull();
     });
@@ -3269,9 +3269,9 @@ describe("TaskDetailModal", () => {
       expect(tabs[3].textContent).toBe("Comments");
       expect(tabs[4].textContent).toBe("Documents");
       expect(tabs[5].textContent).toBe("Model");
-      expect(tabs[6].textContent).toBe("Routing");
-      expect(tabs[7].textContent).toBe("Workflow");
-      expect(tabs[8].textContent).toBe("Stats");
+      expect(tabs[6].textContent).toBe("Workflow");
+      expect(tabs[7].textContent).toBe("Stats");
+      expect(tabs[8].textContent).toBe("Routing");
       // Commits tab should NOT be present
       expect(screen.queryByText("Commits")).toBeNull();
     });
@@ -3290,9 +3290,9 @@ describe("TaskDetailModal", () => {
       );
 
       const triageTabs = triageContainer.querySelectorAll(".detail-tab");
-      expect(triageTabs.length).toBe(8); // Definition, Logs, Comments, Documents, Model, Routing, Workflow, Stats
+      expect(triageTabs.length).toBe(8); // Definition, Logs, Comments, Documents, Model, Workflow, Stats, Routing
       expect(Array.from(triageTabs).map(t => t.textContent)).toEqual([
-        "Definition", "Logs", "Comments", "Documents", "Model", "Routing", "Workflow", "Stats",
+        "Definition", "Logs", "Comments", "Documents", "Model", "Workflow", "Stats", "Routing",
       ]);
 
       const { container: todoContainer } = render(
@@ -3308,9 +3308,9 @@ describe("TaskDetailModal", () => {
       );
 
       const todoTabs = todoContainer.querySelectorAll(".detail-tab");
-      expect(todoTabs.length).toBe(8); // Definition, Logs, Comments, Documents, Model, Routing, Workflow, Stats
+      expect(todoTabs.length).toBe(8); // Definition, Logs, Comments, Documents, Model, Workflow, Stats, Routing
       expect(Array.from(todoTabs).map(t => t.textContent)).toEqual([
-        "Definition", "Logs", "Comments", "Documents", "Model", "Routing", "Workflow", "Stats",
+        "Definition", "Logs", "Comments", "Documents", "Model", "Workflow", "Stats", "Routing",
       ]);
     });
 

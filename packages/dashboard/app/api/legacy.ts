@@ -298,6 +298,7 @@ export function updateTask(
     executionMode?: "standard" | "fast" | null;
     priority?: TaskPriority | null;
     sourceIssue?: TaskSourceIssue | null;
+    nodeId?: string | null;
   },
   projectId?: string,
 ): Promise<Task> {

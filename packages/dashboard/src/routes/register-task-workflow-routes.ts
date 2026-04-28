@@ -1324,6 +1324,23 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         }
       }
 
+      let validatedNodeId: string | null | undefined;
+      if (hasBodyField("nodeId")) {
+        if (nodeId === undefined) {
+          validatedNodeId = undefined;
+        } else if (nodeId === null) {
+          validatedNodeId = null;
+        } else if (typeof nodeId === "string") {
+          const trimmed = nodeId.trim();
+          if (trimmed.length === 0) {
+            throw new Error("nodeId must be a non-empty string");
+          }
+          validatedNodeId = trimmed;
+        } else {
+          throw new Error("nodeId must be a string or null");
+        }
+      }
+
       const updates: Parameters<typeof scopedStore.updateTask>[1] = {};
       if (title !== undefined) updates.title = title;
       if (description !== undefined) updates.description = description;
@@ -1341,14 +1358,14 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (hasBodyField("reviewLevel")) updates.reviewLevel = reviewLevel;
       if (hasBodyField("executionMode")) updates.executionMode = executionMode === null ? null : executionMode;
       if (hasBodyField("sourceIssue")) updates.sourceIssue = validatedSourceIssue === undefined ? undefined : validatedSourceIssue;
-      if (hasBodyField("nodeId")) updates.nodeId = nodeId === null ? null : nodeId;
+      if (hasBodyField("nodeId")) updates.nodeId = validatedNodeId;
 
-      if (hasBodyField("nodeId")) {
+      if (hasBodyField("nodeId") && validatedNodeId !== undefined) {
         const currentTask = await scopedStore.getTask(req.params.id);
         if (!currentTask) {
           throw notFound("Task not found");
         }
-        const validation = validateNodeOverrideChange(currentTask, nodeId ?? null);
+        const validation = validateNodeOverrideChange(currentTask, validatedNodeId ?? null);
         if (!validation.allowed) {
           throw new ApiError(409, validation.message ?? "Node override change blocked");
         }
@@ -1360,7 +1377,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = (err instanceof Error ? err.message : String(err)).includes("must be a string") || (err instanceof Error ? err.message : String(err)).includes("must be an array of strings") || (err instanceof Error ? err.message : String(err)).includes("thinkingLevel must be one of") || (err instanceof Error ? err.message : String(err)).includes("reviewLevel must be an integer") || (err instanceof Error ? err.message : String(err)).includes("executionMode must be one of") || (err instanceof Error ? err.message : String(err)).includes("sourceIssue") ? 400 : 500;
+      const status = (err instanceof Error ? err.message : String(err)).includes("must be a string") || (err instanceof Error ? err.message : String(err)).includes("must be a non-empty string") || (err instanceof Error ? err.message : String(err)).includes("must be a string or null") || (err instanceof Error ? err.message : String(err)).includes("must be an array of strings") || (err instanceof Error ? err.message : String(err)).includes("thinkingLevel must be one of") || (err instanceof Error ? err.message : String(err)).includes("reviewLevel must be an integer") || (err instanceof Error ? err.message : String(err)).includes("executionMode must be one of") || (err instanceof Error ? err.message : String(err)).includes("sourceIssue") ? 400 : 500;
       throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
