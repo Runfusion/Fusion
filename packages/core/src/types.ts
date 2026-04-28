@@ -754,6 +754,12 @@ export interface Task {
   /** Durable source provenance for the originating external issue. */
   sourceIssue?: TaskSourceIssue;
   log: TaskLogEntry[];
+  /** Pre-aggregated sum of `[timing] … in <N>ms` log durations, in milliseconds.
+   *  Computed server-side so slim board listings can render the card timer
+   *  without shipping the full agent log. The TaskDetailModal still derives
+   *  this on the fly from `log`, so this field is only populated by the slim
+   *  list path and may be omitted on the full-detail object. */
+  timedExecutionMs?: number;
   /** Durable aggregate token usage totals for the task. Undefined when no usage has been recorded yet. */
   tokenUsage?: TaskTokenUsage;
   size?: "S" | "M" | "L";

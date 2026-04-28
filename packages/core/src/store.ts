@@ -635,6 +635,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       attachments: slim ? undefined : entry.attachments,
       comments: entry.comments,
       log: slim ? [] : entry.log ?? [],
+      timedExecutionMs: slim ? this.computeTimedExecutionMs(entry.log) : undefined,
       createdAt: entry.createdAt,
       updatedAt: entry.updatedAt,
       columnMovedAt: entry.columnMovedAt,
@@ -835,7 +836,36 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "breakIntoSubtasks", "enabledWorkflowSteps", "modifiedFiles",
       "missionId", "sliceId", "assignedAgentId", "assigneeUserId",
       "checkedOutBy", "checkedOutAt",
+      // `log` is fetched in slim mode so the server can aggregate
+      // `timedExecutionMs` from `[timing] … in <N>ms` entries before
+      // returning. The log itself is stripped from the response —
+      // see `listTasks()` slim post-processing.
+      "log",
     ].map((column) => `${prefix}${column}`).join(", ");
+  }
+
+  /**
+   * Sum the durations of all `[timing] … in <N>ms` (or `… after <N>ms`) log
+   * entries. Returns 0 when no timing entries are present.
+   *
+   * Mirrors the client-side `getTimedDurationMs` so slim board listings can
+   * report the same total-execution figure that the task detail Stats panel
+   * computes from the full log.
+   */
+  private computeTimedExecutionMs(log: import("./types.js").TaskLogEntry[] | undefined): number {
+    if (!log || log.length === 0) return 0;
+    let total = 0;
+    for (const entry of log) {
+      const action = typeof entry.action === "string" ? entry.action : "";
+      const outcome = typeof entry.outcome === "string" ? entry.outcome : "";
+      if (!action.includes("[timing]") && !outcome.includes("[timing]")) continue;
+      const haystack = `${action}\n${outcome}`;
+      const match = haystack.match(/(\d+(?:\.\d+)?)ms\b/i);
+      if (!match) continue;
+      const ms = Number(match[1]);
+      if (Number.isFinite(ms)) total += ms;
+    }
+    return total;
   }
 
   private getTaskSelectClauseWithActivityLogLimit(limit: number): string {
@@ -2255,6 +2285,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     const rows = this.db.prepare(sql).all(...params);
     const activeTasks = await Promise.all((rows as unknown as TaskRow[]).map(async (row) => {
       const task = this.rowToTask(row);
+
+      // Slim path: aggregate the timed-execution total server-side, then
+      // strip the heavy log payload from the wire response. Without this
+      // the board card has no way to display the same total-execution
+      // figure that the task detail panel shows.
+      if (slim) {
+        task.timedExecutionMs = this.computeTimedExecutionMs(task.log);
+        task.log = [];
+      }
+
       if (!slim || task.steps.length > 0) {
         return task;
       }
@@ -2383,6 +2423,14 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
     const activeMatches = await Promise.all(rows.map(async (row) => {
       const task = this.rowToTask(row);
+
+      // Slim path mirrors `listTasks`: aggregate timed execution server-side
+      // before stripping the heavy log payload from the wire response.
+      if (slim) {
+        task.timedExecutionMs = this.computeTimedExecutionMs(task.log);
+        task.log = [];
+      }
+
       if (task.steps.length > 0) {
         return task;
       }

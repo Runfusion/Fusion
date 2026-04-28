@@ -141,7 +141,14 @@ function getWorkflowRuntimeMs(task: Task, nowMs: number): number | null {
 }
 
 function getInstrumentedDurationMs(task: Task, nowMs: number): number | null {
-  const timed = getTimedDurationMs(task.log);
+  // Prefer the server-aggregated `timedExecutionMs` (populated for slim board
+  // listings, where `task.log` is stripped to keep the wire payload small).
+  // Fall back to client-side parsing of the full log for the detail-modal
+  // path where the slim aggregate is absent but the log is loaded.
+  const timed =
+    typeof task.timedExecutionMs === "number"
+      ? task.timedExecutionMs
+      : getTimedDurationMs(task.log);
   const workflow = getWorkflowRuntimeMs(task, nowMs);
   if (timed == null && workflow == null) return null;
   return (timed ?? 0) + (workflow ?? 0);

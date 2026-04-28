@@ -356,8 +356,25 @@ describe("ChangesDiffModal", () => {
 
       const overlay = container.querySelector(".modal-overlay");
       expect(overlay).toBeTruthy();
-      fireEvent.click(overlay!);
+      // Overlay dismiss is wired via mousedown→mouseup so a resize-drag that
+      // ends on the overlay doesn't close the modal. A real click on the
+      // overlay fires both events on the overlay element.
+      fireEvent.mouseDown(overlay!);
+      fireEvent.mouseUp(overlay!);
       expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("does NOT call onClose when mousedown is on the modal but mouseup is on the overlay (resize drag)", () => {
+      const onClose = vi.fn();
+      const { container } = render(
+        <ChangesDiffModal {...defaultProps} onClose={onClose} />,
+      );
+
+      const overlay = container.querySelector(".modal-overlay")!;
+      const modal = container.querySelector(".changes-diff-modal")!;
+      fireEvent.mouseDown(modal);
+      fireEvent.mouseUp(overlay);
+      expect(onClose).not.toHaveBeenCalled();
     });
 
     it("does NOT call onClose when clicking inside the modal body", () => {
@@ -545,35 +562,39 @@ describe("ChangesDiffModal", () => {
       expect(blockMatch).toBeTruthy();
       const maxHeightValue = blockMatch![1].trim();
 
-      // The max-height must use calc() with the overlay-padding-top variable
-      // so the modal fits within the visible viewport (100vh minus top+bottom padding)
+      // The max-height must use calc() against a viewport unit so the modal
+      // never exceeds the visible viewport. The diff modal switched from a
+      // padding-aware calc(100vh - 2 * --overlay-padding-top) to a fixed
+      // calc(100dvh - 40px) inset when it became user-resizable, but the
+      // intent — clamp to viewport — is unchanged.
       expect(maxHeightValue).toContain("calc(");
-      expect(maxHeightValue).toContain("--overlay-padding-top");
-      expect(maxHeightValue).toContain("100vh");
+      expect(maxHeightValue).toMatch(/100(?:dvh|vh)/);
     });
 
-    it("height and max-height together do not exceed viewport with default padding", async () => {
-      const fs = await import("fs");
-      const path = await import("path");
+    it("default and max constraints together do not exceed viewport", async () => {
+      // Modal switched from a static `height: 80vh` to user-resizable, with
+      // the initial size applied via :not([style*="height"]) selectors. Verify
+      // both the default-height and the max-height clamp the modal within
+      // the viewport.
       const css = loadAllAppCss();
+
+      const defaultBlockMatch = css.match(
+        /\.changes-diff-modal:not\(\[style\*="height"\]\)\s*\{([^}]*)\}/,
+      );
+      expect(defaultBlockMatch).toBeTruthy();
+      const defaultBlock = defaultBlockMatch![1];
+      const defaultHeightMatch = defaultBlock.match(/height:\s*([^;]+);/);
+      expect(defaultHeightMatch).toBeTruthy();
+      // The initial height uses min(...) against a viewport unit so it
+      // never exceeds the visible viewport.
+      expect(defaultHeightMatch![1].trim()).toContain("min(");
+      expect(defaultHeightMatch![1].trim()).toMatch(/100(?:dvh|vh)/);
 
       const blockMatch = css.match(
         /\.changes-diff-modal\s*\{([^}]*)\}/,
       );
       expect(blockMatch).toBeTruthy();
       const block = blockMatch![1];
-
-      // Extract height value
-      const heightMatch = block.match(/height:\s*([^;]+);/);
-      expect(heightMatch).toBeTruthy();
-      const heightValue = heightMatch![1].trim();
-
-      // height should be a reasonable vh value (≤ 85vh)
-      const heightNum = parseFloat(heightValue);
-      expect(heightNum).toBeGreaterThan(0);
-      expect(heightNum).toBeLessThanOrEqual(85);
-
-      // max-height must be present and use calc()
       const maxHeightMatch = block.match(/max-height:\s*([^;]+);/);
       expect(maxHeightMatch).toBeTruthy();
       expect(maxHeightMatch![1].trim()).toContain("calc(");

@@ -1,4 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useModalResizePersist } from "../hooks/useModalResizePersist";
+import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import {
   X,
   FileCode,
@@ -66,6 +68,9 @@ export function ChangesDiffModal({
 }: ChangesDiffModalProps) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [wordWrap, setWordWrap] = useState(true);
+  const modalRef = useRef<HTMLDivElement>(null);
+  useModalResizePersist(modalRef, isOpen, "fusion:changes-diff-modal-size");
+  const overlayDismissProps = useOverlayDismiss(onClose);
 
   // Auto-select first file when files change
   useEffect(() => {
@@ -114,10 +119,10 @@ export function ChangesDiffModal({
   const isDone = column === "done";
 
   return (
-    <div className="modal-overlay open" onClick={onClose} role="dialog" aria-modal="true">
+    <div className="modal-overlay open" {...overlayDismissProps} role="dialog" aria-modal="true">
       <div
         className="modal changes-diff-modal"
-        onClick={(e) => e.stopPropagation()}
+        ref={modalRef}
       >
         {/* Header */}
         <div className="modal-header changes-diff-modal-header">

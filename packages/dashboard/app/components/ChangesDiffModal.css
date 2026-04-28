@@ -1,10 +1,22 @@
 .changes-diff-modal {
-  width: 90vw;
-  max-width: 1600px;
-  height: 80vh;
-  max-height: calc(100vh - 2 * var(--overlay-padding-top, 10vh));
+  /* Diff comparisons read better wide — default to a generous portion of
+     the viewport. The grip-resize remembers the user's chosen dimensions
+     across sessions via useModalResizePersist. */
+  min-width: 720px;
+  min-height: 420px;
+  max-width: calc(100vw - 40px);
+  max-height: calc(100dvh - 40px);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  resize: both;
+}
+
+.changes-diff-modal:not([style*="width"]) {
+  width: min(95vw, 2200px);
+}
+.changes-diff-modal:not([style*="height"]) {
+  height: min(90vh, calc(100dvh - 40px));
 }
 
 .changes-diff-modal-header {
@@ -164,11 +176,15 @@
 
 @media (max-width: 768px) {
   .changes-diff-modal {
-    width: 100vw;
-    height: 100vh;
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
     max-width: 100%;
-    max-height: 100%;
+    max-height: 100vh;
+    max-height: 100dvh;
     border-radius: 0;
+    /* Disable user resize on mobile — fullscreen layout. */
+    resize: none;
   }
 
   .changes-diff-header-title {
