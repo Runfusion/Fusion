@@ -1702,31 +1702,6 @@ export function TaskDetailModal({
             </div>
           )}
           <MergeDetails task={task} />
-          <div className="detail-section">
-            <h4>Node Routing</h4>
-            <dl className="detail-source-grid">
-              <div>
-                <dt>Task Override</dt>
-                <dd>{task.nodeId ?? <span className="detail-source-empty">(none)</span>}</dd>
-              </div>
-              <div>
-                <dt>Effective Node</dt>
-                <dd>{(task as Task & { effectiveNodeId?: string }).effectiveNodeId ?? "local execution"}</dd>
-              </div>
-              <div>
-                <dt>Routing Source</dt>
-                <dd>{(task as Task & { effectiveNodeSource?: string }).effectiveNodeSource ?? "local"}</dd>
-              </div>
-              <div>
-                <dt>Unavailable Node Policy</dt>
-                <dd>{(settings as Settings & { unavailableNodePolicy?: string } | undefined)?.unavailableNodePolicy ?? "block"}</dd>
-              </div>
-              <div>
-                <dt>Blocking Reason</dt>
-                <dd>{((task as Task & { blockedReason?: string; statusReason?: string }).blockedReason || (task as Task & { statusReason?: string }).statusReason) ?? <span className="detail-source-empty">(not blocked)</span>}</dd>
-              </div>
-            </dl>
-          </div>
           {task.sourceIssue && (
             <div className="detail-section detail-source-section">
               <h4>Source Issue</h4>

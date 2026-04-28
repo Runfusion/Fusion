@@ -133,7 +133,7 @@ async function execWithProcessGroup(
 }
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { getTaskMergeBlocker, type TaskStore, type MergeResult, type MergeDetails, type WorkflowStep, type WorkflowStepResult, type Settings, type AgentPromptsConfig } from "@fusion/core";
+import { getTaskMergeBlocker, type TaskStore, type MergeResult, type MergeDetails, type WorkflowStep, type WorkflowStepResult, type Settings, type AgentPromptsConfig, type MergeConflictStrategy } from "@fusion/core";
 import { resolveAgentPrompt } from "@fusion/core";
 import { describeModel, promptWithFallback } from "./pi.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
@@ -2170,6 +2170,7 @@ export async function aiMergeTask(
   const includeTaskId = settings.includeTaskIdInCommit !== false;
   // Support both setting names: smartConflictResolution (new) and autoResolveConflicts (legacy)
   const smartConflictResolution = (settings.smartConflictResolution ?? settings.autoResolveConflicts) !== false;
+  const mergeConflictStrategy: NonNullable<MergeConflictStrategy> = settings.mergeConflictStrategy ?? "smart";
 
   // 3. Check branch exists
   try {
@@ -2320,6 +2321,45 @@ export async function aiMergeTask(
             throwIfAborted(options.signal, taskId);
             await execAsync(`git rebase "${remoteRef}"`, { cwd: worktreePath });
             mergerLog.log(`${taskId}: rebased ${branch} onto ${remoteRef}`);
+
+            // Stage 2: also rebase onto rootDir's local HEAD when enabled.
+            // Catches sibling-task merges that landed locally but haven't
+            // been pushed to remote yet. Without this, two tasks based on a
+            // common ancestor where one deletes code can have the other
+            // silently resurrect that code via a -X theirs fallback.
+            if (settings.worktreeRebaseLocalBase !== false) {
+              try {
+                const { stdout: localHeadOut } = await execAsync("git rev-parse HEAD", {
+                  cwd: rootDir,
+                  encoding: "utf-8",
+                });
+                const localHead = localHeadOut.trim();
+                if (localHead) {
+                  // Skip if worktree branch already contains local HEAD.
+                  let alreadyContains = false;
+                  try {
+                    await execAsync(`git merge-base --is-ancestor "${localHead}" HEAD`, { cwd: worktreePath });
+                    alreadyContains = true;
+                  } catch {
+                    // not an ancestor — rebase needed
+                  }
+                  if (!alreadyContains) {
+                    throwIfAborted(options.signal, taskId);
+                    await execAsync(`git rebase "${localHead}"`, { cwd: worktreePath });
+                    mergerLog.log(`${taskId}: rebased ${branch} onto local HEAD ${localHead.slice(0, 8)}`);
+                  }
+                }
+              } catch (localRebaseErr) {
+                rethrowIfMergeAborted(localRebaseErr);
+                const lmsg = localRebaseErr instanceof Error ? localRebaseErr.message : String(localRebaseErr);
+                mergerLog.warn(`${taskId}: pre-merge rebase onto local HEAD failed (${lmsg}) — aborting and falling through`);
+                try {
+                  await execAsync("git rebase --abort", { cwd: worktreePath });
+                } catch (abortError: unknown) {
+                  mergerLog.warn(`${taskId}: failed to abort local-HEAD rebase: ${getCommandErrorMessage(abortError)}`);
+                }
+              }
+            }
           } else {
             mergerLog.warn(`${taskId}: no worktreePath — skipping task branch rebase`);
           }
@@ -2340,6 +2380,40 @@ export async function aiMergeTask(
       rethrowIfMergeAborted(err);
       const msg = err instanceof Error ? err.message : String(err);
       mergerLog.warn(`${taskId}: pre-merge rebase pipeline failed (${msg}) — proceeding without rebase`);
+    }
+  } else if (settings.worktreeRebaseLocalBase !== false && worktreePath) {
+    // Remote rebase is disabled but the user still wants the local-base
+    // rebase. This catches sibling-task merges that landed locally even when
+    // the project doesn't have a remote configured.
+    try {
+      const { stdout: localHeadOut } = await execAsync("git rev-parse HEAD", {
+        cwd: rootDir,
+        encoding: "utf-8",
+      });
+      const localHead = localHeadOut.trim();
+      if (localHead) {
+        let alreadyContains = false;
+        try {
+          await execAsync(`git merge-base --is-ancestor "${localHead}" HEAD`, { cwd: worktreePath });
+          alreadyContains = true;
+        } catch {
+          // not an ancestor — rebase needed
+        }
+        if (!alreadyContains) {
+          throwIfAborted(options.signal, taskId);
+          await execAsync(`git rebase "${localHead}"`, { cwd: worktreePath });
+          mergerLog.log(`${taskId}: rebased ${branch} onto local HEAD ${localHead.slice(0, 8)} (remote rebase disabled)`);
+        }
+      }
+    } catch (localOnlyErr) {
+      rethrowIfMergeAborted(localOnlyErr);
+      const msg = localOnlyErr instanceof Error ? localOnlyErr.message : String(localOnlyErr);
+      mergerLog.warn(`${taskId}: pre-merge local-HEAD rebase failed (${msg}) — falling through to smart/AI merge`);
+      try {
+        await execAsync("git rebase --abort", { cwd: worktreePath });
+      } catch (abortError: unknown) {
+        mergerLog.warn(`${taskId}: failed to abort local-HEAD rebase: ${getCommandErrorMessage(abortError)}`);
+      }
     }
   }
 
@@ -2436,6 +2510,7 @@ export async function aiMergeTask(
         diffStat,
         includeTaskId,
         smartConflictResolution,
+        mergeConflictStrategy,
         attemptNum,
         options,
         result,
@@ -2448,7 +2523,7 @@ export async function aiMergeTask(
 
       if (success) {
         result.attemptsMade = attemptNum;
-        result.resolutionStrategy = getResolutionStrategy(attemptNum, smartConflictResolution);
+        result.resolutionStrategy = getResolutionStrategy(attemptNum, smartConflictResolution, mergeConflictStrategy);
         result.resolutionMethod = getResolutionMethod(result.resolutionStrategy, result.autoResolvedCount, aiTracker.aiWasInvoked);
         result.merged = true;
         return true;
@@ -2698,13 +2773,20 @@ export async function aiMergeTask(
   // Attempt 1: Standard AI merge
   merged = await mergeAttempt(1);
 
-  // Attempt 2: Auto-resolve lock/generated files, then AI (if enabled)
-  if (!merged && smartConflictResolution) {
+  // Attempt 2: Auto-resolve lock/generated files, then AI (if enabled).
+  // Skipped for "abort" — that strategy gives the user one AI shot, no more.
+  if (!merged && smartConflictResolution && mergeConflictStrategy !== "abort") {
     merged = await mergeAttempt(2);
   }
 
-  // Attempt 3: Use -X theirs merge strategy (if enabled)
-  if (!merged && smartConflictResolution) {
+  // Attempt 3: -X theirs (smart) or -X ours (prefer-main) fallback.
+  // Skipped for "ai-only" (no silent side-pick) and "abort" (one shot only).
+  if (
+    !merged
+    && smartConflictResolution
+    && mergeConflictStrategy !== "ai-only"
+    && mergeConflictStrategy !== "abort"
+  ) {
     merged = await mergeAttempt(3);
   }
 
@@ -2716,6 +2798,10 @@ export async function aiMergeTask(
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       mergerLog.warn(`${taskId}: git reset --merge cleanup failed: ${errorMessage}`);
+    }
+    if (mergeConflictStrategy === "abort") {
+      result.resolutionStrategy = "abort";
+      throw new Error(`Merge conflict for ${taskId}: aborted per mergeConflictStrategy="abort" — manual resolution required`);
     }
     throw new Error(`AI merge failed for ${taskId}: all 3 attempts exhausted`);
   }
@@ -2926,10 +3012,14 @@ export async function aiMergeTask(
   return result;
 }
 
-/** Get the resolution strategy based on attempt number and settings */
+/** Get the resolution strategy based on attempt number and settings.
+ *  `mergeConflictStrategy` controls the FALLBACK on attempt 3 (and gates the
+ *  whole cascade on "abort"); attempts 1–2 always try AI then auto-resolve so
+ *  trivial conflicts don't pay an unnecessary price. */
 function getResolutionStrategy(
   attemptNum: 1 | 2 | 3,
   smartConflictResolution: boolean,
+  mergeConflictStrategy: NonNullable<MergeConflictStrategy> = "smart",
 ): MergeResult["resolutionStrategy"] {
   if (!smartConflictResolution || attemptNum === 1) {
     return "ai";
@@ -2937,7 +3027,18 @@ function getResolutionStrategy(
   if (attemptNum === 2) {
     return "auto-resolve";
   }
-  return "theirs";
+  // Attempt 3: fallback strategy
+  switch (mergeConflictStrategy) {
+    case "ai-only":
+      return "ai";
+    case "prefer-main":
+      return "ours";
+    case "abort":
+      return "abort";
+    case "smart":
+    default:
+      return "theirs";
+  }
 }
 
 /** Map resolutionStrategy and autoResolvedCount to resolutionMethod for metrics/debugging */
@@ -2948,6 +3049,8 @@ function getResolutionMethod(
 ): MergeResult["resolutionMethod"] {
   if (strategy === "ai") return "ai";
   if (strategy === "theirs") return "theirs";
+  if (strategy === "ours") return "ours";
+  if (strategy === "abort") return "abort";
   if (strategy === "auto-resolve") {
     // auto-resolve strategy: determine if pure auto or mixed with AI
     if (autoResolvedCount && autoResolvedCount > 0) {
@@ -2968,6 +3071,7 @@ interface MergeAttemptParams {
   diffStat: string;
   includeTaskId: boolean;
   smartConflictResolution: boolean;
+  mergeConflictStrategy: NonNullable<MergeConflictStrategy>;
   attemptNum: 1 | 2 | 3;
   options: MergerOptions;
   result: MergeResult;
@@ -3017,9 +3121,15 @@ async function executeMergeAttempt(
     buildSource,
   } = params;
 
-  // Attempt 3: Use -X theirs strategy
+  // Attempt 3: dispatch on the configured fallback strategy.
+  // Note: "ai-only" and "abort" are filtered out by the mergeAttempt cascade
+  // before reaching here — only "smart" (theirs) and "prefer-main" (ours)
+  // legitimately run attempt 3.
   if (attemptNum === 3) {
-    return attemptWithTheirsStrategy(params);
+    if (params.mergeConflictStrategy === "prefer-main") {
+      return attemptWithSideStrategy(params, "ours");
+    }
+    return attemptWithSideStrategy(params, "theirs");
   }
 
   // Attempt 1 & 2: Standard squash merge
@@ -3292,17 +3402,22 @@ async function executeMergeAttempt(
 }
 
 /**
- * Attempt 3: Use git merge -X theirs --squash strategy
+ * Attempt 3: Use git merge -X{theirs,ours} --squash strategy.
+ * Side controls which version wins on conflicts:
+ *   - "theirs" — the task branch wins (default fallback)
+ *   - "ours" — the main branch wins (used by mergeConflictStrategy="prefer-main")
  */
-async function attemptWithTheirsStrategy(params: MergeAttemptParams): Promise<boolean> {
+async function attemptWithSideStrategy(
+  params: MergeAttemptParams,
+  side: "theirs" | "ours" = "theirs",
+): Promise<boolean> {
   const { rootDir, branch, commitLog, includeTaskId, taskId, store, settings, testCommand, buildCommand, testSource, buildSource } = params;
 
-  mergerLog.log(`${taskId}: attempting merge with -X theirs strategy`);
+  mergerLog.log(`${taskId}: attempting merge with -X ${side} strategy`);
 
   try {
-    // Use -X theirs to auto-resolve conflicts favoring the incoming branch
     throwIfAborted(params.options.signal, taskId);
-    await execAsync(`git merge -X theirs --squash "${branch}"`, {
+    await execAsync(`git merge -X ${side} --squash "${branch}"`, {
       cwd: rootDir,
     });
 
@@ -3313,8 +3428,8 @@ async function attemptWithTheirsStrategy(params: MergeAttemptParams): Promise<bo
     }).trim();
 
     if (conflictedOutput.length > 0) {
-      mergerLog.warn(`${taskId}: -X theirs left unresolved conflicts: ${conflictedOutput}`);
-      return false; // Still has conflicts after -X theirs
+      mergerLog.warn(`${taskId}: -X ${side} left unresolved conflicts: ${conflictedOutput}`);
+      return false;
     }
 
     // Check if there's anything staged
@@ -3351,7 +3466,7 @@ async function attemptWithTheirsStrategy(params: MergeAttemptParams): Promise<bo
       `git commit -m "${fallbackPrefix}: merge ${branch} (auto-resolved)" -m "${escapedLog}"${authorArg}`,
       { cwd: rootDir },
     );
-    mergerLog.log(`${taskId}: committed with -X theirs auto-resolution`);
+    mergerLog.log(`${taskId}: committed with -X ${side} auto-resolution`);
 
     // Run deterministic verification after committing
     if (testCommand || buildCommand) {
@@ -3373,7 +3488,7 @@ async function attemptWithTheirsStrategy(params: MergeAttemptParams): Promise<bo
     if (error instanceof Error && error.name === "MergeAbortedError") {
       throw error;
     }
-    mergerLog.error(`${taskId}: -X theirs merge failed: ${error}`);
+    mergerLog.error(`${taskId}: -X ${side} merge failed: ${error}`);
     return false;
   }
 }

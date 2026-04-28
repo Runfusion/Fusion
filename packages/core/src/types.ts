@@ -92,6 +92,16 @@ export type ColorTheme = (typeof COLOR_THEMES)[number];
 
 export type PrStatus = "open" | "closed" | "merged";
 export type MergeStrategy = "direct" | "pull-request";
+/** How merge conflicts are resolved when the AI agent can't (or shouldn't) decide.
+ *  - "smart" (default): try AI, then auto-resolve lock/generated/trivial files,
+ *    then fall back to `-X theirs` (task branch wins). Backwards-compatible.
+ *  - "ai-only": run AI on every attempt; never silently prefer one side.
+ *  - "prefer-main": after AI/auto-resolve, fall back to `-X ours` so main's
+ *    state wins. Best when concurrent tasks frequently regress just-merged
+ *    sibling work.
+ *  - "abort": run AI once; if conflict remains, fail the merge so a human
+ *    can resolve it. */
+export type MergeConflictStrategy = "smart" | "ai-only" | "prefer-main" | "abort";
 /** Policy for handling task execution when the selected node is unavailable/unhealthy. */
 export type UnavailableNodePolicy = "block" | "fallback-local";
 
@@ -685,8 +695,8 @@ export interface MergeDetails {
   mergedAt?: string;
   mergeConfirmed?: boolean;
   prNumber?: number;
-  resolutionStrategy?: "ai" | "auto-resolve" | "theirs";
-  resolutionMethod?: "ai" | "auto" | "mixed" | "theirs";
+  resolutionStrategy?: "ai" | "auto-resolve" | "theirs" | "ours" | "abort";
+  resolutionMethod?: "ai" | "auto" | "mixed" | "theirs" | "ours" | "abort";
   attemptsMade?: 1 | 2 | 3;
   autoResolvedCount?: number;
 }
@@ -1500,6 +1510,17 @@ export interface ProjectSettings {
    *  (typically `origin`). Exposed as a dropdown in the dashboard's
    *  Worktrees settings. */
   worktreeRebaseRemote?: string;
+  /** When true, the worktree is also rebased onto the local default-branch
+   *  HEAD (in addition to the remote rebase). Catches sibling tasks that
+   *  merged into local main *after* this task's worktree was created but
+   *  *before* its merge — including merges that haven't been pushed yet.
+   *  Without this, concurrent task branches based on stale main can silently
+   *  re-introduce code that an earlier sibling task already deleted.
+   *  Default: true. */
+  worktreeRebaseLocalBase?: boolean;
+  /** Strategy used when a merge conflict can't be resolved by AI. See
+   *  {@link MergeConflictStrategy}. Default: "smart". */
+  mergeConflictStrategy?: MergeConflictStrategy;
   /** Wall-clock timeout (ms) for a single pre-merge workflow step's AI call.
    *  When a step exceeds this, the session is aborted and the executor is
    *  given one shot to retry with the configured fallback model before the

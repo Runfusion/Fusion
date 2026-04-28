@@ -2770,6 +2770,22 @@ export function SettingsModal({
                 </small>
               </div>
             )}
+            <div className="form-group">
+              <label htmlFor="worktreeRebaseLocalBase" className="checkbox-label">
+                <input
+                  id="worktreeRebaseLocalBase"
+                  type="checkbox"
+                  checked={form.worktreeRebaseLocalBase !== false}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, worktreeRebaseLocalBase: e.target.checked }))
+                  }
+                />
+                Also rebase onto local default-branch HEAD
+              </label>
+              <small>
+                In addition to the remote rebase above, also rebase the task branch onto the local default-branch HEAD (rootDir). This catches sibling tasks that merged locally but haven't been pushed yet — without it, two concurrent tasks where one deletes code can have the other silently re-introduce it via the fallback strategy. Enabled by default; only disable if it causes issues with your workflow.
+              </small>
+            </div>
           </>
         );
       case "commands":
@@ -2936,6 +2952,24 @@ export function SettingsModal({
                 Smart conflict resolution
               </label>
               <small>When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.) are resolved using 'ours' strategy, generated files (dist/*, *.gen.ts) using 'theirs' strategy, and trivial whitespace conflicts are auto-resolved without spawning an AI agent. Complex code conflicts still require AI review.</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="mergeConflictStrategy">Conflict Fallback Strategy</label>
+              <select
+                id="mergeConflictStrategy"
+                value={form.mergeConflictStrategy ?? "smart"}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, mergeConflictStrategy: e.target.value as "smart" | "ai-only" | "prefer-main" | "abort" }))
+                }
+              >
+                <option value="smart">Smart — AI, then auto-resolve, then prefer task branch (default)</option>
+                <option value="ai-only">AI only — never silently pick a side</option>
+                <option value="prefer-main">Prefer main — fall back to keeping main's version</option>
+                <option value="abort">Abort — fail merge if AI can't resolve (manual review)</option>
+              </select>
+              <small>
+                What to do on the final merge attempt when AI and auto-resolve haven't fully resolved the conflict. <strong>Smart</strong> matches the historical behavior — the task branch wins on hard conflicts, which is fast but can resurrect code an earlier sibling task deleted. <strong>Prefer main</strong> sides with main instead, protecting just-merged sibling work. <strong>AI only</strong> retries the AI agent rather than silently choosing a side. <strong>Abort</strong> requires manual resolution for any conflict the AI can't handle.
+              </small>
             </div>
             <div className="form-group">
               <label htmlFor="pushAfterMerge" className="checkbox-label">
