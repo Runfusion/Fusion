@@ -13,19 +13,12 @@ interface RoutingTabProps {
   onTaskUpdated?: (task: Task) => void;
 }
 
-function getNodeStatusLabel(status: NodeInfo["status"]): string {
-  if (status === "online") return "Online";
-  if (status === "connecting") return "Connecting";
-  if (status === "error") return "Error";
-  return "Offline";
-}
-
-function getNodeStatusClass(status: NodeInfo["status"]): string {
-  if (status === "online") return "routing-node-status--online";
-  if (status === "connecting") return "routing-node-status--connecting";
-  if (status === "error") return "routing-node-status--error";
-  return "routing-node-status--offline";
-}
+const STATUS_DOT: Record<NodeInfo["status"], string> = {
+  online: "🟢",
+  offline: "🔴",
+  connecting: "🟡",
+  error: "🔴",
+};
 
 type RoutingSettings = Settings & {
   defaultNodeId?: string;
@@ -89,14 +82,10 @@ export function RoutingTab({ task, settings, addToast, onTaskUpdated }: RoutingT
 
   const effectiveNode = effectiveNodeId ? nodesById.get(effectiveNodeId) : undefined;
   const effectiveNodeName = effectiveNode
-    ? `${effectiveNode.name} (${effectiveNode.type})`
+    ? `${STATUS_DOT[effectiveNode.status]} ${effectiveNode.name} (${effectiveNode.type})`
     : effectiveNodeId
       ? `${effectiveNodeId} (node unavailable or unknown)`
       : "Local (no routing configured)";
-  const blockingReason =
-    (task as Task & { blockedReason?: string; statusReason?: string }).blockedReason
-    || (task as Task & { statusReason?: string }).statusReason
-    || "(not blocked)";
 
   const taskInProgress = task.column === "in-progress";
   const selectorDisabled = taskInProgress || savingNode || loadingNodes;
@@ -148,12 +137,6 @@ export function RoutingTab({ task, settings, addToast, onTaskUpdated }: RoutingT
             <span className="routing-summary-label">Effective node</span>
             <span className="routing-summary-value">
               {effectiveNodeName}
-              {effectiveNode ? (
-                <span className={`routing-node-status ${getNodeStatusClass(effectiveNode.status)}`}>
-                  <span className="routing-node-status__dot" aria-hidden="true" />
-                  {getNodeStatusLabel(effectiveNode.status)}
-                </span>
-              ) : null}
               {isUnhealthy(effectiveNode?.status) ? (
                 <span className="routing-summary-warning">Unhealthy</span>
               ) : null}
@@ -166,10 +149,6 @@ export function RoutingTab({ task, settings, addToast, onTaskUpdated }: RoutingT
           <div className="routing-summary-row" role="listitem">
             <span className="routing-summary-label">Unavailable-node policy</span>
             <span className="routing-summary-value">{getRoutingPolicyLabel(routingSettings?.unavailableNodePolicy)}</span>
-          </div>
-          <div className="routing-summary-row" role="listitem">
-            <span className="routing-summary-label">Blocking reason</span>
-            <span className="routing-summary-value">{blockingReason}</span>
           </div>
         </div>
         {taskInProgress && effectiveNodeId ? (
@@ -202,7 +181,7 @@ export function RoutingTab({ task, settings, addToast, onTaskUpdated }: RoutingT
           <option value="">Use project default</option>
           {sortedNodes.map((node) => (
             <option key={node.id} value={node.id}>
-              {node.name} ({node.type}) — {getNodeStatusLabel(node.status)}
+              {STATUS_DOT[node.status]} {node.name} ({node.type})
             </option>
           ))}
         </select>

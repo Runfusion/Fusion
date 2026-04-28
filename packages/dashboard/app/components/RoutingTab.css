@@ -50,13 +50,10 @@
 }
 
 .routing-summary-value {
-  display: flex;
-  flex-wrap: wrap;
-  min-width: 0;
+  display: inline-flex;
   align-items: center;
   gap: var(--space-sm);
   color: var(--text);
-  overflow-wrap: anywhere;
 }
 
 .routing-summary-warning {
@@ -66,49 +63,6 @@
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--color-warning) 16%, transparent);
   color: var(--color-warning);
-}
-
-.routing-node-status {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  color: var(--text-muted);
-}
-
-.routing-node-status__dot {
-  width: var(--space-sm);
-  height: var(--space-sm);
-  border-radius: 50%;
-  background: var(--text-dim);
-}
-
-.routing-node-status--online .routing-node-status__dot {
-  background: var(--color-success);
-}
-
-.routing-node-status--offline .routing-node-status__dot,
-.routing-node-status--error .routing-node-status__dot {
-  background: var(--color-error);
-}
-
-.routing-node-status--connecting .routing-node-status__dot {
-  background: var(--color-warning);
-}
-
-.routing-node-status--error {
-  color: var(--color-error);
-}
-
-.routing-node-status--connecting {
-  color: var(--color-warning);
-}
-
-.routing-node-status--online {
-  color: var(--color-success);
-}
-
-.routing-node-status--offline {
-  color: var(--text-muted);
 }
 
 .routing-tab__info-banner,
