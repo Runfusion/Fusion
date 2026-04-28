@@ -13,7 +13,7 @@
 // Usage:
 //   pnpm release              # interactive: review changesets, accept or override version, confirm
 //   pnpm release --yes        # accept the proposed version, skip confirmation prompt
-//   pnpm release --dry-run    # run through steps without publishing/pushing
+//   pnpm release --dry-run    # preview only — exit before any file/git/npm changes
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync, statSync, existsSync, unlinkSync, mkdtempSync } from "node:fs";
@@ -158,7 +158,7 @@ function parseVersionKey(key) {
 }
 
 async function confirm(prompt) {
-  if (AUTO_YES || DRY_RUN) return true;
+  if (AUTO_YES) return true;
   const rl = createInterface({ input: stdin, output: stdout });
   const answer = (await rl.question(`${prompt} [y/N] `)).trim().toLowerCase();
   rl.close();
@@ -349,6 +349,12 @@ if (chosenVersion !== proposedVersion) {
   warn(`Overriding changeset-proposed version: ${proposedVersion} → ${chosenVersion}`);
 }
 
+if (DRY_RUN) {
+  warn("--dry-run: stopping before version bump. No files modified, no commit, no publish, no tag.");
+  info(`Would release v${chosenVersion} (${releases.length} package(s) bumped).`);
+  process.exit(0);
+}
+
 if (!(await confirm(`Proceed with release v${chosenVersion} (build, publish, tag)?`))) {
   warn("Aborted by user.");
   process.exit(0);
@@ -390,12 +396,6 @@ run(
 );
 
 // --- Publish --------------------------------------------------------------
-
-if (DRY_RUN) {
-  warn("--dry-run: skipping npm publish, git push, and tag.");
-  info(`Would publish, commit, and tag v${version}.`);
-  process.exit(0);
-}
 
 info("Publishing to npm (non-private packages only)…");
 run("pnpm -r publish --access public --no-git-checks");
