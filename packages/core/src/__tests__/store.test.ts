@@ -5934,6 +5934,12 @@ Task with acceptance criteria
         error: "stale error",
         worktree: "stale-worktree",
         blockedBy: "FN-456",
+        branch: "fn/stale-branch",
+        baseBranch: "main",
+        baseCommitSha: "abc123",
+        summary: "stale summary from prior attempt",
+        recoveryRetryCount: 2,
+        nextRecoveryAt: new Date().toISOString(),
         workflowStepResults: [{
           workflowStepId: "wf-1",
           workflowStepName: "Workflow step 1",
@@ -5949,6 +5955,14 @@ Task with acceptance criteria
       expect(retried.worktree).toBeUndefined();
       expect(retried.blockedBy).toBeUndefined();
       expect(retried.workflowStepResults).toBeUndefined();
+      // Full reset: prior branch/summary/recovery state discarded so the next
+      // run starts from scratch.
+      expect(retried.branch).toBeUndefined();
+      expect(retried.baseBranch).toBeUndefined();
+      expect(retried.baseCommitSha).toBeUndefined();
+      expect(retried.summary).toBeUndefined();
+      expect(retried.recoveryRetryCount).toBeUndefined();
+      expect(retried.nextRecoveryAt).toBeUndefined();
     });
   });
 

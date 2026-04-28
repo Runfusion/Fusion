@@ -2615,6 +2615,17 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         task.workflowStepResults = undefined;
       }
 
+      // Full reset when sending an in-review task back to todo: discard prior
+      // branch/summary/recovery state so the next run starts from scratch.
+      if (fromColumn === "in-review" && toColumn === "todo") {
+        task.branch = undefined;
+        task.baseBranch = undefined;
+        task.baseCommitSha = undefined;
+        task.summary = undefined;
+        task.recoveryRetryCount = undefined;
+        task.nextRecoveryAt = undefined;
+      }
+
       await this.atomicWriteTaskJson(dir, task);
 
       // Update cache if watcher is active
