@@ -24,6 +24,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   ntfyBaseUrl: undefined,
   ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review", "planning-awaiting-input", "gridlock"],
   ntfyDashboardHost: undefined,
+  notificationProviders: [],
   defaultProjectId: undefined,
   setupComplete: undefined,
   favoriteProviders: undefined,

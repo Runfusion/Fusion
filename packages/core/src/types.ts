@@ -154,6 +154,38 @@ export interface WorkflowStep {
 /** Event types that can trigger ntfy notifications */
 export type NtfyNotificationEvent = "in-review" | "merged" | "failed" | "awaiting-approval" | "awaiting-user-review" | "planning-awaiting-input" | "gridlock";
 
+/** Known notification event types. Providers may support additional custom events. */
+export const NOTIFICATION_EVENTS = [
+  "in-review",
+  "merged",
+  "failed",
+  "awaiting-approval",
+  "awaiting-user-review",
+  "planning-awaiting-input",
+  "gridlock",
+] as const;
+
+/** Notification event type. Known events plus provider-specific custom events. */
+export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number] | (string & {});
+
+/** Standard payload shape shared across notification providers. */
+export interface NotificationPayload {
+  taskId: string;
+  taskTitle?: string;
+  taskDescription?: string;
+  event: NotificationEvent;
+  timestamp?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** Declarative notification provider configuration persisted in settings. */
+export interface NotificationProviderConfig {
+  id: string;
+  name: string;
+  enabled: boolean;
+  config: Record<string, unknown>;
+}
+
 export interface WorkflowStepInput {
   /** Built-in template source ID when creating a concrete step from a template. */
   templateId?: string;
@@ -1085,6 +1117,9 @@ export interface GlobalSettings {
    *  ?project=<id>&task=<id> so the dashboard opens the correct project first.
    *  Example: "http://localhost:3000" or "https://fusion.example.com" */
   ntfyDashboardHost?: string;
+  /** Pluggable notification providers configuration. Additive to legacy ntfy
+   *  settings so existing ntfy configuration continues working unchanged. */
+  notificationProviders?: NotificationProviderConfig[];
   /** The default project ID for CLI operations when --project flag is not provided.
    *  Used to determine which project to operate on when not in a project directory.
    *  Set via `fn project set-default <name>`. */
