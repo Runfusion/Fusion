@@ -1,11 +1,24 @@
 /* ===== Model Onboarding Modal ===== */
 
 .model-onboarding-modal {
-  max-width: 880px;
-  width: 90vw;
-  max-height: 85vh;
+  /* Resizable via the native CSS grip. The user's chosen size is persisted
+     by useModalResizePersist. Min/max keep the dimensions sane so a value
+     saved on a 4K display still renders on a laptop. */
+  min-width: 640px;
+  min-height: 480px;
+  max-width: calc(100vw - 40px);
+  max-height: calc(100dvh - 40px);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  resize: both;
+}
+
+.model-onboarding-modal:not([style*="width"]) {
+  width: min(1100px, calc(100vw - 40px));
+}
+.model-onboarding-modal:not([style*="height"]) {
+  height: min(85vh, calc(100dvh - 40px));
 }
 
 .model-onboarding-header {
@@ -414,7 +427,10 @@
   margin: 0 0 var(--space-md) 0;
 }
 
-/* Provider cards in onboarding - enhanced card layout for AI setup step */
+/* Provider cards in onboarding - enhanced card layout for AI setup step.
+   flex-wrap lets the API-key form drop to a full-width row beneath the
+   icon+body header instead of being crammed into a fixed side column,
+   which was the root of the squished layout at narrow modal widths. */
 .onboarding-provider-card {
   display: flex;
   align-items: flex-start;
@@ -424,6 +440,8 @@
   border-radius: var(--radius-md);
   background: var(--card);
   transition: background var(--transition-fast), border-color var(--transition-fast);
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .onboarding-provider-card:hover {
@@ -442,11 +460,12 @@
 }
 
 .onboarding-provider-card__body {
-  flex: 1;
+  flex: 1 1 240px;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
+  overflow-wrap: anywhere;
 }
 
 .onboarding-provider-card__name {
@@ -461,6 +480,13 @@
   font-size: 12px;
   color: var(--text-muted);
   line-height: 1.4;
+}
+
+/* Status badge sits in a flex-column body — keep it sized to its text
+   instead of stretching the full row width. */
+.onboarding-provider-card__body > .auth-status-badge,
+.onboarding-provider-card__body > .auth-key-hint {
+  align-self: flex-start;
 }
 
 .onboarding-provider-card__actions {
@@ -489,7 +515,11 @@
 
 .onboarding-provider-card__actions--api-key {
   align-items: stretch;
-  width: min(calc(var(--space-2xl) * 10), 100%);
+  /* Force the API-key form onto its own full-width row beneath the
+     icon+body header so the input has space to breathe. */
+  flex: 1 0 100%;
+  width: 100%;
+  min-width: 0;
 }
 
 .auth-provider-card--cli .auth-provider-info {
@@ -833,6 +863,34 @@
   opacity: 0.5;
 }
 
+.model-onboarding-github-optional .optional-icon--github {
+  color: var(--text);
+  opacity: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ProviderIcon caps at lg=24px — scale up so the GitHub mark reads as the
+   hero of this section. */
+.model-onboarding-github-optional .optional-icon--github svg {
+  width: 64px;
+  height: 64px;
+}
+
+.model-onboarding-github-optional__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-sm);
+}
+
+.model-onboarding-github-optional__actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
 .model-onboarding-github-optional p {
   color: var(--text-muted);
   max-width: 320px;
@@ -1140,6 +1198,13 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* When the footer holds only the "Get Started" button (final "complete"
+   step), push it to the right edge instead of hugging the left under
+   `justify-content: space-between`. */
+.model-onboarding-footer > .btn-primary:only-child {
+  margin-inline-start: auto;
 }
 
 .onboarding-skip-step-link {

@@ -718,7 +718,11 @@ function StatusModeGrid({
   const logsShare = Math.max(1, middleHeight - SYSTEM_HEIGHT - bottomShare);
   // LogsPanel chrome: border 2 + title 1 + filter 1 = 4.
   const logsAvailableRows = Math.max(1, logsShare - 4);
-  tuiDebug("StatusModeGrid", { cols, rows, middleHeight, logsShare, bottomShare, focused });
+  // On very wide terminals, lift Stats up next to Logs so the bottom row only
+  // holds Utilities + Settings. Logs gets the row budget that Stats vacated.
+  const wideLayout = cols >= 150;
+  const wideLogsAvailableRows = Math.max(1, logsShare + bottomShare - 4);
+  tuiDebug("StatusModeGrid", { cols, rows, middleHeight, logsShare, bottomShare, focused, wideLayout });
 
   return (
     <Box flexDirection="column" flexGrow={1}>
@@ -732,28 +736,56 @@ function StatusModeGrid({
         <Box height={4} flexShrink={0} overflow="hidden">
           <SystemPanel state={state} isFocused={focused === "system"} />
         </Box>
-        {/* Logs: fills remaining vertical space. flexShrink=0 so System and
-            the bottom row collapse first — Logs keeps its space. */}
-        <Box flexGrow={1} flexShrink={0} flexDirection="column" overflow="hidden">
-          <LogsPanel
-            state={state}
-            isFocused={focused === "logs"}
-            availableRows={logsAvailableRows}
-          />
-        </Box>
-        {/* Bottom row: Stats + Utilities + Settings, equal-width. flexShrink=2
-            so when terminal height is small they collapse before Logs does. */}
-        <Box flexDirection="row" flexShrink={2} overflow="hidden">
-          <Box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
-            <StatsPanel state={state} isFocused={focused === "stats"} />
-          </Box>
-          <Box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
-            <UtilitiesPanel state={state} isFocused={focused === "utilities"} />
-          </Box>
-          <Box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
-            <SettingsPanel state={state} isFocused={focused === "settings"} />
-          </Box>
-        </Box>
+        {wideLayout ? (
+          <>
+            {/* Wide: Stats sits left of Logs and absorbs the bottom-row height. */}
+            <Box flexGrow={1} flexShrink={0} flexDirection="row" overflow="hidden">
+              <Box flexDirection="column" width="30%" flexShrink={0} overflow="hidden">
+                <StatsPanel state={state} isFocused={focused === "stats"} />
+              </Box>
+              <Box flexGrow={1} flexDirection="column" overflow="hidden">
+                <LogsPanel
+                  state={state}
+                  isFocused={focused === "logs"}
+                  availableRows={wideLogsAvailableRows}
+                />
+              </Box>
+            </Box>
+            <Box flexDirection="row" flexShrink={2} overflow="hidden">
+              <Box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
+                <UtilitiesPanel state={state} isFocused={focused === "utilities"} />
+              </Box>
+              <Box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
+                <SettingsPanel state={state} isFocused={focused === "settings"} />
+              </Box>
+            </Box>
+          </>
+        ) : (
+          <>
+            {/* Logs: fills remaining vertical space. flexShrink=0 so System and
+                the bottom row collapse first — Logs keeps its space. */}
+            <Box flexGrow={1} flexShrink={0} flexDirection="column" overflow="hidden">
+              <LogsPanel
+                state={state}
+                isFocused={focused === "logs"}
+                availableRows={logsAvailableRows}
+              />
+            </Box>
+            {/* Bottom row: Stats + Utilities + Settings, equal-width. flexShrink=2
+                so when terminal height is small they collapse before Logs does. */}
+            <Box flexDirection="row" flexShrink={2} overflow="hidden">
+              <Box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
+                <StatsPanel state={state} isFocused={focused === "stats"} />
+              </Box>
+              <Box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
+                <UtilitiesPanel state={state} isFocused={focused === "utilities"} />
+              </Box>
+              <Box flexDirection="column" flexGrow={1} flexBasis={0} overflow="hidden">
+                <SettingsPanel state={state} isFocused={focused === "settings"} />
+              </Box>
+            </Box>
+          </>
+        )}
       </Box>
 
       <Box flexShrink={0}>
@@ -829,20 +861,27 @@ function StatusBar({ state, controller: _controller }: { state: DashboardState; 
   const uptimePart = systemInfo ? formatUptime(Date.now() - systemInfo.startTimeMs) : null;
   const versionPart = systemInfo ? `${systemInfo.baseUrl} v${FUSION_VERSION}` : null;
 
-  // Truncate both halves so the StatusBar always fits in a single row.
-  // Without this, default wrap="wrap" lets long hotkey strings or URLs
-  // wrap to 2+ rows, throwing the layout's row budget off by 1-2 rows
-  // and pushing the header off the top of the alt-screen.
+  // Both halves must collapse into a single row regardless of width.
+  // The right side is rendered as a single Text (not a Box of separate
+  // Texts joined with gap+flexShrink=0) so Yoga can truncate it when
+  // the natural width of hotkeys + version exceeds `cols`. With the
+  // previous structure, the row's natural width could exceed `cols`
+  // (~137 in the worst case: utilities hotkeys + localhost URL + uptime
+  // + version + ●), causing the row to wrap to 2 lines; height={1} +
+  // overflow=hidden then clipped the top line, making the hotkeys row
+  // disappear and only the version row show through.
+  const rightParts: string[] = [];
+  if (uptimePart) rightParts.push(uptimePart, "|");
+  if (versionPart) rightParts.push(versionPart);
+  const rightText = rightParts.join(" ");
   return (
     <Box height={1} justifyContent="space-between" paddingX={1} flexShrink={0} overflow="hidden">
       <Text dimColor wrap="truncate-end">{hotkeys.join("  ·  ")}</Text>
-      {versionPart && (
-        <Box flexDirection="row" gap={1} flexShrink={0}>
-          {uptimePart && <Text dimColor wrap="truncate-end">{uptimePart}</Text>}
-          {uptimePart && <Text dimColor wrap="truncate-end">|</Text>}
-          <Text dimColor wrap="truncate-end">{versionPart}</Text>
-          {hasUpdate && <Text color="yellow" wrap="truncate-end">●</Text>}
-        </Box>
+      {rightText && (
+        <Text wrap="truncate-end">
+          <Text dimColor>{rightText}</Text>
+          {hasUpdate && <Text color="yellow">{" ●"}</Text>}
+        </Text>
       )}
     </Box>
   );

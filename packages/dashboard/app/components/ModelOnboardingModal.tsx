@@ -15,6 +15,7 @@ import {
   createTask,
 } from "../api";
 import type { ToastType } from "../hooks/useToast";
+import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ProviderIcon } from "./ProviderIcon";
 import { ClaudeCliProviderCard } from "./ClaudeCliProviderCard";
@@ -594,6 +595,7 @@ export function ModelOnboardingModal({
   const [apiKeySuccess, setApiKeySuccess] = useState<Record<string, string | null>>({});
   const apiKeySuccessTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const onboardingContentRef = useRef<HTMLDivElement | null>(null);
+  const modalRef = useRef<HTMLDivElement | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [loginOutcomes, setLoginOutcomes] = useState<Record<string, LoginOutcome>>({});
   const [isGithubSkipped, setIsGithubSkipped] = useState<boolean>(() => {
@@ -605,6 +607,17 @@ export function ModelOnboardingModal({
   const hasTrackedWizardOpenRef = useRef(false);
   const resumedFromStep = persistedState?.currentStep;
   const isResumedFlow = !!persistedState && persistedState.currentStep !== "complete";
+
+  useModalResizePersist(modalRef, isOpen, "fusion:model-onboarding-modal-size");
+
+  // Scroll the content area to the top whenever the step changes so the user
+  // always lands at the start of the next page instead of mid-scroll from the
+  // previous one.
+  useEffect(() => {
+    const content = onboardingContentRef.current;
+    if (!content) return;
+    content.scrollTop = 0;
+  }, [step]);
 
   // Initialize skippedProviders from persisted state
   const [skippedProviders, setSkippedProviders] = useState<Record<string, boolean>>(
@@ -1743,7 +1756,7 @@ export function ModelOnboardingModal({
       aria-modal="true"
       aria-labelledby="onboarding-title"
     >
-      <div className="modal model-onboarding-modal">
+      <div className="modal model-onboarding-modal" ref={modalRef}>
         {/* Header */}
         <div className="model-onboarding-header">
           <h2 id="onboarding-title" className="model-onboarding-title">
@@ -2028,25 +2041,35 @@ export function ModelOnboardingModal({
 
           {step === "github" && (
             <div className="model-onboarding-github">
-              <p className="model-onboarding-description">
-                Connecting GitHub unlocks issue imports and pull request tracking. You can skip this — task creation works without it.
-              </p>
-              <div className="onboarding-feature-list">
-                <ul>
-                  <li className="onboarding-feature-list-heading">
-                    <strong>Without GitHub (available now):</strong>
-                  </li>
-                  <li className="onboarding-helper-text">Create tasks manually</li>
-                  <li className="onboarding-helper-text">Describe work for AI agents</li>
-                  <li className="onboarding-helper-text">Track progress on the board</li>
-                  <li className="onboarding-feature-list-heading">
-                    <strong>With GitHub (after connecting):</strong>
-                  </li>
-                  <li className="onboarding-helper-text onboarding-feature-list-item--with-github">Import issues as tasks</li>
-                  <li className="onboarding-helper-text onboarding-feature-list-item--with-github">Sync pull request status</li>
-                  <li className="onboarding-helper-text onboarding-feature-list-item--with-github">Link code changes to tasks</li>
-                </ul>
-              </div>
+              {isGitHubReady ? (
+                <p className="model-onboarding-description">
+                  {isGitHubReadyViaCli
+                    ? "GitHub CLI is already authenticated — issue imports and pull request tracking work right now. You're all set; no further action needed."
+                    : "GitHub is connected — issue imports and pull request tracking are available. You're all set; no further action needed."}
+                </p>
+              ) : (
+                <p className="model-onboarding-description">
+                  Connecting GitHub unlocks issue imports and pull request tracking. You can skip this — task creation works without it.
+                </p>
+              )}
+              {!isGitHubReady && (
+                <div className="onboarding-feature-list">
+                  <ul>
+                    <li className="onboarding-feature-list-heading">
+                      <strong>Without GitHub (available now):</strong>
+                    </li>
+                    <li className="onboarding-helper-text">Create tasks manually</li>
+                    <li className="onboarding-helper-text">Describe work for AI agents</li>
+                    <li className="onboarding-helper-text">Track progress on the board</li>
+                    <li className="onboarding-feature-list-heading">
+                      <strong>With GitHub (after connecting):</strong>
+                    </li>
+                    <li className="onboarding-helper-text onboarding-feature-list-item--with-github">Import issues as tasks</li>
+                    <li className="onboarding-helper-text onboarding-feature-list-item--with-github">Sync pull request status</li>
+                    <li className="onboarding-helper-text onboarding-feature-list-item--with-github">Link code changes to tasks</li>
+                  </ul>
+                </div>
+              )}
 
               {/* Skip-state banner: shown when AI setup was skipped */}
               {aiSetupSkipped && (
@@ -2067,11 +2090,13 @@ export function ModelOnboardingModal({
 
               {!hasGithubProvider ? (
                 <div className="model-onboarding-github-optional">
-                  <GitPullRequest size={48} className="optional-icon" />
+                  <div className="optional-icon optional-icon--github" aria-hidden="true">
+                    <ProviderIcon provider="github" size="lg" />
+                  </div>
                   {isGitHubReadyViaCli ? (
                     <p>
                       GitHub CLI is already authenticated, so imports and PR tracking work now.
-                      OAuth integration in Settings → Authentication is optional and only controls
+                      OAuth from the dashboard is optional and only controls
                       dashboard-managed connect/disconnect.
                     </p>
                   ) : (
@@ -2080,12 +2105,38 @@ export function ModelOnboardingModal({
                       or continue now and connect later.
                     </p>
                   )}
-                  <button
-                    className="btn btn-primary btn-sm"
-                    onClick={() => setStep("project-setup")}
-                  >
-                    Continue without GitHub →
-                  </button>
+                  <div className="model-onboarding-github-optional__actions">
+                    <button
+                      className="btn btn-primary btn-sm"
+                      onClick={() => setStep("project-setup")}
+                    >
+                      {isGitHubReadyViaCli
+                        ? "Continue with gh CLI auth →"
+                        : "Continue without GitHub →"}
+                    </button>
+                    {isGitHubReadyViaCli && (
+                      authActionInProgress === "github" ? (
+                        <button className="btn btn-sm" disabled>
+                          <Loader2 size={14} className="onboarding-spinner" />
+                          Waiting for OAuth login…
+                        </button>
+                      ) : (
+                        <button
+                          className="btn btn-sm"
+                          onClick={() => handleLogin("github")}
+                        >
+                          <ProviderIcon provider="github" size="sm" />
+                          Connect OAuth (optional)
+                        </button>
+                      )
+                    )}
+                  </div>
+                  {isGitHubReadyViaCli && authActionInProgress === "github" && loginInstructions.github && (
+                    <LoginInstructions
+                      instructions={loginInstructions.github}
+                      data-testid="onboarding-login-instructions-github"
+                    />
+                  )}
                 </div>
               ) : (
                 <>

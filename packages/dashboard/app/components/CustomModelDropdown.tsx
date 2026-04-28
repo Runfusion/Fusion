@@ -283,15 +283,35 @@ export function CustomModelDropdown({
     setPortalRoot(document.body);
   }, []);
 
-  // Reset highlighted index when opening
+  // Initialise the highlighted option on open. We only seed once per open
+  // session — re-seeding on every optionsList change (which fires on each
+  // keystroke into the filter) was snapping highlightedIndex back to the
+  // current model's position, and the scrollIntoView effect below then
+  // yanked the list back to that row, making filtering feel like the
+  // dropdown was "refreshing" or fighting the user's scroll.
+  const didInitHighlightRef = useRef(false);
   useEffect(() => {
-    if (isOpen) {
-      const selectableIndex = optionsList.findIndex(
-        (opt, idx) => idx >= (currentValueIndex >= 0 ? currentValueIndex : 0) && opt.type !== "provider"
-      );
-      setHighlightedIndex(selectableIndex >= 0 ? selectableIndex : 0);
+    if (!isOpen) {
+      didInitHighlightRef.current = false;
+      return;
     }
+    if (didInitHighlightRef.current) return;
+    if (optionsList.length === 0) return;
+    const selectableIndex = optionsList.findIndex(
+      (opt, idx) => idx >= (currentValueIndex >= 0 ? currentValueIndex : 0) && opt.type !== "provider"
+    );
+    setHighlightedIndex(selectableIndex >= 0 ? selectableIndex : 0);
+    didInitHighlightRef.current = true;
   }, [isOpen, optionsList, currentValueIndex]);
+
+  // When the filter changes, reset to the first option and scroll the list
+  // back to the top instead of keeping a now-invalid highlight position.
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!didInitHighlightRef.current) return;
+    setHighlightedIndex(0);
+    if (listRef.current) listRef.current.scrollTop = 0;
+  }, [localFilter, isOpen]);
 
   // Focus search input and position dropdown when opening
   useEffect(() => {
