@@ -272,6 +272,10 @@ export class DashboardTUI {
    * gone by the time we send the signal).
    */
   killVitestProcesses(): { killed: number; pids: number[] } {
+    // pgrep is POSIX-only; Windows path is a no-op above.
+    if (process.platform === "win32") {
+      return { killed: 0, pids: [] };
+    }
     const selfPid = process.pid;
     let pids: number[] = [];
     try {

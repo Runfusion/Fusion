@@ -1791,6 +1791,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       const child = spawn("npx", npxArgs, {
         cwd: resolveProjectRoot(ctx.cwd),
         stdio: "pipe",
+        shell: true,
       });
 
       let stderr = "";
@@ -1895,6 +1896,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         stdio: ["ignore", "pipe", "pipe"],
         detached: false,
         env: { ...process.env },
+        shell: true,
       });
 
       dashboardProcess = child;

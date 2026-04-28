@@ -12,7 +12,8 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { sep as PATH_SEP } from "node:path";
+import os from "node:os";
+import path, { sep as PATH_SEP } from "node:path";
 
 /**
  * On Windows, `spawn("hermes", ...)` won't find `hermes.cmd`/`.bat` shims —
@@ -143,9 +144,9 @@ function parseProfileListOutput(raw: string): HermesProfileSummary[] {
  * This is used to set HERMES_HOME when spawning hermes with a specific profile.
  */
 function hermesProfileHome(profileName: string): string {
-  const base = process.env.HERMES_HOME ?? `${process.env.HOME ?? "~"}/.hermes`;
+  const base = process.env.HERMES_HOME ?? path.join(os.homedir(), ".hermes");
   if (profileName === "default" || profileName === "") return base;
-  return `${base}/profiles/${profileName}`;
+  return path.join(base, "profiles", profileName);
 }
 
 /**
