@@ -1,0 +1,9 @@
+.routing-tab {
+  width: 100%;
+}
+
+@media (max-width: 768px) {
+  .routing-tab {
+    min-width: 0;
+  }
+}
