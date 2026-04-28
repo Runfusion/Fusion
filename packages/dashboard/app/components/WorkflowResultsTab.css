@@ -318,6 +318,32 @@
   color: var(--text, #e6edf3);
 }
 
+.workflow-result-expand-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-xl);
+  height: var(--space-xl);
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast), background var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.workflow-result-expand-toggle:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.workflow-result-expand-toggle:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+
 .workflow-result-output {
   background: var(--surface-dimmed, #0d1117);
   border: 1px solid var(--border, #30363d);
@@ -520,7 +546,12 @@
 @media (max-width: 768px) {
   /* Workflow results edit toggle: touch target on mobile */
   .workflow-results-edit-toggle {
-    min-width: 36px;
-    min-height: 36px;
+    min-width: calc(var(--space-lg) * 2 + var(--space-xs));
+    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
+  }
+
+  .workflow-result-expand-toggle {
+    min-width: calc(var(--space-lg) * 2 + var(--space-xs));
+    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
   }
 }
