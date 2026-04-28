@@ -6,6 +6,11 @@ const BLOCKING_TASK_STATUSES = new Set([
   "awaiting-user-review",
   "merging",
   "merging-pr",
+  // A task in planning/triage hasn't finalized its scope yet — letting it
+  // merge skips the work the user moved it back to plan. Same for the legacy
+  // "specifying" alias migrated to "planning" in db.ts.
+  "planning",
+  "specifying",
 ]);
 
 const NON_TERMINAL_STEP_STATUSES = new Set([

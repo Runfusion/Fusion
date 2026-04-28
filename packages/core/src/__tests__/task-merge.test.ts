@@ -46,6 +46,20 @@ describe("getTaskMergeBlocker", () => {
       .toContain("awaiting-inspection");
   });
 
+  it("returns reason when task has planning status", () => {
+    // Planning means the user moved the task back to triage/specification —
+    // its scope isn't finalized, so merging the in-flight branch is wrong.
+    expect(getTaskMergeBlocker({ ...baseTask, status: "planning" }))
+      .toContain("planning");
+  });
+
+  it("returns reason when task has the legacy 'specifying' status", () => {
+    // Legacy alias migrated to "planning" in db.ts; guard against any
+    // un-migrated rows that might still surface this value.
+    expect(getTaskMergeBlocker({ ...baseTask, status: "specifying" }))
+      .toContain("specifying");
+  });
+
   it("returns reason when task has incomplete steps", () => {
     expect(getTaskMergeBlocker({
       ...baseTask,
