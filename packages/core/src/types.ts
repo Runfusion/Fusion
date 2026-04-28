@@ -845,6 +845,10 @@ export interface Task {
   assignedAgentId?: string;
   /** Per-task node override. When set, this task routes to the specified node instead of the project's default node. Undefined means use the project default. Use empty string to explicitly clear. */
   nodeId?: string;
+  /** The node this task is actually routed to (resolved from nodeId override or project default). Set by the scheduler at dispatch time. */
+  effectiveNodeId?: string;
+  /** How the effectiveNodeId was determined. Set by the scheduler at dispatch time. */
+  effectiveNodeSource?: "task-override" | "project-default" | "local";
   /** Explicitly assigned user ID for task-user linking. Used during review handoff to indicate
    *  which user should review the task. The sentinel value "requesting-user" indicates the
    *  user who created or steered the task. */
@@ -1332,6 +1336,8 @@ export interface ProjectSettings {
    *  - "block": prevent execution until the selected node is healthy/available (default)
    *  - "fallback-local": run on the local node when the selected node is unavailable */
   unavailableNodePolicy?: UnavailableNodePolicy;
+  /** ID of the pinned default execution node. Tasks without a per-task override run on this node. */
+  defaultNodeId?: string;
   /** Shell command to run inside each new worktree immediately after creation.
    *  Useful for project-specific setup (e.g. `pnpm install --frozen-lockfile`, `cp .env.local .env`). */
   worktreeInitCommand?: string;

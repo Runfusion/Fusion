@@ -86,7 +86,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 49;
+const SCHEMA_VERSION = 50;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -1849,6 +1849,15 @@ export class Database {
     if (version < 49) {
       this.applyMigration(49, () => {
         this.addColumnIfMissing("tasks", "nodeId", "TEXT");
+      });
+    }
+
+    // Resolved effective node fields for task routing (FN-2854).
+    // effectiveNodeId is the scheduler-resolved target; effectiveNodeSource explains how it was chosen.
+    if (version < 50) {
+      this.applyMigration(50, () => {
+        this.addColumnIfMissing("tasks", "effectiveNodeId", "TEXT");
+        this.addColumnIfMissing("tasks", "effectiveNodeSource", "TEXT");
       });
     }
 
