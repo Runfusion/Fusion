@@ -212,6 +212,172 @@ function OpencodeIcon({ size, color, label = "Opencode" }: { size: number; color
   );
 }
 
+// Qwen / Tongyi Qianwen monogram — stylized "Q" with the tail piercing
+// the ring, a recognizable simplification of the official mark.
+function QwenIcon({ size, color, label = "Qwen" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="qwen-icon"
+      aria-label={label}
+    >
+      <circle cx="11" cy="12" r="7.5" stroke={color} strokeWidth="2" fill="none" />
+      <path
+        d="M14 15 L21 22"
+        stroke={color}
+        strokeWidth="2.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+// LM Studio — rounded square frame with a stylized "LM" wordmark inside,
+// reminiscent of the desktop app's icon.
+function LMStudioIcon({ size, color, label = "LM Studio" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="lmstudio-icon"
+      aria-label={label}
+    >
+      <rect x="2" y="2" width="20" height="20" rx="4.5" fill={color} />
+      <text
+        x="12"
+        y="16"
+        textAnchor="middle"
+        fontFamily="-apple-system, system-ui, sans-serif"
+        fontSize="9.5"
+        fontWeight="700"
+        fill="var(--provider-icon-contrast)"
+        letterSpacing="-0.4"
+      >
+        LM
+      </text>
+    </svg>
+  );
+}
+
+// Hugging Face — the iconic smiling-face emoji used as their official
+// brand mark. Eyes and mouth are stamped using the surrounding contrast
+// token so the face remains legible on any theme background.
+function HuggingFaceIcon({ size, color, label = "Hugging Face" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="huggingface-icon"
+      aria-label={label}
+    >
+      <circle cx="12" cy="12" r="9" fill={color} />
+      <circle cx="8.5" cy="10.5" r="1.4" fill="var(--provider-icon-contrast)" />
+      <circle cx="15.5" cy="10.5" r="1.4" fill="var(--provider-icon-contrast)" />
+      <path
+        d="M7.5 14.5 Q12 18.5 16.5 14.5"
+        stroke="var(--provider-icon-contrast)"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        fill="none"
+      />
+      {/* Hands flanking the face — the "hugging" part of the emoji. */}
+      <path
+        d="M3.5 16 Q5 13.5 7 14.5 M20.5 16 Q19 13.5 17 14.5"
+        stroke={color}
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        fill="none"
+      />
+    </svg>
+  );
+}
+
+// Mistral — geometric "M" simplified from the official tricolor mark.
+function MistralIcon({ size, color, label = "Mistral AI" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="mistral-icon"
+      aria-label={label}
+    >
+      {/* Five vertical bars descending into staggered baselines, the
+          essence of the Mistral wordmark's M. */}
+      <path
+        d="M2 4h3v16H2zM7 4h3v12H7zM12 4h3v16h-3zM17 4h3v8h-3zM7 16h3v4H7zM17 8h3v12h-3z"
+        fill={color}
+      />
+    </svg>
+  );
+}
+
+// Azure — Microsoft Azure "A" sail mark.
+function AzureIcon({ size, color, label = "Azure" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="azure-icon"
+      aria-label={label}
+    >
+      <path
+        d="M10.4 3.2 4.5 16.6l3.5.5L13 6 9.6 19.5h9.9zM3 19.5l4.6.6 8.6-1.7-7-1.6z"
+        fill={color}
+      />
+    </svg>
+  );
+}
+
+// Fireworks AI — burst of dots radiating from a central nucleus, a
+// monochrome simplification of their identity mark.
+function FireworksIcon({ size, color, label = "Fireworks AI" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="fireworks-icon"
+      aria-label={label}
+    >
+      <circle cx="12" cy="12" r="2.4" fill={color} />
+      {/* 8 outer dots arranged on a circle */}
+      <circle cx="12" cy="3.5" r="1.4" fill={color} />
+      <circle cx="12" cy="20.5" r="1.4" fill={color} />
+      <circle cx="3.5" cy="12" r="1.4" fill={color} />
+      <circle cx="20.5" cy="12" r="1.4" fill={color} />
+      <circle cx="6" cy="6" r="1.2" fill={color} />
+      <circle cx="18" cy="6" r="1.2" fill={color} />
+      <circle cx="6" cy="18" r="1.2" fill={color} />
+      <circle cx="18" cy="18" r="1.2" fill={color} />
+      {/* 4 connecting rays from the nucleus to the cardinal dots */}
+      <path
+        d="M12 5.5v3M12 15.5v3M5.5 12h3M15.5 12h3"
+        stroke={color}
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 // OpenRouter ring mark — simplified geometric version of the OpenRouter brand symbol.
 function OpenRouterIcon({ size, color, label = "OpenRouter" }: { size: number; color: string; label?: string }) {
   return (
@@ -301,6 +467,11 @@ const providerConfig: Record<
   google: { component: GeminiIcon, color: "var(--provider-gemini)" },
   gemini: { component: GeminiIcon, color: "var(--provider-gemini)" }, // Gemini alias family
   "google-antigravity": { component: GeminiIcon, color: "var(--provider-gemini)", label: "Google Gemini" },
+  antigravity: { component: GeminiIcon, color: "var(--provider-gemini)", label: "Google Gemini" },
+  "google-vertex": { component: GeminiIcon, color: "var(--provider-gemini)", label: "Google Vertex AI" },
+  vertex: { component: GeminiIcon, color: "var(--provider-gemini)", label: "Google Vertex AI" },
+  "google-cloud-code": { component: GeminiIcon, color: "var(--provider-gemini)", label: "Google Cloud Code" },
+  "cloud-code": { component: GeminiIcon, color: "var(--provider-gemini)", label: "Google Cloud Code" },
 
   // Monochrome marks use theme-aware text color for dark/light safety.
   ollama: { component: OllamaIcon, color: "var(--text)" },
@@ -324,6 +495,27 @@ const providerConfig: Record<
   grok: { component: XaiIcon, color: "var(--text)", label: "xAI" },
 
   opencode: { component: OpencodeIcon, color: "var(--provider-opencode)" },
+
+  qwen: { component: QwenIcon, color: "var(--provider-qwen)" },
+  "qwen-coder": { component: QwenIcon, color: "var(--provider-qwen)", label: "Qwen Coder" },
+  alibaba: { component: QwenIcon, color: "var(--provider-qwen)", label: "Qwen" },
+  tongyi: { component: QwenIcon, color: "var(--provider-qwen)", label: "Qwen" },
+
+  lmstudio: { component: LMStudioIcon, color: "var(--provider-lmstudio)", label: "LM Studio" },
+  "lm-studio": { component: LMStudioIcon, color: "var(--provider-lmstudio)", label: "LM Studio" },
+
+  huggingface: { component: HuggingFaceIcon, color: "var(--provider-huggingface)", label: "Hugging Face" },
+  "hugging-face": { component: HuggingFaceIcon, color: "var(--provider-huggingface)", label: "Hugging Face" },
+  hf: { component: HuggingFaceIcon, color: "var(--provider-huggingface)", label: "Hugging Face" },
+
+  mistral: { component: MistralIcon, color: "var(--provider-mistral)", label: "Mistral AI" },
+  "mistral-ai": { component: MistralIcon, color: "var(--provider-mistral)", label: "Mistral AI" },
+
+  azure: { component: AzureIcon, color: "var(--provider-azure)" },
+  "azure-openai": { component: AzureIcon, color: "var(--provider-azure)", label: "Azure OpenAI" },
+
+  fireworks: { component: FireworksIcon, color: "var(--provider-fireworks)", label: "Fireworks AI" },
+  "fireworks-ai": { component: FireworksIcon, color: "var(--provider-fireworks)", label: "Fireworks AI" },
 };
 
 export function ProviderIcon({ provider, size = "sm" }: ProviderIconProps) {

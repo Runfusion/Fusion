@@ -503,4 +503,71 @@ describe("ProviderIcon", () => {
     const icon = screen.getByTestId("bedrock-icon").parentElement;
     expect(icon).toHaveStyle({ color: "var(--provider-bedrock)" });
   });
+
+  // ── New providers (Qwen, LM Studio, Hugging Face, Mistral, Azure, Fireworks)
+  // and additional Gemini-mapped Google product aliases.
+
+  it("renders Qwen icon for qwen and its aliases", () => {
+    for (const provider of ["qwen", "qwen-coder", "alibaba", "tongyi"]) {
+      const { unmount } = render(<ProviderIcon provider={provider} />);
+      expect(screen.getByTestId("qwen-icon")).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("renders LM Studio icon for both lmstudio and lm-studio", () => {
+    for (const provider of ["lmstudio", "lm-studio"]) {
+      const { unmount } = render(<ProviderIcon provider={provider} />);
+      expect(screen.getByTestId("lmstudio-icon")).toBeInTheDocument();
+      expect(screen.getByLabelText("LM Studio")).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("renders Hugging Face icon for huggingface, hugging-face, and hf", () => {
+    for (const provider of ["huggingface", "hugging-face", "hf"]) {
+      const { unmount } = render(<ProviderIcon provider={provider} />);
+      expect(screen.getByTestId("huggingface-icon")).toBeInTheDocument();
+      expect(screen.getByLabelText("Hugging Face")).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("renders Mistral icon for mistral and mistral-ai", () => {
+    for (const provider of ["mistral", "mistral-ai"]) {
+      const { unmount } = render(<ProviderIcon provider={provider} />);
+      expect(screen.getByTestId("mistral-icon")).toBeInTheDocument();
+      expect(screen.getByLabelText("Mistral AI")).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("renders Azure icon for azure and azure-openai with provider-azure color", () => {
+    for (const provider of ["azure", "azure-openai"]) {
+      const { unmount } = render(<ProviderIcon provider={provider} />);
+      expect(screen.getByTestId("azure-icon")).toBeInTheDocument();
+      const wrap = screen.getByTestId("azure-icon").parentElement;
+      expect(wrap).toHaveStyle({ color: "var(--provider-azure)" });
+      unmount();
+    }
+  });
+
+  it("renders Fireworks icon for fireworks and fireworks-ai", () => {
+    for (const provider of ["fireworks", "fireworks-ai"]) {
+      const { unmount } = render(<ProviderIcon provider={provider} />);
+      expect(screen.getByTestId("fireworks-icon")).toBeInTheDocument();
+      expect(screen.getByLabelText("Fireworks AI")).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("maps Google Vertex / Cloud Code / Antigravity all to the Gemini icon", () => {
+    for (const provider of ["google-vertex", "vertex", "google-cloud-code", "cloud-code", "google-antigravity", "antigravity"]) {
+      const { unmount } = render(<ProviderIcon provider={provider} />);
+      expect(screen.getByTestId("gemini-icon")).toBeInTheDocument();
+      const wrap = screen.getByTestId("gemini-icon").parentElement;
+      expect(wrap).toHaveStyle({ color: "var(--provider-gemini)" });
+      unmount();
+    }
+  });
 });

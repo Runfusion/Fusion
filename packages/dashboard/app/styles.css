@@ -209,6 +209,12 @@ html {
   --provider-kimi: #6c5ce7;
   --provider-bedrock: #ff9900;
   --provider-opencode: #38bdf8;
+  --provider-qwen: #6149e1;
+  --provider-lmstudio: #ec4899;
+  --provider-huggingface: #ffd21e;
+  --provider-mistral: #ff7000;
+  --provider-azure: #0078d4;
+  --provider-fireworks: #5019c5;
   --provider-icon-contrast: var(--bg);
 
   /* Task-creation CTA tokens */
