@@ -415,7 +415,7 @@ describe("SettingsModal", () => {
       expect(await screen.findByText("You're up to date ✓")).toBeInTheDocument();
     });
 
-    it("clicking check for updates shows update available message with infusion.ai link", async () => {
+    it("clicking check for updates shows update available message with runfusion.ai link", async () => {
       mockCheckForUpdates.mockResolvedValueOnce({
         currentVersion: "1.0.0",
         latestVersion: "2.0.0",
@@ -428,7 +428,7 @@ describe("SettingsModal", () => {
       await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
 
       expect(await screen.findByText(/v2.0.0 available/i)).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "Learn more" })).toHaveAttribute("href", "https://infusion.ai");
+      expect(screen.getByRole("link", { name: "Learn more" })).toHaveAttribute("href", "https://runfusion.ai");
     });
 
     it("disables button while checking", async () => {

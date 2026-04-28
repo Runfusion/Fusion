@@ -15,7 +15,7 @@ describe("UpdateAvailableBanner", () => {
       "href",
       "https://github.com/Runfusion/Fusion/releases",
     );
-    expect(screen.getByRole("link", { name: "Learn more" })).toHaveAttribute("href", "https://infusion.ai");
+    expect(screen.getByRole("link", { name: "Learn more" })).toHaveAttribute("href", "https://runfusion.ai");
   });
 
   it("dismiss button calls onDismiss", () => {

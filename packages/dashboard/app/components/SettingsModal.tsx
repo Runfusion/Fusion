@@ -596,7 +596,7 @@ export function SettingsModal({
         <>
           v{updateCheckResult.latestVersion} available ·{" "}
           <a
-            href="https://infusion.ai"
+            href="https://runfusion.ai"
             target="_blank"
             rel="noreferrer"
             className="settings-update-result-link"

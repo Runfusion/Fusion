@@ -22,7 +22,7 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
           Release notes
         </a>{" "}
         ·{" "}
-        <a className="update-available-banner__link" href="https://infusion.ai" target="_blank" rel="noreferrer">
+        <a className="update-available-banner__link" href="https://runfusion.ai" target="_blank" rel="noreferrer">
           Learn more
         </a>
       </p>
