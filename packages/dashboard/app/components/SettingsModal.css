@@ -622,6 +622,30 @@
   content: "▾";
 }
 
+.settings-option-details {
+  margin-top: var(--space-xs);
+}
+
+.settings-option-details > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  list-style: none;
+}
+
+.settings-option-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-option-details > summary::before {
+  content: "▸";
+  margin-right: var(--space-xs);
+}
+
+.settings-option-details[open] > summary::before {
+  content: "▾";
+}
+
 .remote-tunnel-actions {
   margin-top: var(--space-md);
 }

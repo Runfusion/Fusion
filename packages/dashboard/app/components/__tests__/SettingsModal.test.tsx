@@ -1140,6 +1140,32 @@ describe("SettingsModal", () => {
       expect(screen.queryByLabelText("Push Remote")).not.toBeInTheDocument();
     });
 
+    it("merge option descriptions are hidden behind disclosure by default", async () => {
+      renderModal();
+
+      await waitForSettingsModalReady();
+      await userEvent.click(screen.getAllByText("Merge")[0]);
+
+      const autoMergeDescription = screen.getByText(/When enabled, tasks that pass review are automatically merged/i);
+      const disclosure = autoMergeDescription.closest("details");
+
+      expect(disclosure).not.toBeNull();
+      expect(disclosure).not.toHaveAttribute("open");
+      expect(autoMergeDescription).not.toBeVisible();
+    });
+
+    it("merge option descriptions are revealed when clicking More details", async () => {
+      renderModal();
+
+      await waitForSettingsModalReady();
+      await userEvent.click(screen.getAllByText("Merge")[0]);
+
+      const moreDetailsSummaries = screen.getAllByText("More details");
+      await userEvent.click(moreDetailsSummaries[0]);
+
+      expect(screen.getByText(/When enabled, tasks that pass review are automatically merged/i)).toBeVisible();
+    });
+
     it("shows Push Remote input when push-after-merge is enabled", async () => {
       renderModal();
 

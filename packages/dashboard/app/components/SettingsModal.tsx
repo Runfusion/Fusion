@@ -2874,7 +2874,10 @@ export function SettingsModal({
                 />
                 Auto-merge completed tasks
               </label>
-              <small>When enabled, tasks that pass review are automatically merged into the main branch</small>
+              <details className="settings-option-details">
+                <summary>More details</summary>
+                <small>When enabled, tasks that pass review are automatically merged into the main branch</small>
+              </details>
             </div>
             <div className="form-group">
               <label htmlFor="mergeStrategy">Auto-completion mode</label>
@@ -2888,9 +2891,12 @@ export function SettingsModal({
                 <option value="direct">Direct merge into the current branch</option>
                 <option value="pull-request">Create, monitor, and merge a GitHub pull request</option>
               </select>
-              <small>
-                Controls what happens after a task reaches In Review. Direct mode preserves Fusion&apos;s current local squash-merge behavior. Pull request mode keeps the task in In Review while Fusion waits for GitHub reviews and required checks before merging the PR.
-              </small>
+              <details className="settings-option-details">
+                <summary>More details</summary>
+                <small>
+                  Controls what happens after a task reaches In Review. Direct mode preserves Fusion&apos;s current local squash-merge behavior. Pull request mode keeps the task in In Review while Fusion waits for GitHub reviews and required checks before merging the PR.
+                </small>
+              </details>
             </div>
             <div className="form-group">
               <label htmlFor="includeTaskIdInCommit" className="checkbox-label">
@@ -2904,7 +2910,10 @@ export function SettingsModal({
                 />
                 Include task ID in commit scope
               </label>
-              <small>When disabled, merge commit messages omit the task ID from the scope (e.g. <code>feat: ...</code> instead of <code>feat(KB-001): ...</code>)</small>
+              <details className="settings-option-details">
+                <summary>More details</summary>
+                <small>When disabled, merge commit messages omit the task ID from the scope (e.g. <code>feat: ...</code> instead of <code>feat(KB-001): ...</code>)</small>
+              </details>
             </div>
             <div className="form-group">
               <label htmlFor="commitAuthorEnabled" className="checkbox-label">
@@ -2918,10 +2927,13 @@ export function SettingsModal({
                 />
                 Add author attribution to commits
               </label>
-              <small>
-                When enabled, all commits made by Fusion include <code>--author</code>{" "}
-                attribution identifying them as AI-generated
-              </small>
+              <details className="settings-option-details">
+                <summary>More details</summary>
+                <small>
+                  When enabled, all commits made by Fusion include <code>--author</code>{" "}
+                  attribution identifying them as AI-generated
+                </small>
+              </details>
             </div>
 
             {form.commitAuthorEnabled !== false && (
@@ -2973,7 +2985,10 @@ export function SettingsModal({
                 />
                 Auto-resolve conflicts in lock files and generated files
               </label>
-              <small>When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.), generated files (dist/*, *.gen.ts), and trivial whitespace conflicts are resolved automatically without AI intervention. Complex code conflicts still require AI review.</small>
+              <details className="settings-option-details">
+                <summary>More details</summary>
+                <small>When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.), generated files (dist/*, *.gen.ts), and trivial whitespace conflicts are resolved automatically without AI intervention. Complex code conflicts still require AI review.</small>
+              </details>
             </div>
             <div className="form-group">
               <label htmlFor="smartConflictResolution" className="checkbox-label">
@@ -2987,7 +3002,10 @@ export function SettingsModal({
                 />
                 Smart conflict resolution
               </label>
-              <small>When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.) are resolved using 'ours' strategy, generated files (dist/*, *.gen.ts) using 'theirs' strategy, and trivial whitespace conflicts are auto-resolved without spawning an AI agent. Complex code conflicts still require AI review.</small>
+              <details className="settings-option-details">
+                <summary>More details</summary>
+                <small>When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.) are resolved using 'ours' strategy, generated files (dist/*, *.gen.ts) using 'theirs' strategy, and trivial whitespace conflicts are auto-resolved without spawning an AI agent. Complex code conflicts still require AI review.</small>
+              </details>
             </div>
             <div className="form-group">
               <label htmlFor="mergeConflictStrategy">Conflict Fallback Strategy</label>
@@ -3003,19 +3021,22 @@ export function SettingsModal({
                 <option value="ai-only">AI only — AI → auto-resolve → AI retry; never silently pick a side</option>
                 <option value="abort">Abort — one AI attempt; require manual resolution if it fails</option>
               </select>
-              <small>
-                Both <strong>Smart</strong> options start with a best-effort <code>git fetch</code> + fast-forward of local main from <code>origin</code> (so a freshly-pushed sibling commit doesn't get clobbered), then run an AI agent, then auto-resolve handles lock/generated/trivial files. They differ only in the <em>final fallback</em>:
-                {" "}
-                <strong>Smart, prefer main</strong> uses <code>-X ours</code> so main wins — protects just-merged sibling work and is the new default.
-                {" "}
-                <strong>Smart, prefer task</strong> uses <code>-X theirs</code> so the task branch wins — fast, but can resurrect code an earlier sibling task deleted (the FN-2887 class of regression).
-                {" "}
-                <strong>AI only</strong> retries the AI agent rather than auto-picking a side.
-                {" "}
-                <strong>Abort</strong> stops after the first AI attempt and waits for a human.
-                {" "}
-                <em>Legacy <code>"smart"</code> and <code>"prefer-main"</code> values from older settings are migrated automatically.</em>
-              </small>
+              <details className="settings-option-details">
+                <summary>More details</summary>
+                <small>
+                  Both <strong>Smart</strong> options start with a best-effort <code>git fetch</code> + fast-forward of local main from <code>origin</code> (so a freshly-pushed sibling commit doesn't get clobbered), then run an AI agent, then auto-resolve handles lock/generated/trivial files. They differ only in the <em>final fallback</em>:
+                  {" "}
+                  <strong>Smart, prefer main</strong> uses <code>-X ours</code> so main wins — protects just-merged sibling work and is the new default.
+                  {" "}
+                  <strong>Smart, prefer task</strong> uses <code>-X theirs</code> so the task branch wins — fast, but can resurrect code an earlier sibling task deleted (the FN-2887 class of regression).
+                  {" "}
+                  <strong>AI only</strong> retries the AI agent rather than auto-picking a side.
+                  {" "}
+                  <strong>Abort</strong> stops after the first AI attempt and waits for a human.
+                  {" "}
+                  <em>Legacy <code>"smart"</code> and <code>"prefer-main"</code> values from older settings are migrated automatically.</em>
+                </small>
+              </details>
             </div>
             <div className="form-group">
               <label htmlFor="pushAfterMerge" className="checkbox-label">
@@ -3029,7 +3050,10 @@ export function SettingsModal({
                 />
                 Push to remote after merge
               </label>
-              <small>When enabled, the merged result is automatically pushed to the configured git remote. This includes pulling the latest from the remote first (rebase) and resolving any conflicts with AI if needed.</small>
+              <details className="settings-option-details">
+                <summary>More details</summary>
+                <small>When enabled, the merged result is automatically pushed to the configured git remote. This includes pulling the latest from the remote first (rebase) and resolving any conflicts with AI if needed.</small>
+              </details>
             </div>
 
             {form.pushAfterMerge && (
@@ -3044,7 +3068,10 @@ export function SettingsModal({
                     setForm((f) => ({ ...f, pushRemote: e.target.value || undefined }))
                   }
                 />
-                <small>Git remote to push to (e.g. "origin"). Can include branch name (e.g. "origin main"). Default: "origin".</small>
+                <details className="settings-option-details">
+                  <summary>More details</summary>
+                  <small>Git remote to push to (e.g. "origin"). Can include branch name (e.g. "origin main"). Default: "origin".</small>
+                </details>
               </div>
             )}
           </>

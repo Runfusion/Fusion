@@ -611,8 +611,13 @@
 
 .onboarding-apikey-input-row {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: var(--space-sm);
+}
+
+.onboarding-apikey-input-row .btn {
+  align-self: flex-end;
 }
 
 .onboarding-apikey-input {
@@ -1361,6 +1366,15 @@
     margin-inline: calc(-1 * var(--space-md));
     padding-inline: var(--space-xs);
     box-sizing: border-box;
+    /* Override the parent rule's justify-content: flex-end. The api-key form
+       is a single child without flex-grow, so right-justification pushes it
+       against the right edge and leaves a huge left gap. */
+    justify-content: stretch;
+  }
+
+  .onboarding-provider-card__actions--api-key > .onboarding-apikey-form {
+    width: 100%;
+    min-width: 0;
   }
 
   /* When actions are simple buttons (Connect / Skip), make them split the

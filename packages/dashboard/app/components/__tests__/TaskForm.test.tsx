@@ -1076,7 +1076,8 @@ describe("TaskForm workflow step reordering (FN-836)", () => {
     });
 
     // Click checkbox to add WS-003 — it should be appended
-    const checkbox = screen.getByTestId("workflow-step-checkbox-WS-003").querySelector('input[type="checkbox"]') as HTMLInputElement;
+    const checkboxRow = await screen.findByTestId("workflow-step-checkbox-WS-003");
+    const checkbox = checkboxRow.querySelector('input[type="checkbox"]') as HTMLInputElement;
     fireEvent.click(checkbox);
 
     expect(onWorkflowStepsChange).toHaveBeenCalledWith(["WS-001", "WS-002", "WS-003"]);
