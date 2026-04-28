@@ -7,6 +7,11 @@ const maxWorkers = Math.max(1, Number.isFinite(requestedMaxWorkers) ? requestedM
 process.env.VITEST_MAX_WORKERS = String(maxWorkers);
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@fusion/core": new URL("../core/src/index.ts", import.meta.url).pathname,
+    },
+  },
   test: {
     include: ["src/**/*.test.ts"],
     pool: "threads",

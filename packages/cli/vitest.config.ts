@@ -21,6 +21,7 @@ export default defineConfig({
       { find: /^@fusion\/dashboard\/planning$/, replacement: resolve(__dirname, "../dashboard/src/planning.ts") },
       { find: /^@fusion\/dashboard$/, replacement: resolve(__dirname, "../dashboard/src/index.ts") },
       { find: /^@fusion\/engine$/, replacement: resolve(__dirname, "../engine/src/index.ts") },
+      { find: /^@fusion\/plugin-sdk$/, replacement: resolve(__dirname, "../plugin-sdk/src/index.ts") },
       { find: /^@fusion\/test-utils$/, replacement: resolve(__dirname, "../core/src/__test-utils__/workspace.ts") },
     ],
   },

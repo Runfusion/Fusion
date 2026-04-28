@@ -5,6 +5,12 @@ const maxWorkers = Math.max(1, Math.min(4, Number.isFinite(requestedMaxWorkers) 
 process.env.VITEST_MAX_WORKERS = String(maxWorkers);
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@fusion/core": new URL("../../../packages/core/src/index.ts", import.meta.url).pathname,
+      "@fusion/plugin-sdk": new URL("../../../packages/plugin-sdk/src/index.ts", import.meta.url).pathname,
+    },
+  },
   test: {
     include: ["src/**/*.test.ts"],
     pool: "threads",

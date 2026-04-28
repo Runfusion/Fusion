@@ -818,6 +818,8 @@ describe("Scheduler", () => {
         blockedBy: null,
         baseBranch: undefined,
         worktree: "/test/project/.worktrees/fn-010",
+        effectiveNodeId: null,
+        effectiveNodeSource: "local",
       });
       expect(moveTask).toHaveBeenCalledWith("FN-010", "in-progress");
       expect(updateTask.mock.invocationCallOrder[0]).toBeLessThan(moveTask.mock.invocationCallOrder[0]);
@@ -854,12 +856,16 @@ describe("Scheduler", () => {
         blockedBy: null,
         baseBranch: undefined,
         worktree: "/test/project/.worktrees/amber-aspen",
+        effectiveNodeId: null,
+        effectiveNodeSource: "local",
       });
       expect(updateTask).toHaveBeenNthCalledWith(2, "FN-012", {
         status: null,
         blockedBy: null,
         baseBranch: undefined,
         worktree: "/test/project/.worktrees/amber-aspen-2",
+        effectiveNodeId: null,
+        effectiveNodeSource: "local",
       });
 
       randomSpy.mockRestore();

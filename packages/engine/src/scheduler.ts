@@ -17,6 +17,7 @@ import { schedulerLog } from "./logger.js";
 import { type PrMonitor, type PrComment } from "./pr-monitor.js";
 import { reconcileMissionFeatureState } from "./mission-feature-sync.js";
 import { evaluateSpecStaleness, getPromptPath } from "./spec-staleness.js";
+import { resolveEffectiveNode } from "./effective-node.js";
 
 /**
  * Check whether two sets of file scope paths overlap.
@@ -129,6 +130,10 @@ export interface SchedulerOptions {
   ) => void | Promise<void>;
   /** Optional MissionExecutionLoop for validation cycle handling */
   missionExecutionLoop?: import("./mission-execution-loop.js").MissionExecutionLoop;
+  /** Optional NodeHealthMonitor for node health checks during dispatch.
+   *  Reserved for FN-2722-C (unavailable node policy enforcement).
+   *  Accepted here so the option can be wired at construction time. */
+  nodeHealthMonitor?: import("./node-health-monitor.js").NodeHealthMonitor;
 }
 
 /**
@@ -748,6 +753,10 @@ export class Scheduler {
           continue;
         }
 
+        // Resolve effective node for routing
+        const effectiveNode = resolveEffectiveNode(freshTask, settings);
+        schedulerLog.log(`Task ${task.id} routed to node=${effectiveNode.nodeId ?? "local"} (source=${effectiveNode.source})`);
+
         // Clear status, reserve worktree path, and then move to in-progress
         schedulerLog.log(`Starting ${task.id}: ${task.title || task.id} (deps satisfied)`);
         await this.store.updateTask(task.id, {
@@ -755,8 +764,11 @@ export class Scheduler {
           blockedBy: null,
           baseBranch: baseBranch ?? undefined,
           worktree: plannedWorktree,
+          effectiveNodeId: effectiveNode.nodeId ?? null,
+          effectiveNodeSource: effectiveNode.source,
         });
         await this.store.moveTask(task.id, "in-progress");
+        await this.store.logEntry(task.id, `Node routing resolved: ${effectiveNode.nodeId ?? "local"} (source: ${effectiveNode.source})`);
         this.options.onSchedule?.(task);
         started++;
 
