@@ -252,7 +252,13 @@ interface PanelSize {
   height: number;
 }
 
-type ResizeDirection = "n" | "w" | "nw";
+type ResizeDirection = "n" | "s" | "e" | "w" | "nw" | "ne" | "sw" | "se";
+
+/** Offset of the panel anchor relative to the FAB position (right/bottom deltas in px). */
+interface PanelAnchorOffset {
+  right: number;
+  bottom: number;
+}
 
 const QUICK_CHAT_DEFAULT_PANEL_SIZE: PanelSize = {
   width: 320,
@@ -438,27 +444,28 @@ function useDraggable(projectId?: string, externalDidDragRef?: React.MutableRefO
   };
 }
 
-function usePanelResize(projectId: string | undefined, panelRight: number, panelBottom: number) {
-  const storageKey = `fusion-quick-chat-size-${projectId || "default"}`;
+function usePanelResize(projectId: string | undefined, fabRight: number, fabBottom: number) {
+  const storageKey = `fusion:quick-chat-size-${projectId || "default"}`;
 
   const isDesktopViewport = useCallback(
     () => typeof window !== "undefined" && window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT,
     [],
   );
 
+  /** Clamp width/height given the effective anchor point (right/bottom offsets from viewport edges). */
   const clampPanelSize = useCallback(
-    (size: PanelSize): PanelSize => {
+    (size: PanelSize, anchorRight: number, anchorBottom: number): PanelSize => {
       if (typeof window === "undefined") {
         return size;
       }
 
       const maxWidth = Math.max(
         QUICK_CHAT_MIN_PANEL_SIZE.width,
-        window.innerWidth - panelRight - QUICK_CHAT_VIEWPORT_PADDING,
+        window.innerWidth - anchorRight - QUICK_CHAT_VIEWPORT_PADDING,
       );
       const maxHeight = Math.max(
         QUICK_CHAT_MIN_PANEL_SIZE.height,
-        window.innerHeight - panelBottom - QUICK_CHAT_VIEWPORT_PADDING,
+        window.innerHeight - anchorBottom - QUICK_CHAT_VIEWPORT_PADDING,
       );
 
       return {
@@ -466,121 +473,171 @@ function usePanelResize(projectId: string | undefined, panelRight: number, panel
         height: Math.max(QUICK_CHAT_MIN_PANEL_SIZE.height, Math.min(maxHeight, size.height)),
       };
     },
-    [panelBottom, panelRight],
+    [],
   );
 
-  const [panelSize, setPanelSize] = useState<PanelSize>(() => {
+  const loadPersistedSize = useCallback((): PanelSize => {
     if (typeof window === "undefined" || window.innerWidth <= QUICK_CHAT_DESKTOP_BREAKPOINT) {
       return QUICK_CHAT_DEFAULT_PANEL_SIZE;
     }
-
     try {
-      const rawSize = localStorage.getItem(storageKey);
-      if (!rawSize) {
-        return QUICK_CHAT_DEFAULT_PANEL_SIZE;
-      }
-
-      const parsed = JSON.parse(rawSize) as Partial<PanelSize>;
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return QUICK_CHAT_DEFAULT_PANEL_SIZE;
+      const parsed = JSON.parse(raw) as Partial<PanelSize>;
       if (typeof parsed.width !== "number" || typeof parsed.height !== "number") {
         return QUICK_CHAT_DEFAULT_PANEL_SIZE;
       }
-
-      return {
-        width: parsed.width,
-        height: parsed.height,
-      };
+      return { width: parsed.width, height: parsed.height };
     } catch {
       return QUICK_CHAT_DEFAULT_PANEL_SIZE;
     }
-  });
+  }, [storageKey]);
+
+  const [panelSize, setPanelSize] = useState<PanelSize>(loadPersistedSize);
+
+  /**
+   * Anchor offset relative to the FAB position.
+   * When the user drags the south or east handle, we shift the anchor so the
+   * panel top/left edge moves while the opposite edge stays fixed.
+   */
+  const [anchorOffset, setAnchorOffset] = useState<PanelAnchorOffset>({ right: 0, bottom: 0 });
 
   useEffect(() => {
-    if (!isDesktopViewport()) {
-      return;
-    }
-
-    setPanelSize((current) => clampPanelSize(current));
-  }, [clampPanelSize, isDesktopViewport]);
+    if (!isDesktopViewport()) return;
+    const effective = { right: fabRight + anchorOffset.right, bottom: fabBottom + anchorOffset.bottom };
+    setPanelSize((current) => clampPanelSize(current, effective.right, effective.bottom));
+  }, [clampPanelSize, isDesktopViewport, fabRight, fabBottom, anchorOffset]);
 
   useEffect(() => {
-    if (!isDesktopViewport()) {
-      return;
-    }
-
+    if (!isDesktopViewport()) return;
     try {
       localStorage.setItem(storageKey, JSON.stringify(panelSize));
     } catch {
-      // Ignore storage errors
+      // Ignore storage errors (private mode / quota)
     }
   }, [isDesktopViewport, panelSize, storageKey]);
 
   const handleResizeStart = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (!isDesktopViewport()) {
-        return;
-      }
+      if (!isDesktopViewport()) return;
 
       const direction = event.currentTarget.dataset.resizeDirection as ResizeDirection | undefined;
-      if (!direction) {
-        return;
-      }
+      if (!direction) return;
 
       event.preventDefault();
       event.stopPropagation();
 
       const resizeHandle = event.currentTarget;
-
       if (typeof resizeHandle.setPointerCapture === "function") {
         resizeHandle.setPointerCapture(event.pointerId);
       }
 
-      const resizeStart = {
+      const startState = {
         pointerX: event.clientX,
         pointerY: event.clientY,
         width: panelSize.width,
         height: panelSize.height,
+        anchorRight: anchorOffset.right,
+        anchorBottom: anchorOffset.bottom,
       };
 
       document.body.style.userSelect = "none";
 
-      const handlePointerMove = (moveEvent: PointerEvent) => {
-        let nextWidth = resizeStart.width;
-        let nextHeight = resizeStart.height;
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        const dx = moveEvent.clientX - startState.pointerX;
+        const dy = moveEvent.clientY - startState.pointerY;
 
+        let nextWidth = startState.width;
+        let nextHeight = startState.height;
+        let nextAnchorRight = startState.anchorRight;
+        let nextAnchorBottom = startState.anchorBottom;
+
+        // West handle: dragging left grows width (panel expands left).
         if (direction.includes("w")) {
-          nextWidth = resizeStart.width + (resizeStart.pointerX - moveEvent.clientX);
+          nextWidth = startState.width - dx;
         }
 
+        // East handle: dragging right grows width (panel expands right).
+        // The right anchor must shift leftward (decrease) to keep left edge fixed.
+        if (direction.includes("e")) {
+          const widthDelta = dx;
+          nextWidth = startState.width + widthDelta;
+          nextAnchorRight = startState.anchorRight - widthDelta;
+        }
+
+        // North handle: dragging up grows height (panel expands upward).
         if (direction.includes("n")) {
-          nextHeight = resizeStart.height + (resizeStart.pointerY - moveEvent.clientY);
+          nextHeight = startState.height - dy;
         }
 
-        setPanelSize(
-          clampPanelSize({
-            width: nextWidth,
-            height: nextHeight,
-          }),
+        // South handle: dragging down grows height (panel expands downward).
+        // The bottom anchor must shift upward (decrease) to keep the top edge fixed.
+        if (direction.includes("s")) {
+          const heightDelta = dy;
+          nextHeight = startState.height + heightDelta;
+          nextAnchorBottom = startState.anchorBottom - heightDelta;
+        }
+
+        // Clamp size against effective anchor position.
+        const effectiveRight = fabRight + nextAnchorRight;
+        const effectiveBottom = fabBottom + nextAnchorBottom;
+        const clamped = clampPanelSize({ width: nextWidth, height: nextHeight }, effectiveRight, effectiveBottom);
+
+        // Also clamp the anchor offsets so the panel doesn't go off-screen.
+        const clampedAnchorRight = Math.max(
+          QUICK_CHAT_VIEWPORT_PADDING - fabRight,
+          Math.min(
+            window.innerWidth - fabRight - QUICK_CHAT_MIN_PANEL_SIZE.width - QUICK_CHAT_VIEWPORT_PADDING,
+            nextAnchorRight,
+          ),
         );
+        const clampedAnchorBottom = Math.max(
+          QUICK_CHAT_VIEWPORT_PADDING - fabBottom,
+          Math.min(
+            window.innerHeight - fabBottom - QUICK_CHAT_MIN_PANEL_SIZE.height - QUICK_CHAT_VIEWPORT_PADDING,
+            nextAnchorBottom,
+          ),
+        );
+
+        setPanelSize(clamped);
+        setAnchorOffset({ right: clampedAnchorRight, bottom: clampedAnchorBottom });
       };
 
-      const handlePointerUp = (upEvent: PointerEvent) => {
+      const onPointerUp = (upEvent: PointerEvent) => {
         if (typeof resizeHandle.releasePointerCapture === "function") {
           resizeHandle.releasePointerCapture(upEvent.pointerId);
         }
-
         document.body.style.userSelect = "";
-        document.removeEventListener("pointermove", handlePointerMove);
-        document.removeEventListener("pointerup", handlePointerUp);
+        document.removeEventListener("pointermove", onPointerMove);
+        document.removeEventListener("pointerup", onPointerUp);
+
+        // Persist final size.
+        try {
+          localStorage.setItem(storageKey, JSON.stringify({ width: panelSize.width, height: panelSize.height }));
+        } catch {
+          // Best-effort
+        }
       };
 
-      document.addEventListener("pointermove", handlePointerMove);
-      document.addEventListener("pointerup", handlePointerUp);
+      document.addEventListener("pointermove", onPointerMove);
+      document.addEventListener("pointerup", onPointerUp);
     },
-    [clampPanelSize, isDesktopViewport, panelSize.height, panelSize.width],
+    [
+      anchorOffset.bottom,
+      anchorOffset.right,
+      clampPanelSize,
+      fabBottom,
+      fabRight,
+      isDesktopViewport,
+      panelSize.height,
+      panelSize.width,
+      storageKey,
+    ],
   );
 
   return {
     panelSize,
+    anchorOffset,
     handleResizeStart,
   };
 }
@@ -671,7 +728,7 @@ export function QuickChatFAB({
 
   // Panel stays 60px above FAB (FAB is 48px tall + 12px gap)
   const panelY = position.y + 60;
-  const { panelSize, handleResizeStart } = usePanelResize(projectId, position.x, panelY);
+  const { panelSize, anchorOffset, handleResizeStart } = usePanelResize(projectId, position.x, panelY);
   const shouldApplyDesktopPanelSize = typeof window !== "undefined" && window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT;
 
   // Chat session hook
@@ -1214,31 +1271,83 @@ export function QuickChatFAB({
           ref={panelRef}
           data-testid="quick-chat-panel"
           style={{
-            right: position.x,
-            bottom: panelY,
+            right: position.x + anchorOffset.right,
+            bottom: panelY + anchorOffset.bottom,
             ...(shouldApplyDesktopPanelSize ? { width: panelSize.width, height: panelSize.height } : {}),
             ...keyboardPanelStyle,
           }}
         >
           {shouldApplyDesktopPanelSize && (
             <>
+              {/* Edge handles */}
               <div
                 className="quick-chat-resize-handle"
                 data-resize-direction="n"
+                data-testid="quick-chat-resize-n"
                 onPointerDown={handleResizeStart}
-                aria-hidden="true"
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label="Resize panel from top"
+              />
+              <div
+                className="quick-chat-resize-handle"
+                data-resize-direction="s"
+                data-testid="quick-chat-resize-s"
+                onPointerDown={handleResizeStart}
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label="Resize panel from bottom"
+              />
+              <div
+                className="quick-chat-resize-handle"
+                data-resize-direction="e"
+                data-testid="quick-chat-resize-e"
+                onPointerDown={handleResizeStart}
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize panel from right"
               />
               <div
                 className="quick-chat-resize-handle"
                 data-resize-direction="w"
+                data-testid="quick-chat-resize-w"
                 onPointerDown={handleResizeStart}
-                aria-hidden="true"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize panel from left"
               />
+              {/* Corner handles */}
               <div
                 className="quick-chat-resize-handle"
                 data-resize-direction="nw"
+                data-testid="quick-chat-resize-nw"
                 onPointerDown={handleResizeStart}
-                aria-hidden="true"
+                role="separator"
+                aria-label="Resize panel from top-left corner"
+              />
+              <div
+                className="quick-chat-resize-handle"
+                data-resize-direction="ne"
+                data-testid="quick-chat-resize-ne"
+                onPointerDown={handleResizeStart}
+                role="separator"
+                aria-label="Resize panel from top-right corner"
+              />
+              <div
+                className="quick-chat-resize-handle"
+                data-resize-direction="sw"
+                data-testid="quick-chat-resize-sw"
+                onPointerDown={handleResizeStart}
+                role="separator"
+                aria-label="Resize panel from bottom-left corner"
+              />
+              <div
+                className="quick-chat-resize-handle"
+                data-resize-direction="se"
+                data-testid="quick-chat-resize-se"
+                onPointerDown={handleResizeStart}
+                role="separator"
+                aria-label="Resize panel from bottom-right corner"
               />
             </>
           )}

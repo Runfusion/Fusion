@@ -1,6 +1,7 @@
 import "./TaskDetailModal.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pencil, Bot, X, ChevronDown } from "lucide-react";
+import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, Settings, AgentLogEntry, Agent, TaskPriority, TaskSourceIssue } from "@fusion/core";
@@ -371,6 +372,8 @@ export function TaskDetailModal({
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const moveMenuRef = useRef<HTMLDivElement>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  useModalResizePersist(modalRef, true, "fusion:task-detail-modal-size");
 
   // Plugin UI slots for task-detail-tab
   const { getSlotsForId: getPluginSlots } = usePluginUiSlots(projectId);
@@ -1277,7 +1280,7 @@ export function TaskDetailModal({
 
   return (
     <div className="modal-overlay open" onClick={handleOverlayClick} role="dialog" aria-modal="true">
-      <div className="modal modal-lg" onDragOver={handleDragOver} onDrop={handleDrop}>
+      <div className="modal modal-lg task-detail-modal" ref={modalRef} onDragOver={handleDragOver} onDrop={handleDrop}>
         <div className="modal-header">
           <div className="detail-title-row">
             <span className="detail-id">{task.id}</span>

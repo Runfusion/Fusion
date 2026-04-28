@@ -60,6 +60,7 @@ import type {
   FileReadResult,
   TaskDetailData,
   TaskEvent,
+  UpdateStatus,
 } from "./state.js";
 import { SECTION_ORDER } from "./state.js";
 import type { LogEntry } from "./log-ring-buffer.js";
@@ -137,7 +138,7 @@ const SPLASH_MIN_ROWS = 12;
 const LARGE_LOGO_MIN_COLS = 70;
 const LARGE_LOGO_MIN_ROWS = 16;
 
-function SplashScreen({ loadingStatus }: { loadingStatus: string }) {
+function SplashScreen({ loadingStatus, updateStatus }: { loadingStatus: string; updateStatus: UpdateStatus | null }) {
   const { stdout } = useStdout();
   const cols = stdout?.columns ?? 80;
   const rows = stdout?.rows ?? 24;
@@ -154,6 +155,9 @@ function SplashScreen({ loadingStatus }: { loadingStatus: string }) {
       <Text color="cyanBright" dimColor>{FUSION_TAGLINE}</Text>
       <Text color="cyanBright" dimColor>{FUSION_URL}</Text>
       <Text color="cyanBright" dimColor>{`v${FUSION_VERSION}`}</Text>
+      {updateStatus?.updateAvailable && (
+        <Text color="yellow" dimColor>{`Update available: v${updateStatus.currentVersion} → v${updateStatus.latestVersion}. Run \`npm install -g @runfusion/fusion\`.`}</Text>
+      )}
       <Box height={1} />
       <Box flexDirection="row" gap={1}>
         <Text color="cyanBright"><Spinner type="dots" /></Text>
@@ -819,11 +823,11 @@ function StatusBar({ state, controller: _controller }: { state: DashboardState; 
     hotkeys.push("Tab cycle panel", "1-5 jump");
   }
 
-  const statusParts: string[] = [];
-  if (systemInfo) {
-    statusParts.push(`${systemInfo.baseUrl} v${FUSION_VERSION}`);
-    statusParts.push(formatUptime(Date.now() - systemInfo.startTimeMs));
-  }
+  const { updateStatus } = state;
+  const hasUpdate = updateStatus?.updateAvailable === true;
+
+  const uptimePart = systemInfo ? formatUptime(Date.now() - systemInfo.startTimeMs) : null;
+  const versionPart = systemInfo ? `${systemInfo.baseUrl} v${FUSION_VERSION}` : null;
 
   // Truncate both halves so the StatusBar always fits in a single row.
   // Without this, default wrap="wrap" lets long hotkey strings or URLs
@@ -832,8 +836,13 @@ function StatusBar({ state, controller: _controller }: { state: DashboardState; 
   return (
     <Box height={1} justifyContent="space-between" paddingX={1} flexShrink={0} overflow="hidden">
       <Text dimColor wrap="truncate-end">{hotkeys.join("  ·  ")}</Text>
-      {statusParts.length > 0 && (
-        <Text dimColor wrap="truncate-end">{statusParts.join(" | ")}</Text>
+      {versionPart && (
+        <Box flexDirection="row" gap={1} flexShrink={0}>
+          {uptimePart && <Text dimColor wrap="truncate-end">{uptimePart}</Text>}
+          {uptimePart && <Text dimColor wrap="truncate-end">|</Text>}
+          <Text dimColor wrap="truncate-end">{versionPart}</Text>
+          {hasUpdate && <Text color="yellow" wrap="truncate-end">●</Text>}
+        </Box>
       )}
     </Box>
   );
@@ -4108,7 +4117,7 @@ export function DashboardApp({ controller }: DashboardAppProps) {
   if (!state.systemInfo) {
     return (
       <Box key={layoutKey} flexDirection="column" height={rows} width={cols} overflow="hidden">
-        <SplashScreen loadingStatus={state.loadingStatus} />
+        <SplashScreen loadingStatus={state.loadingStatus} updateStatus={state.updateStatus} />
       </Box>
     );
   }

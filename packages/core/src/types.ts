@@ -1089,9 +1089,24 @@ export interface GlobalSettings {
    *  the OpenRouter API at startup so the model picker shows all available
    *  OpenRouter models (not just the static built-in list). Default: true. */
   openrouterModelSync?: boolean;
-  /** When true (default), checks npm daily for new versions of @runfusion/fusion
-   *  and shows update notices in the CLI and dashboard. */
+  /** When true (default), checks npm for new versions of @runfusion/fusion and
+   *  shows update notices in the CLI and dashboard. The actual cadence is
+   *  governed by `updateCheckFrequency`. Disabled = no automatic checks at all. */
   updateCheckEnabled?: boolean;
+  /** When false, hides the "Star on GitHub" button in the Settings modal
+   *  header. Defaults to true (visible). The button is also hidden once the
+   *  user has clicked it (tracked client-side in localStorage). */
+  showGitHubStarButton?: boolean;
+  /** Cadence for automatic update checks. The dashboard's `/update-check`
+   *  route uses this to decide whether to consult npm or return a cached
+   *  result.
+   *  - `manual`: never auto-check; only when the user clicks "Check now"
+   *  - `on-startup`: refresh once when the server starts, then cache
+   *    indefinitely until next startup
+   *  - `daily` (default): 24h cache TTL
+   *  - `weekly`: 7-day cache TTL
+   */
+  updateCheckFrequency?: "manual" | "on-startup" | "daily" | "weekly";
   /** When true, indicates the user has completed the AI model onboarding flow
    *  (connected at least one provider and selected a default model). When
    *  false/undefined, the dashboard will auto-open the onboarding modal.

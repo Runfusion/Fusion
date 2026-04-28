@@ -41,7 +41,9 @@ export const registerUpdateCheckRoutes: ApiRouteRegistrar = (ctx) => {
         return;
       }
 
-      const result = await performUpdateCheck(resolveGlobalDir(), CLI_PACKAGE_VERSION);
+      const result = await performUpdateCheck(resolveGlobalDir(), CLI_PACKAGE_VERSION, {
+        frequency: globalSettings.updateCheckFrequency,
+      });
       res.json(result);
     } catch (error) {
       rethrowAsApiError(error, "Failed to perform update check");
@@ -52,7 +54,11 @@ export const registerUpdateCheckRoutes: ApiRouteRegistrar = (ctx) => {
     try {
       const fusionDir = resolveGlobalDir();
       await clearUpdateCheckCache(fusionDir);
-      const result = await performUpdateCheck(fusionDir, CLI_PACKAGE_VERSION);
+      // Explicit `force: true` so a "manual" frequency setting doesn't short
+      // out the network fetch on the user's deliberate "Check now" click.
+      const result = await performUpdateCheck(fusionDir, CLI_PACKAGE_VERSION, {
+        force: true,
+      });
       res.json(result);
     } catch (error) {
       rethrowAsApiError(error, "Failed to refresh update check");

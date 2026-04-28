@@ -1417,7 +1417,7 @@ describe("QuickChatFAB", () => {
       });
 
       expect(localStorageMock.setItem).toHaveBeenCalledWith(
-        "fusion-quick-chat-size-proj-123",
+        "fusion:quick-chat-size-proj-123",
         expect.stringContaining('"width":'),
       );
       expect(parseFloat(panel.style.width)).toBeGreaterThan(320);
@@ -1425,7 +1425,7 @@ describe("QuickChatFAB", () => {
     });
 
     it("restores panel size from localStorage on desktop mount", () => {
-      localStorageMock.store["fusion-quick-chat-size-proj-123"] = JSON.stringify({ width: 470, height: 520 });
+      localStorageMock.store["fusion:quick-chat-size-proj-123"] = JSON.stringify({ width: 470, height: 520 });
 
       render(<QuickChatFAB addToast={addToast} projectId="proj-123" open={true} />);
 

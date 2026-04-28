@@ -1,4 +1,15 @@
 /* === Detail Modal === */
+.modal.task-detail-modal {
+  width: min(95vw, 800px);
+  max-width: 95vw;
+  min-width: 480px;
+  height: 85vh;
+  min-height: 480px;
+  max-height: calc(100dvh - var(--overlay-padding-top, 10vh) - 16px);
+  overflow: hidden;
+  resize: both;
+}
+
 .detail-title-row {
   display: flex;
   align-items: center;

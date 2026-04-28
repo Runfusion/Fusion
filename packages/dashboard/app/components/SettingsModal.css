@@ -2,6 +2,60 @@
    Extracted from styles.css as part of the Sweep-3 CSS extraction effort.
    Imported by SettingsModal.tsx (and MemoryView.tsx for shared classes). */
 
+/* === Settings Modal header action buttons (Star on GitHub, Help) === */
+.settings-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-left: auto;
+  margin-right: var(--space-sm);
+}
+
+/* GitHub star button — split-pill layout: [Star half | Count half] */
+.settings-github-star-btn {
+  display: inline-flex;
+  align-items: stretch;
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--card);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  text-decoration: none;
+  overflow: hidden;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.settings-github-star-btn:hover {
+  border-color: var(--text-muted);
+  background: var(--card-hover);
+}
+
+.settings-github-star-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-color: var(--todo);
+}
+
+.settings-github-star-btn__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+}
+
+.settings-github-star-btn__count {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-left: var(--btn-border-width) solid var(--border);
+  background: color-mix(in srgb, var(--surface) 60%, var(--card));
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* === Settings Modal: sizing + resizability === */
 .settings-modal {
   width: min(95vw, 1100px);
