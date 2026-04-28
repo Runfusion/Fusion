@@ -1287,26 +1287,33 @@ export async function resolveTaskDiffBaseRef({
   baseBranch,
   baseCommitSha,
 }: DiffBaseResolutionInput): Promise<string | undefined> {
-  const resolvedBaseBranch = baseBranch?.trim() || "main";
+  // When baseBranch was nulled (e.g., upstream dep merged and its branch was
+  // deleted) but a task-scoped baseCommitSha is still recorded, skip the
+  // merge-base step so we don't widen the diff range to merge-base(HEAD, main)
+  // and surface unrelated history. Only fall back to "main" when neither hint
+  // is available (legacy tasks).
+  const resolvedBaseBranch = baseBranch?.trim() || (baseCommitSha ? undefined : "main");
   const quotedHeadRef = quoteArg(headRef);
   let mergeBase: string | undefined;
 
-  try {
+  if (resolvedBaseBranch) {
     try {
-      const { stdout } = await execAsync(`git merge-base ${quotedHeadRef} ${quoteArg(resolvedBaseBranch)}`, {
-        cwd,
-        encoding: "utf-8",
-      });
-      mergeBase = stdout.trim() || undefined;
+      try {
+        const { stdout } = await execAsync(`git merge-base ${quotedHeadRef} ${quoteArg(resolvedBaseBranch)}`, {
+          cwd,
+          encoding: "utf-8",
+        });
+        mergeBase = stdout.trim() || undefined;
+      } catch {
+        const { stdout } = await execAsync(`git merge-base ${quotedHeadRef} ${quoteArg(`origin/${resolvedBaseBranch}`)}`, {
+          cwd,
+          encoding: "utf-8",
+        });
+        mergeBase = stdout.trim() || undefined;
+      }
     } catch {
-      const { stdout } = await execAsync(`git merge-base ${quotedHeadRef} ${quoteArg(`origin/${resolvedBaseBranch}`)}`, {
-        cwd,
-        encoding: "utf-8",
-      });
-      mergeBase = stdout.trim() || undefined;
+      // Base branch may not exist locally/remotely.
     }
-  } catch {
-    // Base branch may not exist locally/remotely.
   }
 
   // Same guard as dashboard routes: when merge-base === headRef, the range

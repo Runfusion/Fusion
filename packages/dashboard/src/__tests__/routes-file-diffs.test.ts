@@ -232,6 +232,31 @@ describe("resolveDiffBase", () => {
     expect(diffBase).toBe("origin-merge-base");
   });
 
+  it("uses baseCommitSha directly when baseBranch is null (upstream branch deleted)", async () => {
+    // Regression: FN-2855 showed 108 changed files because the dashboard fell
+    // back to merge-base(HEAD, main) after self-healing nulled the original
+    // baseBranch. With a valid baseCommitSha recorded, we must skip the
+    // "main" default and use the SHA so the diff range stays task-scoped.
+    const runGit = vi.fn(async (args: string[]) => {
+      if (args.join(" ") === "merge-base --is-ancestor task-base-789 HEAD") return "";
+      throw new Error(`Unexpected command: ${args.join(" ")}`);
+    });
+
+    const diffBase = await resolveDiffBase(
+      { baseCommitSha: "task-base-789" },
+      "/tmp/worktree",
+      "HEAD",
+      runGit,
+    );
+
+    expect(diffBase).toBe("task-base-789");
+    expect(runGit).not.toHaveBeenCalledWith(
+      ["merge-base", "HEAD", "main"],
+      "/tmp/worktree",
+      5000,
+    );
+  });
+
   it("falls back to HEAD~1 when merge-base is unavailable and baseCommitSha is stale", async () => {
     const runGit = vi.fn(async (args: string[]) => {
       if (args.join(" ") === "merge-base HEAD main") {

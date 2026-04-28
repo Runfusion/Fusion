@@ -60,17 +60,24 @@ export async function resolveDiffBase(
   headRef = "HEAD",
   runGit: (args: string[], cwd?: string, timeout?: number) => Promise<string> = runGitCommand,
 ): Promise<string | undefined> {
-  const baseBranch = task.baseBranch ?? "main";
+  // When baseBranch was nulled (e.g., upstream dep merged and its branch was
+  // deleted) but a task-scoped baseCommitSha is still recorded, skip the
+  // merge-base step so we don't widen the diff range to merge-base(HEAD, main)
+  // and surface unrelated history. Only fall back to "main" when neither hint
+  // is available (legacy tasks).
+  const baseBranch = task.baseBranch?.trim() || (task.baseCommitSha ? undefined : "main");
   let mergeBase: string | undefined;
 
-  try {
+  if (baseBranch) {
     try {
-      mergeBase = (await runGit(["merge-base", headRef, baseBranch], cwd, 5000)).trim() || undefined;
+      try {
+        mergeBase = (await runGit(["merge-base", headRef, baseBranch], cwd, 5000)).trim() || undefined;
+      } catch {
+        mergeBase = (await runGit(["merge-base", headRef, `origin/${baseBranch}`], cwd, 5000)).trim() || undefined;
+      }
     } catch {
-      mergeBase = (await runGit(["merge-base", headRef, `origin/${baseBranch}`], cwd, 5000)).trim() || undefined;
+      // base branch may no longer exist locally/remotely
     }
-  } catch {
-    // base branch may no longer exist locally/remotely
   }
 
   // If merge-base equals headRef, the live merge-base would produce an empty
