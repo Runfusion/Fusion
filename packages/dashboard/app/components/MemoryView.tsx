@@ -165,6 +165,9 @@ export function MemoryView({ projectId, addToast }: MemoryViewProps) {
     selectFile,
     saveSelectedFile,
     savingSelectedFile,
+    reloadMemoryFiles,
+    triggerDreamNow,
+    dreamRunning,
   } = useMemoryData({ projectId });
 
   useEffect(() => {
@@ -298,6 +301,16 @@ export function MemoryView({ projectId, addToast }: MemoryViewProps) {
       setMemoryTestLoading(false);
     }
   }, [memoryTestQuery, testRetrieval, addToast]);
+
+  const handleDreamNow = useCallback(async () => {
+    try {
+      await triggerDreamNow();
+      addToast("Dream processing completed", "success");
+      await reloadMemoryFiles();
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : "Failed to run dream processing", "error");
+    }
+  }, [triggerDreamNow, reloadMemoryFiles, addToast]);
 
   // Handle compact memory
   const handleCompactMemory = useCallback(async () => {
@@ -521,24 +534,44 @@ export function MemoryView({ projectId, addToast }: MemoryViewProps) {
                     </div>
 
                     {memorySettingsDraft.memoryEnabled && memorySettingsDraft.memoryDreamsEnabled && (
-                      <div className="form-group">
-                        <label htmlFor="memoryDreamsSchedule">Dream Schedule</label>
-                        <input
-                          id="memoryDreamsSchedule"
-                          type="text"
-                          className="input"
-                          value={memorySettingsDraft.memoryDreamsSchedule}
-                          onChange={(event) => {
-                            setMemorySettingsDraft((prev) => ({
-                              ...prev,
-                              memoryDreamsSchedule: event.target.value,
-                            }));
-                          }}
-                          placeholder="0 4 * * *"
-                          disabled={settingsLoading}
-                        />
-                        <small>Cron expression for dream processing.</small>
-                      </div>
+                      <>
+                        <div className="form-group">
+                          <label htmlFor="memoryDreamsSchedule">Dream Schedule</label>
+                          <input
+                            id="memoryDreamsSchedule"
+                            type="text"
+                            className="input"
+                            value={memorySettingsDraft.memoryDreamsSchedule}
+                            onChange={(event) => {
+                              setMemorySettingsDraft((prev) => ({
+                                ...prev,
+                                memoryDreamsSchedule: event.target.value,
+                              }));
+                            }}
+                            placeholder="0 4 * * *"
+                            disabled={settingsLoading}
+                          />
+                          <small>Cron expression for dream processing.</small>
+                        </div>
+                        <div className="form-group">
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={handleDreamNow}
+                            disabled={dreamRunning || !memorySettingsDraft.memoryDreamsEnabled}
+                          >
+                            {dreamRunning ? (
+                              <>
+                                <Loader2 size={14} className="animate-spin" />
+                                Dreaming…
+                              </>
+                            ) : (
+                              "Dream Now"
+                            )}
+                          </button>
+                          <small>Manually trigger dream processing now.</small>
+                        </div>
+                      </>
                     )}
                   </div>
 

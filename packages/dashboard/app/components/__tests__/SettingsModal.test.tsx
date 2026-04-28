@@ -40,6 +40,8 @@ const mockRegenerateRemotePersistentToken = vi.fn();
 const mockGenerateShortLivedRemoteToken = vi.fn();
 const mockFetchRemoteQr = vi.fn();
 const mockFetchRemoteUrl = vi.fn();
+const mockFetchAutomations = vi.fn();
+const mockRunAutomation = vi.fn();
 const mockUseWorkspaceFileBrowser = vi.fn();
 
 vi.mock("../../api", () => ({
@@ -78,6 +80,8 @@ vi.mock("../../api", () => ({
   generateShortLivedRemoteToken: (...args: unknown[]) => mockGenerateShortLivedRemoteToken(...args),
   fetchRemoteQr: (...args: unknown[]) => mockFetchRemoteQr(...args),
   fetchRemoteUrl: (...args: unknown[]) => mockFetchRemoteUrl(...args),
+  fetchAutomations: (...args: unknown[]) => mockFetchAutomations(...args),
+  runAutomation: (...args: unknown[]) => mockRunAutomation(...args),
 }));
 
 // Mock the hook
@@ -95,6 +99,7 @@ vi.mock("lucide-react", async (importOriginal) => {
     RefreshCw: ({ className }: { className?: string }) => <span data-testid="icon-refresh" className={className} />,
     Star: ({ size }: { size?: number }) => <span data-testid="icon-star" style={{ width: size, height: size }} />,
     HelpCircle: ({ size }: { size?: number }) => <span data-testid="icon-help-circle" style={{ width: size, height: size }} />,
+    Loader2: ({ className }: { className?: string }) => <span data-testid="icon-loader2" className={className} />,
   };
 });
 
@@ -263,6 +268,8 @@ describe("SettingsModal", () => {
     mockGenerateShortLivedRemoteToken.mockResolvedValue({ token: "short", expiresAt: new Date(Date.now() + 60000).toISOString(), ttlMs: 60000 });
     mockFetchRemoteQr.mockResolvedValue({ url: "https://remote.example.com", tokenType: "persistent", expiresAt: null, format: "image/svg", data: "<svg></svg>" });
     mockFetchRemoteUrl.mockResolvedValue({ url: "https://remote.example.com", tokenType: "persistent", expiresAt: null });
+    mockFetchAutomations.mockResolvedValue([]);
+    mockRunAutomation.mockResolvedValue({ schedule: { id: "auto-2", name: "Memory Dreams" }, result: { success: true } });
     mockUseWorkspaceFileBrowser.mockReturnValue({
       entries: [],
       currentPath: ".",
@@ -1714,6 +1721,58 @@ describe("SettingsModal", () => {
         expect(screen.queryByRole("img", { name: "Remote access QR code" })).not.toBeInTheDocument();
       });
       expect(screen.getByText("https://remote.example.com/qr-text")).toBeInTheDocument();
+    });
+  });
+
+  describe("memory dream trigger", () => {
+    const openMemorySection = async () => {
+      const [memorySectionButton] = await screen.findAllByRole("button", { name: /^Memory$/i });
+      await userEvent.click(memorySectionButton);
+    };
+
+    it("shows Dream Now button when dreams are enabled", async () => {
+      mockFetchSettings.mockResolvedValueOnce({
+        ...defaultSettings,
+        memoryEnabled: true,
+        memoryDreamsEnabled: true,
+        memoryDreamsSchedule: "0 4 * * *",
+      });
+
+      renderModal();
+      await waitForSettingsModalReady();
+      await openMemorySection();
+
+      expect(await screen.findByRole("button", { name: "Dream Now" })).toBeInTheDocument();
+    });
+
+    it("triggers dream processing from Dream Now button", async () => {
+      const addToast = vi.fn();
+      mockFetchSettings.mockResolvedValueOnce({
+        ...defaultSettings,
+        memoryEnabled: true,
+        memoryDreamsEnabled: true,
+      });
+      mockFetchAutomations.mockResolvedValueOnce([{ id: "auto-2", name: "Memory Dreams" }]);
+
+      renderModal({ addToast });
+      await waitForSettingsModalReady();
+      await openMemorySection();
+
+      await userEvent.click(await screen.findByRole("button", { name: "Dream Now" }));
+
+      await waitFor(() => {
+        expect(mockFetchAutomations).toHaveBeenCalledWith({ scope: "project", projectId: undefined });
+        expect(mockRunAutomation).toHaveBeenCalledWith("auto-2", { scope: "project", projectId: undefined });
+      });
+      expect(addToast).toHaveBeenCalledWith("Dream processing completed", "success");
+    });
+
+    it("hides Dream Now button when dreams are disabled", async () => {
+      renderModal();
+      await waitForSettingsModalReady();
+      await openMemorySection();
+
+      expect(screen.queryByRole("button", { name: "Dream Now" })).not.toBeInTheDocument();
     });
   });
 });

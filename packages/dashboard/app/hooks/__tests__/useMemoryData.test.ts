@@ -13,6 +13,15 @@ vi.mock("../../api", () => ({
   fetchMemoryStats: vi.fn(),
   compactMemory: vi.fn(),
   fetchMemoryBackendStatus: vi.fn(),
+  fetchSettings: vi.fn(),
+  updateSettings: vi.fn(),
+  fetchMemoryFiles: vi.fn(),
+  fetchMemoryFile: vi.fn(),
+  saveMemoryFile: vi.fn(),
+  installQmd: vi.fn(),
+  testMemoryRetrieval: vi.fn(),
+  fetchAutomations: vi.fn(),
+  runAutomation: vi.fn(),
 }));
 
 // Mock useMemoryBackendStatus hook
@@ -42,6 +51,8 @@ import {
   triggerInsightExtraction,
   fetchMemoryAudit,
   compactMemory,
+  fetchAutomations,
+  runAutomation,
 } from "../../api";
 
 describe("useMemoryData", () => {
@@ -271,6 +282,69 @@ describe("useMemoryData", () => {
 
     expect(saveMemoryInsights).toHaveBeenCalledWith("New insights content", "test-project");
     expect(fetchMemoryInsights).toHaveBeenCalledTimes(2); // Initial + refresh
+  });
+
+  it("triggerDreamNow finds and runs the Memory Dreams automation", async () => {
+    vi.mocked(fetchMemory).mockResolvedValue({ content: "Initial content" });
+    vi.mocked(fetchMemoryInsights).mockResolvedValue({ content: null, exists: false });
+    vi.mocked(fetchMemoryAudit).mockResolvedValue({
+      generatedAt: "2024-01-01T00:00:00.000Z",
+      workingMemory: { exists: true, size: 20, sectionCount: 1 },
+      insightsMemory: { exists: false, size: 0, insightCount: 0, categories: {} },
+      extraction: { runAt: "", success: false, insightCount: 0, duplicateCount: 0, skippedCount: 0, summary: "" },
+      pruning: { applied: false, reason: "", sizeDelta: 0, originalSize: 0, newSize: 0 },
+      checks: [],
+      health: "warning",
+    });
+    vi.mocked(fetchAutomations).mockResolvedValue([
+      { id: "auto-1", name: "Other", cron: "* * * * *", enabled: true },
+      { id: "auto-2", name: "Memory Dreams", cron: "0 4 * * *", enabled: true },
+    ] as any);
+    vi.mocked(runAutomation).mockResolvedValue({ schedule: { id: "auto-2" }, result: { success: true } } as any);
+
+    const { result } = renderHook(() => useMemoryData({ projectId: "test-project" }));
+
+    await waitFor(() => {
+      expect(result.current.workingMemoryLoading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.triggerDreamNow();
+    });
+
+    expect(fetchAutomations).toHaveBeenCalledWith({ scope: "project", projectId: "test-project" });
+    expect(runAutomation).toHaveBeenCalledWith("auto-2", { scope: "project", projectId: "test-project" });
+    expect(result.current.dreamRunning).toBe(false);
+  });
+
+  it("triggerDreamNow throws when Memory Dreams schedule is missing and resets state", async () => {
+    vi.mocked(fetchMemory).mockResolvedValue({ content: "Initial content" });
+    vi.mocked(fetchMemoryInsights).mockResolvedValue({ content: null, exists: false });
+    vi.mocked(fetchMemoryAudit).mockResolvedValue({
+      generatedAt: "2024-01-01T00:00:00.000Z",
+      workingMemory: { exists: true, size: 20, sectionCount: 1 },
+      insightsMemory: { exists: false, size: 0, insightCount: 0, categories: {} },
+      extraction: { runAt: "", success: false, insightCount: 0, duplicateCount: 0, skippedCount: 0, summary: "" },
+      pruning: { applied: false, reason: "", sizeDelta: 0, originalSize: 0, newSize: 0 },
+      checks: [],
+      health: "warning",
+    });
+    vi.mocked(fetchAutomations).mockResolvedValue([{ id: "auto-1", name: "Other" }] as any);
+
+    const { result } = renderHook(() => useMemoryData({ projectId: "test-project" }));
+
+    await waitFor(() => {
+      expect(result.current.workingMemoryLoading).toBe(false);
+    });
+
+    await act(async () => {
+      await expect(result.current.triggerDreamNow()).rejects.toThrow(
+        "Memory Dreams schedule not found. Enable dream processing in memory settings first.",
+      );
+    });
+
+    expect(runAutomation).not.toHaveBeenCalled();
+    expect(result.current.dreamRunning).toBe(false);
   });
 
   it("sets correct loading states during async operations", async () => {

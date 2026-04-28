@@ -13,6 +13,8 @@ import {
   fetchMemoryFiles,
   fetchMemoryFile,
   saveMemoryFile,
+  fetchAutomations,
+  runAutomation,
   installQmd,
   testMemoryRetrieval,
   type MemoryAuditReport,
@@ -84,6 +86,10 @@ interface UseMemoryDataResult {
   // Extraction
   extractInsights: () => Promise<{ success: boolean; summary: string }>;
   extracting: boolean;
+
+  // Dreams
+  triggerDreamNow: () => Promise<unknown>;
+  dreamRunning: boolean;
 
   // Audit
   auditReport: MemoryAuditReport | null;
@@ -161,6 +167,9 @@ export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryData
 
   // Extraction state
   const [extracting, setExtracting] = useState(false);
+
+  // Dreams state
+  const [dreamRunning, setDreamRunning] = useState(false);
 
   // Audit state
   const [auditReport, setAuditReport] = useState<MemoryAuditReport | null>(null);
@@ -514,6 +523,21 @@ export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryData
     }
   }, [projectId, refreshInsights, refreshAudit]);
 
+  const triggerDreamNow = useCallback(async () => {
+    setDreamRunning(true);
+    try {
+      const automations = await fetchAutomations({ scope: "project", projectId });
+      const memoryDreamsSchedule = automations.find((automation) => automation.name === "Memory Dreams");
+      if (!memoryDreamsSchedule) {
+        throw new Error("Memory Dreams schedule not found. Enable dream processing in memory settings first.");
+      }
+
+      return await runAutomation(memoryDreamsSchedule.id, { scope: "project", projectId });
+    } finally {
+      setDreamRunning(false);
+    }
+  }, [projectId]);
+
   // Compact memory
   const compactMemoryAction = useCallback(async (path?: string) => {
     setCompacting(true);
@@ -581,6 +605,10 @@ export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryData
     // Extraction
     extractInsights,
     extracting,
+
+    // Dreams
+    triggerDreamNow,
+    dreamRunning,
 
     // Audit
     auditReport,

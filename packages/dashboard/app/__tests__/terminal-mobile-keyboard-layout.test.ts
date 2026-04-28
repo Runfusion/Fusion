@@ -125,9 +125,9 @@ describe("terminal mobile keyboard layout CSS contract", () => {
       return match?.[1] ?? "";
     }
 
-    it("sets width: 100% on mobile", () => {
+    it("sets width: 100vw on mobile", () => {
       const ruleBody = findMobileTerminalModalRule();
-      expect(ruleBody).toContain("width: 100%");
+      expect(ruleBody).toContain("width: 100vw");
     });
 
     it("sets height: 100dvh on mobile", () => {
@@ -140,9 +140,9 @@ describe("terminal mobile keyboard layout CSS contract", () => {
       expect(ruleBody).toContain("max-height: 100dvh");
     });
 
-    it("sets min-height: 100dvh on mobile", () => {
+    it("resets min-height constraint on mobile", () => {
       const ruleBody = findMobileTerminalModalRule();
-      expect(ruleBody).toContain("min-height: 100dvh");
+      expect(ruleBody).toContain("min-height: 0");
     });
   });
 

@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense, type MouseEvent } from "react";
-import { Globe, Folder, RefreshCw, Star, HelpCircle } from "lucide-react";
+import { Globe, Folder, RefreshCw, Star, HelpCircle, Loader2 } from "lucide-react";
 import { THINKING_LEVELS, isGlobalSettingsKey, isProjectSettingsKey, getErrorMessage } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, AgentPromptsConfig, ThinkingLevel } from "@fusion/core";
-import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, fetchGitRemotesDetailed, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, updateRemoteSettings, fetchRemoteStatus, activateRemoteProvider, startRemoteTunnel, stopRemoteTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteQr, fetchRemoteUrl } from "../api";
+import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, fetchAutomations, runAutomation, fetchGitRemotesDetailed, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, updateRemoteSettings, fetchRemoteStatus, activateRemoteProvider, startRemoteTunnel, stopRemoteTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteQr, fetchRemoteUrl } from "../api";
 import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemoteDetailed, RemoteSettings, RemoteStatus, UpdateCheckResponse } from "../api";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
@@ -415,6 +415,7 @@ export function SettingsModal({
   const [memoryTestQuery, setMemoryTestQuery] = useState("");
   const [memoryTestLoading, setMemoryTestLoading] = useState(false);
   const [memoryTestResult, setMemoryTestResult] = useState<MemoryRetrievalTestResult | null>(null);
+  const [dreamRunning, setDreamRunning] = useState(false);
   const [memoryCompactLoading, setMemoryCompactLoading] = useState(false);
   const [qmdInstallLoading, setQmdInstallLoading] = useState(false);
   const skipNextMemoryReloadRef = useRef(false);
@@ -1342,6 +1343,23 @@ export function SettingsModal({
       setMemoryTestLoading(false);
     }
   }, [memoryTestQuery, projectId, addToast]);
+
+  const handleDreamNow = useCallback(async () => {
+    setDreamRunning(true);
+    try {
+      const automations = await fetchAutomations({ scope: "project", projectId });
+      const memoryDreamsSchedule = automations.find((automation) => automation.name === "Memory Dreams");
+      if (!memoryDreamsSchedule) {
+        throw new Error("Memory Dreams schedule not found. Enable dream processing in memory settings first.");
+      }
+      await runAutomation(memoryDreamsSchedule.id, { scope: "project", projectId });
+      addToast("Dream processing completed", "success");
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : "Failed to run dream processing", "error");
+    } finally {
+      setDreamRunning(false);
+    }
+  }, [projectId, addToast]);
 
   const handleInstallQmd = useCallback(async () => {
     setQmdInstallLoading(true);
@@ -3080,18 +3098,38 @@ export function SettingsModal({
             </div>
 
             {isMemoryEnabled && form.memoryDreamsEnabled === true && (
-              <div className="form-group">
-                <label htmlFor="memoryDreamsSchedule">Dream Schedule</label>
-                <input
-                  id="memoryDreamsSchedule"
-                  type="text"
-                  value={form.memoryDreamsSchedule ?? "0 4 * * *"}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, memoryDreamsSchedule: e.target.value }))
-                  }
-                />
-                <small>Cron expression for dream processing.</small>
-              </div>
+              <>
+                <div className="form-group">
+                  <label htmlFor="memoryDreamsSchedule">Dream Schedule</label>
+                  <input
+                    id="memoryDreamsSchedule"
+                    type="text"
+                    value={form.memoryDreamsSchedule ?? "0 4 * * *"}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, memoryDreamsSchedule: e.target.value }))
+                    }
+                  />
+                  <small>Cron expression for dream processing.</small>
+                </div>
+                <div className="form-group">
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={handleDreamNow}
+                    disabled={dreamRunning || form.memoryDreamsEnabled !== true}
+                  >
+                    {dreamRunning ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" />
+                        Dreaming…
+                      </>
+                    ) : (
+                      "Dream Now"
+                    )}
+                  </button>
+                  <small>Manually trigger dream processing now.</small>
+                </div>
+              </>
             )}
 
             <div className="memory-retrieval-test">

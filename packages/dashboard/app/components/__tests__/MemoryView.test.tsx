@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryView } from "../MemoryView";
 
@@ -83,6 +83,9 @@ function createMemoryData(overrides: Record<string, unknown> = {}) {
     selectFile: vi.fn(),
     saveSelectedFile: vi.fn(),
     savingSelectedFile: false,
+    reloadMemoryFiles: vi.fn(),
+    triggerDreamNow: vi.fn(),
+    dreamRunning: false,
     ...overrides,
   };
 }
@@ -178,5 +181,60 @@ describe("MemoryView", () => {
 
     expect(screen.getByText("Installed")).toBeInTheDocument();
     expect(screen.getByText("qmd is available on PATH.")).toBeInTheDocument();
+  });
+
+  it("shows Dream Now button when dreams are enabled", () => {
+    mockUseMemoryData.mockReturnValue(
+      createMemoryData({
+        memorySettings: {
+          memoryEnabled: true,
+          memoryAutoSummarizeEnabled: false,
+          memoryAutoSummarizeThresholdChars: 50000,
+          memoryAutoSummarizeSchedule: "0 3 * * *",
+          memoryDreamsEnabled: true,
+          memoryDreamsSchedule: "0 4 * * *",
+        },
+      }),
+    );
+
+    render(<MemoryView addToast={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "Dream Now" })).toBeInTheDocument();
+  });
+
+  it("triggers dream processing and refreshes memory files", async () => {
+    const triggerDreamNow = vi.fn().mockResolvedValue({});
+    const reloadMemoryFiles = vi.fn().mockResolvedValue(undefined);
+    const addToast = vi.fn();
+    mockUseMemoryData.mockReturnValue(
+      createMemoryData({
+        triggerDreamNow,
+        reloadMemoryFiles,
+        memorySettings: {
+          memoryEnabled: true,
+          memoryAutoSummarizeEnabled: false,
+          memoryAutoSummarizeThresholdChars: 50000,
+          memoryAutoSummarizeSchedule: "0 3 * * *",
+          memoryDreamsEnabled: true,
+          memoryDreamsSchedule: "0 4 * * *",
+        },
+      }),
+    );
+
+    render(<MemoryView addToast={addToast} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Dream Now" }));
+
+    await waitFor(() => {
+      expect(triggerDreamNow).toHaveBeenCalledTimes(1);
+      expect(reloadMemoryFiles).toHaveBeenCalledTimes(1);
+    });
+    expect(addToast).toHaveBeenCalledWith("Dream processing completed", "success");
+  });
+
+  it("hides Dream Now button when dreams are disabled", () => {
+    render(<MemoryView addToast={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: "Dream Now" })).not.toBeInTheDocument();
   });
 });
