@@ -94,7 +94,11 @@ const COLUMN_PROGRESS_COLOR_MAP: Record<Column, string> = {
   archived: "var(--text-muted)",
 };
 
-const TIME_INDICATOR_COLUMNS = new Set<Column>(["in-progress", "done"]);
+const TIME_INDICATOR_COLUMNS = new Set<Column>([
+  "in-progress",
+  "in-review",
+  "done",
+]);
 const LIVE_TIME_INDICATOR_POLL_MS = 30_000;
 
 function parseTimestampToMs(value?: string): number | null {
@@ -677,15 +681,24 @@ function TaskCardComponent({
     unifiedProgress.total > 0 && (task.status === "executing" || task.column === "in-progress");
 
   useEffect(() => {
-    if (task.column !== "in-progress") {
+    if (task.column !== "in-progress" && task.column !== "in-review") {
       return;
     }
 
-    const hasInProgressStep = (task.workflowStepResults ?? []).some(
-      (step) => step.startedAt && !step.completedAt,
-    );
-    if (!hasInProgressStep) {
-      return;
+    if (task.column === "in-progress") {
+      const hasInProgressStep = (task.workflowStepResults ?? []).some(
+        (step) => step.startedAt && !step.completedAt,
+      );
+      if (!hasInProgressStep) {
+        return;
+      }
+    }
+
+    if (task.column === "in-review") {
+      const instrumentedMs = getInstrumentedDurationMs(task, Date.now());
+      if (instrumentedMs == null) {
+        return;
+      }
     }
 
     setTimeIndicatorNowMs(Date.now());
@@ -694,7 +707,7 @@ function TaskCardComponent({
     }, LIVE_TIME_INDICATOR_POLL_MS);
 
     return () => window.clearInterval(interval);
-  }, [task.column, task.workflowStepResults]);
+  }, [task.column, task.workflowStepResults, task.timedExecutionMs]);
 
   const timeIndicator = useMemo(() => {
     if (!TIME_INDICATOR_COLUMNS.has(task.column)) {
@@ -706,7 +719,7 @@ function TaskCardComponent({
       return null;
     }
 
-    if (task.column === "in-progress") {
+    if (task.column === "in-progress" || task.column === "in-review") {
       const elapsedLabel = formatElapsedDuration(instrumentedMs);
       if (!elapsedLabel) {
         return null;

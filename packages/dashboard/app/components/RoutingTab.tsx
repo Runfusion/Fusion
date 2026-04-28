@@ -1,136 +1,209 @@
 import "./RoutingTab.css";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { getErrorMessage, type Settings, type Task, type TaskDetail } from "@fusion/core";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Settings, Task, TaskDetail } from "@fusion/core";
+import { getErrorMessage } from "@fusion/core";
 import { fetchNodes, updateTask } from "../api";
 import type { NodeInfo } from "../api";
 import type { ToastType } from "../hooks/useToast";
-import { ProjectNodeSelector } from "./ProjectNodeSelector";
 
 interface RoutingTabProps {
   task: Task | TaskDetail;
   settings?: Settings;
-  projectId?: string;
   addToast: (message: string, type?: ToastType) => void;
   onTaskUpdated?: (task: Task) => void;
 }
 
-function resolveUnavailablePolicy(policy?: string): string {
+const STATUS_DOT: Record<NodeInfo["status"], string> = {
+  online: "🟢",
+  offline: "🔴",
+  connecting: "🟡",
+  error: "🔴",
+};
+
+type RoutingSettings = Settings & {
+  defaultNodeId?: string;
+  unavailableNodePolicy?: "block" | "fallback-local";
+};
+
+function getRoutingPolicyLabel(policy: RoutingSettings["unavailableNodePolicy"] | undefined): string {
   if (policy === "block") return "Block execution";
   if (policy === "fallback-local") return "Fall back to local";
   return "Not configured";
 }
 
-export function RoutingTab({ task, settings, projectId, addToast, onTaskUpdated }: RoutingTabProps) {
+function isUnhealthy(status: NodeInfo["status"] | undefined): boolean {
+  return status !== undefined && status !== "online";
+}
+
+export function RoutingTab({ task, settings, addToast, onTaskUpdated }: RoutingTabProps) {
   const [nodes, setNodes] = useState<NodeInfo[]>([]);
-  const isInProgress = task.column === "in-progress";
+  const [loadingNodes, setLoadingNodes] = useState(false);
+  const [nodesError, setNodesError] = useState<string | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string>(task.nodeId ?? "");
+  const [savingNode, setSavingNode] = useState(false);
+
+  const activeTaskIdRef = useRef(task.id);
 
   useEffect(() => {
-    let mounted = true;
+    activeTaskIdRef.current = task.id;
+    setSelectedNodeId(task.nodeId ?? "");
+    setSavingNode(false);
+  }, [task.id, task.nodeId]);
+
+  useEffect(() => {
+    setLoadingNodes(true);
+    setNodesError(null);
 
     fetchNodes()
-      .then((fetchedNodes) => {
-        if (mounted) setNodes(fetchedNodes);
+      .then((result) => {
+        setNodes(result);
       })
-      .catch((error) => {
-        if (mounted) {
-          addToast(`Failed to load nodes: ${getErrorMessage(error)}`, "error");
-        }
+      .catch((err) => {
+        setNodesError(getErrorMessage(err) || "Failed to load nodes");
+      })
+      .finally(() => {
+        setLoadingNodes(false);
       });
+  }, []);
 
-    return () => {
-      mounted = false;
-    };
-  }, [addToast]);
+  const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+  const sortedNodes = useMemo(
+    () => [...nodes].sort((a, b) => a.name.localeCompare(b.name)),
+    [nodes],
+  );
 
-  const effectiveNodeName = useMemo(() => {
-    if (task.nodeId) {
-      const taskNode = nodes.find((node) => node.id === task.nodeId);
-      return taskNode ? taskNode.name : `${task.nodeId} (unknown node)`;
-    }
-
-    if (settings?.defaultNodeId) {
-      const defaultNode = nodes.find((node) => node.id === settings.defaultNodeId);
-      return defaultNode ? `${defaultNode.name} (project default)` : `${settings.defaultNodeId} (unknown node)`;
-    }
-
-    return "Local (no routing configured)";
-  }, [nodes, settings?.defaultNodeId, task.nodeId]);
-
+  const routingSettings = settings as RoutingSettings | undefined;
+  const effectiveNodeId = task.nodeId ?? routingSettings?.defaultNodeId ?? null;
   const routingSource = task.nodeId
     ? "Per-task override"
-    : settings?.defaultNodeId
+    : routingSettings?.defaultNodeId
       ? "Project default"
       : "No routing";
 
-  const blockingReason = (task as Task & { blockedReason?: string; statusReason?: string }).blockedReason
-    || (task as Task & { statusReason?: string }).statusReason;
+  const effectiveNode = effectiveNodeId ? nodesById.get(effectiveNodeId) : undefined;
+  const effectiveNodeName = effectiveNode
+    ? `${STATUS_DOT[effectiveNode.status]} ${effectiveNode.name} (${effectiveNode.type})`
+    : effectiveNodeId
+      ? `${effectiveNodeId} (node unavailable or unknown)`
+      : "Local (no routing configured)";
+
+  const taskInProgress = task.column === "in-progress";
+  const selectorDisabled = taskInProgress || savingNode || loadingNodes;
 
   const handleNodeSelect = useCallback(
-    async (selectedNodeId: string | null) => {
+    async (nextValue: string) => {
+      if (nextValue === selectedNodeId) {
+        return;
+      }
+
+      const requestTaskId = task.id;
+      const previousValue = selectedNodeId;
+      setSelectedNodeId(nextValue);
+      setSavingNode(true);
+
       try {
-        const updated = await updateTask(task.id, { nodeId: selectedNodeId || null });
-        addToast("Node override updated", "success");
-        onTaskUpdated?.(updated);
-      } catch (error) {
-        addToast(`Failed to update node override: ${getErrorMessage(error)}`, "error");
+        const updatedTask = await updateTask(requestTaskId, { nodeId: nextValue || null });
+        if (activeTaskIdRef.current !== requestTaskId) return;
+
+        setSelectedNodeId(updatedTask.nodeId ?? "");
+        onTaskUpdated?.(updatedTask);
+        addToast(nextValue ? "Node override updated" : "Node override cleared", "success");
+      } catch (err) {
+        if (activeTaskIdRef.current !== requestTaskId) return;
+        setSelectedNodeId(previousValue);
+        addToast(getErrorMessage(err) || "Failed to update node override", "error");
+      } finally {
+        if (activeTaskIdRef.current === requestTaskId) {
+          setSavingNode(false);
+        }
       }
     },
-    [addToast, onTaskUpdated, task.id],
+    [addToast, onTaskUpdated, selectedNodeId, task.id],
   );
 
-  const handleClearOverride = useCallback(async () => {
-    await handleNodeSelect(null);
+  const clearOverride = useCallback(() => {
+    void handleNodeSelect("");
   }, [handleNodeSelect]);
 
   return (
     <div className="routing-tab">
-      <div className="routing-tab-summary">
-        <h4>Node Routing Summary</h4>
-        <dl className="detail-source-grid">
-          <div>
-            <dt>Effective Node</dt>
-            <dd>{effectiveNodeName}</dd>
-          </div>
-          <div>
-            <dt>Routing Source</dt>
-            <dd>{routingSource}</dd>
-          </div>
-          <div>
-            <dt>Unavailable Node Policy</dt>
-            <dd>{resolveUnavailablePolicy(settings?.unavailableNodePolicy)}</dd>
-          </div>
-          <div>
-            <dt>Blocking Reason</dt>
-            <dd>{blockingReason ?? <span className="detail-source-empty">(not blocked)</span>}</dd>
-          </div>
-        </dl>
-      </div>
+      <h4>Task Routing</h4>
+      <p className="routing-tab__intro">View the effective execution node and control per-task node override.</p>
 
-      <div className="routing-tab-override">
-        <h4>Node Override</h4>
-        <ProjectNodeSelector
-          projectId={projectId ?? ""}
-          nodes={nodes}
-          currentNodeId={task.nodeId ?? undefined}
-          onSelect={(nodeId) => {
-            void handleNodeSelect(nodeId);
-          }}
-          disabled={isInProgress}
-        />
-        {isInProgress ? (
-          <div className="routing-tab-blocked">
-            Node override cannot be changed while the task is in progress. Wait for the task to complete or move it
-            back to todo first.
+      <section className="routing-tab__section">
+        <h5>Routing Summary</h5>
+        <div className="routing-summary-grid" role="list">
+          <div className="routing-summary-row" role="listitem">
+            <span className="routing-summary-label">Effective node</span>
+            <span className="routing-summary-value">
+              {effectiveNodeName}
+              {isUnhealthy(effectiveNode?.status) ? (
+                <span className="routing-summary-warning">Unhealthy</span>
+              ) : null}
+            </span>
+          </div>
+          <div className="routing-summary-row" role="listitem">
+            <span className="routing-summary-label">Routing source</span>
+            <span className="routing-summary-value">{routingSource}</span>
+          </div>
+          <div className="routing-summary-row" role="listitem">
+            <span className="routing-summary-label">Unavailable-node policy</span>
+            <span className="routing-summary-value">{getRoutingPolicyLabel(routingSettings?.unavailableNodePolicy)}</span>
+          </div>
+        </div>
+        {taskInProgress && effectiveNodeId ? (
+          <div className="routing-tab__info-banner">
+            Routing is locked while this task is active. Node override cannot be changed until the task leaves in-progress.
           </div>
         ) : null}
-        {task.nodeId && !isInProgress ? (
-          <div className="routing-tab-actions">
-            <button type="button" className="btn btn-sm" onClick={() => void handleClearOverride()}>
+      </section>
+
+      <section className="routing-tab__section">
+        <h5>Node Override</h5>
+        {taskInProgress ? (
+          <div className="routing-tab__warning-banner">
+            Node override cannot be changed while the task is in progress.
+          </div>
+        ) : null}
+
+        <label className="routing-tab__selector-label" htmlFor={`routing-node-${task.id}`}>
+          Select execution node
+        </label>
+        <select
+          id={`routing-node-${task.id}`}
+          className="select routing-tab__selector"
+          value={selectedNodeId}
+          disabled={selectorDisabled}
+          onChange={(event) => {
+            void handleNodeSelect(event.target.value);
+          }}
+        >
+          <option value="">Use project default</option>
+          {sortedNodes.map((node) => (
+            <option key={node.id} value={node.id}>
+              {STATUS_DOT[node.status]} {node.name} ({node.type})
+            </option>
+          ))}
+        </select>
+
+        {nodesError ? <div className="routing-tab__error">{nodesError}</div> : null}
+
+        {task.nodeId ? (
+          <div className="routing-tab__override-row">
+            <span className="routing-tab__override-text">
+              Override set to: {nodesById.get(task.nodeId)?.name ?? task.nodeId}
+            </span>
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={taskInProgress || savingNode}
+              onClick={clearOverride}
+            >
               Clear override
             </button>
           </div>
         ) : null}
-      </div>
+      </section>
     </div>
   );
 }

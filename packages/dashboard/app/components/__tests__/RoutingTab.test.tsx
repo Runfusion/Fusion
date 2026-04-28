@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { Settings, Task } from "@fusion/core";
-import * as api from "../../api";
 import { RoutingTab } from "../RoutingTab";
+import * as api from "../../api";
 
 vi.mock("lucide-react", () => ({}));
 
@@ -15,22 +16,13 @@ vi.mock("../../api", async () => {
   };
 });
 
-vi.mock("../ProjectNodeSelector", () => ({
-  ProjectNodeSelector: (props: any) => (
-    <div data-testid="node-selector" data-disabled={String(Boolean(props.disabled))}>
-      <button type="button" onClick={() => props.onSelect("node-2")}>select-node-2</button>
-      <button type="button" onClick={() => props.onSelect(null)}>select-none</button>
-    </div>
-  ),
-}));
-
 const mockFetchNodes = api.fetchNodes as ReturnType<typeof vi.fn>;
 const mockUpdateTask = api.updateTask as ReturnType<typeof vi.fn>;
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
-    id: "FN-2845",
-    description: "routing test",
+    id: "FN-001",
+    description: "Routing test task",
     column: "todo",
     dependencies: [],
     steps: [],
@@ -42,43 +34,66 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
-function makeSettings(overrides: Partial<Settings> = {}): Settings {
+type RoutingSettings = Settings & {
+  defaultNodeId?: string;
+  unavailableNodePolicy?: "block" | "fallback-local";
+};
+
+function makeSettings(overrides: Partial<RoutingSettings> = {}): RoutingSettings {
   return {
-    maxConcurrent: 1,
-    maxWorktrees: 1,
-    pollIntervalMs: 1000,
-    autoMerge: false,
+    maxConcurrent: 2,
+    maxWorktrees: 2,
+    pollIntervalMs: 10000,
     groupOverlappingFiles: false,
+    autoMerge: true,
     ...overrides,
   };
 }
 
 describe("RoutingTab", () => {
   const addToast = vi.fn();
+  const onTaskUpdated = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetchNodes.mockResolvedValue([
-      { id: "node-1", name: "Worker Alpha", type: "remote", status: "online", maxConcurrent: 5, createdAt: "", updatedAt: "" },
-      { id: "node-2", name: "Worker Beta", type: "remote", status: "online", maxConcurrent: 5, createdAt: "", updatedAt: "" },
+      { id: "node-a", name: "Alpha", type: "local", status: "online" },
+      { id: "node-b", name: "Beta", type: "remote", status: "offline" },
     ]);
-    mockUpdateTask.mockImplementation(async (_id: string, updates: Record<string, unknown>) => makeTask(updates as Partial<Task>));
+    mockUpdateTask.mockImplementation(async (_id: string, updates: { nodeId?: string | null }) => {
+      return makeTask({ nodeId: updates.nodeId ?? undefined });
+    });
   });
 
   it("renders routing summary with per-task override", async () => {
-    render(<RoutingTab task={makeTask({ nodeId: "node-1" })} addToast={addToast} settings={makeSettings()} />);
-    await screen.findByText("Worker Alpha");
-    expect(screen.getByText("Per-task override")).toBeInTheDocument();
+    render(
+      <RoutingTab
+        task={makeTask({ nodeId: "node-a" })}
+        settings={makeSettings({ defaultNodeId: "node-b" })}
+        addToast={addToast}
+      />,
+    );
+
+    expect(await screen.findByText("Per-task override")).toBeInTheDocument();
+    expect(screen.getByText(/Effective node/i)).toBeInTheDocument();
   });
 
   it("renders routing summary with project default", async () => {
-    render(<RoutingTab task={makeTask()} addToast={addToast} settings={makeSettings({ defaultNodeId: "node-2" })} />);
-    await screen.findByText("Worker Beta (project default)");
-    expect(screen.getByText("Project default")).toBeInTheDocument();
+    render(
+      <RoutingTab
+        task={makeTask()}
+        settings={makeSettings({ defaultNodeId: "node-a" })}
+        addToast={addToast}
+      />,
+    );
+
+    expect(await screen.findByText("Project default")).toBeInTheDocument();
+    expect(screen.getByText(/Effective node/i)).toBeInTheDocument();
   });
 
-  it("renders routing summary with no routing", async () => {
-    render(<RoutingTab task={makeTask()} addToast={addToast} settings={makeSettings()} />);
+  it("renders no-routing summary when no override or project default exists", async () => {
+    render(<RoutingTab task={makeTask()} settings={makeSettings()} addToast={addToast} />);
+
     expect(await screen.findByText("Local (no routing configured)")).toBeInTheDocument();
     expect(screen.getByText("No routing")).toBeInTheDocument();
   });
@@ -86,43 +101,69 @@ describe("RoutingTab", () => {
   it.each([
     ["block", "Block execution"],
     ["fallback-local", "Fall back to local"],
-  ])("displays unavailable-node policy %s", async (policy, text) => {
-    render(<RoutingTab task={makeTask()} addToast={addToast} settings={makeSettings({ unavailableNodePolicy: policy as any })} />);
-    expect(await screen.findByText(text)).toBeInTheDocument();
+  ] as const)("displays unavailable-node policy: %s", async (policy, label) => {
+    render(
+      <RoutingTab
+        task={makeTask()}
+        settings={makeSettings({ unavailableNodePolicy: policy })}
+        addToast={addToast}
+      />,
+    );
+
+    await screen.findByText(label);
+    expect(screen.getByText(label)).toBeInTheDocument();
   });
 
-  it("disables selector and shows warning for in-progress tasks", async () => {
-    render(<RoutingTab task={makeTask({ column: "in-progress" })} addToast={addToast} settings={makeSettings()} />);
-    await waitFor(() => expect(screen.getByTestId("node-selector")).toHaveAttribute("data-disabled", "true"));
-    expect(screen.getByText(/Node override cannot be changed while the task is in progress/i)).toBeInTheDocument();
+  it("disables node selector for in-progress tasks", async () => {
+    render(<RoutingTab task={makeTask({ column: "in-progress" })} settings={makeSettings()} addToast={addToast} />);
+
+    const selector = await screen.findByLabelText("Select execution node");
+    expect(selector).toBeDisabled();
+    expect(screen.getByText("Node override cannot be changed while the task is in progress.")).toBeInTheDocument();
   });
 
-  it("enables selector for non-in-progress tasks", async () => {
-    render(<RoutingTab task={makeTask({ column: "todo" })} addToast={addToast} settings={makeSettings()} />);
-    await waitFor(() => expect(screen.getByTestId("node-selector")).toHaveAttribute("data-disabled", "false"));
-    expect(screen.queryByText(/Node override cannot be changed/i)).not.toBeInTheDocument();
+  it("enables node selector for non-in-progress tasks", async () => {
+    render(<RoutingTab task={makeTask({ column: "todo" })} settings={makeSettings()} addToast={addToast} />);
+
+    const selector = await screen.findByLabelText("Select execution node");
+    expect(selector).toBeEnabled();
   });
 
   it("calls updateTask when node selected", async () => {
-    render(<RoutingTab task={makeTask()} addToast={addToast} settings={makeSettings()} />);
-    fireEvent.click(await screen.findByText("select-node-2"));
-    await waitFor(() => expect(mockUpdateTask).toHaveBeenCalledWith("FN-2845", { nodeId: "node-2" }));
+    const user = userEvent.setup();
+    render(
+      <RoutingTab
+        task={makeTask({ column: "todo" })}
+        settings={makeSettings()}
+        addToast={addToast}
+        onTaskUpdated={onTaskUpdated}
+      />,
+    );
+
+    const selector = await screen.findByLabelText("Select execution node");
+    await user.selectOptions(selector, "node-a");
+
+    await waitFor(() => {
+      expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", { nodeId: "node-a" });
+    });
   });
 
-  it("shows clear override button and clears override", async () => {
-    render(<RoutingTab task={makeTask({ nodeId: "node-1", column: "todo" })} addToast={addToast} settings={makeSettings()} />);
-    const button = await screen.findByRole("button", { name: "Clear override" });
-    fireEvent.click(button);
-    await waitFor(() => expect(mockUpdateTask).toHaveBeenCalledWith("FN-2845", { nodeId: null }));
-  });
+  it("shows clear override button and clears node override", async () => {
+    const user = userEvent.setup();
+    render(
+      <RoutingTab
+        task={makeTask({ nodeId: "node-a" })}
+        settings={makeSettings()}
+        addToast={addToast}
+        onTaskUpdated={onTaskUpdated}
+      />,
+    );
 
-  it("hides clear override button for in-progress tasks", () => {
-    render(<RoutingTab task={makeTask({ nodeId: "node-1", column: "in-progress" })} addToast={addToast} settings={makeSettings()} />);
-    expect(screen.queryByRole("button", { name: "Clear override" })).not.toBeInTheDocument();
-  });
+    const clearButton = await screen.findByRole("button", { name: "Clear override" });
+    await user.click(clearButton);
 
-  it("shows unknown node IDs as raw id", async () => {
-    render(<RoutingTab task={makeTask({ nodeId: "ghost-node" })} addToast={addToast} settings={makeSettings()} />);
-    expect(await screen.findByText("ghost-node (unknown node)")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", { nodeId: null });
+    });
   });
 });

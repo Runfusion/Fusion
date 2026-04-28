@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, lazy, Suspense, type MouseEve
 import { Globe, Folder, RefreshCw, Star, HelpCircle, Loader2 } from "lucide-react";
 import { THINKING_LEVELS, isGlobalSettingsKey, isProjectSettingsKey, getErrorMessage } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, AgentPromptsConfig, ThinkingLevel } from "@fusion/core";
-import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotesDetailed, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, updateRemoteSettings, fetchRemoteStatus, activateRemoteProvider, startRemoteTunnel, stopRemoteTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteQr, fetchRemoteUrl } from "../api";
+import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotesDetailed, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, updateRemoteSettings, fetchRemoteStatus, startRemoteTunnel, stopRemoteTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteQr, fetchRemoteUrl } from "../api";
 import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemoteDetailed, RemoteSettings, RemoteStatus, UpdateCheckResponse } from "../api";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
@@ -2704,6 +2704,7 @@ export function SettingsModal({
             </div>
           </>
         );
+
       case "worktrees":
         return (
           <>

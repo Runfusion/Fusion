@@ -1270,3 +1270,32 @@
 .settings-node-status--connecting .settings-node-status__dot {
   background: var(--color-warning);
 }
+
+.settings-node-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.settings-node-status__dot {
+  width: var(--space-sm);
+  height: var(--space-sm);
+  border-radius: var(--radius-pill);
+  background: var(--color-muted);
+}
+
+.settings-node-status--online .settings-node-status__dot {
+  background: var(--color-success);
+}
+
+.settings-node-status--offline .settings-node-status__dot,
+.settings-node-status--error .settings-node-status__dot {
+  background: var(--color-error);
+}
+
+.settings-node-status--connecting .settings-node-status__dot {
+  background: var(--color-warning);
+}

@@ -2085,50 +2085,51 @@ function AgentsView({ state }: { state: DashboardState }) {
                   <Text bold color="whiteBright">{detail.name}</Text>
                   <Text dimColor>{detail.id}</Text>
                   <Box height={1} />
-                  <Box flexDirection="row" gap={1}>
-                    <Text dimColor>State:</Text>
-                    <Text color={agentStateColor(detail.state) as "cyanBright" | "green" | "red" | "gray"} bold>
-                      {detail.state}
-                    </Text>
-                  </Box>
-                  <Box flexDirection="row" gap={1}>
-                    <Text dimColor>Role:</Text>
-                    <Text>{detail.role}</Text>
-                  </Box>
-                  {detail.title && (
-                    <Box flexDirection="row" gap={1}>
-                      <Text dimColor>Title:</Text>
-                      <Text>{detail.title}</Text>
-                    </Box>
-                  )}
-                  {detail.taskId && (
-                    <Box flexDirection="row" gap={1}>
-                      <Text dimColor>Task:</Text>
-                      <Text color="cyanBright">{detail.taskId}</Text>
-                    </Box>
-                  )}
-                  {detail.capabilities.length > 0 && (
-                    <Box flexDirection="row" gap={1}>
-                      <Text dimColor>Caps:</Text>
-                      <Text>{detail.capabilities.join(", ")}</Text>
-                    </Box>
-                  )}
-                  {recentRuns.length > 0 && (
+
+                  {showRunLogs && selectedRun ? (
                     <>
+                      <Text dimColor>Run logs ({selectedRunIndex + 1})</Text>
+                      <Text dimColor>ID: {selectedRun.id}</Text>
                       <Box height={1} />
-                      {showRunLogs && selectedRun ? (
+                      {getRunLogLines(selectedRun).slice(0, 10).map((line, i) => (
+                        <Text key={`${selectedRun.id}-log-${i}`} wrap="truncate-end">{line}</Text>
+                      ))}
+                      <Box height={1} />
+                      <Text dimColor>[Esc/q] back to runs</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Box flexDirection="row" gap={1}>
+                        <Text dimColor>State:</Text>
+                        <Text color={agentStateColor(detail.state) as "cyanBright" | "green" | "red" | "gray"} bold>
+                          {detail.state}
+                        </Text>
+                      </Box>
+                      <Box flexDirection="row" gap={1}>
+                        <Text dimColor>Role:</Text>
+                        <Text>{detail.role}</Text>
+                      </Box>
+                      {detail.title && (
+                        <Box flexDirection="row" gap={1}>
+                          <Text dimColor>Title:</Text>
+                          <Text>{detail.title}</Text>
+                        </Box>
+                      )}
+                      {detail.taskId && (
+                        <Box flexDirection="row" gap={1}>
+                          <Text dimColor>Task:</Text>
+                          <Text color="cyanBright">{detail.taskId}</Text>
+                        </Box>
+                      )}
+                      {detail.capabilities.length > 0 && (
+                        <Box flexDirection="row" gap={1}>
+                          <Text dimColor>Caps:</Text>
+                          <Text>{detail.capabilities.join(", ")}</Text>
+                        </Box>
+                      )}
+                      {recentRuns.length > 0 && (
                         <>
-                          <Text dimColor>Run logs ({selectedRunIndex + 1})</Text>
-                          <Text dimColor>ID: {selectedRun.id}</Text>
                           <Box height={1} />
-                          {getRunLogLines(selectedRun).slice(0, 10).map((line, i) => (
-                            <Text key={`${selectedRun.id}-log-${i}`} wrap="truncate-end">{line}</Text>
-                          ))}
-                          <Box height={1} />
-                          <Text dimColor>[Esc/q] back to runs</Text>
-                        </>
-                      ) : (
-                        <>
                           <Text dimColor>Run history (latest first):</Text>
                           {recentRuns.slice(0, 5).map((run, i) => (
                             <Box key={run.id} flexDirection="row" gap={1} marginLeft={1}>

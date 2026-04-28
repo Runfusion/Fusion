@@ -651,7 +651,58 @@ describe("TaskCard", () => {
     expect(Array.from(footerRow?.children ?? [])).toEqual([filesChanged, timer]);
   });
 
-  it.each(["triage", "todo", "in-review", "archived"] as const)(
+  it("shows timer chip for in-review cards", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          column: "in-review",
+          workflowStepResults: [
+            {
+              workflowStepId: "step-1",
+              workflowStepName: "Plan",
+              phase: "pre-merge" as const,
+              status: "passed" as const,
+              startedAt: "2026-04-25T12:00:00.000Z",
+              completedAt: "2026-04-25T12:08:00.000Z",
+            },
+          ],
+          log: [
+            {
+              timestamp: "2026-04-25T12:09:00.000Z",
+              action: "[timing] llm_call in 240000ms",
+              outcome: "",
+            } as unknown as Task["log"][number],
+          ],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const timer = container.querySelector(".card-time-indicator");
+    expect(timer).not.toBeNull();
+    expect(timer?.textContent).toContain("12m");
+    expect(timer?.getAttribute("title")).toContain("Execution time 12m");
+  });
+
+  it("does not render timer chip for in-review cards without instrumentation data", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          column: "in-review",
+          workflowStepResults: undefined,
+          log: [],
+          timedExecutionMs: undefined,
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card-time-indicator")).toBeNull();
+  });
+
+  it.each(["triage", "todo", "archived"] as const)(
     "does not render timer chip for %s cards",
     (column) => {
       const { container } = render(
