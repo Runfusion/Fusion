@@ -11,13 +11,14 @@
 //   - `npm login` already completed (publish uses the active npm token)
 //
 // Usage:
-//   pnpm release              # interactive, confirms before publish+tag
-//   pnpm release --yes        # skip confirmation prompt
+//   pnpm release              # interactive: review changesets, accept or override version, confirm
+//   pnpm release --yes        # accept the proposed version, skip confirmation prompt
 //   pnpm release --dry-run    # run through steps without publishing/pushing
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, readdirSync, writeFileSync, statSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync, statSync, existsSync, unlinkSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 
@@ -164,6 +165,137 @@ async function confirm(prompt) {
   return answer === "y" || answer === "yes";
 }
 
+async function ask(prompt) {
+  const rl = createInterface({ input: stdin, output: stdout });
+  const answer = await rl.question(prompt);
+  rl.close();
+  return answer.trim();
+}
+
+const SEMVER_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+/**
+ * Run `pnpm changeset status --output` to compute the proposed release plan
+ * without applying it. Returns { proposedVersion, releases } where releases
+ * is the bumped public packages list.
+ *
+ * The repo uses a single "fixed" group, so every bumped public package
+ * shares one new version — we surface that as the canonical proposedVersion.
+ */
+function computeReleasePlan() {
+  const dir = mkdtempSync(join(tmpdir(), "fusion-release-"));
+  const out = join(dir, "plan.json");
+  const r = spawnSync("pnpm", ["changeset", "status", "--output", out], {
+    stdio: "pipe",
+    encoding: "utf8",
+  });
+  if (r.status !== 0) {
+    fail(`Failed to compute release plan:\n${r.stderr || r.stdout}`);
+  }
+  const plan = JSON.parse(readFileSync(out, "utf8"));
+  try { unlinkSync(out); } catch {}
+
+  const bumpedReleases = (plan.releases || []).filter((rel) => rel.type !== "none");
+  if (bumpedReleases.length === 0) {
+    fail("Release plan contains no bumps. All changesets resolved to 'none'.");
+  }
+
+  // All public packages share a version (changeset config "fixed"); pick the
+  // first non-none release's newVersion as canonical. Sanity-check below.
+  const proposedVersion = bumpedReleases[0].newVersion;
+  const mismatched = bumpedReleases.filter(
+    (rel) => rel.newVersion !== proposedVersion && !rel.private,
+  );
+  if (mismatched.length > 0) {
+    warn("Bumped packages have differing versions; using the first as canonical:");
+    for (const rel of mismatched) console.log(`    ${rel.name} → ${rel.newVersion}`);
+  }
+  return { proposedVersion, releases: bumpedReleases, plan };
+}
+
+/**
+ * Read the changeset markdown files in `.changeset/` and return [{ file, bump, summary }].
+ * `bump` is the highest bump declared in that file's frontmatter.
+ */
+function readChangesetSummaries() {
+  const files = readdirSync(".changeset").filter(
+    (f) => f.endsWith(".md") && f !== "README.md",
+  );
+  return files.map((file) => {
+    const raw = readFileSync(join(".changeset", file), "utf8");
+    const fm = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+    let bump = "patch";
+    let summary = raw.trim();
+    if (fm) {
+      const bumps = [...fm[1].matchAll(/:\s*(major|minor|patch)/g)].map((m) => m[1]);
+      const order = { major: 3, minor: 2, patch: 1 };
+      bump = bumps.reduce((a, b) => (order[b] > order[a] ? b : a), "patch");
+      summary = fm[2].trim();
+    }
+    // Keep the summary tight for terminal display.
+    const firstLine = summary.split("\n").find((l) => l.trim()) ?? "(no summary)";
+    return { file, bump, summary: firstLine.trim() };
+  });
+}
+
+/**
+ * If the user picked a version different from what changesets generated,
+ * patch every bumped package's package.json + CHANGELOG.md heading so the
+ * commit, npm publish, and tag all use the chosen version.
+ */
+function overrideVersion(releases, proposedVersion, chosenVersion) {
+  if (proposedVersion === chosenVersion) return;
+  // Only rewrite packages that resolved to the canonical proposed version
+  // (i.e. members of the "fixed" group). Other bumped packages have their
+  // own independent versions (e.g. plugin examples) and must be left alone.
+  const targets = releases.filter((rel) => rel.newVersion === proposedVersion);
+  info(`Rewriting ${targets.length} package(s) to v${chosenVersion}…`);
+  for (const rel of targets) {
+    const dir = findPackageDir(rel.name);
+    if (!dir) {
+      warn(`  Could not locate package directory for ${rel.name}; skipping.`);
+      continue;
+    }
+    const pkgPath = join(dir, "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+    pkg.version = chosenVersion;
+    writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+
+    const changelogPath = join(dir, "CHANGELOG.md");
+    if (existsSync(changelogPath)) {
+      const raw = readFileSync(changelogPath, "utf8");
+      // Replace only the most recent (top) version heading to avoid touching history.
+      const patched = raw.replace(
+        new RegExp(`^## ${escapeRegex(proposedVersion)}\\b`, "m"),
+        `## ${chosenVersion}`,
+      );
+      writeFileSync(changelogPath, patched);
+    }
+  }
+  ok(`Version override applied: ${proposedVersion} → ${chosenVersion}`);
+}
+
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function findPackageDir(name) {
+  // Most packages live under packages/<basename>; do an exact match on package.json name.
+  const roots = ["packages"];
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    for (const entry of readdirSync(root)) {
+      const p = join(root, entry, "package.json");
+      if (!existsSync(p)) continue;
+      try {
+        const pkg = JSON.parse(readFileSync(p, "utf8"));
+        if (pkg.name === name) return join(root, entry);
+      } catch {}
+    }
+  }
+  return null;
+}
+
 // --- Preflight ------------------------------------------------------------
 
 info("Preflight checks…");
@@ -180,18 +312,44 @@ const behind = run("git rev-list --count HEAD..origin/main", { capture: true }).
 if (behind !== "0") fail(`Local main is behind origin/main by ${behind} commit(s). Pull first.`);
 if (ahead !== "0") warn(`Local main is ahead of origin/main by ${ahead} commit(s); they will be pushed.`);
 
-const changesets = readdirSync(".changeset").filter(
-  (f) => f.endsWith(".md") && f !== "README.md"
-);
-if (changesets.length === 0) {
+const changesetSummaries = readChangesetSummaries();
+if (changesetSummaries.length === 0) {
   fail("No pending changesets in .changeset/. Run `pnpm changeset` first.");
 }
-ok(`${changesets.length} pending changeset(s).`);
+ok(`${changesetSummaries.length} pending changeset(s):`);
+for (const cs of changesetSummaries) {
+  console.log(`    ${color(33, `[${cs.bump}]`)} ${cs.summary}  ${color(90, `(${cs.file})`)}`);
+}
 
-info("Changeset summary:");
-run("pnpm changeset status");
+info("Computing proposed release plan…");
+const { proposedVersion, releases } = computeReleasePlan();
+const currentVersion = JSON.parse(readFileSync("packages/cli/package.json", "utf8")).version;
 
-if (!(await confirm("Proceed with version bump, build, publish, and tag?"))) {
+console.log("");
+console.log(`  Current version : ${color(90, currentVersion)}`);
+console.log(`  Proposed version: ${color(32, proposedVersion)}`);
+console.log(`  Bumped packages : ${releases.map((r) => r.name).join(", ")}`);
+console.log("");
+
+let chosenVersion = proposedVersion;
+if (!(AUTO_YES || DRY_RUN)) {
+  while (true) {
+    const answer = await ask(`Release version [${proposedVersion}]: `);
+    if (answer === "") break;
+    if (!SEMVER_RE.test(answer)) {
+      warn(`Not a valid semver string: '${answer}'. Try again.`);
+      continue;
+    }
+    chosenVersion = answer;
+    break;
+  }
+}
+
+if (chosenVersion !== proposedVersion) {
+  warn(`Overriding changeset-proposed version: ${proposedVersion} → ${chosenVersion}`);
+}
+
+if (!(await confirm(`Proceed with release v${chosenVersion} (build, publish, tag)?`))) {
   warn("Aborted by user.");
   process.exit(0);
 }
@@ -201,11 +359,16 @@ if (!(await confirm("Proceed with version bump, build, publish, and tag?"))) {
 info("Applying changesets (version bump + CHANGELOG)…");
 run("pnpm release:version");
 
+overrideVersion(releases, proposedVersion, chosenVersion);
+
 info("Updating lockfile…");
 run("pnpm install --no-frozen-lockfile");
 
 const cliPkg = JSON.parse(readFileSync("packages/cli/package.json", "utf8"));
 const version = cliPkg.version;
+if (version !== chosenVersion) {
+  fail(`Post-bump version mismatch: package reports ${version}, expected ${chosenVersion}.`);
+}
 ok(`New version: ${version}`);
 
 info("Syncing root CHANGELOG.md from packages/cli/CHANGELOG.md…");

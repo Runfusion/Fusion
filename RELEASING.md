@@ -84,6 +84,9 @@ This will trigger `release.yml` to build binaries and create a GitHub Release. N
 |--------|-------------|
 | `pnpm changeset` | Add a new changeset |
 | `pnpm changeset status` | Check pending changesets |
+| `pnpm release` | Local interactive release: previews changesets, lets you accept or override the proposed version, then bumps + builds + publishes + tags |
+| `pnpm release --yes` | Same, but auto-accepts the proposed version and skips the final confirmation |
+| `pnpm release --dry-run` | Walks through the same preview/version-selection flow without publishing or pushing |
 | `pnpm release:version` | Apply changesets and bump versions (used by CI) |
 | `pnpm --filter @runfusion/fusion build:exe` | Build binary for current platform |
 | `pnpm --filter @runfusion/fusion build:exe -- --target <target>` | Cross-compile for a specific platform |
