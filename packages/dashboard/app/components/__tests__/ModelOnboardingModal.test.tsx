@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import { ModelOnboardingModal } from "../ModelOnboardingModal";
 import type { AuthProvider } from "../../api";
@@ -1182,7 +1182,14 @@ describe("ModelOnboardingModal", () => {
 
       await navigateToGitHubStep();
 
-      expect(screen.getByText(/Import issues as tasks/)).toBeTruthy();
+      // The "what GitHub unlocks" feature list is intentionally hidden when
+      // GitHub is already connected — the modal renders a confirmation
+      // sentence and the Disconnect control instead.
+      expect(
+        screen.getByText(
+          /GitHub is connected — issue imports and pull request tracking are available/,
+        ),
+      ).toBeTruthy();
       expect(screen.getByTestId("onboarding-auth-status-github")).toBeTruthy();
       expect(screen.getByText("✓ Connected")).toBeTruthy();
       expect(screen.getByRole("button", { name: "Disconnect" })).toBeTruthy();
@@ -1199,8 +1206,17 @@ describe("ModelOnboardingModal", () => {
 
       await navigateToGitHubStep();
 
-      expect(screen.getByText(/GitHub CLI is already authenticated/)).toBeTruthy();
-      expect(screen.getByText(/OAuth integration in Settings → Authentication is optional/)).toBeTruthy();
+      // The new component renders the "GitHub CLI is already authenticated"
+      // copy in two places: the top-level description sentence and inside
+      // the optional-OAuth explanation block. Both are valid; just confirm
+      // at least one match (use getAllByText since there are two).
+      expect(
+        screen.getAllByText(/GitHub CLI is already authenticated/).length,
+      ).toBeGreaterThan(0);
+      // The optional-OAuth panel describes that dashboard OAuth is optional.
+      expect(
+        screen.getByText(/OAuth from the dashboard is optional/),
+      ).toBeTruthy();
       expect(screen.queryByTestId("onboarding-github-connect-cta")).toBeNull();
     });
 
