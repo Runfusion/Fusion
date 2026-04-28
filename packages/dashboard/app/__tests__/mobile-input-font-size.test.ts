@@ -5,6 +5,12 @@ const css = loadAllAppCss();
 
 describe("mobile input font size CSS", () => {
   describe("base (desktop) styles", () => {
+    it("html/body uses touch-action manipulation to reduce mobile zoom gestures", () => {
+      const htmlBodyMatch = css.match(/html,\s*body\s*\{[^}]*\}/);
+      expect(htmlBodyMatch).not.toBeNull();
+      expect(htmlBodyMatch![0]).toContain("touch-action: manipulation");
+    });
+
     it("quick-entry-input has desktop font-size below 16px", () => {
       // Extract the .quick-entry-input rule
       const quickEntryMatch = css.match(/\.quick-entry-input\s*\{[^}]*\}/);

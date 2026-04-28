@@ -3282,6 +3282,10 @@
     padding: var(--space-md);
   }
 
+  .gm-search-box input {
+    font-size: 16px;
+  }
+
   .gm-status-grid {
     grid-template-columns: 1fr;
   }
@@ -3293,6 +3297,7 @@
   .gm-create-form input,
   .gm-create-form select {
     flex: 1 1 100%;
+    font-size: 16px;
   }
 
   .gm-branch-item {

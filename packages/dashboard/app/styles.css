@@ -540,6 +540,7 @@ body {
   background: var(--bg);
   color: var(--text);
   overflow: hidden;
+  touch-action: manipulation;
 }
 
 #root {

@@ -870,6 +870,7 @@
 
   .add-node-modal__field input {
     min-height: calc(var(--space-2xl) + var(--space-md));
+    font-size: 16px;
   }
 
   /* Instant transition on mobile for remote fields */
