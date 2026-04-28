@@ -1348,8 +1348,19 @@
     min-width: 0;
   }
 
+  /* Bleed the API-key form past the card's horizontal padding so the input
+     and the Save button span the full width of the card on mobile. Without
+     this the form sat inside the 12px card padding (and on Safari sometimes
+     inherited the icon-row's start indent), which read as a chunky left
+     margin on phones. Width = 100% + 2*card-padding cancels the padding
+     out; matching negative inline margins re-anchor it to the card edges.
+     A tiny --space-xs inline padding keeps the input from kissing the
+     border. */
   .onboarding-provider-card__actions--api-key {
-    width: 100%;
+    width: calc(100% + 2 * var(--space-md));
+    margin-inline: calc(-1 * var(--space-md));
+    padding-inline: var(--space-xs);
+    box-sizing: border-box;
   }
 
   /* When actions are simple buttons (Connect / Skip), make them split the

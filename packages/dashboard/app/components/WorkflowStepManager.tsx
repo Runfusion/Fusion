@@ -371,10 +371,17 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
     }
   }, [addToast, loadSteps]);
 
+  // useOverlayDismiss MUST be called before any early return — otherwise the
+  // hook count differs between isOpen=false (returns early after the existing
+  // useState/useEffect/useCallback hooks) and isOpen=true (also calls
+  // useOverlayDismiss), which trips React error #310 the moment the modal
+  // is opened. That bug currently breaks the workflow steps panel from
+  // loading at all.
+  const overlayDismissProps = useOverlayDismiss(onClose);
+
   if (!isOpen) return null;
 
   const isEditing = isCreating || editingId !== null;
-  const overlayDismissProps = useOverlayDismiss(onClose);
 
   return (
     <div className="modal-overlay open" {...overlayDismissProps} data-testid="workflow-step-manager">
