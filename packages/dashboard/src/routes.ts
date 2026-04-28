@@ -34,6 +34,41 @@ import {
   unauthorized,
 } from "./api-error.js";
 import { resolvePluginManifest } from "./plugin-routes.js";
+import { hermesRuntimeMetadata } from "@fusion-plugin-examples/hermes-runtime";
+import { openclawRuntimeMetadata } from "@fusion-plugin-examples/openclaw-runtime";
+
+// Bundled runtime metadata exposed in /api/plugins/runtimes even when the
+// corresponding plugin has not been explicitly installed. Installed plugins
+// override these entries by runtimeId.
+const BUNDLED_PLUGIN_RUNTIMES: Array<{
+  pluginId: string;
+  runtimeId: string;
+  name: string;
+  description?: string;
+  version: string;
+}> = [
+  {
+    pluginId: "fusion-plugin-hermes-runtime",
+    runtimeId: hermesRuntimeMetadata.runtimeId,
+    name: hermesRuntimeMetadata.name,
+    ...(hermesRuntimeMetadata.description ? { description: hermesRuntimeMetadata.description } : {}),
+    version: hermesRuntimeMetadata.version,
+  },
+  {
+    pluginId: "fusion-plugin-openclaw-runtime",
+    runtimeId: openclawRuntimeMetadata.runtimeId,
+    name: openclawRuntimeMetadata.name,
+    ...(openclawRuntimeMetadata.description ? { description: openclawRuntimeMetadata.description } : {}),
+    version: openclawRuntimeMetadata.version,
+  },
+  {
+    pluginId: "fusion-plugin-paperclip-runtime",
+    runtimeId: "paperclip",
+    name: "Paperclip Runtime",
+    description: "Drives a Paperclip agent via the wakeup + heartbeat-run REST API",
+    version: "1.0.0",
+  },
+];
 import { createSessionDiagnostics } from "./ai-session-diagnostics.js";
 import { createApiRoutesContext } from "./routes/context.js";
 import { registerTaskWorkflowRoutes } from "./routes/register-task-workflow-routes.js";
@@ -2987,15 +3022,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/plugins/runtimes", async (_req: Request, res: Response) => {
     const runtimes = options?.pluginLoader?.getPluginRuntimes() ?? [];
-    res.json(
-      runtimes.map(({ pluginId, runtime }) => ({
-        pluginId,
-        runtimeId: runtime.metadata.runtimeId,
-        name: runtime.metadata.name,
-        description: runtime.metadata.description,
-        version: runtime.metadata.version,
-      })),
+    const installed = runtimes.map(({ pluginId, runtime }) => ({
+      pluginId,
+      runtimeId: runtime.metadata.runtimeId,
+      name: runtime.metadata.name,
+      description: runtime.metadata.description,
+      version: runtime.metadata.version,
+    }));
+    const installedRuntimeIds = new Set(installed.map((r) => r.runtimeId));
+    const bundledFallback = BUNDLED_PLUGIN_RUNTIMES.filter(
+      (r) => !installedRuntimeIds.has(r.runtimeId),
     );
+    res.json([...installed, ...bundledFallback]);
   });
 
   /**
