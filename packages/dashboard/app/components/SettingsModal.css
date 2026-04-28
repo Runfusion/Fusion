@@ -20,6 +20,16 @@
   box-sizing: border-box;
 }
 
+@media (max-width: 768px) {
+  /* Keep settings header actions compact; override global mobile
+     `.btn-icon { min-height/min-width: 36px; }` inflation. */
+  .settings-header-actions > .btn-icon,
+  .settings-header-actions > .settings-update-btn {
+    min-height: 26px;
+    min-width: 26px;
+  }
+}
+
 /* GitHub star button — split-pill layout: [Star half | Count half] */
 .settings-github-star-btn {
   display: inline-flex;
