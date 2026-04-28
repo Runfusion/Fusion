@@ -1194,6 +1194,52 @@
     grid-template-columns: 1fr;
     gap: var(--space-xs);
   }
+
+  .settings-node-routing-note {
+    padding: var(--space-sm) var(--space-md);
+    font-size: 12px;
+  }
+}
+
+.settings-node-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.settings-node-status__dot {
+  width: var(--space-sm);
+  height: var(--space-sm);
+  border-radius: var(--radius-pill);
+  background: var(--color-muted);
+}
+
+.settings-node-status--online .settings-node-status__dot {
+  background: var(--color-success);
+}
+
+.settings-node-status--offline .settings-node-status__dot,
+.settings-node-status--error .settings-node-status__dot {
+  background: var(--color-error);
+}
+
+.settings-node-status--connecting .settings-node-status__dot {
+  background: var(--color-warning);
+}
+
+/* Node Routing section */
+.settings-node-routing-note {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md) var(--space-lg);
+  margin-top: var(--space-lg);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .settings-node-status {

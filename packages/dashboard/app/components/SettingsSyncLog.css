@@ -142,26 +142,6 @@
   font-size: 13px;
 }
 
-.project-node-selector {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.project-node-selector__label {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.project-node-selector select {
-  width: 100%;
-  max-width: 320px;
-}
-
-.project-node-selector__option--dim {
-  color: var(--text-muted);
-}
-
 .node-badge {
   display: inline-flex;
   align-items: center;

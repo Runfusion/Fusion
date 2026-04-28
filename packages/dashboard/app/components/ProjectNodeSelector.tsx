@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { NodeInfo } from "../api";
+import "./ProjectNodeSelector.css";
 
 interface ProjectNodeSelectorProps {
   projectId: string;
@@ -33,6 +34,7 @@ export function ProjectNodeSelector({
     <label className="project-node-selector" htmlFor={`project-node-selector-${projectId}`}>
       <span className="project-node-selector__label">Runtime Node</span>
       <select
+        className="select"
         id={`project-node-selector-${projectId}`}
         value={selectedValue}
         onChange={(event) => {
