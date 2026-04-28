@@ -377,6 +377,7 @@ export function TaskDetailModal({
   const [showMoveMenu, setShowMoveMenu] = useState(false);
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const moveMenuRef = useRef<HTMLDivElement>(null);
+  const moveButtonRef = useRef<HTMLButtonElement>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   useModalResizePersist(modalRef, true, "fusion:task-detail-modal-size");
@@ -1279,6 +1280,71 @@ export function TaskDetailModal({
   const primaryMoveTransition = moveTransitions[0];
   const secondaryMoveTransitions = moveTransitions.slice(1);
   const hasSecondaryMoveOptions = secondaryMoveTransitions.length > 0;
+
+  const closeMoveMenuAndFocusTrigger = useCallback(() => {
+    setShowMoveMenu(false);
+    moveButtonRef.current?.focus();
+  }, []);
+
+  const handleMoveButtonClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    if (!hasSecondaryMoveOptions) {
+      if (primaryMoveTransition) {
+        void handleMoveMenuItemClick(primaryMoveTransition);
+      }
+      return;
+    }
+
+    const arrowZone = event.currentTarget.querySelector<HTMLSpanElement>(".detail-move-btn__arrow");
+    const clickedArrow = Boolean(
+      (event.target instanceof Element && event.target.closest(".detail-move-btn__arrow")) ||
+      (arrowZone && event.clientX > 0 && event.clientX >= arrowZone.getBoundingClientRect().left),
+    );
+
+    if (clickedArrow) {
+      setShowMoveMenu((prev) => !prev);
+      setShowActionsMenu(false);
+      return;
+    }
+
+    if (primaryMoveTransition) {
+      void handleMoveMenuItemClick(primaryMoveTransition);
+    }
+  }, [hasSecondaryMoveOptions, primaryMoveTransition, handleMoveMenuItemClick]);
+
+  const handleMoveButtonKeyDown = useCallback((event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (!hasSecondaryMoveOptions) {
+      return;
+    }
+
+    const shouldOpenMenu = event.key === "ArrowDown" || (event.altKey && event.key === "ArrowDown");
+    if (!shouldOpenMenu) {
+      return;
+    }
+
+    event.preventDefault();
+    setShowMoveMenu(true);
+    setShowActionsMenu(false);
+  }, [hasSecondaryMoveOptions]);
+
+  const handleMoveMenuKeyDown = useCallback((event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key !== "Escape") {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    closeMoveMenuAndFocusTrigger();
+  }, [closeMoveMenuAndFocusTrigger]);
+
+  useEffect(() => {
+    if (!showMoveMenu) {
+      return;
+    }
+
+    const firstMenuItem = moveMenuRef.current?.querySelector<HTMLButtonElement>(".detail-move-menu-item");
+    firstMenuItem?.focus();
+  }, [showMoveMenu]);
+
   const prAutomationStatusLabels: Record<string, string> = {
     "creating-pr": "Creating PR…",
     "awaiting-pr-checks": "Awaiting PR checks",
@@ -2171,39 +2237,35 @@ export function TaskDetailModal({
               <div className="detail-move-dropdown" ref={moveMenuRef}>
                 {task.column === "in-review" ? (
                   <div className="detail-move-actions-in-review">
-                    <div className="detail-move-split-btn">
+                    <div>
                       <button
-                        className="btn btn-primary btn-sm detail-move-split-btn__main"
-                        onClick={() => primaryMoveTransition && handleMoveMenuItemClick(primaryMoveTransition)}
+                        ref={moveButtonRef}
+                        className="btn btn-primary btn-sm detail-move-btn"
+                        onClick={handleMoveButtonClick}
+                        onKeyDown={handleMoveButtonKeyDown}
                         disabled={!primaryMoveTransition}
+                        aria-label={primaryMoveTransition ? `Move to ${COLUMN_LABELS[primaryMoveTransition]}` : undefined}
+                        aria-haspopup={hasSecondaryMoveOptions ? "menu" : undefined}
+                        aria-expanded={hasSecondaryMoveOptions ? showMoveMenu : undefined}
                       >
-                        Move to {primaryMoveTransition ? COLUMN_LABELS[primaryMoveTransition] : ""}
-                      </button>
-                      {hasSecondaryMoveOptions && (
-                        <>
-                          <span className="detail-move-split-btn__divider" aria-hidden="true" />
-                          <button
-                            className="btn btn-primary btn-sm detail-move-split-btn__chevron"
-                            onClick={() => {
-                              setShowMoveMenu((prev) => !prev);
-                              setShowActionsMenu(false);
-                            }}
-                            aria-label="More move options"
-                            aria-haspopup="menu"
-                            aria-expanded={showMoveMenu}
-                          >
+                        <span className="detail-move-btn__label">
+                          Move to {primaryMoveTransition ? COLUMN_LABELS[primaryMoveTransition] : ""}
+                        </span>
+                        {hasSecondaryMoveOptions && (
+                          <span className="detail-move-btn__arrow" aria-hidden="true">
                             <ChevronDown size={12} />
-                          </button>
-                        </>
-                      )}
+                          </span>
+                        )}
+                      </button>
                       {showMoveMenu && hasSecondaryMoveOptions && (
-                        <div className="detail-move-menu detail-move-split-btn__menu" role="menu">
+                        <div className="detail-move-menu" role="menu" onKeyDown={handleMoveMenuKeyDown}>
                           {secondaryMoveTransitions.map((col) => (
                             <button
                               key={col}
                               className="detail-move-menu-item"
                               role="menuitem"
                               onClick={() => handleMoveMenuItemClick(col)}
+                              onKeyDown={handleMoveMenuKeyDown}
                             >
                               {col === "in-progress" ? "Back to In Progress" : `Move to ${COLUMN_LABELS[col]}`}
                             </button>
@@ -2222,39 +2284,35 @@ export function TaskDetailModal({
                     )}
                   </div>
                 ) : (
-                  <div className="detail-move-split-btn">
+                  <div>
                     <button
-                      className="btn btn-primary btn-sm detail-move-split-btn__main"
-                      onClick={() => primaryMoveTransition && handleMoveMenuItemClick(primaryMoveTransition)}
+                      ref={moveButtonRef}
+                      className="btn btn-primary btn-sm detail-move-btn"
+                      onClick={handleMoveButtonClick}
+                      onKeyDown={handleMoveButtonKeyDown}
                       disabled={!primaryMoveTransition}
+                      aria-label={primaryMoveTransition ? `Move to ${COLUMN_LABELS[primaryMoveTransition]}` : undefined}
+                      aria-haspopup={hasSecondaryMoveOptions ? "menu" : undefined}
+                      aria-expanded={hasSecondaryMoveOptions ? showMoveMenu : undefined}
                     >
-                      Move to {primaryMoveTransition ? COLUMN_LABELS[primaryMoveTransition] : ""}
-                    </button>
-                    {hasSecondaryMoveOptions && (
-                      <>
-                        <span className="detail-move-split-btn__divider" aria-hidden="true" />
-                        <button
-                          className="btn btn-primary btn-sm detail-move-split-btn__chevron"
-                          onClick={() => {
-                            setShowMoveMenu((prev) => !prev);
-                            setShowActionsMenu(false);
-                          }}
-                          aria-label="More move options"
-                          aria-haspopup="menu"
-                          aria-expanded={showMoveMenu}
-                        >
+                      <span className="detail-move-btn__label">
+                        Move to {primaryMoveTransition ? COLUMN_LABELS[primaryMoveTransition] : ""}
+                      </span>
+                      {hasSecondaryMoveOptions && (
+                        <span className="detail-move-btn__arrow" aria-hidden="true">
                           <ChevronDown size={12} />
-                        </button>
-                      </>
-                    )}
+                        </span>
+                      )}
+                    </button>
                     {showMoveMenu && hasSecondaryMoveOptions && (
-                      <div className="detail-move-menu detail-move-split-btn__menu" role="menu">
+                      <div className="detail-move-menu" role="menu" onKeyDown={handleMoveMenuKeyDown}>
                         {secondaryMoveTransitions.map((col) => (
                           <button
                             key={col}
                             className="detail-move-menu-item"
                             role="menuitem"
                             onClick={() => handleMoveMenuItemClick(col)}
+                            onKeyDown={handleMoveMenuKeyDown}
                           >
                             Move to {COLUMN_LABELS[col]}
                           </button>

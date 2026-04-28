@@ -648,42 +648,31 @@
   align-items: center;
 }
 
-.detail-move-split-btn {
+.detail-move-btn {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.detail-move-btn__label {
+  flex: 1;
+}
+
+.detail-move-btn__arrow {
   display: flex;
-  align-items: stretch;
-  border-radius: var(--radius-md);
-}
-
-.detail-move-split-btn__main {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
-
-.detail-move-split-btn__main:focus-visible,
-.detail-move-split-btn__chevron:focus-visible {
-  box-shadow: var(--focus-ring-strong);
-  outline: none;
-}
-
-.detail-move-split-btn__chevron {
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-  min-width: calc(var(--space-xs) + var(--space-sm) + var(--space-md));
-  padding: 0;
-}
-
-.detail-move-split-btn__divider {
-  width: 1px;
-  height: calc(var(--space-sm) + var(--space-xs));
-  align-self: center;
-  background: var(--border);
-  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xs);
+  margin-right: calc(-1 * var(--space-xs));
+  margin-block: calc(-1 * var(--space-xs));
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  cursor: pointer;
 }
 
 @media (hover: hover) {
-  .detail-move-split-btn__chevron:hover {
-    background: var(--cta-bg-hover, var(--cta-bg));
+  .detail-move-btn:hover .detail-move-btn__arrow {
+    background: color-mix(in srgb, var(--text) 12%, transparent);
   }
 }
 
@@ -705,10 +694,6 @@
 }
 
 .detail-move-menu {
-  right: 0;
-}
-
-.detail-move-split-btn__menu {
   right: 0;
 }
 
@@ -739,8 +724,8 @@
 }
 
 @media (max-width: 768px) {
-  .detail-move-split-btn__chevron {
-    min-width: calc(var(--space-md) + var(--space-sm));
+  .detail-move-btn__arrow {
+    padding: var(--space-xs);
   }
 
   /* Full-screen sheet on mobile. Desktop `min-width: 480px` would otherwise

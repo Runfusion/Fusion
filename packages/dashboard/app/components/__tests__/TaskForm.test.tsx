@@ -816,7 +816,7 @@ describe("TaskForm preset selection (FN-819)", () => {
       expect(fetchSettings).toHaveBeenCalled();
     });
 
-    const presetSelect = document.getElementById("model-preset") as HTMLSelectElement;
+    const presetSelect = (await screen.findByLabelText("Preset")) as HTMLSelectElement;
     fireEvent.change(presetSelect, { target: { value: "custom" } });
 
     expect(onPresetModeChange).toHaveBeenCalledWith("custom");

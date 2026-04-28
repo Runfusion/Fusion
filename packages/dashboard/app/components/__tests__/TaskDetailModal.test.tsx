@@ -543,7 +543,7 @@ describe("TaskDetailModal", () => {
     });
 
     it("shows in-review split button with primary action and secondary move option", () => {
-      render(
+      const { container } = render(
         <TaskDetailModal
           task={makeTask({ column: "in-review" })}
           onClose={noop}
@@ -555,11 +555,12 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByRole("button", { name: "Move to Todo" })).toBeTruthy();
-      const chevronBtn = screen.getByRole("button", { name: "More move options" });
-      expect(chevronBtn).toBeTruthy();
+      const moveBtn = screen.getByRole("button", { name: "Move to Todo" });
+      expect(moveBtn).toBeTruthy();
+      const chevronZone = container.querySelector(".detail-move-btn__arrow");
+      expect(chevronZone).toBeTruthy();
 
-      fireEvent.click(chevronBtn);
+      fireEvent.keyDown(moveBtn, { key: "ArrowDown" });
       expect(screen.getByRole("menuitem", { name: "Back to In Progress" })).toBeTruthy();
       expect(screen.queryByRole("menuitem", { name: "Move to Todo" })).toBeNull();
 
@@ -589,16 +590,16 @@ describe("TaskDetailModal", () => {
       expect(screen.getByRole("menuitem", { name: "Retry" })).toBeTruthy();
       expect(screen.getAllByRole("menuitem", { name: "Retry" })).toHaveLength(1);
 
-      const chevronBtn = screen.getByRole("button", { name: "More move options" });
+      const chevronZone = document.querySelector(".detail-move-btn__arrow");
       await act(async () => {
-        fireEvent.click(chevronBtn);
+        fireEvent.click(chevronZone!);
       });
       expect(screen.getByRole("menuitem", { name: "Back to In Progress" })).toBeTruthy();
       expect(screen.queryByRole("menuitem", { name: "Move to Todo" })).toBeNull();
     });
 
     it("split-button renders with chevron when multiple transitions exist", async () => {
-      render(
+      const { container } = render(
         <TaskDetailModal
           task={makeTask({ column: "in-progress" })}
           onClose={noop}
@@ -610,12 +611,13 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByRole("button", { name: "Move to In Review" })).toBeTruthy();
-      const chevronBtn = screen.getByRole("button", { name: "More move options" });
-      expect(chevronBtn).toBeTruthy();
+      const moveBtn = screen.getByRole("button", { name: "Move to In Review" });
+      expect(moveBtn).toBeTruthy();
+      const chevronZone = container.querySelector(".detail-move-btn__arrow");
+      expect(chevronZone).toBeTruthy();
 
       await act(async () => {
-        fireEvent.click(chevronBtn);
+        fireEvent.click(chevronZone!);
       });
       expect(screen.getByRole("menuitem", { name: "Move to Todo" })).toBeTruthy();
       expect(screen.getByRole("menuitem", { name: "Move to Planning" })).toBeTruthy();
@@ -637,7 +639,7 @@ describe("TaskDetailModal", () => {
       );
 
       expect(screen.getByRole("button", { name: "Move to Todo" })).toBeTruthy();
-      expect(screen.queryByRole("button", { name: "More move options" })).toBeNull();
+      expect(container.querySelector(".detail-move-btn__arrow")).toBeNull();
       expect(container.querySelector(".detail-move-split-btn__divider")).toBeNull();
     });
 
@@ -677,14 +679,17 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      await act(async () => {
-        fireEvent.click(screen.getByRole("button", { name: "More move options" }));
-      });
+      const moveBtn = screen.getByRole("button", { name: "Move to In Review" });
+      fireEvent.keyDown(moveBtn, { key: "ArrowDown" });
 
       expect(screen.getByRole("menuitem", { name: "Move to Todo" })).toBeTruthy();
       expect(screen.getByRole("menuitem", { name: "Move to Planning" })).toBeTruthy();
       expect(screen.getByRole("menuitem", { name: "Move to Done" })).toBeTruthy();
       expect(screen.queryByRole("menuitem", { name: "Move to In Review" })).toBeNull();
+
+      fireEvent.keyDown(screen.getByRole("menuitem", { name: "Move to Todo" }), { key: "Escape" });
+      expect(screen.queryByRole("menuitem", { name: "Move to Todo" })).toBeNull();
+      expect(document.activeElement).toBe(moveBtn);
     });
   });
 
@@ -2638,7 +2643,7 @@ describe("TaskDetailModal", () => {
       expect(screen.getByText("Merge & Close")).toBeTruthy();
 
       // Back to In Progress is in secondary move options
-      fireEvent.click(screen.getByRole("button", { name: "More move options" }));
+      fireEvent.click(document.querySelector(".detail-move-btn__arrow")!);
       expect(screen.getByRole("menuitem", { name: "Back to In Progress" })).toBeTruthy();
     });
 
