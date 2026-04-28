@@ -1359,18 +1359,47 @@
     min-width: 0;
   }
 
-  .onboarding-apikey-input {
-    width: 100%;
-    min-height: 36px;
+  /* Keep the API-key input and the Save button on a single row on mobile.
+     Earlier rule stacked them (input above, button below), which doubled
+     the vertical space inside an already-cramped provider card. The input
+     stays left-aligned and grows to fill the row, the Save button shrinks
+     to its label and pins to the right. */
+  .onboarding-apikey-input-row {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-xs);
   }
 
-  .onboarding-apikey-input-row {
-    flex-direction: column;
-    align-items: stretch;
+  .onboarding-apikey-input {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    min-height: 32px;
   }
 
   .onboarding-apikey-input-row .btn {
-    min-height: 36px;
+    flex: 0 0 auto;
+    min-height: 32px;
+    /* Compact label so "Save" doesn't bloat the row. */
+    padding-inline: var(--space-md);
+  }
+
+  /* Tighten the surrounding form so the row doesn't sit inside a tall
+     wrapper of label + input + footnote. */
+  .onboarding-apikey-form {
+    gap: var(--space-xs);
+  }
+
+  .onboarding-apikey-field-label {
+    font-size: 11px;
+    margin-bottom: 0;
+  }
+
+  .onboarding-apikey-instructions,
+  .onboarding-apikey-usage {
+    font-size: 11px;
+    line-height: 1.35;
+    margin: 0;
   }
 
   .onboarding-apikey-dashboard-link {

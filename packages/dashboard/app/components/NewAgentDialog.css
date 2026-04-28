@@ -561,10 +561,19 @@
     border-right: 0;
   }
 
-  /* Tighter chrome leaves more room for the scrollable body. */
-  .agent-dialog-header,
+  /* Tighter chrome leaves more room for the scrollable body. The header
+     adds env(safe-area-inset-top) so the iOS notch / status bar doesn't
+     hide the title and close button. The footer mirrors that with
+     safe-area-inset-bottom so the home indicator doesn't sit on top of
+     the action buttons. */
+  .agent-dialog-header {
+    padding: calc(var(--space-md) + env(safe-area-inset-top)) var(--space-md)
+      var(--space-md);
+  }
+
   .agent-dialog-footer {
-    padding: var(--space-md) var(--space-md);
+    padding: var(--space-md) var(--space-md)
+      calc(var(--space-md) + env(safe-area-inset-bottom));
   }
 
   .agent-dialog-steps {
@@ -573,12 +582,26 @@
        instead of overflowing the dialog. */
     overflow-x: auto;
     flex-wrap: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* Header/footer must not shrink — only the body should give up height
+     to keep the chrome fixed and the body scrollable. */
+  .agent-dialog-header,
+  .agent-dialog-footer {
+    flex-shrink: 0;
   }
 
   .agent-dialog-body {
     padding: var(--space-md);
-    /* Already overflow-y: auto, but lock the scroll inside the body so iOS
-       doesn't bubble it up to the page and trap the user above the footer. */
+    /* `min-height: 0` is required for `overflow-y: auto` to take effect
+       on a flex child — without it the body's intrinsic height grows to
+       its content, the dialog bleeds past the viewport, and scroll never
+       activates. This is the classic flex `min-height: auto` gotcha. */
+    flex: 1 1 auto;
+    min-height: 0;
+    /* Lock the scroll inside the body so iOS doesn't bubble it up to the
+       page and trap the user above the footer. */
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
   }
