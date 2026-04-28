@@ -332,7 +332,7 @@ console.log(`  Bumped packages : ${releases.map((r) => r.name).join(", ")}`);
 console.log("");
 
 let chosenVersion = proposedVersion;
-if (!(AUTO_YES || DRY_RUN)) {
+if (!AUTO_YES) {
   while (true) {
     const answer = await ask(`Release version [${proposedVersion}]: `);
     if (answer === "") break;
