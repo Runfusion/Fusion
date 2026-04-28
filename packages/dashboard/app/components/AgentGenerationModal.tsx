@@ -305,7 +305,7 @@ export function AgentGenerationModal({
           </button>
           {view.type === "input" && (
             <button
-              className="btn btn--primary"
+              className="btn btn-task-create"
               onClick={() => void handleGenerate()}
               disabled={!canGenerate}
             >
@@ -320,7 +320,7 @@ export function AgentGenerationModal({
               >
                 Regenerate
               </button>
-              <button className="btn btn--primary" onClick={handleUseSpec}>
+              <button className="btn btn-task-create" onClick={handleUseSpec}>
                 Use This
               </button>
             </>

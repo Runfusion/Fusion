@@ -89,6 +89,25 @@ export async function createResolvedAgentSession(
   // Create the session using the resolved runtime
   const result = await resolved.runtime.createSession(runtimeOptions);
 
+  // Attach the resolved runtime's promptWithFallback as a bound method on the
+  // session object when it is not already present. This is the dispatch hook
+  // that pi.promptWithFallback (pi.ts:175) checks before falling through to its
+  // own pi-native path. Plugin runtimes (hermes, openclaw, paperclip) do not
+  // attach this method themselves; without it every prompt call would silently
+  // bypass the plugin and go through pi's session.prompt() instead.
+  //
+  // The default pi runtime's createFnAgent (pi.ts:1143) already attaches
+  // promptWithFallback to the session, so we only attach when it is absent.
+  const session = result.session as AgentSession & { promptWithFallback?: unknown };
+  if (typeof session.promptWithFallback !== "function") {
+    const runtime = resolved.runtime;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (session as any).promptWithFallback = (
+      prompt: string,
+      options?: unknown,
+    ) => runtime.promptWithFallback(session, prompt, options);
+  }
+
   return {
     session: result.session,
     sessionFile: result.sessionFile,

@@ -289,7 +289,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
             </div>
 
             <button
-              className="btn btn--primary"
+              className="btn btn-task-create btn-sm"
               onClick={() => setIsCreating(!isCreating)}
             >
               <Plus size={16} />
@@ -320,7 +320,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                   </option>
                 ))}
               </select>
-              <button className="btn btn--primary" onClick={() => void handleCreate()}>
+              <button className="btn btn-task-create btn-sm" onClick={() => void handleCreate()}>
                 Create
               </button>
             </div>
@@ -650,7 +650,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                       {agent.state === "terminated" && (
                         <>
                           <button
-                            className="btn btn--sm btn--primary"
+                            className="btn btn--sm btn-task-create"
                             onClick={() => void handleStateChange(agent.id, "active")}
                             disabled={transitioningAgentIds.has(agent.id)}
                             title="Start"

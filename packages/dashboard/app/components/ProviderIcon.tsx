@@ -488,6 +488,96 @@ function GitHubIcon({ size, color, label = "GitHub" }: { size: number; color: st
   );
 }
 
+// Hermes — caduceus (winged staff) mark, single-color so it adapts to theme.
+function HermesIcon({ size, color, label = "Hermes" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label={label}>
+      <rect x="30" y="10" width="4" height="46" rx="2" fill={color} />
+      <path d="M30 18 C24 14, 14 14, 10 18 C14 16, 22 16, 28 20" fill={color} opacity="0.9" />
+      <path d="M30 22 C26 19, 18 19, 14 22 C18 20, 24 20, 28 24" fill={color} opacity="0.7" />
+      <path d="M34 18 C40 14, 50 14, 54 18 C50 16, 42 16, 36 20" fill={color} opacity="0.9" />
+      <path d="M34 22 C38 19, 46 19, 50 22 C46 20, 40 20, 36 24" fill={color} opacity="0.7" />
+      <path d="M32 48 C22 44, 20 38, 26 34 C20 36, 18 42, 24 46 C18 40, 22 30, 30 28 C24 32, 22 38, 28 42" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M32 48 C42 44, 44 38, 38 34 C44 36, 46 42, 40 46 C46 40, 42 30, 34 28 C40 32, 42 38, 36 42" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" opacity="0.8" />
+      <circle cx="32" cy="10" r="4" fill={color} />
+    </svg>
+  );
+}
+
+// OpenClaw — pixel-art lobster (verbatim 16×16 source SVG, recolor disabled
+// so the iconic palette survives).
+function OpenClawIcon({ size, label = "OpenClaw" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" role="img" aria-label={label}>
+      <rect width="16" height="16" fill="none" />
+      <g fill="#3a0a0d">
+        <rect x="1" y="5" width="1" height="3" />
+        <rect x="2" y="4" width="1" height="1" />
+        <rect x="2" y="8" width="1" height="1" />
+        <rect x="3" y="3" width="1" height="1" />
+        <rect x="3" y="9" width="1" height="1" />
+        <rect x="4" y="2" width="1" height="1" />
+        <rect x="4" y="10" width="1" height="1" />
+        <rect x="5" y="2" width="6" height="1" />
+        <rect x="11" y="2" width="1" height="1" />
+        <rect x="12" y="3" width="1" height="1" />
+        <rect x="12" y="9" width="1" height="1" />
+        <rect x="13" y="4" width="1" height="1" />
+        <rect x="13" y="8" width="1" height="1" />
+        <rect x="14" y="5" width="1" height="3" />
+        <rect x="5" y="11" width="6" height="1" />
+        <rect x="4" y="12" width="1" height="1" />
+        <rect x="11" y="12" width="1" height="1" />
+        <rect x="3" y="13" width="1" height="1" />
+        <rect x="12" y="13" width="1" height="1" />
+        <rect x="5" y="14" width="6" height="1" />
+      </g>
+      <g fill="#ff4f40">
+        <rect x="5" y="3" width="6" height="1" />
+        <rect x="4" y="4" width="8" height="1" />
+        <rect x="3" y="5" width="10" height="1" />
+        <rect x="3" y="6" width="10" height="1" />
+        <rect x="3" y="7" width="10" height="1" />
+        <rect x="4" y="8" width="8" height="1" />
+        <rect x="5" y="9" width="6" height="1" />
+        <rect x="5" y="12" width="6" height="1" />
+        <rect x="6" y="13" width="4" height="1" />
+      </g>
+      <g fill="#ff775f">
+        <rect x="1" y="6" width="2" height="1" />
+        <rect x="2" y="5" width="1" height="1" />
+        <rect x="2" y="7" width="1" height="1" />
+        <rect x="13" y="6" width="2" height="1" />
+        <rect x="13" y="5" width="1" height="1" />
+        <rect x="13" y="7" width="1" height="1" />
+      </g>
+      <g fill="#081016">
+        <rect x="6" y="5" width="1" height="1" />
+        <rect x="9" y="5" width="1" height="1" />
+      </g>
+      <g fill="#f5fbff">
+        <rect x="6" y="4" width="1" height="1" />
+        <rect x="9" y="4" width="1" height="1" />
+      </g>
+    </svg>
+  );
+}
+
+// Paperclip — official paperclip outline, theme-color aware.
+function PaperclipIcon({ size, color, label = "Paperclip" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label={label}>
+      <path
+        d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"
+        stroke={color}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 // Anthropic "A" mark composited with a small terminal "> _" badge in the
 // bottom-right, visually signalling "Anthropic, but via the local CLI".
 function ClaudeCliIcon({ size, color, label = "Anthropic — via Claude CLI" }: { size: number; color: string; label?: string }) {
@@ -600,6 +690,16 @@ const providerConfig: Record<
 
   vercel: { component: VercelIcon, color: "var(--provider-vercel)" },
   "vercel-ai-gateway": { component: VercelIcon, color: "var(--provider-vercel)", label: "Vercel AI Gateway" },
+
+  // Runtime-plugin marks (Hermes / OpenClaw / Paperclip).
+  hermes: { component: HermesIcon, color: "var(--provider-hermes)", label: "Hermes" },
+  "hermes-agent": { component: HermesIcon, color: "var(--provider-hermes)", label: "Hermes" },
+  hermesagent: { component: HermesIcon, color: "var(--provider-hermes)", label: "Hermes" },
+  openclaw: { component: OpenClawIcon, color: "var(--provider-openclaw)", label: "OpenClaw" },
+  "open-claw": { component: OpenClawIcon, color: "var(--provider-openclaw)", label: "OpenClaw" },
+  paperclip: { component: PaperclipIcon, color: "var(--provider-paperclip)", label: "Paperclip" },
+  paperclipai: { component: PaperclipIcon, color: "var(--provider-paperclip)", label: "Paperclip" },
+  "paperclip-ai": { component: PaperclipIcon, color: "var(--provider-paperclip)", label: "Paperclip" },
 };
 
 export function ProviderIcon({ provider, size = "sm" }: ProviderIconProps) {

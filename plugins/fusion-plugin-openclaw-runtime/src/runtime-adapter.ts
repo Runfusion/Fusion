@@ -1,33 +1,45 @@
+/**
+ * OpenClaw Runtime Adapter — drives the local `openclaw` CLI as a subprocess.
+ *
+ * Each call to `promptWithFallback` invokes
+ *   `openclaw --no-color agent --local --json --session-id <uuid> --message <prompt>`
+ * (and `--model`, `--thinking`, `--timeout`, `--agent` if configured),
+ * parses the JSON document on stdout, and forwards visible/reasoning text
+ * via the session callbacks.
+ *
+ * Session continuity: the UUID minted on session create is reused on every
+ * subsequent prompt as `--session-id`, so openclaw resumes the same agent
+ * conversation server-side.
+ */
+
 import type {
   AgentRuntime,
   AgentRuntimeOptions,
   AgentSessionResult,
-  GatewayConfig,
+  CliConfig,
   GatewaySession,
 } from "./types.js";
 import {
-  createGatewaySession,
-  describeGatewayModel,
-  promptGateway,
-  resolveGatewayConfig,
+  createCliSession,
+  describeCliModel,
+  promptCli,
+  resolveCliConfig,
 } from "./pi-module.js";
 
 export class OpenClawRuntimeAdapter implements AgentRuntime {
   readonly id = "openclaw";
   readonly name = "OpenClaw Runtime";
 
-  private readonly config: GatewayConfig;
+  private readonly config: CliConfig;
 
-  constructor(settings?: Partial<GatewayConfig>) {
-    this.config = resolveGatewayConfig(settings as Record<string, unknown> | undefined);
+  constructor(settings?: Partial<CliConfig> | Record<string, unknown>) {
+    this.config = resolveCliConfig(settings as Record<string, unknown> | undefined);
   }
 
   async createSession(options: AgentRuntimeOptions): Promise<AgentSessionResult> {
-    const session = createGatewaySession({
-      gatewayUrl: this.config.gatewayUrl,
-      gatewayToken: this.config.gatewayToken,
-      agentId: this.config.agentId,
+    const session = createCliSession({
       systemPrompt: options.systemPrompt,
+      agentId: this.config.agentId,
       callbacks: {
         onText: options.onText,
         onThinking: options.onThinking,
@@ -36,23 +48,25 @@ export class OpenClawRuntimeAdapter implements AgentRuntime {
       },
     });
 
-    return {
-      session,
-      sessionFile: undefined,
-    };
+    return { session, sessionFile: undefined };
   }
 
-  async promptWithFallback(session: GatewaySession, prompt: string, options?: unknown): Promise<void> {
-    session.messages.push({ role: "user", content: prompt });
-
-    await promptGateway(session, prompt, options as Parameters<typeof promptGateway>[2]);
+  async promptWithFallback(
+    session: GatewaySession,
+    prompt: string,
+    options?: unknown,
+  ): Promise<void> {
+    const overrideCallbacks = (options ?? undefined) as
+      | Parameters<typeof promptCli>[3]
+      | undefined;
+    await promptCli(session, prompt, this.config, overrideCallbacks);
   }
 
   describeModel(session: GatewaySession): string {
-    return describeGatewayModel(session);
+    return describeCliModel(session);
   }
 
   async dispose(_session: GatewaySession): Promise<void> {
-    // OpenClaw gateway sessions are managed remotely; no local cleanup required.
+    // No persistent resources — each prompt spawns a fresh subprocess.
   }
 }

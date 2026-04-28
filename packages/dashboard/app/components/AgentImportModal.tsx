@@ -908,7 +908,7 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
           </button>
           {step === "input" && (
             <button
-              className="btn btn--primary"
+              className="btn btn-task-create"
               onClick={() => void handleParse()}
               disabled={
                 isParsing || (
@@ -932,7 +932,7 @@ export function AgentImportModal({ isOpen, onClose, onImported, projectId }: Age
           )}
           {step === "preview" && (
             <button
-              className="btn btn--primary"
+              className="btn btn-task-create"
               onClick={() => void handleImport()}
               disabled={isImporting || (selectedAgentCount === 0 && selectedSkillCount === 0)}
             >

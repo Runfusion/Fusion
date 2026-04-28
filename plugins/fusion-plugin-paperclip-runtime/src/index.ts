@@ -1,5 +1,8 @@
 import { definePlugin } from "@fusion/plugin-sdk";
-import { probePaperclipInstance, resolvePaperclipConfig } from "./pi-module.js";
+import {
+  probePaperclipConnection,
+  resolvePaperclipConfig,
+} from "./paperclip-client.js";
 import { PaperclipRuntimeAdapter } from "./runtime-adapter.js";
 import type {
   FusionPlugin,
@@ -7,20 +10,46 @@ import type {
   RuntimeLogger,
 } from "./types.js";
 
+// Public exports — consumed by the dashboard probe façade and tests.
+export type {
+  PaperclipAgentSummary,
+  PaperclipCliDiscovery,
+  PaperclipCliDiscoveryResult,
+  PaperclipCompanySummary,
+  PaperclipConnectionStatus,
+} from "./paperclip-client.js";
+export {
+  agentsMe,
+  discoverPaperclipCliConfig,
+  listCompanies,
+  listCompanyAgents,
+  mintAgentApiKeyViaCli,
+  probePaperclipConnection,
+} from "./paperclip-client.js";
+export type { MintCliKeyOptions, MintedApiKey } from "./paperclip-client.js";
+export { PaperclipRuntimeAdapter } from "./runtime-adapter.js";
+
 function getSettingsConfig(settings: unknown) {
   return resolvePaperclipConfig((settings ?? {}) as Record<string, unknown>);
 }
 
-async function paperclipRuntimeFactory(ctx: { settings?: unknown; logger?: RuntimeLogger }): Promise<unknown> {
+async function paperclipRuntimeFactory(ctx: {
+  settings?: unknown;
+  logger?: RuntimeLogger;
+}): Promise<unknown> {
   const config = getSettingsConfig(ctx.settings);
-  return new PaperclipRuntimeAdapter(config, ctx.logger);
+  // resolvePaperclipConfig returns `mode: string`; the adapter narrows it.
+  return new PaperclipRuntimeAdapter(
+    config as unknown as Record<string, unknown>,
+    ctx.logger,
+  );
 }
 
 const paperclipRuntime: PluginRuntimeRegistration = {
   metadata: {
     runtimeId: "paperclip",
     name: "Paperclip Runtime",
-    description: "Paperclip-backed AI session via Paperclip REST API",
+    description: "Drives a Paperclip agent via the wakeup + heartbeat-run REST API",
     version: "1.0.0",
   },
   factory: paperclipRuntimeFactory,
@@ -31,14 +60,14 @@ const plugin: FusionPlugin = definePlugin({
     id: "fusion-plugin-paperclip-runtime",
     name: "Paperclip Runtime Plugin",
     version: "1.0.0",
-    description: "Provides Paperclip runtime for Fusion AI agents",
+    description: "Drives a Paperclip agent via the wakeup + heartbeat-run REST API",
     author: "Fusion Team",
-    homepage: "https://github.com/gsxdsm/fusion",
+    homepage: "https://paperclip.ing/",
     fusionVersion: ">=0.1.0",
     runtime: {
       runtimeId: "paperclip",
       name: "Paperclip Runtime",
-      description: "Paperclip-backed AI session via Paperclip REST API",
+      description: "Drives a Paperclip agent via the wakeup + heartbeat-run REST API",
       version: "1.0.0",
     },
   },
@@ -49,15 +78,26 @@ const plugin: FusionPlugin = definePlugin({
       const config = getSettingsConfig(ctx.settings);
       ctx.logger.info(`Paperclip Runtime Plugin loaded (apiUrl=${config.apiUrl})`);
 
-      const probe = await probePaperclipInstance(config.apiUrl, config.apiKey);
-      if (probe.ok) {
-        ctx.logger.info(
-          `Paperclip probe succeeded (deploymentMode=${probe.deploymentMode ?? "unknown"})`,
-        );
-        return;
+      // Best-effort connectivity probe; failures are warnings, not errors.
+      try {
+        const status = await probePaperclipConnection({
+          apiUrl: config.apiUrl,
+          apiKey: config.apiKey,
+        });
+        if (status.available) {
+          const ident = status.identity;
+          ctx.logger.info(
+            ident
+              ? `Paperclip reachable as ${ident.agentName} (${ident.role ?? "agent"}) at ${ident.companyName ?? ident.companyId}`
+              : `Paperclip reachable at ${config.apiUrl}`,
+          );
+        } else {
+          ctx.logger.warn(`Paperclip probe failed: ${status.reason ?? "unknown"}`);
+        }
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        ctx.logger.warn(`Paperclip probe threw: ${reason}`);
       }
-
-      ctx.logger.warn(`Paperclip probe failed: ${probe.error}`);
     },
   },
 });

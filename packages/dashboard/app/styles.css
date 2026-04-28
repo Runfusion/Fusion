@@ -218,7 +218,176 @@ html {
   --provider-cerebras: #f1592a;
   --provider-groq: #f55036;
   --provider-vercel: var(--text);
+  /* Runtime-plugin marks. */
+  --provider-hermes: #d4961c;
+  --provider-openclaw: #ff4f40;
+  --provider-paperclip: var(--text);
   --provider-icon-contrast: var(--bg);
+}
+
+/* -------------------------------------------------------------------------
+ * Runtime provider settings card — unified layout used by Hermes / OpenClaw /
+ * Paperclip cards. Header (large logo + name + status), description, form,
+ * footer action row.
+ * ------------------------------------------------------------------------- */
+
+.runtime-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.runtime-card__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.runtime-card__logo {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--provider-icon-color, currentColor) 8%, transparent);
+}
+
+.runtime-card__title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.runtime-card__name {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.runtime-card__status {
+  font-size: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.runtime-card__status--ok {
+  color: var(--accent-green, #22c55e);
+}
+
+.runtime-card__status--err {
+  color: var(--accent-red, #ef4444);
+}
+
+.runtime-card__status--neutral {
+  color: var(--text-muted);
+}
+
+.runtime-card__learn-more {
+  flex: 0 0 auto;
+  font-size: 0.85rem;
+}
+
+.runtime-card__description {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.runtime-card__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.runtime-card__form .form-group {
+  margin: 0;
+}
+
+.runtime-card__tabs {
+  display: flex;
+  gap: var(--space-xxs, 2px);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-sm);
+}
+
+.runtime-card__tab {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-bottom: -1px;
+}
+
+.runtime-card__tab:hover {
+  color: var(--text);
+}
+
+.runtime-card__tab[aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--accent, #4f46e5);
+}
+
+.runtime-card__footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.runtime-card__toast {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.85rem;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+}
+
+.runtime-card__toast--ok {
+  background: color-mix(in srgb, var(--accent-green, #22c55e) 12%, transparent);
+  color: var(--accent-green, #22c55e);
+}
+
+.runtime-card__toast--err {
+  background: color-mix(in srgb, var(--accent-red, #ef4444) 12%, transparent);
+  color: var(--accent-red, #ef4444);
+}
+
+.runtime-card__cobrand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: var(--space-xxs, 2px);
+}
+
+.runtime-card__cobrand-mark {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: currentColor;
+  color: var(--text-muted);
+  border-radius: 2px;
+  flex: 0 0 auto;
 
   /* Task-creation CTA tokens */
   --cta-bg: #238636;

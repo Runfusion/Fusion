@@ -777,7 +777,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
               <RefreshCw size={16} className={isLoading ? "spin" : undefined} />
             </button>
             <button
-              className="btn btn--primary"
+              className="btn btn-task-create btn-sm"
               onClick={() => {
                 setIsCreating(true);
                 setIsControlsPanelOpen(false);

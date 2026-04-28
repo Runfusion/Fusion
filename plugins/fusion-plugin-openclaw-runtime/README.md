@@ -1,79 +1,77 @@
 # OpenClaw Runtime Plugin
 
-`fusion-plugin-openclaw-runtime` provides the `openclaw` runtime hint for Fusion agents by calling a **locally running OpenClaw gateway** over HTTP.
+Drives the local **`openclaw` CLI** ([openclaw/openclaw](https://github.com/openclaw/openclaw)) as a subprocess. By default it runs `openclaw agent --local` (embedded mode, no daemon required); you can opt into the WebSocket gateway with `useGateway: true`.
 
-Unlike the default runtime, this plugin does **not** delegate to Fusion's internal pi runtime. It talks directly to OpenClaw's OpenAI-compatible endpoint.
+## What it does
+
+For each `promptWithFallback(session, prompt)`:
+
+1. Spawns `openclaw --no-color agent --local --json --session-id <uuid> --message <prompt>` (plus `--agent`, `--model`, `--thinking`, `--timeout` if configured).
+2. Reads the single JSON document on stdout (matching `OpenClawAgentJson`):
+   - Concatenates `payloads[]` where `!isError && !isReasoning` → `session.callbacks.onText(...)`.
+   - Joins `payloads[].isReasoning === true` → `session.callbacks.onThinking(...)`.
+   - Surfaces tool-level errors (`payloads[].isError === true`) as a logger warning.
+   - Stores `meta.agentMeta.usage` on the session for token accounting.
+3. Reuses the same UUID across every prompt for the session so OpenClaw resumes the same agent conversation server-side.
+
+The previous HTTP `/v1/chat/completions` integration has been removed — that endpoint required a separate gateway daemon and was an OpenAI-compat shim. The CLI surface is the canonical OpenClaw API.
 
 ## Prerequisites
 
-1. Install OpenClaw globally:
-
 ```bash
-npm i -g openclaw
+npm install -g openclaw
 ```
 
-2. Start your OpenClaw gateway with chat-completions endpoint enabled.
-3. Ensure the gateway is reachable from Fusion (default: `http://127.0.0.1:18789`).
+Verify with `openclaw --version` (expect `OpenClaw 2026.x.y`).
 
-## Installation
+If you want gateway mode (`useGateway: true`), also start `openclaw gateway run` separately.
 
-### Option 1: Copy to plugins directory
+> **First-run note:** the very first `openclaw agent` invocation lazy-installs runtime deps and can take 30–60s. Subsequent calls are fast.
 
-```bash
-cp -r fusion-plugin-openclaw-runtime ~/.fusion/plugins/
+## Settings
+
+| Key | Env var | Default | Notes |
+|---|---|---|---|
+| `binaryPath` | `OPENCLAW_BIN` | `openclaw` | Path to the `openclaw` binary. |
+| `agentId` | `OPENCLAW_AGENT_ID` | `main` | Maps to `--agent <id>`. List with `openclaw agents list`. |
+| `model` | `OPENCLAW_MODEL` | (OpenClaw default) | Maps to `--model <provider/model>`, e.g. `anthropic/claude-haiku-4-5`. |
+| `thinking` | `OPENCLAW_THINKING` | `off` | One of `off | minimal | low | medium | high | xhigh | adaptive | max`. |
+| `cliTimeoutSec` | `OPENCLAW_TIMEOUT_SEC` | `0` | OpenClaw-side timeout (0 = no limit). |
+| `cliTimeoutMs` | `OPENCLAW_CLI_TIMEOUT_MS` | `300000` | Hard kill on the Fusion side. |
+| `useGateway` | `OPENCLAW_USE_GATEWAY` | `false` | When `true`, omit `--local`; the CLI tries the WS gateway and falls back to embedded after ~2 s. |
+
+Settings precedence: plugin settings → env var → default.
+
+## Limitations
+
+- **No per-token streaming.** `--json` emits a single JSON document at process exit. `onText` is called exactly once.
+- **Default ignores the gateway.** With `useGateway: false` (default) we always pass `--local`, skipping the WebSocket connect attempt entirely. Most users want this.
+- **AbortSignal sends SIGTERM.** If the CLI ignores it (e.g. during a long model download), the hard-kill timer (`cliTimeoutMs`) eventually fires.
+
+## Public API
+
+```ts
+import {
+  OpenClawRuntimeAdapter,
+  resolveCliConfig,
+  buildOpenClawArgs,
+  createCliSession,
+  promptCli,
+  describeCliModel,
+  extractStderrError,
+  probeOpenClawBinary,
+  type CliConfig,
+  type GatewaySession,
+  type OpenClawAgentJson,
+  type OpenClawBinaryStatus,
+} from "@fusion-plugin-examples/openclaw-runtime";
 ```
 
-### Option 2: Install via CLI
+`probeOpenClawBinary({ binaryPath?, timeoutMs? })` runs `openclaw --version` and returns `{ available, version, binaryPath, reason, probeDurationMs }` — used by the dashboard's "Runtimes → OpenClaw" settings card.
 
-```bash
-fn plugin install ./plugins/fusion-plugin-openclaw-runtime
-```
+## Agent configuration
 
-## Runtime Metadata
-
-- **Plugin ID:** `fusion-plugin-openclaw-runtime`
-- **Package name:** `@fusion-plugin-examples/openclaw-runtime`
-- **Runtime ID:** `openclaw`
-- **Runtime name:** `OpenClaw Runtime`
-- **Version:** `0.1.0`
-
-## Plugin Settings
-
-Configure via plugin settings (`ctx.settings`) or environment variables.
-
-| Setting key | Env fallback | Default |
-| --- | --- | --- |
-| `gatewayUrl` | `OPENCLAW_GATEWAY_URL` | `http://127.0.0.1:18789` |
-| `gatewayToken` | `OPENCLAW_GATEWAY_TOKEN` | _unset_ |
-| `agentId` | `OPENCLAW_AGENT_ID` | `main` |
-
-Settings take precedence over environment variables.
-
-## How Execution Works
-
-For each prompt, the runtime sends a streaming request to:
-
-- `POST /v1/chat/completions`
-- `Content-Type: application/json`
-- `Authorization: Bearer <gatewayToken>` (when configured)
-- `x-openclaw-agent-id: <agentId>`
-
-Request payload includes:
-
-- `model: "openclaw:<agentId>"`
-- `stream: true`
-- `messages: [...]`
-- `user: <stable-session-id>` (so repeated turns share a stable gateway session)
-
-Streaming uses SSE (`data: ...` + `[DONE]`), with callbacks wired for:
-
-- text deltas (`choices[0].delta.content`)
-- reasoning deltas (`choices[0].delta.reasoning_content`)
-- tool call lifecycle (`choices[0].delta.tool_calls`)
-
-## Agent Configuration
-
-Configure an agent to target OpenClaw via `runtimeConfig.runtimeHint`:
+To create a Fusion agent backed by OpenClaw, set `runtimeConfig.runtimeHint`:
 
 ```json
 {
@@ -85,14 +83,17 @@ Configure an agent to target OpenClaw via `runtimeConfig.runtimeHint`:
 }
 ```
 
-## Notes
+Runtime selection happens in the dashboard's **New Agent → Plugin Runtime → OpenClaw**.
 
-- This plugin no longer depends on `@fusion/engine`.
-- Session cleanup is a no-op client-side; OpenClaw manages gateway sessions.
+## Metadata
 
-## Local Development
+- **Plugin ID:** `fusion-plugin-openclaw-runtime`
+- **Runtime ID:** `openclaw`
+- **Package:** `@fusion-plugin-examples/openclaw-runtime`
+
+## Development
 
 ```bash
-pnpm --filter @fusion-plugin-examples/openclaw-runtime test
+pnpm --filter @fusion-plugin-examples/openclaw-runtime test    # 44 tests
 pnpm --filter @fusion-plugin-examples/openclaw-runtime build
 ```

@@ -60,7 +60,7 @@ export async function probeClaudeCli(
     };
 
     let settled = false;
-    const child = spawn("claude", ["--version"], {
+    const child = spawn(binaryPath ?? "claude", ["--version"], {
       stdio: ["ignore", "pipe", "pipe"],
     });
 

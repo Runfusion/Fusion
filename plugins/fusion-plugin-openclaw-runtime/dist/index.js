@@ -1,49 +1,51 @@
 /**
  * OpenClaw Runtime Plugin
  *
- * Provides an executable OpenClaw runtime adapter for Fusion's plugin runtime
- * discovery and session execution pipeline.
+ * Drives the local `openclaw` CLI as a subprocess (via
+ * `openclaw --no-color agent --local --json`). No daemon required.
  */
 import { definePlugin } from "@fusion/plugin-sdk";
 import { OpenClawRuntimeAdapter } from "./runtime-adapter.js";
-import { probeGateway, resolveGatewayConfig } from "./pi-module.js";
+import { resolveCliConfig } from "./pi-module.js";
+import { probeOpenClawBinary } from "./probe.js";
 const OPENCLAW_RUNTIME_ID = "openclaw";
-const OPENCLAW_RUNTIME_VERSION = "0.1.0";
+const OPENCLAW_RUNTIME_VERSION = "0.2.0";
 const openclawRuntimeMetadata = {
     runtimeId: OPENCLAW_RUNTIME_ID,
     name: "OpenClaw Runtime",
-    description: "OpenClaw-backed AI session using the local OpenClaw gateway",
+    description: "Drives the local `openclaw` CLI (openclaw/openclaw)",
     version: OPENCLAW_RUNTIME_VERSION,
 };
 const openclawRuntimeFactory = async (ctx) => {
-    const config = resolveGatewayConfig(ctx?.settings);
-    return new OpenClawRuntimeAdapter(config);
+    return new OpenClawRuntimeAdapter(ctx?.settings);
 };
 const plugin = definePlugin({
     manifest: {
         id: "fusion-plugin-openclaw-runtime",
         name: "OpenClaw Runtime Plugin",
-        version: "0.1.0",
-        description: "Provides OpenClaw runtime for Fusion AI agents",
+        version: OPENCLAW_RUNTIME_VERSION,
+        description: "Drives the local `openclaw` CLI for Fusion agents — embedded `--local` mode by default; gateway optional.",
         author: "Fusion Team",
-        homepage: "https://github.com/gsxdsm/fusion",
+        homepage: "https://docs.openclaw.ai/",
         runtime: openclawRuntimeMetadata,
     },
     state: "installed",
     hooks: {
         onLoad: async (ctx) => {
-            const config = resolveGatewayConfig(ctx.settings);
-            const gatewayReachable = await probeGateway(config.gatewayUrl);
-            ctx.logger.info(`OpenClaw Runtime Plugin loaded (gateway: ${config.gatewayUrl}, reachable: ${gatewayReachable ? "yes" : "no"})`);
+            const config = resolveCliConfig(ctx.settings);
+            const probe = await probeOpenClawBinary({ binaryPath: config.binaryPath });
+            ctx.logger.info(probe.available
+                ? `OpenClaw Runtime Plugin loaded — binary=${config.binaryPath}${probe.version ? ` (${probe.version})` : ""}`
+                : `OpenClaw Runtime Plugin loaded but binary not detected: ${probe.reason ?? "unknown"}`);
             ctx.emitEvent("openclaw-runtime:loaded", {
                 runtimeId: OPENCLAW_RUNTIME_ID,
                 version: OPENCLAW_RUNTIME_VERSION,
-                gatewayUrl: config.gatewayUrl,
-                gatewayReachable,
+                binaryAvailable: probe.available,
+                binaryPath: probe.binaryPath ?? config.binaryPath,
             });
         },
         onUnload: () => {
-            // No context available during unload
+            // No persistent state to clean up — each prompt spawns a fresh subprocess.
         },
     },
     runtime: {
@@ -52,5 +54,10 @@ const plugin = definePlugin({
     },
 });
 export default plugin;
+// ── Public exports ────────────────────────────────────────────────────────────
 export { openclawRuntimeMetadata, openclawRuntimeFactory, OPENCLAW_RUNTIME_ID };
+export { OpenClawRuntimeAdapter } from "./runtime-adapter.js";
+export { resolveCliConfig, buildOpenClawArgs, createCliSession, promptCli, describeCliModel, extractStderrError, } from "./pi-module.js";
+// Probe re-export for the dashboard's runtime-provider-probes façade.
+export { probeOpenClawBinary } from "./probe.js";
 //# sourceMappingURL=index.js.map

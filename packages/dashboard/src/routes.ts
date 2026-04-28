@@ -60,6 +60,7 @@ import { registerProxyRoutes } from "./routes/register-proxy-routes.js";
 import { registerModelRoutes } from "./routes/register-model-routes.js";
 import { registerUsageRoutes } from "./routes/register-usage-routes.js";
 import { registerAuthRoutes } from "./routes/register-auth-routes.js";
+import { registerRuntimeProviderRoutes } from "./routes/register-runtime-provider-routes.js";
 import { registerUpdateCheckRoutes } from "./routes/register-update-check-routes.js";
 import { registerIntegratedRouters, registerIntegratedDevServerRouter } from "./routes/register-integrated-routers.js";
 import { runGitCommand } from "./routes/resolve-diff-base.js";
@@ -1406,6 +1407,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
   // ---------- Auth routes ----------
   registerAuthRoutes(routeContext);
+
+  // ---------- Runtime-plugin probe routes (Hermes / OpenClaw / Paperclip) ----------
+  registerRuntimeProviderRoutes(routeContext);
 
   /**
    * POST /api/ai/refine-text

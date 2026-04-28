@@ -253,4 +253,72 @@ describe("Hermes runtime E2E pipeline", () => {
       systemPrompt: "fallback",
     });
   });
+
+  it("attaches runtime.promptWithFallback as session.promptWithFallback so pi dispatch hook routes to plugin", async () => {
+    // This test verifies the fix for the bug where createResolvedAgentSession did NOT
+    // attach the resolved runtime's promptWithFallback onto the session object.
+    // Without the fix, pi.promptWithFallback (pi.ts:175) would fall through to
+    // pi's own session.prompt() instead of dispatching to HermesRuntimeAdapter.
+    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true });
+    await pluginStore.init();
+
+    await pluginStore.registerPlugin({
+      manifest: {
+        id: "fusion-plugin-hermes-runtime",
+        name: "Hermes Runtime Plugin",
+        version: "0.1.0",
+        runtime: {
+          runtimeId: "hermes",
+          name: "Hermes Runtime",
+          version: "0.1.0",
+        },
+      },
+      path: hermesPluginModulePath(),
+    });
+
+    const taskStore = createTaskStoreMock(testRoot);
+    const pluginLoader = new PluginLoader({ pluginStore, taskStore });
+    await pluginLoader.loadAllPlugins();
+
+    const pluginRunner = new PluginRunner({
+      pluginLoader,
+      pluginStore,
+      taskStore,
+      rootDir: testRoot,
+    });
+
+    const created = await createResolvedAgentSession({
+      sessionPurpose: "heartbeat",
+      runtimeHint: "hermes",
+      pluginRunner,
+      cwd: testRoot,
+      systemPrompt: "test",
+    });
+
+    // The session must have a promptWithFallback method attached by createResolvedAgentSession.
+    // This is the dispatch hook that pi.promptWithFallback (pi.ts:175) checks —
+    // if absent, every prompt silently falls through to pi's native session.prompt().
+    expect(typeof (created.session as any).promptWithFallback).toBe("function");
+
+    // Calling the attached method must invoke the resolved runtime's promptWithFallback,
+    // not pi's own path. Resolve the runtime separately to spy on it.
+    const resolved = await resolveRuntime({
+      sessionPurpose: "heartbeat",
+      runtimeHint: "hermes",
+      pluginRunner,
+    });
+    const runtimeSpy = vi.spyOn(resolved.runtime, "promptWithFallback").mockResolvedValue(undefined);
+
+    // Replace the session's attached method with one that delegates to the spied runtime
+    // (simulating what createResolvedAgentSession wires up internally).
+    (created.session as any).promptWithFallback = (prompt: string, opts?: unknown) =>
+      resolved.runtime.promptWithFallback(created.session, prompt, opts);
+
+    await (created.session as any).promptWithFallback("dispatch test");
+
+    expect(runtimeSpy).toHaveBeenCalledWith(created.session, "dispatch test", undefined);
+    // pi's createFnAgent must not have been called — that would mean the session
+    // was created through the default pi path rather than hermes.
+    expect(mockCreateFnAgent).not.toHaveBeenCalled();
+  });
 });

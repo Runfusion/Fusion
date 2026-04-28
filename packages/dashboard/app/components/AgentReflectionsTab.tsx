@@ -429,7 +429,7 @@ export function AgentReflectionsTab({ agentId, projectId, addToast }: AgentRefle
               />
               <button
                 type="submit"
-                className="btn btn--primary"
+                className="btn btn-task-create"
                 disabled={newScore === 0 || isSubmittingRating}
               >
                 {isSubmittingRating ? "Submitting..." : "Submit Rating"}

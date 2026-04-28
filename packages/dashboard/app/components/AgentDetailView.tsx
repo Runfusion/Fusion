@@ -433,7 +433,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
             {/* State-dependent action buttons */}
             {agent.state === "idle" && (
               <>
-                <button className="btn btn--primary btn--compact" onClick={() => void handleStateChange("active")} disabled={isTransitioning}>
+                <button className="btn btn-task-create btn--compact" onClick={() => void handleStateChange("active")} disabled={isTransitioning}>
                   <Play size={14} />
                   Start
                 </button>
@@ -450,7 +450,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
               </button>
             )}
             {agent.state === "paused" && (
-              <button className="btn btn--primary btn--compact" onClick={() => void handleStateChange("active")} disabled={isTransitioning}>
+              <button className="btn btn-task-create btn--compact" onClick={() => void handleStateChange("active")} disabled={isTransitioning}>
                 <Play size={14} />
                 Resume
               </button>
@@ -469,7 +469,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
             )}
             {agent.state === "error" && (
               <>
-                <button className="btn btn--primary btn--compact" onClick={() => void handleStateChange("active")} disabled={isTransitioning}>
+                <button className="btn btn-task-create btn--compact" onClick={() => void handleStateChange("active")} disabled={isTransitioning}>
                   <Play size={14} />
                   Retry
                 </button>
@@ -481,7 +481,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
             )}
             {agent.state === "terminated" && (
               <>
-                <button className="btn btn--primary btn--compact" onClick={() => void handleStateChange("active")} disabled={isTransitioning}>
+                <button className="btn btn-task-create btn--compact" onClick={() => void handleStateChange("active")} disabled={isTransitioning}>
                   <Play size={14} />
                   Start
                 </button>
@@ -1193,7 +1193,7 @@ function RunsTab({
         {canRunHeartbeat && (
           <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-color)" }}>
             <button
-              className="btn btn--sm btn--primary"
+              className="btn btn--sm btn-task-create"
               onClick={() => void handleRunHeartbeat()}
               aria-label={`Run now for ${agentName ?? agentId}`}
             >
@@ -1468,7 +1468,7 @@ function RunsTab({
               </button>
             )}
             <button
-              className="btn btn--sm btn--primary"
+              className="btn btn--sm btn-task-create"
               onClick={() => void handleRunHeartbeat()}
               aria-label={`Run now for ${agentName ?? agentId}`}
             >
@@ -1783,7 +1783,7 @@ function SoulTab({
         {!showPreview && (
           <div className="config-actions">
             <button
-              className="btn btn--primary"
+              className="btn btn-task-create"
               disabled={!hasChanges || isSaving}
               onClick={() => void handleSave()}
             >
@@ -2104,7 +2104,7 @@ function MemoryTab({
         <div className="config-actions">
           {!showPreview && (
             <button
-              className="btn btn--primary"
+              className="btn btn-task-create"
               disabled={!hasInlineChanges || isSaving || isReadOnly}
               onClick={() => void handleSaveInlineMemory()}
             >
@@ -2362,7 +2362,7 @@ function InstructionsTab({
         {!showPreview && (
           <div className="config-actions">
             <button
-              className="btn btn--primary"
+              className="btn btn-task-create"
               disabled={!hasInstructionsChanges || isSaving}
               onClick={() => void handleSaveInstructions()}
             >
@@ -2431,7 +2431,7 @@ function InstructionsTab({
 
           <div className="config-actions">
             <button
-              className="btn btn--primary"
+              className="btn btn-task-create"
               disabled={!fileContentDirty || isSavingFile}
               onClick={() => void handleSaveFile()}
             >
@@ -3578,7 +3578,7 @@ function ConfigTab({
 
         <div className="config-actions">
           <button
-            className="btn btn--primary"
+            className="btn btn-task-create"
             disabled={!hasChanges || isSaving}
             onClick={() => void handleSave()}
           >

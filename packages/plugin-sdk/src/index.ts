@@ -57,11 +57,11 @@ export type {
   FusionPlugin,
   PluginState,
   PluginInstallation,
-} from "../../core/src/plugin-types.js";
+} from "@fusion/core";
 
-export { validatePluginManifest } from "../../core/src/plugin-types.js";
+export { validatePluginManifest } from "@fusion/core";
 
-import type { FusionPlugin } from "../../core/src/plugin-types.js";
+import type { FusionPlugin } from "@fusion/core";
 
 /**
  * Type-safe helper for defining a Fusion plugin.

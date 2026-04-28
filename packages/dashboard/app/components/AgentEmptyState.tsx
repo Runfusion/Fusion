@@ -19,7 +19,7 @@ export function AgentEmptyState({
       <p className="agent-empty-state__title">{title}</p>
       <p className="agent-empty-state__description text-secondary">{description}</p>
       {onCtaClick ? (
-        <button type="button" className="btn btn--primary" onClick={onCtaClick}>
+        <button type="button" className="btn btn-task-create btn-sm" onClick={onCtaClick}>
           {ctaLabel}
         </button>
       ) : null}

@@ -169,6 +169,15 @@ importers:
       '@codemirror/view':
         specifier: ^6.36.4
         version: 6.40.0
+      '@fusion-plugin-examples/hermes-runtime':
+        specifier: workspace:*
+        version: link:../../plugins/fusion-plugin-hermes-runtime
+      '@fusion-plugin-examples/openclaw-runtime':
+        specifier: workspace:*
+        version: link:../../plugins/fusion-plugin-openclaw-runtime
+      '@fusion-plugin-examples/paperclip-runtime':
+        specifier: workspace:*
+        version: link:../../plugins/fusion-plugin-paperclip-runtime
       '@fusion/core':
         specifier: workspace:*
         version: link:../core

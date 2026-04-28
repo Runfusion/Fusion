@@ -1,123 +1,111 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-const { mockResolveGatewayConfig, mockCreateGatewaySession, mockPromptGateway, mockDescribeGatewayModel, mockProbeGateway, } = vi.hoisted(() => ({
-    mockResolveGatewayConfig: vi.fn().mockReturnValue({
-        gatewayUrl: "http://127.0.0.1:18789",
-        gatewayToken: undefined,
+const { mockResolveCliConfig, mockProbeBinary } = vi.hoisted(() => ({
+    mockResolveCliConfig: vi.fn().mockReturnValue({
+        binaryPath: "openclaw",
         agentId: "main",
+        model: undefined,
+        thinking: "off",
+        cliTimeoutSec: 0,
+        cliTimeoutMs: 300_000,
+        useGateway: false,
     }),
-    mockCreateGatewaySession: vi.fn(),
-    mockPromptGateway: vi.fn(),
-    mockDescribeGatewayModel: vi.fn().mockReturnValue("openclaw/main"),
-    mockProbeGateway: vi.fn().mockResolvedValue(true),
+    mockProbeBinary: vi.fn().mockResolvedValue({
+        available: true,
+        binaryPath: "/opt/homebrew/bin/openclaw",
+        version: "OpenClaw 2026.4.26",
+        probeDurationMs: 12,
+    }),
 }));
-vi.mock("../pi-module.js", () => ({
-    resolveGatewayConfig: mockResolveGatewayConfig,
-    createGatewaySession: mockCreateGatewaySession,
-    promptGateway: mockPromptGateway,
-    describeGatewayModel: mockDescribeGatewayModel,
-    probeGateway: mockProbeGateway,
-}));
-import plugin, { openclawRuntimeMetadata, openclawRuntimeFactory, OPENCLAW_RUNTIME_ID } from "../index.js";
+vi.mock("../pi-module.js", async () => {
+    const actual = await vi.importActual("../pi-module.js");
+    return {
+        ...actual,
+        resolveCliConfig: mockResolveCliConfig,
+    };
+});
+vi.mock("../probe.js", async () => {
+    const actual = await vi.importActual("../probe.js");
+    return {
+        ...actual,
+        probeOpenClawBinary: mockProbeBinary,
+    };
+});
+import plugin, { openclawRuntimeMetadata, openclawRuntimeFactory, OPENCLAW_RUNTIME_ID, } from "../index.js";
 import { OpenClawRuntimeAdapter } from "../runtime-adapter.js";
-function createMockContext(overrides = {}) {
+function createMockContext(settings = {}) {
+    const logger = {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+    };
     return {
         pluginId: "fusion-plugin-openclaw-runtime",
-        settings: {},
-        logger: {
-            info: vi.fn(),
-            warn: vi.fn(),
-            error: vi.fn(),
-            debug: vi.fn(),
-        },
+        settings,
+        logger,
         emitEvent: vi.fn(),
-        taskStore: {
-            getTask: vi.fn(),
-        },
-        ...overrides,
+        taskStore: { getTask: vi.fn() },
     };
 }
 describe("openclaw-runtime plugin", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mockProbeGateway.mockResolvedValue(true);
+        mockResolveCliConfig.mockReturnValue({
+            binaryPath: "openclaw",
+            agentId: "main",
+            model: undefined,
+            thinking: "off",
+            cliTimeoutSec: 0,
+            cliTimeoutMs: 300_000,
+            useGateway: false,
+        });
+        mockProbeBinary.mockResolvedValue({
+            available: true,
+            binaryPath: "/opt/homebrew/bin/openclaw",
+            version: "OpenClaw 2026.4.26",
+            probeDurationMs: 12,
+        });
     });
     afterEach(() => {
         vi.restoreAllMocks();
     });
-    describe("plugin manifest identity", () => {
-        it("should have correct manifest fields", () => {
-            expect(plugin.manifest.id).toBe("fusion-plugin-openclaw-runtime");
-            expect(plugin.manifest.name).toBe("OpenClaw Runtime Plugin");
-            expect(plugin.manifest.version).toBe("0.1.0");
-            expect(plugin.manifest.description).toContain("OpenClaw");
-            expect(plugin.manifest.author).toBe("Fusion Team");
-            expect(plugin.state).toBe("installed");
-        });
+    it("manifest identity is stable", () => {
+        expect(plugin.manifest.id).toBe("fusion-plugin-openclaw-runtime");
+        expect(plugin.manifest.name).toBe("OpenClaw Runtime Plugin");
+        expect(plugin.state).toBe("installed");
+        expect(plugin.runtime?.metadata.runtimeId).toBe(OPENCLAW_RUNTIME_ID);
+        expect(plugin.manifest.runtime).toEqual(openclawRuntimeMetadata);
     });
-    describe("runtime registration", () => {
-        it("should register openclaw runtime metadata", () => {
-            expect(plugin.runtime).toBeDefined();
-            expect(plugin.runtime?.metadata.runtimeId).toBe(OPENCLAW_RUNTIME_ID);
-            expect(plugin.runtime?.metadata.name).toBe("OpenClaw Runtime");
-            expect(plugin.runtime?.metadata.description).toContain("OpenClaw-backed AI session");
-            expect(plugin.runtime?.metadata.version).toBe("0.1.0");
-        });
-        it("should have consistent runtime metadata between export and manifest", () => {
-            expect(plugin.manifest.runtime).toEqual(openclawRuntimeMetadata);
-            expect(plugin.runtime?.metadata).toEqual(openclawRuntimeMetadata);
-        });
+    it("onLoad probes binary and logs binary path + version", async () => {
+        const ctx = createMockContext({});
+        await plugin.hooks.onLoad(ctx);
+        expect(mockProbeBinary).toHaveBeenCalledWith({ binaryPath: "openclaw" });
+        expect(ctx.logger.info).toHaveBeenCalledWith(expect.stringContaining("openclaw"));
+        expect(ctx.emitEvent).toHaveBeenCalledWith("openclaw-runtime:loaded", expect.objectContaining({
+            runtimeId: OPENCLAW_RUNTIME_ID,
+            binaryAvailable: true,
+        }));
     });
-    describe("hooks", () => {
-        it("onLoad should probe gateway, log startup message, and emit loaded event", async () => {
-            const ctx = createMockContext();
-            mockResolveGatewayConfig.mockReturnValue({
-                gatewayUrl: "http://localhost:18789",
-                gatewayToken: "secret-token",
-                agentId: "main",
-            });
-            await plugin.hooks.onLoad?.(ctx);
-            expect(mockProbeGateway).toHaveBeenCalledWith("http://localhost:18789");
-            expect(ctx.logger.info).toHaveBeenCalledWith("OpenClaw Runtime Plugin loaded (gateway: http://localhost:18789, reachable: yes)");
-            expect(ctx.logger.info.mock.calls.join(" ")).not.toContain("secret-token");
-            expect(ctx.emitEvent).toHaveBeenCalledWith("openclaw-runtime:loaded", {
-                runtimeId: OPENCLAW_RUNTIME_ID,
-                version: "0.1.0",
-                gatewayUrl: "http://localhost:18789",
-                gatewayReachable: true,
-            });
+    it("onLoad logs warning when binary missing", async () => {
+        mockProbeBinary.mockResolvedValueOnce({
+            available: false,
+            probeDurationMs: 5,
+            reason: "`openclaw` not found on PATH",
         });
-        it("onUnload should not throw", () => {
-            expect(() => plugin.hooks.onUnload?.()).not.toThrow();
-        });
+        const ctx = createMockContext({});
+        await plugin.hooks.onLoad(ctx);
+        expect(ctx.logger.info).toHaveBeenCalledWith(expect.stringContaining("not detected"));
     });
-    describe("runtime factory behavior", () => {
-        it("should export runtime constants", () => {
-            expect(OPENCLAW_RUNTIME_ID).toBe("openclaw");
-            expect(openclawRuntimeMetadata.runtimeId).toBe("openclaw");
-            expect(typeof openclawRuntimeFactory).toBe("function");
-        });
-        it("runtime factory should return executable runtime adapter", async () => {
-            const runtime = (await openclawRuntimeFactory(createMockContext({
-                settings: {
-                    gatewayUrl: "http://settings-gateway:18789",
-                    gatewayToken: "plugin-token",
-                    agentId: "ops",
-                },
-            })));
-            expect(mockResolveGatewayConfig).toHaveBeenCalledWith({
-                gatewayUrl: "http://settings-gateway:18789",
-                gatewayToken: "plugin-token",
-                agentId: "ops",
-            });
-            expect(runtime).toBeInstanceOf(OpenClawRuntimeAdapter);
-            expect(runtime.id).toBe("openclaw");
-            expect(runtime.name).toBe("OpenClaw Runtime");
-            expect(runtime).not.toHaveProperty("status");
-            expect(runtime).not.toHaveProperty("execute");
-        });
-        it("factory creation should not throw", async () => {
-            await expect(openclawRuntimeFactory(createMockContext())).resolves.toBeInstanceOf(OpenClawRuntimeAdapter);
-        });
+    it("factory returns an OpenClawRuntimeAdapter instance", async () => {
+        const runtime = (await openclawRuntimeFactory(createMockContext({ binaryPath: "/usr/bin/openclaw", agentId: "ops" })));
+        expect(runtime).toBeInstanceOf(OpenClawRuntimeAdapter);
+        expect(runtime.id).toBe("openclaw");
+    });
+    it("factory creation does not throw with empty settings", async () => {
+        await expect(openclawRuntimeFactory(createMockContext())).resolves.toBeInstanceOf(OpenClawRuntimeAdapter);
+    });
+    it("onUnload does not throw", () => {
+        expect(() => plugin.hooks.onUnload?.()).not.toThrow();
     });
 });
 //# sourceMappingURL=index.test.js.map

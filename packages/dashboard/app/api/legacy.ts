@@ -1205,6 +1205,197 @@ export function fetchClaudeCliStatus(): Promise<ClaudeCliStatus> {
   return api<ClaudeCliStatus>("/providers/claude-cli/status");
 }
 
+// --- Runtime Provider Status Types ---
+
+export interface RuntimeBinaryStatus {
+  available: boolean;
+  binaryPath?: string;
+  version?: string;
+  reason?: string;
+  probeDurationMs: number;
+}
+
+export interface PaperclipConnectionStatus {
+  available: boolean;
+  apiUrl: string;
+  identity?: {
+    agentId: string;
+    agentName: string;
+    role?: string;
+    companyId: string;
+    companyName?: string;
+  };
+  reason?: string;
+  probeDurationMs: number;
+}
+
+export interface HermesProviderStatus {
+  binary: RuntimeBinaryStatus;
+  ready: boolean;
+}
+
+export interface OpenClawProviderStatus {
+  binary: RuntimeBinaryStatus;
+  ready: boolean;
+}
+
+export interface PaperclipProviderStatus {
+  connection: PaperclipConnectionStatus;
+  ready: boolean;
+}
+
+/** Probe the local Hermes binary. */
+export async function fetchHermesStatus(opts?: {
+  binaryPath?: string;
+}): Promise<HermesProviderStatus> {
+  const qs = opts?.binaryPath
+    ? `?binaryPath=${encodeURIComponent(opts.binaryPath)}`
+    : "";
+  return api<HermesProviderStatus>(`/providers/hermes/status${qs}`);
+}
+
+export interface HermesProfileSummary {
+  name: string;
+  model?: string;
+  gateway?: string;
+  alias?: string;
+  isDefault: boolean;
+}
+
+/** List Hermes profiles from `hermes profile list`. Returns empty array on error. */
+export async function fetchHermesProfiles(opts?: {
+  binaryPath?: string;
+}): Promise<HermesProfileSummary[]> {
+  const qs = opts?.binaryPath ? `?binaryPath=${encodeURIComponent(opts.binaryPath)}` : "";
+  const r = await api<{ profiles: HermesProfileSummary[]; error?: string }>(
+    `/providers/hermes/profiles${qs}`,
+  );
+  return r.profiles ?? [];
+}
+
+/** Probe the local OpenClaw binary. */
+export async function fetchOpenClawStatus(opts?: {
+  binaryPath?: string;
+}): Promise<OpenClawProviderStatus> {
+  const qs = opts?.binaryPath
+    ? `?binaryPath=${encodeURIComponent(opts.binaryPath)}`
+    : "";
+  return api<OpenClawProviderStatus>(`/providers/openclaw/status${qs}`);
+}
+
+/** Probe the Paperclip API connection. */
+export async function fetchPaperclipStatus(opts: {
+  apiUrl: string;
+  apiKey?: string;
+}): Promise<PaperclipProviderStatus> {
+  const params = new URLSearchParams({ apiUrl: opts.apiUrl });
+  if (opts.apiKey) params.set("apiKey", opts.apiKey);
+  return api<PaperclipProviderStatus>(
+    `/providers/paperclip/status?${params.toString()}`,
+  );
+}
+
+export interface PaperclipCompanySummary {
+  id: string;
+  name: string;
+  urlKey?: string;
+}
+
+export interface PaperclipAgentSummary {
+  id: string;
+  name: string;
+  role?: string;
+  companyId: string;
+  status?: string;
+  isCurrent?: boolean;
+}
+
+export interface PaperclipCliDiscoverySuccess {
+  ok: true;
+  apiUrl: string;
+  apiKey?: string;
+  configPath: string;
+  deploymentMode?: string;
+}
+
+export interface PaperclipCliDiscoveryFailure {
+  ok: false;
+  reason: string;
+  configPath?: string;
+}
+
+export type PaperclipCliDiscoveryResult =
+  | PaperclipCliDiscoverySuccess
+  | PaperclipCliDiscoveryFailure;
+
+/** List Paperclip companies visible to the bearer. Empty array on failure. */
+export async function fetchPaperclipCompanies(opts: {
+  apiUrl: string;
+  apiKey?: string;
+}): Promise<PaperclipCompanySummary[]> {
+  const params = new URLSearchParams({ apiUrl: opts.apiUrl });
+  if (opts.apiKey) params.set("apiKey", opts.apiKey);
+  const r = await api<{ companies: PaperclipCompanySummary[] }>(
+    `/providers/paperclip/companies?${params.toString()}`,
+  );
+  return r.companies ?? [];
+}
+
+/** List agents in a Paperclip company. Empty array on failure. */
+export async function fetchPaperclipAgents(opts: {
+  apiUrl: string;
+  apiKey?: string;
+  companyId: string;
+}): Promise<PaperclipAgentSummary[]> {
+  const params = new URLSearchParams({
+    apiUrl: opts.apiUrl,
+    companyId: opts.companyId,
+  });
+  if (opts.apiKey) params.set("apiKey", opts.apiKey);
+  const r = await api<{ agents: PaperclipAgentSummary[] }>(
+    `/providers/paperclip/agents?${params.toString()}`,
+  );
+  return r.agents ?? [];
+}
+
+export interface PaperclipMintKeyRequest {
+  cliBinaryPath?: string;
+  agentRef: string;
+  /** Required by paperclipai agent local-cli (`-C/--company-id`). */
+  companyId: string;
+  keyName?: string;
+  configPath?: string;
+  dataDir?: string;
+}
+export type PaperclipMintKeyResult =
+  | { ok: true; key: { apiKey: string; apiBase?: string; agentId?: string; companyId?: string } }
+  | { ok: false; reason: string };
+
+/**
+ * Mints a Paperclip agent API key via the local `paperclipai` CLI.
+ * Always resolves (never rejects); on failure the result has `ok: false`.
+ */
+export async function mintPaperclipApiKey(
+  body: PaperclipMintKeyRequest,
+): Promise<PaperclipMintKeyResult> {
+  return api<PaperclipMintKeyResult>(`/providers/paperclip/cli-mint-key`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/** Read the local paperclipai config to discover apiUrl + deploymentMode. */
+export async function fetchPaperclipCliDiscovery(opts: {
+  cliConfigPath?: string;
+} = {}): Promise<PaperclipCliDiscoveryResult> {
+  const params = new URLSearchParams();
+  if (opts.cliConfigPath) params.set("cliConfigPath", opts.cliConfigPath);
+  const qs = params.toString();
+  return api<PaperclipCliDiscoveryResult>(
+    `/providers/paperclip/cli-discovery${qs ? `?${qs}` : ""}`,
+  );
+}
+
 /** Enable or disable the Claude CLI provider. Refuses enable if binary is missing. */
 export function setClaudeCliEnabled(
   enabled: boolean,

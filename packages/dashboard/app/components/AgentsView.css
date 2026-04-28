@@ -973,7 +973,7 @@
 
   /* New Agent: icon-only on mobile, sized to match view-toggle buttons.
      Text is visually hidden via font-size: 0 (the SVG icon keeps its size). */
-  .agents-view-primary-actions .btn--primary {
+  .agents-view-primary-actions .btn-task-create {
     width: 28px;
     height: 28px;
     min-width: 28px;

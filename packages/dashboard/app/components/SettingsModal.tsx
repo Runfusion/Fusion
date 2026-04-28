@@ -17,6 +17,9 @@ import { useModalResizePersist } from "../hooks/useModalResizePersist";
 const PluginManager = lazy(() => import("./PluginManager").then((m) => ({ default: m.PluginManager })));
 const PiExtensionsManager = lazy(() => import("./PiExtensionsManager").then((m) => ({ default: m.PiExtensionsManager })));
 import { ClaudeCliProviderCard } from "./ClaudeCliProviderCard";
+import { HermesRuntimeCard } from "./HermesRuntimeCard";
+import { OpenClawRuntimeCard } from "./OpenClawRuntimeCard";
+import { PaperclipRuntimeCard } from "./PaperclipRuntimeCard";
 import { PluginSlot } from "./PluginSlot";
 import { AgentPromptsManager } from "./AgentPromptsManager";
 import { LoginInstructions } from "./LoginInstructions";
@@ -160,6 +163,12 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "node-sync", label: "Node Sync", scope: "global" },
   { id: "global-models", label: "Models", scope: "global" },
   { id: "updates", label: "Updates", scope: "global" },
+
+  // Runtimes group (plugin runtimes with their own settings)
+  { id: "__runtimes_header", label: "Runtimes", scope: undefined, isGroupHeader: true },
+  { id: "hermes-runtime", label: "Hermes", scope: "global" },
+  { id: "openclaw-runtime", label: "OpenClaw", scope: "global" },
+  { id: "paperclip-runtime", label: "Paperclip", scope: "global" },
 
   // Project group (specific to this project)
   { id: "__project_header", label: "Project", scope: undefined, isGroupHeader: true },
@@ -4276,6 +4285,27 @@ export function SettingsModal({
           </>
         );
       }
+      case "hermes-runtime":
+        return (
+          <>
+            <h4 className="settings-section-heading">Hermes Runtime</h4>
+            <HermesRuntimeCard />
+          </>
+        );
+      case "openclaw-runtime":
+        return (
+          <>
+            <h4 className="settings-section-heading">OpenClaw Runtime</h4>
+            <OpenClawRuntimeCard />
+          </>
+        );
+      case "paperclip-runtime":
+        return (
+          <>
+            <h4 className="settings-section-heading">Paperclip Runtime</h4>
+            <PaperclipRuntimeCard />
+          </>
+        );
     }
   };
 
@@ -4320,7 +4350,7 @@ export function SettingsModal({
             </div>
           </div>
           <div className="settings-header-actions">
-            {form.showGitHubStarButton !== false && !starClicked && (
+            {form.showGitHubStarButton !== false && (
               <a
                 href="https://github.com/Runfusion/Fusion"
                 target="_blank"
@@ -4329,9 +4359,11 @@ export function SettingsModal({
                 aria-label="Star Fusion on GitHub"
                 title="Star Fusion on GitHub"
                 onClick={markStarClicked}
+                data-clicked={starClicked ? "true" : "false"}
               >
                 <span className="settings-github-star-btn__action">
-                  <Star size={13} aria-hidden="true" />
+                  <ProviderIcon provider="github" size="sm" />
+                  <Star size={11} aria-hidden="true" />
                   Star
                 </span>
                 {gitHubStarCount !== null && (

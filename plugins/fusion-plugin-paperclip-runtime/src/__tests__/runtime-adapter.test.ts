@@ -1,307 +1,277 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PaperclipRuntimeAdapter } from "../runtime-adapter.js";
+import type { RunEvent } from "../paperclip-client.js";
 
 const {
+  mockAgentsMe,
   mockCreateIssue,
-  mockCheckoutIssue,
-  mockInvokeHeartbeat,
   mockGetIssue,
   mockGetIssueComments,
-  MockConflictError,
-} = vi.hoisted(() => {
-  class LocalConflictError extends Error {
-    readonly status = 409;
-  }
-
-  return {
-    mockCreateIssue: vi.fn(),
-    mockCheckoutIssue: vi.fn(),
-    mockInvokeHeartbeat: vi.fn(),
-    mockGetIssue: vi.fn(),
-    mockGetIssueComments: vi.fn(),
-    MockConflictError: LocalConflictError,
-  };
-});
-
-vi.mock("../pi-module.js", () => ({
-  resolvePaperclipConfig: vi.fn((settings?: Record<string, unknown>) => ({
+  mockGetRunEvents,
+  mockWakeAgent,
+  mockResolveConfig,
+} = vi.hoisted(() => ({
+  mockAgentsMe: vi.fn(),
+  mockCreateIssue: vi.fn(),
+  mockGetIssue: vi.fn(),
+  mockGetIssueComments: vi.fn(),
+  mockGetRunEvents: vi.fn(),
+  mockWakeAgent: vi.fn(),
+  mockResolveConfig: vi.fn((settings?: Record<string, unknown>) => ({
     apiUrl: "http://localhost:3100",
-    apiKey: undefined,
-    agentId: undefined,
-    companyId: undefined,
+    apiKey: undefined as string | undefined,
+    agentId: undefined as string | undefined,
+    companyId: undefined as string | undefined,
+    mode: "rolling-issue" as const,
+    parentIssueId: undefined as string | undefined,
+    projectId: undefined as string | undefined,
+    goalId: undefined as string | undefined,
+    runTimeoutMs: 60_000,
+    pollIntervalMs: 1,
+    pollIntervalMaxMs: 1,
     ...(settings ?? {}),
   })),
-  createIssue: mockCreateIssue,
-  checkoutIssue: mockCheckoutIssue,
-  invokeHeartbeat: mockInvokeHeartbeat,
-  getIssue: mockGetIssue,
-  getIssueComments: mockGetIssueComments,
-  ConflictError: MockConflictError,
 }));
 
-describe("PaperclipRuntimeAdapter", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.useRealTimers();
+vi.mock("../paperclip-client.js", () => ({
+  agentsMe: mockAgentsMe,
+  createIssue: mockCreateIssue,
+  getIssue: mockGetIssue,
+  getIssueComments: mockGetIssueComments,
+  getRunEvents: mockGetRunEvents,
+  wakeAgent: mockWakeAgent,
+  resolvePaperclipConfig: mockResolveConfig,
+}));
+
+const baseSessionOpts = {
+  cwd: "/repo",
+  systemPrompt: "be helpful",
+};
+
+function makeAdapter(config: Record<string, unknown> = {}) {
+  return new PaperclipRuntimeAdapter(config, {
+    info: () => undefined,
+    warn: () => undefined,
+    error: () => undefined,
+  });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockAgentsMe.mockResolvedValue({
+    agentId: "AG-default",
+    agentName: "Coder",
+    role: "engineer",
+    companyId: "CO-default",
+    companyName: "Acme",
+  });
+  const defaultEvents: RunEvent[] = [
+    { seq: 1, type: "heartbeat.run.log", payload: { stream: "stdout", chunk: "hello world" } },
+    { seq: 2, type: "heartbeat.run.status", payload: { status: "succeeded" } },
+  ];
+  mockGetRunEvents.mockResolvedValue(defaultEvents);
+  mockWakeAgent.mockResolvedValue({ id: "RUN-1", status: "queued" });
+  mockCreateIssue.mockResolvedValue({ id: "ISS-1", status: "todo" });
+  mockGetIssue.mockResolvedValue({ id: "ISS-1", status: "done" });
+  mockGetIssueComments.mockResolvedValue([{ id: "C-1", body: "final answer comment" }]);
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("PaperclipRuntimeAdapter — createSession", () => {
+  it("auto-derives agentId/companyId from /agents/me when missing", async () => {
+    const adapter = makeAdapter({});
+    const result = await adapter.createSession({ ...baseSessionOpts });
+    expect(mockAgentsMe).toHaveBeenCalledTimes(1);
+    expect(result.session.agentId).toBe("AG-default");
+    expect(result.session.companyId).toBe("CO-default");
+    expect(result.sessionFile).toBeUndefined();
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
+  it("uses provided agentId/companyId without calling /agents/me", async () => {
+    const adapter = makeAdapter({ agentId: "AG-X", companyId: "CO-Y" });
+    const { session } = await adapter.createSession({ ...baseSessionOpts });
+    expect(mockAgentsMe).not.toHaveBeenCalled();
+    expect(session.agentId).toBe("AG-X");
+    expect(session.companyId).toBe("CO-Y");
   });
 
-  it("createSession returns configured Paperclip session with undefined sessionFile", async () => {
+  it("throws if agents/me fails and identity is missing", async () => {
+    mockAgentsMe.mockRejectedValueOnce(new Error("API key rejected"));
+    const adapter = makeAdapter({});
+    await expect(adapter.createSession({ ...baseSessionOpts })).rejects.toThrow(
+      /could not derive agentId\/companyId/,
+    );
+  });
+
+  it("normalizes invalid mode to rolling-issue", async () => {
+    const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1", mode: "bogus" });
+    const { session } = await adapter.createSession({ ...baseSessionOpts });
+    expect(session.mode).toBe("rolling-issue");
+  });
+});
+
+describe("PaperclipRuntimeAdapter — promptWithFallback (rolling-issue mode)", () => {
+  it("creates an issue on first prompt, reuses it on second", async () => {
+    const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1" });
+    const { session } = await adapter.createSession({ ...baseSessionOpts });
+    await adapter.promptWithFallback(session, "first prompt");
+    await adapter.promptWithFallback(session, "second prompt");
+    expect(mockCreateIssue).toHaveBeenCalledTimes(1);
+    expect(mockWakeAgent).toHaveBeenCalledTimes(2);
+    expect(session.issueId).toBe("ISS-1");
+  });
+
+  it("forwards stdout chunks to onText", async () => {
+    const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1" });
     const onText = vi.fn();
-    const onThinking = vi.fn();
-    const onToolStart = vi.fn();
-    const onToolEnd = vi.fn();
-
-    const adapter = new PaperclipRuntimeAdapter({
-      apiUrl: "http://paperclip.local",
-      apiKey: "token",
-      agentId: "AG-1",
-      companyId: "CO-1",
-    });
-
-    const { session, sessionFile } = await adapter.createSession({
-      cwd: "/repo",
-      systemPrompt: "system",
-      onText,
-      onThinking,
-      onToolStart,
-      onToolEnd,
-    });
-
-    expect(sessionFile).toBeUndefined();
-    expect(session).toMatchObject({
-      apiUrl: "http://paperclip.local",
-      apiKey: "token",
-      agentId: "AG-1",
-      companyId: "CO-1",
-      cwd: "/repo",
-      systemPrompt: "system",
-      onText,
-      onThinking,
-      onToolStart,
-      onToolEnd,
-    });
-    expect(session.sessionId).toBeTypeOf("string");
+    const { session } = await adapter.createSession({ ...baseSessionOpts, onText });
+    await adapter.promptWithFallback(session, "hi");
+    expect(onText).toHaveBeenCalledWith("hello world");
   });
 
-  it("createSession throws when required agentId/companyId config is missing", async () => {
-    const adapter = new PaperclipRuntimeAdapter({ apiUrl: "http://paperclip.local" });
+  it("idempotency key increments per turn", async () => {
+    const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1" });
+    const { session } = await adapter.createSession({ ...baseSessionOpts });
+    await adapter.promptWithFallback(session, "p1");
+    await adapter.promptWithFallback(session, "p2");
+    const keys = mockWakeAgent.mock.calls.map((c) => (c[3] as { idempotencyKey: string }).idempotencyKey);
+    expect(keys[0]).toMatch(/:1$/);
+    expect(keys[1]).toMatch(/:2$/);
+    expect(keys[0].split(":")[0]).toBe(keys[1].split(":")[0]);
+  });
+});
 
-    await expect(
-      adapter.createSession({
-        cwd: "/repo",
-        systemPrompt: "system",
-      }),
-    ).rejects.toThrow("missing required config");
+describe("PaperclipRuntimeAdapter — issue-per-prompt mode", () => {
+  it("creates a new issue per prompt", async () => {
+    const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1", mode: "issue-per-prompt" });
+    const { session } = await adapter.createSession({ ...baseSessionOpts });
+    await adapter.promptWithFallback(session, "p1");
+    await adapter.promptWithFallback(session, "p2");
+    expect(mockCreateIssue).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("PaperclipRuntimeAdapter — wakeup-only mode", () => {
+  it("does not create an issue", async () => {
+    const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1", mode: "wakeup-only" });
+    const { session } = await adapter.createSession({ ...baseSessionOpts });
+    await adapter.promptWithFallback(session, "p1");
+    expect(mockCreateIssue).not.toHaveBeenCalled();
+    expect(mockWakeAgent).toHaveBeenCalledTimes(1);
+    expect(mockGetIssue).not.toHaveBeenCalled();
+  });
+});
+
+describe("PaperclipRuntimeAdapter — wakeup soft errors", () => {
+  it("status=skipped → onToolEnd isError=true, no polling", async () => {
+    mockWakeAgent.mockResolvedValueOnce({ id: "", status: "skipped" });
+    const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1" });
+    const onToolEnd = vi.fn();
+    const { session } = await adapter.createSession({ ...baseSessionOpts, onToolEnd });
+    await adapter.promptWithFallback(session, "p");
+    expect(onToolEnd).toHaveBeenCalledWith(
+      "paperclip.run",
+      true,
+      expect.objectContaining({ runStatus: "skipped" }),
+    );
+    expect(mockGetRunEvents).not.toHaveBeenCalled();
   });
 
-  it("promptWithFallback creates issue, checks out, invokes heartbeat, polls, and emits output", async () => {
-    vi.useFakeTimers();
-
-    const onText = vi.fn();
-    const onThinking = vi.fn();
-    const onToolStart = vi.fn();
+  it("wakeup throws → onToolEnd isError=true, no polling", async () => {
+    mockWakeAgent.mockRejectedValueOnce(new Error("nope"));
+    const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1" });
     const onToolEnd = vi.fn();
+    const { session } = await adapter.createSession({ ...baseSessionOpts, onToolEnd });
+    await adapter.promptWithFallback(session, "p");
+    expect(onToolEnd).toHaveBeenCalledWith(
+      "paperclip.run",
+      true,
+      expect.objectContaining({ reason: expect.stringContaining("nope") }),
+    );
+    expect(mockGetRunEvents).not.toHaveBeenCalled();
+  });
+});
 
-    const adapter = new PaperclipRuntimeAdapter({
-      apiUrl: "http://paperclip.local",
-      apiKey: "token",
-      agentId: "AG-1",
-      companyId: "CO-1",
-    });
+describe("PaperclipRuntimeAdapter — terminal statuses", () => {
+  it("succeeded → onToolEnd isError=false", async () => {
+    const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1" });
+    const onToolEnd = vi.fn();
+    const { session } = await adapter.createSession({ ...baseSessionOpts, onToolEnd });
+    await adapter.promptWithFallback(session, "p");
+    expect(onToolEnd).toHaveBeenCalledWith(
+      "paperclip.run",
+      false,
+      expect.objectContaining({ runStatus: "succeeded" }),
+    );
+  });
 
-    const { session } = await adapter.createSession({
-      cwd: "/repo",
-      systemPrompt: "system prompt",
-      onText,
-      onThinking,
-      onToolStart,
-      onToolEnd,
-    });
-
-    mockCreateIssue.mockResolvedValue({ id: "ISS-1", status: "backlog" });
-    mockCheckoutIssue.mockResolvedValue({ id: "ISS-1", status: "in_progress" });
-    mockInvokeHeartbeat.mockResolvedValue({ ok: true, run: { id: "RUN-1", status: "queued" } });
-    mockGetIssue
-      .mockResolvedValueOnce({ id: "ISS-1", status: "in_progress" })
-      .mockResolvedValueOnce({ id: "ISS-1", status: "done" });
-    mockGetIssueComments.mockResolvedValue([
-      { id: "C1", body: "Thinking: I should do this" },
-      { id: "C2", body: "Completed work." },
+  it("failed → onToolEnd isError=true", async () => {
+    mockGetRunEvents.mockResolvedValueOnce([
+      { seq: 1, type: "heartbeat.run.status", payload: { status: "failed" } },
     ]);
-
-    const promptPromise = adapter.promptWithFallback(session, "Title line\nBody");
-    await vi.advanceTimersByTimeAsync(6_000);
-    await promptPromise;
-
-    expect(mockCreateIssue).toHaveBeenCalledWith(
-      "http://paperclip.local",
-      "token",
-      "CO-1",
-      expect.objectContaining({
-        title: "Title line",
-        status: "backlog",
-        assigneeAgentId: "AG-1",
-      }),
+    const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1" });
+    const onToolEnd = vi.fn();
+    const { session } = await adapter.createSession({ ...baseSessionOpts, onToolEnd });
+    await adapter.promptWithFallback(session, "p");
+    expect(onToolEnd).toHaveBeenCalledWith(
+      "paperclip.run",
+      true,
+      expect.objectContaining({ runStatus: "failed" }),
     );
-    expect(mockCheckoutIssue).toHaveBeenCalledWith(
-      "http://paperclip.local",
-      "token",
-      "ISS-1",
-      "AG-1",
-      expect.any(String),
-    );
-    expect(mockInvokeHeartbeat).toHaveBeenCalledWith("http://paperclip.local", "token", "AG-1");
-    expect(onText).toHaveBeenCalledWith("Thinking: I should do this\n\nCompleted work.");
-    expect(onThinking).toHaveBeenCalledWith("I should do this");
-    expect(onToolStart).toHaveBeenCalledWith(
-      "paperclip.issue",
-      expect.objectContaining({ sessionId: expect.any(String) }),
-    );
-    expect(onToolEnd).toHaveBeenCalledWith("paperclip.issue", false, {
-      issueId: "ISS-1",
-      status: "done",
-    });
   });
 
-  it("handles checkout conflicts gracefully and continues", async () => {
-    vi.useFakeTimers();
-    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-
-    const adapter = new PaperclipRuntimeAdapter(
-      {
-        apiUrl: "http://paperclip.local",
-        apiKey: "token",
-        agentId: "AG-1",
-        companyId: "CO-1",
-      },
-      logger,
-    );
-
-    const { session } = await adapter.createSession({ cwd: "/repo", systemPrompt: "system" });
-
-    mockCreateIssue.mockResolvedValue({ id: "ISS-1", status: "backlog" });
-    mockCheckoutIssue.mockRejectedValue(new MockConflictError("conflict"));
-    mockInvokeHeartbeat.mockResolvedValue({ ok: true, skipped: true });
-    mockGetIssue.mockResolvedValue({ id: "ISS-1", status: "done" });
-    mockGetIssueComments.mockResolvedValue([{ body: "done" }]);
-
-    const promise = adapter.promptWithFallback(session, "Prompt");
-    await vi.advanceTimersByTimeAsync(2_000);
-    await promise;
-
-    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("checkout conflict"));
-    expect(mockInvokeHeartbeat).toHaveBeenCalled();
-  });
-
-  it("handles heartbeat skipped responses and continues polling", async () => {
-    vi.useFakeTimers();
-
-    const adapter = new PaperclipRuntimeAdapter({
-      apiUrl: "http://paperclip.local",
-      apiKey: "token",
+  it("local timeout → exits with timedOutLocally=true, no throw", async () => {
+    mockGetRunEvents.mockResolvedValue([
+      { seq: 1, type: "heartbeat.run.status", payload: { status: "running" } },
+    ]);
+    const adapter = makeAdapter({
       agentId: "AG-1",
       companyId: "CO-1",
+      runTimeoutMs: 5,
+      pollIntervalMs: 1,
+      pollIntervalMaxMs: 1,
     });
-
-    const { session } = await adapter.createSession({ cwd: "/repo", systemPrompt: "system" });
-
-    mockCreateIssue.mockResolvedValue({ id: "ISS-1", status: "backlog" });
-    mockCheckoutIssue.mockResolvedValue({ id: "ISS-1", status: "in_progress" });
-    mockInvokeHeartbeat.mockResolvedValue({ ok: true, skipped: true });
-    mockGetIssue.mockResolvedValue({ id: "ISS-1", status: "done" });
-    mockGetIssueComments.mockResolvedValue([{ body: "done" }]);
-
-    const promise = adapter.promptWithFallback(session, "Prompt");
-    await vi.advanceTimersByTimeAsync(2_000);
-    await promise;
-
-    expect(mockInvokeHeartbeat).toHaveBeenCalled();
-    expect(mockGetIssue).toHaveBeenCalled();
+    const onToolEnd = vi.fn();
+    const { session } = await adapter.createSession({ ...baseSessionOpts, onToolEnd });
+    await adapter.promptWithFallback(session, "p");
+    expect(onToolEnd).toHaveBeenCalledWith(
+      "paperclip.run",
+      true,
+      expect.objectContaining({ timedOutLocally: true }),
+    );
   });
+});
 
-  it("returns output on timeout with whatever comments are available", async () => {
-    vi.useFakeTimers();
+describe("PaperclipRuntimeAdapter — comment fallback", () => {
+  it("uses latest comment as text when no streamed stdout", async () => {
+    mockGetRunEvents.mockResolvedValueOnce([
+      { seq: 1, type: "heartbeat.run.status", payload: { status: "succeeded" } },
+    ]);
+    mockGetIssueComments.mockResolvedValueOnce([
+      { id: "C-old", body: "older" },
+      { id: "C-latest", body: "latest answer" },
+    ]);
+    const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1" });
     const onText = vi.fn();
-
-    const adapter = new PaperclipRuntimeAdapter({
-      apiUrl: "http://paperclip.local",
-      apiKey: "token",
-      agentId: "AG-1",
-      companyId: "CO-1",
-    });
-
-    const { session } = await adapter.createSession({ cwd: "/repo", systemPrompt: "system", onText });
-
-    mockCreateIssue.mockResolvedValue({ id: "ISS-1", status: "backlog" });
-    mockCheckoutIssue.mockResolvedValue({ id: "ISS-1", status: "in_progress" });
-    mockInvokeHeartbeat.mockResolvedValue({ ok: true, run: { id: "RUN-1", status: "queued" } });
-    mockGetIssue.mockResolvedValue({ id: "ISS-1", status: "in_progress" });
-    mockGetIssueComments.mockResolvedValue([{ body: "partial result" }]);
-
-    const promise = adapter.promptWithFallback(session, "Prompt");
-    await vi.advanceTimersByTimeAsync(130_000);
-    await promise;
-
-    expect(onText).toHaveBeenCalledWith("partial result");
+    const { session } = await adapter.createSession({ ...baseSessionOpts, onText });
+    await adapter.promptWithFallback(session, "p");
+    expect(onText).toHaveBeenCalledWith("latest answer");
   });
+});
 
-  it("uses exponential backoff intervals while polling", async () => {
-    vi.useFakeTimers();
-    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
-
-    const adapter = new PaperclipRuntimeAdapter({
-      apiUrl: "http://paperclip.local",
-      apiKey: "token",
-      agentId: "AG-1",
-      companyId: "CO-1",
-    });
-
-    const { session } = await adapter.createSession({ cwd: "/repo", systemPrompt: "system" });
-
-    mockCreateIssue.mockResolvedValue({ id: "ISS-1", status: "backlog" });
-    mockCheckoutIssue.mockResolvedValue({ id: "ISS-1", status: "in_progress" });
-    mockInvokeHeartbeat.mockResolvedValue({ ok: true, run: { id: "RUN-1", status: "queued" } });
-    mockGetIssue
-      .mockResolvedValueOnce({ id: "ISS-1", status: "in_progress" })
-      .mockResolvedValueOnce({ id: "ISS-1", status: "in_progress" })
-      .mockResolvedValueOnce({ id: "ISS-1", status: "in_progress" })
-      .mockResolvedValueOnce({ id: "ISS-1", status: "in_progress" })
-      .mockResolvedValueOnce({ id: "ISS-1", status: "done" });
-    mockGetIssueComments.mockResolvedValue([{ body: "done" }]);
-
-    const promise = adapter.promptWithFallback(session, "Prompt");
-    await vi.advanceTimersByTimeAsync(2_000 + 4_000 + 8_000 + 10_000 + 10_000);
-    await promise;
-
-    const timeoutDurations = timeoutSpy.mock.calls.map((call) => call[1]).filter((value) => typeof value === "number");
-    expect(timeoutDurations).toEqual(expect.arrayContaining([2_000, 4_000, 8_000, 10_000]));
-  });
-
+describe("PaperclipRuntimeAdapter — describeModel/dispose", () => {
   it("describeModel returns paperclip/<agentId>", async () => {
-    const adapter = new PaperclipRuntimeAdapter({
-      apiUrl: "http://paperclip.local",
-      agentId: "AG-1",
-      companyId: "CO-1",
-    });
-
-    const { session } = await adapter.createSession({ cwd: "/repo", systemPrompt: "system" });
-    expect(adapter.describeModel(session)).toBe("paperclip/AG-1");
+    const adapter = makeAdapter({ agentId: "AG-XYZ", companyId: "CO-1" });
+    const { session } = await adapter.createSession({ ...baseSessionOpts });
+    expect(adapter.describeModel(session)).toBe("paperclip/AG-XYZ");
   });
 
   it("dispose is a no-op", async () => {
-    const adapter = new PaperclipRuntimeAdapter({
-      apiUrl: "http://paperclip.local",
-      agentId: "AG-1",
-      companyId: "CO-1",
-    });
-
-    const { session } = await adapter.createSession({ cwd: "/repo", systemPrompt: "system" });
-    expect(typeof session.dispose).toBe("function");
-    expect(() => session.dispose?.()).not.toThrow();
-    await expect(adapter.dispose(session)).resolves.toBeUndefined();
+    const adapter = makeAdapter({ agentId: "AG-1", companyId: "CO-1" });
+    const { session } = await adapter.createSession({ ...baseSessionOpts });
+    await expect(adapter.dispose!(session)).resolves.toBeUndefined();
   });
 });

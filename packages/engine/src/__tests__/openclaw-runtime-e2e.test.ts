@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
 import { mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -9,10 +10,16 @@ import { PluginRunner } from "../plugin-runner.js";
 import { resolveRuntime } from "../runtime-resolution.js";
 import { createResolvedAgentSession } from "../agent-session-helpers.js";
 
-const { mockCreateFnAgent, mockPromptWithFallback, mockDescribeModel } = vi.hoisted(() => ({
+const {
+  mockCreateFnAgent,
+  mockPromptWithFallback,
+  mockDescribeModel,
+  mockSpawn,
+} = vi.hoisted(() => ({
   mockCreateFnAgent: vi.fn(),
   mockPromptWithFallback: vi.fn(),
   mockDescribeModel: vi.fn(),
+  mockSpawn: vi.fn(),
 }));
 
 vi.mock("../logger.js", () => ({
@@ -34,6 +41,10 @@ vi.mock("../pi.js", () => ({
   describeModel: mockDescribeModel,
 }));
 
+vi.mock("node:child_process", () => ({
+  spawn: (...args: unknown[]) => mockSpawn(...args),
+}));
+
 function createTaskStoreMock(rootDir: string): TaskStore {
   return {
     getRootDir: () => rootDir,
@@ -50,6 +61,22 @@ function openClawPluginModulePath(): string {
 
 async function preloadOpenClawPluginModule(): Promise<void> {
   await import(pathToFileURL(openClawPluginModulePath()).href);
+}
+
+function createFakeChildProcess(): EventEmitter & {
+  stdout: EventEmitter;
+  stderr: EventEmitter;
+  kill: ReturnType<typeof vi.fn>;
+} {
+  const child = new EventEmitter() as EventEmitter & {
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+    kill: ReturnType<typeof vi.fn>;
+  };
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.kill = vi.fn();
+  return child;
 }
 
 describe("OpenClaw runtime E2E pipeline", () => {
@@ -73,35 +100,50 @@ describe("OpenClaw runtime E2E pipeline", () => {
     mockPromptWithFallback.mockResolvedValue(undefined);
     mockDescribeModel.mockReturnValue("pi/default");
 
-    const fetchMock = vi.fn().mockImplementation(async (input: string | URL, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input.toString();
-      const method = (init?.method ?? "GET").toUpperCase();
+    mockSpawn.mockImplementation((command: string, args: string[] = []) => {
+      const child = createFakeChildProcess();
 
-      if (method === "HEAD" && url === "http://127.0.0.1:18789") {
-        return new Response(null, { status: 200 });
-      }
+      queueMicrotask(() => {
+        if (command === "which" || command === "where") {
+          child.stdout.emit("data", Buffer.from("/usr/local/bin/openclaw\n"));
+          child.emit("close", 0);
+          return;
+        }
 
-      if (method === "POST" && url === "http://127.0.0.1:18789/v1/chat/completions") {
-        const ssePayload =
-          'data: {"choices":[{"delta":{"content":"OpenClaw response"}}]}\n\n' +
-          "data: [DONE]\\n\\n";
-        return new Response(ssePayload, {
-          status: 200,
-          headers: { "Content-Type": "text/event-stream" },
-        });
-      }
+        if (args[0] === "--version") {
+          child.stdout.emit("data", Buffer.from("OpenClaw 2026.4.27\n"));
+          child.emit("close", 0);
+          return;
+        }
 
-      return new Response(`Unexpected request: ${method} ${url}`, { status: 500 });
+        if (args.includes("agent") && args.includes("--json")) {
+          const payload = JSON.stringify({
+            payloads: [{ text: "OpenClaw response" }],
+            meta: {
+              agentMeta: {
+                provider: "openclaw",
+                model: "openclaw-agent",
+                usage: { input: 1, output: 1, total: 2 },
+              },
+            },
+          });
+          child.stdout.emit("data", Buffer.from(payload));
+          child.emit("close", 0);
+          return;
+        }
+
+        child.stderr.emit("data", Buffer.from(`Unexpected spawn: ${command} ${args.join(" ")}`));
+        child.emit("close", 1);
+      });
+
+      return child;
     });
-
-    vi.stubGlobal("fetch", fetchMock);
 
     await preloadOpenClawPluginModule();
   });
 
   afterEach(async () => {
     process.env = { ...originalEnv };
-    vi.unstubAllGlobals();
     await rm(testRoot, { recursive: true, force: true });
   });
 
@@ -163,7 +205,9 @@ describe("OpenClaw runtime E2E pipeline", () => {
     expect(created.session).toBeTruthy();
 
     await expect(resolved.runtime.promptWithFallback(created.session, "Hello from e2e")).resolves.toBeUndefined();
-    expect(resolved.runtime.describeModel(created.session)).toBe("openclaw/openclaw-agent");
+    expect(resolved.runtime.describeModel(created.session)).toBe(
+      "openclaw/openclaw-agent/openclaw/openclaw-agent",
+    );
     expect(mockCreateFnAgent).not.toHaveBeenCalled();
   });
 
