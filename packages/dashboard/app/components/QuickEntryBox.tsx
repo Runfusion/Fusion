@@ -9,6 +9,8 @@ import { fetchModels, fetchSettings, refineText, getRefineErrorMessage, updateGl
 import { Link, Paperclip, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
+import { useNodes } from "../hooks/useNodes";
+import type { NodeInfo } from "../api";
 
 const STORAGE_KEY = "kb-quick-entry-text";
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
@@ -59,6 +61,12 @@ interface QuickEntryBoxProps {
    * Toggle favorite model callback from shared app-level state.
    */
   onToggleModelFavorite?: (modelId: string) => void;
+}
+
+function getNodeStatusLabel(status: NodeInfo["status"]): string {
+  if (status === "online") return "Online";
+  if (status === "connecting") return "Connecting";
+  return "Offline";
 }
 
 function getModelSelectionValue(provider?: string, modelId?: string): string {
@@ -139,6 +147,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [settings, setSettings] = useState<Settings | null>(null);
   const [selectedPresetId, setSelectedPresetId] = useState<string | undefined>(undefined);
   const [isFastMode, setIsFastMode] = useState(false);
+  const [nodeId, setNodeId] = useState<string | undefined>(undefined);
+  const { nodes } = useNodes();
 
   // AI Refinement state
   const [isRefineMenuOpen, setIsRefineMenuOpen] = useState(false);
@@ -380,6 +390,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setPlanningModelId(undefined);
     setSelectedPresetId(undefined);
     setIsFastMode(false);
+    setNodeId(undefined);
     setShowDeps(false);
     setIsModelMenuOpen(false);
     setModelMenuPosition(null);
@@ -451,6 +462,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         planningModelProvider: hasPlanningOverride ? planningProvider : undefined,
         planningModelId: hasPlanningOverride ? planningModelId : undefined,
         ...(isFastMode ? { executionMode: "fast" } : {}),
+        nodeId,
       });
       if (createdTask && pendingImages.length > 0) {
         const failures: string[] = [];
@@ -496,6 +508,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     addToast,
     resetForm,
     isFastMode,
+    nodeId,
   ]);
 
   const handleKeyDown = useCallback(
@@ -1355,6 +1368,27 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               <Brain size={12} style={{ verticalAlign: "middle" }} />
               {modelMenuLabel}
             </button>
+
+            <label className="quick-entry-node-wrap" htmlFor="quick-entry-node-select">
+              <span className="visually-hidden">Execution Node Override</span>
+              <select
+                id="quick-entry-node-select"
+                className="select quick-entry-node-select"
+                data-testid="quick-entry-node-select"
+                value={nodeId ?? ""}
+                onChange={(e) => {
+                  const nextNodeId = e.target.value;
+                  setNodeId(nextNodeId || undefined);
+                }}
+              >
+                <option value="">Execution Node: Project default / local</option>
+                {nodes.map((node) => (
+                  <option key={node.id} value={node.id}>
+                    {`${node.name} (${getNodeStatusLabel(node.status)})`}
+                  </option>
+                ))}
+              </select>
+            </label>
 
             <div className="agent-trigger-wrap" ref={agentPickerRef}>
               <button

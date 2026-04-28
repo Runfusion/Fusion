@@ -511,6 +511,54 @@ describe("TaskStore", () => {
     });
   });
 
+  describe("nodeId in-progress blocking", () => {
+    it("throws when updating nodeId on an in-progress task", async () => {
+      const task = await store.createTask({ description: "In progress task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+
+      await expect(store.updateTask(task.id, { nodeId: "node-abc" }))
+        .rejects.toThrow(/in progress/i);
+    });
+
+    it("allows updating nodeId on a todo task", async () => {
+      const task = await store.createTask({ description: "Todo task" });
+
+      const updated = await store.updateTask(task.id, { nodeId: "node-todo" });
+      expect(updated.nodeId).toBe("node-todo");
+    });
+
+    it("allows updating nodeId on an in-review task", async () => {
+      const task = await store.createTask({ description: "Review task" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+
+      const updated = await store.updateTask(task.id, { nodeId: "node-review" });
+      expect(updated.nodeId).toBe("node-review");
+    });
+
+    it("allows other updates on in-progress tasks (non-nodeId)", async () => {
+      const task = await store.createTask({ description: "In progress title update" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+
+      const updated = await store.updateTask(task.id, { title: "Updated title" });
+      expect(updated.title).toBe("Updated title");
+    });
+
+    it("allows clearing nodeId on a done task", async () => {
+      const task = await store.createTask({ description: "Done task", nodeId: "node-done" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+
+      const updated = await store.updateTask(task.id, { nodeId: null });
+      expect(updated.nodeId).toBeUndefined();
+    });
+  });
+
   describe("selectNextTaskForAgent", () => {
     it("returns null when no tasks exist", async () => {
       await expect(store.selectNextTaskForAgent("agent-1")).resolves.toBeNull();

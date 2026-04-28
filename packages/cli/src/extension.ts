@@ -5,6 +5,7 @@ import {
   TaskStore,
   COLUMNS,
   COLUMN_LABELS,
+  validateNodeOverrideChange,
   type Task,
 } from "@fusion/core";
 import {
@@ -228,14 +229,20 @@ export default function kbExtension(pi: ExtensionAPI) {
           description: "Agent ID to assign this task to, or null to clear (e.g. 'agent-abc123')",
         }),
       ),
+      nodeId: Type.Optional(
+        Type.Union([Type.String(), Type.Null()], {
+          description: "Node ID override for this task, or null to clear",
+        }),
+      ),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const store = await getStore(ctx.cwd);
 
       // Validate task exists
+      let task: Task;
       try {
-        await store.getTask(params.id);
+        task = await store.getTask(params.id);
       } catch {
         return {
           content: [{ type: "text", text: `Task ${params.id} not found` }],
@@ -264,10 +271,22 @@ export default function kbExtension(pi: ExtensionAPI) {
         updates.assignedAgentId = params.agentId;
         updatedFields.push("agentId");
       }
+      if (params.nodeId !== undefined) {
+        const validation = validateNodeOverrideChange(task, params.nodeId ?? null);
+        if (!validation.allowed) {
+          return {
+            content: [{ type: "text", text: validation.message ?? "Node override change blocked" }],
+            isError: true,
+            details: { error: validation.reason },
+          };
+        }
+        updates.nodeId = params.nodeId;
+        updatedFields.push("nodeId");
+      }
 
       if (updatedFields.length === 0) {
         return {
-          content: [{ type: "text", text: "No fields to update. Provide at least one of: title, description, depends, agentId." }],
+          content: [{ type: "text", text: "No fields to update. Provide at least one of: title, description, depends, agentId, nodeId." }],
           isError: true,
           details: { error: "No fields provided" },
         };

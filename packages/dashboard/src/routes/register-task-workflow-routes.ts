@@ -1,6 +1,6 @@
 import { createReadStream } from "node:fs";
 import type { TaskStore, Task, TaskDetail, Column } from "@fusion/core";
-import { COLUMNS, VALID_TRANSITIONS } from "@fusion/core";
+import { COLUMNS, VALID_TRANSITIONS, validateNodeOverrideChange } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import type { ApiRoutesContext } from "./types.js";
 
@@ -1235,7 +1235,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   router.patch("/tasks/:id", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const { title, description, prompt, dependencies, enabledWorkflowSteps, modelProvider, modelId, validatorModelProvider, validatorModelId, planningModelProvider, planningModelId, thinkingLevel, assigneeUserId, reviewLevel, executionMode, sourceIssue } = req.body;
+      const { title, description, prompt, dependencies, enabledWorkflowSteps, modelProvider, modelId, validatorModelProvider, validatorModelId, planningModelProvider, planningModelId, thinkingLevel, assigneeUserId, reviewLevel, executionMode, sourceIssue, nodeId } = req.body;
       const hasBodyField = (field: string) => Object.prototype.hasOwnProperty.call(req.body, field);
 
       // Validate model fields are strings or undefined/null
@@ -1341,6 +1341,18 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (hasBodyField("reviewLevel")) updates.reviewLevel = reviewLevel;
       if (hasBodyField("executionMode")) updates.executionMode = executionMode === null ? null : executionMode;
       if (hasBodyField("sourceIssue")) updates.sourceIssue = validatedSourceIssue === undefined ? undefined : validatedSourceIssue;
+      if (hasBodyField("nodeId")) updates.nodeId = nodeId === null ? null : nodeId;
+
+      if (hasBodyField("nodeId")) {
+        const currentTask = await scopedStore.getTask(req.params.id);
+        if (!currentTask) {
+          throw notFound("Task not found");
+        }
+        const validation = validateNodeOverrideChange(currentTask, nodeId ?? null);
+        if (!validation.allowed) {
+          throw new ApiError(409, validation.message ?? "Node override change blocked");
+        }
+      }
 
       const task = await scopedStore.updateTask(req.params.id, updates);
       res.json(task);

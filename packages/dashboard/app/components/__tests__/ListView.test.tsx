@@ -2022,7 +2022,7 @@ describe("ListView - Bulk Selection", () => {
     const checkbox = screen.getByLabelText("Select FN-001");
     fireEvent.click(checkbox);
 
-    expect(screen.getByText("Bulk Edit Models:")).toBeDefined();
+    expect(screen.getByText("Bulk Edit Models & Node:")).toBeDefined();
   });
 
   it("shows bulk edit toolbar when tasks are selected", () => {
@@ -2044,7 +2044,7 @@ describe("ListView - Bulk Selection", () => {
     const checkbox = screen.getByLabelText("Select FN-001");
     fireEvent.click(checkbox);
 
-    expect(screen.getByText("Bulk Edit Models:")).toBeDefined();
+    expect(screen.getByText("Bulk Edit Models & Node:")).toBeDefined();
   });
 
   it("disables apply button when no model changes selected", () => {
@@ -2403,7 +2403,7 @@ describe("ListView - Bulk Selection", () => {
       fireEvent.click(screen.getByLabelText("Select FN-002"));
 
       expect(screen.getByText("2 selected")).toBeInTheDocument();
-      expect(screen.getByText("Bulk Edit Models:")).toBeInTheDocument();
+      expect(screen.getByText("Bulk Edit Models & Node:")).toBeInTheDocument();
     });
 
     it("applies agent-active class to mobile cards when task is in-progress and not paused/failed", () => {

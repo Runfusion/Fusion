@@ -21,6 +21,7 @@ import { getTaskMergeBlocker } from "./task-merge.js";
 import { ensureMemoryFileWithBackend } from "./project-memory.js";
 import { runCommandAsync } from "./run-command.js";
 import { createLogger } from "./logger.js";
+import { validateNodeOverrideChange } from "./node-override-guard.js";
 
 /** Database row shape for the tasks table (all columns). */
 interface TaskRow {
@@ -2629,6 +2630,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
       const dir = this.taskDir(id);
       const task = await this.readTaskJson(dir);
+
+      if (updates.nodeId !== undefined) {
+        const validation = validateNodeOverrideChange(task, updates.nodeId ?? null);
+        if (!validation.allowed) {
+          throw new Error(validation.message);
+        }
+      }
 
       // Initialize log array if missing (for legacy tasks)
       if (!task.log) {

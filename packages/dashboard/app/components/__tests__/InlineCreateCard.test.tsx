@@ -4,6 +4,7 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 import { InlineCreateCard } from "../InlineCreateCard";
 import type { Task, Column } from "@fusion/core";
 import { fetchModels, fetchSettings, fetchAgents } from "../../api";
+import { useNodes } from "../../hooks/useNodes";
 import type { ModelInfo } from "../../api";
 import { scopedKey } from "../../utils/projectStorage";
 
@@ -81,6 +82,22 @@ vi.mock("../ModelSelectionModal", () => ({
       </div>
     );
   },
+}));
+
+vi.mock("../../hooks/useNodes", () => ({
+  useNodes: vi.fn(() => ({
+    nodes: [
+      { id: "node-1", name: "Node One", status: "online", type: "remote", createdAt: "", updatedAt: "" },
+      { id: "node-2", name: "Node Two", status: "offline", type: "remote", createdAt: "", updatedAt: "" },
+    ],
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+    register: vi.fn(),
+    update: vi.fn(),
+    unregister: vi.fn(),
+    healthCheck: vi.fn(),
+  })),
 }));
 
 // Mock the api module
@@ -172,6 +189,19 @@ beforeEach(() => {
   localStorage.clear();
   vi.mocked(fetchModels).mockResolvedValue({ models: MOCK_MODELS, favoriteProviders: [], favoriteModels: [] });
   vi.mocked(fetchAgents).mockResolvedValue([]);
+  vi.mocked(useNodes).mockReturnValue({
+    nodes: [
+      { id: "node-1", name: "Node One", status: "online", type: "remote", createdAt: "", updatedAt: "" },
+      { id: "node-2", name: "Node Two", status: "offline", type: "remote", createdAt: "", updatedAt: "" },
+    ],
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+    register: vi.fn(),
+    update: vi.fn(),
+    unregister: vi.fn(),
+    healthCheck: vi.fn(),
+  });
   vi.mocked(fetchSettings).mockResolvedValue({
     modelPresets: [],
     autoSelectModelPreset: false,
@@ -1365,4 +1395,22 @@ describe("InlineCreateCard button visibility when collapsed", () => {
       });
     });
   });
+
+
+describe("InlineCreateCard node override", () => {
+  it("includes nodeId in payload when execution node override is selected", async () => {
+    const onSubmit = vi.fn().mockResolvedValue({ id: "FN-777" } as Task);
+    renderCard([], { onSubmit });
+
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Run on node" } });
+    expandCard();
+    fireEvent.change(screen.getByTestId("inline-create-node-select"), { target: { value: "node-1" } });
+    fireEvent.click(screen.getByTestId("save-button"));
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ nodeId: "node-1" }));
+    });
+  });
+});
+
 });

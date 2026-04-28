@@ -29,6 +29,7 @@ Update fields on an existing task. Supports modifying the title, description, de
 | `description` | string | — | New task description |
 | `depends` | array | — | New dependency list — replaces existing dependencies (e.g. ['FN-001', 'FN-002']) |
 | `agentId` | union | — | Agent ID to assign this task to, or null to clear (e.g. 'agent-abc123') |
+| `nodeId` | union | — | Node ID override for this task, or null to clear |
 
 ### fn_task_list
 

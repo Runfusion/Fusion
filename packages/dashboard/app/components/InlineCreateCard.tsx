@@ -6,7 +6,8 @@ import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, type Task, type TaskCreateInput
 import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { fetchModels, uploadAttachment, fetchSettings, updateGlobalSettings, fetchAgents } from "../api";
-import type { ModelInfo, Agent } from "../api";
+import type { ModelInfo, Agent, NodeInfo } from "../api";
+import { useNodes } from "../hooks/useNodes";
 import { ModelSelectionModal } from "./ModelSelectionModal";
 import { applyPresetToSelection } from "../utils/modelPresets";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
@@ -39,6 +40,12 @@ interface InlineCreateCardProps {
    * Called when the user clicks the "Subtask" button to trigger subtask breakdown.
    */
   onSubtaskBreakdown?: (description: string) => void;
+}
+
+function getNodeStatusLabel(status: NodeInfo["status"]): string {
+  if (status === "online") return "Online";
+  if (status === "connecting") return "Connecting";
+  return "Offline";
 }
 
 function getModelSelectionValue(provider?: string, modelId?: string): string {
@@ -86,6 +93,8 @@ export function InlineCreateCard({
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [isModelModalOpen, setIsModelModalOpen] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
+  const [nodeId, setNodeId] = useState<string | undefined>(undefined);
+  const { nodes } = useNodes();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [selectedPresetId, setSelectedPresetId] = useState<string | undefined>(undefined);
   const [executorProvider, setExecutorProvider] = useState<string | undefined>(undefined);
@@ -320,6 +329,7 @@ export function InlineCreateCard({
         validatorModelId: hasValidatorOverride ? validatorModelId : undefined,
         enabledWorkflowSteps: browserVerification ? ["browser-verification"] : undefined,
         priority,
+        nodeId,
       });
 
       // Upload pending images as attachments
@@ -354,6 +364,7 @@ export function InlineCreateCard({
       setPriority(DEFAULT_TASK_PRIORITY);
       setDependencies([]);
       setSelectedAgentId(null);
+      setNodeId(undefined);
       setShowDeps(false);
       setShowAgentPicker(false);
       setIsModelModalOpen(false);
@@ -390,6 +401,7 @@ export function InlineCreateCard({
     addToast,
     projectId,
     selectedPresetId,
+    nodeId,
   ]);
 
   const handleKeyDown = useCallback(
@@ -564,6 +576,7 @@ export function InlineCreateCard({
     setBrowserVerification(false);
     setSelectedPresetId(undefined);
     setSelectedAgentId(null);
+    setNodeId(undefined);
     setShowDeps(false);
     setShowAgentPicker(false);
     setIsModelModalOpen(false);
@@ -588,6 +601,7 @@ export function InlineCreateCard({
     setBrowserVerification(false);
     setSelectedPresetId(undefined);
     setSelectedAgentId(null);
+    setNodeId(undefined);
     setShowDeps(false);
     setShowAgentPicker(false);
     setIsModelModalOpen(false);
@@ -812,6 +826,27 @@ export function InlineCreateCard({
                 );
               })()}
             </div>
+
+            <label className="inline-create-node-wrap" htmlFor="inline-create-node-select">
+              <span className="visually-hidden">Execution Node Override</span>
+              <select
+                id="inline-create-node-select"
+                className="select inline-create-node-select"
+                data-testid="inline-create-node-select"
+                value={nodeId ?? ""}
+                onChange={(e) => {
+                  const nextNodeId = e.target.value;
+                  setNodeId(nextNodeId || undefined);
+                }}
+              >
+                <option value="">Execution Node: Project default / local</option>
+                {nodes.map((node) => (
+                  <option key={node.id} value={node.id}>
+                    {`${node.name} (${getNodeStatusLabel(node.status)})`}
+                  </option>
+                ))}
+              </select>
+            </label>
 
             <div className="agent-trigger-wrap" ref={agentPickerRef}>
               <button

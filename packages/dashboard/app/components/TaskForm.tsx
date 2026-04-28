@@ -1,10 +1,16 @@
 import { useState, useCallback, useEffect, useRef, type ReactNode } from "react";
 import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, type Task, type TaskPriority, type Settings, type WorkflowStep } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
-import { fetchModels, fetchSettings, fetchWorkflowSteps, refineText, getRefineErrorMessage, updateGlobalSettings, type RefinementType, type ModelInfo } from "../api";
+import { fetchModels, fetchSettings, fetchWorkflowSteps, refineText, getRefineErrorMessage, updateGlobalSettings, type RefinementType, type ModelInfo, type NodeInfo } from "../api";
 import { applyPresetToSelection, getRecommendedPresetForSize } from "../utils/modelPresets";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { Sparkles, ChevronUp, ChevronDown, X, Maximize2, Minimize2 } from "lucide-react";
+
+function getNodeStatusLabel(status: NodeInfo["status"]): string {
+  if (status === "online") return "Online";
+  if (status === "connecting") return "Connecting";
+  return "Offline";
+}
 
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 
@@ -40,6 +46,11 @@ export interface TaskFormProps {
   // Dependencies
   dependencies: string[];
   onDependenciesChange: (deps: string[]) => void;
+  nodeId?: string;
+  onNodeIdChange?: (nodeId: string | undefined) => void;
+  nodeOptions?: NodeInfo[];
+  nodeOverrideDisabled?: boolean;
+  nodeOverrideDisabledReason?: string;
 
   // Model configuration
   priority?: TaskPriority;
@@ -106,6 +117,11 @@ export function TaskForm({
   onTitleChange,
   dependencies,
   onDependenciesChange,
+  nodeId,
+  onNodeIdChange,
+  nodeOptions,
+  nodeOverrideDisabled = false,
+  nodeOverrideDisabledReason,
   priority,
   onPriorityChange,
   executorModel,
@@ -154,7 +170,8 @@ export function TaskForm({
     (planningModel || "") !== "" ||
     (thinkingLevel || "") !== "" ||
     reviewLevel !== undefined ||
-    executionMode === "fast";
+    executionMode === "fast" ||
+    (nodeId || "") !== "";
 
   const [showDepDropdown, setShowDepDropdown] = useState(false);
   const [showMoreOptions, setShowMoreOptions] = useState(
@@ -219,7 +236,8 @@ export function TaskForm({
     (planningModel || "") !== "" ||
     (thinkingLevel || "") !== "" ||
     reviewLevel !== undefined ||
-    executionMode === "fast";
+    executionMode === "fast" ||
+    (nodeId || "") !== "";
 
   // Auto-select preset by size (create mode only)
   useEffect(() => {
@@ -802,6 +820,29 @@ export function TaskForm({
         </button>
         <small>You can also paste images or drag & drop</small>
       </div>
+
+      {onNodeIdChange && (
+        <div className="form-group">
+          <label htmlFor="task-node-select">Execution Node Override</label>
+          <select
+            id="task-node-select"
+            className="select"
+            value={nodeId ?? ""}
+            onChange={(e) => onNodeIdChange(e.target.value || undefined)}
+            disabled={disabled || nodeOverrideDisabled}
+          >
+            <option value="">Use project default / local</option>
+            {(nodeOptions ?? []).map((node) => (
+              <option key={node.id} value={node.id}>
+                {node.name} ({getNodeStatusLabel(node.status)})
+              </option>
+            ))}
+          </select>
+          <small>
+            {nodeOverrideDisabledReason ?? "Task override takes priority over project default node routing."}
+          </small>
+        </div>
+      )}
 
       {!hideDependencies && (
         <>

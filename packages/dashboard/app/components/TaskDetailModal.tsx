@@ -19,6 +19,7 @@ import { TaskComments } from "./TaskComments";
 import { MergeDetails } from "./MergeDetails";
 import { TaskChangesTab } from "./TaskChangesTab";
 import { TaskForm, type PendingImage } from "./TaskForm";
+import { useNodes } from "../hooks/useNodes";
 import { WorkflowResultsTab } from "./WorkflowResultsTab";
 import { TaskDocumentsTab } from "./TaskDocumentsTab";
 import { TaskTokenStatsPanel } from "./TaskTokenStatsPanel";
@@ -32,6 +33,8 @@ interface ModelSelection {
   provider?: string;
   modelId?: string;
 }
+
+const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging"]);
 
 
 
@@ -357,6 +360,7 @@ export function TaskDetailModal({
   const [editPresetMode, setEditPresetMode] = useState<"default" | "preset" | "custom">("default");
   const [editReviewLevel, setEditReviewLevel] = useState<number | undefined>(undefined);
   const [editPriority, setEditPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
+  const [editNodeId, setEditNodeId] = useState<string | undefined>(task.nodeId);
   const [editExecutionMode, setEditExecutionMode] = useState<"standard" | "fast">(normalizeExecutionModeValue(task.executionMode));
   const [editSelectedPresetId, setEditSelectedPresetId] = useState("");
   const [editSelectedWorkflowSteps, setEditSelectedWorkflowSteps] = useState<string[]>(task.enabledWorkflowSteps || []);
@@ -395,6 +399,7 @@ export function TaskDetailModal({
   const [workflowResults, setWorkflowResults] = useState<WorkflowStepResult[]>([]);
   const [workflowResultsLoading, setWorkflowResultsLoading] = useState(false);
   const [workflowEnabledSteps, setWorkflowEnabledSteps] = useState<string[]>(task.enabledWorkflowSteps || []);
+  const isNodeOverrideLocked = task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string);
 
   // Reset edit state when task changes
   useEffect(() => {
@@ -570,6 +575,7 @@ export function TaskDetailModal({
     setEditValidatorModel(valModel);
     setEditPlanningModel(planModel);
     setEditThinkingLevel(task.thinkingLevel ?? "");
+    setEditNodeId(task.nodeId);
     setEditPresetMode(execModel || valModel || planModel ? "custom" : "default");
     setEditSelectedPresetId("");
     setEditSelectedWorkflowSteps(task.enabledWorkflowSteps || []);
@@ -588,6 +594,7 @@ export function TaskDetailModal({
     setEditTitle(task.title || "");
     setEditDescription(task.description || "");
     setEditDependencies(task.dependencies || []);
+    setEditNodeId(task.nodeId);
     setEditSourceIssueProvider(task.sourceIssue?.provider ?? "");
     setEditSourceIssueRepository(task.sourceIssue?.repository ?? "");
     setEditSourceIssueExternalId(task.sourceIssue?.externalIssueId ?? "");
@@ -596,12 +603,12 @@ export function TaskDetailModal({
     setEditExecutionMode(normalizeExecutionModeValue(task.executionMode));
     editPendingImages.forEach((img) => URL.revokeObjectURL(img.previewUrl));
     setEditPendingImages([]);
-  }, [task.title, task.description, task.dependencies, task.priority, task.executionMode, editPendingImages]);
+  }, [task.title, task.description, task.dependencies, task.nodeId, task.priority, task.executionMode, editPendingImages]);
 
   const handleSave = useCallback(async () => {
     setIsSaving(true);
     try {
-      const updates: Parameters<typeof updateTask>[1] = {};
+      const updates: Record<string, unknown> = {};
       const trimmedTitle = editTitle.trim();
       const trimmedDescription = editDescription.trim();
 
@@ -642,6 +649,9 @@ export function TaskDetailModal({
       const currentThinkingLevel = task.thinkingLevel ?? "";
       if (editThinkingLevel !== currentThinkingLevel) {
         updates.thinkingLevel = editThinkingLevel !== "" ? (editThinkingLevel as "minimal" | "low" | "medium" | "high") : null;
+      }
+      if ((task.nodeId ?? undefined) !== editNodeId) {
+        updates.nodeId = editNodeId ?? null;
       }
 
       const currentReviewLevel = task.reviewLevel;
@@ -712,7 +722,7 @@ export function TaskDetailModal({
 
       const hasTaskUpdates = Object.keys(updates).length > 0;
       if (hasTaskUpdates) {
-        const updatedTask = await updateTask(task.id, updates, projectId);
+        const updatedTask = await updateTask(task.id, updates as never, projectId);
         onTaskUpdated?.(updatedTask);
       }
 
@@ -744,7 +754,7 @@ export function TaskDetailModal({
         setIsSaving(false);
       }
     }
-  }, [task, editTitle, editDescription, editDependencies, editExecutorModel, editValidatorModel, editPlanningModel, editThinkingLevel, editReviewLevel, editPriority, editExecutionMode, editSelectedWorkflowSteps, editSourceIssueProvider, editSourceIssueRepository, editSourceIssueExternalId, editSourceIssueUrl, editPendingImages, addToast, projectId, onTaskUpdated]);
+  }, [task, editTitle, editDescription, editDependencies, editExecutorModel, editValidatorModel, editPlanningModel, editThinkingLevel, editNodeId, editReviewLevel, editPriority, editExecutionMode, editSelectedWorkflowSteps, editSourceIssueProvider, editSourceIssueRepository, editSourceIssueExternalId, editSourceIssueUrl, editPendingImages, addToast, projectId, onTaskUpdated]);
 
   const handleAutoSaveDescription = useCallback(async (description: string) => {
     try {
@@ -774,6 +784,7 @@ export function TaskDetailModal({
   }, [isEditing, handleEditKeyDown]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { nodes } = useNodes();
   const { confirm } = useConfirm();
   const {
     entries: agentLogEntries,
@@ -1337,6 +1348,11 @@ export function TaskDetailModal({
                 onReviewLevelChange={setEditReviewLevel}
                 priority={editPriority}
                 onPriorityChange={setEditPriority}
+                nodeId={editNodeId}
+                onNodeIdChange={setEditNodeId}
+                nodeOptions={nodes}
+                nodeOverrideDisabled={isNodeOverrideLocked}
+                nodeOverrideDisabledReason={isNodeOverrideLocked ? "Execution node override is locked while a task is active/in progress." : undefined}
                 executionMode={editExecutionMode}
                 onExecutionModeChange={setEditExecutionMode}
                 renderBelowModelConfiguration={(
@@ -1604,6 +1620,31 @@ export function TaskDetailModal({
             </div>
           )}
           <MergeDetails task={task} />
+          <div className="detail-section">
+            <h4>Node Routing</h4>
+            <dl className="detail-source-grid">
+              <div>
+                <dt>Task Override</dt>
+                <dd>{task.nodeId ?? <span className="detail-source-empty">(none)</span>}</dd>
+              </div>
+              <div>
+                <dt>Effective Node</dt>
+                <dd>{(task as Task & { effectiveNodeId?: string }).effectiveNodeId ?? "local execution"}</dd>
+              </div>
+              <div>
+                <dt>Routing Source</dt>
+                <dd>{(task as Task & { effectiveNodeSource?: string }).effectiveNodeSource ?? "local"}</dd>
+              </div>
+              <div>
+                <dt>Unavailable Node Policy</dt>
+                <dd>{(settings as Settings & { unavailableNodePolicy?: string } | undefined)?.unavailableNodePolicy ?? "block"}</dd>
+              </div>
+              <div>
+                <dt>Blocking Reason</dt>
+                <dd>{((task as Task & { blockedReason?: string; statusReason?: string }).blockedReason || (task as Task & { statusReason?: string }).statusReason) ?? <span className="detail-source-empty">(not blocked)</span>}</dd>
+              </div>
+            </dl>
+          </div>
           {task.sourceIssue && (
             <div className="detail-section detail-source-section">
               <h4>Source Issue</h4>

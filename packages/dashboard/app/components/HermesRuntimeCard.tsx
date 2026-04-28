@@ -7,7 +7,6 @@ import {
   type HermesProfileSummary,
   type HermesProviderStatus,
 } from "../api";
-import { ProviderIcon } from "./ProviderIcon";
 import { RuntimeCardShell } from "./RuntimeCardShell";
 
 const PLUGIN_ID = "fusion-plugin-hermes-runtime";

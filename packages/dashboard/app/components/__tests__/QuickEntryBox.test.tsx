@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 import { QuickEntryBox } from "../QuickEntryBox";
 import type { Task } from "@fusion/core";
 import { fetchSettings, fetchAgents, uploadAttachment } from "../../api";
+import { useNodes } from "../../hooks/useNodes";
 import { scopedKey } from "../../utils/projectStorage";
 
 const MOCK_MODELS = [
@@ -99,6 +100,22 @@ vi.mock("../../api", () => ({
   fetchAgents: vi.fn().mockResolvedValue([]),
   uploadAttachment: vi.fn().mockResolvedValue({}),
   updateGlobalSettings: vi.fn().mockResolvedValue({}),
+}));
+
+vi.mock("../../hooks/useNodes", () => ({
+  useNodes: vi.fn(() => ({
+    nodes: [
+      { id: "node-1", name: "Node One", status: "online", type: "remote", createdAt: "", updatedAt: "" },
+      { id: "node-2", name: "Node Two", status: "offline", type: "remote", createdAt: "", updatedAt: "" },
+    ],
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+    register: vi.fn(),
+    update: vi.fn(),
+    unregister: vi.fn(),
+    healthCheck: vi.fn(),
+  })),
 }));
 
 // Mock lucide-react
@@ -218,6 +235,19 @@ describe("QuickEntryBox", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     localStorage.clear();
     vi.mocked(fetchAgents).mockResolvedValue([]);
+    vi.mocked(useNodes).mockReturnValue({
+      nodes: [
+        { id: "node-1", name: "Node One", status: "online", type: "remote", createdAt: "", updatedAt: "" },
+        { id: "node-2", name: "Node Two", status: "offline", type: "remote", createdAt: "", updatedAt: "" },
+      ],
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+      register: vi.fn(),
+      update: vi.fn(),
+      unregister: vi.fn(),
+      healthCheck: vi.fn(),
+    });
     vi.mocked(uploadAttachment).mockResolvedValue({} as any);
 
     Object.defineProperty(URL, "createObjectURL", {
@@ -2982,6 +3012,20 @@ describe("QuickEntryBox", () => {
       renderQuickEntryBox({});
       const wrapper = screen.getByTestId("quick-entry-input").parentElement;
       expect(wrapper).toHaveClass("quick-entry-textarea-wrap");
+    });
+  });
+
+  it("includes nodeId in payload when execution node override is selected", async () => {
+    const onCreate = vi.fn().mockResolvedValue(undefined);
+    renderQuickEntryBox({ onCreate });
+
+    fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Route this task" } });
+    expandQuickEntry();
+    fireEvent.change(screen.getByTestId("quick-entry-node-select"), { target: { value: "node-2" } });
+    clickSave();
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ nodeId: "node-2" }));
     });
   });
 });

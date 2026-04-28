@@ -74,6 +74,11 @@ export { AutomationStore } from "./automation-store.js";
 export type { AutomationStoreEvents } from "./automation-store.js";
 export { runCommandAsync } from "./run-command.js";
 export type { RunCommandOptions, RunCommandResult } from "./run-command.js";
+export {
+  validateNodeOverrideChange,
+  type NodeOverrideValidationResult,
+  type NodeOverrideBlockReason,
+} from "./node-override-guard.js";
 export { validateUnavailableNodePolicy } from "./settings-validation.js";
 
 // ── Routine System ───────────────────────────────────────────────────

@@ -27,6 +27,7 @@ import { ProviderIcon } from "./ProviderIcon";
 import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPresets";
 import { appendTokenQuery } from "../auth";
 import { useConfirm } from "../hooks/useConfirm";
+import { useNodes } from "../hooks/useNodes";
 
 // ---------------------------------------------------------------------------
 // GitHub star count — fetched once per session, cached in localStorage (1 h).
@@ -34,6 +35,12 @@ import { useConfirm } from "../hooks/useConfirm";
 const GITHUB_STAR_CACHE_KEY = "fusion_github_star_count";
 const GITHUB_STAR_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const GITHUB_STAR_CLICKED_KEY = "fusion:github-star-clicked";
+
+function getNodeStatusLabel(status: "online" | "offline" | "connecting" | "error"): string {
+  if (status === "online") return "Online";
+  if (status === "connecting") return "Connecting";
+  return "Offline";
+}
 
 /**
  * Has the user already clicked the "Star on GitHub" button at any point in
@@ -350,6 +357,7 @@ export function SettingsModal({
     refresh: refreshOverlapPathPicker,
   } = useWorkspaceFileBrowser("project", overlapPathPickerIndex !== null, projectId);
 
+  const { nodes } = useNodes();
   const remoteAccessEnabled = isExperimentalFeatureEnabled(form.experimentalFeatures ?? {}, "remoteAccess");
   const visibleSections = SETTINGS_SECTIONS.filter((section) => section.id !== "remote" || remoteAccessEnabled);
   const firstVisibleSectionId = visibleSections.find((section) => !section.isGroupHeader)?.id ?? "general";
@@ -2354,6 +2362,44 @@ export function SettingsModal({
                 }}
               />
               <small>Maximum concurrent planning agents</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="defaultNodeId">Default Execution Node</label>
+              <select
+                id="defaultNodeId"
+                className="select"
+                value={typeof form.defaultNodeId === "string" ? form.defaultNodeId : ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setForm((f) => ({ ...f, defaultNodeId: val || undefined } as SettingsFormState));
+                }}
+              >
+                <option value="">Local execution (no default node)</option>
+                {nodes.map((node) => (
+                  <option key={node.id} value={node.id}>
+                    {node.name} ({getNodeStatusLabel(node.status)})
+                  </option>
+                ))}
+              </select>
+              <small>Used when a task has no node override. Node status is shown for safer routing selection.</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="unavailableNodePolicy">Unavailable Node Policy</label>
+              <select
+                id="unavailableNodePolicy"
+                value={
+                  form.unavailableNodePolicy === "fallback-local" ? "fallback-local" : "block"
+                }
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    unavailableNodePolicy: e.target.value as "block" | "fallback-local",
+                  } as SettingsFormState))
+                }
+              >
+                <option value="block">Block execution</option>
+                <option value="fallback-local">Fallback to local</option>
+              </select>
             </div>
             <div className="form-group">
               <label htmlFor="pollIntervalMs">Poll Interval (ms)</label>

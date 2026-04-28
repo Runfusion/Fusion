@@ -10,6 +10,7 @@ import { useSetupReadiness } from "../hooks/useSetupReadiness";
 import { SetupWarningBanner } from "./SetupWarningBanner";
 import { TaskForm, type PendingImage } from "./TaskForm";
 import { useConfirm } from "../hooks/useConfirm";
+import { useNodes } from "../hooks/useNodes";
 
 interface NewTaskModalProps {
   isOpen: boolean;
@@ -39,6 +40,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   const [workflowStepsExplicitlySet, setWorkflowStepsExplicitlySet] = useState(false);
   const [reviewLevel, setReviewLevel] = useState<number | undefined>(undefined);
   const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
+  const [nodeId, setNodeId] = useState<string | undefined>(undefined);
 
   // Agent assignment state
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -53,6 +55,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   const quickFieldsDepRef = useRef<HTMLDivElement>(null);
 
   const { hasAiProvider, hasGithub, loading: setupReadinessLoading } = useSetupReadiness(projectId);
+  const { nodes } = useNodes();
 
   // Handler for workflow step changes that detects explicit user interaction
   const handleWorkflowStepsChange = useCallback((steps: string[]) => {
@@ -151,9 +154,10 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       selectedWorkflowSteps.length > 0 ||
       selectedAgentId !== null ||
       reviewLevel !== undefined ||
-      priority !== DEFAULT_TASK_PRIORITY;
+      priority !== DEFAULT_TASK_PRIORITY ||
+      nodeId !== undefined;
     setHasDirtyState(isDirty);
-  }, [description, dependencies, pendingImages, executorModel, validatorModel, planningModel, thinkingLevel, selectedWorkflowSteps, selectedAgentId, reviewLevel, priority]);
+  }, [description, dependencies, pendingImages, executorModel, validatorModel, planningModel, thinkingLevel, selectedWorkflowSteps, selectedAgentId, reviewLevel, priority, nodeId]);
 
   const handleClose = useCallback(async () => {
     if (hasDirtyState) {
@@ -182,6 +186,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setShowAgentPicker(false);
     setReviewLevel(undefined);
     setPriority(DEFAULT_TASK_PRIORITY);
+    setNodeId(undefined);
     setHasDirtyState(false);
     onClose();
   }, [hasDirtyState, onClose, pendingImages, confirm]);
@@ -215,6 +220,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
         thinkingLevel: thinkingLevel !== "" ? thinkingLevel as "minimal" | "low" | "medium" | "high" : undefined,
         reviewLevel,
         priority,
+        nodeId,
       });
 
       // Upload pending images as attachments
@@ -249,6 +255,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       setShowAgentPicker(false);
       setReviewLevel(undefined);
       setPriority(DEFAULT_TASK_PRIORITY);
+      setNodeId(undefined);
 
       addToast(`Created ${task.id}`, "success");
       onClose();
@@ -257,7 +264,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     } finally {
       setIsSubmitting(false);
     }
-  }, [description, dependencies, pendingImages, executorModel, validatorModel, planningModel, thinkingLevel, isSubmitting, onCreateTask, addToast, onClose, projectId, presetMode, selectedPresetId, selectedWorkflowSteps, workflowStepsExplicitlySet, selectedAgentId, reviewLevel, priority]);
+  }, [description, dependencies, pendingImages, executorModel, validatorModel, planningModel, thinkingLevel, isSubmitting, onCreateTask, addToast, onClose, projectId, presetMode, selectedPresetId, selectedWorkflowSteps, workflowStepsExplicitlySet, selectedAgentId, reviewLevel, priority, nodeId]);
 
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -460,6 +467,9 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
             onReviewLevelChange={setReviewLevel}
             priority={priority}
             onPriorityChange={setPriority}
+            nodeId={nodeId}
+            onNodeIdChange={setNodeId}
+            nodeOptions={nodes}
             renderBelowPrimary={quickFields}
             hideDependencies={true}
             autoExpandMoreOptionsOnSelection={false}

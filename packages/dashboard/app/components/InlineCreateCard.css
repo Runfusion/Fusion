@@ -215,6 +215,15 @@
   align-items: center;
 }
 
+.inline-create-node-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+.inline-create-node-select {
+  max-width: 250px;
+}
+
 .inline-create-priority-select {
   max-width: 180px;
 }

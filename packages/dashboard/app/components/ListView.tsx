@@ -3,7 +3,7 @@ import { useState, useCallback, useMemo, Fragment, useEffect, useRef } from "rea
 import { ArrowUpDown, ArrowUp, ArrowDown, Link, Columns3, EyeOff, Eye, ChevronRight } from "lucide-react";
 import type { Task, TaskDetail, Column, TaskCreateInput } from "@fusion/core";
 import { COLUMN_LABELS, COLUMNS, getErrorMessage } from "@fusion/core";
-import { batchUpdateTaskModels } from "../api";
+import { batchUpdateTaskModels, updateTask } from "../api";
 import type { ModelInfo } from "../api";
 import { QuickEntryBox } from "./QuickEntryBox";
 import { CustomModelDropdown } from "./CustomModelDropdown";
@@ -12,6 +12,7 @@ import type { ToastType } from "../hooks/useToast";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
 import { getUnifiedTaskProgress } from "../utils/taskProgress";
+import { useNodes } from "../hooks/useNodes";
 
 const COLUMN_COLOR_MAP: Record<Column, string> = {
   triage: "var(--triage)",
@@ -23,6 +24,16 @@ const COLUMN_COLOR_MAP: Record<Column, string> = {
 };
 
 const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging"]);
+
+function isTaskActivelyExecuting(task: Task): boolean {
+  return task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string);
+}
+
+function getNodeStatusLabel(status: "online" | "offline" | "connecting" | "error"): string {
+  if (status === "online") return "Online";
+  if (status === "connecting") return "Connecting";
+  return "Offline";
+}
 
 type SortField = "id" | "title" | "status" | "column";
 type SortDirection = "asc" | "desc";
@@ -446,7 +457,9 @@ export function ListView({
   // Bulk edit state and handlers (must be after groupedTasks and clearSelection definition)
   const [executorModel, setExecutorModel] = useState<string>("__no_change__");
   const [validatorModel, setValidatorModel] = useState<string>("__no_change__");
+  const [bulkNodeId, setBulkNodeId] = useState<string>("__no_change__");
   const [isApplying, setIsApplying] = useState(false);
+  const { nodes } = useNodes();
 
   // Handle apply bulk model update
   const handleApplyBulkUpdate = useCallback(async () => {
@@ -461,6 +474,10 @@ export function ListView({
       addToast("No valid tasks to update (archived tasks cannot be modified)", "error");
       return;
     }
+
+    const selectedTasks = taskIds
+      .map((id) => tasks.find((task) => task.id === id))
+      .filter((task): task is Task => Boolean(task));
 
     // Build payload - only include fields that changed from "__no_change__"
     const payload: {
@@ -499,42 +516,77 @@ export function ListView({
       }
     }
 
+    const hasNodeChange = bulkNodeId !== "__no_change__";
+    const activeTasks = hasNodeChange ? selectedTasks.filter((task) => isTaskActivelyExecuting(task)) : [];
+    const nodeEligibleTaskIds = hasNodeChange
+      ? selectedTasks.filter((task) => !isTaskActivelyExecuting(task)).map((task) => task.id)
+      : [];
+
     // Check if any changes were made
-    if (Object.keys(payload).length === 1) {
+    if (Object.keys(payload).length === 1 && !hasNodeChange) {
       addToast("No changes to apply", "info");
+      return;
+    }
+
+    if (hasNodeChange && nodeEligibleTaskIds.length === 0 && Object.keys(payload).length === 1) {
+      addToast("Node override cannot be changed for active tasks. Stop the tasks and try again.", "error");
       return;
     }
 
     setIsApplying(true);
     try {
-      const result = await batchUpdateTaskModels(
-        payload.taskIds,
-        payload.modelProvider,
-        payload.modelId,
-        payload.validatorModelProvider,
-        payload.validatorModelId,
-        undefined,
-        undefined,
-        projectId,
-      );
-
-      // Optimistically update parent with returned tasks
-      if (onTasksUpdated && result.updated.length > 0) {
-        onTasksUpdated(result.updated);
+      const updatedTasks: Task[] = [];
+      if (Object.keys(payload).length > 1) {
+        const result = await batchUpdateTaskModels(
+          payload.taskIds,
+          payload.modelProvider,
+          payload.modelId,
+          payload.validatorModelProvider,
+          payload.validatorModelId,
+          undefined,
+          undefined,
+          projectId,
+        );
+        updatedTasks.push(...result.updated);
       }
 
-      addToast(`Updated ${result.count} task${result.count === 1 ? "" : "s"}`, "success");
+      if (hasNodeChange) {
+        for (const taskId of nodeEligibleTaskIds) {
+          const updated = await updateTask(taskId, { nodeId: bulkNodeId === "" ? null : bulkNodeId } as never, projectId);
+          updatedTasks.push(updated);
+        }
+      }
+
+      if (onTasksUpdated && updatedTasks.length > 0) {
+        onTasksUpdated(updatedTasks);
+      }
+
+      const updatedCount = Object.keys(payload).length > 1
+        ? taskIds.length
+        : hasNodeChange
+          ? nodeEligibleTaskIds.length
+          : taskIds.length;
+      const skippedIds = activeTasks.map((task) => task.id);
+      if (hasNodeChange && skippedIds.length > 0) {
+        addToast(
+          `Updated ${updatedCount} task${updatedCount === 1 ? "" : "s"}. Skipped active tasks: ${skippedIds.join(", ")}`,
+          "warning",
+        );
+      } else {
+        addToast(`Updated ${updatedCount} task${updatedCount === 1 ? "" : "s"}`, "success");
+      }
 
       // Reset state
       clearSelection();
       setExecutorModel("__no_change__");
       setValidatorModel("__no_change__");
+      setBulkNodeId("__no_change__");
     } catch (err) {
       addToast(getErrorMessage(err) || "Failed to update models", "error");
     } finally {
       setIsApplying(false);
     }
-  }, [selectedTaskIds, tasks, executorModel, validatorModel, projectId, addToast, clearSelection, onTasksUpdated]);
+  }, [selectedTaskIds, tasks, executorModel, validatorModel, bulkNodeId, projectId, addToast, clearSelection, onTasksUpdated]);
 
   const handleRowClick = useCallback(
     (task: Task) => {
@@ -681,7 +733,7 @@ export function ListView({
         {/* Bulk Edit Toolbar */}
         {selectedTaskIds.size > 0 && availableModels && availableModels.length > 0 && (
           <div className="bulk-edit-toolbar">
-            <span className="bulk-edit-label">Bulk Edit Models:</span>
+            <span className="bulk-edit-label">Bulk Edit Models &amp; Node:</span>
             <div className="bulk-edit-dropdown">
               <CustomModelDropdown
                 models={availableModels}
@@ -710,10 +762,19 @@ export function ListView({
                 onToggleModelFavorite={onToggleModelFavorite}
               />
             </div>
+            <div className="bulk-edit-dropdown">
+              <select className="select" value={bulkNodeId} onChange={(e) => setBulkNodeId(e.target.value)}>
+                <option value="__no_change__">Node: No change</option>
+                <option value="">Node: Clear override</option>
+                {nodes.map((node) => (
+                  <option key={node.id} value={node.id}>{node.name} ({getNodeStatusLabel(node.status)})</option>
+                ))}
+              </select>
+            </div>
             <button
               className="btn btn-primary btn-sm bulk-edit-apply-btn"
               onClick={handleApplyBulkUpdate}
-              disabled={isApplying || (executorModel === "__no_change__" && validatorModel === "__no_change__")}
+              disabled={isApplying || (executorModel === "__no_change__" && validatorModel === "__no_change__" && bulkNodeId === "__no_change__")}
             >
               {isApplying ? "Applying..." : "Apply"}
             </button>

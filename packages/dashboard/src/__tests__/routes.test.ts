@@ -3059,6 +3059,73 @@ describe("PATCH /tasks/:id", () => {
     expect(res.body.dependencies).toEqual(["FN-002"]);
   });
 
+  it("returns 409 when changing nodeId on an in-progress task", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "KB-001",
+      column: "in-progress",
+      nodeId: "node-old",
+    });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({ nodeId: "node-xyz" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("in progress");
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("allows changing nodeId on a todo task", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "KB-001",
+      column: "todo",
+    });
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, nodeId: "node-xyz" });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({ nodeId: "node-xyz" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { nodeId: "node-xyz" });
+  });
+
+  it("allows clearing nodeId on a todo task", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "KB-001",
+      column: "todo",
+      nodeId: "node-old",
+    });
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, nodeId: undefined });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({ nodeId: null }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { nodeId: null });
+  });
+
+  it("returns 409 when clearing nodeId on an in-progress task", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "KB-001",
+      column: "in-progress",
+      nodeId: "node-old",
+    });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({ nodeId: null }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("in progress");
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
   it("forwards sourceIssue object updates to store.updateTask", async () => {
     const sourceIssue = {
       provider: "github",
