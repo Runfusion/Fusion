@@ -2266,6 +2266,32 @@ export async function aiMergeTask(
   //
   // Controlled by `settings.worktreeRebaseBeforeMerge` (default true) and
   // `settings.worktreeRebaseRemote` (empty → use repo's default remote).
+  //
+  // For "smart-prefer-main" we treat a rebase abort as a hard error: a stale
+  // branch base means the -X ours fallback can silently re-add code that main
+  // recently deleted (the merge sees branch additions vs main deletions as
+  // non-conflicting). Track here and throw outside the catch wrapper.
+  //
+  // We also surface silent-skip cases (no remote, no worktreePath) as
+  // warnings so they're observable in logs even when prefer-main can't
+  // strictly enforce its semantics.
+  let rebaseHappened = false;
+  let preferMainRebaseFailureMessage: string | undefined;
+  // Semantic guard: prefer-main + rebase explicitly disabled is incoherent —
+  // the strategy depends on the rebase to honor main's deletions. Fail fast
+  // before we waste work attempting a merge that can't deliver its promise.
+  if (
+    settings.worktreeRebaseBeforeMerge === false
+    && mergeConflictStrategy === "smart-prefer-main"
+  ) {
+    throw new Error(
+      `Incompatible settings for ${taskId}: mergeConflictStrategy="smart-prefer-main" ` +
+      `requires worktreeRebaseBeforeMerge to remain enabled. The strategy relies on ` +
+      `rebasing the branch onto current main to preserve main's deletions; with rebase ` +
+      `disabled it can silently re-introduce branch-only content. Re-enable ` +
+      `worktreeRebaseBeforeMerge or switch to "smart-prefer-branch" / "ai-only".`,
+    );
+  }
   if (settings.worktreeRebaseBeforeMerge !== false) {
     try {
       // Resolve which remote to fetch. An explicit setting wins; otherwise
@@ -2330,6 +2356,7 @@ export async function aiMergeTask(
           if (worktreePath) {
             throwIfAborted(options.signal, taskId);
             await execAsync(`git rebase "${remoteRef}"`, { cwd: worktreePath });
+            rebaseHappened = true;
             mergerLog.log(`${taskId}: rebased ${branch} onto ${remoteRef}`);
 
             // Stage 2: also rebase onto rootDir's local HEAD when enabled.
@@ -2356,7 +2383,13 @@ export async function aiMergeTask(
                   if (!alreadyContains) {
                     throwIfAborted(options.signal, taskId);
                     await execAsync(`git rebase "${localHead}"`, { cwd: worktreePath });
+                    rebaseHappened = true;
                     mergerLog.log(`${taskId}: rebased ${branch} onto local HEAD ${localHead.slice(0, 8)}`);
+                  } else {
+                    // Already contains current main — branch is up-to-date,
+                    // so prefer-main semantics are satisfied even without a
+                    // fresh rebase command running.
+                    rebaseHappened = true;
                   }
                 }
               } catch (localRebaseErr) {
@@ -2367,6 +2400,13 @@ export async function aiMergeTask(
                   await execAsync("git rebase --abort", { cwd: worktreePath });
                 } catch (abortError: unknown) {
                   mergerLog.warn(`${taskId}: failed to abort local-HEAD rebase: ${getCommandErrorMessage(abortError)}`);
+                }
+                // Strict prefer-main semantics: a stale branch base means main's
+                // deletions can be silently re-added by the -X ours fallback.
+                // Record so we can throw after the outer catch.
+                if (mergeConflictStrategy === "smart-prefer-main") {
+                  preferMainRebaseFailureMessage =
+                    `Pre-merge rebase onto local HEAD aborted (${lmsg})`;
                 }
               }
             }
@@ -2383,6 +2423,11 @@ export async function aiMergeTask(
             } catch (abortError: unknown) {
               mergerLog.warn(`${taskId}: failed to abort pre-merge rebase: ${getCommandErrorMessage(abortError)}`);
             }
+          }
+          // See above: prefer-main semantics require a successful rebase.
+          if (mergeConflictStrategy === "smart-prefer-main") {
+            preferMainRebaseFailureMessage =
+              `Pre-merge rebase onto remote main aborted (${msg})`;
           }
         }
       }
@@ -2412,7 +2457,10 @@ export async function aiMergeTask(
         if (!alreadyContains) {
           throwIfAborted(options.signal, taskId);
           await execAsync(`git rebase "${localHead}"`, { cwd: worktreePath });
+          rebaseHappened = true;
           mergerLog.log(`${taskId}: rebased ${branch} onto local HEAD ${localHead.slice(0, 8)} (remote rebase disabled)`);
+        } else {
+          rebaseHappened = true;
         }
       }
     } catch (localOnlyErr) {
@@ -2424,7 +2472,36 @@ export async function aiMergeTask(
       } catch (abortError: unknown) {
         mergerLog.warn(`${taskId}: failed to abort local-HEAD rebase: ${getCommandErrorMessage(abortError)}`);
       }
+      if (mergeConflictStrategy === "smart-prefer-main") {
+        preferMainRebaseFailureMessage =
+          `Pre-merge local-HEAD rebase aborted (${msg})`;
+      }
     }
+  }
+
+  // Hard-fail prefer-main when a rebase started and aborted: a stale branch
+  // base means the -X ours fallback can silently re-introduce branch-only
+  // content that main recently deleted.
+  if (preferMainRebaseFailureMessage) {
+    throw new Error(
+      `${preferMainRebaseFailureMessage} for ${taskId}. ` +
+      `Strategy "smart-prefer-main" requires a successful rebase to preserve main's deletions; ` +
+      `falling through to a -X ours merge would silently re-introduce branch-only content. ` +
+      `Resolve the rebase conflict manually, or switch mergeConflictStrategy to ` +
+      `"smart-prefer-branch" / "ai-only".`,
+    );
+  }
+  // Silent-skip observability: when prefer-main couldn't run a rebase at all
+  // (no remote resolvable, no worktreePath), warn loudly so the gap is visible
+  // in logs. Not a hard fail — environmental skips are common in tests and
+  // some setups, and would cause too much breakage to enforce here. Production
+  // monitoring can alert on this warning.
+  if (mergeConflictStrategy === "smart-prefer-main" && !rebaseHappened) {
+    mergerLog.warn(
+      `${taskId}: smart-prefer-main ran without a successful pre-merge rebase ` +
+      `(${worktreePath ? "no remote resolvable or rebase disabled" : "no worktreePath"}). ` +
+      `Main's deletions may not be preserved if the branch re-introduces them.`,
+    );
   }
 
   // 4. Gather context for the agent (used in all attempts)

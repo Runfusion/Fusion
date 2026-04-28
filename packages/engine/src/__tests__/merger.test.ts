@@ -578,6 +578,11 @@ describe("aiMergeTask — pre-merge rebase abort observability", () => {
       { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
       [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
+    // Fall-through is only allowed for prefer-branch; prefer-main hard-fails (see test below).
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeConflictStrategy: "smart-prefer-branch",
+    });
 
     mockedExecSync.mockImplementation((cmd: any) => {
       const cmdStr = String(cmd);
@@ -624,6 +629,10 @@ describe("aiMergeTask — pre-merge rebase abort observability", () => {
       { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
       [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeConflictStrategy: "smart-prefer-branch",
+    });
 
     const warnSpy = vi.spyOn(mergerLog, "warn");
     const abortFailureMessage = "fatal: no rebase in progress";
@@ -666,6 +675,63 @@ describe("aiMergeTask — pre-merge rebase abort observability", () => {
     expect(mockedExecSync.mock.calls.some(([command]) => String(command).includes("merge --squash"))).toBe(true);
 
     warnSpy.mockRestore();
+  });
+
+  it("hard-fails when prefer-main is paired with worktreeRebaseBeforeMerge=false", async () => {
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeConflictStrategy: "smart-prefer-main",
+      worktreeRebaseBeforeMerge: false,
+    });
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git rev-parse --abbrev-ref")) return "main" as any;
+      return Buffer.from("");
+    });
+
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(
+      /Incompatible settings.*smart-prefer-main.*worktreeRebaseBeforeMerge/i,
+    );
+  });
+
+  it("hard-fails when smart-prefer-main rebase aborts (no silent fall-through)", async () => {
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeConflictStrategy: "smart-prefer-main",
+    });
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git symbolic-ref --short HEAD")) return "main" as any;
+      if (cmdStr.includes("git rev-parse --abbrev-ref origin/HEAD")) return "origin/main" as any;
+      if (cmdStr === "git rev-parse --abbrev-ref HEAD") return "main" as any;
+      if (cmdStr.includes("git config --get branch.main.remote")) return "origin" as any;
+      if (cmdStr === 'git fetch "origin"') return Buffer.from("");
+      if (cmdStr === 'git rebase "origin/main"') {
+        throw new Error("pre-merge rebase conflict");
+      }
+      if (cmdStr === "git rebase --abort") return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(
+      /smart-prefer-main.*rebase/i,
+    );
+    // Critical: the unsafe -X ours fallback must not have run.
+    expect(
+      mockedExec.mock.calls.some(([command]) => String(command).includes("merge -X ours")),
+    ).toBe(false);
   });
 });
 
