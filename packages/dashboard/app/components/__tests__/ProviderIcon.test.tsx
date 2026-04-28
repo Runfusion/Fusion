@@ -570,4 +570,49 @@ describe("ProviderIcon", () => {
       unmount();
     }
   });
+
+  // ── pi-ai catalog gap fills (Cerebras, Groq, Vercel) and aliases for
+  // existing icons (minimax-cn, azure-openai-responses, google-gemini-cli,
+  // opencode-go).
+
+  it("renders Cerebras icon for cerebras provider", () => {
+    render(<ProviderIcon provider="cerebras" />);
+    expect(screen.getByTestId("cerebras-icon")).toBeInTheDocument();
+  });
+
+  it("renders Groq icon for groq provider", () => {
+    render(<ProviderIcon provider="groq" />);
+    expect(screen.getByTestId("groq-icon")).toBeInTheDocument();
+  });
+
+  it("renders Vercel icon for vercel and vercel-ai-gateway", () => {
+    for (const provider of ["vercel", "vercel-ai-gateway"]) {
+      const { unmount } = render(<ProviderIcon provider={provider} />);
+      expect(screen.getByTestId("vercel-icon")).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("aliases minimax-cn to the MiniMax icon", () => {
+    render(<ProviderIcon provider="minimax-cn" />);
+    expect(screen.getByTestId("minimax-icon")).toBeInTheDocument();
+  });
+
+  it("aliases azure-openai-responses to the Azure icon", () => {
+    render(<ProviderIcon provider="azure-openai-responses" />);
+    expect(screen.getByTestId("azure-icon")).toBeInTheDocument();
+  });
+
+  it("aliases google-gemini-cli and google-generative-ai to the Gemini icon", () => {
+    for (const provider of ["google-gemini-cli", "google-generative-ai"]) {
+      const { unmount } = render(<ProviderIcon provider={provider} />);
+      expect(screen.getByTestId("gemini-icon")).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("aliases opencode-go to the Opencode icon", () => {
+    render(<ProviderIcon provider="opencode-go" />);
+    expect(screen.getByTestId("opencode-icon")).toBeInTheDocument();
+  });
 });
