@@ -13,8 +13,7 @@ import {
   fetchMemoryFiles,
   fetchMemoryFile,
   saveMemoryFile,
-  fetchAutomations,
-  runAutomation,
+  triggerMemoryDreams,
   installQmd,
   testMemoryRetrieval,
   type MemoryAuditReport,
@@ -526,13 +525,7 @@ export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryData
   const triggerDreamNow = useCallback(async () => {
     setDreamRunning(true);
     try {
-      const automations = await fetchAutomations({ scope: "project", projectId });
-      const memoryDreamsSchedule = automations.find((automation) => automation.name === "Memory Dreams");
-      if (!memoryDreamsSchedule) {
-        throw new Error("Memory Dreams schedule not found. Enable dream processing in memory settings first.");
-      }
-
-      return await runAutomation(memoryDreamsSchedule.id, { scope: "project", projectId });
+      return await triggerMemoryDreams(projectId);
     } finally {
       setDreamRunning(false);
     }

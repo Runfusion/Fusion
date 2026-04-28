@@ -13,7 +13,9 @@ import {
   isQmdAvailable,
   listMemoryBackendTypes,
   listProjectMemoryFiles,
+  processAgentMemoryDreams,
   processAndAuditInsightExtraction,
+  processMemoryDreams,
   readInsightsMemory,
   readMemory,
   readProjectMemoryFile,
@@ -23,6 +25,7 @@ import {
   scheduleQmdProjectMemoryRefresh,
   searchProjectMemory,
   syncBackupRoutine,
+  type DreamPromptExecutor,
   type ModelPreset,
   type PiExtensionSettings,
   validateBackupDir,
@@ -994,6 +997,94 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       }
 
       rethrowAsApiError(err, "Failed to compact memory");
+    }
+  });
+
+  /**
+   * POST /api/memory/dream
+   * Trigger manual memory dream processing for project and agent memories.
+   */
+  router.post("/memory/dream", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      const rootDir = scopedStore.getRootDir();
+
+      if (!settings.memoryDreamsEnabled) {
+        throw new ApiError(400, "Memory dreams are disabled. Enable dream processing in memory settings first.");
+      }
+
+      const resolvedProvider =
+        (settings.titleSummarizerProvider && settings.titleSummarizerModelId ? settings.titleSummarizerProvider : undefined) ||
+        (settings.planningProvider && settings.planningModelId ? settings.planningProvider : undefined) ||
+        (settings.defaultProvider && settings.defaultModelId ? settings.defaultProvider : undefined);
+
+      const resolvedModelId =
+        (settings.titleSummarizerProvider && settings.titleSummarizerModelId ? settings.titleSummarizerModelId : undefined) ||
+        (settings.planningProvider && settings.planningModelId ? settings.planningModelId : undefined) ||
+        (settings.defaultProvider && settings.defaultModelId ? settings.defaultModelId : undefined);
+
+      const executePrompt: DreamPromptExecutor = async (prompt: string) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let session: any = null;
+        try {
+          await initCreateFnAgentForInsights();
+          if (!createFnAgentForInsights) {
+            throw new ApiError(503, "AI service unavailable for dream processing");
+          }
+
+          const agentResult = await createFnAgentForInsights({
+            cwd: rootDir,
+            tools: "readonly",
+            defaultProvider: resolvedProvider,
+            defaultModelId: resolvedModelId,
+            systemPrompt: "You are a helpful AI assistant that synthesizes memory into durable insights.",
+          });
+
+          if (!agentResult?.session) {
+            throw new ApiError(503, "Failed to initialize AI agent for dream processing");
+          }
+
+          session = agentResult.session;
+          return await session.prompt(prompt);
+        } finally {
+          if (session) {
+            try {
+              session.dispose();
+            } catch {
+              // Ignore disposal errors
+            }
+          }
+        }
+      };
+
+      const projectResult = await processMemoryDreams(rootDir, executePrompt);
+
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+      const agents = await agentStore.listAgents();
+
+      const agentResults = await processAgentMemoryDreams(rootDir, agents, executePrompt);
+
+      const summary = `Processed project dreams (dreams written: ${projectResult.dreams ? 1 : 0}, long-term updates: ${projectResult.longTermUpdates ? 1 : 0}) and ${agentResults.length} agent dream(s).`;
+
+      res.json({
+        success: true,
+        summary,
+        dreamsWritten: !!projectResult.dreams,
+        longTermUpdatesWritten: !!projectResult.longTermUpdates,
+      });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+
+      if (err instanceof Error && err.name === "AiServiceError") {
+        throw new ApiError(503, err.message || "AI service unavailable for dream processing");
+      }
+
+      rethrowAsApiError(err, "Failed to process memory dreams");
     }
   });
 

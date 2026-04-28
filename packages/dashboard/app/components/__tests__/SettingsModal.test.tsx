@@ -40,8 +40,7 @@ const mockRegenerateRemotePersistentToken = vi.fn();
 const mockGenerateShortLivedRemoteToken = vi.fn();
 const mockFetchRemoteQr = vi.fn();
 const mockFetchRemoteUrl = vi.fn();
-const mockFetchAutomations = vi.fn();
-const mockRunAutomation = vi.fn();
+const mockTriggerMemoryDreams = vi.fn();
 const mockUseWorkspaceFileBrowser = vi.fn();
 
 vi.mock("../../api", () => ({
@@ -80,8 +79,7 @@ vi.mock("../../api", () => ({
   generateShortLivedRemoteToken: (...args: unknown[]) => mockGenerateShortLivedRemoteToken(...args),
   fetchRemoteQr: (...args: unknown[]) => mockFetchRemoteQr(...args),
   fetchRemoteUrl: (...args: unknown[]) => mockFetchRemoteUrl(...args),
-  fetchAutomations: (...args: unknown[]) => mockFetchAutomations(...args),
-  runAutomation: (...args: unknown[]) => mockRunAutomation(...args),
+  triggerMemoryDreams: (...args: unknown[]) => mockTriggerMemoryDreams(...args),
 }));
 
 // Mock the hook
@@ -268,8 +266,7 @@ describe("SettingsModal", () => {
     mockGenerateShortLivedRemoteToken.mockResolvedValue({ token: "short", expiresAt: new Date(Date.now() + 60000).toISOString(), ttlMs: 60000 });
     mockFetchRemoteQr.mockResolvedValue({ url: "https://remote.example.com", tokenType: "persistent", expiresAt: null, format: "image/svg", data: "<svg></svg>" });
     mockFetchRemoteUrl.mockResolvedValue({ url: "https://remote.example.com", tokenType: "persistent", expiresAt: null });
-    mockFetchAutomations.mockResolvedValue([]);
-    mockRunAutomation.mockResolvedValue({ schedule: { id: "auto-2", name: "Memory Dreams" }, result: { success: true } });
+    mockTriggerMemoryDreams.mockResolvedValue({ success: true, summary: "done" });
     mockUseWorkspaceFileBrowser.mockReturnValue({
       entries: [],
       currentPath: ".",
@@ -1753,7 +1750,7 @@ describe("SettingsModal", () => {
         memoryEnabled: true,
         memoryDreamsEnabled: true,
       });
-      mockFetchAutomations.mockResolvedValueOnce([{ id: "auto-2", name: "Memory Dreams" }]);
+      mockTriggerMemoryDreams.mockResolvedValueOnce({ success: true, summary: "done" });
 
       renderModal({ addToast });
       await waitForSettingsModalReady();
@@ -1762,8 +1759,7 @@ describe("SettingsModal", () => {
       await userEvent.click(await screen.findByRole("button", { name: "Dream Now" }));
 
       await waitFor(() => {
-        expect(mockFetchAutomations).toHaveBeenCalledWith({ scope: "project", projectId: undefined });
-        expect(mockRunAutomation).toHaveBeenCalledWith("auto-2", { scope: "project", projectId: undefined });
+        expect(mockTriggerMemoryDreams).toHaveBeenCalledWith(undefined);
       });
       expect(addToast).toHaveBeenCalledWith("Dream processing completed", "success");
     });

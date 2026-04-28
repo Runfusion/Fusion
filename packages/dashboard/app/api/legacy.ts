@@ -632,6 +632,25 @@ export function compactMemory(
   });
 }
 
+/**
+ * Trigger manual memory dream processing.
+ * Synthesizes daily notes into dreams and promotes durable lessons to long-term memory.
+ *
+ * @param projectId - Optional project ID for multi-project support
+ * @returns Promise resolving to dream processing result
+ */
+export function triggerMemoryDreams(projectId?: string): Promise<{
+  success: boolean;
+  summary?: string;
+  dreamsWritten?: boolean;
+  longTermUpdatesWritten?: boolean;
+  error?: string;
+}> {
+  return api(withProjectId("/memory/dream", projectId), {
+    method: "POST",
+  });
+}
+
 /** Memory audit report type (mirrors @fusion/core MemoryAuditReport) */
 export interface MemoryAuditReport {
   generatedAt: string;

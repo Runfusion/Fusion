@@ -125,6 +125,7 @@ vi.mock("@fusion/engine", () => ({
 }));
 
 import { AgentStore, isGhAvailable, isGhAuthenticated } from "@fusion/core";
+import { createFnAgent } from "@fusion/engine";
 
 const mockIsGhAvailable = vi.mocked(isGhAvailable);
 const mockIsGhAuthenticated = vi.mocked(isGhAuthenticated);
@@ -14824,6 +14825,126 @@ describe("POST /api/memory/compact", () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toContain("read-only");
+  });
+});
+
+describe("POST /api/memory/dream", () => {
+  let store: TaskStore;
+  let rootDir: string;
+
+  beforeEach(() => {
+    rootDir = mkdtempSync(join(tmpdir(), "fusion-memory-dream-"));
+    mkdirSync(join(rootDir, ".fusion", "memory"), { recursive: true });
+    writeFileSync(join(rootDir, ".fusion", "memory", "MEMORY.md"), "# Memory\n\nLong-term context");
+    writeFileSync(join(rootDir, ".fusion", "memory", `${new Date().toISOString().slice(0, 10)}.md`), "# Daily Memory\n\n- notable note");
+
+    store = createMockStore({
+      getRootDir: vi.fn().mockReturnValue(rootDir),
+      getFusionDir: vi.fn().mockReturnValue(join(rootDir, ".fusion")),
+      getSettings: vi.fn().mockResolvedValue({
+        memoryEnabled: true,
+        memoryDreamsEnabled: true,
+        memoryBackendType: "file",
+      }),
+    });
+
+    vi.spyOn(AgentStore.prototype, "init").mockResolvedValue(undefined);
+    vi.spyOn(AgentStore.prototype, "listAgents").mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    rmSync(rootDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("returns 200 with dream results on success", async () => {
+    vi.mocked(createFnAgent).mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue("## DREAMS\nSynthesis\n\n## LONG_TERM_UPDATES\nLesson"),
+        dispose: vi.fn(),
+      },
+    } as never);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/memory/dream", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      success: true,
+      dreamsWritten: true,
+      longTermUpdatesWritten: true,
+    });
+  });
+
+  it("returns 200 with empty results when no daily notes to process", async () => {
+    writeFileSync(join(rootDir, ".fusion", "memory", `${new Date().toISOString().slice(0, 10)}.md`), "");
+    vi.mocked(createFnAgent).mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue("## DREAMS\n\n## LONG_TERM_UPDATES\n"),
+        dispose: vi.fn(),
+      },
+    } as never);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/memory/dream", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      success: true,
+      dreamsWritten: false,
+      longTermUpdatesWritten: false,
+    });
+  });
+
+  it("returns 400 when dreams are disabled in settings", async () => {
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      memoryEnabled: true,
+      memoryDreamsEnabled: false,
+      memoryBackendType: "file",
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/memory/dream", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Memory dreams are disabled");
+  });
+
+  it("returns 503 when AI service is unavailable", async () => {
+    vi.mocked(createFnAgent).mockRejectedValue(Object.assign(new Error("AI down"), { name: "AiServiceError" }));
+
+    const res = await REQUEST(buildApp(), "POST", "/api/memory/dream", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toContain("AI");
+  });
+
+  it("returns 500 on unexpected processing failure", async () => {
+    vi.mocked(createFnAgent).mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockRejectedValue(new Error("boom")),
+        dispose: vi.fn(),
+      },
+    } as never);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/memory/dream", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain("boom");
   });
 });
 
