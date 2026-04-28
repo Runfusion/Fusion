@@ -93,6 +93,8 @@ vi.mock("lucide-react", async (importOriginal) => {
     Globe: () => <span data-testid="icon-globe" />,
     Folder: () => <span data-testid="icon-folder" />,
     RefreshCw: ({ className }: { className?: string }) => <span data-testid="icon-refresh" className={className} />,
+    Star: ({ size }: { size?: number }) => <span data-testid="icon-star" style={{ width: size, height: size }} />,
+    HelpCircle: ({ size }: { size?: number }) => <span data-testid="icon-help-circle" style={{ width: size, height: size }} />,
   };
 });
 

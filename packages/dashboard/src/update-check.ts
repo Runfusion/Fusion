@@ -3,8 +3,12 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const CACHE_FILENAME = "update-check.json";
-const CHECK_TTL_MS = 24 * 60 * 60 * 1000;
 const REGISTRY_URL = "https://registry.npmjs.org/@runfusion%2Ffusion";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Allowed update-check cadences from GlobalSettings. */
+export type UpdateCheckFrequency = "manual" | "on-startup" | "daily" | "weekly";
 
 export type UpdateCheckResult = {
   currentVersion: string;
@@ -13,6 +17,24 @@ export type UpdateCheckResult = {
   lastChecked: number;
   error?: string;
 };
+
+/**
+ * Cache TTL in ms for the given frequency. Frequencies that don't expire by
+ * elapsed time (`manual`, `on-startup`) return Infinity — those modes rely on
+ * external triggers (the `/refresh` endpoint or a server-startup hook).
+ */
+export function ttlForFrequency(frequency: UpdateCheckFrequency | undefined): number {
+  switch (frequency) {
+    case "manual":
+    case "on-startup":
+      return Number.POSITIVE_INFINITY;
+    case "weekly":
+      return 7 * DAY_MS;
+    case "daily":
+    default:
+      return DAY_MS;
+  }
+}
 
 function getCachePath(fusionDir: string): string {
   return join(fusionDir, CACHE_FILENAME);
@@ -54,6 +76,19 @@ function isValidResult(value: unknown): value is UpdateCheckResult {
   );
 }
 
+/**
+ * Tracks whether we've refreshed the cache during the current process
+ * lifetime. Used to implement `on-startup` frequency: the first /update-check
+ * after server boot bypasses the cache; subsequent calls within the same
+ * process return whatever was just written.
+ */
+let hasRefreshedThisProcess = false;
+
+/** Test-only hook to reset the per-process startup flag. */
+export function __resetStartupRefreshFlag(): void {
+  hasRefreshedThisProcess = false;
+}
+
 export function readCachedUpdateCheck(fusionDir: string): UpdateCheckResult | null {
   try {
     const raw = readFileSync(getCachePath(fusionDir), "utf-8");
@@ -68,12 +103,45 @@ export async function clearUpdateCheckCache(fusionDir: string): Promise<void> {
   await rm(getCachePath(fusionDir), { force: true });
 }
 
-export async function performUpdateCheck(fusionDir: string, currentVersion: string): Promise<UpdateCheckResult> {
+export async function performUpdateCheck(
+  fusionDir: string,
+  currentVersion: string,
+  options: { frequency?: UpdateCheckFrequency; force?: boolean } = {},
+): Promise<UpdateCheckResult> {
   const now = Date.now();
   const cached = readCachedUpdateCheck(fusionDir);
+  const ttl = ttlForFrequency(options.frequency);
+  const cacheStillFresh = cached && now - cached.lastChecked < ttl;
 
-  if (cached && now - cached.lastChecked < CHECK_TTL_MS) {
+  // `on-startup`: refresh exactly once per process lifetime; afterwards
+  // serve the freshly-written cache for the rest of the run.
+  if (
+    !options.force &&
+    options.frequency === "on-startup" &&
+    hasRefreshedThisProcess &&
+    cached
+  ) {
     return cached;
+  }
+
+  if (!options.force && options.frequency !== "on-startup" && cacheStillFresh) {
+    return cached;
+  }
+
+  // For `manual`, never go to the network on a regular check — only the
+  // `/update-check/refresh` endpoint (which sets `force: true`) should.
+  // Return whatever's in the cache so the UI can still display the last
+  // known result; if there's nothing cached, return a no-op disabled-style
+  // payload.
+  if (!options.force && options.frequency === "manual") {
+    return (
+      cached ?? {
+        currentVersion,
+        latestVersion: null,
+        updateAvailable: false,
+        lastChecked: now,
+      }
+    );
   }
 
   try {
@@ -97,6 +165,7 @@ export async function performUpdateCheck(fusionDir: string, currentVersion: stri
     await mkdir(fusionDir, { recursive: true });
     await writeFile(getCachePath(fusionDir), JSON.stringify(result, null, 2), "utf-8");
 
+    hasRefreshedThisProcess = true;
     return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

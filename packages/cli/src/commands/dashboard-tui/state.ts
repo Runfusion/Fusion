@@ -318,6 +318,14 @@ export interface InteractiveData {
   };
 }
 
+// ── Update check status (surfaced in the TUI header/splash) ──────────────────
+
+export interface UpdateStatus {
+  updateAvailable: boolean;
+  currentVersion: string;
+  latestVersion: string;
+}
+
 // ── Dashboard state (mutable, shared between controller and App) ───────────────
 
 export interface DashboardState {
@@ -341,6 +349,7 @@ export interface DashboardState {
   interactiveInputLocked: boolean;
   autoKillVitestOnPressure: boolean;
   vitestKillThreshold: number;
+  updateStatus: UpdateStatus | null;
 }
 
 export const SECTION_ORDER: SectionId[] = ["system", "logs", "utilities", "stats", "settings"];
@@ -367,5 +376,6 @@ export function createInitialState(): DashboardState {
     interactiveInputLocked: false,
     autoKillVitestOnPressure: true,
     vitestKillThreshold: 0.9,
+    updateStatus: null,
   };
 }

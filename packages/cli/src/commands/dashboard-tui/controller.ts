@@ -2,6 +2,7 @@ import os from "node:os";
 import v8 from "node:v8";
 import { execSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
+import { getCachedUpdateStatus } from "../../update-cache.js";
 
 const TUI_DEBUG_LOG = process.env.FUSION_TUI_DEBUG_LOG;
 function tuiDebug(tag: string, data: Record<string, unknown>): void {
@@ -25,6 +26,7 @@ import type {
   DashboardState,
   InteractiveData,
   InteractiveView,
+  UpdateStatus,
 } from "./state.js";
 import { SECTION_ORDER } from "./state.js";
 
@@ -74,6 +76,7 @@ export class DashboardTUI {
   interactiveData: InteractiveData | null = null;
   interactiveView: InteractiveView = "board";
   interactiveInputLocked = false;
+  updateStatus: UpdateStatus | null = null;
 
   // Subscribers registered by the Ink App component.
   private subscribers: Set<() => void> = new Set();
@@ -112,6 +115,17 @@ export class DashboardTUI {
 
   constructor() {
     this.logBuffer = new LogRingBuffer();
+    // Read the update-check cache synchronously at construction time so the
+    // splash screen and status bar can render the notice immediately, without
+    // any network access.
+    const cached = getCachedUpdateStatus();
+    if (cached) {
+      this.updateStatus = {
+        updateAvailable: cached.updateAvailable,
+        currentVersion: cached.currentVersion,
+        latestVersion: cached.latestVersion,
+      };
+    }
   }
 
   // ── Subscription API (for Ink App) ────────────────────────────────────────
@@ -144,6 +158,7 @@ export class DashboardTUI {
       interactiveInputLocked: this.interactiveInputLocked,
       autoKillVitestOnPressure: this.autoKillVitestOnPressure,
       vitestKillThreshold: this.vitestKillThreshold,
+      updateStatus: this.updateStatus,
     };
     return this.cachedSnapshot;
   }
@@ -350,6 +365,11 @@ export class DashboardTUI {
   setInteractiveInputLocked(locked: boolean): void {
     if (this.interactiveInputLocked === locked) return;
     this.interactiveInputLocked = locked;
+    this.notify();
+  }
+
+  setUpdateStatus(status: UpdateStatus | null): void {
+    this.updateStatus = status;
     this.notify();
   }
 

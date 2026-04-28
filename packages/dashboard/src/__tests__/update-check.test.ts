@@ -7,6 +7,8 @@ import {
   clearUpdateCheckCache,
   performUpdateCheck,
   readCachedUpdateCheck,
+  ttlForFrequency,
+  __resetStartupRefreshFlag,
   type UpdateCheckResult,
 } from "../update-check.js";
 
@@ -127,6 +129,113 @@ describe("update-check", () => {
     await writeFile(join(fusionDir, "update-check.json"), JSON.stringify(value), "utf-8");
 
     expect(readCachedUpdateCheck(fusionDir)).toEqual(value);
+  });
+
+  describe("frequency", () => {
+    beforeEach(() => {
+      __resetStartupRefreshFlag();
+    });
+
+    it("ttlForFrequency: maps frequencies to expected windows", () => {
+      const day = 24 * 60 * 60 * 1000;
+      expect(ttlForFrequency(undefined)).toBe(day);
+      expect(ttlForFrequency("daily")).toBe(day);
+      expect(ttlForFrequency("weekly")).toBe(7 * day);
+      expect(ttlForFrequency("manual")).toBe(Number.POSITIVE_INFINITY);
+      expect(ttlForFrequency("on-startup")).toBe(Number.POSITIVE_INFINITY);
+    });
+
+    it("weekly: serves cache for up to 7 days, refetches on day 8", async () => {
+      // Day-6 cache: weekly should still serve it
+      const cached: UpdateCheckResult = {
+        currentVersion: "0.6.0",
+        latestVersion: "0.7.0",
+        updateAvailable: true,
+        lastChecked: Date.now() - 6 * 24 * 60 * 60 * 1000,
+      };
+      await writeFile(join(fusionDir, "update-check.json"), JSON.stringify(cached), "utf-8");
+
+      const fetchSpy = vi.fn();
+      vi.stubGlobal("fetch", fetchSpy);
+
+      const result = await performUpdateCheck(fusionDir, "0.6.0", { frequency: "weekly" });
+      expect(result).toEqual(cached);
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      // Day-8 cache: weekly should refetch
+      await writeFile(
+        join(fusionDir, "update-check.json"),
+        JSON.stringify({ ...cached, lastChecked: Date.now() - 8 * 24 * 60 * 60 * 1000 }),
+        "utf-8",
+      );
+      fetchSpy.mockResolvedValueOnce({
+        json: async () => ({ "dist-tags": { latest: "0.9.0" } }),
+      });
+      const refetched = await performUpdateCheck(fusionDir, "0.6.0", { frequency: "weekly" });
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      expect(refetched.latestVersion).toBe("0.9.0");
+    });
+
+    it("manual: never hits the network unless force=true, returns cached or empty", async () => {
+      const fetchSpy = vi.fn();
+      vi.stubGlobal("fetch", fetchSpy);
+
+      // No cache → returns synthetic empty result without fetching.
+      const empty = await performUpdateCheck(fusionDir, "0.6.0", { frequency: "manual" });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(empty.latestVersion).toBeNull();
+      expect(empty.updateAvailable).toBe(false);
+
+      // With cache → returns cache without fetching even if "stale" by daily standards.
+      const cached: UpdateCheckResult = {
+        currentVersion: "0.6.0",
+        latestVersion: "0.7.0",
+        updateAvailable: true,
+        lastChecked: Date.now() - 30 * 24 * 60 * 60 * 1000,
+      };
+      await writeFile(join(fusionDir, "update-check.json"), JSON.stringify(cached), "utf-8");
+      const fromCache = await performUpdateCheck(fusionDir, "0.6.0", { frequency: "manual" });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(fromCache).toEqual(cached);
+
+      // force=true (used by /update-check/refresh) overrides manual.
+      fetchSpy.mockResolvedValueOnce({
+        json: async () => ({ "dist-tags": { latest: "1.0.0" } }),
+      });
+      const forced = await performUpdateCheck(fusionDir, "0.6.0", {
+        frequency: "manual",
+        force: true,
+      });
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      expect(forced.latestVersion).toBe("1.0.0");
+    });
+
+    it("on-startup: refreshes once per process, then serves cache", async () => {
+      const fetchSpy = vi.fn().mockResolvedValue({
+        json: async () => ({ "dist-tags": { latest: "0.8.0" } }),
+      });
+      vi.stubGlobal("fetch", fetchSpy);
+
+      // First call within the process: hits the network, writes cache.
+      const first = await performUpdateCheck(fusionDir, "0.6.0", { frequency: "on-startup" });
+      expect(first.latestVersion).toBe("0.8.0");
+      expect(fetchSpy).toHaveBeenCalledOnce();
+
+      // Subsequent call: serves the just-written cache, no network.
+      const second = await performUpdateCheck(fusionDir, "0.6.0", { frequency: "on-startup" });
+      expect(second.latestVersion).toBe("0.8.0");
+      expect(fetchSpy).toHaveBeenCalledOnce();
+
+      // Reset the per-process flag (simulates a fresh server boot) → next
+      // call refreshes again.
+      __resetStartupRefreshFlag();
+      fetchSpy.mockResolvedValueOnce({
+        json: async () => ({ "dist-tags": { latest: "0.9.0" } }),
+      });
+      const afterReboot = await performUpdateCheck(fusionDir, "0.6.0", { frequency: "on-startup" });
+      expect(afterReboot.latestVersion).toBe("0.9.0");
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("persists fetched results to the cache file", async () => {

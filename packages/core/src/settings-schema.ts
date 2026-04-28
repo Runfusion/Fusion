@@ -30,6 +30,8 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   favoriteModels: undefined,
   openrouterModelSync: true,
   updateCheckEnabled: true,
+  updateCheckFrequency: "daily",
+  showGitHubStarButton: true,
   modelOnboardingComplete: undefined,
   useClaudeCli: undefined,
   // Global baseline lanes for per-role model selection

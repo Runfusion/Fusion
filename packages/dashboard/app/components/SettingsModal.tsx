@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense, type MouseEvent } from "react";
-import { Globe, Folder, RefreshCw } from "lucide-react";
+import { Globe, Folder, RefreshCw, Star, HelpCircle } from "lucide-react";
 import { THINKING_LEVELS, isGlobalSettingsKey, isProjectSettingsKey, getErrorMessage } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, AgentPromptsConfig, ThinkingLevel } from "@fusion/core";
 import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, fetchGitRemotesDetailed, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, updateRemoteSettings, fetchRemoteStatus, activateRemoteProvider, startRemoteTunnel, stopRemoteTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteQr, fetchRemoteUrl } from "../api";
@@ -23,6 +23,97 @@ import { ProviderIcon } from "./ProviderIcon";
 import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPresets";
 import { appendTokenQuery } from "../auth";
 import { useConfirm } from "../hooks/useConfirm";
+
+// ---------------------------------------------------------------------------
+// GitHub star count — fetched once per session, cached in localStorage (1 h).
+// ---------------------------------------------------------------------------
+const GITHUB_STAR_CACHE_KEY = "fusion_github_star_count";
+const GITHUB_STAR_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const GITHUB_STAR_CLICKED_KEY = "fusion:github-star-clicked";
+
+/**
+ * Has the user already clicked the "Star on GitHub" button at any point in
+ * the past? Used to permanently hide the button afterward — clicking opens
+ * the repo where the actual star happens, so we treat that click as intent
+ * to star and stop nagging.
+ */
+function useStarClickedFlag(): [boolean, () => void] {
+  const [clicked, setClicked] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(GITHUB_STAR_CLICKED_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+  const markClicked = useCallback(() => {
+    setClicked(true);
+    try {
+      localStorage.setItem(GITHUB_STAR_CLICKED_KEY, "true");
+    } catch {
+      // quota / private mode — best-effort
+    }
+  }, []);
+  return [clicked, markClicked];
+}
+
+interface StarCache {
+  count: number;
+  fetchedAt: number;
+}
+
+function useGitHubStarCount(): number | null {
+  const [count, setCount] = useState<number | null>(() => {
+    try {
+      const raw = localStorage.getItem(GITHUB_STAR_CACHE_KEY);
+      if (raw) {
+        const parsed: StarCache = JSON.parse(raw) as StarCache;
+        if (Date.now() - parsed.fetchedAt < GITHUB_STAR_CACHE_TTL_MS) {
+          return parsed.count;
+        }
+      }
+    } catch {
+      // ignore malformed cache
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    // If we already have a fresh count from the initial state, skip the fetch.
+    try {
+      const raw = localStorage.getItem(GITHUB_STAR_CACHE_KEY);
+      if (raw) {
+        const parsed: StarCache = JSON.parse(raw) as StarCache;
+        if (Date.now() - parsed.fetchedAt < GITHUB_STAR_CACHE_TTL_MS) {
+          return;
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    fetch("https://api.github.com/repos/Runfusion/Fusion")
+      .then((res) => {
+        if (!res.ok) return;
+        return res.json() as Promise<{ stargazers_count?: number }>;
+      })
+      .then((data) => {
+        if (data && typeof data.stargazers_count === "number") {
+          const cache: StarCache = { count: data.stargazers_count, fetchedAt: Date.now() };
+          try {
+            localStorage.setItem(GITHUB_STAR_CACHE_KEY, JSON.stringify(cache));
+          } catch {
+            // quota exceeded — just skip
+          }
+          setCount(data.stargazers_count);
+        }
+      })
+      .catch(() => {
+        // Network failure — hide count gracefully, no update
+      });
+  }, []);
+
+  return count;
+}
 
 /**
  * Settings sections configuration.
@@ -235,6 +326,8 @@ export function SettingsModal({
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [updateCheckLoading, setUpdateCheckLoading] = useState(false);
   const [updateCheckResult, setUpdateCheckResult] = useState<UpdateCheckResponse | null>(null);
+  const gitHubStarCount = useGitHubStarCount();
+  const [starClicked, markStarClicked] = useStarClickedFlag();
   const [prefixError, setPrefixError] = useState<string | null>(null);
   const [overlapPathPickerIndex, setOverlapPathPickerIndex] = useState<number | null>(null);
 
@@ -1410,6 +1503,23 @@ export function SettingsModal({
               </label>
               <small>Show the floating chat button in the dashboard. Chat is still accessible from the Chat tab in the mobile navigation.</small>
             </div>
+            <div className="form-group">
+              <label htmlFor="showGitHubStarButton" className="checkbox-label">
+                <input
+                  id="showGitHubStarButton"
+                  type="checkbox"
+                  checked={form.showGitHubStarButton !== false}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, showGitHubStarButton: e.target.checked }))
+                  }
+                />
+                Show &quot;Star on GitHub&quot; button in Settings header
+              </label>
+              <small>
+                Once you click the Star button it&apos;s hidden automatically. Uncheck this to keep
+                it hidden even before clicking.
+              </small>
+            </div>
           </>
         );
       case "global-models": {
@@ -1609,8 +1719,37 @@ export function SettingsModal({
                 Check for updates automatically
               </label>
               <small>
-                When enabled, Fusion checks npm daily for new versions of{" "}
+                When enabled, Fusion checks npm for new versions of{" "}
                 <code>@runfusion/fusion</code> and shows update notices in the CLI and dashboard.
+                Cadence is governed by the frequency below.
+              </small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="updateCheckFrequency">Frequency</label>
+              <select
+                id="updateCheckFrequency"
+                value={form.updateCheckFrequency ?? "daily"}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    updateCheckFrequency: e.target.value as
+                      | "manual"
+                      | "on-startup"
+                      | "daily"
+                      | "weekly",
+                  }))
+                }
+                disabled={form.updateCheckEnabled === false}
+              >
+                <option value="manual">Manual only — never auto-check</option>
+                <option value="on-startup">On startup — once per server launch</option>
+                <option value="daily">Daily (recommended)</option>
+                <option value="weekly">Weekly</option>
+              </select>
+              <small>
+                Controls how often the dashboard re-fetches the npm registry. The
+                &quot;Check Now&quot; button below always triggers an immediate fetch
+                regardless of this setting.
               </small>
             </div>
             <div className="form-group">
@@ -1648,11 +1787,6 @@ export function SettingsModal({
               </div>
               <small>Manually check for the latest version right now.</small>
             </div>
-            <p className="settings-note">
-              Update frequency control (on-startup / daily / weekly) is not yet configurable here
-              — it requires a backend schema addition to <code>GlobalSettings</code>. The toggle
-              above enables or disables the daily automatic check entirely.
-            </p>
           </>
         );
       }
@@ -4179,6 +4313,42 @@ export function SettingsModal({
                 </span>
               )}
             </div>
+          </div>
+          <div className="settings-header-actions">
+            {form.showGitHubStarButton !== false && !starClicked && (
+              <a
+                href="https://github.com/Runfusion/Fusion"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="settings-github-star-btn"
+                aria-label="Star Fusion on GitHub"
+                title="Star Fusion on GitHub"
+                onClick={markStarClicked}
+              >
+                <span className="settings-github-star-btn__action">
+                  <Star size={13} aria-hidden="true" />
+                  Star
+                </span>
+                {gitHubStarCount !== null && (
+                  <span className="settings-github-star-btn__count" aria-label={`${gitHubStarCount.toLocaleString()} stars`}>
+                    {gitHubStarCount >= 1000
+                      ? `${(gitHubStarCount / 1000).toFixed(1)}k`
+                      : gitHubStarCount.toLocaleString()}
+                  </span>
+                )}
+              </a>
+            )}
+            <a
+              href="https://github.com/Runfusion/Fusion/discussions"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-sm"
+              aria-label="Help and discussions"
+              title="Help and discussions"
+            >
+              <HelpCircle size={13} aria-hidden="true" />
+              Help
+            </a>
           </div>
           <button className="modal-close" onClick={onClose} aria-label="Close">
             &times;

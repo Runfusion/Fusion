@@ -66,30 +66,95 @@
   position: absolute;
   z-index: 2;
   background: transparent;
+  /* Faint accent line appears on hover to indicate resizability */
+  transition: background var(--transition-fast);
 }
 
+/* Edge handles */
 .quick-chat-resize-handle[data-resize-direction="n"] {
-  cursor: ns-resize;
+  cursor: n-resize;
   top: 0;
-  left: 6px;
-  right: 6px;
+  left: 10px;
+  right: 10px;
   height: 6px;
 }
 
-.quick-chat-resize-handle[data-resize-direction="w"] {
-  cursor: ew-resize;
-  top: 6px;
-  left: 0;
-  bottom: 6px;
+.quick-chat-resize-handle[data-resize-direction="s"] {
+  cursor: s-resize;
+  bottom: 0;
+  left: 10px;
+  right: 10px;
+  height: 6px;
+}
+
+.quick-chat-resize-handle[data-resize-direction="e"] {
+  cursor: e-resize;
+  top: 10px;
+  right: 0;
+  bottom: 10px;
   width: 6px;
 }
 
+.quick-chat-resize-handle[data-resize-direction="w"] {
+  cursor: w-resize;
+  top: 10px;
+  left: 0;
+  bottom: 10px;
+  width: 6px;
+}
+
+/* Corner handles */
 .quick-chat-resize-handle[data-resize-direction="nw"] {
-  cursor: nwse-resize;
+  cursor: nw-resize;
   top: 0;
   left: 0;
   width: 10px;
   height: 10px;
+}
+
+.quick-chat-resize-handle[data-resize-direction="ne"] {
+  cursor: ne-resize;
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+}
+
+.quick-chat-resize-handle[data-resize-direction="sw"] {
+  cursor: sw-resize;
+  bottom: 0;
+  left: 0;
+  width: 10px;
+  height: 10px;
+}
+
+.quick-chat-resize-handle[data-resize-direction="se"] {
+  cursor: se-resize;
+  bottom: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+}
+
+/* Subtle hover accent on edge handles */
+.quick-chat-resize-handle[data-resize-direction="n"]:hover,
+.quick-chat-resize-handle[data-resize-direction="s"]:hover {
+  background: linear-gradient(
+    to bottom,
+    transparent 30%,
+    color-mix(in srgb, var(--border) 60%, transparent) 50%,
+    transparent 70%
+  );
+}
+
+.quick-chat-resize-handle[data-resize-direction="e"]:hover,
+.quick-chat-resize-handle[data-resize-direction="w"]:hover {
+  background: linear-gradient(
+    to right,
+    transparent 30%,
+    color-mix(in srgb, var(--border) 60%, transparent) 50%,
+    transparent 70%
+  );
 }
 
 .quick-chat-panel-header {
