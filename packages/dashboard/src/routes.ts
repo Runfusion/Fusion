@@ -52,14 +52,14 @@ const BUNDLED_PLUGIN_RUNTIMES: Array<{
     runtimeId: hermesRuntimeMetadata.runtimeId,
     name: hermesRuntimeMetadata.name,
     ...(hermesRuntimeMetadata.description ? { description: hermesRuntimeMetadata.description } : {}),
-    version: hermesRuntimeMetadata.version,
+    version: hermesRuntimeMetadata.version ?? "0.0.0",
   },
   {
     pluginId: "fusion-plugin-openclaw-runtime",
     runtimeId: openclawRuntimeMetadata.runtimeId,
     name: openclawRuntimeMetadata.name,
     ...(openclawRuntimeMetadata.description ? { description: openclawRuntimeMetadata.description } : {}),
-    version: openclawRuntimeMetadata.version,
+    version: openclawRuntimeMetadata.version ?? "0.0.0",
   },
   {
     pluginId: "fusion-plugin-paperclip-runtime",
