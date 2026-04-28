@@ -41,6 +41,12 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
+  /* Establish an inline-size container so the value can scale itself to
+     the metric's actual width — keeps long token counts (8-10+ digits with
+     thousand separators) inside the box on narrow grid columns. */
+  container-type: inline-size;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .task-token-stats-panel__label {
@@ -52,9 +58,20 @@
 
 .task-token-stats-panel__value {
   font-family: var(--font-mono);
-  font-size: calc(var(--space-lg) + var(--space-xs));
+  /* Fluid size: scales with the metric's container width so values are as
+     large as they can be without overflowing the box. The cqw factor is
+     tuned so a 10-digit comma-separated count (e.g. 1,234,567,890) at the
+     monospace width still fits inside the metric's padded inline area;
+     the ceiling lets short values look bold without becoming oversized. */
+  font-size: clamp(13px, 13cqw, 28px);
   color: var(--text);
   font-weight: 700;
+  min-width: 0;
+  /* Safety net: if a value somehow exceeds the calculated width (e.g. a
+     non-digit unit suffix in formatDuration), break instead of overflowing. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.15;
 }
 
 .task-token-stats-panel__timestamps {
