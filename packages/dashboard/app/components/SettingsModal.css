@@ -683,9 +683,12 @@
 
 /* === Auth Provider Cards === */
 
-/* Horizontal gutter wrapper for the auth section body, matching form-group padding */
+/* Horizontal gutter wrapper for the auth section body. Tighter than the
+   default form-group gutter so each provider card gets more horizontal room
+   — the cards are dense enough that the wider --space-xl gutter wasted
+   visible width without any visual benefit. */
 .auth-panel-body {
-  padding-inline: var(--space-xl);
+  padding-inline: var(--space-md);
 }
 
 .auth-section-hint {

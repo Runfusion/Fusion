@@ -17,7 +17,10 @@
   border-radius: var(--radius-lg);
   width: 100%;
   max-width: calc(var(--space-xl) * 21 + var(--space-md));
+  /* Use dvh so iOS Safari's collapsing URL bar doesn't push the footer
+     under the address bar. The vh fallback keeps older browsers working. */
   max-height: calc(100vh - (var(--space-xl) + var(--space-lg)));
+  max-height: calc(100dvh - (var(--space-xl) + var(--space-lg)));
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -536,4 +539,60 @@
   padding: var(--space-sm) 0;
 }
 
+/* === Mobile: fullscreen + scroll === */
+@media (max-width: 768px) {
+  /* Drop the overlay padding so the dialog can fill the viewport edge-to-edge.
+     The desktop padding (20px on all sides) + max-height clamp left ~40px of
+     unusable gutter on phones and pushed the body content off-screen on
+     small devices when the URL bar was visible. */
+  .agent-dialog-overlay {
+    padding: 0;
+    align-items: stretch;
+    justify-content: stretch;
+  }
 
+  .agent-dialog {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+  }
+
+  /* Tighter chrome leaves more room for the scrollable body. */
+  .agent-dialog-header,
+  .agent-dialog-footer {
+    padding: var(--space-md) var(--space-md);
+  }
+
+  .agent-dialog-steps {
+    padding: var(--space-sm) var(--space-md);
+    /* Allow the step rail to scroll horizontally on very narrow phones
+       instead of overflowing the dialog. */
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+
+  .agent-dialog-body {
+    padding: var(--space-md);
+    /* Already overflow-y: auto, but lock the scroll inside the body so iOS
+       doesn't bubble it up to the page and trap the user above the footer. */
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Stack the footer buttons full-width — primary on top, cancel below.
+     On phones the side-by-side layout truncates labels and pushes Cancel
+     off-screen when the dialog edge meets the safe-area inset. */
+  .agent-dialog-footer {
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  .agent-dialog-footer > .btn {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}

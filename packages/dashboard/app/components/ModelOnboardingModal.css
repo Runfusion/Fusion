@@ -1226,10 +1226,23 @@
 
 @media (max-width: 768px) {
   .model-onboarding-modal {
-    max-width: 100%;
-    width: 100%;
-    max-height: 100dvh;
+    /* Reset the desktop min-width/min-height — they pin the modal at 640×480
+       and force horizontal overflow on phones (≤414px). The fullscreen
+       width/height below then take effect normally.
+       !important is required because useModalResizePersist writes inline
+       width/height from previously-saved desktop sessions, and inline styles
+       would otherwise win over the media query and re-pin the modal at e.g.
+       1100px on a 375px phone. */
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: 100vw !important;
+    width: 100vw !important;
+    max-height: 100dvh !important;
+    height: 100dvh !important;
     border-radius: 0;
+    /* Disable the desktop resize grip on mobile — it's useless at fullscreen
+       and the resize handle bleeds outside the safe area. */
+    resize: none;
   }
 
   .model-onboarding-header {
