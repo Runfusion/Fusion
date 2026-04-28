@@ -500,7 +500,7 @@ describe("GET /api/plugins/runtimes", () => {
     return app;
   }
 
-  it("returns plugin runtime metadata with 200 status", async () => {
+  it("returns plugin runtime metadata with 200 status, with installed entries overriding bundled fallbacks by runtimeId", async () => {
     const pluginLoader = {
       getPluginRuntimes: () => [
         {
@@ -521,22 +521,29 @@ describe("GET /api/plugins/runtimes", () => {
     const res = await GET(buildApp(pluginLoader), "/api/plugins/runtimes");
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual([
-      {
-        pluginId: "plugin-openclaw",
-        runtimeId: "openclaw",
-        name: "OpenClaw Runtime",
-        description: "Executes OpenClaw prompts",
-        version: "1.2.3",
-      },
-    ]);
+    const body = res.body as Array<{ pluginId: string; runtimeId: string }>;
+    // Installed runtime appears first and shadows the bundled openclaw entry.
+    expect(body[0]).toEqual({
+      pluginId: "plugin-openclaw",
+      runtimeId: "openclaw",
+      name: "OpenClaw Runtime",
+      description: "Executes OpenClaw prompts",
+      version: "1.2.3",
+    });
+    const ids = body.map((r) => r.runtimeId);
+    expect(ids).toContain("hermes");
+    expect(ids).toContain("paperclip");
+    // Only one openclaw entry (installed wins over bundled).
+    expect(ids.filter((id) => id === "openclaw")).toHaveLength(1);
   });
 
-  it("returns an empty array with 200 status when plugin runtimes are unavailable", async () => {
+  it("returns the bundled plugin runtime fallbacks when no plugins are installed", async () => {
     const res = await GET(buildApp(), "/api/plugins/runtimes");
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual([]);
+    const body = res.body as Array<{ pluginId: string; runtimeId: string }>;
+    const ids = body.map((r) => r.runtimeId).sort();
+    expect(ids).toEqual(["hermes", "openclaw", "paperclip"]);
   });
 });
 

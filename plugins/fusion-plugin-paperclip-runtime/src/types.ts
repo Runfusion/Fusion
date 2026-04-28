@@ -52,6 +52,16 @@ export interface PaperclipSession {
   goalId?: string;
   /** Set by the adapter on first prompt in `rolling-issue` mode; reused thereafter. */
   issueId?: string;
+  /**
+   * Resolved transport for this session — copied from the runtime config so
+   * `promptWithFallback` can route createIssue/getIssue through `paperclipai`
+   * when the user picked the Local CLI tab in settings.
+   */
+  transport: PaperclipTransport;
+  /** Optional override for the paperclipai binary; used when transport=cli. */
+  cliBinaryPath?: string;
+  /** Optional override for the paperclipai instance config path. */
+  cliConfigPath?: string;
   /** Incremented per prompt. Combined with sessionId to form an idempotency key. */
   turnIndex: number;
   /** Hard cap for a single wakeup-run polling loop. */

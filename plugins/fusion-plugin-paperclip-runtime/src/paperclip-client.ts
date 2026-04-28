@@ -894,6 +894,275 @@ export async function mintAgentApiKeyViaCli(opts: MintCliKeyOptions): Promise<Mi
 }
 
 // ---------------------------------------------------------------------------
+// CLI-backed discovery / probing
+//
+// In "Local CLI" mode the dashboard shouldn't make HTTP calls itself —
+// instead it shells out to `paperclipai`, which carries the user's CLI
+// context (profile, api-base, agent key) from `paperclipai onboard`.
+// ---------------------------------------------------------------------------
+
+interface CliJsonOptions {
+  cliBinaryPath?: string;
+  cliConfigPath?: string;
+  cliTimeoutMs?: number;
+}
+
+function remapSpawnError(err: unknown, bin: string): Error {
+  const code = (err as NodeJS.ErrnoException)?.code;
+  if (code === "ENOENT") {
+    return new Error(
+      `paperclipai binary not found at ${bin}; install via \`npm i -g paperclipai\``,
+    );
+  }
+  return err instanceof Error ? err : new Error(String(err));
+}
+
+async function spawnPaperclipCliJson<T = unknown>(
+  args: string[],
+  opts: CliJsonOptions,
+): Promise<T> {
+  const { spawn } = await import("node:child_process");
+  const bin = opts.cliBinaryPath ?? "paperclipai";
+  const fullArgs = [...args, "--json"];
+  if (opts.cliConfigPath) {
+    fullArgs.push("--config", opts.cliConfigPath);
+  }
+  const timeoutMs = opts.cliTimeoutMs ?? 15_000;
+  const label = ["paperclipai", ...args].join(" ");
+
+  return new Promise<T>((resolve, reject) => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(bin, fullArgs, { stdio: ["ignore", "pipe", "pipe"] });
+    } catch (err) {
+      reject(remapSpawnError(err, bin));
+      return;
+    }
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrLines: string[] = [];
+    let killed = false;
+
+    const timer = setTimeout(() => {
+      killed = true;
+      child.kill("SIGKILL");
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      const lines = chunk.toString("utf-8").split("\n");
+      for (const line of lines) {
+        const stripped = stripAnsi(line).trim();
+        if (stripped) stderrLines.push(stripped);
+      }
+    });
+
+    child.on("error", (err: NodeJS.ErrnoException) => {
+      clearTimeout(timer);
+      reject(remapSpawnError(err, bin));
+    });
+
+    child.on("close", (code: number | null) => {
+      clearTimeout(timer);
+      if (killed) return;
+
+      const cleaned = stripAnsi(
+        Buffer.concat(stdoutChunks).toString("utf-8"),
+      ).trim();
+
+      if (code !== 0) {
+        const lastErr = stderrLines.filter(Boolean).pop() ?? "";
+        reject(
+          new Error(
+            lastErr ? `${label} exited ${code}: ${lastErr}` : `${label} exited ${code}`,
+          ),
+        );
+        return;
+      }
+      if (!cleaned) {
+        reject(new Error(`${label} produced no output`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(cleaned) as T);
+      } catch {
+        reject(
+          new Error(`${label} returned non-JSON output: ${cleaned.slice(0, 200)}`),
+        );
+      }
+    });
+  });
+}
+
+/**
+ * Lists companies by spawning `paperclipai company list --json`.
+ * The CLI uses its onboarded context (profile / api-base / api-key), so this
+ * works without the dashboard knowing the api URL or key.
+ */
+export async function listCompaniesViaCli(
+  opts: CliJsonOptions,
+): Promise<PaperclipCompanySummary[]> {
+  const raw = await spawnPaperclipCliJson<unknown>(["company", "list"], opts);
+  if (!Array.isArray(raw)) return [];
+  const out: PaperclipCompanySummary[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const r = entry as Record<string, unknown>;
+    const id = typeof r.id === "string" ? r.id : undefined;
+    if (!id) continue;
+    const name = typeof r.name === "string" ? r.name : id;
+    const urlKey =
+      typeof r.urlKey === "string"
+        ? r.urlKey
+        : typeof r.slug === "string"
+          ? r.slug
+          : undefined;
+    out.push({ id, name, urlKey });
+  }
+  return out;
+}
+
+/**
+ * Lists agents in a company via `paperclipai agent list -C <id> --json`.
+ */
+export async function listCompanyAgentsViaCli(
+  opts: CliJsonOptions & { companyId: string },
+): Promise<PaperclipAgentSummary[]> {
+  const raw = await spawnPaperclipCliJson<unknown>(
+    ["agent", "list", "--company-id", opts.companyId],
+    opts,
+  );
+  if (!Array.isArray(raw)) return [];
+  const out: PaperclipAgentSummary[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const r = entry as Record<string, unknown>;
+    const id = typeof r.id === "string" ? r.id : undefined;
+    if (!id) continue;
+    const name = typeof r.name === "string" ? r.name : id;
+    const role = typeof r.role === "string" ? r.role : undefined;
+    const cId = typeof r.companyId === "string" ? r.companyId : opts.companyId;
+    const status = typeof r.status === "string" ? r.status : undefined;
+    out.push({ id, name, role, companyId: cId, status });
+  }
+  return out;
+}
+
+/**
+ * Creates a Paperclip issue via `paperclipai issue create -C <id> --json`.
+ * Mirrors the HTTP `createIssue` shape: returns the created issue record.
+ */
+export async function createIssueViaCli(
+  opts: CliJsonOptions & { companyId: string; body: CreateIssueBody },
+): Promise<Record<string, unknown>> {
+  const args = ["issue", "create", "--company-id", opts.companyId];
+  args.push("--title", opts.body.title);
+  if (opts.body.description) args.push("--description", opts.body.description);
+  if (opts.body.status) args.push("--status", opts.body.status);
+  if (opts.body.assigneeAgentId)
+    args.push("--assignee-agent-id", opts.body.assigneeAgentId);
+  if (opts.body.parentId) args.push("--parent-id", opts.body.parentId);
+  if (opts.body.projectId) args.push("--project-id", opts.body.projectId);
+  if (opts.body.goalId) args.push("--goal-id", opts.body.goalId);
+  const raw = await spawnPaperclipCliJson<Record<string, unknown>>(args, opts);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(
+      `paperclipai issue create returned unexpected payload: ${JSON.stringify(raw).slice(0, 200)}`,
+    );
+  }
+  return raw;
+}
+
+/**
+ * Fetches a single issue via `paperclipai issue get <id> --json`.
+ */
+export async function getIssueViaCli(
+  opts: CliJsonOptions & { issueId: string },
+): Promise<Record<string, unknown>> {
+  const raw = await spawnPaperclipCliJson<Record<string, unknown>>(
+    ["issue", "get", opts.issueId],
+    opts,
+  );
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(
+      `paperclipai issue get returned unexpected payload: ${JSON.stringify(raw).slice(0, 200)}`,
+    );
+  }
+  return raw;
+}
+
+/**
+ * Looks up a single agent's identity via `paperclipai agent get <id> --json`.
+ *
+ * The HTTP `agentsMe` derives the *self* identity of an agent API key; the CLI
+ * doesn't have that endpoint, so the caller must already know the agent id
+ * (typically picked in the settings card).
+ */
+export async function agentsMeViaCli(
+  opts: CliJsonOptions & { agentId: string },
+): Promise<AgentsMeResponse> {
+  const raw = await spawnPaperclipCliJson<Record<string, unknown>>(
+    ["agent", "get", opts.agentId],
+    opts,
+  );
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(
+      `paperclipai agent get returned unexpected payload: ${JSON.stringify(raw).slice(0, 200)}`,
+    );
+  }
+  const id = typeof raw.id === "string" ? raw.id : undefined;
+  const cId = typeof raw.companyId === "string" ? raw.companyId : undefined;
+  if (!id || !cId) {
+    throw new Error(
+      "paperclipai agent get returned a response missing `id` or `companyId`",
+    );
+  }
+  return {
+    agentId: id,
+    agentName: typeof raw.name === "string" ? raw.name : id,
+    role: typeof raw.role === "string" ? raw.role : undefined,
+    companyId: cId,
+    companyName:
+      typeof raw.companyName === "string" ? raw.companyName : undefined,
+  };
+}
+
+/**
+ * "Test" a Paperclip connection through the local CLI. We treat a successful
+ * `paperclipai company list --json` as proof that the binary is installed,
+ * the CLI context is configured, and the server is reachable.
+ *
+ * Identity is intentionally not populated: the CLI represents a board user,
+ * not a single agent — the agent picker handles per-agent identity later.
+ */
+export async function probePaperclipViaCli(
+  opts: CliJsonOptions,
+): Promise<PaperclipConnectionStatus> {
+  const started = Date.now();
+  let apiUrl = "(via paperclipai CLI)";
+  try {
+    const disc = await discoverPaperclipCliConfig({ configPath: opts.cliConfigPath });
+    if (disc.ok) apiUrl = disc.apiUrl;
+  } catch {
+    // best-effort
+  }
+  try {
+    await spawnPaperclipCliJson<unknown>(["company", "list"], opts);
+    return { available: true, apiUrl, probeDurationMs: Date.now() - started };
+  } catch (err) {
+    return {
+      available: false,
+      apiUrl,
+      reason: err instanceof Error ? err.message : String(err),
+      probeDurationMs: Date.now() - started,
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Legacy probe (used by index.ts onLoad)
 // ---------------------------------------------------------------------------
 

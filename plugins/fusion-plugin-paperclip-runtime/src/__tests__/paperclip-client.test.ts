@@ -1,13 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   agentsMe,
+  agentsMeViaCli,
   createIssue,
+  createIssueViaCli,
   getIssue,
   getIssueComments,
+  getIssueViaCli,
   getRunEvents,
+  listCompaniesViaCli,
   listCompanyAgents,
+  listCompanyAgentsViaCli,
   mintAgentApiKeyViaCli,
   probePaperclipConnection,
+  probePaperclipViaCli,
   resolvePaperclipConfig,
   wakeAgent,
 } from "../paperclip-client.js";
@@ -487,5 +493,258 @@ describe("mintAgentApiKeyViaCli", () => {
     ).rejects.toThrow(/non-JSON output/i);
 
     vi.doUnmock("node:child_process");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CLI-backed variants — createIssueViaCli, getIssueViaCli, agentsMeViaCli,
+// listCompaniesViaCli, listCompanyAgentsViaCli, probePaperclipViaCli.
+//
+// All of these spawn `paperclipai … --json`; we mock node:child_process the
+// same way the mintAgentApiKeyViaCli suite does and assert both the argv we
+// pass to the CLI and the parsed return shape.
+// ---------------------------------------------------------------------------
+
+interface FakeSpawnHandle {
+  stdoutChunks: string[];
+  stderrChunks: string[];
+  exitCode: number | null;
+  errorOnSpawn?: NodeJS.ErrnoException;
+}
+
+async function withFakeSpawn<T>(
+  handle: FakeSpawnHandle,
+  run: (spawnMock: ReturnType<typeof vi.fn>) => Promise<T>,
+): Promise<T> {
+  const { EventEmitter } = await import("node:events");
+  const { Readable } = await import("node:stream");
+
+  const fakeChild = new EventEmitter() as ReturnType<
+    typeof import("node:child_process").spawn
+  >;
+  (fakeChild as unknown as Record<string, unknown>).stdout = Readable.from(
+    handle.stdoutChunks.map((c) => Buffer.from(c)),
+  );
+  (fakeChild as unknown as Record<string, unknown>).stderr = Readable.from(
+    handle.stderrChunks.map((c) => Buffer.from(c)),
+  );
+  (fakeChild as unknown as Record<string, unknown>).kill = vi.fn();
+
+  const spawnMock = vi.fn().mockReturnValue(fakeChild);
+  vi.doMock("node:child_process", () => ({ spawn: spawnMock }));
+
+  // Wait for the spawn caller to attach `close`/`error` listeners before
+  // emitting — `probePaperclipViaCli` does an extra filesystem await before
+  // spawning, so emitting eagerly via setImmediate races the listener
+  // registration and never fires.
+  const tryEmit = () => {
+    if (
+      fakeChild.listenerCount("close") > 0 ||
+      fakeChild.listenerCount("error") > 0
+    ) {
+      if (handle.errorOnSpawn) {
+        fakeChild.emit("error", handle.errorOnSpawn);
+      } else {
+        fakeChild.emit("close", handle.exitCode ?? 0);
+      }
+      return;
+    }
+    setImmediate(tryEmit);
+  };
+  setImmediate(tryEmit);
+
+  try {
+    return await run(spawnMock);
+  } finally {
+    vi.doUnmock("node:child_process");
+  }
+}
+
+describe("createIssueViaCli", () => {
+  it("spawns `paperclipai issue create` with the right argv and parses JSON", async () => {
+    const created = { id: "ISS-1", status: "todo" };
+    await withFakeSpawn(
+      { stdoutChunks: [JSON.stringify(created)], stderrChunks: [], exitCode: 0 },
+      async (spawnMock) => {
+        const r = await createIssueViaCli({
+          companyId: "CO-1",
+          body: {
+            title: "Hello",
+            description: "Body",
+            status: "todo",
+            assigneeAgentId: "AG-1",
+            parentId: "ISS-0",
+            projectId: "PR-1",
+            goalId: "GO-1",
+          },
+          cliBinaryPath: "/opt/bin/paperclipai",
+          cliConfigPath: "/cfg.json",
+        });
+        expect(r.id).toBe("ISS-1");
+        const argv = spawnMock.mock.calls[0]![1] as string[];
+        expect(spawnMock.mock.calls[0]![0]).toBe("/opt/bin/paperclipai");
+        expect(argv).toEqual([
+          "issue",
+          "create",
+          "--company-id",
+          "CO-1",
+          "--title",
+          "Hello",
+          "--description",
+          "Body",
+          "--status",
+          "todo",
+          "--assignee-agent-id",
+          "AG-1",
+          "--parent-id",
+          "ISS-0",
+          "--project-id",
+          "PR-1",
+          "--goal-id",
+          "GO-1",
+          "--json",
+          "--config",
+          "/cfg.json",
+        ]);
+      },
+    );
+  });
+
+  it("rejects when the CLI returns a non-object payload", async () => {
+    await withFakeSpawn(
+      { stdoutChunks: ["[1,2,3]"], stderrChunks: [], exitCode: 0 },
+      async () => {
+        await expect(
+          createIssueViaCli({
+            companyId: "CO-1",
+            body: { title: "x", description: "y", status: "todo", assigneeAgentId: "a" },
+          }),
+        ).rejects.toThrow(/unexpected payload/i);
+      },
+    );
+  });
+});
+
+describe("getIssueViaCli", () => {
+  it("spawns `paperclipai issue get <id>` and returns the parsed object", async () => {
+    const issue = { id: "ISS-1", status: "in_progress" };
+    await withFakeSpawn(
+      { stdoutChunks: [JSON.stringify(issue)], stderrChunks: [], exitCode: 0 },
+      async (spawnMock) => {
+        const r = await getIssueViaCli({ issueId: "ISS-1" });
+        expect(r.status).toBe("in_progress");
+        const argv = spawnMock.mock.calls[0]![1] as string[];
+        expect(argv.slice(0, 3)).toEqual(["issue", "get", "ISS-1"]);
+        expect(argv).toContain("--json");
+      },
+    );
+  });
+});
+
+describe("agentsMeViaCli", () => {
+  it("returns identity from `paperclipai agent get <id> --json`", async () => {
+    const agent = {
+      id: "AG-1",
+      name: "Bot",
+      role: "engineer",
+      companyId: "CO-1",
+      companyName: "Acme",
+    };
+    await withFakeSpawn(
+      { stdoutChunks: [JSON.stringify(agent)], stderrChunks: [], exitCode: 0 },
+      async () => {
+        const r = await agentsMeViaCli({ agentId: "AG-1" });
+        expect(r).toEqual({
+          agentId: "AG-1",
+          agentName: "Bot",
+          role: "engineer",
+          companyId: "CO-1",
+          companyName: "Acme",
+        });
+      },
+    );
+  });
+
+  it("throws when payload is missing required fields", async () => {
+    await withFakeSpawn(
+      { stdoutChunks: ['{"name":"orphan"}'], stderrChunks: [], exitCode: 0 },
+      async () => {
+        await expect(agentsMeViaCli({ agentId: "AG-1" })).rejects.toThrow(
+          /missing `id` or `companyId`/i,
+        );
+      },
+    );
+  });
+});
+
+describe("listCompaniesViaCli / listCompanyAgentsViaCli", () => {
+  it("listCompaniesViaCli projects array entries", async () => {
+    const payload = [
+      { id: "CO-1", name: "Acme", urlKey: "acme" },
+      { id: "CO-2", name: "Beta" },
+    ];
+    await withFakeSpawn(
+      { stdoutChunks: [JSON.stringify(payload)], stderrChunks: [], exitCode: 0 },
+      async (spawnMock) => {
+        const r = await listCompaniesViaCli({});
+        expect(r).toEqual([
+          { id: "CO-1", name: "Acme", urlKey: "acme" },
+          { id: "CO-2", name: "Beta", urlKey: undefined },
+        ]);
+        expect(spawnMock.mock.calls[0]![1]).toEqual([
+          "company",
+          "list",
+          "--json",
+        ]);
+      },
+    );
+  });
+
+  it("listCompanyAgentsViaCli passes --company-id and projects entries", async () => {
+    const payload = [{ id: "AG-1", name: "Bot", role: "engineer", companyId: "CO-1" }];
+    await withFakeSpawn(
+      { stdoutChunks: [JSON.stringify(payload)], stderrChunks: [], exitCode: 0 },
+      async (spawnMock) => {
+        const r = await listCompanyAgentsViaCli({ companyId: "CO-1" });
+        expect(r).toEqual([
+          { id: "AG-1", name: "Bot", role: "engineer", companyId: "CO-1", status: undefined },
+        ]);
+        expect(spawnMock.mock.calls[0]![1]).toEqual([
+          "agent",
+          "list",
+          "--company-id",
+          "CO-1",
+          "--json",
+        ]);
+      },
+    );
+  });
+});
+
+describe("probePaperclipViaCli", () => {
+  it("returns available:true when `company list` succeeds", async () => {
+    await withFakeSpawn(
+      { stdoutChunks: ["[]"], stderrChunks: [], exitCode: 0 },
+      async () => {
+        const r = await probePaperclipViaCli({});
+        expect(r.available).toBe(true);
+        expect(typeof r.probeDurationMs).toBe("number");
+      },
+    );
+  });
+
+  it("returns available:false with the stderr reason on failure", async () => {
+    await withFakeSpawn(
+      {
+        stdoutChunks: [],
+        stderrChunks: ["Could not reach the Paperclip API."],
+        exitCode: 1,
+      },
+      async () => {
+        const r = await probePaperclipViaCli({});
+        expect(r.available).toBe(false);
+        expect(r.reason).toMatch(/Could not reach/);
+      },
+    );
   });
 });

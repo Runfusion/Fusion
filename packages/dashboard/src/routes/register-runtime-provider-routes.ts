@@ -3,11 +3,14 @@ import {
   discoverPaperclipCli,
   listHermesProviderProfiles,
   listPaperclipCompanies,
+  listPaperclipCompaniesViaCliFacade,
   listPaperclipCompanyAgents,
+  listPaperclipCompanyAgentsViaCliFacade,
   mintPaperclipKeyViaCli,
   probeHermesProvider,
   probeOpenClawProvider,
   probePaperclipProvider,
+  probePaperclipViaCliFacade,
 } from "../runtime-provider-probes.js";
 import type { ApiRouteRegistrar } from "./types.js";
 
@@ -161,6 +164,98 @@ export const registerRuntimeProviderRoutes: ApiRouteRegistrar = (ctx) => {
         throw badRequest("Missing required query parameter: companyId");
       }
       const agents = await listPaperclipCompanyAgents({ apiUrl, apiKey, companyId });
+      res.json({ agents });
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
+  /**
+   * GET /providers/paperclip/cli-status
+   *
+   * Query: cliBinaryPath?, cliConfigPath?
+   * Probes Paperclip by spawning the local `paperclipai` CLI (`company list`),
+   * so the connection test in the dashboard's Local-CLI tab exercises exactly
+   * the same auth path as runtime calls. Never throws — failures are reported
+   * inside the connection object so the card can render `available: false`.
+   */
+  router.get("/providers/paperclip/cli-status", async (req, res) => {
+    try {
+      const cliBinaryPath =
+        typeof req.query.cliBinaryPath === "string"
+          ? req.query.cliBinaryPath
+          : undefined;
+      const cliConfigPath =
+        typeof req.query.cliConfigPath === "string"
+          ? req.query.cliConfigPath
+          : undefined;
+      const connection = await probePaperclipViaCliFacade({
+        cliBinaryPath,
+        cliConfigPath,
+      });
+      res.json({ connection, ready: connection.available });
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
+  /**
+   * GET /providers/paperclip/cli-companies
+   *
+   * Query: cliBinaryPath?, cliConfigPath?
+   * Lists companies via `paperclipai company list --json`. Empty array on failure.
+   */
+  router.get("/providers/paperclip/cli-companies", async (req, res) => {
+    try {
+      const cliBinaryPath =
+        typeof req.query.cliBinaryPath === "string"
+          ? req.query.cliBinaryPath
+          : undefined;
+      const cliConfigPath =
+        typeof req.query.cliConfigPath === "string"
+          ? req.query.cliConfigPath
+          : undefined;
+      const companies = await listPaperclipCompaniesViaCliFacade({
+        cliBinaryPath,
+        cliConfigPath,
+      });
+      res.json({ companies });
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
+  /**
+   * GET /providers/paperclip/cli-agents
+   *
+   * Query: companyId (required), cliBinaryPath?, cliConfigPath?
+   * Lists agents via `paperclipai agent list -C <id> --json`. Empty array on failure.
+   */
+  router.get("/providers/paperclip/cli-agents", async (req, res) => {
+    try {
+      const companyId =
+        typeof req.query.companyId === "string"
+          ? req.query.companyId.trim()
+          : "";
+      if (!companyId) {
+        throw badRequest("Missing required query parameter: companyId");
+      }
+      const cliBinaryPath =
+        typeof req.query.cliBinaryPath === "string"
+          ? req.query.cliBinaryPath
+          : undefined;
+      const cliConfigPath =
+        typeof req.query.cliConfigPath === "string"
+          ? req.query.cliConfigPath
+          : undefined;
+      const agents = await listPaperclipCompanyAgentsViaCliFacade({
+        cliBinaryPath,
+        cliConfigPath,
+        companyId,
+      });
       res.json({ agents });
     } catch (err) {
       if (err instanceof ApiError) throw err;

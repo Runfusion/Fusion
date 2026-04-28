@@ -15,7 +15,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchPaperclipAgents,
+  fetchPaperclipCliAgents,
+  fetchPaperclipCliCompanies,
   fetchPaperclipCliDiscovery,
+  fetchPaperclipCliStatus,
   fetchPaperclipCompanies,
   fetchPaperclipStatus,
   fetchPluginSettings,
@@ -190,13 +193,29 @@ export function PaperclipRuntimeCard() {
   }, [settings.transport, settings.cliConfigPath]);
 
   // Probe + load companies/agents whenever effective auth changes.
+  // In CLI mode we shell out via the cli-* endpoints instead of hitting the
+  // Paperclip HTTP API directly, so the test exercises the same auth path the
+  // user has onboarded with `paperclipai`.
+  const useCli = settings.transport === "cli";
+  const cliOpts = useMemo(
+    () => ({
+      cliBinaryPath: settings.cliBinaryPath || undefined,
+      cliConfigPath: settings.cliConfigPath || undefined,
+    }),
+    [settings.cliBinaryPath, settings.cliConfigPath],
+  );
+
   const probe = useCallback(async (): Promise<PaperclipProviderStatus | null> => {
-    if (!effectiveAuth.apiUrl) return null;
+    if (!useCli && !effectiveAuth.apiUrl) return null;
     try {
-      const next = await fetchPaperclipStatus(effectiveAuth);
+      const next = useCli
+        ? await fetchPaperclipCliStatus(cliOpts)
+        : await fetchPaperclipStatus(effectiveAuth);
       if (mountedRef.current) setStatus(next);
       // Then load companies + agents for the picker.
-      const cs = await fetchPaperclipCompanies(effectiveAuth);
+      const cs = useCli
+        ? await fetchPaperclipCliCompanies(cliOpts)
+        : await fetchPaperclipCompanies(effectiveAuth);
       if (!mountedRef.current) return next;
       setCompanies(cs);
       // Auto-pick a company: keep current selection if it exists in cs;
@@ -210,10 +229,9 @@ export function PaperclipRuntimeCard() {
         }
       }
       if (picked) {
-        const ag = await fetchPaperclipAgents({
-          ...effectiveAuth,
-          companyId: picked,
-        });
+        const ag = useCli
+          ? await fetchPaperclipCliAgents({ ...cliOpts, companyId: picked })
+          : await fetchPaperclipAgents({ ...effectiveAuth, companyId: picked });
         if (mountedRef.current) {
           setAgents(ag);
           // Auto-pick agent the same way.
@@ -234,9 +252,16 @@ export function PaperclipRuntimeCard() {
         setToast({ kind: "err", message: err instanceof Error ? err.message : String(err) });
       return null;
     }
-    // Deliberately keyed only on the URL/key — companyId/agentId changes are
-    // handled by a separate effect below.
-  }, [effectiveAuth.apiUrl, effectiveAuth.apiKey, settings.companyId, settings.agentId]);
+    // Deliberately keyed only on transport+auth — companyId/agentId changes
+    // are handled by a separate effect below.
+  }, [
+    useCli,
+    cliOpts,
+    effectiveAuth.apiUrl,
+    effectiveAuth.apiKey,
+    settings.companyId,
+    settings.agentId,
+  ]);
 
   useEffect(() => {
     void probe();
@@ -244,25 +269,33 @@ export function PaperclipRuntimeCard() {
 
   // Reload agent list when the user manually changes companyId.
   useEffect(() => {
-    if (!effectiveAuth.apiUrl || !settings.companyId) {
+    if (!settings.companyId) {
+      setAgents([]);
+      return;
+    }
+    if (!useCli && !effectiveAuth.apiUrl) {
       setAgents([]);
       return;
     }
     let cancelled = false;
-    fetchPaperclipAgents({
-      ...effectiveAuth,
-      companyId: settings.companyId,
-    })
-      .then((ag) => {
-        if (!cancelled && mountedRef.current) setAgents(ag);
-      })
-      .catch(() => {
-        if (!cancelled && mountedRef.current) setAgents([]);
-      });
+    const p = useCli
+      ? fetchPaperclipCliAgents({ ...cliOpts, companyId: settings.companyId })
+      : fetchPaperclipAgents({ ...effectiveAuth, companyId: settings.companyId });
+    p.then((ag) => {
+      if (!cancelled && mountedRef.current) setAgents(ag);
+    }).catch(() => {
+      if (!cancelled && mountedRef.current) setAgents([]);
+    });
     return () => {
       cancelled = true;
     };
-  }, [effectiveAuth.apiUrl, effectiveAuth.apiKey, settings.companyId]);
+  }, [
+    useCli,
+    cliOpts,
+    effectiveAuth.apiUrl,
+    effectiveAuth.apiKey,
+    settings.companyId,
+  ]);
 
   const buildPayload = useCallback((): Record<string, unknown> => {
     const payload: Record<string, unknown> = {

@@ -1384,6 +1384,54 @@ export async function mintPaperclipApiKey(
   });
 }
 
+/**
+ * Probe Paperclip via the local `paperclipai` CLI (Local CLI tab). Carries the
+ * user's onboarded CLI context (profile / api-base / api-key) instead of having
+ * the dashboard server make the HTTP call directly.
+ */
+export async function fetchPaperclipCliStatus(opts: {
+  cliBinaryPath?: string;
+  cliConfigPath?: string;
+}): Promise<PaperclipProviderStatus> {
+  const params = new URLSearchParams();
+  if (opts.cliBinaryPath) params.set("cliBinaryPath", opts.cliBinaryPath);
+  if (opts.cliConfigPath) params.set("cliConfigPath", opts.cliConfigPath);
+  const qs = params.toString();
+  return api<PaperclipProviderStatus>(
+    `/providers/paperclip/cli-status${qs ? `?${qs}` : ""}`,
+  );
+}
+
+/** List companies via `paperclipai company list --json`. Empty array on failure. */
+export async function fetchPaperclipCliCompanies(opts: {
+  cliBinaryPath?: string;
+  cliConfigPath?: string;
+}): Promise<PaperclipCompanySummary[]> {
+  const params = new URLSearchParams();
+  if (opts.cliBinaryPath) params.set("cliBinaryPath", opts.cliBinaryPath);
+  if (opts.cliConfigPath) params.set("cliConfigPath", opts.cliConfigPath);
+  const qs = params.toString();
+  const r = await api<{ companies: PaperclipCompanySummary[] }>(
+    `/providers/paperclip/cli-companies${qs ? `?${qs}` : ""}`,
+  );
+  return r.companies ?? [];
+}
+
+/** List agents in a company via `paperclipai agent list -C <id> --json`. */
+export async function fetchPaperclipCliAgents(opts: {
+  cliBinaryPath?: string;
+  cliConfigPath?: string;
+  companyId: string;
+}): Promise<PaperclipAgentSummary[]> {
+  const params = new URLSearchParams({ companyId: opts.companyId });
+  if (opts.cliBinaryPath) params.set("cliBinaryPath", opts.cliBinaryPath);
+  if (opts.cliConfigPath) params.set("cliConfigPath", opts.cliConfigPath);
+  const r = await api<{ agents: PaperclipAgentSummary[] }>(
+    `/providers/paperclip/cli-agents?${params.toString()}`,
+  );
+  return r.agents ?? [];
+}
+
 /** Read the local paperclipai config to discover apiUrl + deploymentMode. */
 export async function fetchPaperclipCliDiscovery(opts: {
   cliConfigPath?: string;

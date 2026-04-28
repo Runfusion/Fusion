@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
 import {
   agentsMe,
+  agentsMeViaCli,
   createIssue,
+  createIssueViaCli,
   discoverPaperclipCliConfig,
   getIssue,
   getIssueComments,
+  getIssueViaCli,
   getRunEvents,
   resolvePaperclipConfig,
   wakeAgent,
@@ -125,16 +128,32 @@ export class PaperclipRuntimeAdapter implements AgentRuntime {
     let agentId = this.config.agentId;
     let companyId = this.config.companyId;
 
-    // Auto-derive agentId/companyId from /agents/me when missing.
+    // Auto-derive agentId/companyId when missing. In CLI mode we go through
+    // `paperclipai agent get <id>` (requires a known agentId); in API mode we
+    // call /agents/me which derives identity from the bearer key.
     if (!agentId || !companyId) {
       try {
-        const me = await agentsMe(effectiveApiUrl, effectiveApiKey);
-        agentId = agentId ?? me.agentId;
-        companyId = companyId ?? me.companyId;
+        if (this.config.transport === "cli") {
+          if (!agentId) {
+            throw new Error(
+              "agentId is required in Local CLI mode (paperclipai has no `agents/me` equivalent — pick an agent in settings)",
+            );
+          }
+          const me = await agentsMeViaCli({
+            agentId,
+            cliBinaryPath: this.config.cliBinaryPath,
+            cliConfigPath: this.config.cliConfigPath,
+          });
+          companyId = companyId ?? me.companyId;
+        } else {
+          const me = await agentsMe(effectiveApiUrl, effectiveApiKey);
+          agentId = agentId ?? me.agentId;
+          companyId = companyId ?? me.companyId;
+        }
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         throw new Error(
-          `Paperclip runtime could not derive agentId/companyId from /agents/me. Configure them explicitly or check the API key. Underlying error: ${reason}`,
+          `Paperclip runtime could not derive agentId/companyId. Configure them explicitly or check the API key / CLI auth. Underlying error: ${reason}`,
         );
       }
     }
@@ -158,6 +177,9 @@ export class PaperclipRuntimeAdapter implements AgentRuntime {
       projectId: this.config.projectId,
       goalId: this.config.goalId,
       issueId: undefined,
+      transport: this.config.transport ?? "api",
+      cliBinaryPath: this.config.cliBinaryPath,
+      cliConfigPath: this.config.cliConfigPath,
       turnIndex: 0,
       runTimeoutMs: this.config.runTimeoutMs ?? 600_000,
       pollIntervalMs: this.config.pollIntervalMs ?? 500,
@@ -245,11 +267,20 @@ export class PaperclipRuntimeAdapter implements AgentRuntime {
     let finalText = stream.text;
     if (issueId) {
       try {
-        const issue = await getIssue(session.apiUrl, session.apiKey, issueId);
+        const issue =
+          session.transport === "cli"
+            ? await getIssueViaCli({
+                issueId,
+                cliBinaryPath: session.cliBinaryPath,
+                cliConfigPath: session.cliConfigPath,
+              })
+            : await getIssue(session.apiUrl, session.apiKey, issueId);
         issueStatus = asString(issue.status) ?? undefined;
 
         // Comment fallback: if no streaming text was captured, use the latest
-        // non-system comment as the visible answer.
+        // non-system comment as the visible answer. Note: paperclipai has no
+        // `issue comments list` command, so this stays on HTTP — in CLI mode
+        // it relies on the apiKey discovered from the local paperclipai config.
         if (!finalText) {
           const comments = await getIssueComments(session.apiUrl, session.apiKey, issueId);
           const latest = pickLatestVisibleComment(comments);
@@ -294,7 +325,7 @@ export class PaperclipRuntimeAdapter implements AgentRuntime {
     session: PaperclipSession,
     prompt: string,
   ): Promise<string> {
-    const created = await createIssue(session.apiUrl, session.apiKey, session.companyId, {
+    const body = {
       title: deriveIssueTitle(prompt),
       description: buildIssueDescription(session, prompt),
       status: "todo",
@@ -302,7 +333,16 @@ export class PaperclipRuntimeAdapter implements AgentRuntime {
       ...(session.parentIssueId ? { parentId: session.parentIssueId } : {}),
       ...(session.projectId ? { projectId: session.projectId } : {}),
       ...(session.goalId ? { goalId: session.goalId } : {}),
-    });
+    };
+    const created =
+      session.transport === "cli"
+        ? await createIssueViaCli({
+            companyId: session.companyId,
+            body,
+            cliBinaryPath: session.cliBinaryPath,
+            cliConfigPath: session.cliConfigPath,
+          })
+        : await createIssue(session.apiUrl, session.apiKey, session.companyId, body);
     return pickIssueId(created);
   }
 

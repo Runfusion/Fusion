@@ -28,9 +28,12 @@ import {
   agentsMe,
   discoverPaperclipCliConfig,
   listCompanies,
+  listCompaniesViaCli,
   listCompanyAgents,
+  listCompanyAgentsViaCli,
   mintAgentApiKeyViaCli,
   probePaperclipConnection,
+  probePaperclipViaCli,
   type MintCliKeyOptions,
   type MintedApiKey,
   type PaperclipAgentSummary,
@@ -139,6 +142,51 @@ export async function discoverPaperclipCli(opts: {
   cliConfigPath?: string;
 }): Promise<PaperclipCliDiscoveryResult> {
   return discoverPaperclipCliConfig({ configPath: opts.cliConfigPath });
+}
+
+/**
+ * Probe Paperclip through the local `paperclipai` CLI. Used by the dashboard's
+ * "Local CLI" tab so the test action exercises the same code path as actual
+ * CLI-mode runtime calls (carries the user's onboarded CLI context).
+ */
+export async function probePaperclipViaCliFacade(opts: {
+  cliBinaryPath?: string;
+  cliConfigPath?: string;
+}): Promise<PaperclipConnectionStatus> {
+  return probePaperclipViaCli({
+    cliBinaryPath: opts.cliBinaryPath,
+    cliConfigPath: opts.cliConfigPath,
+  });
+}
+
+export async function listPaperclipCompaniesViaCliFacade(opts: {
+  cliBinaryPath?: string;
+  cliConfigPath?: string;
+}): Promise<PaperclipCompanySummary[]> {
+  try {
+    return await listCompaniesViaCli({
+      cliBinaryPath: opts.cliBinaryPath,
+      cliConfigPath: opts.cliConfigPath,
+    });
+  } catch {
+    return [];
+  }
+}
+
+export async function listPaperclipCompanyAgentsViaCliFacade(opts: {
+  cliBinaryPath?: string;
+  cliConfigPath?: string;
+  companyId: string;
+}): Promise<PaperclipAgentSummary[]> {
+  try {
+    return await listCompanyAgentsViaCli({
+      cliBinaryPath: opts.cliBinaryPath,
+      cliConfigPath: opts.cliConfigPath,
+      companyId: opts.companyId,
+    });
+  } catch {
+    return [];
+  }
 }
 
 /**

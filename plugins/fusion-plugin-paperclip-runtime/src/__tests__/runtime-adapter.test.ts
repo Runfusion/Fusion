@@ -4,16 +4,24 @@ import type { RunEvent } from "../paperclip-client.js";
 
 const {
   mockAgentsMe,
+  mockAgentsMeViaCli,
   mockCreateIssue,
+  mockCreateIssueViaCli,
+  mockDiscoverPaperclipCliConfig,
   mockGetIssue,
+  mockGetIssueViaCli,
   mockGetIssueComments,
   mockGetRunEvents,
   mockWakeAgent,
   mockResolveConfig,
 } = vi.hoisted(() => ({
   mockAgentsMe: vi.fn(),
+  mockAgentsMeViaCli: vi.fn(),
   mockCreateIssue: vi.fn(),
+  mockCreateIssueViaCli: vi.fn(),
+  mockDiscoverPaperclipCliConfig: vi.fn(),
   mockGetIssue: vi.fn(),
+  mockGetIssueViaCli: vi.fn(),
   mockGetIssueComments: vi.fn(),
   mockGetRunEvents: vi.fn(),
   mockWakeAgent: vi.fn(),
@@ -35,8 +43,12 @@ const {
 
 vi.mock("../paperclip-client.js", () => ({
   agentsMe: mockAgentsMe,
+  agentsMeViaCli: mockAgentsMeViaCli,
   createIssue: mockCreateIssue,
+  createIssueViaCli: mockCreateIssueViaCli,
+  discoverPaperclipCliConfig: mockDiscoverPaperclipCliConfig,
   getIssue: mockGetIssue,
+  getIssueViaCli: mockGetIssueViaCli,
   getIssueComments: mockGetIssueComments,
   getRunEvents: mockGetRunEvents,
   wakeAgent: mockWakeAgent,
@@ -259,6 +271,104 @@ describe("PaperclipRuntimeAdapter — comment fallback", () => {
     const { session } = await adapter.createSession({ ...baseSessionOpts, onText });
     await adapter.promptWithFallback(session, "p");
     expect(onText).toHaveBeenCalledWith("latest answer");
+  });
+});
+
+describe("PaperclipRuntimeAdapter — Local CLI transport", () => {
+  beforeEach(() => {
+    mockDiscoverPaperclipCliConfig.mockResolvedValue({
+      ok: true,
+      apiUrl: "http://127.0.0.1:3100",
+      apiKey: "cli-discovered-key",
+      configPath: "/cfg.json",
+      deploymentMode: "local_trusted",
+    });
+    mockCreateIssueViaCli.mockResolvedValue({ id: "ISS-CLI", status: "todo" });
+    mockGetIssueViaCli.mockResolvedValue({ id: "ISS-CLI", status: "done" });
+    mockAgentsMeViaCli.mockResolvedValue({
+      agentId: "AG-cli",
+      agentName: "cli-bot",
+      role: "engineer",
+      companyId: "CO-cli",
+      companyName: "Acme",
+    });
+  });
+
+  it("createSession runs CLI discovery and stores transport on the session", async () => {
+    const adapter = makeAdapter({
+      transport: "cli",
+      cliBinaryPath: "/opt/bin/paperclipai",
+      cliConfigPath: "/cfg.json",
+      agentId: "AG-1",
+      companyId: "CO-1",
+    });
+    const { session } = await adapter.createSession({ ...baseSessionOpts });
+    expect(mockDiscoverPaperclipCliConfig).toHaveBeenCalledWith({
+      configPath: "/cfg.json",
+    });
+    expect(session.transport).toBe("cli");
+    expect(session.cliBinaryPath).toBe("/opt/bin/paperclipai");
+    expect(session.cliConfigPath).toBe("/cfg.json");
+    // Discovered apiKey is plumbed through to the session for HTTP-only fallbacks.
+    expect(session.apiKey).toBe("cli-discovered-key");
+  });
+
+  it("derives companyId via agentsMeViaCli when missing in CLI mode", async () => {
+    const adapter = makeAdapter({ transport: "cli", agentId: "AG-cli" });
+    const { session } = await adapter.createSession({ ...baseSessionOpts });
+    expect(mockAgentsMe).not.toHaveBeenCalled();
+    expect(mockAgentsMeViaCli).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: "AG-cli" }),
+    );
+    expect(session.companyId).toBe("CO-cli");
+  });
+
+  it("throws a clear error when agentId is missing in CLI mode", async () => {
+    const adapter = makeAdapter({ transport: "cli" });
+    await expect(adapter.createSession({ ...baseSessionOpts })).rejects.toThrow(
+      /agentId is required in Local CLI mode/i,
+    );
+    expect(mockAgentsMe).not.toHaveBeenCalled();
+  });
+
+  it("createIssue and getIssue are routed through the CLI variants on prompt", async () => {
+    const adapter = makeAdapter({
+      transport: "cli",
+      agentId: "AG-1",
+      companyId: "CO-1",
+    });
+    const { session } = await adapter.createSession({ ...baseSessionOpts });
+    await adapter.promptWithFallback(session, "do thing");
+    expect(mockCreateIssue).not.toHaveBeenCalled();
+    expect(mockGetIssue).not.toHaveBeenCalled();
+    expect(mockCreateIssueViaCli).toHaveBeenCalledWith(
+      expect.objectContaining({
+        companyId: "CO-1",
+        body: expect.objectContaining({
+          title: expect.any(String),
+          assigneeAgentId: "AG-1",
+          status: "todo",
+        }),
+      }),
+    );
+    expect(mockGetIssueViaCli).toHaveBeenCalledWith(
+      expect.objectContaining({ issueId: "ISS-CLI" }),
+    );
+  });
+
+  it("aborts createSession when CLI discovery fails", async () => {
+    mockDiscoverPaperclipCliConfig.mockResolvedValueOnce({
+      ok: false,
+      reason: "config not found",
+    });
+    const adapter = makeAdapter({
+      transport: "cli",
+      agentId: "AG-1",
+      companyId: "CO-1",
+    });
+    await expect(adapter.createSession({ ...baseSessionOpts })).rejects.toThrow(
+      /Paperclip CLI mode failed.*config not found/,
+    );
   });
 });
 

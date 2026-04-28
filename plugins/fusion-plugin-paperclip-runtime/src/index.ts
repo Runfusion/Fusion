@@ -20,11 +20,17 @@ export type {
 } from "./paperclip-client.js";
 export {
   agentsMe,
+  agentsMeViaCli,
+  createIssueViaCli,
   discoverPaperclipCliConfig,
+  getIssueViaCli,
   listCompanies,
+  listCompaniesViaCli,
   listCompanyAgents,
+  listCompanyAgentsViaCli,
   mintAgentApiKeyViaCli,
   probePaperclipConnection,
+  probePaperclipViaCli,
 } from "./paperclip-client.js";
 export type { MintCliKeyOptions, MintedApiKey } from "./paperclip-client.js";
 export { PaperclipRuntimeAdapter } from "./runtime-adapter.js";
