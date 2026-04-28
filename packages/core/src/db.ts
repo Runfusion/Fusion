@@ -86,7 +86,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 48;
+const SCHEMA_VERSION = 49;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
