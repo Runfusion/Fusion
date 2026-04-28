@@ -832,7 +832,11 @@ export function QuickChatFAB({
       return;
     }
 
-    if (sessionTargetKey === prevSessionTargetRef.current) {
+    const shouldRetrySessionInit = sessionTargetKey === prevSessionTargetRef.current
+      && !activeSession
+      && !sessionsLoading;
+
+    if (sessionTargetKey === prevSessionTargetRef.current && !shouldRetrySessionInit) {
       return;
     }
 
@@ -846,7 +850,17 @@ export function QuickChatFAB({
     if (chatMode === "agent" && selectedAgentId) {
       void switchSession(selectedAgentId);
     }
-  }, [isOpen, chatMode, parsedModelSelection, selectedAgentId, sessionTargetKey, startModelChat, switchSession]);
+  }, [
+    isOpen,
+    chatMode,
+    parsedModelSelection,
+    selectedAgentId,
+    sessionTargetKey,
+    activeSession,
+    sessionsLoading,
+    startModelChat,
+    switchSession,
+  ]);
 
   useEffect(() => {
     if (isOpen) {
