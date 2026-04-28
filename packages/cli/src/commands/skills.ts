@@ -187,6 +187,7 @@ export async function runSkillsInstall(
   const child = spawn("npx", npxArgs, {
     cwd: process.cwd(),
     stdio: "inherit",
+    shell: true,
   });
 
   const exitCode = await new Promise<number>((resolve, reject) => {

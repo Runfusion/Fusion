@@ -27,10 +27,12 @@ async function execWithProcessGroup(
       return;
     }
 
+    const useProcessGroup = process.platform !== "win32";
+
     const child = spawn(command, {
       cwd: options.cwd,
       shell: true,
-      detached: true,
+      detached: useProcessGroup,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -44,7 +46,13 @@ async function execWithProcessGroup(
 
     const killTree = (sig: NodeJS.Signals) => {
       if (child.pid === undefined) return;
-      try { process.kill(-child.pid, sig); } catch { /* group may already be gone */ }
+      try {
+        if (useProcessGroup) {
+          process.kill(-child.pid, sig);
+        } else {
+          child.kill(sig);
+        }
+      } catch { /* group may already be gone */ }
     };
 
     const timer = setTimeout(() => {

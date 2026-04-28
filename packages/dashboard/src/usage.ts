@@ -1,3 +1,4 @@
+import * as os from "node:os";
 import * as path from "node:path";
 import { readFile } from "node:fs/promises";
 import * as https from "node:https";
@@ -845,8 +846,8 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
 
   // ── Credential reading for plan detection & auth check ──────────────
   const credPaths = [
-    path.join(process.env.HOME || "~", ".claude", ".credentials.json"),
-    path.join(process.env.HOME || "~", ".config", "claude", ".credentials.json"),
+    path.join(os.homedir(), ".claude", ".credentials.json"),
+    path.join(os.homedir(), ".config", "claude", ".credentials.json"),
   ];
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped credentials JSON
@@ -1066,7 +1067,7 @@ async function fetchCodexUsage(): Promise<ProviderUsage> {
   };
 
   // Load Codex auth
-  const codexHome = process.env.CODEX_HOME || path.join(process.env.HOME || "~", ".codex");
+  const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
   const authPath = path.join(codexHome, "auth.json");
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped auth JSON
@@ -1181,7 +1182,7 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
   };
 
   // Load Gemini OAuth credentials
-  const oauthPath = path.join(process.env.HOME || "~", ".gemini", "oauth_creds.json");
+  const oauthPath = path.join(os.homedir(), ".gemini", "oauth_creds.json");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped OAuth JSON
   let oauthCreds: any = null;
   try {
@@ -1203,7 +1204,7 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
   }
 
   // Check auth type from settings
-  const settingsPath = path.join(process.env.HOME || "~", ".gemini", "settings.json");
+  const settingsPath = path.join(os.homedir(), ".gemini", "settings.json");
   try {
     const settings = JSON.parse(await readFile(settingsPath, "utf-8"));
     const authType = settings?.security?.auth?.selectedType;
