@@ -1368,6 +1368,36 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    it("does not recover paused merging tasks even when past the stuck timeout", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        taskStuckTimeoutMs: 60_000,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-1677",
+          column: "in-review",
+          status: "merging",
+          paused: true,
+          error: null,
+          updatedAt: new Date(Date.now() - 24 * 60 * 60_000).toISOString(),
+          steps: [{ name: "Ship it", status: "done" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverInterruptedMergingTasks();
+
+      expect(result).toBe(0);
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(store.moveTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
     it("does not recover stale merging tasks when stuck detection is disabled", async () => {
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",

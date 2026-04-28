@@ -927,6 +927,7 @@ export class SelfHealingManager {
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
       const candidates = tasks.filter((task) =>
         task.column === "in-review" &&
+        !task.paused &&
         Boolean(task.status && ACTIVE_MERGE_STATUSES.has(task.status)) &&
         this.isPastInterruptedMergeGrace(task, timeoutMs),
       );
