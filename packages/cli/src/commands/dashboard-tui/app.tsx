@@ -62,7 +62,6 @@ import type {
   TaskEvent,
   UpdateStatus,
 } from "./state.js";
-import { SECTION_ORDER } from "./state.js";
 import type { LogEntry } from "./log-ring-buffer.js";
 import { FUSION_LOGO_LINES, FUSION_LOGO_LARGE_LINES, FUSION_TAGLINE, FUSION_URL, FUSION_VERSION } from "./logo.js";
 import { useProjects, useTasks } from "./hooks/use-projects.js";
@@ -219,6 +218,10 @@ function Panel({ title, isFocused, children, flexGrow, flexShrink, width }: Pane
 
 function SystemPanel({ state, isFocused }: { state: DashboardState; isFocused: boolean }) {
   const info = state.systemInfo;
+  const { stdout } = useStdout();
+  const cols = stdout?.columns ?? 80;
+  // Watcher is the lowest-signal chip — drop it first when chips would wrap.
+  const showWatcher = cols >= 100;
   return (
     <Panel title="System" isFocused={isFocused} flexGrow={1}>
       {!info ? (
@@ -240,18 +243,20 @@ function SystemPanel({ state, isFocused }: { state: DashboardState; isFocused: b
             {info.engineMode === "active" && <Text color="green">active</Text>}
           </Box>
           <Box flexDirection="row" gap={1} flexShrink={0}>
-            <Text dimColor>Watcher</Text>
-            {info.fileWatcher ? <Text color="green">active</Text> : <Text color="red">inactive</Text>}
-          </Box>
-          <Box flexDirection="row" gap={1} flexShrink={0}>
-            <Text dimColor>Uptime</Text>
-            <Text>{formatUptime(Date.now() - info.startTimeMs)}</Text>
-          </Box>
-          <Box flexDirection="row" gap={1} flexShrink={0}>
             <Text dimColor>Auth</Text>
             {info.authEnabled
               ? <Text color="yellow">bearer</Text>
               : <Text color="yellow">none</Text>}
+          </Box>
+          {showWatcher && (
+            <Box flexDirection="row" gap={1} flexShrink={0}>
+              <Text dimColor>Watcher</Text>
+              {info.fileWatcher ? <Text color="green">active</Text> : <Text color="red">inactive</Text>}
+            </Box>
+          )}
+          <Box flexDirection="row" gap={1} flexShrink={0}>
+            <Text dimColor>Uptime</Text>
+            <Text>{formatUptime(Date.now() - info.startTimeMs)}</Text>
           </Box>
           {info.authToken && (
             <Box flexDirection="row" gap={1} flexShrink={1}>
@@ -620,8 +625,8 @@ function UtilitiesPanel({ state, isFocused }: { state: DashboardState; isFocused
     <Panel title="Utilities" isFocused={isFocused} flexGrow={1}>
       <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
         {actions.map((action) => (
-          <Box key={action.key} flexDirection="row" gap={1} flexShrink={0}>
-            <Text color="yellow">[{action.key}]</Text>
+          <Box key={action.key} flexDirection="row" flexShrink={0}>
+            <Text color="yellow">{`[${action.key}] `}</Text>
             <Text wrap="truncate-end">{action.label}</Text>
           </Box>
         ))}
@@ -642,7 +647,7 @@ function HelpOverlay() {
     ["[f]", "Files (when not on Logs); cycles log severity filter on Logs"],
     ["[Tab]", "Cycle focused panel / pane forward"],
     ["[Shift+Tab]", "Cycle focused panel / pane backward"],
-    ["[1-5]", "Jump to panel (Main: System/Logs/Utilities/Stats/Settings)"],
+    ["[1-5]", "Jump to panel (Main: System/Logs/Stats/Utilities/Settings)"],
     ["[← / →]", "Switch pane (Agents, Settings, Files, Git)"],
     ["[→] / [n]", "Next panel (Main)"],
     ["[←] / [p]", "Previous panel (Main)"],
@@ -697,6 +702,11 @@ function HelpOverlay() {
 // ── Status mode grid layout ────────────────────────────────────────────────────
 
 const PANEL_ORDER: SectionId[] = ["system", "logs", "utilities", "stats", "settings"];
+
+// Number-key mapping (1-5) — kept distinct from PANEL_ORDER/SECTION_ORDER so
+// the visual/cycle order stays unchanged while [3]/[4] address Stats/Utilities
+// in the swapped order requested.
+const NUMBER_KEY_ORDER: SectionId[] = ["system", "logs", "stats", "utilities", "settings"];
 
 function StatusModeGrid({
   state,
@@ -807,11 +817,11 @@ function StatusModeSingle({
   const rows = stdout?.rows ?? 24;
   const cols = stdout?.columns ?? 80;
   // LogsPanel's row budget — explicit cap so it doesn't render more
-  // entries than fit. Chrome accounting (chrome=6 base, +1 if narrow spacer):
+  // entries than fit. Chrome=6:
   //   header(1) + statusbar(1) +
   //   panel border top(1) + panel title(1) + panel border bottom(1) +
-  //   filter row(1) = 6, plus 1 if cols<72 spacer is present.
-  const logsAvailableRows = Math.max(1, rows - (cols < 71 ? 7 : 6));
+  //   filter row(1) = 6.
+  const logsAvailableRows = Math.max(1, rows - 6);
   tuiDebug("StatusModeSingle", { cols, rows, logsAvailableRows, focused });
 
   const activePanel = () => {
@@ -824,15 +834,8 @@ function StatusModeSingle({
     }
   };
 
-  // Below cols=72 the layout shifts up by 1 (Yoga edge case at narrow
-  // widths) and the panel's top line ends up under the header overlay. A
-  // 1-row spacer compensates ONLY for those widths. From 72 onwards the
-  // panel sits in the right place naturally and the spacer is just dead
-  // space.
-  const needsSpacer = cols < 71;
   return (
     <Box flexDirection="column" flexGrow={1}>
-      {needsSpacer && <Box height={1} flexShrink={0} />}
       <Box flexGrow={1} flexDirection="column" overflow="hidden">
         {activePanel()}
       </Box>
@@ -844,45 +847,25 @@ function StatusModeSingle({
 }
 
 function StatusBar({ state, controller: _controller }: { state: DashboardState; controller: DashboardTUI }) {
-  const { systemInfo, activeSection } = state;
-
-  const hotkeys: string[] = [];
-  if (activeSection === "logs") {
-    hotkeys.push("↑↓ navigate", "w wrap", "f filter");
-  } else if (activeSection === "utilities") {
-    hotkeys.push("r refresh", "c clear logs", "t toggle pause", "k kill vitest", "v auto-kill", "+/- threshold");
-  } else {
-    hotkeys.push("Tab cycle panel", "1-5 jump");
-  }
-
-  const { updateStatus } = state;
+  const { systemInfo, updateStatus } = state;
   const hasUpdate = updateStatus?.updateAvailable === true;
+  const uptime = systemInfo ? formatUptime(Date.now() - systemInfo.startTimeMs) : null;
+  const url = systemInfo?.baseUrl ?? null;
+  const help = "Tab cycle panel  ·  1-5 jump";
 
-  const uptimePart = systemInfo ? formatUptime(Date.now() - systemInfo.startTimeMs) : null;
-  const versionPart = systemInfo ? `${systemInfo.baseUrl} v${FUSION_VERSION}` : null;
-
-  // Both halves must collapse into a single row regardless of width.
-  // The right side is rendered as a single Text (not a Box of separate
-  // Texts joined with gap+flexShrink=0) so Yoga can truncate it when
-  // the natural width of hotkeys + version exceeds `cols`. With the
-  // previous structure, the row's natural width could exceed `cols`
-  // (~137 in the worst case: utilities hotkeys + localhost URL + uptime
-  // + version + ●), causing the row to wrap to 2 lines; height={1} +
-  // overflow=hidden then clipped the top line, making the hotkeys row
-  // disappear and only the version row show through.
-  const rightParts: string[] = [];
-  if (uptimePart) rightParts.push(uptimePart, "|");
-  if (versionPart) rightParts.push(versionPart);
-  const rightText = rightParts.join(" ");
+  // Single Text so Yoga truncates the tail (help text) when natural width
+  // exceeds cols — guarantees a one-row footer with version/url preserved.
+  const leftSegments = [`v${FUSION_VERSION}`];
+  if (url) leftSegments.push(url);
+  if (uptime) leftSegments.push(uptime);
+  const left = leftSegments.join("  ·  ");
   return (
-    <Box height={1} justifyContent="space-between" paddingX={1} flexShrink={0} overflow="hidden">
-      <Text dimColor wrap="truncate-end">{hotkeys.join("  ·  ")}</Text>
-      {rightText && (
-        <Text wrap="truncate-end">
-          <Text dimColor>{rightText}</Text>
-          {hasUpdate && <Text color="yellow">{" ●"}</Text>}
-        </Text>
-      )}
+    <Box height={1} paddingX={1} flexShrink={0} overflow="hidden">
+      <Text wrap="truncate-end">
+        <Text dimColor>{left}</Text>
+        {hasUpdate && <Text color="yellow">{" ●"}</Text>}
+        <Text dimColor>{`  │  ${help}`}</Text>
+      </Text>
     </Box>
   );
 }
@@ -890,64 +873,6 @@ function StatusBar({ state, controller: _controller }: { state: DashboardState; 
 // ── Interactive mode ──────────────────────────────────────────────────────────
 
 // ── Unified main header — used by both status and interactive modes ──────────
-
-// Build a one-row ANSI string for the header, exactly `cols` printable chars
-// wide. Used by the controller as a stdout-overlay failsafe so the header
-// is always present at terminal row 1 regardless of any log-update tracking
-// drift in real terminals (notably tmux). This is independent of the Ink
-// flow layout — the React-rendered <MainHeader> is the primary rendering;
-// the overlay is just a defensive write-after-Ink-frame.
-const HEADER_TABS_DEF: Array<{ key: string; label: string; kind: "main" | "interactive"; view?: InteractiveView }> = [
-  { key: "m", label: "Main", kind: "main" },
-  { key: "b", label: "Board", kind: "interactive", view: "board" },
-  { key: "a", label: "Agents", kind: "interactive", view: "agents" },
-  { key: "g", label: "Settings", kind: "interactive", view: "settings" },
-  { key: "t", label: "Git", kind: "interactive", view: "git" },
-  { key: "f", label: "Files", kind: "interactive", view: "files" },
-];
-export function buildHeaderAnsiLine(state: DashboardState, cols: number): string {
-  const inInteractive = state.mode === "interactive";
-  const interactiveView = state.interactiveView;
-  const isActive = (t: typeof HEADER_TABS_DEF[number]) =>
-    t.kind === "main" ? !inInteractive : inInteractive && t.view === interactiveView;
-  const tiny = cols < 50;
-  const fullLabels = cols >= 90;
-  const compact = !fullLabels && !tiny;
-  const FG_CYAN_BRIGHT = "\x1b[1;96m";
-  const DIM = "\x1b[2m";
-  const RESET = "\x1b[0m";
-  const PILL_ON = "\x1b[1;30;46m";
-  const SEP_TXT = "\x1b[2m│\x1b[0m";
-  let visibleLen = 0;
-  const out: string[] = [];
-  const push = (visible: string, ansi: string) => {
-    out.push(ansi);
-    visibleLen += visible.length;
-  };
-  push(" ", " ");
-  push("FUSION", `${FG_CYAN_BRIGHT}FUSION${RESET}`);
-  if (tiny) {
-    const active = HEADER_TABS_DEF.find(isActive);
-    if (active) {
-      push(" ", " ");
-      const txt = ` ${active.key} ${active.label} `;
-      push(txt, `${PILL_ON}${txt}${RESET}`);
-    }
-  } else {
-    push(" ", " ");
-    push("│", SEP_TXT);
-    for (const t of HEADER_TABS_DEF) {
-      push(" ", " ");
-      const active = isActive(t);
-      const label = compact
-        ? (active ? ` ${t.key} ` : `[${t.key}]`)
-        : (active ? ` [${t.key}] ${t.label} ` : `[${t.key}] ${t.label}`);
-      push(label, active ? `${PILL_ON}${label}${RESET}` : `${DIM}${label}${RESET}`);
-    }
-  }
-  if (visibleLen < cols) out.push(" ".repeat(cols - visibleLen));
-  return out.join("") + "\x1b[K";
-}
 
 function MainHeader({ state }: { state: DashboardState }) {
   const inInteractive = state.mode === "interactive";
@@ -4027,7 +3952,7 @@ export function DashboardApp({ controller }: DashboardAppProps) {
 
     // Number keys switch panels (status mode)
     if (input >= "1" && input <= "5") {
-      const section = SECTION_ORDER[parseInt(input, 10) - 1];
+      const section = NUMBER_KEY_ORDER[parseInt(input, 10) - 1];
       if (section) {
         controller.setActiveSection(section);
       }
