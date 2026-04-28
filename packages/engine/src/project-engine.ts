@@ -16,6 +16,7 @@ import type { ProjectRuntimeConfig } from "./project-runtime.js";
 import { PrMonitor } from "./pr-monitor.js";
 import { PrCommentHandler } from "./pr-comment-handler.js";
 import { NtfyNotifier } from "./notifier.js";
+import { NotificationService } from "./notification/index.js";
 import { GridlockDetector } from "./gridlock-detector.js";
 import { CronRunner, createAiPromptExecutor } from "./cron-runner.js";
 import type { RoutineRunner } from "./routine-runner.js";
@@ -115,7 +116,7 @@ export interface ProjectEngineOptions {
  *
  * - **Auto-merge queue** — serialized merge with conflict retry, semaphore gating
  * - **PrMonitor + PrCommentHandler** — GitHub PR feedback loop
- * - **NtfyNotifier** — push notifications
+ * - **NotificationService** — provider-driven push notifications
  * - **CronRunner + AutomationStore** — scheduled automations
  * - **Settings event listeners** — dynamic reconfiguration
  *
@@ -128,6 +129,7 @@ export class ProjectEngine {
   private prMonitor?: PrMonitor;
   private prCommentHandler?: PrCommentHandler;
   private notifier?: NtfyNotifier;
+  private notificationService?: NotificationService;
   private gridlockDetector?: GridlockDetector;
   private cronRunner?: CronRunner;
   private automationStore?: AutomationStoreType;
@@ -218,8 +220,15 @@ export class ProjectEngine {
       this.prCommentHandler!.handleNewComments(taskId, prInfo, comments),
     );
 
-    // 3. Initialize NtfyNotifier (unless caller manages it externally)
+    // 3. Initialize notification services (unless caller manages them externally)
     if (!this.options.skipNotifier) {
+      this.notificationService = new NotificationService(store, {
+        projectId: this.options.projectId,
+        ntfyBaseUrl: this.options.ntfyBaseUrl,
+      });
+      await this.notificationService.start();
+
+      // Backward-compatibility shim for gridlock notifications.
       this.notifier = new NtfyNotifier(store, {
         projectId: this.options.projectId,
         ntfyBaseUrl: this.options.ntfyBaseUrl,
@@ -394,6 +403,7 @@ export class ProjectEngine {
     }
 
     // Stop auxiliary subsystems
+    this.notificationService?.stop();
     this.notifier?.stop();
     this.gridlockDetector?.stop();
     this.cronRunner?.stop();

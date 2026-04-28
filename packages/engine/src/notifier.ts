@@ -1,6 +1,7 @@
-import type { Task, Column, Settings, MergeResult, NtfyNotificationEvent } from "@fusion/core";
+import type { Task, Settings, NtfyNotificationEvent } from "@fusion/core";
 import type { GridlockEvent } from "./gridlock-detector.js";
 import { schedulerLog } from "./logger.js";
+import { NotificationService } from "./notification/index.js";
 
 export interface NtfyNotifierOptions {
   /** Base URL for ntfy.sh. Default: https://ntfy.sh */
@@ -58,7 +59,7 @@ type AnyNotificationEvent = TaskNotificationEvent | "gridlock";
  * - If title exists: returns "{title}"
  * - If no title: returns "{id}: {first 200 chars of description}" (truncated with "..." if > 200)
  */
-function formatTaskIdentifier(task: Task): string {
+export function formatTaskIdentifier(task: Task): string {
   if (task.title) {
     return task.title;
   }
@@ -160,9 +161,9 @@ export async function sendNtfyNotification({
 }
 
 /**
- * NtfyNotifier sends push notifications via ntfy.sh when tasks complete
- * or fail. It listens to TaskStore events and sends HTTP POST requests
- * to the configured ntfy topic.
+ * NtfyNotifier is a backward-compatible wrapper around NotificationService.
+ * It keeps legacy APIs (getConfig, notifyGridlock) while delegating task event
+ * notifications to the pluggable provider-based notification module.
  */
 export class NtfyNotifier {
   private config: NtfyConfig = {
@@ -171,9 +172,10 @@ export class NtfyNotifier {
     dashboardHost: undefined,
     events: [...DEFAULT_NTFY_EVENTS],
   };
+  private readonly notificationService: NotificationService;
   private ntfyBaseUrl: string;
   private readonly defaultNtfyBaseUrl: string;
-  private projectId?: string;
+  private readonly projectId?: string;
   private notifiedEvents: Set<string> = new Set();
   private abortController: AbortController | null = null;
 
@@ -184,27 +186,23 @@ export class NtfyNotifier {
     this.defaultNtfyBaseUrl = resolveNtfyBaseUrl(options.ntfyBaseUrl);
     this.ntfyBaseUrl = this.defaultNtfyBaseUrl;
     this.projectId = options.projectId;
+    this.notificationService = new NotificationService(store, {
+      projectId: this.projectId,
+      ntfyBaseUrl: options.ntfyBaseUrl,
+    });
   }
 
   async start(): Promise<void> {
     this.abortController = new AbortController();
-
     const settings = await this.store.getSettings();
     this.loadConfig(settings);
-
-    this.store.on("task:moved", this.handleTaskMoved);
-    this.store.on("task:updated", this.handleTaskUpdated);
-    this.store.on("task:merged", this.handleTaskMerged);
     this.store.on("settings:updated", this.handleSettingsUpdated);
-
+    await this.notificationService.start();
     schedulerLog.log("NtfyNotifier started");
   }
 
   stop(): void {
     if (typeof this.store.off === "function") {
-      this.store.off("task:moved", this.handleTaskMoved);
-      this.store.off("task:updated", this.handleTaskUpdated);
-      this.store.off("task:merged", this.handleTaskMerged);
       this.store.off("settings:updated", this.handleSettingsUpdated);
     }
 
@@ -213,143 +211,12 @@ export class NtfyNotifier {
       this.abortController = null;
     }
 
+    void this.notificationService.stop();
     schedulerLog.log("NtfyNotifier stopped");
   }
 
-  private handleTaskMoved = (data: { task: Task; from: Column; to: Column }): void => {
-    if (!this.config.enabled || !this.config.topic) return;
-
-    const { task, to } = data;
-
-    if (to === "in-review" && this.isEventEnabled("in-review")) {
-      const clickUrl = buildNtfyClickUrl({
-        dashboardHost: this.config.dashboardHost,
-        projectId: this.projectId,
-        taskId: task.id,
-      });
-      this.maybeNotify(task.id, "in-review", () =>
-        sendNtfyNotification({
-          ntfyBaseUrl: this.ntfyBaseUrl,
-          topic: this.config.topic!,
-          title: `Task ${task.id} completed`,
-          message: `Task "${formatTaskIdentifier(task)}" is ready for review`,
-          priority: "default",
-          clickUrl,
-          signal: this.abortController?.signal,
-        }),
-      );
-    }
-  };
-
-  private handleTaskUpdated = (task: Task): void => {
-    if (!this.config.enabled || !this.config.topic) return;
-
-    if (task.status === "failed" && this.isEventEnabled("failed")) {
-      const clickUrl = buildNtfyClickUrl({
-        dashboardHost: this.config.dashboardHost,
-        projectId: this.projectId,
-        taskId: task.id,
-      });
-      this.maybeNotify(task.id, "failed", () =>
-        sendNtfyNotification({
-          ntfyBaseUrl: this.ntfyBaseUrl,
-          topic: this.config.topic!,
-          title: `Task ${task.id} failed`,
-          message: `Task "${formatTaskIdentifier(task)}" has failed and needs attention`,
-          priority: "high",
-          clickUrl,
-          signal: this.abortController?.signal,
-        }),
-      );
-    }
-
-    if (task.status === "awaiting-approval" && this.isEventEnabled("awaiting-approval")) {
-      const clickUrl = buildNtfyClickUrl({
-        dashboardHost: this.config.dashboardHost,
-        projectId: this.projectId,
-        taskId: task.id,
-      });
-      this.maybeNotify(task.id, "awaiting-approval", () =>
-        sendNtfyNotification({
-          ntfyBaseUrl: this.ntfyBaseUrl,
-          topic: this.config.topic!,
-          title: `Plan needs approval for ${task.id}`,
-          message: `Task "${formatTaskIdentifier(task)}" needs your approval before it can proceed`,
-          priority: "high",
-          clickUrl,
-          signal: this.abortController?.signal,
-        }),
-      );
-    }
-
-    if (task.status === "awaiting-user-review" && this.isEventEnabled("awaiting-user-review")) {
-      const clickUrl = buildNtfyClickUrl({
-        dashboardHost: this.config.dashboardHost,
-        projectId: this.projectId,
-        taskId: task.id,
-      });
-      this.maybeNotify(task.id, "awaiting-user-review", () =>
-        sendNtfyNotification({
-          ntfyBaseUrl: this.ntfyBaseUrl,
-          topic: this.config.topic!,
-          title: `User review needed for ${task.id}`,
-          message: `Task "${formatTaskIdentifier(task)}" needs human review before it can proceed`,
-          priority: "high",
-          clickUrl,
-          signal: this.abortController?.signal,
-        }),
-      );
-    }
-  };
-
-  private handleTaskMerged = (result: MergeResult): void => {
-    if (!this.config.enabled || !this.config.topic) return;
-
-    if (result.merged && this.isEventEnabled("merged")) {
-      const clickUrl = buildNtfyClickUrl({
-        dashboardHost: this.config.dashboardHost,
-        projectId: this.projectId,
-        taskId: result.task.id,
-      });
-      this.maybeNotify(result.task.id, "merged", () =>
-        sendNtfyNotification({
-          ntfyBaseUrl: this.ntfyBaseUrl,
-          topic: this.config.topic!,
-          title: `Task ${result.task.id} merged`,
-          message: `Task "${formatTaskIdentifier(result.task)}" has been merged to main`,
-          priority: "default",
-          clickUrl,
-          signal: this.abortController?.signal,
-        }),
-      );
-    }
-  };
-
   private handleSettingsUpdated = (data: { settings: Settings; previous: Settings }): void => {
-    const { settings, previous } = data;
-
-    if (settings.ntfyEnabled !== previous.ntfyEnabled ||
-        settings.ntfyTopic !== previous.ntfyTopic ||
-        settings.ntfyBaseUrl !== previous.ntfyBaseUrl ||
-        settings.ntfyDashboardHost !== previous.ntfyDashboardHost ||
-        JSON.stringify(settings.ntfyEvents) !== JSON.stringify(previous.ntfyEvents)) {
-      const wasEnabled = this.config.enabled;
-      this.loadConfig(settings);
-
-      if (this.config.enabled && !wasEnabled) {
-        schedulerLog.log("NtfyNotifier enabled");
-      } else if (!this.config.enabled && wasEnabled) {
-        schedulerLog.log("NtfyNotifier disabled");
-      } else if (this.config.topic !== previous.ntfyTopic) {
-        schedulerLog.log("NtfyNotifier topic updated");
-      } else if (this.ntfyBaseUrl !== resolveNtfyBaseUrl(previous.ntfyBaseUrl)) {
-        schedulerLog.log("NtfyNotifier base URL updated");
-      } else if (this.config.dashboardHost !== previous.ntfyDashboardHost) {
-        schedulerLog.log("NtfyNotifier dashboard host updated");
-      } else if (JSON.stringify(this.config.events) !== JSON.stringify(previous.ntfyEvents)) {
-        schedulerLog.log("NtfyNotifier events updated");
-      }
-    }
+    this.loadConfig(data.settings);
   };
 
   private loadConfig(settings: Settings): void {
@@ -396,14 +263,6 @@ export class NtfyNotifier {
 
   private isEventEnabled(event: AnyNotificationEvent): boolean {
     return isNtfyEventEnabled(this.config.events, event);
-  }
-
-  private maybeNotify(
-    taskId: string,
-    eventType: TaskNotificationEvent,
-    notifyFn: () => Promise<void>,
-  ): void {
-    this.maybeNotifyByKey(`${taskId}:${eventType}`, notifyFn);
   }
 
   private maybeNotifyByKey(key: string, notifyFn: () => Promise<void>): void {

@@ -72,6 +72,14 @@ vi.mock("../notifier.js", () => ({
   NtfyNotifier: vi.fn().mockImplementation(() => ({
     start: vi.fn(async () => undefined),
     stop: vi.fn(),
+    notifyGridlock: vi.fn(),
+  })),
+}));
+
+vi.mock("../notification/index.js", () => ({
+  NotificationService: vi.fn().mockImplementation(() => ({
+    start: vi.fn().mockResolvedValue(undefined),
+    stop: vi.fn(),
   })),
 }));
 

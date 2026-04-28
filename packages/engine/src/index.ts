@@ -59,11 +59,15 @@ export {
   isNtfyEventEnabled,
   buildNtfyClickUrl,
   sendNtfyNotification,
+  formatTaskIdentifier,
   type NtfyNotifierOptions,
   type NtfyNotificationPriority,
   type NtfyNotificationConfigInput,
   type SendNtfyNotificationInput,
 } from "./notifier.js";
+// ── Notification Service ──────────────────────────────────────
+export { NtfyNotificationProvider, NotificationService } from "./notification/index.js";
+export type { NtfyProviderConfig, NotificationServiceOptions } from "./notification/index.js";
 export { CronRunner, type CronRunnerOptions, type AiPromptExecutor, createAiPromptExecutor } from "./cron-runner.js";
 export { RoutineRunner, type RoutineRunnerOptions } from "./routine-runner.js";
 export { RoutineScheduler, type RoutineSchedulerOptions } from "./routine-scheduler.js";
