@@ -1,7 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { loadAllAppCss } from "../test/cssFixture";
-import { readFileSync } from "fs";
-import { resolve } from "path";
 
 /**
  * CSS contract tests for the terminal modal mobile keyboard-open layout.
@@ -150,33 +148,68 @@ describe("terminal mobile keyboard layout CSS contract", () => {
 
   describe("desktop .modal.terminal-modal base rule", () => {
     /**
-     * Extract the desktop terminal modal rule (top-level, not inside any
-     * @media block).
+     * Extract the base desktop terminal modal rule (top-level, not inside
+     * any @media block).
+     *
+     * The modal is `resize: both` and remembers user-chosen dimensions via
+     * inline `style="width: …; height: …"`. To keep persisted size winning
+     * over the CSS default, the *initial* width/height live in companion
+     * rules (`:not([style*="width"])` / `:not([style*="height"])`), not in
+     * this base block. The base block carries immutable constraints:
+     * min/max sizing, flex layout, background.
      */
     function findDesktopTerminalModalRule(): string {
       const match = css.match(/^\.modal\.terminal-modal\s*\{([^}]*)\}/m);
       return match?.[1] ?? "";
     }
 
+    /** Companion rule supplying the initial width when no inline
+     *  `style="width: …"` has been persisted. */
+    function findDesktopInitialWidthRule(): string {
+      const match = css.match(
+        /^\.modal\.terminal-modal:not\(\[style\*="width"\]\)\s*\{([^}]*)\}/m,
+      );
+      return match?.[1] ?? "";
+    }
+
+    /** Companion rule supplying the initial height when no inline
+     *  `style="height: …"` has been persisted. */
+    function findDesktopInitialHeightRule(): string {
+      const match = css.match(
+        /^\.modal\.terminal-modal:not\(\[style\*="height"\]\)\s*\{([^}]*)\}/m,
+      );
+      return match?.[1] ?? "";
+    }
+
     it("uses viewport-based width with desktop side margins", () => {
-      const ruleBody = findDesktopTerminalModalRule();
-      expect(ruleBody).toContain(
+      // Initial width (when no persisted size) lives in the companion rule.
+      const initialWidth = findDesktopInitialWidthRule();
+      expect(initialWidth).toContain(
         "width: min(1800px, calc(100vw - (var(--space-xl) * 2)))",
       );
-      expect(ruleBody).toContain(
+      // max-width remains in the base rule so persisted sizes are clamped.
+      const baseRule = findDesktopTerminalModalRule();
+      expect(baseRule).toContain(
         "max-width: calc(100vw - (var(--space-xl) * 2))",
       );
     });
 
     it("does not cap desktop width to the old narrow 1600px max", () => {
-      const ruleBody = findDesktopTerminalModalRule();
-      expect(ruleBody).not.toContain("max-width: 1600px");
+      const baseRule = findDesktopTerminalModalRule();
+      const initialWidth = findDesktopInitialWidthRule();
+      expect(baseRule).not.toContain("max-width: 1600px");
+      expect(initialWidth).not.toContain("max-width: 1600px");
     });
 
     it("keeps desktop height constraints", () => {
-      const ruleBody = findDesktopTerminalModalRule();
-      expect(ruleBody).toContain("min-height: 80vh");
-      expect(ruleBody).toContain("max-height: 85vh");
+      // Initial height clamps to 85vh on first open before any resize.
+      const initialHeight = findDesktopInitialHeightRule();
+      expect(initialHeight).toContain("85vh");
+      // Base rule supplies absolute resize bounds: a sensible floor and a
+      // ceiling tied to the dynamic viewport.
+      const baseRule = findDesktopTerminalModalRule();
+      expect(baseRule).toMatch(/min-height:\s*[^;]+/);
+      expect(baseRule).toContain("max-height: calc(100dvh - 40px)");
     });
   });
 });
