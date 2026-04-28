@@ -5,6 +5,7 @@ import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, Ntfy
 import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, fetchGitRemotesDetailed, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, updateRemoteSettings, fetchRemoteStatus, activateRemoteProvider, startRemoteTunnel, stopRemoteTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteQr, fetchRemoteUrl } from "../api";
 import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemoteDetailed, RemoteSettings, RemoteStatus, UpdateCheckResponse } from "../api";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
+import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import type { ToastType } from "../hooks/useToast";
 import { ThemeSelector } from "./ThemeSelector";
 import "./SettingsModal.css";
@@ -956,12 +957,7 @@ export function SettingsModal({
     return () => document.removeEventListener("keydown", handleKey);
   }, [onClose]);
 
-  const handleOverlayClick = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
+  const overlayDismissProps = useOverlayDismiss(onClose);
 
   /**
    * Lane status types:
@@ -4061,6 +4057,25 @@ export function SettingsModal({
         const authenticatedProviders = sortedProviders.filter(p => p.authenticated);
         const unauthenticatedProviders = sortedProviders.filter(p => !p.authenticated);
 
+        // Claude CLI lives in whichever bucket matches its current auth state
+        // (Authenticated when signed in, Available otherwise) instead of
+        // floating at the top of the panel — keeps the section that owns it
+        // visually consistent with the rest of the providers.
+        const claudeCliProvider = cliAuthProviders.find((p) => p.id === "claude-cli");
+        const claudeCliCard = claudeCliProvider ? (
+          <ClaudeCliProviderCard
+            compact
+            authenticated={claudeCliProvider.authenticated}
+            onToggled={() => {
+              void loadAuthStatus();
+            }}
+          />
+        ) : null;
+        const showAuthenticatedGroup =
+          authenticatedProviders.length > 0 || (claudeCliProvider?.authenticated ?? false);
+        const showAvailableGroup =
+          unauthenticatedProviders.length > 0 || (claudeCliProvider && !claudeCliProvider.authenticated);
+
         return (
           <>
             <h4 className="settings-section-heading">Authentication</h4>
@@ -4072,26 +4087,15 @@ export function SettingsModal({
               </div>
             ) : (
               <div className="auth-panel-body">
-              {cliAuthProviders.some((p) => p.id === "claude-cli") && (
-                <ClaudeCliProviderCard
-                  compact
-                  authenticated={
-                    cliAuthProviders.find((p) => p.id === "claude-cli")
-                      ?.authenticated ?? false
-                  }
-                  onToggled={() => {
-                    void loadAuthStatus();
-                  }}
-                />
-              )}
-              {authenticatedProviders.length === 0 && (
+              {!showAuthenticatedGroup && (
                 <div className="auth-section-hint">
                   Sign in to at least one provider to get started with AI models.
                 </div>
               )}
-              {authenticatedProviders.length > 0 && (
+              {showAuthenticatedGroup && (
                 <div className="auth-provider-group">
                   <div className="auth-group-label">Authenticated</div>
+                  {claudeCliProvider?.authenticated && claudeCliCard}
                   {authenticatedProviders.map((provider) => (
                     <div key={provider.id} className="auth-provider-card auth-provider-card--authenticated">
                       <div className="auth-provider-header">
@@ -4172,9 +4176,10 @@ export function SettingsModal({
                   ))}
                 </div>
               )}
-              {unauthenticatedProviders.length > 0 && (
+              {showAvailableGroup && (
                 <div className="auth-provider-group">
                   <div className="auth-group-label">Available</div>
+                  {claudeCliProvider && !claudeCliProvider.authenticated && claudeCliCard}
                   {unauthenticatedProviders.map((provider) => (
                     <div key={provider.id} className="auth-provider-card">
                       <div className="auth-provider-header">
@@ -4275,7 +4280,7 @@ export function SettingsModal({
   };
 
   return (
-    <div className="modal-overlay open" onClick={handleOverlayClick} role="dialog" aria-modal="true">
+    <div className="modal-overlay open" {...overlayDismissProps} role="dialog" aria-modal="true">
       <div className="modal modal-lg settings-modal" ref={modalRef}>
         <div className="modal-header">
           <div className="settings-modal-heading">

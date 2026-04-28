@@ -16,6 +16,7 @@ import { RoutineCard } from "./RoutineCard";
 import { RoutineEditor } from "./RoutineEditor";
 import type { ToastType } from "../hooks/useToast";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
+import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 
 /** Polling interval for auto-refreshing the schedule/routine list (30 seconds). */
 const POLL_INTERVAL_MS = 30_000;
@@ -104,12 +105,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId }: ScheduledT
     return () => document.removeEventListener("keydown", handleKey);
   }, [onClose, routineView]);
 
-  const handleOverlayClick = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
+  const overlayDismissProps = useOverlayDismiss(onClose);
 
   // ── Routine CRUD handlers ───────────────────────────────────────────────
 
@@ -289,7 +285,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId }: ScheduledT
   const isShowingList =
     routineView === "list" && routines.length > 0;
   return (
-    <div className="modal-overlay open" onClick={handleOverlayClick}>
+    <div className="modal-overlay open" {...overlayDismissProps}>
       <div ref={modalRef} className="modal modal-lg automation-modal" role="dialog" aria-modal="true" aria-labelledby="schedules-modal-title">
         <div className="modal-header">
           <div className="detail-title-row">

@@ -5,6 +5,7 @@ import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
+import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import type {
   GitStatus,
   GitCommit,
@@ -179,6 +180,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   const [sectionError, setSectionError] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   useModalResizePersist(modalRef, isOpen, "fusion:git-modal-size");
+  const overlayDismissProps = useOverlayDismiss(onClose);
   const copyToClipboard = useCopyToClipboard(addToast);
 
   // ── Status state
@@ -738,7 +740,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay open" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
+    <div className="modal-overlay open" {...overlayDismissProps} role="dialog" aria-modal="true">
       <div className="modal gm-modal" ref={modalRef}>
         <div className="modal-header">
           <h3>

@@ -1,5 +1,6 @@
 import "./WorkflowStepManager.css";
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import type { WorkflowStep, WorkflowStepInput, WorkflowStepMode, WorkflowStepPhase } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import {
@@ -373,13 +374,13 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
   if (!isOpen) return null;
 
   const isEditing = isCreating || editingId !== null;
+  const overlayDismissProps = useOverlayDismiss(onClose);
 
   return (
-    <div className="modal-overlay open" onClick={onClose} data-testid="workflow-step-manager">
+    <div className="modal-overlay open" {...overlayDismissProps} data-testid="workflow-step-manager">
       <div
         ref={modalRef}
         className="modal workflow-step-manager-modal"
-        onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Workflow Steps"

@@ -5,6 +5,7 @@ import { useWorkspaceFileBrowser } from "../hooks/useWorkspaceFileBrowser";
 import { useWorkspaceFileEditor } from "../hooks/useWorkspaceFileEditor";
 import { useWorkspaces } from "../hooks/useWorkspaces";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
+import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import { downloadFileUrl } from "../api";
 import { FileBrowser } from "./FileBrowser";
 import { FileEditor } from "./FileEditor";
@@ -63,6 +64,7 @@ export function FileBrowserModal({
   const { projectName, workspaces } = useWorkspaces(projectId);
   const modalRef = useRef<HTMLDivElement>(null);
   useModalResizePersist(modalRef, true, "fusion:files-modal-size");
+  const overlayDismissProps = useOverlayDismiss(onClose);
   const [currentWorkspace, setCurrentWorkspace] = useState(initialWorkspace);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
@@ -171,8 +173,8 @@ export function FileBrowserModal({
   };
 
   return (
-    <div className="modal-overlay open" onClick={onClose} role="dialog" aria-modal="true">
-      <div className="modal file-browser-modal" ref={modalRef} onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay open" {...overlayDismissProps} role="dialog" aria-modal="true">
+      <div className="modal file-browser-modal" ref={modalRef}>
         <div className="modal-header file-browser-modal-header">
           <div className="file-browser-header-title">
             <Folder size={18} />

@@ -2,6 +2,7 @@ import "./TaskDetailModal.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pencil, Bot, X, ChevronDown } from "lucide-react";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
+import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, Settings, AgentLogEntry, Agent, TaskPriority, TaskSourceIssue } from "@fusion/core";
@@ -794,12 +795,7 @@ export function TaskDetailModal({
     return () => document.removeEventListener("keydown", handleKey);
   }, [onClose, isEditing]);
 
-  const handleOverlayClick = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
+  const overlayDismissProps = useOverlayDismiss(onClose);
 
   const handleMove = useCallback(
     async (column: Column) => {
@@ -1279,7 +1275,7 @@ export function TaskDetailModal({
   const prAutomationLabel = task.status ? prAutomationStatusLabels[task.status] : undefined;
 
   return (
-    <div className="modal-overlay open" onClick={handleOverlayClick} role="dialog" aria-modal="true">
+    <div className="modal-overlay open" {...overlayDismissProps} role="dialog" aria-modal="true">
       <div className="modal modal-lg task-detail-modal" ref={modalRef} onDragOver={handleDragOver} onDrop={handleDrop}>
         <div className="modal-header">
           <div className="detail-title-row">

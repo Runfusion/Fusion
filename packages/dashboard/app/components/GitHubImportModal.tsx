@@ -14,6 +14,7 @@ import {
 } from "../api";
 import { Loader2, RefreshCw, ArrowLeft, GitPullRequest, CircleDot } from "lucide-react";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
+import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 
 interface GitHubImportModalProps {
   isOpen: boolean;
@@ -55,6 +56,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId 
   const mountedRef = useRef(false);
   const modalRef = useRef<HTMLDivElement>(null);
   useModalResizePersist(modalRef, isOpen, "fusion:github-modal-size");
+  const overlayDismissProps = useOverlayDismiss(onClose);
 
   // Mobile view state
   const [isMobile, setIsMobile] = useState(false);
@@ -352,7 +354,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId 
   const showInlineErrorBanner = activeTab === "issues" ? showIssuesError : showPullsError;
 
   return (
-    <div className="modal-overlay open" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
+    <div className="modal-overlay open" {...overlayDismissProps} role="dialog" aria-modal="true">
       <div className="modal modal-lg github-import-modal" ref={modalRef}>
         <div className="modal-header github-import-modal__header">
           <div>

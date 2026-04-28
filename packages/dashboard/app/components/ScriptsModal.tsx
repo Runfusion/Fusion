@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { getErrorMessage } from "@fusion/core";
 import { fetchScripts, addScript, removeScript, type ScriptEntry } from "../api";
 import type { ToastType } from "../hooks/useToast";
+import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import {
   X,
   Plus,
@@ -51,6 +52,7 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
   const [saving, setSaving] = useState(false);
   const [deleteConfirmName, setDeleteConfirmName] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
+  const overlayDismissProps = useOverlayDismiss(onClose);
 
   const loadScripts = useCallback(async () => {
     try {
@@ -170,10 +172,9 @@ export function ScriptsModal({ isOpen, onClose, addToast, projectId, onRunScript
   }));
 
   return (
-    <div className="modal-overlay open" onClick={onClose} data-testid="scripts-modal">
+    <div className="modal-overlay open" {...overlayDismissProps} data-testid="scripts-modal">
       <div
         className="modal scripts-modal"
-        onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Scripts"
