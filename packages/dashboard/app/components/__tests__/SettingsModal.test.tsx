@@ -33,7 +33,6 @@ const mockCheckForUpdates = vi.fn();
 const mockFetchRemoteSettings = vi.fn();
 const mockUpdateRemoteSettings = vi.fn();
 const mockFetchRemoteStatus = vi.fn();
-const mockActivateRemoteProvider = vi.fn();
 const mockStartRemoteTunnel = vi.fn();
 const mockStopRemoteTunnel = vi.fn();
 const mockRegenerateRemotePersistentToken = vi.fn();
@@ -72,7 +71,6 @@ vi.mock("../../api", () => ({
   fetchRemoteSettings: (...args: unknown[]) => mockFetchRemoteSettings(...args),
   updateRemoteSettings: (...args: unknown[]) => mockUpdateRemoteSettings(...args),
   fetchRemoteStatus: (...args: unknown[]) => mockFetchRemoteStatus(...args),
-  activateRemoteProvider: (...args: unknown[]) => mockActivateRemoteProvider(...args),
   startRemoteTunnel: (...args: unknown[]) => mockStartRemoteTunnel(...args),
   stopRemoteTunnel: (...args: unknown[]) => mockStopRemoteTunnel(...args),
   regenerateRemotePersistentToken: (...args: unknown[]) => mockRegenerateRemotePersistentToken(...args),
@@ -259,7 +257,6 @@ describe("SettingsModal", () => {
       },
     });
     mockFetchRemoteStatus.mockResolvedValue({ provider: null, state: "stopped", url: null, lastError: null });
-    mockActivateRemoteProvider.mockResolvedValue({ activeProvider: "tailscale" });
     mockStartRemoteTunnel.mockResolvedValue({ state: "starting", provider: "tailscale" });
     mockStopRemoteTunnel.mockResolvedValue({ state: "stopped", provider: null });
     mockRegenerateRemotePersistentToken.mockResolvedValue({ token: "token", maskedToken: "****" });
@@ -1517,6 +1514,30 @@ describe("SettingsModal", () => {
       );
     });
 
+    it("forces enabled=true for selected active provider when saving", async () => {
+      renderModal();
+      await waitForSettingsModalReady();
+      await openRemoteSection();
+
+      const tailscaleToggle = screen.getByLabelText("Enable Tailscale provider config");
+      expect(tailscaleToggle).not.toBeChecked();
+
+      await userEvent.selectOptions(screen.getByLabelText("Active provider"), "tailscale");
+      await userEvent.click(screen.getByRole("button", { name: "Save Remote Settings" }));
+
+      await waitFor(() => {
+        expect(mockUpdateRemoteSettings).toHaveBeenCalledTimes(1);
+      });
+
+      expect(mockUpdateRemoteSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          remoteActiveProvider: "tailscale",
+          remoteTailscaleEnabled: true,
+        }),
+        undefined,
+      );
+    });
+
     it("toggles Cloudflare quick tunnel and hides manual cloudflare fields", async () => {
       renderModal();
       await waitForSettingsModalReady();
@@ -1544,7 +1565,7 @@ describe("SettingsModal", () => {
       });
     });
 
-    it("updates active provider selection and provider status affordance after activation", async () => {
+    it("uses a save-only remote provider setup flow", async () => {
       mockFetchRemoteStatus
         .mockResolvedValueOnce({ provider: null, state: "stopped", url: null, lastError: null })
         .mockResolvedValueOnce({ provider: "tailscale", state: "running", url: "https://tail.example", lastError: null });
@@ -1553,13 +1574,21 @@ describe("SettingsModal", () => {
       await waitForSettingsModalReady();
       await openRemoteSection();
 
+      expect(screen.queryByRole("button", { name: "Activate Provider" })).not.toBeInTheDocument();
+
       const activeProviderSelect = screen.getByLabelText("Active provider");
       await userEvent.selectOptions(activeProviderSelect, "tailscale");
       expect(activeProviderSelect).toHaveValue("tailscale");
-      await userEvent.click(screen.getByRole("button", { name: "Activate Provider" }));
+      await userEvent.click(screen.getByRole("button", { name: "Save Remote Settings" }));
 
       await waitFor(() => {
-        expect(mockActivateRemoteProvider).toHaveBeenCalledWith("tailscale", undefined);
+        expect(mockUpdateRemoteSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            remoteActiveProvider: "tailscale",
+            remoteTailscaleEnabled: true,
+          }),
+          undefined,
+        );
       });
       await waitFor(() => {
         expect(getTunnelStateSummary()).toHaveTextContent("Provider: tailscale");

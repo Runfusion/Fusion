@@ -2,7 +2,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import express from "express";
-import type { TaskStore } from "@fusion/core";
+import { DEFAULT_PROJECT_SETTINGS, type TaskStore } from "@fusion/core";
 import { createApiRoutes } from "../routes.js";
 import { request as performRequest } from "../test-request.js";
 
@@ -129,6 +129,58 @@ describe("remote access API route contracts", () => {
         }),
       }),
     }));
+  });
+
+  it("returns default remote settings payload when remoteAccess is missing", async () => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({}),
+    });
+    const { app } = createApp({ store });
+
+    const getRes = await REQUEST(app, "GET", "/api/remote/settings");
+
+    expect(getRes.status).toBe(200);
+    expect(getRes.body).toMatchObject({
+      settings: expect.objectContaining({
+        remoteEnabled: false,
+        remoteActiveProvider: null,
+        remoteTailscaleEnabled: false,
+        remoteCloudflareEnabled: false,
+        remoteShortLivedEnabled: false,
+      }),
+    });
+  });
+
+  it("seeds defaults when saving remote settings on a fresh project", async () => {
+    const updateSettings = vi.fn().mockResolvedValue(undefined);
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({}),
+      updateSettings,
+    });
+    const { app } = createApp({ store });
+
+    const putRes = await REQUEST(app, "PUT", "/api/remote/settings", {
+      remoteActiveProvider: "tailscale",
+      remoteTailscaleEnabled: true,
+      remoteTailscaleHostname: "first-use.ts.net",
+    });
+
+    expect(putRes.status).toBe(200);
+    expect(updateSettings).toHaveBeenCalledWith({
+      remoteAccess: expect.objectContaining({
+        ...DEFAULT_PROJECT_SETTINGS.remoteAccess,
+        activeProvider: "tailscale",
+        providers: expect.objectContaining({
+          tailscale: expect.objectContaining({ enabled: true, hostname: "first-use.ts.net" }),
+          cloudflare: expect.objectContaining({ enabled: false }),
+        }),
+      }),
+    });
+    expect(putRes.body.settings).toMatchObject({
+      remoteEnabled: true,
+      remoteActiveProvider: "tailscale",
+      remoteTailscaleEnabled: true,
+    });
   });
 
   it("supports provider activation and tunnel lifecycle endpoints", async () => {

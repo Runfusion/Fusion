@@ -104,6 +104,28 @@ describe("remote access provider/lifecycle contracts", () => {
     });
   });
 
+  it("seeds defaults when activating a provider on a fresh project", async () => {
+    const updateSettings = vi.fn().mockResolvedValue(undefined);
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({}),
+      updateSettings,
+    });
+    const { app } = createApp({ store });
+
+    const activate = await REQUEST(app, "POST", "/api/remote/provider/activate", { provider: "cloudflare" });
+
+    expect(activate.status).toBe(200);
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      remoteAccess: expect.objectContaining({
+        activeProvider: "cloudflare",
+        providers: expect.objectContaining({
+          tailscale: expect.objectContaining({ enabled: false }),
+          cloudflare: expect.objectContaining({ enabled: false }),
+        }),
+      }),
+    }));
+  });
+
   it("returns NO_ACTIVE_PROVIDER when tunnel start is requested without an active provider", async () => {
     const store = createMockStore({
       getSettings: vi.fn().mockResolvedValue({
@@ -142,7 +164,7 @@ describe("remote access provider/lifecycle contracts", () => {
     }
   });
 
-  it("maps runtime prerequisite failures to a structured conflict response", async () => {
+  it("returns REMOTE_TUNNEL_PREREQUISITE_MISSING when provider is selected but runtime prerequisites are missing", async () => {
     const store = createMockStore();
     const engine = {
       getTaskStore: vi.fn().mockReturnValue(store),

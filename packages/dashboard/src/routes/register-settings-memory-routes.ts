@@ -1,4 +1,5 @@
 import {
+  DEFAULT_PROJECT_SETTINGS,
   GLOBAL_SETTINGS_KEYS,
   QMD_INSTALL_COMMAND,
   MemoryBackendError,
@@ -316,11 +317,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
-      const remoteAccess = settings.remoteAccess;
-
-      if (!remoteAccess) {
-        throw new ApiError(409, "Remote access is not configured", { code: "REMOTE_ACCESS_DISABLED" });
-      }
+      const remoteAccess = settings.remoteAccess ?? DEFAULT_PROJECT_SETTINGS.remoteAccess;
 
       res.json({ settings: toRemoteSettingsPayload(remoteAccess) });
     } catch (err: unknown) {
@@ -333,10 +330,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
-      const remoteAccess = settings.remoteAccess;
-      if (!remoteAccess) {
-        throw new ApiError(409, "Remote access is not configured", { code: "REMOTE_ACCESS_DISABLED" });
-      }
+      const remoteAccess = settings.remoteAccess ?? DEFAULT_PROJECT_SETTINGS.remoteAccess;
 
       const body = (req.body ?? {}) as Record<string, unknown>;
       const nextRemoteAccess = {
@@ -433,10 +427,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       }
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
-      const remoteAccess = settings.remoteAccess;
-      if (!remoteAccess) {
-        throw new ApiError(409, "Remote access is not configured", { code: "REMOTE_ACCESS_DISABLED" });
-      }
+      const remoteAccess = settings.remoteAccess ?? DEFAULT_PROJECT_SETTINGS.remoteAccess;
 
       await scopedStore.updateSettings({
         remoteAccess: {

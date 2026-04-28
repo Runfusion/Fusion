@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, lazy, Suspense, type MouseEve
 import { Globe, Folder, RefreshCw, Star, HelpCircle, Loader2 } from "lucide-react";
 import { THINKING_LEVELS, isGlobalSettingsKey, isProjectSettingsKey, getErrorMessage } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, AgentPromptsConfig, ThinkingLevel } from "@fusion/core";
-import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotesDetailed, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, updateRemoteSettings, fetchRemoteStatus, activateRemoteProvider, startRemoteTunnel, stopRemoteTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteQr, fetchRemoteUrl } from "../api";
+import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNtfyNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotesDetailed, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, updateRemoteSettings, fetchRemoteStatus, startRemoteTunnel, stopRemoteTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteQr, fetchRemoteUrl } from "../api";
 import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemoteDetailed, RemoteSettings, RemoteStatus, UpdateCheckResponse } from "../api";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
@@ -1451,13 +1451,18 @@ export function SettingsModal({
   };
 
   const handleSaveRemoteSettings = useCallback(async () => {
+    const activeProvider = ((form as Record<string, unknown>).remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null;
     const nextSettings: Partial<RemoteSettings> = {
-      remoteActiveProvider: ((form as Record<string, unknown>).remoteActiveProvider as "tailscale" | "cloudflare" | null) ?? null,
-      remoteTailscaleEnabled: Boolean((form as Record<string, unknown>).remoteTailscaleEnabled),
+      remoteActiveProvider: activeProvider,
+      remoteTailscaleEnabled: activeProvider === "tailscale"
+        ? true
+        : Boolean((form as Record<string, unknown>).remoteTailscaleEnabled),
       remoteTailscaleHostname: String((form as Record<string, unknown>).remoteTailscaleHostname ?? ""),
       remoteTailscaleTargetPort: Number((form as Record<string, unknown>).remoteTailscaleTargetPort ?? 4040),
       remoteTailscaleAcceptRoutes: Boolean((form as Record<string, unknown>).remoteTailscaleAcceptRoutes),
-      remoteCloudflareEnabled: Boolean((form as Record<string, unknown>).remoteCloudflareEnabled),
+      remoteCloudflareEnabled: activeProvider === "cloudflare"
+        ? true
+        : Boolean((form as Record<string, unknown>).remoteCloudflareEnabled),
       remoteCloudflareQuickTunnel: Boolean((form as Record<string, unknown>).remoteCloudflareQuickTunnel),
       remoteCloudflareTunnelName: String((form as Record<string, unknown>).remoteCloudflareTunnelName ?? ""),
       remoteCloudflareTunnelToken: (((form as Record<string, unknown>).remoteCloudflareTunnelToken as string | null) || null),
@@ -2409,6 +2414,55 @@ export function SettingsModal({
                 }}
               />
               <small>Maximum concurrent planning agents</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="defaultNodeId">Default Execution Node</label>
+              <select
+                id="defaultNodeId"
+                className="select"
+                value={typeof form.defaultNodeId === "string" ? form.defaultNodeId : ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setForm((f) => ({ ...f, defaultNodeId: val || undefined } as SettingsFormState));
+                }}
+              >
+                <option value="">Local execution (no default node)</option>
+                {nodes.map((node) => (
+                  <option key={node.id} value={node.id}>
+                    {node.name} ({getNodeStatusLabel(node.status)})
+                  </option>
+                ))}
+              </select>
+              {(() => {
+                const selectedNode = nodes.find((node) => node.id === form.defaultNodeId);
+                if (!selectedNode) return null;
+                return (
+                  <div className={`settings-node-status ${getNodeStatusClass(selectedNode.status)}`}>
+                    <span className="settings-node-status__dot" aria-hidden="true" />
+                    <span>{`Selected node: ${getNodeStatusLabel(selectedNode.status)}`}</span>
+                  </div>
+                );
+              })()}
+              <small>Used when a task has no node override. Node status is shown for safer routing selection.</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="unavailableNodePolicy">Unavailable Node Policy</label>
+              <select
+                id="unavailableNodePolicy"
+                className="select"
+                value={
+                  form.unavailableNodePolicy === "fallback-local" ? "fallback-local" : "block"
+                }
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    unavailableNodePolicy: e.target.value as "block" | "fallback-local",
+                  } as SettingsFormState))
+                }
+              >
+                <option value="block">Block execution</option>
+                <option value="fallback-local">Fallback to local</option>
+              </select>
             </div>
             <div className="form-group">
               <label htmlFor="pollIntervalMs">Poll Interval (ms)</label>
@@ -3840,20 +3894,6 @@ export function SettingsModal({
                 <option value="cloudflare">Cloudflare Tunnel</option>
               </select>
               <div className="settings-button-row">
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  disabled={!activeProvider || remoteBusyAction !== null}
-                  onClick={() => {
-                    if (!activeProvider) return;
-                    void runRemoteAction("activate provider", async () => {
-                      await activateRemoteProvider(activeProvider, projectId);
-                      addToast(`Activated ${activeProvider}`, "success");
-                    });
-                  }}
-                >
-                  Activate Provider
-                </button>
                 <button
                   type="button"
                   className="btn btn-sm"
