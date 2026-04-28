@@ -433,7 +433,10 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     const trimmed = description.trim();
     if (!trimmed || isSubmitting || !onCreate) return;
 
+    const originalDescription = description;
     setIsSubmitting(true);
+    // Optimistically clear text for rapid entry; restore on failure.
+    setDescription("");
     try {
       const createdTask = await onCreate({
         description: trimmed,
@@ -467,6 +470,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       resetForm();
       // Note: Focus restoration is handled by useEffect when isSubmitting becomes false
     } catch (err) {
+      setDescription(originalDescription);
       addToast(getErrorMessage(err) || "Failed to create task", "error");
       // Keep input content on failure so user can retry
     } finally {

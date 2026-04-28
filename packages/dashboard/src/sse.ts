@@ -143,7 +143,40 @@ function stripTaskListHeavyFields<T>(task: T): T {
     return task;
   }
 
-  return { ...task, log: [] } as T;
+  const candidate = task as Record<string, unknown>;
+  const existingTimed = candidate.timedExecutionMs;
+  // Mirror the slim REST path (listTasks): aggregate `[timing] … in <N>ms`
+  // log entries before stripping the log so the board card has the same
+  // total-execution figure on SSE updates as on the initial fetch.
+  // Without this, `task:updated` events arrive with log=[] AND
+  // timedExecutionMs=undefined, causing TaskCard to fall back to
+  // workflow-only time and flicker every time an update lands.
+  const timedExecutionMs =
+    typeof existingTimed === "number"
+      ? existingTimed
+      : sumTimedLogEntries(candidate.log);
+
+  return { ...task, log: [], timedExecutionMs } as T;
+}
+
+function sumTimedLogEntries(log: unknown): number {
+  if (!Array.isArray(log)) return 0;
+  let total = 0;
+  for (const entry of log) {
+    if (!entry || typeof entry !== "object") continue;
+    const action = typeof (entry as { action?: unknown }).action === "string"
+      ? ((entry as { action: string }).action)
+      : "";
+    const outcome = typeof (entry as { outcome?: unknown }).outcome === "string"
+      ? ((entry as { outcome: string }).outcome)
+      : "";
+    if (!action.includes("[timing]") && !outcome.includes("[timing]")) continue;
+    const match = `${action}\n${outcome}`.match(/(\d+(?:\.\d+)?)ms\b/i);
+    if (!match) continue;
+    const ms = Number(match[1]);
+    if (Number.isFinite(ms)) total += ms;
+  }
+  return total;
 }
 
 function stripTaskEventHeavyFields<T>(payload: T): T {

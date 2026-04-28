@@ -847,8 +847,10 @@
        otherwise win over the media query. */
     min-width: 0 !important;
     min-height: 0 !important;
+    width: 100% !important;
     width: 100vw !important;
     max-width: 100vw !important;
+    min-height: 100dvh !important;
     height: 100dvh !important;
     max-height: 100dvh !important;
     border-radius: 0;
