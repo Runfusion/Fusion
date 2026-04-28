@@ -690,7 +690,7 @@
   border-left: 3px solid var(--text-muted);
 }
 .auth-provider-group {
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 .auth-group-label {
   font-size: 11px;
@@ -698,14 +698,14 @@
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--text-muted);
-  margin-bottom: 8px;
+  margin-bottom: 4px;
   padding: 0 4px;
 }
 .auth-provider-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  margin-bottom: 8px;
+  margin-bottom: 4px;
   overflow: hidden;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
@@ -723,7 +723,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: 8px 12px;
   gap: 12px;
 }
 .auth-provider-info {
