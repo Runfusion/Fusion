@@ -344,6 +344,76 @@ function AzureIcon({ size, color, label = "Azure" }: { size: number; color: stri
   );
 }
 
+// Cerebras — concentric arcs forming a stylized "C", echoing the
+// official wafer-scale brand mark.
+function CerebrasIcon({ size, color, label = "Cerebras" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="cerebras-icon"
+      aria-label={label}
+    >
+      <path
+        d="M19.5 6.5A8.5 8.5 0 1 0 19.5 17.5"
+        stroke={color}
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        fill="none"
+      />
+      <path
+        d="M16.5 9A4.6 4.6 0 1 0 16.5 15"
+        stroke={color}
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        fill="none"
+      />
+      <circle cx="11" cy="12" r="1.6" fill={color} />
+    </svg>
+  );
+}
+
+// Groq — stylized lightning-bolt pulse, evoking their fast-inference
+// brand identity.
+function GroqIcon({ size, color, label = "Groq" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="groq-icon"
+      aria-label={label}
+    >
+      <path
+        d="M14 2 4 13h6l-2 9 10-11h-6z"
+        fill={color}
+      />
+    </svg>
+  );
+}
+
+// Vercel — the iconic equilateral triangle wordmark.
+function VercelIcon({ size, color, label = "Vercel" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="vercel-icon"
+      aria-label={label}
+    >
+      <path d="M12 2 22 21H2z" fill={color} />
+    </svg>
+  );
+}
+
 // Fireworks AI — burst of dots radiating from a central nucleus, a
 // monochrome simplification of their identity mark.
 function FireworksIcon({ size, color, label = "Fireworks AI" }: { size: number; color: string; label?: string }) {
@@ -472,6 +542,8 @@ const providerConfig: Record<
   vertex: { component: GeminiIcon, color: "var(--provider-gemini)", label: "Google Vertex AI" },
   "google-cloud-code": { component: GeminiIcon, color: "var(--provider-gemini)", label: "Google Cloud Code" },
   "cloud-code": { component: GeminiIcon, color: "var(--provider-gemini)", label: "Google Cloud Code" },
+  "google-gemini-cli": { component: GeminiIcon, color: "var(--provider-gemini)", label: "Google Gemini CLI" },
+  "google-generative-ai": { component: GeminiIcon, color: "var(--provider-gemini)", label: "Google Generative AI" },
 
   // Monochrome marks use theme-aware text color for dark/light safety.
   ollama: { component: OllamaIcon, color: "var(--text)" },
@@ -482,6 +554,7 @@ const providerConfig: Record<
   openrouter: { component: OpenRouterIcon, color: "var(--provider-openrouter)" },
 
   minimax: { component: MiniMaxIcon, color: "var(--provider-minimax)" },
+  "minimax-cn": { component: MiniMaxIcon, color: "var(--provider-minimax)", label: "MiniMax (CN)" },
   zai: { component: ZaiIcon, color: "var(--provider-zai)" },
 
   kimi: { component: KimiIcon, color: "var(--provider-kimi)" },
@@ -495,6 +568,7 @@ const providerConfig: Record<
   grok: { component: XaiIcon, color: "var(--text)", label: "xAI" },
 
   opencode: { component: OpencodeIcon, color: "var(--provider-opencode)" },
+  "opencode-go": { component: OpencodeIcon, color: "var(--provider-opencode)", label: "Opencode (Go)" },
 
   qwen: { component: QwenIcon, color: "var(--provider-qwen)" },
   "qwen-coder": { component: QwenIcon, color: "var(--provider-qwen)", label: "Qwen Coder" },
@@ -513,9 +587,17 @@ const providerConfig: Record<
 
   azure: { component: AzureIcon, color: "var(--provider-azure)" },
   "azure-openai": { component: AzureIcon, color: "var(--provider-azure)", label: "Azure OpenAI" },
+  "azure-openai-responses": { component: AzureIcon, color: "var(--provider-azure)", label: "Azure OpenAI" },
 
   fireworks: { component: FireworksIcon, color: "var(--provider-fireworks)", label: "Fireworks AI" },
   "fireworks-ai": { component: FireworksIcon, color: "var(--provider-fireworks)", label: "Fireworks AI" },
+
+  cerebras: { component: CerebrasIcon, color: "var(--provider-cerebras)" },
+
+  groq: { component: GroqIcon, color: "var(--provider-groq)" },
+
+  vercel: { component: VercelIcon, color: "var(--provider-vercel)" },
+  "vercel-ai-gateway": { component: VercelIcon, color: "var(--provider-vercel)", label: "Vercel AI Gateway" },
 };
 
 export function ProviderIcon({ provider, size = "sm" }: ProviderIconProps) {

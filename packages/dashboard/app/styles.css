@@ -215,6 +215,9 @@ html {
   --provider-mistral: #ff7000;
   --provider-azure: #0078d4;
   --provider-fireworks: #5019c5;
+  --provider-cerebras: #f1592a;
+  --provider-groq: #f55036;
+  --provider-vercel: var(--text);
   --provider-icon-contrast: var(--bg);
 
   /* Task-creation CTA tokens */
