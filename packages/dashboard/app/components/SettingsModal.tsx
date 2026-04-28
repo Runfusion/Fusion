@@ -202,6 +202,7 @@ const DEFAULT_NTFY_EVENTS: NtfyNotificationEvent[] = [
   "awaiting-approval",
   "awaiting-user-review",
   "planning-awaiting-input",
+  "gridlock",
 ];
 
 /** Well-known experimental feature flags with display labels.
@@ -3673,6 +3674,22 @@ export function SettingsModal({
                     Planning needs input
                   </label>
                   <small>When planning mode is waiting for your response to continue</small>
+
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={form.ntfyEvents?.includes("gridlock") ?? true}
+                      onChange={(e) => {
+                        const current = form.ntfyEvents ?? [...DEFAULT_NTFY_EVENTS];
+                        const newEvents = e.target.checked
+                          ? (current.includes("gridlock") ? current : [...current, "gridlock" as NtfyNotificationEvent])
+                          : current.filter((ev): ev is NtfyNotificationEvent => ev !== "gridlock");
+                        setForm((f) => ({ ...f, ntfyEvents: newEvents.length > 0 ? newEvents : undefined }));
+                      }}
+                    />
+                    Pipeline gridlocked
+                  </label>
+                  <small>When all schedulable todo tasks are blocked and work cannot advance</small>
                 </div>
               </div>
               <div className="form-group">

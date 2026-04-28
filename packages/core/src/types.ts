@@ -152,7 +152,7 @@ export interface WorkflowStep {
 
 /** Input for creating a new workflow step. */
 /** Event types that can trigger ntfy notifications */
-export type NtfyNotificationEvent = "in-review" | "merged" | "failed" | "awaiting-approval" | "awaiting-user-review" | "planning-awaiting-input";
+export type NtfyNotificationEvent = "in-review" | "merged" | "failed" | "awaiting-approval" | "awaiting-user-review" | "planning-awaiting-input" | "gridlock";
 
 export interface WorkflowStepInput {
   /** Built-in template source ID when creating a concrete step from a template. */

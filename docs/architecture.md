@@ -326,6 +326,7 @@ See [Memory Plugin Contract](./memory-plugin-contract.md) for the full plan.
 - `AgentSemaphore` (`concurrency.ts`) — slot acquisition
 - `RecoveryPolicy` (`recovery-policy.ts`) — retry/recovery decision policy
 - `StuckTaskDetector` (`stuck-task-detector.ts`) — inactivity/loop stall detection
+- `GridlockDetector` (`gridlock-detector.ts`) — detects all-blocked todo pipelines and emits notification events
 - `TransientErrorDetector` (`transient-error-detector.ts`) — retriable error classification
 - `SelfHealingManager` (`self-healing.ts`) — auto-unpause/maintenance recovery actions
 - `UsageLimitPauser` (`usage-limit-detector.ts`) and `withRateLimitRetry` (`rate-limit-retry.ts`)

@@ -22,7 +22,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   ntfyEnabled: false,
   ntfyTopic: undefined,
   ntfyBaseUrl: undefined,
-  ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review", "planning-awaiting-input"],
+  ntfyEvents: ["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review", "planning-awaiting-input", "gridlock"],
   ntfyDashboardHost: undefined,
   defaultProjectId: undefined,
   setupComplete: undefined,

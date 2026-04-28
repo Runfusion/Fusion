@@ -16,6 +16,7 @@ import type { ProjectRuntimeConfig } from "./project-runtime.js";
 import { PrMonitor } from "./pr-monitor.js";
 import { PrCommentHandler } from "./pr-comment-handler.js";
 import { NtfyNotifier } from "./notifier.js";
+import { GridlockDetector } from "./gridlock-detector.js";
 import { CronRunner, createAiPromptExecutor } from "./cron-runner.js";
 import type { RoutineRunner } from "./routine-runner.js";
 import { aiMergeTask } from "./merger.js";
@@ -127,6 +128,7 @@ export class ProjectEngine {
   private prMonitor?: PrMonitor;
   private prCommentHandler?: PrCommentHandler;
   private notifier?: NtfyNotifier;
+  private gridlockDetector?: GridlockDetector;
   private cronRunner?: CronRunner;
   private automationStore?: AutomationStoreType;
   private remoteTunnelManager?: TunnelProcessManager;
@@ -224,6 +226,11 @@ export class ProjectEngine {
       });
       await this.notifier.start();
     }
+
+    this.gridlockDetector = new GridlockDetector(store, {
+      onGridlock: (event) => this.notifier?.notifyGridlock(event),
+    });
+    this.gridlockDetector.start();
 
     // 4. Initialize AutomationStore + CronRunner
     this.setAutomationSubsystemHealth(
@@ -388,6 +395,7 @@ export class ProjectEngine {
 
     // Stop auxiliary subsystems
     this.notifier?.stop();
+    this.gridlockDetector?.stop();
     this.cronRunner?.stop();
     this.setAutomationSubsystemHealth("not-initialized", "Automation subsystem stopped");
 

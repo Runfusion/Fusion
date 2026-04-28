@@ -1,4 +1,5 @@
 import type { Task, Column, Settings, MergeResult, NtfyNotificationEvent } from "@fusion/core";
+import type { GridlockEvent } from "./gridlock-detector.js";
 import { schedulerLog } from "./logger.js";
 
 export interface NtfyNotifierOptions {
@@ -19,6 +20,7 @@ export const DEFAULT_NTFY_EVENTS: readonly NtfyNotificationEvent[] = [
   "awaiting-approval",
   "awaiting-user-review",
   "planning-awaiting-input",
+  "gridlock",
 ] as const;
 
 export interface NtfyNotificationConfigInput {
@@ -49,6 +51,7 @@ interface NtfyConfig {
 
 /** Event types for task notification deduplication */
 type TaskNotificationEvent = "in-review" | "merged" | "failed" | "awaiting-approval" | "awaiting-user-review";
+type AnyNotificationEvent = TaskNotificationEvent | "gridlock";
 
 /**
  * Format a task identifier for notifications.
@@ -359,7 +362,39 @@ export class NtfyNotifier {
     this.ntfyBaseUrl = resolveNtfyBaseUrl(settings.ntfyBaseUrl, this.defaultNtfyBaseUrl);
   }
 
-  private isEventEnabled(event: TaskNotificationEvent): boolean {
+  notifyGridlock(event: GridlockEvent): void {
+    if (!this.config.enabled || !this.config.topic || !this.isEventEnabled("gridlock")) return;
+
+    const blockedTasks = event.blockedTaskIds.sort();
+    const reasonSummary = Object.values(event.reasons).reduce((acc, reason) => {
+      acc[reason] = (acc[reason] ?? 0) + 1;
+      return acc;
+    }, {} as Record<"dependency" | "overlap", number>);
+
+    const reasons: string[] = [];
+    if (reasonSummary.dependency) reasons.push(`${reasonSummary.dependency} dependency`);
+    if (reasonSummary.overlap) reasons.push(`${reasonSummary.overlap} overlap`);
+
+    const clickUrl = buildNtfyClickUrl({
+      dashboardHost: this.config.dashboardHost,
+      projectId: this.projectId,
+    });
+
+    const dedupKey = `gridlock:${blockedTasks.join(",")}`;
+    this.maybeNotifyByKey(dedupKey, () =>
+      sendNtfyNotification({
+        ntfyBaseUrl: this.ntfyBaseUrl,
+        topic: this.config.topic!,
+        title: "Pipeline gridlocked",
+        message: `${event.blockedTaskCount} todo tasks are blocked (${reasons.join(", ")}). Blocked: ${blockedTasks.join(", ")}. Blocking: ${event.blockingTaskIds.join(", ") || "none"}.`,
+        priority: "high",
+        clickUrl,
+        signal: this.abortController?.signal,
+      }),
+    );
+  }
+
+  private isEventEnabled(event: AnyNotificationEvent): boolean {
     return isNtfyEventEnabled(this.config.events, event);
   }
 
@@ -368,8 +403,10 @@ export class NtfyNotifier {
     eventType: TaskNotificationEvent,
     notifyFn: () => Promise<void>,
   ): void {
-    const key = `${taskId}:${eventType}`;
+    this.maybeNotifyByKey(`${taskId}:${eventType}`, notifyFn);
+  }
 
+  private maybeNotifyByKey(key: string, notifyFn: () => Promise<void>): void {
     if (this.notifiedEvents.has(key)) {
       return;
     }

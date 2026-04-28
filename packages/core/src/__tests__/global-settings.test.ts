@@ -317,7 +317,7 @@ describe("GlobalSettingsStore", () => {
       // After clear, reading back gives the default value
       // (either undefined on disk with default applied, or default written directly)
       const settings = await store.getSettings();
-      expect(settings.ntfyEvents).toEqual(["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review", "planning-awaiting-input"]);
+      expect(settings.ntfyEvents).toEqual(["in-review", "merged", "failed", "awaiting-approval", "awaiting-user-review", "planning-awaiting-input", "gridlock"]);
     });
 
     it("handles concurrent updates safely via locking", async () => {

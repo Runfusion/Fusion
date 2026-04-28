@@ -66,6 +66,7 @@ describe("Ntfy notifier helpers", () => {
   it("includes planning-awaiting-input in default events", () => {
     expect(DEFAULT_NTFY_EVENTS).toContain("planning-awaiting-input");
     expect(resolveNtfyEvents(undefined)).toContain("planning-awaiting-input");
+    expect(DEFAULT_NTFY_EVENTS).toContain("gridlock");
   });
 
   it("checks planning-awaiting-input event enablement", () => {
@@ -136,6 +137,75 @@ describe("NtfyNotifier", () => {
       await flushAsyncWork();
 
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("gridlock notifications", () => {
+    it("sends notification when gridlock event is enabled", async () => {
+      store.setSettings({ ntfyEnabled: true, ntfyTopic: "test-topic", ntfyEvents: ["gridlock"] });
+      fetchMock.mockResolvedValue({ ok: true });
+      notifier = new NtfyNotifier(store, { projectId: "proj-1" });
+      await notifier.start();
+
+      notifier.notifyGridlock({
+        blockedTaskCount: 2,
+        reasons: { "FN-001": "dependency", "FN-003": "overlap" },
+        blockedTaskIds: ["FN-001", "FN-003"],
+        blockingTaskIds: ["FN-002"],
+      });
+
+      await flushAsyncWork();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.sh/test-topic",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            Title: "Pipeline gridlocked",
+            Priority: "high",
+          }),
+        }),
+      );
+    });
+
+    it("skips notification when gridlock event is disabled", async () => {
+      store.setSettings({ ntfyEnabled: true, ntfyTopic: "test-topic", ntfyEvents: ["failed"] });
+      fetchMock.mockResolvedValue({ ok: true });
+      notifier = new NtfyNotifier(store);
+      await notifier.start();
+
+      notifier.notifyGridlock({
+        blockedTaskCount: 1,
+        reasons: { "FN-001": "dependency" },
+        blockedTaskIds: ["FN-001"],
+        blockingTaskIds: ["FN-002"],
+      });
+
+      await flushAsyncWork();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("deduplicates by blocked task set", async () => {
+      store.setSettings({ ntfyEnabled: true, ntfyTopic: "test-topic", ntfyEvents: ["gridlock"] });
+      fetchMock.mockResolvedValue({ ok: true });
+      notifier = new NtfyNotifier(store);
+      await notifier.start();
+
+      notifier.notifyGridlock({
+        blockedTaskCount: 2,
+        reasons: { "FN-001": "dependency", "FN-003": "dependency" },
+        blockedTaskIds: ["FN-003", "FN-001"],
+        blockingTaskIds: ["FN-002"],
+      });
+      notifier.notifyGridlock({
+        blockedTaskCount: 2,
+        reasons: { "FN-001": "dependency", "FN-003": "dependency" },
+        blockedTaskIds: ["FN-001", "FN-003"],
+        blockingTaskIds: ["FN-002"],
+      });
+
+      await flushAsyncWork();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
   });
 
