@@ -1952,6 +1952,51 @@ export function ModelOnboardingModal({
                     </section>
                   )}
 
+                  {/* Model Selection — placed directly after the authenticated provider list */}
+                  <div className="onboarding-model-section">
+                    <h3 className="onboarding-section-title">
+                      Default Model (Optional)
+                    </h3>
+                    <p className="model-onboarding-description">
+                      Pick a default model for AI tasks, or leave this blank to choose
+                      later. Models vary in speed, capability, and cost.
+                    </p>
+
+                    <OnboardingDisclosure summary="How do I choose a model?">
+                      <p className="onboarding-helper-text">
+                        Models vary in speed, capability, and cost. A good default is usually
+                        the latest model from your connected provider. You can always change this
+                        later in Settings.
+                      </p>
+                    </OnboardingDisclosure>
+
+                    {availableModels.length === 0 ? (
+                      <div className="model-onboarding-empty">
+                        No models available yet. Connect a provider above to see model options.
+                      </div>
+                    ) : (
+                      <div className="onboarding-model-selector">
+                        <CustomModelDropdown
+                          models={availableModels}
+                          value={selectedModel}
+                          onChange={handleModelSelect}
+                          placeholder="Select a default model…"
+                          label="Default model"
+                        />
+                      </div>
+                    )}
+
+                    {selectedModel && (
+                      <div className="onboarding-model-preview">
+                        <small className="settings-muted">
+                          Selected:{" "}
+                          {availableModels.find((m) => m.id === selectedModel)
+                            ?.name ?? selectedModel}
+                        </small>
+                      </div>
+                    )}
+                  </div>
+
                   <OnboardingDisclosure summary="Advanced provider settings" className="onboarding-provider-advanced">
                     <div data-testid="onboarding-advanced-provider-settings">
                       {advancedProviders.length > 0 ? (
@@ -1990,51 +2035,6 @@ export function ModelOnboardingModal({
 
                 </>
               )}
-
-              {/* Model Selection */}
-              <div className="onboarding-model-section">
-                <h3 className="onboarding-section-title">
-                  Default Model (Optional)
-                </h3>
-                <p className="model-onboarding-description">
-                  Pick a default model for AI tasks, or leave this blank to choose
-                  later. Models vary in speed, capability, and cost.
-                </p>
-
-                <OnboardingDisclosure summary="How do I choose a model?">
-                  <p className="onboarding-helper-text">
-                    Models vary in speed, capability, and cost. A good default is usually
-                    the latest model from your connected provider. You can always change this
-                    later in Settings.
-                  </p>
-                </OnboardingDisclosure>
-
-                {availableModels.length === 0 ? (
-                  <div className="model-onboarding-empty">
-                    No models available yet. Connect a provider above to see model options.
-                  </div>
-                ) : (
-                  <div className="onboarding-model-selector">
-                    <CustomModelDropdown
-                      models={availableModels}
-                      value={selectedModel}
-                      onChange={handleModelSelect}
-                      placeholder="Select a default model…"
-                      label="Default model"
-                    />
-                  </div>
-                )}
-
-                {selectedModel && (
-                  <div className="onboarding-model-preview">
-                    <small className="settings-muted">
-                      Selected:{" "}
-                      {availableModels.find((m) => m.id === selectedModel)
-                        ?.name ?? selectedModel}
-                    </small>
-                  </div>
-                )}
-              </div>
 
             </div>
           )}
