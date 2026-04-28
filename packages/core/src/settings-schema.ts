@@ -77,6 +77,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   mergeStrategy: "direct",
   pushAfterMerge: false,
   pushRemote: "origin",
+  unavailableNodePolicy: "block",
   worktreeInitCommand: undefined,
   testCommand: undefined,
   buildCommand: undefined,

@@ -570,12 +570,21 @@ export function PaperclipRuntimeCard() {
                 style={{ marginTop: "0.4rem" }}
                 disabled={busy !== null}
                 onClick={async () => {
+                  const agentId = settings.agentId;
+                  const companyId = settings.companyId.trim();
+                  if (!agentId || !companyId) {
+                    setToast({
+                      kind: "err",
+                      message: "✗ Company ID is required to mint a Paperclip API key.",
+                    });
+                    return;
+                  }
                   setBusy("testing");
                   setToast(null);
                   const result = await mintPaperclipApiKey({
                     cliBinaryPath: settings.cliBinaryPath || undefined,
-                    agentRef: settings.agentId,
-                    companyId: settings.companyId || undefined,
+                    agentRef: agentId,
+                    companyId,
                     keyName: "fusion-runtime",
                     configPath: settings.cliConfigPath || undefined,
                   });
@@ -586,7 +595,7 @@ export function PaperclipRuntimeCard() {
                     setApiKeyDirty(true);
                     setToast({
                       kind: "ok",
-                      message: `✓ API key minted via paperclipai (key 'fusion-runtime' installed for agent ${settings.agentId}). Click Save to persist.`,
+                      message: `✓ API key minted via paperclipai (key 'fusion-runtime' installed for agent ${agentId}). Click Save to persist.`,
                     });
                     void probe();
                   } else {

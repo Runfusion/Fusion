@@ -91,6 +91,7 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `maxWorktrees` | `number` | `4` | Max git worktrees. |
 | `pollIntervalMs` | `number` | `15000` | Scheduler poll interval (ms). |
 | `heartbeatMultiplier` | `number` | `1` | Global multiplier applied to all agent heartbeat intervals. Configured from the Agents screen (not Settings). |
+| `unavailableNodePolicy` | `"block" \| "fallback-local"` | `"block"` | Routing policy when a selected node is unavailable/unhealthy. `"block"` stops execution until the node is healthy; `"fallback-local"` runs the task on the local node instead. Applies to both project-default node routing and per-task node overrides. |
 | `groupOverlappingFiles` | `boolean` | `true` | Serialize execution when file scopes overlap. |
 | `overlapIgnorePaths` | `string[]` | `[]` | Optional project-relative file or directory paths to exclude from overlap blocking (for example `docs` or `generated/openapi.json`). Entries are trimmed, deduplicated, and must not be absolute or contain `..` traversal. |
 | `autoMerge` | `boolean` | `true` | Auto-finalize tasks from `in-review`. |

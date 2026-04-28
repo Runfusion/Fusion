@@ -92,6 +92,8 @@ export type ColorTheme = (typeof COLOR_THEMES)[number];
 
 export type PrStatus = "open" | "closed" | "merged";
 export type MergeStrategy = "direct" | "pull-request";
+/** Policy for handling task execution when the selected node is unavailable/unhealthy. */
+export type UnavailableNodePolicy = "block" | "fallback-local";
 
 export interface ModelPreset {
   id: string;
@@ -1321,6 +1323,11 @@ export interface ProjectSettings {
    *  When set to "remote branch" format, both the remote and branch are specified.
    *  Only used when pushAfterMerge is true. Default: "origin". */
   pushRemote?: string;
+  /** Policy for how to route execution when the selected node is unavailable/unhealthy.
+   *  Applies to both project default node selection and per-task node overrides.
+   *  - "block": prevent execution until the selected node is healthy/available (default)
+   *  - "fallback-local": run on the local node when the selected node is unavailable */
+  unavailableNodePolicy?: UnavailableNodePolicy;
   /** Shell command to run inside each new worktree immediately after creation.
    *  Useful for project-specific setup (e.g. `pnpm install --frozen-lockfile`, `cp .env.local .env`). */
   worktreeInitCommand?: string;
