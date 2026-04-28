@@ -192,6 +192,11 @@ export class ProjectEngine {
       ? { ...config, externalTaskStore: options.externalTaskStore }
       : config;
     this.runtime = new InProcessRuntime(runtimeConfig, centralCore);
+    // Let the runtime's SelfHealingManager re-enqueue tasks directly into our
+    // auto-merge queue when it clears a stale `merging` status, instead of
+    // relying on the 15s polling sweep to eventually catch them.
+    // Tests substitute a minimal runtime mock that may not implement this hook.
+    this.runtime.setMergeEnqueuer?.((taskId) => this.internalEnqueueMerge(taskId));
   }
 
   /**

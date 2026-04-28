@@ -106,6 +106,12 @@ export class InProcessRuntime
   private ephemeralCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Listener for agent:stateChanged events to clean up terminated ephemeral agents */
   private ephemeralTerminationListener?: (agentId: string, from: import("@fusion/core").AgentState, to: import("@fusion/core").AgentState) => void;
+  /**
+   * Optional callback the runtime forwards to SelfHealingManager so that
+   * stale-merge recovery can re-enqueue tasks immediately. Set by ProjectEngine
+   * before `start()` via `setMergeEnqueuer`.
+   */
+  private mergeEnqueuer?: (taskId: string) => void;
 
   /**
    * @param config - Runtime configuration
@@ -675,6 +681,7 @@ export class InProcessRuntime
         recoverApprovedTriageTask: (task) => this.triageProcessor?.recoverApprovedTask(task) ?? Promise.resolve(false),
         getPlanningTaskIds: () => this.triageProcessor?.getProcessingTaskIds() ?? new Set<string>(),
         evictStaleTriageProcessing: () => this.triageProcessor?.evictStaleProcessing() ?? new Set<string>(),
+        enqueueMerge: this.mergeEnqueuer ? (taskId: string) => this.mergeEnqueuer?.(taskId) : undefined,
       });
       this.selfHealingManager.start();
       this.stuckTaskDetector.start();
@@ -919,6 +926,15 @@ export class InProcessRuntime
    */
   getStatus(): RuntimeStatus {
     return this.status;
+  }
+
+  /**
+   * Register a callback used by SelfHealingManager to re-enqueue tasks for
+   * auto-merge after clearing a stale `merging` status. Must be called before
+   * `start()` because SelfHealingManager is constructed during startup.
+   */
+  setMergeEnqueuer(enqueueMerge: (taskId: string) => void): void {
+    this.mergeEnqueuer = enqueueMerge;
   }
 
   /**

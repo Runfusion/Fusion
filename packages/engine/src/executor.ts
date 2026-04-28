@@ -4092,7 +4092,19 @@ and show an appropriate message to the user.\`
 
     for (let attempt = 0; attempt < this.MAX_WORKTREE_RETRIES; attempt++) {
       try {
-        return await this.tryCreateWorktree(branch, currentPath, taskId, resolvedStartPoint, attempt);
+        const result = await this.tryCreateWorktree(branch, currentPath, taskId, resolvedStartPoint, attempt);
+        // Mirror the merge-time rebase behavior: when worktreeRebaseBeforeMerge
+        // is enabled, fetch the remote and rebase the just-created task branch
+        // onto the latest <remote>/<defaultBranch>. This makes the worktree
+        // start from origin/main + local main both, so divergence only matters
+        // if the user actively skips this setting. Best-effort: failures here
+        // don't abort task setup.
+        await this.rebaseNewWorktreeOntoRemote(result.path, result.branch, taskId).catch((err: unknown) => {
+          executorLog.warn(
+            `Post-create worktree rebase failed for ${taskId} (continuing): ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+        return result;
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         const isLastAttempt = attempt === this.MAX_WORKTREE_RETRIES - 1;
@@ -4117,6 +4129,98 @@ and show an appropriate message to the user.\`
 
     // Should never reach here, but TypeScript needs a return
     throw new Error("Unexpected exit from worktree creation retry loop");
+  }
+
+  private quoteShellArg(value: string): string {
+    return `'${value.replace(/'/g, "'\\''")}'`;
+  }
+
+  /**
+   * After creating a fresh task worktree, fetch the configured remote and
+   * rebase the task branch onto `<remote>/<defaultBranch>`. The result is a
+   * branch that contains origin's tip plus any local main commits, so the
+   * eventual merge has fewer surprises and the executor sees the freshest
+   * code its peers/CI may have published.
+   *
+   * No-op when `worktreeRebaseBeforeMerge` is disabled, no remote is
+   * configured/resolvable, or the rebase produces conflicts (we abort and
+   * leave the worktree as-is so the executor can still run).
+   */
+  private async rebaseNewWorktreeOntoRemote(
+    worktreePath: string,
+    branch: string,
+    taskId: string,
+  ): Promise<void> {
+    let settings;
+    try {
+      settings = await this.store.getSettings();
+    } catch {
+      return;
+    }
+    if (settings.worktreeRebaseBeforeMerge === false) return;
+
+    let remote = settings.worktreeRebaseRemote?.trim() || "";
+    if (!remote) {
+      try {
+        const { stdout } = await execAsync("git remote", { cwd: this.rootDir });
+        const remotes = stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+        if (remotes.includes("origin")) remote = "origin";
+        else if (remotes.length === 1) remote = remotes[0];
+      } catch {
+        // No remote resolvable — nothing to rebase against.
+      }
+    }
+    if (!remote) return;
+
+    let defaultBranch = "";
+    try {
+      const { stdout } = await execAsync(`git rev-parse --abbrev-ref ${remote}/HEAD`, { cwd: this.rootDir });
+      defaultBranch = stdout.trim().replace(new RegExp(`^${remote}/`), "");
+    } catch {
+      // origin/HEAD not set — fall back to current branch in rootDir.
+    }
+    if (!defaultBranch) {
+      try {
+        const { stdout } = await execAsync("git rev-parse --abbrev-ref HEAD", { cwd: this.rootDir });
+        defaultBranch = stdout.trim();
+      } catch {
+        return;
+      }
+    }
+    if (!defaultBranch || defaultBranch === "HEAD") return;
+
+    const remoteRef = `${remote}/${defaultBranch}`;
+
+    try {
+      await execAsync(`git fetch ${this.quoteShellArg(remote)} ${this.quoteShellArg(defaultBranch)}`, { cwd: this.rootDir });
+    } catch (err) {
+      executorLog.warn(
+        `Worktree rebase: fetch ${remote} ${defaultBranch} failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+
+    try {
+      await execAsync(`git rebase ${this.quoteShellArg(remoteRef)}`, { cwd: worktreePath });
+      await this.store.logEntry(
+        taskId,
+        `Rebased new worktree branch ${branch} onto ${remoteRef}`,
+      );
+    } catch (rebaseErr) {
+      const msg = rebaseErr instanceof Error ? rebaseErr.message : String(rebaseErr);
+      executorLog.warn(
+        `Worktree rebase: rebase onto ${remoteRef} failed for ${taskId} — aborting and leaving local base intact: ${msg}`,
+      );
+      try {
+        await execAsync("git rebase --abort", { cwd: worktreePath });
+      } catch {
+        // best-effort
+      }
+      await this.store.logEntry(
+        taskId,
+        `Could not rebase new worktree onto ${remoteRef} — kept local base. The merge-time rebase will retry with conflict resolution.`,
+      );
+    }
   }
 
   /**

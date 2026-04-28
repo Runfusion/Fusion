@@ -66,6 +66,15 @@ export interface SelfHealingOptions {
    * Should return true if the task was successfully sent back, false otherwise.
    */
   recoverFailedPreMergeStep?: (task: Task) => Promise<boolean>;
+  /**
+   * Re-enqueue a task into the auto-merge queue. Used by
+   * `recoverInterruptedMergingTasks` so that a stale `merging` status that was
+   * just cleared is retried immediately instead of waiting on the next
+   * 15s polling sweep — and so the engine's in-memory `mergeActive` set is
+   * refreshed (otherwise a leftover entry from a SIGKILL'd merge would cause
+   * the polling sweep's enqueue to silently no-op).
+   */
+  enqueueMerge?: (taskId: string) => void;
 }
 
 const APPROVED_TRIAGE_RECOVERY_GRACE_MS = 60_000;
@@ -966,6 +975,13 @@ export class SelfHealingManager {
             "Auto-recovered: stale merge status cleared; merge will be retried",
           );
           log.log(`Recovered interrupted merge ${task.id}: cleared stale status for retry`);
+          try {
+            this.options.enqueueMerge?.(task.id);
+          } catch (enqueueErr: unknown) {
+            log.warn(
+              `Failed to re-enqueue ${task.id} after stale-merge recovery (will rely on polling sweep): ${enqueueErr instanceof Error ? enqueueErr.message : String(enqueueErr)}`,
+            );
+          }
           recovered++;
         } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
           log.error(`Failed to recover interrupted merge ${task.id}: ${errorMessage}`);
