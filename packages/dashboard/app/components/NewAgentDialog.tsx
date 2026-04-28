@@ -1,5 +1,6 @@
 import "./NewAgentDialog.css";
 import { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import type { Agent, AgentCapability, ModelInfo, AgentGenerationSpec, PluginRuntimeInfo } from "../api";
 import { createAgent, fetchAgents, fetchModels, updateGlobalSettings } from "../api";
 import * as apiModule from "../api";
@@ -358,7 +359,13 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
     </>
   );
 
-  return (
+  // Render through a portal to document.body so the overlay escapes any
+  // ancestor stacking context / `overflow: hidden`. Without this, `position:
+  // fixed` on the overlay was being trapped under .agents-view, so the
+  // dialog rendered with its top hidden behind the in-page Agents header on
+  // mobile (the header isn't taller than the dialog top — it's just stacked
+  // above it because the dialog couldn't escape its container).
+  return createPortal(
     <div className="agent-dialog-overlay" onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}>
       <div className="agent-dialog" role="dialog" aria-modal="true" aria-label="Create new agent">
         {/* Header */}
@@ -778,6 +785,7 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
         onGenerated={handleGenerated}
         projectId={projectId}
       />
-    </div>
+    </div>,
+    document.body,
   );
 }
