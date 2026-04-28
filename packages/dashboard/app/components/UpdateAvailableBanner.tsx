@@ -20,6 +20,10 @@ export function UpdateAvailableBanner({ latestVersion, currentVersion, onDismiss
           rel="noreferrer"
         >
           Release notes
+        </a>{" "}
+        ·{" "}
+        <a className="update-available-banner__link" href="https://infusion.ai" target="_blank" rel="noreferrer">
+          Learn more
         </a>
       </p>
       <button

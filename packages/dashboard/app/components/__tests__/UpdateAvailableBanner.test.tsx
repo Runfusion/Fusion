@@ -4,7 +4,7 @@ import { useState } from "react";
 import { UpdateAvailableBanner } from "../UpdateAvailableBanner";
 
 describe("UpdateAvailableBanner", () => {
-  it("renders version information and release notes link", () => {
+  it("renders version information with release notes and learn more links", () => {
     render(
       <UpdateAvailableBanner latestVersion="0.7.0" currentVersion="0.6.0" onDismiss={vi.fn()} />,
     );
@@ -15,6 +15,7 @@ describe("UpdateAvailableBanner", () => {
       "href",
       "https://github.com/Runfusion/Fusion/releases",
     );
+    expect(screen.getByRole("link", { name: "Learn more" })).toHaveAttribute("href", "https://infusion.ai");
   });
 
   it("dismiss button calls onDismiss", () => {

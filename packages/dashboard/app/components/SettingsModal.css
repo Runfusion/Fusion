@@ -151,6 +151,22 @@
   color: var(--text-muted);
 }
 
+.settings-update-result-link {
+  color: var(--color-info);
+  text-decoration: underline;
+  transition: color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.settings-update-result-link:hover {
+  color: color-mix(in srgb, var(--color-info) 80%, var(--text));
+}
+
+.settings-update-result-link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-radius: var(--radius-sm);
+}
+
 @keyframes settings-update-spin {
   to {
     transform: rotate(360deg);

@@ -558,6 +558,34 @@ export function SettingsModal({
     }
   }, [addToast, appVersion]);
 
+  const renderUpdateCheckResultContent = useCallback(() => {
+    if (!updateCheckResult) {
+      return null;
+    }
+
+    if (updateCheckResult.error) {
+      return updateCheckResult.error;
+    }
+
+    if (updateCheckResult.updateAvailable && updateCheckResult.latestVersion) {
+      return (
+        <>
+          v{updateCheckResult.latestVersion} available ·{" "}
+          <a
+            href="https://infusion.ai"
+            target="_blank"
+            rel="noreferrer"
+            className="settings-update-result-link"
+          >
+            Learn more
+          </a>
+        </>
+      );
+    }
+
+    return "You're up to date ✓";
+  }, [updateCheckResult]);
+
   // Load auth status when the authentication section is active
   const loadAuthStatus = useCallback(async () => {
     try {
@@ -1808,11 +1836,7 @@ export function SettingsModal({
                           : "settings-update-result--up-to-date"
                     }`}
                   >
-                    {updateCheckResult.error
-                      ? updateCheckResult.error
-                      : updateCheckResult.updateAvailable && updateCheckResult.latestVersion
-                        ? `v${updateCheckResult.latestVersion} available`
-                        : "You're up to date ✓"}
+                    {renderUpdateCheckResultContent()}
                   </span>
                 )}
               </div>
@@ -4424,11 +4448,7 @@ export function SettingsModal({
                         : "settings-update-result--up-to-date"
                   }`}
                 >
-                  {updateCheckResult.error
-                    ? updateCheckResult.error
-                    : updateCheckResult.updateAvailable && updateCheckResult.latestVersion
-                      ? `v${updateCheckResult.latestVersion} available`
-                      : "You're up to date ✓"}
+                  {renderUpdateCheckResultContent()}
                 </span>
               )}
             </div>
