@@ -26,14 +26,23 @@
 }
 
 /* === Setup Wizard Modal (Onboarding) === */
+.setup-wizard-overlay {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .setup-wizard-modal {
   display: flex;
   flex-direction: column;
   max-width: 880px;
   width: 90vw;
+  /* vh fallback first for browsers without dvh support; dvh upgrade follows. */
+  max-height: min(720px, calc(100vh - var(--overlay-padding-top, 10vh) - var(--space-lg)));
   max-height: min(720px, calc(100dvh - var(--overlay-padding-top, 10vh) - var(--space-lg)));
   animation: slideUp var(--transition-normal) ease-out;
   overflow: hidden;
+  /* Prevent flex parents from squeezing this below its content's needs. */
+  flex-shrink: 0;
 }
 
 @keyframes slideUp {
@@ -405,6 +414,7 @@
     flex-direction: column;
     max-width: 100%;
     width: 100%;
+    max-height: calc(100vh - max(var(--space-2xl), env(safe-area-inset-top, 0px)) - max(var(--space-2xl), env(safe-area-inset-bottom, 0px)));
     max-height: calc(100dvh - max(var(--space-2xl), env(safe-area-inset-top, 0px)) - max(var(--space-2xl), env(safe-area-inset-bottom, 0px)));
     border-radius: var(--radius-lg);
   }
