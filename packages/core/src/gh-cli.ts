@@ -7,6 +7,29 @@ export interface GhError extends Error {
   stdout: string;
 }
 
+export interface RunGhOptions {
+  cwd?: string;
+  /** External abort signal — propagated to the spawned `gh` process. */
+  signal?: AbortSignal;
+  /**
+   * Hard ceiling on `gh` runtime in milliseconds. The child process is killed
+   * when exceeded and the returned promise rejects with a `GhError`. Defaults
+   * to 30_000 (30 s); set to `0` or a negative value to disable.
+   *
+   * Without this, an upstream hang (network stall, hung credential helper,
+   * gh waiting on stdin) can leave the call pending forever — which in turn
+   * pins any AI session's `prompt()` that triggered the tool call.
+   */
+  timeoutMs?: number;
+}
+
+const DEFAULT_GH_TIMEOUT_MS = 30_000;
+
+function normalizeRunGhOptions(opts: string | RunGhOptions | undefined): RunGhOptions {
+  if (typeof opts === "string") return { cwd: opts };
+  return opts ?? {};
+}
+
 /**
  * Check if the `gh` CLI is installed and available.
  */
@@ -63,21 +86,76 @@ export function runGh(args: string[], cwd?: string): string {
 
 /**
  * Execute a gh CLI command asynchronously.
- * Returns a promise that resolves with the output or rejects with GhError.
+ *
+ * Returns a promise that resolves with the output or rejects with `GhError`.
+ *
+ * `cwdOrOptions` accepts either a string (cwd, legacy form) or a `RunGhOptions`
+ * object. The options form supports an external `AbortSignal` and a
+ * `timeoutMs` ceiling — both default to safe values that prevent indefinite
+ * hangs when `gh` stalls on the network or a credential helper.
  */
-export function runGhAsync(args: string[], cwd?: string): Promise<string> {
+export function runGhAsync(args: string[], cwdOrOptions?: string | RunGhOptions): Promise<string> {
+  const { cwd, signal: externalSignal, timeoutMs = DEFAULT_GH_TIMEOUT_MS } =
+    normalizeRunGhOptions(cwdOrOptions);
+
   return new Promise((resolve, reject) => {
+    if (externalSignal?.aborted) {
+      reject(makeGhError(`gh command aborted: ${describeAbortReason(externalSignal.reason)}`, "ABORT_ERR"));
+      return;
+    }
+
+    // Compose the abort sources so we can distinguish timeout from external
+    // abort in the rejection. Using a private controller keeps signal
+    // ownership inside this function.
+    const controller = new AbortController();
+    let timedOut = false;
+    let externalAborted = false;
+
+    const onExternalAbort = () => {
+      externalAborted = true;
+      controller.abort();
+    };
+    if (externalSignal) {
+      externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+
+    const timer = timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, timeoutMs)
+      : undefined;
+
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
+    };
+
     execFile(
       "gh",
       args,
       {
         encoding: "utf-8",
         cwd,
+        signal: controller.signal,
       },
       (error, stdout, stderr) => {
+        cleanup();
         if (error) {
-          const ghError = new Error(`gh command failed: ${error.message}`) as GhError;
-          ghError.code = error.code ?? null;
+          const isAbort = (error as ExecFileException & { code?: string | number | null }).code === "ABORT_ERR"
+            || error.name === "AbortError";
+          let message: string;
+          if (timedOut) {
+            message = `gh command timed out after ${timeoutMs}ms`;
+          } else if (isAbort && externalAborted) {
+            message = `gh command aborted: ${describeAbortReason(externalSignal?.reason)}`;
+          } else if (isAbort) {
+            message = "gh command aborted";
+          } else {
+            message = `gh command failed: ${error.message}`;
+          }
+          const ghError = new Error(message) as GhError;
+          ghError.code = (error as ExecFileException).code ?? (isAbort ? "ABORT_ERR" : null);
           ghError.stdout = stdout ?? "";
           ghError.stderr = stderr ?? "";
           reject(ghError);
@@ -87,6 +165,20 @@ export function runGhAsync(args: string[], cwd?: string): Promise<string> {
       }
     );
   });
+}
+
+function makeGhError(message: string, code: string | number | null): GhError {
+  const err = new Error(message) as GhError;
+  err.code = code;
+  err.stdout = "";
+  err.stderr = "";
+  return err;
+}
+
+function describeAbortReason(reason: unknown): string {
+  if (reason instanceof Error) return reason.message;
+  if (typeof reason === "string") return reason;
+  return "aborted";
 }
 
 /**
@@ -106,10 +198,13 @@ export function runGhJson<T>(args: string[], cwd?: string): T {
 /**
  * Execute a gh CLI command asynchronously and parse the JSON output.
  * Requires the command to support --json flag.
+ *
+ * Forwards `signal` / `timeoutMs` to the underlying `runGhAsync` so callers
+ * can bound the call from outside (e.g. an AI tool's `signal` argument).
  */
-export async function runGhJsonAsync<T>(args: string[], cwd?: string): Promise<T> {
+export async function runGhJsonAsync<T>(args: string[], cwdOrOptions?: string | RunGhOptions): Promise<T> {
   const jsonArgs = args.includes("--json") ? args : [...args, "--json"];
-  const output = await runGhAsync(jsonArgs, cwd);
+  const output = await runGhAsync(jsonArgs, cwdOrOptions);
   try {
     return JSON.parse(output) as T;
   } catch (err) {

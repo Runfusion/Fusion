@@ -31,7 +31,9 @@ import {
   SessionNotFoundError,
   InvalidSessionStateError,
   setAiSessionStore,
+  stopSubtaskGeneration,
   SubtaskStreamManager,
+  GENERATION_TIMEOUT_MS,
 } from "../subtask-breakdown.js";
 
 const UUID_REGEX =
@@ -911,5 +913,87 @@ describe("SessionNotFoundError", () => {
     expect(error).toBeInstanceOf(Error);
     expect(error.name).toBe("SessionNotFoundError");
     expect(error.message).toBe("Missing session");
+  });
+});
+
+describe("subtask generation timeout / abort", () => {
+  it("marks the session as error and stops the prompt() promise when generation exceeds GENERATION_TIMEOUT_MS", async () => {
+    vi.useFakeTimers();
+
+    let resolveHungPrompt: (() => void) | undefined;
+    const hungPromptCallable = vi.fn(async () => {
+      // Simulate a stalled provider stream that never terminates on its own.
+      await new Promise<void>((resolve) => { resolveHungPrompt = resolve; });
+      return undefined;
+    });
+
+    mockCreateFnAgent.mockImplementation(async () => ({
+      session: {
+        state: { messages: [] },
+        prompt: hungPromptCallable,
+        dispose: vi.fn(),
+      },
+    }));
+
+    const created = await createSubtaskSession(
+      "Hung subtask generation",
+      undefined,
+      "/tmp/project",
+    );
+
+    // Yield once so startSubtaskGeneration's microtasks run before we advance time.
+    await Promise.resolve();
+    expect(getSubtaskSession(created.sessionId)?.status).toBe("generating");
+
+    await vi.advanceTimersByTimeAsync(GENERATION_TIMEOUT_MS);
+    // Drain any remaining microtasks (the abort propagates through Promise.race).
+    await vi.advanceTimersByTimeAsync(0);
+
+    const after = getSubtaskSession(created.sessionId);
+    expect(after?.status).toBe("error");
+    expect(after?.error).toMatch(/timed out/i);
+
+    // The hung prompt is still pending; release it so its microtask completes.
+    resolveHungPrompt?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    vi.useRealTimers();
+  });
+
+  it("stopSubtaskGeneration aborts an in-flight session and marks it stopped", async () => {
+    vi.useFakeTimers();
+
+    let resolveHungPrompt: (() => void) | undefined;
+    mockCreateFnAgent.mockImplementation(async () => ({
+      session: {
+        state: { messages: [] },
+        prompt: vi.fn(async () => {
+          await new Promise<void>((resolve) => { resolveHungPrompt = resolve; });
+        }),
+        dispose: vi.fn(),
+      },
+    }));
+
+    const created = await createSubtaskSession(
+      "Stoppable subtask generation",
+      undefined,
+      "/tmp/project",
+    );
+    await Promise.resolve();
+
+    expect(stopSubtaskGeneration(created.sessionId)).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const after = getSubtaskSession(created.sessionId);
+    expect(after?.status).toBe("error");
+    expect(after?.error).toMatch(/stopped by user/i);
+
+    // Stop is idempotent — no in-flight generation after first call.
+    expect(stopSubtaskGeneration(created.sessionId)).toBe(false);
+
+    resolveHungPrompt?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    vi.useRealTimers();
   });
 });

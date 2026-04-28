@@ -8,6 +8,7 @@ import {
   createSessionDiagnostics,
   resetDiagnosticsSink,
 } from "./ai-session-diagnostics.js";
+import { GenerationGuard, isAbortError } from "./ai-session-timeout.js";
 
 import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
 
@@ -77,6 +78,14 @@ export type SubtaskStreamCallback = (event: SubtaskStreamEvent, eventId?: number
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+/**
+ * Subtask breakdown is a single-turn flow with no follow-up questions, so
+ * a stuck `prompt()` (silent stream stall, hung tool call) blocks the whole
+ * UI. 90 s is generous for a small JSON response and bounds the worst case.
+ */
+export const GENERATION_TIMEOUT_MS = 90_000;
+
+const generationGuard = new GenerationGuard();
 
 /** Minimal interface for the agent object created by createFnAgent */
 interface SubtaskAgent {
@@ -207,6 +216,10 @@ function cleanupInMemorySubtaskSession(sessionId: string): boolean {
   if (!session) {
     return false;
   }
+
+  // Abort any in-flight generation so the agent.session.prompt() rejects
+  // promptly and we don't leak the timer / AbortController.
+  generationGuard.stop(sessionId);
 
   try {
     session.agent?.session?.dispose?.();
@@ -407,6 +420,11 @@ async function startSubtaskGeneration(
   try {
     await generateSubtasks(sessionId, cwd, promptOverrides);
   } catch (err) {
+    // Timeout / user-stop already published an error state via the guard
+    // handlers. Don't overwrite it with a generic AbortError message.
+    if (isAbortError(err)) {
+      return;
+    }
     const existing = sessions.get(sessionId);
     if (!existing) return;
     existing.status = "error";
@@ -451,22 +469,39 @@ async function generateSubtasks(
     });
 
     session.agent = agent;
-    await agent.session.prompt(session.initialDescription);
 
-    const messages = agent.session.state.messages as Array<{ role: string; content?: string | Array<{ type: string; text: string }> }>;
-    const lastAssistant = messages.filter((m) => m.role === "assistant").pop();
-    let responseText = session.thinkingOutput;
-    if (typeof lastAssistant?.content === "string") {
-      responseText = lastAssistant.content;
-    } else if (Array.isArray(lastAssistant?.content)) {
-      responseText = lastAssistant.content
-        .filter((item): item is { type: "text"; text: string } => item.type === "text")
-        .map((item) => item.text)
-        .join("");
-    }
+    await generationGuard.run(
+      sessionId,
+      GENERATION_TIMEOUT_MS,
+      {
+        onTimeout: () => setSubtaskError(
+          sessionId,
+          "AI generation timed out. You can retry or start a new session.",
+        ),
+        onUserStop: () => setSubtaskError(
+          sessionId,
+          "Generation stopped by user. You can retry or start a new session.",
+        ),
+      },
+      async () => {
+        await agent.session.prompt(session.initialDescription);
 
-    const subtasks = parseSubtasks(responseText);
-    completeSession(sessionId, subtasks);
+        const messages = agent.session.state.messages as Array<{ role: string; content?: string | Array<{ type: string; text: string }> }>;
+        const lastAssistant = messages.filter((m) => m.role === "assistant").pop();
+        let responseText = session.thinkingOutput;
+        if (typeof lastAssistant?.content === "string") {
+          responseText = lastAssistant.content;
+        } else if (Array.isArray(lastAssistant?.content)) {
+          responseText = lastAssistant.content
+            .filter((item): item is { type: "text"; text: string } => item.type === "text")
+            .map((item) => item.text)
+            .join("");
+        }
+
+        const subtasks = parseSubtasks(responseText);
+        completeSession(sessionId, subtasks);
+      },
+    );
     return;
   }
 
@@ -518,6 +553,24 @@ function generateFallbackSubtasks(initialDescription: string): SubtaskItem[] {
       dependsOn: ["subtask-2"],
     },
   ];
+}
+
+function setSubtaskError(sessionId: string, message: string): void {
+  const session = sessions.get(sessionId);
+  if (!session) return;
+  session.status = "error";
+  session.error = message;
+  session.updatedAt = new Date();
+  persistSubtaskSession(session, "error", message);
+  subtaskStreamManager.broadcast(sessionId, { type: "error", data: message });
+}
+
+/**
+ * Manually abort an in-flight subtask generation (UI "stop" button).
+ * Returns true if a generation was active and got aborted.
+ */
+export function stopSubtaskGeneration(sessionId: string): boolean {
+  return generationGuard.stop(sessionId);
 }
 
 function completeSession(sessionId: string, subtasks: SubtaskItem[]): void {
@@ -622,6 +675,7 @@ export function __resetSubtaskBreakdownState(): void {
   }
   sessions.clear();
   subtaskStreamManager.reset();
+  generationGuard.reset();
 
   if (_aiSessionStore && _aiSessionDeletedListener) {
     _aiSessionStore.off("ai_session:deleted", _aiSessionDeletedListener);

@@ -26,6 +26,7 @@ import {
   resetDiagnosticsSink,
   nonfatal,
 } from "./ai-session-diagnostics.js";
+import { GenerationGuard, isAbortError } from "./ai-session-timeout.js";
 
 import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
 
@@ -85,6 +86,15 @@ const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 
 /** Max number of retry attempts when AI returns unparseable output */
 const MAX_PARSE_RETRIES = 1;
+
+/**
+ * Per-turn generation timeout. Mission interview turns produce larger plans
+ * than planning, so this is more generous than planning's 120 s. Bounds the
+ * worst case for a silently-stalled model stream or hung tool call.
+ */
+export const GENERATION_TIMEOUT_MS = 180_000;
+
+const generationGuard = new GenerationGuard();
 
 /** Mission interview system prompt */
 export const MISSION_INTERVIEW_SYSTEM_PROMPT = `You are a mission planning assistant for a project management system.
@@ -282,6 +292,9 @@ function cleanupInMemoryMissionSession(sessionId: string): boolean {
   if (!session) {
     return false;
   }
+
+  // Abort any in-flight generation so prompt() rejects promptly.
+  generationGuard.stop(sessionId);
 
   if (session.agent) {
     try { session.agent.session.dispose?.(); } catch { /* ignore */ }
@@ -859,18 +872,54 @@ async function ensureMissionInterviewAgent(
     return;
   }
 
-  await session.agent.session.prompt(
-    [
-      "Previous conversation summary:",
-      historySummary,
-      "Use this context when handling the next user response.",
-    ].join("\n\n"),
+  await generationGuard.run(
+    session.id,
+    GENERATION_TIMEOUT_MS,
+    {
+      onTimeout: () => setMissionSessionError(
+        session,
+        "AI generation timed out while restoring context. You can retry or start a new session.",
+      ),
+      onUserStop: () => setMissionSessionError(
+        session,
+        "Generation stopped by user. You can retry or start a new session.",
+      ),
+    },
+    () => session.agent!.session.prompt(
+      [
+        "Previous conversation summary:",
+        historySummary,
+        "Use this context when handling the next user response.",
+      ].join("\n\n"),
+    ),
   );
+}
+
+function setMissionSessionError(session: MissionInterviewSession, message: string): void {
+  session.error = message;
+  session.updatedAt = new Date();
+  persistMissionSession(session, "error", message);
+  missionInterviewStreamManager.broadcast(session.id, {
+    type: "error",
+    data: message,
+  });
+}
+
+/**
+ * Manually abort an in-flight mission interview generation. Returns true if
+ * a generation was active and got aborted.
+ */
+export function stopMissionInterviewGeneration(sessionId: string): boolean {
+  return generationGuard.stop(sessionId);
 }
 
 /**
  * Continue the AI conversation with a user message.
  * Includes bounded recovery: one retry on parse failure.
+ *
+ * The entire body — including the parse-retry inner `prompt()` calls — runs
+ * inside `generationGuard.run`, so a stalled stream or hung tool call on
+ * either the first or retry attempt is bounded by `GENERATION_TIMEOUT_MS`.
  */
 async function continueAgentConversation(session: MissionInterviewSession, message: string): Promise<void> {
   if (!session.agent) {
@@ -878,128 +927,138 @@ async function continueAgentConversation(session: MissionInterviewSession, messa
   }
 
   try {
-    session.thinkingOutput = "";
+    await generationGuard.run(
+      session.id,
+      GENERATION_TIMEOUT_MS,
+      {
+        onTimeout: () => setMissionSessionError(
+          session,
+          "AI generation timed out. You can retry or start a new session.",
+        ),
+        onUserStop: () => setMissionSessionError(
+          session,
+          "Generation stopped by user. You can retry or start a new session.",
+        ),
+      },
+      async () => {
+        const agent = session.agent!;
+        session.thinkingOutput = "";
 
-    await session.agent.session.prompt(message);
+        await agent.session.prompt(message);
 
-    // Get the response text from the agent's state
-    interface AgentMessage {
-      role: string;
-      content?: string | Array<{ type: string; text: string }>;
-    }
-    const lastMessage = (session.agent.session.state.messages as AgentMessage[])
-      .filter((m: AgentMessage) => m.role === "assistant")
-      .pop();
+        // Get the response text from the agent's state
+        interface AgentMessage {
+          role: string;
+          content?: string | Array<{ type: string; text: string }>;
+        }
+        const lastMessage = (agent.session.state.messages as AgentMessage[])
+          .filter((m: AgentMessage) => m.role === "assistant")
+          .pop();
 
-    let responseText = session.thinkingOutput;
-    if (lastMessage?.content) {
-      if (typeof lastMessage.content === "string") {
-        responseText = lastMessage.content;
-      } else if (Array.isArray(lastMessage.content)) {
-        responseText = lastMessage.content
-          .filter((c: { type: string; text: string }): c is { type: "text"; text: string } => c.type === "text")
-          .map((c: { type: string; text: string }) => c.text)
-          .join("");
-      }
-    }
-
-    // Parse with retry
-    let parsed: MissionInterviewResponse | undefined;
-    let lastError: Error | undefined;
-
-    for (let attempt = 0; attempt <= MAX_PARSE_RETRIES; attempt++) {
-      try {
-        parsed = parseMissionAgentResponse(responseText);
-        break;
-      } catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-
-        if (attempt < MAX_PARSE_RETRIES) {
-          diagnostics.warn(
-            "Parse attempt failed, requesting reformat",
-            { sessionId: session.id, attempt: attempt + 1, operation: "parse-retry" }
-          );
-          try {
-            session.thinkingOutput = "";
-            await session.agent.session.prompt(
-              "Your previous response could not be parsed as JSON. " +
-              'Please respond with ONLY a valid JSON object: either {"type":"question","data":{...}} ' +
-              'or {"type":"complete","data":{"missionTitle":"...","missionDescription":"...","milestones":[...]}}. ' +
-              "No markdown, no explanation, just the JSON."
-            );
-
-            const retryMessage = (session.agent.session.state.messages as AgentMessage[])
-              .filter((m: AgentMessage) => m.role === "assistant")
-              .pop();
-
-            let retryText = session.thinkingOutput;
-            if (retryMessage?.content) {
-              if (typeof retryMessage.content === "string") {
-                retryText = retryMessage.content;
-              } else if (Array.isArray(retryMessage.content)) {
-                retryText = retryMessage.content
-                  .filter((c: { type: string; text: string }): c is { type: "text"; text: string } => c.type === "text")
-                  .map((c: { type: string; text: string }) => c.text)
-                  .join("");
-              }
-            }
-            responseText = retryText;
-          } catch (retryErr) {
-            diagnostics.errorFromException("Retry prompt failed for session", retryErr, { sessionId: session.id, operation: "retry-prompt" });
-            break;
+        let responseText = session.thinkingOutput;
+        if (lastMessage?.content) {
+          if (typeof lastMessage.content === "string") {
+            responseText = lastMessage.content;
+          } else if (Array.isArray(lastMessage.content)) {
+            responseText = lastMessage.content
+              .filter((c: { type: string; text: string }): c is { type: "text"; text: string } => c.type === "text")
+              .map((c: { type: string; text: string }) => c.text)
+              .join("");
           }
         }
-      }
-    }
 
-    if (!parsed) {
-      const errorMsg = `${lastError?.message || "Failed to parse AI response"} You can try responding again or start a new session.`;
-      diagnostics.error(
-        "All parse attempts exhausted for session",
-        { sessionId: session.id, message: errorMsg, operation: "parse-exhausted" }
-      );
-      session.error = errorMsg;
-      session.updatedAt = new Date();
-      persistMissionSession(session, "error", errorMsg);
-      missionInterviewStreamManager.broadcast(session.id, {
-        type: "error",
-        data: errorMsg,
-      });
+        // Parse with retry
+        let parsed: MissionInterviewResponse | undefined;
+        let lastError: Error | undefined;
+
+        for (let attempt = 0; attempt <= MAX_PARSE_RETRIES; attempt++) {
+          try {
+            parsed = parseMissionAgentResponse(responseText);
+            break;
+          } catch (err) {
+            lastError = err instanceof Error ? err : new Error(String(err));
+
+            if (attempt < MAX_PARSE_RETRIES) {
+              diagnostics.warn(
+                "Parse attempt failed, requesting reformat",
+                { sessionId: session.id, attempt: attempt + 1, operation: "parse-retry" }
+              );
+              try {
+                session.thinkingOutput = "";
+                await agent.session.prompt(
+                  "Your previous response could not be parsed as JSON. " +
+                  'Please respond with ONLY a valid JSON object: either {"type":"question","data":{...}} ' +
+                  'or {"type":"complete","data":{"missionTitle":"...","missionDescription":"...","milestones":[...]}}. ' +
+                  "No markdown, no explanation, just the JSON."
+                );
+
+                const retryMessage = (agent.session.state.messages as AgentMessage[])
+                  .filter((m: AgentMessage) => m.role === "assistant")
+                  .pop();
+
+                let retryText = session.thinkingOutput;
+                if (retryMessage?.content) {
+                  if (typeof retryMessage.content === "string") {
+                    retryText = retryMessage.content;
+                  } else if (Array.isArray(retryMessage.content)) {
+                    retryText = retryMessage.content
+                      .filter((c: { type: string; text: string }): c is { type: "text"; text: string } => c.type === "text")
+                      .map((c: { type: string; text: string }) => c.text)
+                      .join("");
+                  }
+                }
+                responseText = retryText;
+              } catch (retryErr) {
+                diagnostics.errorFromException("Retry prompt failed for session", retryErr, { sessionId: session.id, operation: "retry-prompt" });
+                break;
+              }
+            }
+          }
+        }
+
+        if (!parsed) {
+          const errorMsg = `${lastError?.message || "Failed to parse AI response"} You can try responding again or start a new session.`;
+          diagnostics.error(
+            "All parse attempts exhausted for session",
+            { sessionId: session.id, message: errorMsg, operation: "parse-exhausted" }
+          );
+          setMissionSessionError(session, errorMsg);
+          return;
+        }
+
+        if (parsed.type === "question") {
+          session.currentQuestion = parsed.data;
+          session.error = undefined;
+          session.lastGeneratedThinking = session.thinkingOutput;
+          session.updatedAt = new Date();
+          persistMissionSession(session, "awaiting_input");
+          missionInterviewStreamManager.broadcast(session.id, {
+            type: "question",
+            data: parsed.data,
+          });
+        } else if (parsed.type === "complete") {
+          session.summary = parsed.data;
+          session.currentQuestion = undefined;
+          session.error = undefined;
+          session.updatedAt = new Date();
+          persistMissionSession(session, "complete");
+          missionInterviewStreamManager.broadcast(session.id, {
+            type: "summary",
+            data: parsed.data,
+          });
+          missionInterviewStreamManager.broadcast(session.id, { type: "complete" });
+        }
+      },
+    );
+  } catch (err) {
+    // Timeout / user-stop already published an error state via the guard
+    // handlers. Don't double-broadcast a generic AbortError.
+    if (isAbortError(err)) {
       return;
     }
-
-    if (parsed.type === "question") {
-      session.currentQuestion = parsed.data;
-      session.error = undefined;
-      session.lastGeneratedThinking = session.thinkingOutput;
-      session.updatedAt = new Date();
-      persistMissionSession(session, "awaiting_input");
-      missionInterviewStreamManager.broadcast(session.id, {
-        type: "question",
-        data: parsed.data,
-      });
-    } else if (parsed.type === "complete") {
-      session.summary = parsed.data;
-      session.currentQuestion = undefined;
-      session.error = undefined;
-      session.updatedAt = new Date();
-      persistMissionSession(session, "complete");
-      missionInterviewStreamManager.broadcast(session.id, {
-        type: "summary",
-        data: parsed.data,
-      });
-      missionInterviewStreamManager.broadcast(session.id, { type: "complete" });
-    }
-  } catch (err) {
     const errorMessage = err instanceof Error ? err.message : "AI processing failed";
     diagnostics.errorFromException("Agent conversation error for session", err, { sessionId: session.id, operation: "conversation" });
-    session.error = errorMessage;
-    session.updatedAt = new Date();
-    persistMissionSession(session, "error", errorMessage);
-    missionInterviewStreamManager.broadcast(session.id, {
-      type: "error",
-      data: errorMessage,
-    });
+    setMissionSessionError(session, errorMessage);
   }
 }
 
@@ -1211,6 +1270,7 @@ export function __resetMissionInterviewState(): void {
   sessions.clear();
   rateLimits.clear();
   missionInterviewStreamManager.reset();
+  generationGuard.reset();
 
   if (_aiSessionStore && _aiSessionDeletedListener) {
     _aiSessionStore.off("ai_session:deleted", _aiSessionDeletedListener);

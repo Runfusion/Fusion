@@ -1,7 +1,21 @@
 import { describe, it, expect, vi } from "vitest";
+
+const { mockExecFile } = vi.hoisted(() => ({
+  mockExecFile: vi.fn(),
+}));
+
+// Mock child_process before importing gh-cli so runGhAsync's `execFile`
+// reference uses our stub. We only mock execFile because the timeout path
+// is what we need to exercise; the synchronous helpers don't go through it.
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+  return { ...actual, execFile: mockExecFile };
+});
+
 import {
   getGhErrorMessage,
   parseRepoFromRemote,
+  runGhAsync,
 } from "../gh-cli.js";
 
 // Tests for pure functions (no child_process dependency)
@@ -239,5 +253,102 @@ describe("gh-cli functions (inline tests)", () => {
         expect(ghErr.stderr).toBe("error message");
       }
     });
+  });
+});
+
+describe("runGhAsync timeout / abort", () => {
+  // Each test wires execFile to capture the AbortSignal from gh-cli's
+  // internal controller and the user callback, then drives the abort path
+  // explicitly. This mirrors what real Node would do: when the signal fires,
+  // execFile invokes its callback with an AbortError-shaped failure.
+  type ExecFileCb = (
+    err: (Error & { code?: string | number; killed?: boolean }) | null,
+    stdout: string,
+    stderr: string,
+  ) => void;
+
+  function captureExecFile(): { signalRef: { current?: AbortSignal }; cbRef: { current?: ExecFileCb } } {
+    const signalRef: { current?: AbortSignal } = {};
+    const cbRef: { current?: ExecFileCb } = {};
+    mockExecFile.mockImplementation((_bin, _args, options, callback) => {
+      signalRef.current = (options as { signal?: AbortSignal }).signal;
+      cbRef.current = callback as ExecFileCb;
+      // When the signal fires, invoke the callback with an AbortError-shaped
+      // failure — that's what Node's real execFile does on signal abort.
+      signalRef.current?.addEventListener("abort", () => {
+        const err = new Error("aborted") as Error & { code?: string };
+        err.name = "AbortError";
+        err.code = "ABORT_ERR";
+        callback?.(err as never, "", "");
+      }, { once: true });
+      return {} as ReturnType<typeof import("node:child_process").execFile>;
+    });
+    return { signalRef, cbRef };
+  }
+
+  it("rejects with timeout message after timeoutMs elapses and reports ABORT_ERR code", async () => {
+    vi.useFakeTimers();
+    mockExecFile.mockReset();
+    captureExecFile();
+
+    const promise = runGhAsync(["api", "repos/owner/repo"], { timeoutMs: 1_000 });
+    const settled = promise.then(
+      (v) => ({ ok: true as const, v }),
+      (err) => ({ ok: false as const, err }),
+    );
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    const outcome = await settled;
+
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.err.message).toContain("timed out after 1000ms");
+      expect(outcome.err.code).toBe("ABORT_ERR");
+    }
+    vi.useRealTimers();
+  });
+
+  it("propagates an external AbortSignal and rejects with the abort reason", async () => {
+    mockExecFile.mockReset();
+    captureExecFile();
+
+    const ac = new AbortController();
+    const promise = runGhAsync(["api", "x"], { signal: ac.signal, timeoutMs: 0 });
+    const settled = promise.then(
+      () => ({ ok: true as const }),
+      (err) => ({ ok: false as const, err }),
+    );
+
+    ac.abort(new Error("user cancelled"));
+    const outcome = await settled;
+
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.err.message).toContain("user cancelled");
+      expect(outcome.err.code).toBe("ABORT_ERR");
+    }
+  });
+
+  it("rejects synchronously when the external signal is already aborted", async () => {
+    mockExecFile.mockReset();
+    // Should never be called — pre-aborted check happens before exec.
+    const ac = new AbortController();
+    ac.abort(new Error("pre-cancelled"));
+
+    await expect(runGhAsync(["api", "x"], { signal: ac.signal })).rejects.toMatchObject({
+      message: expect.stringContaining("pre-cancelled"),
+      code: "ABORT_ERR",
+    });
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it("disables the timeout when timeoutMs <= 0", async () => {
+    mockExecFile.mockReset();
+    const { cbRef } = captureExecFile();
+
+    const promise = runGhAsync(["api", "x"], { timeoutMs: 0 });
+    // Resolve normally — verifies no implicit timeout fires and shorts the call.
+    cbRef.current?.(null, "ok\n", "");
+    await expect(promise).resolves.toBe("ok\n");
   });
 });

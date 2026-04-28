@@ -27,7 +27,9 @@ import {
   setAiSessionStore,
   RateLimitError,
   SessionNotFoundError,
+  stopMissionInterviewGeneration,
   submitMissionInterviewResponse,
+  GENERATION_TIMEOUT_MS,
 } from "../mission-interview.js";
 import {
   setDiagnosticsSink,
@@ -925,6 +927,87 @@ describe("mission-interview module", () => {
       expect(mockCreateFnAgent).toHaveBeenCalled();
       const lastCall = mockCreateFnAgent.mock.calls[mockCreateFnAgent.mock.calls.length - 1];
       expect(lastCall[0].systemPrompt).toMatch(/^You are a mission planning assistant/);
+    });
+  });
+
+  describe("generation timeout / abort", () => {
+    it("marks the session as error when initial generation exceeds GENERATION_TIMEOUT_MS", async () => {
+      vi.useFakeTimers();
+
+      let resolveHungPrompt: (() => void) | undefined;
+      mockCreateFnAgent.mockImplementationOnce(async () => ({
+        session: {
+          state: { messages: [] },
+          prompt: vi.fn(async () => {
+            await new Promise<void>((resolve) => { resolveHungPrompt = resolve; });
+          }),
+          dispose: vi.fn(),
+        },
+      }));
+
+      const sessionId = await createMissionInterviewSession(
+        "10.0.0.10",
+        "Hung mission interview",
+        "/tmp/project",
+      );
+
+      // Yield so initializeAgent's async work registers the generation guard.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      await vi.advanceTimersByTimeAsync(GENERATION_TIMEOUT_MS);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const session = getMissionInterviewSession(sessionId);
+      expect(session?.error).toMatch(/timed out/i);
+
+      resolveHungPrompt?.();
+      await vi.advanceTimersByTimeAsync(0);
+
+      vi.useRealTimers();
+    });
+
+    it("stopMissionInterviewGeneration aborts an in-flight session and marks it stopped", async () => {
+      // Real timers — we want the guard.run() registration to actually happen
+      // through normal microtask scheduling without us racing it.
+      let resolveHungPrompt: (() => void) | undefined;
+      mockCreateFnAgent.mockImplementationOnce(async () => ({
+        session: {
+          state: { messages: [] },
+          prompt: vi.fn(async () => {
+            await new Promise<void>((resolve) => { resolveHungPrompt = resolve; });
+          }),
+          dispose: vi.fn(),
+        },
+      }));
+
+      const sessionId = await createMissionInterviewSession(
+        "10.0.0.11",
+        "Stoppable mission interview",
+        "/tmp/project",
+      );
+
+      // initializeAgent → createMissionInterviewAgent → continueAgentConversation
+      // → generationGuard.run is several awaits deep; poll until the guard is
+      // registered, then stop. Bounded so a regression doesn't hang the suite.
+      let stopped = false;
+      for (let i = 0; i < 50 && !stopped; i++) {
+        stopped = stopMissionInterviewGeneration(sessionId);
+        if (!stopped) await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(stopped).toBe(true);
+
+      // Yield so the guard's catch/finally and onUserStop run.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const session = getMissionInterviewSession(sessionId);
+      expect(session?.error).toMatch(/stopped by user/i);
+
+      // Stop is idempotent — no in-flight generation after first call.
+      expect(stopMissionInterviewGeneration(sessionId)).toBe(false);
+
+      resolveHungPrompt?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
   });
 });

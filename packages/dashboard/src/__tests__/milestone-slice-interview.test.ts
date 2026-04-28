@@ -33,6 +33,8 @@ import {
   skipTargetInterview,
   MILESTONE_INTERVIEW_SYSTEM_PROMPT,
   SLICE_INTERVIEW_SYSTEM_PROMPT,
+  stopMilestoneSliceInterviewGeneration,
+  GENERATION_TIMEOUT_MS,
   type MilestoneInterviewSummary,
   type SliceInterviewSummary,
 } from "../milestone-slice-interview.js";
@@ -767,6 +769,85 @@ describe("milestone-slice-interview module", () => {
       expect(SLICE_INTERVIEW_SYSTEM_PROMPT).toContain("slice");
       expect(SLICE_INTERVIEW_SYSTEM_PROMPT).toContain("feature");
       expect(SLICE_INTERVIEW_SYSTEM_PROMPT).toContain("acceptanceCriteria");
+    });
+  });
+
+  describe("generation timeout / abort", () => {
+    it("marks the session as error when initial generation exceeds GENERATION_TIMEOUT_MS", async () => {
+      vi.useFakeTimers();
+
+      let resolveHungPrompt: (() => void) | undefined;
+      mockCreateFnAgent.mockImplementationOnce(async () => ({
+        session: {
+          state: { messages: [] },
+          prompt: vi.fn(async () => {
+            await new Promise<void>((resolve) => { resolveHungPrompt = resolve; });
+          }),
+          dispose: vi.fn(),
+        },
+      }));
+
+      const sessionId = await createTargetInterviewSession(
+        "10.0.1.10",
+        "milestone",
+        "milestone-stuck",
+        "Hung milestone interview",
+        undefined,
+        "/tmp/project",
+      );
+
+      // Yield so the guard registration runs.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      await vi.advanceTimersByTimeAsync(GENERATION_TIMEOUT_MS);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const session = getTargetInterviewSession(sessionId);
+      expect(session?.error).toMatch(/timed out/i);
+
+      resolveHungPrompt?.();
+      await vi.advanceTimersByTimeAsync(0);
+
+      vi.useRealTimers();
+    });
+
+    it("stopMilestoneSliceInterviewGeneration aborts an in-flight session and marks it stopped", async () => {
+      let resolveHungPrompt: (() => void) | undefined;
+      mockCreateFnAgent.mockImplementationOnce(async () => ({
+        session: {
+          state: { messages: [] },
+          prompt: vi.fn(async () => {
+            await new Promise<void>((resolve) => { resolveHungPrompt = resolve; });
+          }),
+          dispose: vi.fn(),
+        },
+      }));
+
+      const sessionId = await createTargetInterviewSession(
+        "10.0.1.11",
+        "slice",
+        "slice-stoppable",
+        "Stoppable slice interview",
+        undefined,
+        "/tmp/project",
+      );
+
+      let stopped = false;
+      for (let i = 0; i < 50 && !stopped; i++) {
+        stopped = stopMilestoneSliceInterviewGeneration(sessionId);
+        if (!stopped) await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(stopped).toBe(true);
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const session = getTargetInterviewSession(sessionId);
+      expect(session?.error).toMatch(/stopped by user/i);
+      expect(stopMilestoneSliceInterviewGeneration(sessionId)).toBe(false);
+
+      resolveHungPrompt?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
   });
 });

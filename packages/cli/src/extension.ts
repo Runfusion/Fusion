@@ -96,7 +96,7 @@ function ensureGhCliAuth(): void {
 async function fetchGitHubIssuesViaGh(
   owner: string,
   repo: string,
-  options: { limit?: number; labels?: string[] } = {},
+  options: { limit?: number; labels?: string[]; signal?: AbortSignal } = {},
 ): Promise<GitHubIssueApiResult[]> {
   ensureGhCliAuth();
 
@@ -110,20 +110,25 @@ async function fetchGitHubIssuesViaGh(
   const path = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?${queryParams.toString()}`;
 
   try {
-    const issues = await runGhJsonAsync<GitHubIssueApiResult[]>(["api", path]);
+    const issues = await runGhJsonAsync<GitHubIssueApiResult[]>(["api", path], { signal: options.signal });
     return issues.filter((issue) => !issue.pull_request);
   } catch (error) {
     throw new Error(getGhErrorMessage(error));
   }
 }
 
-async function fetchGitHubIssueViaGh(owner: string, repo: string, issueNumber: number): Promise<GitHubIssueApiResult> {
+async function fetchGitHubIssueViaGh(
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  options: { signal?: AbortSignal } = {},
+): Promise<GitHubIssueApiResult> {
   ensureGhCliAuth();
 
   const path = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${issueNumber}`;
 
   try {
-    return await runGhJsonAsync<GitHubIssueApiResult>(["api", path]);
+    return await runGhJsonAsync<GitHubIssueApiResult>(["api", path], { signal: options.signal });
   } catch (error) {
     throw new Error(getGhErrorMessage(error));
   }
@@ -786,12 +791,12 @@ export default function kbExtension(pi: ExtensionAPI) {
       ),
     }),
 
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const [owner, repo] = params.ownerRepo.split("/");
       const limit = params.limit ?? 30;
       const labels = params.labels;
 
-      const issues = await fetchGitHubIssuesViaGh(owner, repo, { limit, labels });
+      const issues = await fetchGitHubIssuesViaGh(owner, repo, { limit, labels, signal });
 
       if (issues.length === 0) {
         return {
@@ -876,9 +881,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       }),
     }),
 
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const { owner, repo, issueNumber } = params;
-      const issue = await fetchGitHubIssueViaGh(owner, repo, issueNumber);
+      const issue = await fetchGitHubIssueViaGh(owner, repo, issueNumber, { signal });
 
       if (issue.pull_request) {
         throw new Error(`#${issueNumber} is a pull request, not an issue`);
@@ -975,9 +980,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       ),
     }),
 
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const { owner, repo, limit = 30, labels } = params;
-      const issues = await fetchGitHubIssuesViaGh(owner, repo, { limit, labels });
+      const issues = await fetchGitHubIssuesViaGh(owner, repo, { limit, labels, signal });
 
       if (issues.length === 0) {
         return {
