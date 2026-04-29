@@ -98,7 +98,13 @@ function LiveAgentCard({ agent, projectId, onSelect, onOpenTaskLogs }: LiveAgent
       <div className="live-agent-card-transcript">
         {entries.length === 0 ? (
           <div className="live-agent-card-empty">
-            {currentStep ? (
+            {!agent.taskId ? (
+              // "active" agents that aren't currently working a task have no
+              // SSE stream to attach to; useLiveTranscript bails out with
+              // isConnected=false. Showing "Connecting..." here is misleading
+              // — the agent is just idle.
+              <span>{agent.state === "running" ? "Starting..." : "Idle — no task assigned"}</span>
+            ) : currentStep ? (
               <>
                 <div className="live-agent-card-status">
                   Step {stepNumber}

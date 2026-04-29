@@ -383,8 +383,21 @@ export function subscribeSse(url: string, sub: SseSubscription = {}): () => void
   }
 
   channel.subscribers.add(subscriber);
+  const wasAlreadyOpen = !!channel.es && channel.hasOpenedOnce;
   openChannel(channel);
   reattachNativeListeners(channel);
+
+  // Subscribers joining a channel that already opened never see another
+  // `open` event from EventSource, so fire onOpen for them on a microtask
+  // (microtask, not sync, so the caller finishes wiring before state
+  // updates land).
+  if (wasAlreadyOpen) {
+    queueMicrotask(() => {
+      if (channel.subscribers.has(subscriber)) {
+        subscriber.onOpen?.();
+      }
+    });
+  }
 
   let active = true;
   return () => {

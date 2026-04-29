@@ -119,6 +119,48 @@ describe("ActiveAgentsPanel", () => {
     expect(screen.getByText("Waiting for output...")).toBeInTheDocument();
   });
 
+  it("shows idle copy (not 'Connecting...') when an active agent has no taskId", async () => {
+    mockUseLiveTranscript.mockReturnValue({
+      entries: [],
+      isConnected: false,
+    });
+
+    const mockAgent: Agent = {
+      id: "agent-001",
+      name: "Test Agent",
+      role: "executor",
+      state: "active",
+      // taskId intentionally omitted — agent is available but not running
+      lastHeartbeatAt: new Date().toISOString(),
+    } as Agent;
+
+    render(<ActiveAgentsPanel agents={[mockAgent]} />);
+
+    expect(screen.getByText("Idle — no task assigned")).toBeInTheDocument();
+    expect(screen.queryByText("Connecting...")).toBeNull();
+  });
+
+  it("shows 'Starting...' for running agents that haven't picked up a task yet", async () => {
+    mockUseLiveTranscript.mockReturnValue({
+      entries: [],
+      isConnected: false,
+    });
+
+    const mockAgent: Agent = {
+      id: "agent-001",
+      name: "Test Agent",
+      role: "executor",
+      state: "running",
+      // taskId intentionally omitted — race between state flip and task bind
+      lastHeartbeatAt: new Date().toISOString(),
+    } as Agent;
+
+    render(<ActiveAgentsPanel agents={[mockAgent]} />);
+
+    expect(screen.getByText("Starting...")).toBeInTheDocument();
+    expect(screen.queryByText("Connecting...")).toBeNull();
+  });
+
   it("renders multiple agent cards with separate transcript streams", async () => {
     mockUseLiveTranscript
       .mockReturnValueOnce({
