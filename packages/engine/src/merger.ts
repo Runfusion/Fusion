@@ -2398,6 +2398,13 @@ export async function aiMergeTask(
       await execAsync(`git rebase "${localHead}"`, { cwd: worktreePath });
       rebaseHappened = true;
       mergerLog.log(`${taskId}: rebased ${branch} onto local HEAD ${localHead.slice(0, 8)}${label ? ` (${label})` : ""}`);
+      await store.appendAgentLog(
+        taskId,
+        `Pre-merge rebase: ${branch} → local HEAD ${localHead.slice(0, 8)}${label ? ` (${label})` : ""}`,
+        "text",
+        undefined,
+        "merger",
+      );
     } catch (localRebaseErr) {
       rethrowIfMergeAborted(localRebaseErr);
       const lmsg = localRebaseErr instanceof Error ? localRebaseErr.message : String(localRebaseErr);
@@ -2473,6 +2480,13 @@ export async function aiMergeTask(
           await execAsync(`git rebase "${remoteRef}"`, { cwd: worktreePath });
           rebaseHappened = true;
           mergerLog.log(`${taskId}: rebased ${branch} onto ${remoteRef}`);
+          await store.appendAgentLog(
+            taskId,
+            `Pre-merge rebase: ${branch} → ${remoteRef}`,
+            "text",
+            undefined,
+            "merger",
+          );
         } catch (rebaseErr) {
           rethrowIfMergeAborted(rebaseErr);
           const msg = rebaseErr instanceof Error ? rebaseErr.message : String(rebaseErr);
@@ -2615,6 +2629,18 @@ export async function aiMergeTask(
 
   const mergeAttempt = async (attemptNum: 1 | 2 | 3): Promise<boolean> => {
     mergerLog.log(`${taskId}: merge attempt ${attemptNum}/3...`);
+    const attemptLabel = attemptNum === 1
+      ? "Attempt 1: AI merge"
+      : attemptNum === 2
+        ? "Attempt 2: auto-resolve known conflicts, then AI"
+        : `Attempt 3: ${mergeConflictStrategy === "smart-prefer-main" ? "-X ours" : "-X theirs"} fallback`;
+    await store.appendAgentLog(
+      taskId,
+      `Starting merge ${attemptLabel}`,
+      "text",
+      undefined,
+      "merger",
+    );
 
     try {
       // Try the merge with appropriate strategy for this attempt
@@ -3003,6 +3029,29 @@ export async function aiMergeTask(
 
     await store.updateTask(taskId, { mergeDetails });
     mergerLog.log(`${taskId}: merge details stored (commitSha: ${recordedSha?.slice(0, 8) ?? "<deferred>"})`);
+
+    // Surface the high-level outcome on the agent-log timeline so users can
+    // see the merge's strategy, attempt count, and final commit at a glance.
+    const summaryParts: string[] = [
+      `Merge completed via ${result.resolutionStrategy ?? "unknown"} (attempt ${result.attemptsMade ?? "?"}/3)`,
+    ];
+    if (recordedSha) {
+      summaryParts.push(`commit ${recordedSha.slice(0, 8)}`);
+    } else if (mergeWasEmpty) {
+      summaryParts.push("no commit landed (branch already on main)");
+    } else if (isEmptyCommit) {
+      summaryParts.push("squash collapsed to empty (sha deferred)");
+    }
+    if (filesChanged !== undefined) {
+      summaryParts.push(`${filesChanged} file${filesChanged === 1 ? "" : "s"} changed (+${insertions ?? 0}/-${deletions ?? 0})`);
+    }
+    await store.appendAgentLog(
+      taskId,
+      summaryParts.join(" · "),
+      "text",
+      undefined,
+      "merger",
+    );
   } catch (err: any) {
     mergerLog.warn(`${taskId}: failed to collect/store merge details: ${err.message}`);
   }
