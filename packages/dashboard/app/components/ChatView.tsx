@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useChat, type ToolCallInfo } from "../hooks/useChat";
 import { useViewportMode } from "./Header";
-import { fetchAgents, fetchDiscoveredSkills, fetchModels } from "../api";
+import { fetchAgents, fetchDiscoveredSkills, fetchModels, updateGlobalSettings } from "../api";
 import type { Agent } from "@fusion/core";
 import type { DiscoveredSkill } from "@fusion/dashboard";
 import type { ModelInfo } from "../api";
@@ -211,6 +211,8 @@ function NewChatDialog({ projectId, onClose, onCreate }: NewChatDialogProps) {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [selectedModel, setSelectedModel] = useState<string>("");
+  const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
+  const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
 
   // Load agents on mount (project-scoped)
   useEffect(() => {
@@ -244,15 +246,51 @@ function NewChatDialog({ projectId, onClose, onCreate }: NewChatDialogProps) {
     fetchModels()
       .then((response) => {
         setModels(response.models);
+        setFavoriteProviders(response.favoriteProviders);
+        setFavoriteModels(response.favoriteModels);
       })
       .catch(() => {
         // Silently fail - show empty list
         setModels([]);
+        setFavoriteProviders([]);
+        setFavoriteModels([]);
       })
       .finally(() => {
         setModelsLoading(false);
       });
   }, []);
+
+  const handleToggleFavorite = useCallback(async (provider: string) => {
+    const currentFavorites = favoriteProviders;
+    const isFavorite = currentFavorites.includes(provider);
+    const newFavorites = isFavorite
+      ? currentFavorites.filter((value) => value !== provider)
+      : [provider, ...currentFavorites];
+
+    setFavoriteProviders(newFavorites);
+
+    try {
+      await updateGlobalSettings({ favoriteProviders: newFavorites, favoriteModels });
+    } catch {
+      setFavoriteProviders(currentFavorites);
+    }
+  }, [favoriteProviders, favoriteModels]);
+
+  const handleToggleModelFavorite = useCallback(async (modelId: string) => {
+    const currentFavorites = favoriteModels;
+    const isFavorite = currentFavorites.includes(modelId);
+    const newFavorites = isFavorite
+      ? currentFavorites.filter((value) => value !== modelId)
+      : [modelId, ...currentFavorites];
+
+    setFavoriteModels(newFavorites);
+
+    try {
+      await updateGlobalSettings({ favoriteProviders, favoriteModels: newFavorites });
+    } catch {
+      setFavoriteModels(currentFavorites);
+    }
+  }, [favoriteModels, favoriteProviders]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -341,6 +379,10 @@ function NewChatDialog({ projectId, onClose, onCreate }: NewChatDialogProps) {
                   onChange={setSelectedModel}
                   label="Model"
                   placeholder="Select a model"
+                  favoriteProviders={favoriteProviders}
+                  onToggleFavorite={handleToggleFavorite}
+                  favoriteModels={favoriteModels}
+                  onToggleModelFavorite={handleToggleModelFavorite}
                 />
               )}
             </div>
@@ -1139,17 +1181,6 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     <div className="chat-view">
       {/* Sidebar */}
       <div className={`chat-sidebar${!sidebarVisible ? " chat-sidebar--hidden" : ""}`}>
-        {/* Desktop header with New Chat button */}
-        <div className="chat-sidebar-header">
-          <button
-            className="btn btn-sm btn-primary"
-            onClick={() => setShowNewDialog(true)}
-            data-testid="chat-new-btn"
-          >
-            <Plus size={14} />
-            New Chat
-          </button>
-        </div>
         {/* Search section */}
         <div className="chat-sidebar-search">
           <div className="chat-sidebar-search-wrapper">
@@ -1219,7 +1250,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
           <button
             className="btn btn-sm btn-primary chat-sidebar-footer-btn"
             onClick={() => setShowNewDialog(true)}
-            data-testid="chat-new-btn-mobile"
+            data-testid="chat-new-btn"
           >
             <Plus size={14} />
             New Chat

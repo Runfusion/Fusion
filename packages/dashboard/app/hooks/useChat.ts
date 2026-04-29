@@ -71,7 +71,7 @@ export interface UseChatReturn {
   pendingMessage: string;
 
   // Session operations
-  selectSession: (id: string) => void;
+  selectSession: (id: string, sessionOverride?: ChatSessionInfo) => void;
   createSession: (
     input: { agentId: string; title?: string; modelProvider?: string; modelId?: string },
   ) => Promise<ChatSessionInfo>;
@@ -243,7 +243,7 @@ export function useChat(projectId?: string): UseChatReturn {
 
   // Restore active session from localStorage after initial load
   // Uses a ref to avoid circular dependency with selectSession
-  const selectSessionRef = useRef<(id: string) => void>(() => {
+  const selectSessionRef = useRef<(id: string, sessionOverride?: ChatSessionInfo) => void>(() => {
     /* noop - will be replaced after selectSession is defined */
   });
   useEffect(() => {
@@ -284,7 +284,7 @@ export function useChat(projectId?: string): UseChatReturn {
 
   // Select a session
   const selectSession = useCallback(
-    (id: string) => {
+    (id: string, sessionOverride?: ChatSessionInfo) => {
       // Close any existing stream
       if (streamRef.current) {
         streamRef.current.close();
@@ -292,7 +292,7 @@ export function useChat(projectId?: string): UseChatReturn {
       }
 
       // Find and set active session
-      const session = sessions.find((s) => s.id === id);
+      const session = sessionOverride ?? sessions.find((s) => s.id === id);
       setActiveSession(session || null);
 
       // Reset streaming state
@@ -327,6 +327,11 @@ export function useChat(projectId?: string): UseChatReturn {
   const createSession = useCallback(
     async (input: { agentId: string; title?: string; modelProvider?: string; modelId?: string }) => {
       const data = await apiCreateChatSession(input, projectId);
+
+      if (streamRef.current) {
+        streamRef.current.close();
+        streamRef.current = null;
+      }
       const newSession: ChatSessionInfo = {
         id: data.session.id,
         title: data.session.title,
@@ -341,18 +346,12 @@ export function useChat(projectId?: string): UseChatReturn {
       // Add to sessions list at the top
       setSessions((prev) => [newSession, ...prev]);
 
-      // Select the new session
-      setActiveSession(newSession);
+      selectSession(newSession.id, newSession);
       setMessages([]);
-      setStreamingText("");
-      setStreamingThinking("");
-      setStreamingToolCalls([]);
-      setIsStreaming(false);
-      setHasMoreMessages(true);
 
       return newSession;
     },
-    [projectId],
+    [projectId, selectSession],
   );
 
   // Archive a session

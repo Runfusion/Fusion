@@ -2073,17 +2073,16 @@ describe("ChatView project-scoped agent fetching", () => {
 });
 
 describe("ChatView sidebar structure", () => {
-  it("renders sidebar with explicit section class names", () => {
+  it("renders sidebar sections without an empty header spacer", () => {
     setupMockChat({ sessions: [], filteredSessions: [] });
 
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-    // Verify explicit sidebar section class names exist
     expect(document.querySelector(".chat-sidebar")).toBeInTheDocument();
-    expect(document.querySelector(".chat-sidebar-header")).toBeInTheDocument();
     expect(document.querySelector(".chat-sidebar-search")).toBeInTheDocument();
     expect(document.querySelector(".chat-sidebar-list")).toBeInTheDocument();
     expect(document.querySelector(".chat-sidebar-footer")).toBeInTheDocument();
+    expect(document.querySelector(".chat-sidebar-header")).not.toBeInTheDocument();
   });
 
   it("renders desktop header New Chat button", () => {
@@ -2099,7 +2098,7 @@ describe("ChatView sidebar structure", () => {
 
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-    expect(screen.getByTestId("chat-new-btn-mobile")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-new-btn")).toBeInTheDocument();
   });
 
   it("opens new chat dialog when clicking mobile footer New Chat button", async () => {
@@ -2107,7 +2106,7 @@ describe("ChatView sidebar structure", () => {
 
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-    await userEvent.click(screen.getByTestId("chat-new-btn-mobile"));
+    await userEvent.click(screen.getByTestId("chat-new-btn"));
 
     const dialog = document.querySelector(".chat-new-dialog") as HTMLElement | null;
     expect(dialog).toBeInTheDocument();

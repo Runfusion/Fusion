@@ -20,13 +20,6 @@
   display: none;
 }
 
-.chat-sidebar-header {
-  padding: 12px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
 .chat-sidebar-search-wrapper {
   position: relative;
   display: flex;
@@ -73,7 +66,13 @@
 }
 
 .chat-session-item--active {
-  background: var(--accent-bg, var(--hover));
+  border-left: calc(var(--btn-border-width) * 3) solid var(--todo);
+  padding-left: calc(var(--space-md) - (var(--btn-border-width) * 3));
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+}
+
+.chat-session-item--active:hover {
+  background: color-mix(in srgb, var(--todo) 16%, transparent);
 }
 
 .chat-session-title {
@@ -944,10 +943,18 @@
   color: var(--text-muted);
 }
 
-/* The mobile-only "New Chat" footer button is hidden on desktop; the
-   desktop layout uses the .chat-sidebar-header button instead. */
+/* Sidebar footer contains the primary New Chat action on desktop and mobile. */
 .chat-sidebar-footer {
-  display: none;
+  display: block;
+  padding: var(--space-sm) var(--space-md);
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.chat-sidebar-footer .chat-sidebar-footer-btn {
+  width: 100%;
+  justify-content: center;
+  min-height: 40px;
 }
 
 /* === Mobile: one pane at a time =========================================
@@ -976,13 +983,7 @@
     max-height: calc(var(--vv-height, calc(100dvh - var(--keyboard-overlap, 0px))) - var(--header-height));
   }
 
-  /* On mobile, the "New Chat" affordance moves to a full-width pinned
-     footer. The desktop top-header button is hidden to free the screen
-     space for the search field and session list. */
-  .chat-sidebar-header {
-    display: none;
-  }
-
+  /* On mobile, the "New Chat" affordance uses a full-width pinned footer. */
   .chat-sidebar-footer {
     display: block;
     padding: var(--space-sm) var(--space-md);
