@@ -146,6 +146,7 @@ import {
   type Settings,
   type AgentPromptsConfig,
   type CanonicalMergeConflictStrategy,
+  type TaskSourceIssue,
 } from "@fusion/core";
 import { describeModel, promptWithFallback } from "./pi.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
@@ -1698,6 +1699,12 @@ function getCommitAuthorArg(settings: {
   return ` --author="${name} <${email}>"`;
 }
 
+export function buildSourceIssueRef(sourceIssue?: TaskSourceIssue | null): string {
+  if (!sourceIssue || sourceIssue.provider !== "github") return "";
+  if (!sourceIssue.repository || !sourceIssue.issueNumber) return "";
+  return `${sourceIssue.repository}#${sourceIssue.issueNumber}`;
+}
+
 /**
  * Build the merge system prompt. When `includeTaskId` is true (default),
  * the commit format uses `<type>(<scope>): <summary>` where scope is the
@@ -1714,6 +1721,7 @@ Message format:
 - **Scope:** the task ID (e.g., KB-001)
 - **Summary:** one line describing what the squash brings in (imperative mood)
 - **Body:** 2-5 bullet points summarizing the key changes, each starting with "- "
+- **GitHub reference:** when the prompt includes a source issue reference, add \`Ref: owner/repo#N\` to the commit body
 ${authorArg ? `- **Author:** Always include the --author flag as shown in the example above.` : ""}
 
 Example:
@@ -1732,6 +1740,7 @@ Message format:
 - **Type:** feat, fix, refactor, docs, test, chore
 - **Summary:** one line describing what the squash brings in (imperative mood)
 - **Body:** 2-5 bullet points summarizing the key changes, each starting with "- "
+- **GitHub reference:** when the prompt includes a source issue reference, add \`Ref: owner/repo#N\` to the commit body
 ${authorArg ? `- **Author:** Always include the --author flag as shown in the example above.` : ""}
 Do NOT include a scope in the commit message type.
 
@@ -2275,6 +2284,7 @@ export async function aiMergeTask(
   }
 
   const branch = task.branch || `fusion/${taskId.toLowerCase()}`;
+  const sourceIssueRef = buildSourceIssueRef(task.sourceIssue);
   const worktreePath = task.worktree;
   const result: MergeResult = {
     task,
@@ -2749,6 +2759,7 @@ export async function aiMergeTask(
         commitLog,
         diffStat,
         includeTaskId,
+        sourceIssueRef,
         smartConflictResolution,
         mergeConflictStrategy,
         attemptNum,
@@ -3481,6 +3492,7 @@ interface MergeAttemptParams {
   commitLog: string;
   diffStat: string;
   includeTaskId: boolean;
+  sourceIssueRef?: string;
   smartConflictResolution: boolean;
   mergeConflictStrategy: CanonicalMergeConflictStrategy;
   attemptNum: 1 | 2 | 3;
@@ -3525,6 +3537,7 @@ async function executeMergeAttempt(
     commitLog,
     diffStat,
     includeTaskId,
+    sourceIssueRef,
     smartConflictResolution,
     attemptNum,
     options,
@@ -3773,6 +3786,7 @@ async function executeMergeAttempt(
       options,
       testCommand,
       buildCommand,
+      sourceIssueRef,
     });
 
     // Handle build failure
@@ -3871,7 +3885,7 @@ async function attemptWithSideStrategy(
   side: "theirs" | "ours" = "theirs",
   aiTracker?: AiInvocationTracker,
 ): Promise<boolean> {
-  const { rootDir, branch, commitLog, includeTaskId, taskId, store, settings, testCommand, buildCommand, testSource, buildSource } = params;
+  const { rootDir, branch, commitLog, includeTaskId, sourceIssueRef, taskId, store, settings, testCommand, buildCommand, testSource, buildSource } = params;
 
   mergerLog.log(`${taskId}: attempting merge with -X ${side} strategy`);
 
@@ -3925,8 +3939,9 @@ async function attemptWithSideStrategy(
     const fallbackPrefix = includeTaskId ? `feat(${taskId})` : "feat";
     const authorArg = getCommitAuthorArg(settings);
     const trailerArg = buildTaskIdTrailerArg(taskId);
+    const issueRefBodyArg = sourceIssueRef ? ` -m "Ref: ${sourceIssueRef}"` : "";
     await execAsync(
-      `git commit -m "${fallbackPrefix}: merge ${branch} (auto-resolved)" -m "${escapedLog}"${trailerArg}${authorArg}`,
+      `git commit -m "${fallbackPrefix}: merge ${branch} (auto-resolved)" -m "${escapedLog}"${issueRefBodyArg}${trailerArg}${authorArg}`,
       { cwd: rootDir },
     );
     mergerLog.log(`${taskId}: committed with -X ${side} auto-resolution`);
@@ -3966,6 +3981,7 @@ interface AiAgentParams {
   includeTaskId: boolean;
   hasConflicts: boolean;
   simplifiedContext: boolean;
+  sourceIssueRef?: string;
   options: MergerOptions;
   testCommand?: string;
   buildCommand?: string;
@@ -4003,6 +4019,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     includeTaskId,
     hasConflicts,
     simplifiedContext,
+    sourceIssueRef,
     options,
     testCommand,
     buildCommand,
@@ -4133,6 +4150,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
       testCommand,
       buildCommand,
       authorArg,
+      sourceIssueRef,
     });
 
     // Attempt prompting with fresh session (first attempt).
@@ -4171,6 +4189,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
           testCommand,
           buildCommand,
           authorArg,
+          sourceIssueRef,
         });
 
         try {
@@ -4224,8 +4243,9 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
         const fallbackPrefix = includeTaskId ? `feat(${taskId})` : "feat";
         const authorArg = getCommitAuthorArg(settings);
         const trailerArg = buildTaskIdTrailerArg(taskId);
+        const issueRefBodyArg = sourceIssueRef ? ` -m "Ref: ${sourceIssueRef}"` : "";
         await execAsync(
-          `git commit -m "${fallbackPrefix}: merge ${branch}" -m "${escapedLog}"${trailerArg}${authorArg}`,
+          `git commit -m "${fallbackPrefix}: merge ${branch}" -m "${escapedLog}"${issueRefBodyArg}${trailerArg}${authorArg}`,
           { cwd: rootDir },
         );
       } else {
@@ -4264,13 +4284,14 @@ interface MergePromptParams {
   diffStat: string;
   hasConflicts: boolean;
   simplifiedContext?: boolean;
+  sourceIssueRef?: string;
   testCommand?: string;
   buildCommand?: string;
   authorArg?: string;
 }
 
 export function buildMergePrompt(params: MergePromptParams): string {
-  const { taskId, branch, commitLog, diffStat, hasConflicts, simplifiedContext, testCommand, buildCommand, authorArg } = params;
+  const { taskId, branch, commitLog, diffStat, hasConflicts, simplifiedContext, sourceIssueRef, testCommand, buildCommand, authorArg } = params;
 
   // Apply truncation to prevent context overflow for large branches/diffs
   const truncatedCommitLog = truncateWithEllipsis(commitLog, MERGE_COMMIT_LOG_MAX_CHARS);
@@ -4309,6 +4330,14 @@ export function buildMergePrompt(params: MergePromptParams): string {
       "## No conflicts",
       "The merge applied cleanly. All changes are staged.",
       `Write and run the \`git commit\` command with a good message summarizing the work.${authorArg ? ` Be sure to include \`${authorArg.trim()}\` in the commit command.` : ""}`,
+    );
+  }
+
+  if (sourceIssueRef) {
+    parts.push(
+      "",
+      "Include this in the commit message body:",
+      `- Ref: ${sourceIssueRef}`,
     );
   }
 

@@ -5194,6 +5194,34 @@ describe("aiMergeTask — fresh session and compaction recovery", () => {
 
 // ── Merge Prompt Truncation Tests ─────────────────────────────────────
 
+describe("buildSourceIssueRef", () => {
+  it("returns owner/repo#number for GitHub source issues", async () => {
+    const { buildSourceIssueRef } = await import("../merger.js");
+    expect(buildSourceIssueRef({
+      provider: "github",
+      repository: "runfusion/fusion",
+      externalIssueId: "123",
+      issueNumber: 123,
+    })).toBe("runfusion/fusion#123");
+  });
+
+  it("returns empty string for non-GitHub providers", async () => {
+    const { buildSourceIssueRef } = await import("../merger.js");
+    expect(buildSourceIssueRef({
+      provider: "gitlab",
+      repository: "group/project",
+      externalIssueId: "123",
+      issueNumber: 123,
+    })).toBe("");
+  });
+
+  it("returns empty string for nullish source issue", async () => {
+    const { buildSourceIssueRef } = await import("../merger.js");
+    expect(buildSourceIssueRef(undefined)).toBe("");
+    expect(buildSourceIssueRef(null)).toBe("");
+  });
+});
+
 describe("buildMergePrompt — truncation behavior", () => {
   it("truncates commit log when exceeding MERGE_COMMIT_LOG_MAX_CHARS", async () => {
     const { buildMergePrompt } = await import("../merger.js");
@@ -5330,6 +5358,37 @@ describe("buildMergePrompt — truncation behavior", () => {
     });
 
     expect(prompt).not.toContain("Be sure to include");
+  });
+
+  it("includes source issue reference guidance when provided", async () => {
+    const { buildMergePrompt } = await import("../merger.js");
+
+    const prompt = buildMergePrompt({
+      taskId: "FN-001",
+      branch: "fusion/fn-001",
+      commitLog: "- feat: something",
+      diffStat: "1 file changed",
+      hasConflicts: false,
+      sourceIssueRef: "runfusion/fusion#2915",
+    });
+
+    expect(prompt).toContain("Include this in the commit message body:");
+    expect(prompt).toContain("Ref: runfusion/fusion#2915");
+  });
+
+  it("omits source issue reference guidance when not provided", async () => {
+    const { buildMergePrompt } = await import("../merger.js");
+
+    const prompt = buildMergePrompt({
+      taskId: "FN-001",
+      branch: "fusion/fn-001",
+      commitLog: "- feat: something",
+      diffStat: "1 file changed",
+      hasConflicts: false,
+    });
+
+    expect(prompt).not.toContain("Include this in the commit message body:");
+    expect(prompt).not.toContain("Ref: runfusion/fusion#2915");
   });
 });
 

@@ -2417,6 +2417,28 @@ describe("buildExecutionPrompt", () => {
     expect(result).toContain("do not defer them to a separate task");
   });
 
+  it("includes source issue reference in commit instruction when task has github sourceIssue", () => {
+    const task = createMockTaskDetail({
+      sourceIssue: {
+        provider: "github",
+        repository: "runfusion/fusion",
+        externalIssueId: "2915",
+        issueNumber: 2915,
+      },
+    } as any);
+
+    const result = buildExecutionPrompt(task, "/home/user/project");
+    expect(result).toContain('git commit -m "feat(FN-001): complete Step N — description" -m "Ref: runfusion/fusion#2915"');
+  });
+
+  it("omits source issue reference from commit instruction when sourceIssue is missing", () => {
+    const task = createMockTaskDetail();
+    const result = buildExecutionPrompt(task, "/home/user/project");
+
+    expect(result).toContain('git commit -m "feat(FN-001): complete Step N — description"');
+    expect(result).not.toContain(' -m "Ref:');
+  });
+
   it("omits Project Commands section when neither command is set", () => {
     const task = createMockTaskDetail();
     const result = buildExecutionPrompt(task, "/home/user/project", {} as any);

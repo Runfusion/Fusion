@@ -333,6 +333,7 @@ If the task's PROMPT.md includes a "Documentation Requirements" section listing 
 ## Git discipline
 - Commit after completing each step (not after every file change)
 - Use conventional commit messages prefixed with the task ID
+- When the task has a GitHub issue reference, include \`Ref: owner/repo#N\` in the commit body
 - Do NOT commit broken or half-implemented code
 
 ## Worktree Boundaries
@@ -5336,6 +5337,10 @@ export function buildExecutionPrompt(task: TaskDetail, rootDir?: string, setting
     ? ` --author="${settings?.commitAuthorName || "Fusion"} <${settings?.commitAuthorEmail || "noreply@runfusion.ai"}>"`
     : "";
 
+  const sourceIssueRef = task.sourceIssue?.provider === "github" && task.sourceIssue.repository && task.sourceIssue.issueNumber
+    ? `${task.sourceIssue.repository}#${task.sourceIssue.issueNumber}`
+    : "";
+
   // Build step progress for resume
   const hasProgress = task.steps.length > 0 && task.steps.some((s) => s.status !== "pending");
   let progressSection = "";
@@ -5455,7 +5460,7 @@ ${hasProgress
 Use \`fn_task_update\` to report progress on every step transition.
 Use \`fn_task_log\` for important actions and decisions.
 Use \`fn_task_create\` for truly separate follow-up work, not for fixes required to get tests, build, or typecheck back to green.
-Commit at step boundaries: \`git commit -m "feat(${task.id}): complete Step N — description"${authorArg}\`
+Commit at step boundaries: \`git commit -m "feat(${task.id}): complete Step N — description"${sourceIssueRef ? ` -m "Ref: ${sourceIssueRef}"` : ""}${authorArg}\`
 When all steps are complete: call \`fn_task_done()\`
 
 If a build command is configured, run that exact command in this worktree before calling \`fn_task_done()\`.
