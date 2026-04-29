@@ -419,7 +419,11 @@ export function useChat(projectId?: string): UseChatReturn {
     setPendingMessage("");
   }, []);
 
-  // Send a message
+  /**
+   * Send a user message to the active chat session.
+   * @param content Message text content to send.
+   * @param attachments Optional files to upload with the message in the same request.
+   */
   const sendMessage = useCallback(
     (content: string, attachments?: File[]) => {
       if (!activeSession) return;
