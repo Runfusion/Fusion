@@ -53,8 +53,16 @@ interface BoardProps {
   lastFetchTimeMs?: number;
 }
 
-function sortTasksForColumn(tasks: Task[]): Task[] {
+function sortTasksForColumn(tasks: Task[], column: ColumnType): Task[] {
   return [...tasks].sort((a, b) => {
+    if (column === "in-review") {
+      const aIsMerging = a.status === "merging" || a.status === "merging-pr";
+      const bIsMerging = b.status === "merging" || b.status === "merging-pr";
+      if (aIsMerging !== bIsMerging) {
+        return aIsMerging ? -1 : 1;
+      }
+    }
+
     if (a.columnMovedAt && b.columnMovedAt) {
       return b.columnMovedAt.localeCompare(a.columnMovedAt);
     }
@@ -124,7 +132,7 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
     const stableGrouped = {} as Record<ColumnType, Task[]>;
 
     for (const column of COLUMNS) {
-      const sortedTasks = sortTasksForColumn(nextGrouped[column]);
+      const sortedTasks = sortTasksForColumn(nextGrouped[column], column);
       stableGrouped[column] = areTaskArraysEqual(previousGrouped[column], sortedTasks)
         ? previousGrouped[column]
         : sortedTasks;

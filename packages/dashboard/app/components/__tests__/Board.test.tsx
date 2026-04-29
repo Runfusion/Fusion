@@ -331,6 +331,126 @@ describe("Board", () => {
       expect(todoTasks[2].id).toBe("FN-003");
     });
 
+    describe("sortTasksForColumn merging pinning", () => {
+      it("pins merging tasks to top of in-review even when newer non-merging tasks exist", () => {
+        const tasks: Task[] = [
+          createTask({
+            id: "FN-010",
+            column: "in-review",
+            status: "merging",
+            columnMovedAt: "2024-01-01T10:00:00.000Z",
+          }),
+          createTask({
+            id: "FN-011",
+            column: "in-review",
+            status: "review-ready",
+            columnMovedAt: "2024-01-01T12:00:00.000Z",
+          }),
+        ];
+
+        renderBoard({ tasks });
+
+        const inReviewTasks = JSON.parse(screen.getByTestId("column-in-review").getAttribute("data-tasks") || "[]") as Task[];
+        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-010", "FN-011"]);
+      });
+
+      it("pins merging-pr tasks to top of in-review even when newer non-merging tasks exist", () => {
+        const tasks: Task[] = [
+          createTask({
+            id: "FN-020",
+            column: "in-review",
+            status: "merging-pr",
+            columnMovedAt: "2024-01-01T10:00:00.000Z",
+          }),
+          createTask({
+            id: "FN-021",
+            column: "in-review",
+            status: "review-ready",
+            columnMovedAt: "2024-01-01T13:00:00.000Z",
+          }),
+        ];
+
+        renderBoard({ tasks });
+
+        const inReviewTasks = JSON.parse(screen.getByTestId("column-in-review").getAttribute("data-tasks") || "[]") as Task[];
+        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-020", "FN-021"]);
+      });
+
+      it("sorts multiple merging tasks by columnMovedAt descending within the pinned group", () => {
+        const tasks: Task[] = [
+          createTask({
+            id: "FN-030",
+            column: "in-review",
+            status: "merging",
+            columnMovedAt: "2024-01-01T09:00:00.000Z",
+          }),
+          createTask({
+            id: "FN-031",
+            column: "in-review",
+            status: "merging-pr",
+            columnMovedAt: "2024-01-01T11:00:00.000Z",
+          }),
+          createTask({
+            id: "FN-032",
+            column: "in-review",
+            status: "review-ready",
+            columnMovedAt: "2024-01-01T12:00:00.000Z",
+          }),
+        ];
+
+        renderBoard({ tasks });
+
+        const inReviewTasks = JSON.parse(screen.getByTestId("column-in-review").getAttribute("data-tasks") || "[]") as Task[];
+        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-031", "FN-030", "FN-032"]);
+      });
+
+      it("does not change sort order for non-in-review columns", () => {
+        const tasks: Task[] = [
+          createTask({
+            id: "FN-040",
+            column: "todo",
+            status: "merging",
+            columnMovedAt: "2024-01-01T10:00:00.000Z",
+          }),
+          createTask({
+            id: "FN-041",
+            column: "todo",
+            status: "ready",
+            columnMovedAt: "2024-01-01T12:00:00.000Z",
+          }),
+        ];
+
+        renderBoard({ tasks });
+
+        const todoTasks = JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]") as Task[];
+        expect(todoTasks.map((task) => task.id)).toEqual(["FN-041", "FN-040"]);
+      });
+
+      it("keeps tasks without status sorting normally in in-review", () => {
+        const statuslessTask = createTask({
+          id: "FN-050",
+          column: "in-review",
+          columnMovedAt: "2024-01-01T11:00:00.000Z",
+        });
+        delete statuslessTask.status;
+
+        const tasks: Task[] = [
+          statuslessTask,
+          createTask({
+            id: "FN-051",
+            column: "in-review",
+            status: "review-ready",
+            columnMovedAt: "2024-01-01T12:00:00.000Z",
+          }),
+        ];
+
+        renderBoard({ tasks });
+
+        const inReviewTasks = JSON.parse(screen.getByTestId("column-in-review").getAttribute("data-tasks") || "[]") as Task[];
+        expect(inReviewTasks.map((task) => task.id)).toEqual(["FN-051", "FN-050"]);
+      });
+    });
+
     it("renders server-filtered tasks matching across multiple fields simultaneously", () => {
       const tasks: Task[] = [
         createTask({ id: "SEARCH-123", title: "Searchable title", description: "Normal description", column: "todo" }),
