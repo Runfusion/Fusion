@@ -2272,26 +2272,86 @@ export async function aiMergeTask(
   // recently deleted (the merge sees branch additions vs main deletions as
   // non-conflicting). Track here and throw outside the catch wrapper.
   //
-  // We also surface silent-skip cases (no remote, no worktreePath) as
-  // warnings so they're observable in logs even when prefer-main can't
-  // strictly enforce its semantics.
+  // The block runs as TWO INDEPENDENT STAGES so that prefer-main always gets
+  // the strongest available rebase coverage:
+  //   Stage 1 (remote): rebase onto remote/main when enabled + remote resolves.
+  //                     Picks up upstream pushes from collaborators / other
+  //                     workers.
+  //   Stage 2 (local-base): rebase onto rootDir's HEAD when enabled. Picks up
+  //                         sibling-task merges that landed locally but
+  //                         haven't pushed yet, AND covers the no-remote case
+  //                         where Stage 1 silently skipped.
+  // Either stage failing under prefer-main is a hard error.
   let rebaseHappened = false;
   let preferMainRebaseFailureMessage: string | undefined;
-  // Semantic guard: prefer-main + rebase explicitly disabled is incoherent —
-  // the strategy depends on the rebase to honor main's deletions. Fail fast
+
+  // Semantic guards: prefer-main with no rebase available is incoherent —
+  // the strategy depends on rebase to honor main's deletions. Fail fast
   // before we waste work attempting a merge that can't deliver its promise.
   if (
     settings.worktreeRebaseBeforeMerge === false
+    && settings.worktreeRebaseLocalBase === false
     && mergeConflictStrategy === "smart-prefer-main"
   ) {
     throw new Error(
       `Incompatible settings for ${taskId}: mergeConflictStrategy="smart-prefer-main" ` +
-      `requires worktreeRebaseBeforeMerge to remain enabled. The strategy relies on ` +
-      `rebasing the branch onto current main to preserve main's deletions; with rebase ` +
-      `disabled it can silently re-introduce branch-only content. Re-enable ` +
-      `worktreeRebaseBeforeMerge or switch to "smart-prefer-branch" / "ai-only".`,
+      `requires at least one of worktreeRebaseBeforeMerge or worktreeRebaseLocalBase ` +
+      `to remain enabled. The strategy relies on rebasing the branch onto current main ` +
+      `to preserve main's deletions; with both disabled it can silently re-introduce ` +
+      `branch-only content. Re-enable a rebase stage or switch to "smart-prefer-branch" ` +
+      `/ "ai-only".`,
     );
   }
+
+  // Helper: run the local-base rebase (Stage 2). Centralized so both
+  // entry points (after Stage 1, or standalone when Stage 1 is disabled)
+  // share the same logic for ancestor check, rebase, and abort handling.
+  async function runLocalBaseRebase(label: string): Promise<void> {
+    if (!worktreePath) return;
+    try {
+      const { stdout: localHeadOut } = await execAsync("git rev-parse HEAD", {
+        cwd: rootDir,
+        encoding: "utf-8",
+      });
+      const localHead = localHeadOut.trim();
+      if (!localHead) return;
+
+      // Skip if worktree branch already contains local HEAD.
+      let alreadyContains = false;
+      try {
+        await execAsync(`git merge-base --is-ancestor "${localHead}" HEAD`, { cwd: worktreePath });
+        alreadyContains = true;
+      } catch {
+        // not an ancestor — rebase needed
+      }
+
+      if (alreadyContains) {
+        // Branch is already up-to-date with current main; prefer-main is
+        // satisfied without re-running git rebase.
+        rebaseHappened = true;
+        return;
+      }
+
+      throwIfAborted(options.signal, taskId);
+      await execAsync(`git rebase "${localHead}"`, { cwd: worktreePath });
+      rebaseHappened = true;
+      mergerLog.log(`${taskId}: rebased ${branch} onto local HEAD ${localHead.slice(0, 8)}${label ? ` (${label})` : ""}`);
+    } catch (localRebaseErr) {
+      rethrowIfMergeAborted(localRebaseErr);
+      const lmsg = localRebaseErr instanceof Error ? localRebaseErr.message : String(localRebaseErr);
+      mergerLog.warn(`${taskId}: pre-merge rebase onto local HEAD failed (${lmsg}) — aborting and falling through`);
+      try {
+        await execAsync("git rebase --abort", { cwd: worktreePath });
+      } catch (abortError: unknown) {
+        mergerLog.warn(`${taskId}: failed to abort local-HEAD rebase: ${getCommandErrorMessage(abortError)}`);
+      }
+      if (mergeConflictStrategy === "smart-prefer-main" && !preferMainRebaseFailureMessage) {
+        preferMainRebaseFailureMessage = `Pre-merge rebase onto local HEAD aborted (${lmsg})`;
+      }
+    }
+  }
+
+  // ── Stage 1: remote rebase ────────────────────────────────────────────
   if (settings.worktreeRebaseBeforeMerge !== false) {
     try {
       // Resolve which remote to fetch. An explicit setting wins; otherwise
@@ -2332,17 +2392,14 @@ export async function aiMergeTask(
       }
 
       if (!remote) {
-        mergerLog.log(`${taskId}: no remote resolvable — skipping pre-merge rebase`);
+        mergerLog.log(`${taskId}: no remote resolvable — skipping remote rebase stage (local-base stage may still run)`);
+      } else if (!worktreePath) {
+        mergerLog.warn(`${taskId}: no worktreePath — skipping remote rebase stage`);
       } else {
         throwIfAborted(options.signal, taskId);
         mergerLog.log(`${taskId}: fetching ${remote} before merge`);
         await execAsync(`git fetch "${remote}"`, { cwd: rootDir });
 
-        // Rebase the task branch onto the freshly-fetched remote main.
-        // Use a worktree-scoped checkout of the task branch, rebase, then
-        // return rootDir to the main branch so the subsequent merge starts
-        // from the expected state. If rebase fails we log and fall through
-        // — aiMergeTask's attempt cascade still has a chance to succeed.
         try {
           const { stdout: mainBranchOut } = await execAsync(
             "git rev-parse --abbrev-ref HEAD",
@@ -2350,73 +2407,14 @@ export async function aiMergeTask(
           );
           const mainBranch = mainBranchOut.trim();
           const remoteRef = `${remote}/${mainBranch}`;
-
-          // Rebase in the task's worktree (so the rootDir's HEAD isn't
-          // disturbed). This is the same worktree the executor used.
-          if (worktreePath) {
-            throwIfAborted(options.signal, taskId);
-            await execAsync(`git rebase "${remoteRef}"`, { cwd: worktreePath });
-            rebaseHappened = true;
-            mergerLog.log(`${taskId}: rebased ${branch} onto ${remoteRef}`);
-
-            // Stage 2: also rebase onto rootDir's local HEAD when enabled.
-            // Catches sibling-task merges that landed locally but haven't
-            // been pushed to remote yet. Without this, two tasks based on a
-            // common ancestor where one deletes code can have the other
-            // silently resurrect that code via a -X theirs fallback.
-            if (settings.worktreeRebaseLocalBase !== false) {
-              try {
-                const { stdout: localHeadOut } = await execAsync("git rev-parse HEAD", {
-                  cwd: rootDir,
-                  encoding: "utf-8",
-                });
-                const localHead = localHeadOut.trim();
-                if (localHead) {
-                  // Skip if worktree branch already contains local HEAD.
-                  let alreadyContains = false;
-                  try {
-                    await execAsync(`git merge-base --is-ancestor "${localHead}" HEAD`, { cwd: worktreePath });
-                    alreadyContains = true;
-                  } catch {
-                    // not an ancestor — rebase needed
-                  }
-                  if (!alreadyContains) {
-                    throwIfAborted(options.signal, taskId);
-                    await execAsync(`git rebase "${localHead}"`, { cwd: worktreePath });
-                    rebaseHappened = true;
-                    mergerLog.log(`${taskId}: rebased ${branch} onto local HEAD ${localHead.slice(0, 8)}`);
-                  } else {
-                    // Already contains current main — branch is up-to-date,
-                    // so prefer-main semantics are satisfied even without a
-                    // fresh rebase command running.
-                    rebaseHappened = true;
-                  }
-                }
-              } catch (localRebaseErr) {
-                rethrowIfMergeAborted(localRebaseErr);
-                const lmsg = localRebaseErr instanceof Error ? localRebaseErr.message : String(localRebaseErr);
-                mergerLog.warn(`${taskId}: pre-merge rebase onto local HEAD failed (${lmsg}) — aborting and falling through`);
-                try {
-                  await execAsync("git rebase --abort", { cwd: worktreePath });
-                } catch (abortError: unknown) {
-                  mergerLog.warn(`${taskId}: failed to abort local-HEAD rebase: ${getCommandErrorMessage(abortError)}`);
-                }
-                // Strict prefer-main semantics: a stale branch base means main's
-                // deletions can be silently re-added by the -X ours fallback.
-                // Record so we can throw after the outer catch.
-                if (mergeConflictStrategy === "smart-prefer-main") {
-                  preferMainRebaseFailureMessage =
-                    `Pre-merge rebase onto local HEAD aborted (${lmsg})`;
-                }
-              }
-            }
-          } else {
-            mergerLog.warn(`${taskId}: no worktreePath — skipping task branch rebase`);
-          }
+          throwIfAborted(options.signal, taskId);
+          await execAsync(`git rebase "${remoteRef}"`, { cwd: worktreePath });
+          rebaseHappened = true;
+          mergerLog.log(`${taskId}: rebased ${branch} onto ${remoteRef}`);
         } catch (rebaseErr) {
           rethrowIfMergeAborted(rebaseErr);
           const msg = rebaseErr instanceof Error ? rebaseErr.message : String(rebaseErr);
-          mergerLog.warn(`${taskId}: pre-merge rebase failed (${msg}) — aborting rebase and falling through to smart/AI merge`);
+          mergerLog.warn(`${taskId}: pre-merge rebase failed (${msg}) — aborting rebase and falling through`);
           if (worktreePath) {
             try {
               await execAsync("git rebase --abort", { cwd: worktreePath });
@@ -2424,59 +2422,29 @@ export async function aiMergeTask(
               mergerLog.warn(`${taskId}: failed to abort pre-merge rebase: ${getCommandErrorMessage(abortError)}`);
             }
           }
-          // See above: prefer-main semantics require a successful rebase.
           if (mergeConflictStrategy === "smart-prefer-main") {
-            preferMainRebaseFailureMessage =
-              `Pre-merge rebase onto remote main aborted (${msg})`;
+            preferMainRebaseFailureMessage = `Pre-merge rebase onto remote main aborted (${msg})`;
           }
         }
       }
     } catch (err) {
       rethrowIfMergeAborted(err);
       const msg = err instanceof Error ? err.message : String(err);
-      mergerLog.warn(`${taskId}: pre-merge rebase pipeline failed (${msg}) — proceeding without rebase`);
+      mergerLog.warn(`${taskId}: pre-merge remote rebase pipeline failed (${msg}) — proceeding without remote rebase`);
     }
-  } else if (settings.worktreeRebaseLocalBase !== false && worktreePath) {
-    // Remote rebase is disabled but the user still wants the local-base
-    // rebase. This catches sibling-task merges that landed locally even when
-    // the project doesn't have a remote configured.
-    try {
-      const { stdout: localHeadOut } = await execAsync("git rev-parse HEAD", {
-        cwd: rootDir,
-        encoding: "utf-8",
-      });
-      const localHead = localHeadOut.trim();
-      if (localHead) {
-        let alreadyContains = false;
-        try {
-          await execAsync(`git merge-base --is-ancestor "${localHead}" HEAD`, { cwd: worktreePath });
-          alreadyContains = true;
-        } catch {
-          // not an ancestor — rebase needed
-        }
-        if (!alreadyContains) {
-          throwIfAborted(options.signal, taskId);
-          await execAsync(`git rebase "${localHead}"`, { cwd: worktreePath });
-          rebaseHappened = true;
-          mergerLog.log(`${taskId}: rebased ${branch} onto local HEAD ${localHead.slice(0, 8)} (remote rebase disabled)`);
-        } else {
-          rebaseHappened = true;
-        }
-      }
-    } catch (localOnlyErr) {
-      rethrowIfMergeAborted(localOnlyErr);
-      const msg = localOnlyErr instanceof Error ? localOnlyErr.message : String(localOnlyErr);
-      mergerLog.warn(`${taskId}: pre-merge local-HEAD rebase failed (${msg}) — falling through to smart/AI merge`);
-      try {
-        await execAsync("git rebase --abort", { cwd: worktreePath });
-      } catch (abortError: unknown) {
-        mergerLog.warn(`${taskId}: failed to abort local-HEAD rebase: ${getCommandErrorMessage(abortError)}`);
-      }
-      if (mergeConflictStrategy === "smart-prefer-main") {
-        preferMainRebaseFailureMessage =
-          `Pre-merge local-HEAD rebase aborted (${msg})`;
-      }
-    }
+  }
+
+  // ── Stage 2: local-base rebase ─────────────────────────────────────────
+  // Runs independently of Stage 1, so the no-remote case still gets coverage.
+  // Skipped if Stage 1 already aborted under prefer-main (we'll throw below
+  // anyway, and a second attempt just adds noise).
+  if (
+    settings.worktreeRebaseLocalBase !== false
+    && !preferMainRebaseFailureMessage
+  ) {
+    await runLocalBaseRebase(
+      settings.worktreeRebaseBeforeMerge === false ? "remote rebase disabled" : "",
+    );
   }
 
   // Hard-fail prefer-main when a rebase started and aborted: a stale branch

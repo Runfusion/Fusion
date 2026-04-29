@@ -677,7 +677,11 @@ describe("aiMergeTask — pre-merge rebase abort observability", () => {
     warnSpy.mockRestore();
   });
 
-  it("hard-fails when prefer-main is paired with worktreeRebaseBeforeMerge=false", async () => {
+  it("hard-fails when prefer-main is paired with both rebase stages disabled", async () => {
+    // After the rebase block was split into two independent stages
+    // (remote + local-base), prefer-main is satisfied by either stage running
+    // successfully. Only when BOTH are explicitly disabled is the
+    // configuration incoherent.
     const store = createMockStore(
       { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
       [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
@@ -686,6 +690,7 @@ describe("aiMergeTask — pre-merge rebase abort observability", () => {
       ...DEFAULT_SETTINGS,
       mergeConflictStrategy: "smart-prefer-main",
       worktreeRebaseBeforeMerge: false,
+      worktreeRebaseLocalBase: false,
     });
 
     mockedExecSync.mockImplementation((cmd: any) => {
@@ -696,8 +701,56 @@ describe("aiMergeTask — pre-merge rebase abort observability", () => {
     });
 
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(
-      /Incompatible settings.*smart-prefer-main.*worktreeRebaseBeforeMerge/i,
+      /Incompatible settings.*smart-prefer-main.*worktreeRebase/i,
     );
+  });
+
+  it("local-base rebase still runs when remote is unresolvable (independent stages)", async () => {
+    // Regression: previously the local-base rebase was nested inside the
+    // remote-rebase success path, so a missing remote would skip BOTH. Now
+    // the stages are independent — local-base runs even when remote can't
+    // resolve, providing prefer-main with a usable safety net.
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeConflictStrategy: "smart-prefer-main",
+    });
+
+    let localBaseRebaseRan = false;
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr.includes("git symbolic-ref --short HEAD")) return "main" as any;
+      if (cmdStr === "git rev-parse --abbrev-ref HEAD") return "main" as any;
+      // No remote configured: empty config + empty remote list
+      if (cmdStr.includes("git config --get branch.")) return "" as any;
+      if (cmdStr === "git remote") return "" as any;
+      // Local HEAD lookup for Stage 2
+      if (cmdStr === "git rev-parse HEAD") return "localhead123";
+      // Stage 2 ancestor check fails (not contained), so rebase runs
+      if (cmdStr.includes("merge-base --is-ancestor")) {
+        const err: any = new Error("not an ancestor");
+        err.status = 1;
+        throw err;
+      }
+      // Stage 2 rebase command
+      if (cmdStr.includes('git rebase "localhead123"')) {
+        localBaseRebaseRan = true;
+        return Buffer.from("");
+      }
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) return "";
+      if (cmdStr.includes("diff --cached --quiet")) return "1";
+      if (cmdStr.includes("show --shortstat")) return "1 file changed, 1 insertion(+), 0 deletions(-)";
+      return Buffer.from("");
+    });
+
+    await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(localBaseRebaseRan).toBe(true);
   });
 
   it("hard-fails when smart-prefer-main rebase aborts (no silent fall-through)", async () => {
@@ -4938,6 +4991,14 @@ describe("aiMergeTask — merge details collection", () => {
       { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
       [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
+    // Use prefer-branch: this test simulates `git rev-parse HEAD` failing to
+    // exercise merge-details fallback. The local-base rebase stage hits the
+    // same command first; under prefer-main its failure would hard-fail. This
+    // test isn't about prefer-main semantics, so opt out.
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      mergeConflictStrategy: "smart-prefer-branch",
+    });
 
     let revParseHeadCalled = false;
     mockedExecSync.mockImplementation((cmd: any) => {
