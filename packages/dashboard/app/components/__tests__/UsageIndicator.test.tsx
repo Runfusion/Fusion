@@ -676,6 +676,26 @@ describe("UsageIndicator", () => {
     expect(screen.queryByRole("button", { name: "Hide Session (5h)" })).not.toBeInTheDocument();
   });
 
+  it("hidden window does not occupy layout space", () => {
+    mockUseUsageData.mockReturnValue({
+      providers: mockProviders,
+      loading: false,
+      error: null,
+      lastUpdated: new Date(),
+      refresh: mockRefresh,
+    });
+
+    render(<UsageIndicator isOpen={true} onClose={mockOnClose} projectId={TEST_PROJECT_ID} />);
+
+    const sessionRow = screen.getByText("Session (5h)").closest(".usage-window") as HTMLElement;
+    expect(sessionRow).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide Session (5h)" }));
+
+    expect(sessionRow).not.toBeVisible();
+    expect(getComputedStyle(sessionRow).display).toBe("none");
+  });
+
   it("persists hidden windows to localStorage", () => {
     mockUseUsageData.mockReturnValue({
       providers: mockProviders,

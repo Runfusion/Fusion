@@ -214,13 +214,6 @@
 }
 
 .usage-window--hidden {
-  opacity: 0.4;
-}
-
-.usage-window--hidden .usage-progress-wrapper,
-.usage-window--hidden .usage-window-footer,
-.usage-window--hidden .usage-pace-row,
-.usage-window--hidden .usage-window-label {
   display: none;
 }
 
