@@ -5734,6 +5734,133 @@ Task with acceptance criteria
     });
   });
 
+  describe("moveTask — resets steps when moving back to todo/triage", () => {
+    async function setMixedStepStatuses(taskId: string): Promise<void> {
+      await store.updateStep(taskId, 0, "done");
+      await store.updateStep(taskId, 1, "in-progress");
+      await store.updateStep(taskId, 2, "pending");
+    }
+
+    it("resets all steps to pending and currentStep to 0 when moving from in-progress to todo", async () => {
+      const task = await createTaskWithSteps();
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await setMixedStepStatuses(task.id);
+      await store.updateTask(task.id, { currentStep: 2 });
+
+      const moved = await store.moveTask(task.id, "todo");
+      expect(moved.steps.every((step) => step.status === "pending")).toBe(true);
+      expect(moved.currentStep).toBe(0);
+    });
+
+    it("resets all steps to pending and currentStep to 0 when moving from in-progress to triage", async () => {
+      const task = await createTaskWithSteps();
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await setMixedStepStatuses(task.id);
+      await store.updateTask(task.id, { currentStep: 1 });
+
+      const moved = await store.moveTask(task.id, "triage");
+      expect(moved.steps.every((step) => step.status === "pending")).toBe(true);
+      expect(moved.currentStep).toBe(0);
+    });
+
+    it("resets steps when moving from in-review to todo", async () => {
+      const task = await createTaskWithSteps();
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      const withSteps = await store.getTask(task.id);
+      await store.updateTask(task.id, {
+        steps: withSteps.steps.map((step) => ({ ...step, status: "done" })),
+        currentStep: 2,
+      });
+
+      const moved = await store.moveTask(task.id, "todo");
+      expect(moved.steps.every((step) => step.status === "pending")).toBe(true);
+      expect(moved.currentStep).toBe(0);
+    });
+
+    it("resets steps when moving from done to todo", async () => {
+      const task = await createTaskWithSteps();
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+      const withDoneSteps = await store.getTask(task.id);
+      await store.updateTask(task.id, {
+        steps: withDoneSteps.steps.map((step) => ({ ...step, status: "done" })),
+        currentStep: 2,
+      });
+
+      const moved = await store.moveTask(task.id, "todo");
+      expect(moved.steps.every((step) => step.status === "pending")).toBe(true);
+      expect(moved.currentStep).toBe(0);
+    });
+
+    it("resets steps when moving from done to triage", async () => {
+      const task = await createTaskWithSteps();
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+      const withDoneSteps = await store.getTask(task.id);
+      await store.updateTask(task.id, {
+        steps: withDoneSteps.steps.map((step) => ({ ...step, status: "done" })),
+        currentStep: 2,
+      });
+
+      const moved = await store.moveTask(task.id, "triage");
+      expect(moved.steps.every((step) => step.status === "pending")).toBe(true);
+      expect(moved.currentStep).toBe(0);
+    });
+
+    it("does not reset steps when moving from todo to triage", async () => {
+      const task = await createTaskWithSteps();
+      await store.moveTask(task.id, "todo");
+      await store.updateStep(task.id, 0, "done");
+
+      const moved = await store.moveTask(task.id, "triage");
+      expect(moved.steps[0]?.status).toBe("done");
+    });
+
+    it("resets PROMPT.md checkboxes when moving from in-progress to todo", async () => {
+      const task = await createTaskWithSteps();
+      const dir = join(rootDir, ".fusion", "tasks", task.id);
+      await writeFile(
+        join(dir, "PROMPT.md"),
+        `# ${task.id}: Checkbox reset
+
+## Steps
+
+### Step 0: Preflight
+
+- [x] Done thing
+
+### Step 1: Implement
+
+- [x] Done thing
+`,
+      );
+
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "todo");
+
+      const prompt = await readFile(join(dir, "PROMPT.md"), "utf-8");
+      expect(prompt).not.toContain("- [x]");
+      expect(prompt).toContain("- [ ] Done thing");
+    });
+
+    it("is a no-op when steps array is empty", async () => {
+      const task = await store.createTask({ description: "no steps reset" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+
+      await expect(store.moveTask(task.id, "todo")).resolves.toMatchObject({ id: task.id, column: "todo" });
+    });
+  });
+
   describe("moveTask — clears transient fields when leaving in-progress", () => {
     it("clears status, error, worktree, and blockedBy when moving from in-progress to todo", async () => {
       const task = await store.createTask({ description: "test clear fields" });

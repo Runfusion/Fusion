@@ -2662,14 +2662,17 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       // Note: recovery metadata (recoveryRetryCount, nextRecoveryAt) is intentionally
       // preserved here — the recovery-policy module manages those fields. They are
       // only cleared on terminal transitions (in-review, done, archived).
-      if (
+      const isReopenToTodoOrTriage =
         (fromColumn === "in-progress" || fromColumn === "done" || fromColumn === "in-review")
-        && (toColumn === "todo" || toColumn === "triage")
-      ) {
+        && (toColumn === "todo" || toColumn === "triage");
+
+      if (isReopenToTodoOrTriage) {
         task.status = undefined;
         task.error = undefined;
         task.worktree = undefined;
         task.blockedBy = undefined;
+        this.resetAllStepsToPending(task);
+        await this.resetPromptCheckboxes(dir);
       }
 
       // Clear recovery metadata when task reaches in-review (successful completion)
@@ -2707,6 +2710,32 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       this.emit("task:moved", { task, from: fromColumn, to: toColumn });
       return task;
     });
+  }
+
+  private resetAllStepsToPending(task: Task): void {
+    if (task.steps.length === 0) {
+      return;
+    }
+
+    for (const step of task.steps) {
+      step.status = "pending";
+    }
+
+    task.currentStep = 0;
+  }
+
+  private async resetPromptCheckboxes(dir: string): Promise<void> {
+    const promptPath = join(dir, "PROMPT.md");
+    if (!existsSync(promptPath)) {
+      return;
+    }
+
+    const content = await readFile(promptPath, "utf-8");
+    const resetContent = content.replace(/^- \[x\]/gm, "- [ ]");
+
+    if (resetContent !== content) {
+      await writeFile(promptPath, resetContent, "utf-8");
+    }
   }
 
   async updateTask(
