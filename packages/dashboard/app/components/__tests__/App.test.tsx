@@ -1664,6 +1664,39 @@ describe("App view switching", () => {
     expect(screen.queryByTestId("view-overflow-insights")).toBeNull();
   });
 
+  it("keeps experimental views off until settings load and falls back to board when no flag is enabled", async () => {
+    localStorage.setItem(taskViewStorageKey(), "insights");
+
+    let resolveSettings: ((settings: Settings) => void) | undefined;
+    vi.mocked(fetchSettings).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSettings = resolve as (settings: Settings) => void;
+        }),
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTitle("Board view")).toBeTruthy();
+    });
+
+    expect(document.querySelector(".insights-view")).toBeNull();
+    expect(document.querySelector(".board")).toBeNull();
+
+    resolveSettings?.({
+      ...defaultSettings,
+      experimentalFeatures: {},
+    });
+
+    await waitFor(() => {
+      expect(document.querySelector(".board")).toBeTruthy();
+    });
+
+    expect(document.querySelector(".insights-view")).toBeNull();
+    localStorage.removeItem(taskViewStorageKey());
+  });
+
   it("does not render memory view button when memoryView experimental feature is disabled", async () => {
     // Keep another overflow item enabled so the overflow trigger still renders.
     (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({

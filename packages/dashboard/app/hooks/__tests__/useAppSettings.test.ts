@@ -44,6 +44,7 @@ describe("useAppSettings", () => {
       expect(result.current.globalPaused).toBe(true);
       expect(result.current.enginePaused).toBe(false);
       expect(result.current.prAuthAvailable).toBe(true);
+      expect(result.current.settingsLoaded).toBe(true);
       expect(result.current.taskStuckTimeoutMs).toBe(600000);
       expect(result.current.showQuickChatFAB).toBe(false);
     });

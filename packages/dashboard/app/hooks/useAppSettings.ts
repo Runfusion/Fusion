@@ -13,6 +13,7 @@ export interface UseAppSettingsResult {
   taskStuckTimeoutMs: number | undefined;
   showQuickChatFAB: boolean;
   prAuthAvailable: boolean;
+  settingsLoaded: boolean;
   experimentalFeatures: Record<string, boolean>;
   insightsEnabled: boolean;
   roadmapEnabled: boolean;
@@ -39,6 +40,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [taskStuckTimeoutMs, setTaskStuckTimeoutMs] = useState<number | undefined>(undefined);
   const [showQuickChatFAB, setShowQuickChatFAB] = useState(false);
   const [prAuthAvailable, setPrAuthAvailable] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [experimentalFeatures, setExperimentalFeatures] = useState<Record<string, boolean>>({});
   const [insightsEnabled, setInsightsEnabled] = useState(false);
   const [roadmapEnabled, setRoadmapEnabled] = useState(false);
@@ -77,9 +79,18 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setDevServerEnabled(features.devServerView === true || features.devServer === true);
       setTodosEnabled(features.todoView === true);
     }
+
+    setSettingsLoaded(true);
   }, [projectId]);
 
   useEffect(() => {
+    setSettingsLoaded(false);
+    setExperimentalFeatures({});
+    setInsightsEnabled(false);
+    setRoadmapEnabled(false);
+    setMemoryEnabled(false);
+    setDevServerEnabled(false);
+    setTodosEnabled(false);
     void refresh();
   }, [refresh]);
 
@@ -142,6 +153,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     taskStuckTimeoutMs,
     showQuickChatFAB,
     prAuthAvailable,
+    settingsLoaded,
     experimentalFeatures,
     insightsEnabled,
     roadmapEnabled,

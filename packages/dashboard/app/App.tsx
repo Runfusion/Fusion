@@ -354,6 +354,7 @@ function AppInner() {
     taskStuckTimeoutMs,
     showQuickChatFAB,
     prAuthAvailable,
+    settingsLoaded,
     experimentalFeatures,
     insightsEnabled,
     roadmapEnabled,
@@ -371,9 +372,11 @@ function AppInner() {
   const agentsEnabled = true;
 
   // Redirect to board if feature-gated views are disabled.
-  // Only run after settings have been loaded (experimentalFeatures is non-empty)
   useEffect(() => {
-    if (Object.keys(experimentalFeatures).length === 0) return;
+    if (!settingsLoaded) return;
+    if (taskView === "skills" && !skillsEnabled) {
+      handleChangeTaskView("board");
+    }
     if (taskView === "insights" && !insightsEnabled) {
       handleChangeTaskView("board");
     }
@@ -392,7 +395,7 @@ function AppInner() {
     if (taskView === "todos" && !todosEnabled) {
       handleChangeTaskView("board");
     }
-  }, [taskView, insightsEnabled, roadmapEnabled, experimentalFeatures, handleChangeTaskView, agentsEnabled, memoryEnabled, devServerEnabled, todosEnabled]);
+  }, [taskView, settingsLoaded, skillsEnabled, insightsEnabled, roadmapEnabled, handleChangeTaskView, agentsEnabled, memoryEnabled, devServerEnabled, todosEnabled]);
 
   // Auto-close nodes overlay if feature flag is toggled off while overlay is open
   useEffect(() => {
@@ -595,9 +598,7 @@ function AppInner() {
 
     // Project view
     if (taskView === "skills") {
-      if (!skillsEnabled) {
-        // Redirect to board if skills view is not enabled
-        handleChangeTaskView("board");
+      if (!settingsLoaded || !skillsEnabled) {
         return null;
       }
       return (
@@ -636,6 +637,9 @@ function AppInner() {
     }
 
     if (taskView === "roadmaps") {
+      if (!settingsLoaded || !roadmapEnabled) {
+        return null;
+      }
       return (
         <PageErrorBoundary>
           <Suspense fallback={null}>
@@ -698,6 +702,9 @@ function AppInner() {
     }
 
     if (taskView === "insights") {
+      if (!settingsLoaded || !insightsEnabled) {
+        return null;
+      }
       return (
         <PageErrorBoundary>
           <Suspense fallback={null}>
@@ -712,6 +719,9 @@ function AppInner() {
     }
 
     if (taskView === "memory") {
+      if (!settingsLoaded || !memoryEnabled) {
+        return null;
+      }
       return (
         <PageErrorBoundary>
           <Suspense fallback={null}>
@@ -722,6 +732,9 @@ function AppInner() {
     }
 
     if (taskView === "todos") {
+      if (!settingsLoaded || !todosEnabled) {
+        return null;
+      }
       return (
         <PageErrorBoundary>
           <Suspense fallback={null}>
@@ -732,6 +745,9 @@ function AppInner() {
     }
 
     if (taskView === "devserver" || taskView === "dev-server") {
+      if (!settingsLoaded || !devServerEnabled) {
+        return null;
+      }
       return (
         <PageErrorBoundary>
           <Suspense fallback={null}>
