@@ -274,13 +274,19 @@ export class HybridExecutor extends EventEmitter<HybridExecutorEvents> {
         `Isolation mode changed for ${projectId}: ${currentMode} → ${config.isolationMode}`
       );
 
+      const project = await this.centralCore.getProject(projectId);
+      const workingDirectory = config.workingDirectory ?? project?.path;
+      if (!workingDirectory) {
+        throw new Error(`Project not found in CentralCore: ${projectId}`);
+      }
+
       // Stop old runtime
       await this.projectManager.removeProject(projectId);
 
       // Get the full current config
       const fullConfig: ProjectRuntimeConfig = {
         projectId,
-        workingDirectory: config.workingDirectory ?? "/tmp",
+        workingDirectory,
         isolationMode: config.isolationMode,
         maxConcurrent: config.maxConcurrent ?? 2,
         maxWorktrees: config.maxWorktrees ?? 4,

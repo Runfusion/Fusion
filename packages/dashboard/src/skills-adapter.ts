@@ -546,9 +546,9 @@ export function createSkillsAdapter(options: {
 /**
  * Extract skill name from path and source.
  */
-function extractSkillName(skillPath: string, source: string): string {
+export function extractSkillName(skillPath: string, source: string): string {
   // Get the last two path components (category/name or just name)
-  const parts = skillPath.split("/").filter(Boolean);
+  const parts = skillPath.replace(/\\/g, "/").split("/").filter(Boolean);
   if (parts.length >= 2) {
     // Return last two parts joined
     return parts.slice(-2).join("/");

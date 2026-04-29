@@ -433,5 +433,20 @@ describe("HybridExecutor", () => {
         executor.updateProject("non-existent", { maxConcurrent: 4 })
       ).rejects.toThrow("Runtime not found");
     });
+
+    it("reuses the registered project path when isolation mode changes without an explicit working directory", async () => {
+      const manager = mockProjectManagerInstances[0];
+      manager?.addProject.mockClear();
+
+      await executor.updateProject("proj_test123", { isolationMode: "child-process" });
+
+      expect(mockCentralCore.getProject).toHaveBeenCalledWith("proj_test123");
+      expect(manager?.removeProject).toHaveBeenCalledWith("proj_test123");
+      expect(manager?.addProject).toHaveBeenCalledWith(expect.objectContaining({
+        projectId: "proj_test123",
+        workingDirectory: "/tmp/test-project",
+        isolationMode: "child-process",
+      }));
+    });
   });
 });

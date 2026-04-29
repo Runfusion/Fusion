@@ -5,6 +5,10 @@ import * as https from "node:https";
 import * as child_process from "node:child_process";
 import { getAuthFileCandidates } from "./auth-paths.js";
 
+function getHomeDir(): string {
+  return process.env.HOME || process.env.USERPROFILE || os.homedir();
+}
+
 function execFileAsync(
   file: string,
   args: string[],
@@ -846,8 +850,8 @@ async function fetchClaudeUsage(): Promise<ProviderUsage> {
 
   // ── Credential reading for plan detection & auth check ──────────────
   const credPaths = [
-    path.join(os.homedir(), ".claude", ".credentials.json"),
-    path.join(os.homedir(), ".config", "claude", ".credentials.json"),
+    path.join(getHomeDir(), ".claude", ".credentials.json"),
+    path.join(getHomeDir(), ".config", "claude", ".credentials.json"),
   ];
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped credentials JSON
@@ -1067,7 +1071,7 @@ async function fetchCodexUsage(): Promise<ProviderUsage> {
   };
 
   // Load Codex auth
-  const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  const codexHome = process.env.CODEX_HOME || path.join(getHomeDir(), ".codex");
   const authPath = path.join(codexHome, "auth.json");
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped auth JSON
@@ -1182,7 +1186,7 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
   };
 
   // Load Gemini OAuth credentials
-  const oauthPath = path.join(os.homedir(), ".gemini", "oauth_creds.json");
+  const oauthPath = path.join(getHomeDir(), ".gemini", "oauth_creds.json");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped OAuth JSON
   let oauthCreds: any = null;
   try {
@@ -1204,7 +1208,7 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
   }
 
   // Check auth type from settings
-  const settingsPath = path.join(os.homedir(), ".gemini", "settings.json");
+  const settingsPath = path.join(getHomeDir(), ".gemini", "settings.json");
   try {
     const settings = JSON.parse(await readFile(settingsPath, "utf-8"));
     const authType = settings?.security?.auth?.selectedType;

@@ -106,6 +106,24 @@ describe("usage", () => {
       expect(second).not.toBe(first);
       expect(second).toHaveLength(0);
     });
+
+    it("falls back to USERPROFILE when HOME is unset", async () => {
+      vi.stubEnv("HOME", "");
+      vi.stubEnv("USERPROFILE", "/profiles/test-user");
+
+      mockReadFile.mockImplementation(async () => {
+        return Promise.reject(new Error("File not found"));
+      });
+
+      await fetchAllProviderUsage();
+
+      const readPaths = mockReadFile.mock.calls.map(([filePath]) => String(filePath));
+      expect(readPaths).toContain("/profiles/test-user/.claude/.credentials.json");
+      expect(readPaths).toContain("/profiles/test-user/.config/claude/.credentials.json");
+      expect(readPaths).toContain("/profiles/test-user/.codex/auth.json");
+      expect(readPaths).toContain("/profiles/test-user/.gemini/oauth_creds.json");
+      expect(readPaths.some((filePath) => filePath.startsWith("/home/testuser/"))).toBe(false);
+    });
   });
 
   describe("fetchGitHubCopilotUsage (via fetchAllProviderUsage)", () => {
