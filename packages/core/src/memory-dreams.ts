@@ -110,9 +110,10 @@ ${input.dailyMemory || "(empty)"}
 `;
 }
 
-export function extractDreamProcessorResult(output: string): DreamProcessorResult {
-  const dreamsMatch = output.match(/## DREAMS\s*([\s\S]*?)(?=## LONG_TERM_UPDATES|$)/i);
-  const updatesMatch = output.match(/## LONG_TERM_UPDATES\s*([\s\S]*?)$/i);
+export function extractDreamProcessorResult(output: string | undefined | null): DreamProcessorResult {
+  const text = typeof output === "string" ? output : "";
+  const dreamsMatch = text.match(/## DREAMS\s*([\s\S]*?)(?=## LONG_TERM_UPDATES|$)/i);
+  const updatesMatch = text.match(/## LONG_TERM_UPDATES\s*([\s\S]*?)$/i);
   return {
     dreams: dreamsMatch?.[1]?.trim() ?? "",
     longTermUpdates: updatesMatch?.[1]?.trim() ?? "",

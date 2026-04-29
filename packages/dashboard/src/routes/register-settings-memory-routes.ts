@@ -988,6 +988,26 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
     }
   });
 
+  // session.prompt() returns Promise<void>; the assistant reply lives in session state.
+  function extractAssistantTextFromSession(session: unknown): string | undefined {
+    const state = (session as { state?: { messages?: Array<{ role?: string; content?: unknown }> } }).state;
+    const messages = state?.messages;
+    if (!Array.isArray(messages)) return undefined;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg?.role !== "assistant") continue;
+      if (typeof msg.content === "string" && msg.content.trim()) return msg.content;
+      if (Array.isArray(msg.content)) {
+        for (const part of msg.content) {
+          if (part && typeof part === "object" && "text" in part && typeof (part as { text: unknown }).text === "string") {
+            return (part as { text: string }).text;
+          }
+        }
+      }
+    }
+    return undefined;
+  }
+
   /**
    * POST /api/memory/dream
    * Trigger manual memory dream processing for project and agent memories.
@@ -1026,7 +1046,8 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
           }
 
           session = agentResult.session;
-          return await session.prompt(prompt);
+          await session.prompt(prompt);
+          return extractAssistantTextFromSession(session) ?? "";
         } finally {
           if (session) {
             try {
