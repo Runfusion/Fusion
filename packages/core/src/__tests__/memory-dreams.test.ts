@@ -9,10 +9,32 @@ import {
   createMemoryDreamsAutomation,
   DEFAULT_MEMORY_DREAMS_SCHEDULE,
   ensureAgentMemoryFiles,
+  extractDreamProcessorResult,
   MEMORY_DREAMS_SCHEDULE_NAME,
   processAgentMemoryDreams,
   syncMemoryDreamsAutomation,
 } from "../memory-dreams.js";
+
+describe("extractDreamProcessorResult", () => {
+  it("parses dreams and long-term updates from well-formed output", () => {
+    const result = extractDreamProcessorResult(
+      "## DREAMS\n\nPattern A.\n\n## LONG_TERM_UPDATES\n\n- Lesson A.",
+    );
+    expect(result).toEqual({
+      dreams: "Pattern A.",
+      longTermUpdates: "- Lesson A.",
+    });
+  });
+
+  it("returns empty fields when input is undefined (regression: prompt() returns void)", () => {
+    expect(extractDreamProcessorResult(undefined)).toEqual({ dreams: "", longTermUpdates: "" });
+    expect(extractDreamProcessorResult(null)).toEqual({ dreams: "", longTermUpdates: "" });
+  });
+
+  it("returns empty fields when sections are missing", () => {
+    expect(extractDreamProcessorResult("no headings here")).toEqual({ dreams: "", longTermUpdates: "" });
+  });
+});
 
 describe("memory-dreams automation", () => {
   it("creates a scheduled dream processor automation with defaults", () => {

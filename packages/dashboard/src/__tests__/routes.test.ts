@@ -15439,12 +15439,17 @@ describe("POST /api/memory/dream", () => {
   }
 
   it("returns 200 with dream results on success", async () => {
-    vi.mocked(createFnAgent).mockResolvedValue({
-      session: {
-        prompt: vi.fn().mockResolvedValue("## DREAMS\nSynthesis\n\n## LONG_TERM_UPDATES\nLesson"),
-        dispose: vi.fn(),
-      },
-    } as never);
+    const session = {
+      prompt: vi.fn().mockImplementation(async function (this: { state: { messages: unknown[] } }) {
+        this.state.messages.push({
+          role: "assistant",
+          content: "## DREAMS\nSynthesis\n\n## LONG_TERM_UPDATES\nLesson",
+        });
+      }),
+      dispose: vi.fn(),
+      state: { messages: [] as unknown[] },
+    };
+    vi.mocked(createFnAgent).mockResolvedValue({ session } as never);
 
     const res = await REQUEST(buildApp(), "POST", "/api/memory/dream", JSON.stringify({}), {
       "Content-Type": "application/json",
@@ -15460,12 +15465,17 @@ describe("POST /api/memory/dream", () => {
 
   it("returns 200 with empty results when no daily notes to process", async () => {
     writeFileSync(join(rootDir, ".fusion", "memory", `${new Date().toISOString().slice(0, 10)}.md`), "");
-    vi.mocked(createFnAgent).mockResolvedValue({
-      session: {
-        prompt: vi.fn().mockResolvedValue("## DREAMS\n\n## LONG_TERM_UPDATES\n"),
-        dispose: vi.fn(),
-      },
-    } as never);
+    const session = {
+      prompt: vi.fn().mockImplementation(async function (this: { state: { messages: unknown[] } }) {
+        this.state.messages.push({
+          role: "assistant",
+          content: "## DREAMS\n\n## LONG_TERM_UPDATES\n",
+        });
+      }),
+      dispose: vi.fn(),
+      state: { messages: [] as unknown[] },
+    };
+    vi.mocked(createFnAgent).mockResolvedValue({ session } as never);
 
     const res = await REQUEST(buildApp(), "POST", "/api/memory/dream", JSON.stringify({}), {
       "Content-Type": "application/json",
@@ -15503,6 +15513,31 @@ describe("POST /api/memory/dream", () => {
 
     expect(res.status).toBe(503);
     expect(res.body.error).toContain("AI");
+  });
+
+  it("parses assistant text from session.state when content is an array (regression: undefined .match crash)", async () => {
+    const session = {
+      prompt: vi.fn().mockImplementation(async function (this: { state: { messages: unknown[] } }) {
+        this.state.messages.push({
+          role: "assistant",
+          content: [{ text: "## DREAMS\nArrayContent\n\n## LONG_TERM_UPDATES\nArrayLesson" }],
+        });
+      }),
+      dispose: vi.fn(),
+      state: { messages: [] as unknown[] },
+    };
+    vi.mocked(createFnAgent).mockResolvedValue({ session } as never);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/memory/dream", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      success: true,
+      dreamsWritten: true,
+      longTermUpdatesWritten: true,
+    });
   });
 
   it("returns 500 on unexpected processing failure", async () => {
