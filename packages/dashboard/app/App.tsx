@@ -48,7 +48,7 @@ import { useRemoteNodeData } from "./hooks/useRemoteNodeData";
 import { useRemoteNodeEvents } from "./hooks/useRemoteNodeEvents";
 import { NodeProvider, useNodeContext } from "./context/NodeContext";
 import type { AiSessionSummary } from "./api";
-import { fetchUnreadCount, reportDashboardPerf } from "./api";
+import { fetchUnreadCount, reportDashboardPerf, fetchTaskDetail } from "./api";
 import { getScopedItem, setScopedItem } from "./utils/projectStorage";
 import { subscribeSse } from "./sse-bus";
 import { AUTH_TOKEN_RECOVERY_REQUIRED_EVENT } from "./auth";
@@ -478,6 +478,15 @@ function AppInner() {
     modalManager.openDetailTask(task, initialTab);
   }, [modalManager]);
 
+  const handleOpenTaskLogs = useCallback(async (taskId: string) => {
+    try {
+      const task = await fetchTaskDetail(taskId, currentProject?.id);
+      modalManager.openDetailTask(task, "logs");
+    } catch (err) {
+      addToast(`Failed to open task logs: ${(err as Error).message}`, "error");
+    }
+  }, [modalManager, currentProject?.id, addToast]);
+
   const handleOpenNodes = useCallback(() => {
     if (!nodesEnabled) return;
     setNodesOpen((prev) => !prev);
@@ -667,7 +676,7 @@ function AppInner() {
       return (
         <PageErrorBoundary>
           <Suspense fallback={null}>
-            <AgentsView addToast={addToast} projectId={currentProject?.id} />
+            <AgentsView addToast={addToast} projectId={currentProject?.id} onOpenTaskLogs={handleOpenTaskLogs} />
           </Suspense>
         </PageErrorBoundary>
       );

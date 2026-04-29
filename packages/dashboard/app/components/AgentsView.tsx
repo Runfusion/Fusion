@@ -30,6 +30,7 @@ import { isEphemeralAgent, getErrorMessage } from "@fusion/core";
 export interface AgentsViewProps {
   addToast: (message: string, type?: "success" | "error") => void;
   projectId?: string;
+  onOpenTaskLogs?: (taskId: string) => void;
 }
 
 const AGENT_ROLES: { value: AgentCapability; label: string; icon: string }[] = [
@@ -257,7 +258,7 @@ function OrgChartNode({
   );
 }
 
-export function AgentsView({ addToast, projectId }: AgentsViewProps) {
+export function AgentsView({ addToast, projectId, onOpenTaskLogs }: AgentsViewProps) {
   const [showSystemAgents, setShowSystemAgents] = useState(false);
   const [filterState, setFilterState] = useState<AgentState | "all">("all");
   const { agents, stats, isLoading, loadAgents } = useAgents(projectId, {
@@ -1314,7 +1315,7 @@ export function AgentsView({ addToast, projectId }: AgentsViewProps) {
         )}
 
         {/* Secondary sections after the main collection */}
-        <ActiveAgentsPanel agents={displayActiveAgents} projectId={projectId} onAgentSelect={setSelectedAgentId} />
+        <ActiveAgentsPanel agents={displayActiveAgents} projectId={projectId} onAgentSelect={setSelectedAgentId} onOpenTaskLogs={onOpenTaskLogs} />
       </div>
 
       {/* Agent Detail Modal */}

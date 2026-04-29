@@ -66,8 +66,27 @@
 }
 
 .live-agent-card-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.live-agent-card-status {
+  font-style: normal;
+  font-weight: 500;
+  color: var(--text-primary);
+  opacity: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-agent-card-status-sub {
   font-style: italic;
   opacity: 0.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .live-agent-card-line {
@@ -89,6 +108,32 @@
 .live-agent-streaming-dot {
   color: var(--color-success);
   animation: pulse 1.5s infinite;
+}
+
+.live-agent-card-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.live-agent-card-logs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.live-agent-card-logs-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-strong, var(--border));
 }
 
 @media (max-width: 768px) {
