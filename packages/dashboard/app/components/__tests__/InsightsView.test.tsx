@@ -120,8 +120,101 @@ describe("InsightsView", () => {
 
   describe("rendering", () => {
     it("should render all five section headings in expected order", () => {
+      const populatedSections = [
+        {
+          ...mockSections[0],
+          items: [
+            {
+              id: "INS-100",
+              projectId: "test",
+              title: "Features insight",
+              content: "Features content",
+              category: "features" as const,
+              status: "generated" as const,
+              fingerprint: "fp100",
+              provenance: { trigger: "manual" as const },
+              lastRunId: null,
+              createdAt: "2024-01-01T00:00:00Z",
+              updatedAt: "2024-01-01T00:00:00Z",
+            },
+          ],
+        },
+        {
+          ...mockSections[1],
+          items: [
+            {
+              id: "INS-101",
+              projectId: "test",
+              title: "Architecture insight",
+              content: "Architecture content",
+              category: "architecture" as const,
+              status: "generated" as const,
+              fingerprint: "fp101",
+              provenance: { trigger: "manual" as const },
+              lastRunId: null,
+              createdAt: "2024-01-01T00:00:00Z",
+              updatedAt: "2024-01-01T00:00:00Z",
+            },
+          ],
+        },
+        {
+          ...mockSections[2],
+          items: [
+            {
+              id: "INS-102",
+              projectId: "test",
+              title: "Competitive insight",
+              content: "Competitive content",
+              category: "competitive_analysis" as const,
+              status: "generated" as const,
+              fingerprint: "fp102",
+              provenance: { trigger: "manual" as const },
+              lastRunId: null,
+              createdAt: "2024-01-01T00:00:00Z",
+              updatedAt: "2024-01-01T00:00:00Z",
+            },
+          ],
+        },
+        {
+          ...mockSections[3],
+          items: [
+            {
+              id: "INS-103",
+              projectId: "test",
+              title: "Research insight",
+              content: "Research content",
+              category: "research" as const,
+              status: "generated" as const,
+              fingerprint: "fp103",
+              provenance: { trigger: "manual" as const },
+              lastRunId: null,
+              createdAt: "2024-01-01T00:00:00Z",
+              updatedAt: "2024-01-01T00:00:00Z",
+            },
+          ],
+        },
+        {
+          ...mockSections[4],
+          items: [
+            {
+              id: "INS-104",
+              projectId: "test",
+              title: "Trends insight",
+              content: "Trends content",
+              category: "trends" as const,
+              status: "generated" as const,
+              fingerprint: "fp104",
+              provenance: { trigger: "manual" as const },
+              lastRunId: null,
+              createdAt: "2024-01-01T00:00:00Z",
+              updatedAt: "2024-01-01T00:00:00Z",
+            },
+          ],
+        },
+      ];
+
       mockUseInsights.mockReturnValue({
-        sections: mockSections,
+        sections: populatedSections,
         loading: false,
         error: null,
         latestRun: null,
@@ -222,7 +315,7 @@ describe("InsightsView", () => {
       expect(screen.getByText("No insights yet")).toBeInTheDocument();
     });
 
-    it("should render per-section empty placeholder when specific section has no items", () => {
+    it("should hide empty sections when specific section has no items", () => {
       const sectionsWithOne = [
         {
           category: "features" as const,
@@ -267,8 +360,102 @@ describe("InsightsView", () => {
 
       render(<InsightsView {...defaultProps} />);
 
-      expect(screen.getByTestId("insights-empty-architecture")).toBeInTheDocument();
-      expect(screen.getByTestId("insights-empty-architecture")).toHaveTextContent("No insights in this category");
+      expect(screen.queryByTestId("insights-section-architecture")).not.toBeInTheDocument();
+      expect(screen.getByTestId("insights-section-features")).toBeInTheDocument();
+    });
+
+    it("should only render sections that have items", () => {
+      const sectionsWithTwo = [
+        {
+          category: "features" as const,
+          label: "Features",
+          items: [
+            {
+              id: "INS-11",
+              projectId: "test",
+              title: "Features Insight",
+              content: "Content",
+              category: "features" as const,
+              status: "generated" as const,
+              fingerprint: "fp11",
+              provenance: { trigger: "manual" as const },
+              lastRunId: null,
+              createdAt: "2024-01-01T00:00:00Z",
+              updatedAt: "2024-01-01T00:00:00Z",
+            },
+          ],
+          isLoading: false,
+          error: null,
+        },
+        {
+          category: "architecture" as const,
+          label: "Architecture",
+          items: [],
+          isLoading: false,
+          error: null,
+        },
+        {
+          category: "competitive_analysis" as const,
+          label: "Competitive Analysis",
+          items: [
+            {
+              id: "INS-12",
+              projectId: "test",
+              title: "Competitive Insight",
+              content: "Content",
+              category: "competitive_analysis" as const,
+              status: "generated" as const,
+              fingerprint: "fp12",
+              provenance: { trigger: "manual" as const },
+              lastRunId: null,
+              createdAt: "2024-01-01T00:00:00Z",
+              updatedAt: "2024-01-01T00:00:00Z",
+            },
+          ],
+          isLoading: false,
+          error: null,
+        },
+        {
+          category: "research" as const,
+          label: "Research",
+          items: [],
+          isLoading: false,
+          error: null,
+        },
+        {
+          category: "trends" as const,
+          label: "Trends",
+          items: [],
+          isLoading: false,
+          error: null,
+        },
+      ];
+
+      mockUseInsights.mockReturnValue({
+        sections: sectionsWithTwo,
+        loading: false,
+        error: null,
+        latestRun: null,
+        isRunInFlight: false,
+        runError: null,
+        refresh: vi.fn(),
+        runInsights: vi.fn(),
+        dismiss: vi.fn(),
+        createTask: vi.fn(),
+        dismissStates: new Map(),
+        createTaskStates: new Map(),
+        totalCount: 2,
+        dismissedCount: 0,
+      });
+
+      render(<InsightsView {...defaultProps} />);
+
+      expect(screen.getAllByTestId(/insights-section-/)).toHaveLength(2);
+      expect(screen.getByTestId("insights-section-features")).toBeInTheDocument();
+      expect(screen.getByTestId("insights-section-competitive_analysis")).toBeInTheDocument();
+      expect(screen.queryByTestId("insights-section-architecture")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("insights-section-research")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("insights-section-trends")).not.toBeInTheDocument();
     });
 
     it("should render status badge with correct CSS class for generated status", () => {

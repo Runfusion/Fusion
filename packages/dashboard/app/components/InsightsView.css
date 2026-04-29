@@ -213,14 +213,6 @@
   padding: var(--space-md);
 }
 
-/* Empty section placeholder */
-.insights-empty-section {
-  padding: var(--space-lg);
-  text-align: center;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
 /* Insights list */
 .insights-list {
   list-style: none;
@@ -236,6 +228,7 @@
   padding: var(--space-md);
   background: var(--surface);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
   border-radius: var(--radius-md);
   transition: border-color var(--transition-fast);
 }
@@ -272,7 +265,7 @@
   color: var(--text-muted);
   line-height: 1.5;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -304,8 +297,8 @@
 }
 
 .insight-item-status--stale {
-  background: color-mix(in srgb, var(--warning) 15%, transparent);
-  color: var(--warning);
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
 }
 
 .insight-item-status--dismissed {
@@ -387,33 +380,6 @@
     min-height: 36px;
   }
 
-  .post-onboarding-recommendations {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-sm);
-    padding: var(--space-md);
-  }
-
-  .post-onboarding-recommendations__main {
-    width: 100%;
-  }
-
-  .post-onboarding-recommendations__item {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .post-onboarding-recommendations .btn.btn-sm {
-    margin-left: auto;
-    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
-  }
-
-  .post-onboarding-recommendations__dismiss {
-    align-self: flex-end;
-    min-width: calc(var(--space-lg) * 2 + var(--space-xs));
-    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
-  }
-
   /* InsightsView additional mobile refinements */
   .insights-view-actions .btn {
     min-height: 36px;
@@ -428,9 +394,5 @@
     font-size: 12px;
   }
 
-  /* Chat session delete button - always visible on mobile */
-  .chat-session-delete-btn {
-    opacity: 1;
-  }
 
 }

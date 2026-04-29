@@ -1002,6 +1002,10 @@
     flex-wrap: wrap;
   }
 
+  .chat-session-delete-btn {
+    opacity: 1;
+  }
+
   .chat-message--assistant .chat-message-render-toggle {
     opacity: 1;
   }

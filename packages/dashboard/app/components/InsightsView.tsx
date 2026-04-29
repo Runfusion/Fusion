@@ -164,72 +164,66 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
         </div>
 
         <div className="insights-section-content">
-          {section.items.length === 0 ? (
-            <div className="insights-empty-section" data-testid={`insights-empty-${section.category}`}>
-              <p>No insights in this category</p>
-            </div>
-          ) : (
-            <ul className="insights-list">
-              {section.items.map((insight) => {
-                const dismissState = dismissStates.get(insight.id);
-                const createState = createTaskStates.get(insight.id);
-                const isDismissInFlight = dismissState?.running ?? false;
-                const isCreateInFlight = createState?.running ?? false;
+          <ul className="insights-list">
+            {section.items.map((insight) => {
+              const dismissState = dismissStates.get(insight.id);
+              const createState = createTaskStates.get(insight.id);
+              const isDismissInFlight = dismissState?.running ?? false;
+              const isCreateInFlight = createState?.running ?? false;
 
-                return (
-                  <li key={insight.id} className="insight-item" data-insight-id={insight.id}>
-                    <div className="insight-item-header">
-                      <h4 className="insight-item-title">{insight.title}</h4>
-                      <div className="insight-item-actions">
-                        <button
-                          className="btn btn-sm btn-icon"
-                          onClick={() => void handleCreateTask(insight.id, insight.title)}
-                          disabled={isCreateInFlight || isAnyActionInFlight}
-                          title="Create task from this insight"
-                          aria-label="Create task from this insight"
-                          data-testid={`create-task-${insight.id}`}
-                        >
-                          {isCreateInFlight ? (
-                            <RefreshCw size={14} className="spin" />
-                          ) : (
-                            <Plus size={14} />
-                          )}
-                        </button>
-                        <button
-                          className="btn btn-sm btn-icon"
-                          onClick={() => void handleDismiss(insight.id, insight.title)}
-                          disabled={isDismissInFlight || isAnyActionInFlight}
-                          title="Dismiss this insight"
-                          aria-label="Dismiss this insight"
-                          data-testid={`dismiss-${insight.id}`}
-                        >
-                          {isDismissInFlight ? (
-                            <RefreshCw size={14} className="spin" />
-                          ) : (
-                            <X size={14} />
-                          )}
-                        </button>
-                      </div>
+              return (
+                <li key={insight.id} className="insight-item" data-insight-id={insight.id}>
+                  <div className="insight-item-header">
+                    <h4 className="insight-item-title">{insight.title}</h4>
+                    <div className="insight-item-actions">
+                      <button
+                        className="btn btn-sm btn-icon"
+                        onClick={() => void handleCreateTask(insight.id, insight.title)}
+                        disabled={isCreateInFlight || isAnyActionInFlight}
+                        title="Create task from this insight"
+                        aria-label="Create task from this insight"
+                        data-testid={`create-task-${insight.id}`}
+                      >
+                        {isCreateInFlight ? (
+                          <RefreshCw size={14} className="spin" />
+                        ) : (
+                          <Plus size={14} />
+                        )}
+                      </button>
+                      <button
+                        className="btn btn-sm btn-icon"
+                        onClick={() => void handleDismiss(insight.id, insight.title)}
+                        disabled={isDismissInFlight || isAnyActionInFlight}
+                        title="Dismiss this insight"
+                        aria-label="Dismiss this insight"
+                        data-testid={`dismiss-${insight.id}`}
+                      >
+                        {isDismissInFlight ? (
+                          <RefreshCw size={14} className="spin" />
+                        ) : (
+                          <X size={14} />
+                        )}
+                      </button>
                     </div>
-                    {insight.content && (
-                      <p className="insight-item-content">{insight.content}</p>
-                    )}
-                    <div className="insight-item-meta">
-                      <span className={`insight-item-status insight-item-status--${insight.status}`}>
-                        {insight.status}
+                  </div>
+                  {insight.content && (
+                    <p className="insight-item-content">{insight.content}</p>
+                  )}
+                  <div className="insight-item-meta">
+                    <span className={`insight-item-status insight-item-status--${insight.status}`}>
+                      {insight.status}
+                    </span>
+                    {insight.createdAt && (
+                      <span className="insight-item-date">
+                        <Clock size={12} />
+                        {new Date(insight.createdAt).toLocaleDateString()}
                       </span>
-                      {insight.createdAt && (
-                        <span className="insight-item-date">
-                          <Clock size={12} />
-                          {new Date(insight.createdAt).toLocaleDateString()}
-                        </span>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       </section>
     );
@@ -355,7 +349,7 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
         </div>
       ) : (
         <div className="insights-sections">
-          {sections.map(renderSection)}
+          {sections.filter((section) => section.items.length > 0).map(renderSection)}
         </div>
       )}
     </div>
