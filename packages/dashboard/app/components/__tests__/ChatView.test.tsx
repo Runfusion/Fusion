@@ -556,7 +556,7 @@ describe("ChatView", () => {
     expect(preview).toHaveTextContent("path=foo.ts");
   });
 
-  it("renders grouped summary for multiple completed tool calls and keeps it collapsed", () => {
+  it("collapses multiple tool calls into single summary line", () => {
     setupMockChat({
       activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Tool Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
       messages: [
@@ -586,11 +586,11 @@ describe("ChatView", () => {
 
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-    const group = document.querySelector(".chat-tool-calls-group") as HTMLDetailsElement | null;
+    const group = screen.getByTestId("chat-tool-calls-group") as HTMLDetailsElement;
     expect(group).toBeInTheDocument();
-    expect(group?.open).toBe(false);
+    expect(group.open).toBe(false);
     expect(screen.getByText("2 tool calls")).toBeInTheDocument();
-    expect(screen.getByText("2 completed")).toBeInTheDocument();
+    expect(screen.getByText("read, grep")).toBeInTheDocument();
   });
 
   it("auto-opens grouped tool calls when any tool call is running", () => {
@@ -622,12 +622,12 @@ describe("ChatView", () => {
 
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-    const group = document.querySelector(".chat-tool-calls-group") as HTMLDetailsElement | null;
+    const group = screen.getByTestId("chat-tool-calls-group") as HTMLDetailsElement;
     expect(group).toBeInTheDocument();
-    expect(group?.open).toBe(true);
+    expect(group.open).toBe(true);
   });
 
-  it("shows grouped tool-call status breakdown", () => {
+  it("shows status counts in group summary", () => {
     setupMockChat({
       activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Tool Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
       messages: [
@@ -662,9 +662,40 @@ describe("ChatView", () => {
 
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-    expect(screen.getByText("1 completed")).toBeInTheDocument();
-    expect(screen.getByText("1 running")).toBeInTheDocument();
-    expect(screen.getByText("1 error")).toBeInTheDocument();
+    expect(screen.getByText("(1 running)")).toBeInTheDocument();
+  });
+
+  it("shows error count when there are errors and no running calls", () => {
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Tool Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [
+        {
+          id: "msg-002",
+          sessionId: "session-001",
+          role: "assistant",
+          content: "Mixed",
+          toolCalls: [
+            {
+              toolName: "read",
+              isError: false,
+              result: "contents",
+              status: "completed",
+            },
+            {
+              toolName: "write",
+              isError: true,
+              result: "failed",
+              status: "completed",
+            },
+          ],
+          createdAt: "2026-04-08T00:01:00.000Z",
+        },
+      ],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    expect(screen.getByText("(1 error)")).toBeInTheDocument();
   });
 
   it("expands grouped tool calls to reveal individual tool items", async () => {
@@ -697,7 +728,7 @@ describe("ChatView", () => {
 
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-    const group = document.querySelector(".chat-tool-calls-group") as HTMLDetailsElement;
+    const group = screen.getByTestId("chat-tool-calls-group") as HTMLDetailsElement;
     expect(group.open).toBe(false);
 
     const summary = group.querySelector(".chat-tool-calls-group-summary") as HTMLElement;
@@ -708,7 +739,7 @@ describe("ChatView", () => {
     expect(screen.getByText("grep")).toBeInTheDocument();
   });
 
-  it("completed tool calls are collapsed by default", () => {
+  it("single tool call renders without group wrapper", () => {
     setupMockChat({
       activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Tool Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
       messages: [
@@ -732,9 +763,37 @@ describe("ChatView", () => {
 
     render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
+    expect(screen.queryByTestId("chat-tool-calls-group")).not.toBeInTheDocument();
     const details = document.querySelector(".chat-tool-call") as HTMLDetailsElement | null;
     expect(details).toBeInTheDocument();
     expect(details?.open).toBe(false);
+  });
+
+  it("truncates tool names when more than 5 unique", () => {
+    setupMockChat({
+      activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Tool Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
+      messages: [
+        {
+          id: "msg-002",
+          sessionId: "session-001",
+          role: "assistant",
+          content: "Done",
+          toolCalls: [
+            { toolName: "read", isError: false, status: "completed" },
+            { toolName: "edit", isError: false, status: "completed" },
+            { toolName: "bash", isError: false, status: "completed" },
+            { toolName: "grep", isError: false, status: "completed" },
+            { toolName: "write", isError: false, status: "completed" },
+            { toolName: "list", isError: false, status: "completed" },
+          ],
+          createdAt: "2026-04-08T00:01:00.000Z",
+        },
+      ],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    expect(screen.getByText("read, edit, bash, grep, write, +1 more")).toBeInTheDocument();
   });
 
   it("running tool calls show running indicator", () => {

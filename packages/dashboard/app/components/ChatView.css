@@ -404,14 +404,14 @@
 .chat-tool-calls-group-summary {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-xs);
+  gap: var(--space-sm);
   list-style: none;
   cursor: pointer;
   padding: var(--space-xs) var(--space-sm);
   color: var(--text-muted);
   border-radius: var(--radius-sm);
   font-size: var(--space-md);
+  min-width: 0;
 }
 
 .chat-tool-calls-group-summary::marker {
@@ -427,39 +427,30 @@
   box-shadow: var(--focus-ring-strong);
 }
 
-.chat-tool-calls-group-status {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--space-xs);
-}
-
-.chat-tool-calls-group-count {
-  display: inline-flex;
-  align-items: center;
-  padding: 0 var(--space-xs);
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--color-success) 12%, transparent);
-  color: var(--color-success);
+.chat-tool-calls-names {
+  color: var(--text-dim);
+  font-family: var(--font-mono, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
   font-size: 0.6875rem;
 }
 
-.chat-tool-calls-group-count--running {
-  background: color-mix(in srgb, var(--color-info) 12%, transparent);
-  color: var(--color-info);
+.chat-tool-calls-group-status {
+  margin-left: auto;
+  font-size: 0.6875rem;
+  color: var(--text-dim);
+  flex-shrink: 0;
 }
 
-.chat-tool-calls-group-count--error {
-  background: color-mix(in srgb, var(--color-error) 12%, transparent);
-  color: var(--color-error);
+.chat-tool-calls-group > .chat-tool-call {
+  margin: 0 var(--space-sm) var(--space-xs) var(--space-sm);
 }
 
-.chat-tool-calls-group-items {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  padding: 0 var(--space-xs) var(--space-xs);
+.chat-tool-calls-group > .chat-tool-call:last-child {
+  margin-bottom: var(--space-sm);
 }
 
 .chat-tool-call {
@@ -575,12 +566,14 @@
 
 .chat-tool-calls--compact .chat-tool-calls-header,
 .chat-tool-calls--compact .chat-tool-calls-group-summary,
+.chat-tool-calls--compact .chat-tool-calls-names,
 .chat-tool-calls--compact .chat-tool-calls-group-status,
-.chat-tool-calls--compact .chat-tool-calls-group-count,
 .chat-tool-calls--compact .chat-tool-call summary,
 .chat-tool-calls--compact .chat-tool-call-content,
 .chat-tool-calls--compact .chat-tool-call-preview,
-.chat-tool-calls--compact .chat-tool-call-value {
+.chat-tool-calls--compact .chat-tool-call-value,
+.chat-tool-calls-group--compact .chat-tool-calls-group-summary,
+.chat-tool-calls-group--compact .chat-tool-calls-names {
   font-size: 0.6875rem;
 }
 

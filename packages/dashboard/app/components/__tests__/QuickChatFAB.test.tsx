@@ -1005,7 +1005,7 @@ describe("QuickChatFAB", () => {
     expect(preview).toHaveTextContent("result: contents");
   });
 
-  it("renders grouped summary for multiple tool calls in compact mode", async () => {
+  it("renders multiple tool calls collapsed in quick chat", async () => {
     mockFetchChatMessages.mockResolvedValueOnce({
       messages: [
         {
@@ -1038,7 +1038,38 @@ describe("QuickChatFAB", () => {
 
     const toolCallsContainer = document.querySelector(".chat-tool-calls") as HTMLElement | null;
     expect(toolCallsContainer).toHaveClass("chat-tool-calls--compact");
-    expect(screen.getByText("2 completed")).toBeInTheDocument();
+    expect(screen.getByText("read, grep")).toBeInTheDocument();
+  });
+
+  it("compact group class applied in quick chat", async () => {
+    mockFetchChatMessages.mockResolvedValueOnce({
+      messages: [
+        {
+          id: "msg-tools",
+          sessionId: "session-001",
+          role: "assistant",
+          content: "Used tools",
+          toolCalls: [
+            { toolName: "read", status: "completed", isError: false, result: "contents" },
+            { toolName: "grep", status: "completed", isError: false, result: "matches" },
+          ],
+          metadata: {
+            toolCalls: [
+              { toolName: "read", status: "completed", isError: false, result: "contents" },
+              { toolName: "grep", status: "completed", isError: false, result: "matches" },
+            ],
+          },
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    render(<QuickChatFAB addToast={addToast} projectId="proj-123" />);
+
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const group = (await waitFor(() => screen.getByTestId("chat-tool-calls-group"))) as HTMLDetailsElement;
+    expect(group).toHaveClass("chat-tool-calls-group--compact");
   });
 
   it("expands grouped tool calls to reveal individual quick chat tool items", async () => {
@@ -1068,11 +1099,7 @@ describe("QuickChatFAB", () => {
 
     fireEvent.click(screen.getByTestId("quick-chat-fab"));
 
-    const group = (await waitFor(() => {
-      const details = document.querySelector(".chat-tool-calls-group") as HTMLDetailsElement | null;
-      if (!details) throw new Error("group not rendered yet");
-      return details;
-    })) as HTMLDetailsElement;
+    const group = (await waitFor(() => screen.getByTestId("chat-tool-calls-group"))) as HTMLDetailsElement;
 
     expect(group.open).toBe(false);
 
@@ -1084,7 +1111,7 @@ describe("QuickChatFAB", () => {
     expect(screen.getByText("grep")).toBeInTheDocument();
   });
 
-  it("streaming grouped tool calls auto-expand when a tool is running", async () => {
+  it("auto-opens group for running tool calls in quick chat", async () => {
     mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
       handlers.onText?.("Still working");
       handlers.onToolStart?.({ toolName: "read", args: { path: "foo.ts" } });
@@ -1111,11 +1138,10 @@ describe("QuickChatFAB", () => {
     await waitFor(() => {
       const streamingMessage = screen.getByTestId("quick-chat-streaming-message");
       expect(within(streamingMessage).getByText("2 tool calls")).toBeInTheDocument();
-      expect(within(streamingMessage).getByText("1 completed")).toBeInTheDocument();
-      expect(within(streamingMessage).getByText("1 running")).toBeInTheDocument();
-      const group = streamingMessage.querySelector(".chat-tool-calls-group") as HTMLDetailsElement | null;
+      expect(within(streamingMessage).getByText("(1 running)")).toBeInTheDocument();
+      const group = within(streamingMessage).getByTestId("chat-tool-calls-group") as HTMLDetailsElement;
       expect(group).toBeTruthy();
-      expect(group?.open).toBe(true);
+      expect(group.open).toBe(true);
       expect(streamingMessage.querySelector(".chat-tool-call--running")).toBeTruthy();
     });
   });

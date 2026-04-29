@@ -12,7 +12,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
-import { Eye, EyeOff, MessageSquare, Paperclip, Send, Square, X } from "lucide-react";
+import { Eye, EyeOff, MessageSquare, Paperclip, Send, Square, Wrench, X } from "lucide-react";
 import { fetchModels, type Agent, type ModelInfo } from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { AgentMentionPopup } from "./AgentMentionPopup";
@@ -21,7 +21,6 @@ import { useAgents } from "../hooks/useAgents";
 import { FileMentionPopup } from "./FileMentionPopup";
 import { useFileMention } from "../hooks/useFileMention";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
-import { ChatToolCalls } from "./ChatToolCalls";
 
 interface PendingAttachment {
   file: File;
@@ -88,8 +87,127 @@ function formatModelTagName(modelInfo: ModelInfo | null, parsedSelection: Parsed
     .trim();
 }
 
+function truncateToolValue(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength)}…`;
+}
+
+function formatToolArgsSummary(args?: Record<string, unknown>): string | null {
+  if (!args) return null;
+  const entries = Object.entries(args);
+  if (entries.length === 0) return null;
+  return entries
+    .map(([key, value]) => {
+      const stringValue = typeof value === "string" ? value : (() => {
+        try {
+          return JSON.stringify(value);
+        } catch {
+          return String(value);
+        }
+      })();
+      return `${key}=${truncateToolValue(stringValue, 50)}`;
+    })
+    .join(", ");
+}
+
+function formatToolResultSummary(result: unknown): string | null {
+  if (result === undefined) return null;
+  if (typeof result === "string") return truncateToolValue(result, 200);
+  try {
+    return truncateToolValue(JSON.stringify(result), 200);
+  } catch {
+    return truncateToolValue(String(result), 200);
+  }
+}
+
 function renderToolCalls(toolCalls?: ToolCallInfo[], compact = false): ReactNode {
-  return <ChatToolCalls toolCalls={toolCalls} compact={compact} />;
+  if (!toolCalls || toolCalls.length === 0) return null;
+
+  const renderToolCallItem = (toolCall: ToolCallInfo, index: number) => {
+    const isRunning = toolCall.status === "running";
+    const isError = toolCall.status === "completed" && toolCall.isError;
+    const argsSummary = formatToolArgsSummary(toolCall.args);
+    const resultSummary = formatToolResultSummary(toolCall.result);
+    const summaryPreview = isRunning
+      ? argsSummary
+      : resultSummary
+        ? `result: ${resultSummary}`
+        : argsSummary
+          ? `args: ${argsSummary}`
+          : null;
+    const statusLabel = isRunning ? "running" : isError ? "error" : "completed";
+
+    return (
+      <details
+        key={`${toolCall.toolName}-${index}`}
+        className={`chat-tool-call${isRunning ? " chat-tool-call--running" : ""}${isError ? " chat-tool-call--error" : ""}`}
+        open={isRunning}
+      >
+        <summary>
+          <span className="chat-tool-call-status-dot" aria-hidden="true" />
+          <span className="chat-tool-call-name">{toolCall.toolName}</span>
+          {summaryPreview && <span className="chat-tool-call-preview" title={summaryPreview}>{summaryPreview}</span>}
+          <span className="chat-tool-call-status-text">{statusLabel}</span>
+        </summary>
+        <div className="chat-tool-call-content">
+          {argsSummary && (
+            <div className="chat-tool-call-row">
+              <span className="chat-tool-call-label">args</span>
+              <span className="chat-tool-call-value">{argsSummary}</span>
+            </div>
+          )}
+          {resultSummary && (
+            <div className={`chat-tool-call-row${isError ? " chat-tool-call-row--error" : ""}`}>
+              <span className="chat-tool-call-label">result</span>
+              <span className="chat-tool-call-value">{resultSummary}</span>
+            </div>
+          )}
+        </div>
+      </details>
+    );
+  };
+
+  const className = `chat-tool-calls${compact ? " chat-tool-calls--compact" : ""}`;
+  if (toolCalls.length === 1) {
+    return (
+      <div className={className} data-testid="chat-tool-calls">
+        <div className="chat-tool-calls-header">
+          <Wrench size={12} aria-hidden="true" />
+          <span>Tool calls</span>
+        </div>
+        {renderToolCallItem(toolCalls[0], 0)}
+      </div>
+    );
+  }
+
+  const runningCount = toolCalls.filter((toolCall) => toolCall.status === "running").length;
+  const errorCount = toolCalls.filter((toolCall) => toolCall.status === "completed" && toolCall.isError).length;
+  const hasRunning = runningCount > 0;
+  const uniqueNames = Array.from(new Set(toolCalls.map((toolCall) => toolCall.toolName)));
+  const visibleNames = uniqueNames.slice(0, 5);
+  const overflowCount = Math.max(0, uniqueNames.length - visibleNames.length);
+  const namesSummary = overflowCount > 0
+    ? `${visibleNames.join(", ")}, +${overflowCount} more`
+    : visibleNames.join(", ");
+  const statusSummary = hasRunning
+    ? `(${runningCount} running)`
+    : errorCount > 0
+      ? `(${errorCount} ${errorCount === 1 ? "error" : "errors"})`
+      : null;
+
+  return (
+    <div className={className} data-testid="chat-tool-calls">
+      <details className={`chat-tool-calls-group${compact ? " chat-tool-calls-group--compact" : ""}`} data-testid="chat-tool-calls-group" open={hasRunning}>
+        <summary className="chat-tool-calls-group-summary">
+          <Wrench size={12} aria-hidden="true" />
+          <span>{toolCalls.length} tool calls</span>
+          <span className="chat-tool-calls-names" title={namesSummary}>{namesSummary}</span>
+          {statusSummary && <span className="chat-tool-calls-group-status">{statusSummary}</span>}
+        </summary>
+        {toolCalls.map((toolCall, index) => renderToolCallItem(toolCall, index))}
+      </details>
+    </div>
+  );
 }
 
 const quickChatMarkdownComponents: Components = {
