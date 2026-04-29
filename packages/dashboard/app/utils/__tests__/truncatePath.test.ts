@@ -114,4 +114,31 @@ describe("truncateMiddle", () => {
     expect(result).toBe("...verylongname.test.tsx");
     expect(result.endsWith(".test.tsx")).toBe(true);
   });
+
+  it("keeps filename visible for typical component paths at maxLength 40", () => {
+    const path = "packages/dashboard/app/components/SomeComponent.tsx";
+    const result = truncateMiddle(path, 40);
+
+    expect(result.endsWith("SomeComponent.tsx")).toBe(true);
+    expect(result).toContain("...");
+    expect(result.length).toBeLessThanOrEqual(40);
+  });
+
+  it("shows nested filename suffix for very deep paths at maxLength 40", () => {
+    const path = "a/b/c/d/e/f/g/h/i/j/k/l/m/n/Component.tsx";
+    const result = truncateMiddle(path, 40);
+
+    expect(result.endsWith("/Component.tsx")).toBe(true);
+    expect(result).toContain("...");
+    expect(result.length).toBeLessThanOrEqual(40);
+  });
+
+  it("truncates from the end when filename alone nearly consumes maxLength 40", () => {
+    const path = "a/12345678901234567890123456789012345.tsx";
+    const result = truncateMiddle(path, 40);
+
+    expect(result.length).toBeLessThanOrEqual(40);
+    expect(result).toContain("...");
+    expect(result.endsWith("6789012345.tsx")).toBe(true);
+  });
 });

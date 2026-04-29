@@ -244,7 +244,7 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
                     {getStatusLabel("unknown")}
                   </span>
                   <span className="changes-file-path" title={path}>
-                    {truncateMiddle(path)}
+                    {truncateMiddle(path, 40)}
                   </span>
                 </div>
               </div>
@@ -381,7 +381,7 @@ export function TaskChangesTab({ taskId, worktree, projectId, column, mergeDetai
                   {getStatusLabel(file.status)}
                 </span>
                 <span className="changes-file-path" title={file.path}>
-                  {truncateMiddle(file.path)}
+                  {truncateMiddle(file.path, 40)}
                 </span>
                 <span
                   className="changes-file-stat"

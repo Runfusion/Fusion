@@ -223,7 +223,7 @@ export function ChangesDiffModal({
                   >
                     {getStatusLabel(file.status)}
                   </span>
-                  <span className="changes-diff-file-path">{truncateMiddle(file.path)}</span>
+                  <span className="changes-diff-file-path">{truncateMiddle(file.path, 40)}</span>
                   <span className="changes-diff-file-stat">
                     +{file.additions} -{file.deletions}
                   </span>

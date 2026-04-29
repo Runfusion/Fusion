@@ -1115,7 +1115,7 @@ function ChangesPanel({
                     />
                   </label>
                   <FileStatusIcon status={f.status} />
-                  <span className="gm-file-name" title={f.file}>{truncateMiddle(f.file)}</span>
+                  <span className="gm-file-name" title={f.file}>{truncateMiddle(f.file, 40)}</span>
                   <FileStatusBadge status={f.status} />
                   <button
                     className="gm-icon-btn"
@@ -1187,7 +1187,7 @@ function ChangesPanel({
                     />
                   </label>
                   <FileStatusIcon status={f.status} />
-                  <span className="gm-file-name" title={f.file}>{truncateMiddle(f.file)}</span>
+                  <span className="gm-file-name" title={f.file}>{truncateMiddle(f.file, 40)}</span>
                   <FileStatusBadge status={f.status} />
                   <button
                     className="gm-icon-btn"
