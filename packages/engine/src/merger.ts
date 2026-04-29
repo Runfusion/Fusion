@@ -1037,53 +1037,94 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
 }
 
 /**
- * Stage any changes and amend the merge commit to include verification fixes.
- * Returns true if changes were amended, false if no changes to amend.
- * Never throws — errors are logged and the function returns false.
+ * Best-effort `git reset --merge` with a labeled warning on failure.
+ * `label` describes the cleanup site so operators can correlate the warning
+ * back to the merge phase that left state behind. The label is included in
+ * the warning text so test assertions can match on it.
  */
-async function amendMergeCommitWithFixes(
+function resetMergeWithWarn(rootDir: string, taskId: string, label: string): void {
+  try {
+    execSync("git reset --merge", { cwd: rootDir, stdio: "pipe" });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    mergerLog.warn(`${taskId}: git reset --merge cleanup failed during ${label}: ${msg}`);
+  }
+}
+
+/**
+ * Build the canonical merge commit message from the branch's step commits.
+ * Subject is always `feat[(taskId)]: merge <branch>`; body is one bullet per
+ * step commit subject (already constructed upstream as `commitLog`). This is
+ * deterministic — no LLM involvement — so the recorded message can be trusted
+ * to reflect the actual diff.
+ */
+function buildDeterministicMergeMessage(params: {
+  taskId: string;
+  branch: string;
+  commitLog: string;
+  includeTaskId: boolean;
+}): { subjectArg: string; bodyArg: string } {
+  const { taskId, branch, commitLog, includeTaskId } = params;
+  const prefix = includeTaskId ? `feat(${taskId})` : "feat";
+  const subject = `${prefix}: merge ${branch}`;
+  const body = commitLog && commitLog.trim().length > 0
+    ? commitLog.trim()
+    : `- merge ${branch}`;
+  // -m args are double-quoted in the shell command, so escape backslashes,
+  // double quotes, dollar signs, and backticks.
+  const escape = (s: string) => s.replace(/(["\\$`])/g, "\\$1");
+  return {
+    subjectArg: `-m "${escape(subject)}"`,
+    bodyArg: `-m "${escape(body)}"`,
+  };
+}
+
+/**
+ * Stage current changes and either:
+ *   (a) create a fresh squash commit when HEAD has not advanced past
+ *       `preAttemptHeadSha` — i.e. the AI agent never ran `git commit` (e.g.
+ *       fn_report_build_failure path) and the in-merge fix is finalizing the
+ *       merge in its place; or
+ *   (b) amend the existing merge commit (with a deterministic message) when
+ *       HEAD has moved past `preAttemptHeadSha` — i.e. the AI agent already
+ *       committed and the fix is folding follow-up changes into it.
+ *
+ * Always rewrites the commit message to the deterministic form built from the
+ * branch's actual step commits, so consumers of mergeDetails never see a
+ * hallucinated body that talks about files that aren't in the diff.
+ *
+ * Returns true on a successful commit/amend. Never throws — errors are logged
+ * and the function returns false (callers decide whether to abort the merge).
+ */
+async function commitOrAmendMergeWithFixes(
   rootDir: string,
   taskId: string,
+  branch: string,
+  commitLog: string,
+  includeTaskId: boolean,
+  preAttemptHeadSha: string,
   authorArg: string,
 ): Promise<boolean> {
   try {
-    // Check for staged and unstaged changes
-    const { stdout: stagedFiles } = await execAsync("git diff --cached --name-only", {
-      cwd: rootDir,
-      encoding: "utf-8",
-    });
+    // Stage everything (squash state + verification fixes the agent left
+    // unstaged). FN-2152 still applies: filter out any submodule gitlinks
+    // before committing.
     const { stdout: unstagedFiles } = await execAsync("git diff --name-only", {
       cwd: rootDir,
       encoding: "utf-8",
     });
-
-    const hasChanges = stagedFiles.trim().length > 0 || unstagedFiles.trim().length > 0;
-    if (!hasChanges) {
-      mergerLog.log(`${taskId}: no changes to amend after verification fix`);
-      return false;
-    }
-
-    // Stage any unstaged changes
     if (unstagedFiles.trim().length > 0) {
       await execAsync("git add -A", { cwd: rootDir });
     }
 
-    // FN-2152 regression guard: `git add -A` at the repo root will capture any
-    // directory with a `.git` file/dir (nested worktree, orphaned checkout) as
-    // a 160000 gitlink. The project uses no submodules, so any staged gitlink
-    // is a bug. Unstage such entries before amending so they cannot land in
-    // HEAD. Loud log so operators can clean up the offending directory.
     const { stdout: staged } = await execAsync("git diff --cached --raw", {
       cwd: rootDir,
       encoding: "utf-8",
     });
-    const gitlinkPaths: string[] = [];
     for (const line of staged.split("\n")) {
-      // raw format: `:<srcMode> <dstMode> <srcSha> <dstSha> <status>\t<path>`
       const match = line.match(/^:\d{6} 160000 [^\t]+\t(.+)$/);
-      if (match) gitlinkPaths.push(match[1]);
-    }
-    for (const path of gitlinkPaths) {
+      if (!match) continue;
+      const path = match[1];
       mergerLog.warn(`${taskId}: refusing to stage gitlink "${path}" (project uses no submodules — likely a nested worktree). Unstaging.`);
       try {
         await execAsync(`git reset HEAD -- "${path}"`, { cwd: rootDir });
@@ -1093,22 +1134,62 @@ async function amendMergeCommitWithFixes(
       }
     }
 
-    // Check if there are staged changes to amend
     const { stdout: finalStaged } = await execAsync("git diff --cached --name-only", {
       cwd: rootDir,
       encoding: "utf-8",
     });
+    const hasStaged = finalStaged.trim().length > 0;
 
-    if (finalStaged.trim().length > 0) {
-      await execAsync(`git commit --amend --no-edit${authorArg}`, { cwd: rootDir });
-      mergerLog.log(`${taskId}: amended merge commit with verification fixes`);
+    const { stdout: currentHeadOut } = await execAsync("git rev-parse HEAD", {
+      cwd: rootDir,
+      encoding: "utf-8",
+    });
+    const currentHead = currentHeadOut.trim();
+    const headMoved = currentHead !== preAttemptHeadSha;
+
+    if (!hasStaged && !headMoved) {
+      // Truly nothing happened — neither a commit nor staged changes. Refuse
+      // to fabricate a successful merge: the caller will report failure.
+      mergerLog.warn(
+        `${taskId}: refusing to record merge — no commit was created and no changes are staged. ` +
+        `This usually means the AI agent never ran git commit and the in-merge fix had nothing to add.`,
+      );
+      return false;
+    }
+
+    const { subjectArg, bodyArg } = buildDeterministicMergeMessage({
+      taskId,
+      branch,
+      commitLog,
+      includeTaskId,
+    });
+    const trailerArg = buildTaskIdTrailerArg(taskId);
+
+    if (!headMoved) {
+      // No merge commit yet — create one fresh on top of preAttemptHeadSha.
+      // This is the phantom-merge fix: previously the code blindly amended
+      // HEAD (the previous task's commit), silently dropping the current
+      // task's branch and inheriting the prior task's stats.
+      await execAsync(
+        `git commit ${subjectArg} ${bodyArg}${trailerArg}${authorArg}`,
+        { cwd: rootDir },
+      );
+      mergerLog.log(`${taskId}: created fresh merge commit after verification fix (no prior commit to amend)`);
       return true;
     }
 
-    return false;
+    // HEAD moved — AI agent committed already. Amend with deterministic
+    // message + any new staged fixes folded in. `--amend -m` replaces both
+    // the message and includes any newly-staged content.
+    await execAsync(
+      `git commit --amend ${subjectArg} ${bodyArg}${trailerArg}${authorArg}`,
+      { cwd: rootDir },
+    );
+    mergerLog.log(`${taskId}: amended merge commit with verification fixes (deterministic message)`);
+    return true;
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : String(err);
-    mergerLog.warn(`${taskId}: failed to amend merge commit: ${errorMessage}`);
+    mergerLog.warn(`${taskId}: failed to finalize merge commit: ${errorMessage}`);
     return false;
   }
 }
@@ -2642,6 +2723,22 @@ export async function aiMergeTask(
       "merger",
     );
 
+    // Capture HEAD before the squash so the verification-fix finalizer can
+    // tell whether the AI agent actually created a commit (HEAD moved) or
+    // bailed via fn_report_build_failure (HEAD didn't move). Without this,
+    // the amend path silently mutated the previous task's merge commit.
+    let preAttemptHeadSha = "";
+    try {
+      const { stdout } = await execAsync("git rev-parse HEAD", {
+        cwd: rootDir,
+        encoding: "utf-8",
+      });
+      preAttemptHeadSha = stdout.trim();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      mergerLog.warn(`${taskId}: failed to capture pre-attempt HEAD (${msg}) — verification-fix finalizer will fall back to amend`);
+    }
+
     try {
       // Try the merge with appropriate strategy for this attempt
       const success = await executeMergeAttempt({
@@ -2778,9 +2875,27 @@ export async function aiMergeTask(
             }
 
             if (fixSuccess) {
-              // Amend the merge commit to include the fixes
+              // Finalize the merge commit (fresh commit if HEAD didn't move,
+              // amend if AI agent already committed). Always rewrites the
+              // message deterministically from branch step commits.
               const authorArg = getCommitAuthorArg(settings);
-              await amendMergeCommitWithFixes(rootDir, taskId, authorArg);
+              const finalized = await commitOrAmendMergeWithFixes(
+                rootDir,
+                taskId,
+                branch,
+                commitLog,
+                includeTaskId,
+                preAttemptHeadSha,
+                authorArg,
+              );
+              if (!finalized) {
+                // Phantom-merge guard: refused to fabricate a commit. Reset
+                // any leftover squash state and propagate failure.
+                resetMergeWithWarn(rootDir, taskId, "verification-fix finalize");
+                throw new Error(
+                  `${taskId}: verification fix succeeded but no merge commit could be created — refusing to mark merge complete.`,
+                );
+              }
               return true; // Merge succeeds
             }
           }
@@ -2788,6 +2903,7 @@ export async function aiMergeTask(
 
         // Fix attempts exhausted or disabled — fall back to existing behavior
         mergerLog.error(`${taskId}: deterministic verification failed — aborting merge (in-merge fix exhausted or disabled)`);
+        resetMergeWithWarn(rootDir, taskId, "deterministic-verification rollback");
         throw error;
       }
 
@@ -2865,7 +2981,25 @@ export async function aiMergeTask(
 
           if (fixSuccess) {
             const authorArg = getCommitAuthorArg(settings);
-            await amendMergeCommitWithFixes(rootDir, taskId, authorArg);
+            const finalized = await commitOrAmendMergeWithFixes(
+              rootDir,
+              taskId,
+              branch,
+              commitLog,
+              includeTaskId,
+              preAttemptHeadSha,
+              authorArg,
+            );
+            if (!finalized) {
+              // Phantom-merge guard: the verification fix passed but no
+              // commit could be produced (no staged content + HEAD never
+              // moved). Reset and propagate failure rather than silently
+              // mutating a previous task's commit.
+              resetMergeWithWarn(rootDir, taskId, "build-verification fix finalize");
+              throw new Error(
+                `${taskId}: build verification fix succeeded but no merge commit could be created — refusing to mark merge complete.`,
+              );
+            }
             return true; // Merge succeeds
           }
         }
@@ -2883,10 +3017,14 @@ export async function aiMergeTask(
             await audit.git({ type: "reset:hard", target: branch, metadata: { purpose: "build-retry" } });
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            mergerLog.warn(`${taskId}: git reset --merge cleanup failed (build-retry): ${msg}`);
+            mergerLog.warn(`${taskId}: git reset --merge cleanup failed during build-verification rollback (build-retry): ${msg}`);
           }
           return false; // Retry
         }
+        // No fix path took effect and no build retry — reset the squash state
+        // we deliberately preserved at the build-failure throw site so it
+        // doesn't leak into the next attempt or the caller.
+        resetMergeWithWarn(rootDir, taskId, "build-verification rollback (no retries left)");
         throw error; // No retries left — fatal
       }
 
@@ -3639,20 +3777,16 @@ async function executeMergeAttempt(
 
     // Handle build failure
     if (!agentResult.success) {
-      // Build verification failed - log, reset staged changes, and throw
+      // Build verification failed via fn_report_build_failure. DO NOT reset
+      // here: the squash state must survive for the in-merge verification
+      // fix path (mergeAttempt's catch handler) to either fold its fix into
+      // a fresh commit or — if the fix is disabled/exhausted — reset and
+      // propagate. Resetting here previously caused the phantom-merge bug:
+      // the fix agent ran on a clean main, then commitOrAmendMergeWithFixes
+      // amended the *previous* task's commit because HEAD looked unchanged
+      // and there was nothing left of the current task's branch to commit.
       const errorMessage = agentResult.error || "Build verification failed";
       await store.logEntry(taskId, "Build verification failed during merge", errorMessage);
-      
-      // Reset staged changes to abort the merge
-      try {
-        execSync("git reset --merge", { cwd: rootDir, stdio: "pipe" });
-      } catch (resetErr: unknown) {
-        const msg = resetErr instanceof Error ? resetErr.message : String(resetErr);
-        mergerLog.warn(
-          `${taskId}: git reset --merge cleanup failed during build-verification rollback (build-verification reset, build-retry): ${msg}`,
-        );
-      }
-
       throw new Error(`Build verification failed for ${taskId}: ${errorMessage}`);
     }
 
@@ -3669,6 +3803,30 @@ async function executeMergeAttempt(
         buildSource,
         options.signal,
       );
+    }
+
+    // Replace the AI-written commit message with a deterministic body built
+    // from the branch's actual step-commit subjects. The AI's free-form body
+    // routinely hallucinates bullets that describe work from neighbouring
+    // tasks (especially on small diffs), and that message is what consumers
+    // of mergeDetails surface. Subject keeps the conventional-commit shape.
+    try {
+      const authorArg = getCommitAuthorArg(params.settings);
+      const { subjectArg, bodyArg } = buildDeterministicMergeMessage({
+        taskId,
+        branch,
+        commitLog,
+        includeTaskId,
+      });
+      const trailerArg = buildTaskIdTrailerArg(taskId);
+      await execAsync(
+        `git commit --amend ${subjectArg} ${bodyArg}${trailerArg}${authorArg}`,
+        { cwd: rootDir },
+      );
+      mergerLog.log(`${taskId}: rewrote AI-authored merge commit message with deterministic body`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      mergerLog.warn(`${taskId}: failed to canonicalize merge commit message (${msg}) — keeping AI-written message`);
     }
 
     return true;

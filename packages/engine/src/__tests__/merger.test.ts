@@ -2964,7 +2964,11 @@ describe("aiMergeTask — reset cleanup failure diagnostics", () => {
       .map(([message]) => String(message))
       .filter((message) => message.includes("git reset --merge cleanup failed"));
 
-    expect(cleanupWarnMessages.some((message) => message.includes("build-verification reset"))).toBe(true);
+    // Reset cleanup now runs from mergeAttempt's catch handler (after the
+    // squash state is preserved across the build-failure throw site for the
+    // in-merge fix path). With both verificationFixRetries=0 and
+    // buildRetryCount=0 the rollback fires from the "no retries left" branch.
+    expect(cleanupWarnMessages.some((message) => message.includes("build-verification rollback"))).toBe(true);
     expect(cleanupWarnMessages.some((message) => message.includes(resetFailureMessage))).toBe(true);
 
     warnSpy.mockRestore();
