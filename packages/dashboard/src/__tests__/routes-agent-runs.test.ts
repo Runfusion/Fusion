@@ -474,6 +474,28 @@ describe("Agent runs routes (with HeartbeatMonitor)", () => {
         },
       });
     });
+
+    it("resuming to active does not auto-trigger heartbeat when disabled", async () => {
+      mockGetAgent.mockResolvedValue({
+        id: "agent-001",
+        state: "paused",
+        runtimeConfig: { enabled: false },
+      });
+      mockUpdateAgentState.mockResolvedValue({ id: "agent-001", state: "active" });
+
+      const response = await request(
+        app,
+        "POST",
+        "/api/agents/agent-001/state",
+        JSON.stringify({ state: "active" }),
+        { "content-type": "application/json" },
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ id: "agent-001", state: "active" });
+      await Promise.resolve();
+      expect(mockExecuteHeartbeat).not.toHaveBeenCalled();
+    });
   });
 
   describe("POST /api/agents/:id/runs", () => {

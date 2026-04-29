@@ -1471,6 +1471,12 @@ export interface ProjectSettings {
    *    before merging through GitHub
    *  Default: "direct" for backward compatibility. */
   mergeStrategy?: MergeStrategy;
+  /** When true, only auto-merge a pull request after it has at least one approving
+   *  review (`reviewDecision === "APPROVED"`). Independent of GitHub's branch-protection
+   *  `required` flag, so this works on free private repos where required reviewers can't
+   *  be enforced server-side. Only applies when `mergeStrategy === "pull-request"`.
+   *  Default: false. */
+  requirePrApproval?: boolean;
   /** When true, automatically push to the configured remote after a successful direct merge.
    *  The push process includes pulling the latest from the remote (rebase) first.
    *  If conflicts arise during the pull, they are resolved using the AI conflict resolution pipeline.

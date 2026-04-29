@@ -213,7 +213,6 @@ export class AgentStore extends EventEmitter {
     const _ = this.db;
     await mkdir(this.agentsDir, { recursive: true });
     await this.importLegacyFileDataOnce();
-    await this.normalizeHeartbeatDefaultsOnce();
   }
 
   /**
@@ -343,60 +342,6 @@ export class AgentStore extends EventEmitter {
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `).run(migrationKey, migrationVersion);
     this.db.bumpLastModified();
-  }
-
-  /**
-   * One-time normalization for durable agents created before the heartbeat
-   * toggle was exposed in the UI. Those agents could persist
-   * `runtimeConfig.enabled = false` even though users had no supported way to
-   * manage that flag, which caused timers to stay disabled after restart.
-   *
-   * We normalize only once per project. After this migration lands, explicit
-   * user choices are preserved because the version gate prevents reruns.
-   */
-  private async normalizeHeartbeatDefaultsOnce(): Promise<void> {
-    const migrationKey = "agentHeartbeatDefaultVersion";
-    const migrationVersion = "1";
-    const row = this.db.prepare("SELECT value FROM __meta WHERE key = ?").get(migrationKey) as
-      | { value: string }
-      | undefined;
-    if (row?.value === migrationVersion) {
-      return;
-    }
-
-    const agents = await this.listAgents({ includeEphemeral: true });
-    let changed = 0;
-
-    for (const agent of agents) {
-      if (isEphemeralAgent(agent)) {
-        continue;
-      }
-
-      const nextRuntimeConfig = {
-        ...(resolveCreationRuntimeConfig(agent.runtimeConfig, agent.metadata) ?? {}),
-        enabled: true,
-      };
-      const currentRuntimeConfig = agent.runtimeConfig ?? undefined;
-      if (JSON.stringify(nextRuntimeConfig) === JSON.stringify(currentRuntimeConfig)) {
-        continue;
-      }
-
-      await this.writeAgent({
-        ...agent,
-        runtimeConfig: nextRuntimeConfig,
-      });
-      changed++;
-    }
-
-    this.db.prepare(`
-      INSERT INTO __meta (key, value)
-      VALUES (?, ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `).run(migrationKey, migrationVersion);
-
-    if (changed > 0) {
-      this.db.bumpLastModified();
-    }
   }
 
   /**

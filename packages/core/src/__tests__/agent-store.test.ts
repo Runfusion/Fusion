@@ -12,7 +12,6 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { AgentStore } from "../agent-store.js";
-import { Database } from "../db.js";
 import { TaskStore } from "../store.js";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -104,10 +103,7 @@ describe("AgentStore", () => {
       }
     });
 
-    it("normalizes legacy durable agents to heartbeat enabled once", async () => {
-      // Migration test: opens a raw Database on disk to seed a meta key,
-      // then re-opens the AgentStore to assert migration ran. Needs both
-      // the store and the raw DB to be disk-backed.
+    it("preserves disabled heartbeat config for durable agents across restart", async () => {
       store.close();
       store = new AgentStore({ rootDir });
       await store.init();
@@ -124,20 +120,12 @@ describe("AgentStore", () => {
         },
       });
 
-      const db = new Database(rootDir);
-      db.init();
-      db.prepare(`
-        INSERT INTO __meta (key, value)
-        VALUES ('agentHeartbeatDefaultVersion', '0')
-        ON CONFLICT(key) DO UPDATE SET value = '0'
-      `).run();
-
       store.close();
       store = new AgentStore({ rootDir });
       await store.init();
 
-      const migrated = await store.getAgent(agent.id);
-      expect((migrated?.runtimeConfig as Record<string, unknown> | undefined)?.enabled).toBe(true);
+      const persisted = await store.getAgent(agent.id);
+      expect((persisted?.runtimeConfig as Record<string, unknown> | undefined)?.enabled).toBe(false);
     });
   });
 

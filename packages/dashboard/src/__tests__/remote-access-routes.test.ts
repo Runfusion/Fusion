@@ -1,8 +1,20 @@
 // @vitest-environment node
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import type { TaskStore } from "@fusion/core";
+
+const { mockExecFile } = vi.hoisted(() => ({
+  mockExecFile: vi.fn(),
+}));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    execFile: mockExecFile,
+  };
+});
+
 import { createApiRoutes } from "../routes.js";
 import { request as performRequest } from "../test-request.js";
 
@@ -83,6 +95,16 @@ async function REQUEST(app: express.Express, method: string, path: string, body?
     body === undefined ? {} : { "Content-Type": "application/json" },
   );
 }
+
+beforeEach(() => {
+  mockExecFile.mockReset();
+  mockExecFile.mockImplementation((command: string, _args: string[], optionsOrCallback: unknown, maybeCallback?: (error: Error | null, stdout?: string, stderr?: string) => void) => {
+    const callback = typeof optionsOrCallback === "function"
+      ? optionsOrCallback as (error: Error | null, stdout?: string, stderr?: string) => void
+      : maybeCallback;
+    callback?.(null, command === "where" || command === "which" ? "/usr/local/bin/cloudflared" : "", "");
+  });
+});
 
 describe("remote access provider/lifecycle contracts", () => {
   it("switches active provider and rejects invalid provider values", async () => {
@@ -179,5 +201,88 @@ describe("remote access provider/lifecycle contracts", () => {
       error: "tailscale CLI unavailable",
       details: { code: "REMOTE_TUNNEL_PREREQUISITE_MISSING" },
     });
+  });
+
+  it("includes cloudflaredAvailable in remote status for cloudflare provider", async () => {
+    const { app } = createApp();
+
+    const status = await REQUEST(app, "GET", "/api/remote/status");
+
+    expect(status.status).toBe(200);
+    expect(status.body).toEqual(expect.objectContaining({
+      provider: "cloudflare",
+      cloudflaredAvailable: true,
+    }));
+  });
+
+  it("returns cloudflaredAvailable false when cloudflared check fails", async () => {
+    mockExecFile.mockImplementation((command: string, _args: string[], optionsOrCallback: unknown, maybeCallback?: (error: Error | null) => void) => {
+      const callback = typeof optionsOrCallback === "function"
+        ? optionsOrCallback as (error: Error | null) => void
+        : maybeCallback;
+      if (command === "which" || command === "where") {
+        callback?.(new Error("missing"));
+        return;
+      }
+      callback?.(null);
+    });
+
+    const { app } = createApp();
+    const status = await REQUEST(app, "GET", "/api/remote/status");
+
+    expect(status.status).toBe(200);
+    expect(status.body).toEqual(expect.objectContaining({ cloudflaredAvailable: false }));
+  });
+
+  it("returns cloudflaredAvailable null for non-cloudflare provider", async () => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        remoteAccess: buildRemoteAccessSettings({ activeProvider: "tailscale" }),
+      }),
+    });
+    const { app } = createApp({ store });
+
+    const status = await REQUEST(app, "GET", "/api/remote/status");
+
+    expect(status.status).toBe(200);
+    expect(status.body).toEqual(expect.objectContaining({
+      provider: "tailscale",
+      cloudflaredAvailable: null,
+    }));
+  });
+
+  it("installs cloudflared via endpoint and returns install command metadata", async () => {
+    const { app } = createApp();
+
+    const result = await REQUEST(app, "POST", "/api/remote/install-cloudflared", {});
+
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual(expect.objectContaining({
+      success: true,
+      command: expect.any(String),
+    }));
+  });
+
+  it("returns install failure details when cloudflared installation command fails", async () => {
+    mockExecFile.mockImplementation((command: string, _args: string[], optionsOrCallback: unknown, maybeCallback?: (error: Error | null, stdout?: string, stderr?: string) => void) => {
+      const callback = typeof optionsOrCallback === "function"
+        ? optionsOrCallback as (error: Error | null, stdout?: string, stderr?: string) => void
+        : maybeCallback;
+      if (command === "sh" || command === "cmd") {
+        callback?.(new Error("Command failed"), "", "Command failed");
+        return;
+      }
+      callback?.(null, "/usr/local/bin/cloudflared", "");
+    });
+
+    const { app } = createApp();
+    const result = await REQUEST(app, "POST", "/api/remote/install-cloudflared", {});
+
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual(expect.objectContaining({
+      success: false,
+      command: expect.any(String),
+      error: expect.stringContaining("Command failed"),
+    }));
   });
 });

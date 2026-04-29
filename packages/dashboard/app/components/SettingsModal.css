@@ -615,6 +615,44 @@
   gap: var(--space-sm);
 }
 
+.remote-cli-detection {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  margin: 0 var(--space-xl) var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+}
+
+.remote-cli-detection--available {
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+  color: var(--color-success);
+}
+
+.remote-cli-detection--missing {
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  color: var(--color-warning);
+}
+
+.remote-cli-detection-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  color: var(--text);
+}
+
+.remote-cli-detection .btn {
+  align-self: flex-start;
+}
+
+.remote-cli-install-error {
+  color: var(--color-error);
+}
+
+.remote-cli-manual {
+  color: var(--text-dim);
+}
+
 .remote-advanced-details {
   margin: var(--space-lg) var(--space-xl) 0;
   border: var(--btn-border-width) solid var(--border);
@@ -790,6 +828,10 @@
 
   .remote-tunnel-actions .btn {
     min-height: 36px;
+  }
+
+  .remote-cli-detection {
+    margin: 0 var(--space-lg) var(--space-md);
   }
 }
 

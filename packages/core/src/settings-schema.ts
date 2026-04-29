@@ -80,6 +80,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   overlapIgnorePaths: [],
   autoMerge: true,
   mergeStrategy: "direct",
+  requirePrApproval: false,
   pushAfterMerge: false,
   pushRemote: "origin",
   unavailableNodePolicy: "block",

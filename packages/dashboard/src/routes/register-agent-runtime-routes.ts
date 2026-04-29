@@ -432,7 +432,8 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
             }
           }
 
-          if (nextState === "active" && projectHeartbeatMonitor) {
+          const isHeartbeatEnabled = currentAgent.runtimeConfig?.enabled !== false;
+          if (nextState === "active" && isHeartbeatEnabled && projectHeartbeatMonitor) {
             await projectHeartbeatMonitor.executeHeartbeat({
               agentId,
               source: "on_demand",

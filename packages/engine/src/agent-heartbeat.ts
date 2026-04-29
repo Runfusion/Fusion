@@ -17,7 +17,7 @@
  * - onTerminated: Called when an unresponsive agent is terminated
  */
 
-import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask, BlockedStateSnapshot, RunMutationContext, Settings } from "@fusion/core";
+import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask, BlockedStateSnapshot, RunMutationContext, Settings, AgentConfigRevision } from "@fusion/core";
 import { buildExecutionMemoryInstructions, isEphemeralAgent, hasAgentIdentity } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
@@ -1750,11 +1750,14 @@ function isHeartbeatManaged(agent: Agent): boolean {
 /**
  * HeartbeatTriggerScheduler manages timer-based heartbeat triggers for agents.
  *
- * State is the source of truth: state ∈ {active, running} on a non-ephemeral
- * agent arms the timer; any other state or any ephemeral agent doesn't. The
- * `runtimeConfig.enabled` flag is no longer consulted here — pause/resume
- * happens through `agent.state`, and the `agent:updated` listener arms or
- * clears the timer on transitions.
+ * Timers are armed only for durable agents where all of the following hold:
+ * - `runtimeConfig.enabled !== false`
+ * - `state ∈ {active, running, idle}`
+ *
+ * Any other state, or any ephemeral/task-worker agent, clears the timer.
+ * State changes and heartbeat config updates are observed via AgentStore
+ * lifecycle events, while callers can still explicitly register existing
+ * agents during startup bootstrap.
  *
  * Other config knobs still apply:
  * - `heartbeatIntervalMs`: Timer interval (default 1h)
@@ -1768,7 +1771,9 @@ export class HeartbeatTriggerScheduler {
   private registrationEpochs: Map<string, number> = new Map();
   private running = false;
   private assignedListener: ((agent: import("@fusion/core").Agent, taskId: string) => void) | null = null;
+  private createdListener: ((agent: import("@fusion/core").Agent) => void) | null = null;
   private updatedListener: ((agent: import("@fusion/core").Agent) => void) | null = null;
+  private configRevisionListener: ((agentId: string, revision: AgentConfigRevision) => void) | null = null;
   private deletedListener: ((agentId: string) => void) | null = null;
 
   constructor(store: AgentStore, callback: TriggerCallback, taskStore?: TaskStore) {
@@ -1779,7 +1784,7 @@ export class HeartbeatTriggerScheduler {
 
   /**
    * Start the scheduler. Enables assignment watching.
-   * Individual agents must be registered separately via registerAgent().
+   * Existing agents still need one startup bootstrap pass via registerAgent().
    */
   start(): void {
     if (this.running) return;
@@ -1826,9 +1831,10 @@ export class HeartbeatTriggerScheduler {
    * @param config - Per-agent heartbeat config
    */
   registerAgent(agentId: string, config: AgentHeartbeatConfig): void {
-    // State drives whether an agent ticks; this method no longer honors
-    // `config.enabled` as a registration gate. Callers filter based on
-    // state + ephemeral classification before calling through.
+    if (config.enabled === false) {
+      this.unregisterAgent(agentId);
+      return;
+    }
 
     // Apply default interval if not explicitly configured
     // This ensures agents with heartbeat monitoring enabled but no explicit interval
@@ -2042,45 +2048,111 @@ export class HeartbeatTriggerScheduler {
     }
   }
 
+  private isTimerEligibleAgent(agent: Agent): boolean {
+    return isHeartbeatManaged(agent)
+      && agent.runtimeConfig?.enabled !== false
+      && isTickableState(agent.state);
+  }
+
+  private getAgentTimerConfig(agent: Agent): AgentHeartbeatConfig {
+    const rc = (agent.runtimeConfig ?? {}) as {
+      enabled?: boolean;
+      heartbeatIntervalMs?: number;
+      maxConcurrentRuns?: number;
+    };
+    return {
+      enabled: rc.enabled,
+      heartbeatIntervalMs: rc.heartbeatIntervalMs,
+      maxConcurrentRuns: rc.maxConcurrentRuns,
+    };
+  }
+
+  private syncTimerForAgent(agent: Agent, reason: string): void {
+    if (!this.isTimerEligibleAgent(agent)) {
+      this.unregisterAgent(agent.id);
+      return;
+    }
+
+    if (this.timers.has(agent.id)) {
+      // Already ticking — non-config updates should not reset the interval.
+      return;
+    }
+
+    this.registerAgent(agent.id, this.getAgentTimerConfig(agent));
+    heartbeatLog.log(`Timer armed for ${agent.id} (${reason})`);
+  }
+
+  private async syncTimerForAgentFromStore(agentId: string, reason: string): Promise<void> {
+    const agent = await this.store.getAgent(agentId);
+    if (!agent) {
+      this.unregisterAgent(agentId);
+      return;
+    }
+
+    if (!this.isTimerEligibleAgent(agent)) {
+      this.unregisterAgent(agentId);
+      return;
+    }
+
+    this.registerAgent(agent.id, this.getAgentTimerConfig(agent));
+    heartbeatLog.log(`Timer refreshed for ${agent.id} (${reason})`);
+  }
+
+  private didHeartbeatScheduleChange(revision: AgentConfigRevision): boolean {
+    const before = (revision.before.runtimeConfig ?? {}) as Record<string, unknown>;
+    const after = (revision.after.runtimeConfig ?? {}) as Record<string, unknown>;
+
+    const pickScheduleFields = (runtimeConfig: Record<string, unknown>) => ({
+      enabled: runtimeConfig.enabled,
+      heartbeatIntervalMs: runtimeConfig.heartbeatIntervalMs,
+      maxConcurrentRuns: runtimeConfig.maxConcurrentRuns,
+    });
+
+    return JSON.stringify(pickScheduleFields(before)) !== JSON.stringify(pickScheduleFields(after));
+  }
+
   private watchAgentLifecycle(): void {
-    if (this.updatedListener || this.deletedListener) return;
+    if (this.createdListener || this.updatedListener || this.configRevisionListener || this.deletedListener) return;
+
+    this.createdListener = (agent) => {
+      this.syncTimerForAgent(agent, `created:${agent.state}`);
+    };
 
     // State-driven registration: when an agent transitions into a tickable
-    // state (active/running) arm the timer; transitioning out clears it.
+    // state arm the timer; transitioning out clears it. Existing timers are
+    // left alone here so unrelated agent updates do not reset the interval.
     this.updatedListener = (agent) => {
-      if (!isHeartbeatManaged(agent) || !isTickableState(agent.state)) {
-        this.unregisterAgent(agent.id);
+      this.syncTimerForAgent(agent, `state:${agent.state}`);
+    };
+    this.configRevisionListener = (agentId, revision) => {
+      if (!this.didHeartbeatScheduleChange(revision)) {
         return;
       }
-      if (this.timers.has(agent.id)) {
-        // Already ticking — re-registering would reset the interval mid-cycle
-        // on every unrelated agent update.
-        return;
-      }
-      const rc = (agent.runtimeConfig ?? {}) as {
-        heartbeatIntervalMs?: number;
-        maxConcurrentRuns?: number;
-      };
-      this.registerAgent(agent.id, {
-        heartbeatIntervalMs: rc.heartbeatIntervalMs,
-        maxConcurrentRuns: rc.maxConcurrentRuns,
-      });
-      heartbeatLog.log(
-        `State-driven registration: ${agent.id} is ${agent.state} — timer armed`,
-      );
+
+      void this.syncTimerForAgentFromStore(agentId, "runtime-config-updated");
     };
     this.deletedListener = (agentId) => {
       this.unregisterAgent(agentId);
     };
 
+    this.store.on("agent:created", this.createdListener);
     this.store.on("agent:updated", this.updatedListener);
+    this.store.on("agent:configRevision", this.configRevisionListener);
     this.store.on("agent:deleted", this.deletedListener);
   }
 
   private unwatchAgentLifecycle(): void {
+    if (this.createdListener) {
+      this.store.off("agent:created", this.createdListener);
+      this.createdListener = null;
+    }
     if (this.updatedListener) {
       this.store.off("agent:updated", this.updatedListener);
       this.updatedListener = null;
+    }
+    if (this.configRevisionListener) {
+      this.store.off("agent:configRevision", this.configRevisionListener);
+      this.configRevisionListener = null;
     }
     if (this.deletedListener) {
       this.store.off("agent:deleted", this.deletedListener);

@@ -268,6 +268,8 @@ The canonical persisted shape is a nested `remoteAccess` object.
 
 Use **[Remote Access runbook](./remote-access.md)** for setup prerequisites (Tailscale/Cloudflare), tokenized login-link security caveats, and operational troubleshooting. Keep this section as a schema reference.
 
+When `remoteAccess.activeProvider` is `cloudflare`, the Settings UI fetches `/api/remote/status` and surfaces `cloudflaredAvailable` to show installed/missing state plus a one-click `POST /api/remote/install-cloudflared` action.
+
 | Setting | Type | Default | Description |
 |---|---|---:|---|
 | `remoteAccess.enabled` | `boolean` | `false` | Master toggle for remote access orchestration. |

@@ -42,6 +42,8 @@ import {
 } from "@fusion/core";
 import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
 import QRCode from "qrcode";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { ApiError, badRequest } from "../api-error.js";
 import { generateRemoteToken, issueRemoteAuthToken, maskRemoteToken } from "../remote-auth.js";
 import { invalidateAllGlobalSettingsCaches } from "../project-store-resolver.js";
@@ -57,6 +59,44 @@ interface SettingsMemoryRouteDeps {
 export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: SettingsMemoryRouteDeps): void {
   const { router, options, store, runtimeLogger, getProjectContext, rethrowAsApiError } = ctx;
   const { githubToken, validateModelPresets, sanitizeOverlapIgnorePaths, discoverDashboardPiExtensions } = deps;
+  const execFileAsync = promisify(execFile);
+
+  async function isCloudflaredAvailable(): Promise<boolean> {
+    const command = process.platform === "win32" ? "where" : "which";
+    try {
+      await execFileAsync(command, ["cloudflared"]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function resolveCloudflaredInstallCommand(): string {
+    if (process.platform === "darwin") {
+      return "brew install cloudflared";
+    }
+    if (process.platform === "win32") {
+      return "winget install Cloudflare.cloudflared";
+    }
+    return "curl -L --output /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 && chmod +x /usr/local/bin/cloudflared";
+  }
+
+  async function installCloudflared(): Promise<{ success: boolean; command: string; error?: string }> {
+    const command = resolveCloudflaredInstallCommand();
+    const shell = process.platform === "win32" ? "cmd" : "sh";
+    const shellArgs = process.platform === "win32" ? ["/c", command] : ["-c", command];
+
+    try {
+      await execFileAsync(shell, shellArgs, { timeout: 120_000 });
+      return { success: true, command };
+    } catch (error) {
+      return {
+        success: false,
+        command,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
 
   function resolveRemoteBaseUrl(
     remoteAccess: NonNullable<Awaited<ReturnType<typeof store.getSettings>>["remoteAccess"]>,
@@ -422,12 +462,19 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       const tunnelStatus = manager?.getStatus();
       const restore = engine?.getRemoteTunnelRestoreDiagnostics();
 
+      const activeProvider = tunnelStatus?.provider ?? settings.remoteAccess?.activeProvider ?? null;
+      let cloudflaredAvailable: boolean | null = null;
+      if (activeProvider === "cloudflare") {
+        cloudflaredAvailable = await isCloudflaredAvailable();
+      }
+
       res.json({
-        provider: tunnelStatus?.provider ?? settings.remoteAccess?.activeProvider ?? null,
+        provider: activeProvider,
         state: tunnelStatus?.state ?? "stopped",
         url: tunnelStatus?.url ?? null,
         lastError: tunnelStatus?.lastError?.message ?? null,
         lastErrorCode: tunnelStatus?.lastError?.code ?? null,
+        cloudflaredAvailable,
         restore: restore ?? {
           outcome: "skipped",
           reason: "not_attempted",
@@ -438,6 +485,16 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
       rethrowAsApiError(err, "Failed to load remote status");
+    }
+  });
+
+  router.post("/remote/install-cloudflared", async (_req, res) => {
+    try {
+      const result = await installCloudflared();
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to install cloudflared");
     }
   });
 

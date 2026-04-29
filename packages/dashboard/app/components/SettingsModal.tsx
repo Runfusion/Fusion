@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense, type MouseEvent } from "react";
-import { Globe, Folder, RefreshCw, Star, HelpCircle, Loader2 } from "lucide-react";
+import { Globe, Folder, RefreshCw, Star, HelpCircle, Loader2, CheckCircle, AlertTriangle } from "lucide-react";
 import {
   THINKING_LEVELS,
   getErrorMessage,
@@ -10,7 +10,7 @@ import {
   resolveTitleSummarizerSettingsModel,
 } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, AgentPromptsConfig, ThinkingLevel } from "@fusion/core";
-import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotesDetailed, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, updateRemoteSettings, fetchRemoteStatus, startRemoteTunnel, stopRemoteTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteQr, fetchRemoteUrl } from "../api";
+import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotesDetailed, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, updateRemoteSettings, fetchRemoteStatus, installCloudflared, startRemoteTunnel, stopRemoteTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteQr, fetchRemoteUrl } from "../api";
 import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemoteDetailed, RemoteSettings, RemoteStatus, UpdateCheckResponse } from "../api";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
@@ -424,6 +424,8 @@ export function SettingsModal({
   // Remote access state
   const [remoteStatus, setRemoteStatus] = useState<RemoteStatus | null>(null);
   const [remoteBusyAction, setRemoteBusyAction] = useState<string | null>(null);
+  const [cloudflaredInstalling, setCloudflaredInstalling] = useState(false);
+  const [cloudflaredInstallError, setCloudflaredInstallError] = useState<string | null>(null);
   const [remoteAuthLinkTokenType, setRemoteAuthLinkTokenType] = useState<"persistent" | "short-lived">("persistent");
   const [remoteUrlPreview, setRemoteUrlPreview] = useState<{ url: string; expiresAt: string | null; tokenType: "persistent" | "short-lived" } | null>(null);
   const [remoteQrSvg, setRemoteQrSvg] = useState<string | null>(null);
@@ -1537,6 +1539,35 @@ export function SettingsModal({
       setRemoteBusyAction(null);
     }
   }, [addToast, loadRemoteData]);
+
+  const cloudflaredManualInstallCommand = useCallback(() => {
+    if (typeof navigator !== "undefined" && navigator.userAgent.includes("Windows")) {
+      return "winget install Cloudflare.cloudflared";
+    }
+    if (typeof navigator !== "undefined" && /(Mac|iPhone|iPad|iPod)/i.test(navigator.platform)) {
+      return "brew install cloudflared";
+    }
+    return "curl -L --output /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 && chmod +x /usr/local/bin/cloudflared";
+  }, []);
+
+  const handleInstallCloudflared = useCallback(async () => {
+    setCloudflaredInstalling(true);
+    setCloudflaredInstallError(null);
+    try {
+      const result = await installCloudflared(projectId);
+      if (!result.success) {
+        setCloudflaredInstallError(result.error ?? "Installation failed");
+        return;
+      }
+      const status = await fetchRemoteStatus(projectId);
+      setRemoteStatus(status);
+      addToast("cloudflared installed successfully", "success");
+    } catch (err) {
+      setCloudflaredInstallError(err instanceof Error ? err.message : "Installation failed");
+    } finally {
+      setCloudflaredInstalling(false);
+    }
+  }, [addToast, projectId]);
 
   /** Render a scope indicator banner for the current section with theme-aware Lucide icons */
   const renderScopeBanner = () => {
@@ -2972,6 +3003,27 @@ export function SettingsModal({
                 </small>
               </details>
             </div>
+            {form.mergeStrategy === "pull-request" && (
+              <div className="form-group">
+                <label htmlFor="requirePrApproval" className="checkbox-label">
+                  <input
+                    id="requirePrApproval"
+                    type="checkbox"
+                    checked={form.requirePrApproval ?? false}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, requirePrApproval: e.target.checked }))
+                    }
+                  />
+                  Wait for an approving review before merging the PR
+                </label>
+                <details className="settings-option-details">
+                  <summary>More details</summary>
+                  <small>
+                    When enabled, Fusion holds the PR in In Review until at least one approving GitHub review has been submitted. Useful on free private repos where GitHub&apos;s required-reviewer enforcement isn&apos;t available — without this, a fresh PR with no required checks is treated as immediately mergeable.
+                  </small>
+                </details>
+              </div>
+            )}
             <div className="form-group">
               <label htmlFor="includeTaskIdInCommit" className="checkbox-label">
                 <input
@@ -4050,6 +4102,32 @@ export function SettingsModal({
               {!activeProvider && <small>Select a provider above to configure remote access.</small>}
             </div>
 
+            {activeProvider === "cloudflare" && remoteStatus?.cloudflaredAvailable === true && (
+              <div className="remote-cli-detection remote-cli-detection--available" role="status">
+                <CheckCircle aria-hidden="true" />
+                <span>cloudflared is installed</span>
+              </div>
+            )}
+
+            {activeProvider === "cloudflare" && remoteStatus?.cloudflaredAvailable === false && (
+              <div className="remote-cli-detection remote-cli-detection--missing" role="status">
+                <AlertTriangle aria-hidden="true" />
+                <div className="remote-cli-detection-content">
+                  <span>cloudflared is not installed</span>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={cloudflaredInstalling || remoteBusyAction !== null}
+                    onClick={() => void handleInstallCloudflared()}
+                  >
+                    {cloudflaredInstalling ? "Installing…" : "Install cloudflared"}
+                  </button>
+                  {cloudflaredInstallError && <small className="remote-cli-install-error">{cloudflaredInstallError}</small>}
+                  <small className="remote-cli-manual">Manual install: <code>{cloudflaredManualInstallCommand()}</code></small>
+                </div>
+              </div>
+            )}
+
             {activeProvider && (
               <div className="form-group remote-provider-settings">
                 {activeProvider === "tailscale" ? (
@@ -4108,32 +4186,37 @@ export function SettingsModal({
                   {remoteBusyAction === "stop" ? "Stopping…" : "Stop Tunnel"}
                 </button>
               ) : (
-                <button type="button" className="btn btn-primary" disabled={!activeProvider || remoteBusyAction !== null} onClick={() => void runRemoteAction("start", async () => {
-                  const formState = form as Record<string, unknown>;
-                  const savePayload: Partial<RemoteSettings> = {
-                    remoteActiveProvider: activeProvider,
-                    remoteTailscaleEnabled: activeProvider === "tailscale",
-                    remoteTailscaleHostname: String(formState.remoteTailscaleHostname ?? ""),
-                    // Server overrides this with req.socket.localPort
-                    // when starting the tunnel; the value sent here is
-                    // only a fallback if that override doesn't fire.
-                    remoteTailscaleTargetPort: Number(formState.remoteTailscaleTargetPort ?? 4040),
-                    remoteTailscaleAcceptRoutes: Boolean(formState.remoteTailscaleAcceptRoutes),
-                    remoteCloudflareEnabled: activeProvider === "cloudflare",
-                    remoteCloudflareQuickTunnel: Boolean(formState.remoteCloudflareQuickTunnel ?? true),
-                    remoteCloudflareTunnelName: String(formState.remoteCloudflareTunnelName ?? ""),
-                    remoteCloudflareTunnelToken: (formState.remoteCloudflareTunnelToken as string | null) || null,
-                    remoteCloudflareIngressUrl: String(formState.remoteCloudflareIngressUrl ?? ""),
-                    remoteShortLivedEnabled: Boolean(formState.remoteShortLivedEnabled),
-                    remoteShortLivedTtlMs: Number(formState.remoteShortLivedTtlMs ?? 900000),
-                    remoteRememberLastRunning: Boolean(formState.remoteRememberLastRunning),
-                  };
-                  await updateRemoteSettings(savePayload, projectId);
-                  await startRemoteTunnel(projectId);
-                  addToast("Remote tunnel started", "success");
-                })}>
-                  {remoteBusyAction === "start" ? "Starting…" : "Start Tunnel"}
-                </button>
+                <>
+                  <button type="button" className="btn btn-primary" disabled={!activeProvider || remoteBusyAction !== null} onClick={() => void runRemoteAction("start", async () => {
+                    const formState = form as Record<string, unknown>;
+                    const savePayload: Partial<RemoteSettings> = {
+                      remoteActiveProvider: activeProvider,
+                      remoteTailscaleEnabled: activeProvider === "tailscale",
+                      remoteTailscaleHostname: String(formState.remoteTailscaleHostname ?? ""),
+                      // Server overrides this with req.socket.localPort
+                      // when starting the tunnel; the value sent here is
+                      // only a fallback if that override doesn't fire.
+                      remoteTailscaleTargetPort: Number(formState.remoteTailscaleTargetPort ?? 4040),
+                      remoteTailscaleAcceptRoutes: Boolean(formState.remoteTailscaleAcceptRoutes),
+                      remoteCloudflareEnabled: activeProvider === "cloudflare",
+                      remoteCloudflareQuickTunnel: Boolean(formState.remoteCloudflareQuickTunnel ?? true),
+                      remoteCloudflareTunnelName: String(formState.remoteCloudflareTunnelName ?? ""),
+                      remoteCloudflareTunnelToken: (formState.remoteCloudflareTunnelToken as string | null) || null,
+                      remoteCloudflareIngressUrl: String(formState.remoteCloudflareIngressUrl ?? ""),
+                      remoteShortLivedEnabled: Boolean(formState.remoteShortLivedEnabled),
+                      remoteShortLivedTtlMs: Number(formState.remoteShortLivedTtlMs ?? 900000),
+                      remoteRememberLastRunning: Boolean(formState.remoteRememberLastRunning),
+                    };
+                    await updateRemoteSettings(savePayload, projectId);
+                    await startRemoteTunnel(projectId);
+                    addToast("Remote tunnel started", "success");
+                  })}>
+                    {remoteBusyAction === "start" ? "Starting…" : "Start Tunnel"}
+                  </button>
+                  {activeProvider === "cloudflare" && remoteStatus?.cloudflaredAvailable === false ? (
+                    <small className="field-error">cloudflared must be installed to start the tunnel</small>
+                  ) : null}
+                </>
               )}
             </div>
 

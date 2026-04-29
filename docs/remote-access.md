@@ -70,6 +70,8 @@ Cloudflare **Quick Tunnel** startup gates (`quickTunnel = true`):
 
 No Cloudflare account, tunnel token, named tunnel, or pre-created ingress URL is required.
 
+Dashboard note: in Settings → Remote Access, selecting Cloudflare now performs a proactive `cloudflared` CLI detection check and shows a one-click **Install cloudflared** action (with manual command fallback) if the binary is missing.
+
 Runtime command used by engine:
 
 - `cloudflared tunnel --url http://localhost:<dashboardPort>`

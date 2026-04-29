@@ -98,8 +98,6 @@ export class InProcessRuntime
   private triageProcessor?: TriageProcessor;
   private messageStore?: MessageStore;
   private concurrencyChangedListener?: (state: { globalMaxConcurrent: number }) => void;
-  private agentCreatedListener?: (agent: import("@fusion/core").Agent) => void;
-  private agentUpdatedListener?: (agent: import("@fusion/core").Agent, previousState?: import("@fusion/core").AgentState) => void;
   /** Set of agent IDs with scheduled ephemeral cleanup (prevents duplicate deletion) */
   private pendingEphemeralDeletions = new Set<string>();
   /** Map of agent IDs to their cleanup timer IDs */
@@ -506,43 +504,14 @@ export class InProcessRuntime
         );
         this.triggerScheduler.start();
 
-        // Dynamic registration follows per-agent heartbeat enablement and tickable state.
-        // Non-ephemeral agents are managed unless runtimeConfig.enabled is explicitly false.
-        // Paused/error/terminated states are never timer-armed.
+        // Startup bootstrap for already-persisted agents. Ongoing lifecycle
+        // updates are handled inside HeartbeatTriggerScheduler itself.
         const isHeartbeatEnabledAgent = (agent: import("@fusion/core").Agent) =>
           !isEphemeralAgent(agent) && agent.runtimeConfig?.enabled !== false;
         const isTickableHeartbeatState = (state: import("@fusion/core").AgentState) =>
           state === "active" || state === "running" || state === "idle";
         const isTimerManagedAgent = (agent: import("@fusion/core").Agent) =>
           isHeartbeatEnabledAgent(agent) && isTickableHeartbeatState(agent.state);
-
-        this.agentCreatedListener = (agent) => {
-          if (!this.triggerScheduler) return;
-          if (!isTimerManagedAgent(agent)) return;
-          const rc = agent.runtimeConfig;
-          this.triggerScheduler.registerAgent(agent.id, {
-            heartbeatIntervalMs: rc?.heartbeatIntervalMs as number | undefined,
-            maxConcurrentRuns: rc?.maxConcurrentRuns as number | undefined,
-          });
-          runtimeLog.log(`Registered new agent ${agent.id} for heartbeat triggers`);
-        };
-        this.agentStore.on("agent:created", this.agentCreatedListener);
-
-        this.agentUpdatedListener = (agent) => {
-          if (!this.triggerScheduler) return;
-          if (!isTimerManagedAgent(agent)) {
-            this.triggerScheduler.unregisterAgent(agent.id);
-            runtimeLog.log(`Unregistered agent ${agent.id} from heartbeat triggers`);
-            return;
-          }
-          const rc = agent.runtimeConfig;
-          this.triggerScheduler.registerAgent(agent.id, {
-            heartbeatIntervalMs: rc?.heartbeatIntervalMs as number | undefined,
-            maxConcurrentRuns: rc?.maxConcurrentRuns as number | undefined,
-          });
-          runtimeLog.log(`Re-registered agent ${agent.id} for heartbeat triggers`);
-        };
-        this.agentStore.on("agent:updated", this.agentUpdatedListener);
 
         // Listen for agent state transitions to clean up terminated ephemeral agents.
         // This catches cases where ephemeral agents (task-workers, spawned children) are
@@ -595,6 +564,7 @@ export class InProcessRuntime
             if (!isTimerManagedAgent(agent)) continue;
             const rc = agent.runtimeConfig;
             this.triggerScheduler.registerAgent(agent.id, {
+              enabled: rc?.enabled as boolean | undefined,
               heartbeatIntervalMs: rc?.heartbeatIntervalMs as number | undefined,
               maxConcurrentRuns: rc?.maxConcurrentRuns as number | undefined,
             });
@@ -792,16 +762,6 @@ export class InProcessRuntime
 
       // 3. Remove agent event listeners (before stopping trigger scheduler)
       // Guard on this.agentStore being defined - it may not exist if AgentStore init failed
-      if (this.agentCreatedListener && this.agentStore) {
-        this.agentStore.off("agent:created", this.agentCreatedListener);
-        this.agentCreatedListener = undefined;
-        runtimeLog.log("AgentStore agent:created listener removed");
-      }
-      if (this.agentUpdatedListener && this.agentStore) {
-        this.agentStore.off("agent:updated", this.agentUpdatedListener);
-        this.agentUpdatedListener = undefined;
-        runtimeLog.log("AgentStore agent:updated listener removed");
-      }
       if (this.ephemeralTerminationListener && this.agentStore) {
         this.agentStore.off("agent:stateChanged", this.ephemeralTerminationListener);
         this.ephemeralTerminationListener = undefined;

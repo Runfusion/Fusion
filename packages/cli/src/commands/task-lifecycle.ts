@@ -230,6 +230,18 @@ export async function processPullRequestMergeTask(
     return "merged";
   }
 
+  // Optional approval gate. GitHub's `required: true` flag for checks only
+  // flows from branch protection (Pro feature on private repos), so on free
+  // private repos every fresh PR is "merge ready" and would auto-squash
+  // immediately. `requirePrApproval` lets users keep PR mode as "open the
+  // PR, wait for me to approve and merge it" by holding the merge until
+  // reviewDecision === "APPROVED".
+  const settings = await store.getSettings();
+  if (settings.requirePrApproval && mergeStatus.reviewDecision !== "APPROVED") {
+    await store.updateTask(task.id, { status: "awaiting-pr-checks" });
+    return "waiting";
+  }
+
   if (!mergeStatus.mergeReady) {
     if (mergeStatus.prInfo.status === "open") {
       await store.updateTask(task.id, { status: "awaiting-pr-checks" });

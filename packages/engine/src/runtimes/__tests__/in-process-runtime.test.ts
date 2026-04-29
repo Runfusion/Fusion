@@ -862,24 +862,46 @@ describe("InProcessRuntime", () => {
       expect(scheduler!.getRegisteredAgents()).not.toContain(agent.id);
     });
 
-    it("re-registers an existing agent when agent:updated event is emitted", async () => {
-      // Create a new agent
+    it("does not reset an armed timer on unrelated agent updates", async () => {
       const store = getAgentStore(runtime);
+      const monitor = runtime.getHeartbeatMonitor();
+      expect(monitor).toBeDefined();
+
+      const executeHeartbeatSpy = vi
+        .spyOn(monitor!, "executeHeartbeat")
+        .mockResolvedValue({ id: "run-update-timer-stability" } as any);
+
       const agent = await store.createAgent({
         name: "test-agent-update",
         role: "executor",
+        runtimeConfig: {
+          enabled: true,
+          heartbeatIntervalMs: 1000,
+        },
       });
 
       const scheduler = runtime.getTriggerScheduler();
       expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
 
-      // Update the agent
+      await vi.advanceTimersByTimeAsync(400);
       await store.updateAgent(agent.id, {
         name: "test-agent-update-renamed",
       });
 
-      // Verify the agent is still registered (re-registration succeeded)
-      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
+      await vi.advanceTimersByTimeAsync(599);
+      expect(executeHeartbeatSpy).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.waitFor(() => {
+        expect(executeHeartbeatSpy).toHaveBeenCalledTimes(1);
+      });
+
+      expect(executeHeartbeatSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId: agent.id,
+          source: "timer",
+        }),
+      );
     });
 
     it("unregisters an agent when enabled is set to false in update", async () => {
@@ -905,6 +927,41 @@ describe("InProcessRuntime", () => {
 
       // Verify the agent was unregistered
       expect(scheduler!.getRegisteredAgents()).not.toContain(agent.id);
+    });
+
+    it("re-arms the timer when heartbeat interval changes", async () => {
+      const store = getAgentStore(runtime);
+      const monitor = runtime.getHeartbeatMonitor();
+      expect(monitor).toBeDefined();
+
+      const executeHeartbeatSpy = vi
+        .spyOn(monitor!, "executeHeartbeat")
+        .mockResolvedValue({ id: "run-interval-change" } as any);
+
+      const agent = await store.createAgent({
+        name: "interval-change-agent",
+        role: "executor",
+        runtimeConfig: {
+          enabled: true,
+          heartbeatIntervalMs: 1000,
+        },
+      });
+
+      await vi.advanceTimersByTimeAsync(400);
+      await store.updateAgent(agent.id, {
+        runtimeConfig: {
+          enabled: true,
+          heartbeatIntervalMs: 2000,
+        },
+      });
+
+      await vi.advanceTimersByTimeAsync(1599);
+      expect(executeHeartbeatSpy).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(401);
+      await vi.waitFor(() => {
+        expect(executeHeartbeatSpy).toHaveBeenCalledTimes(1);
+      });
     });
 
     it("clears timers on pause and re-arms from resume without stale pre-pause firing", async () => {

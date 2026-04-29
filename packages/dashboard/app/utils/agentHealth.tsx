@@ -3,11 +3,10 @@ import { Bot, Heart, Activity, Pause, Square } from "lucide-react";
 import type { Agent } from "../api";
 import { resolveHeartbeatIntervalMs } from "./heartbeatIntervals";
 
-// Heartbeat scheduling is driven by `agent.state` on the server — active and
-// running tick, everything else does not. There is no separate "heartbeat
-// enabled" flag surfaced in the UI, so this file derives freshness straight
-// from state + lastHeartbeatAt and ignores any legacy `runtimeConfig.enabled`
-// value that may still be persisted on older agent records.
+// Heartbeat scheduling depends on both state and `runtimeConfig.enabled`.
+// Durable agents with heartbeat disabled should render distinctly from healthy
+// or merely-starting agents, while task-worker agents still follow their
+// execution lifecycle regardless of the scheduler toggle.
 
 /**
  * Grace multiplier applied to an agent's configured interval before flagging
@@ -86,6 +85,7 @@ function isTaskWorkerAgent(agent: AgentHealthInput): boolean {
  * - "Error" — agent.state === "error" (uses lastError if available)
  * - "Paused" — agent.state === "paused" (uses pauseReason if available)
  * - "Running" — agent.state === "running", or a detected task worker in "active"
+ * - "Heartbeat Disabled" — durable agent with `runtimeConfig.enabled === false`
  * - "Starting..." — state === "active" && no lastHeartbeatAt
  * - "Idle" — state !== "active" && no lastHeartbeatAt
  * - "Healthy" — heartbeat is fresh within 2× the configured interval
@@ -97,6 +97,7 @@ function isTaskWorkerAgent(agent: AgentHealthInput): boolean {
 export function getAgentHealthStatus(agent: AgentHealthInput): AgentHealthStatus {
   const { state, lastHeartbeatAt, lastError, pauseReason, runtimeConfig } = agent;
   const isTaskWorker = isTaskWorkerAgent(agent);
+  const isHeartbeatEnabled = isTaskWorker || runtimeConfig?.enabled !== false;
 
   // Terminal states - these always take precedence
   if (state === "terminated") {
@@ -133,6 +134,15 @@ export function getAgentHealthStatus(agent: AgentHealthInput): AgentHealthStatus
       icon: <Activity size={14} />,
       color: "var(--state-active-text)",
       stateDerived: true,
+    };
+  }
+
+  if (!isHeartbeatEnabled) {
+    return {
+      label: "Heartbeat Disabled",
+      icon: <Pause size={14} />,
+      color: "var(--state-paused-text)",
+      stateDerived: false,
     };
   }
 

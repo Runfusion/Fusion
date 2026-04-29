@@ -462,6 +462,7 @@ export interface RemoteStatus {
   url: string | null;
   lastError: string | null;
   lastErrorCode?: string | null;
+  cloudflaredAvailable?: boolean | null;
   restore?: {
     outcome: "applied" | "skipped" | "failed";
     reason: string;
@@ -487,6 +488,12 @@ export function updateRemoteSettings(
 
 export function fetchRemoteStatus(projectId?: string): Promise<RemoteStatus> {
   return api<RemoteStatus>(withProjectId("/remote/status", projectId));
+}
+
+export function installCloudflared(projectId?: string): Promise<{ success: boolean; command: string; error?: string }> {
+  return api(withProjectId("/remote/install-cloudflared", projectId), {
+    method: "POST",
+  });
 }
 
 export function activateRemoteProvider(provider: "tailscale" | "cloudflare", projectId?: string): Promise<{ activeProvider: "tailscale" | "cloudflare" }> {

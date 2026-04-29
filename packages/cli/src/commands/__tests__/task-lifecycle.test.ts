@@ -26,11 +26,12 @@ interface MockTask {
   column: string;
 }
 
-function makeStore(task: MockTask) {
+function makeStore(task: MockTask, settings: Record<string, unknown> = {}) {
   const emitter = new EventEmitter();
   const updates: Array<{ id: string; patch: Record<string, unknown> }> = [];
   return Object.assign(emitter, {
     getTask: vi.fn().mockResolvedValue(task),
+    getSettings: vi.fn().mockResolvedValue({ requirePrApproval: false, ...settings }),
     updateTask: vi.fn(async (id: string, patch: Record<string, unknown>) => {
       updates.push({ id, patch });
     }),
@@ -186,5 +187,151 @@ describe("processPullRequestMergeTask", () => {
     ).rejects.toThrow(new RegExp(`Failed to push branch "${branch}" to origin`));
 
     expect(github.createPr).not.toHaveBeenCalled();
+  });
+
+  describe("requirePrApproval", () => {
+    function makeReadyMergeStatus(reviewDecision: string | null) {
+      const prInfo = {
+        number: 100,
+        url: "https://github.com/x/y/pull/100",
+        status: "open" as const,
+        headBranch: "fusion/fn-9100",
+        baseBranch: "main",
+      };
+      // Simulate the "free private repo" case: GitHub reports no required
+      // checks and no blocking review state, so isPrMergeReady returns
+      // mergeReady: true. Without the gate this would auto-merge.
+      return {
+        prInfo,
+        reviewDecision,
+        checks: [],
+        mergeReady: true,
+        blockingReasons: [],
+      };
+    }
+
+    it("holds the merge when requirePrApproval is true and reviewDecision is not APPROVED", async () => {
+      const task: MockTask = {
+        id: "FN-9100",
+        title: "test",
+        description: "desc",
+        column: "in-review",
+        prInfo: {
+          number: 100,
+          url: "https://github.com/x/y/pull/100",
+          status: "open",
+          headBranch: "fusion/fn-9100",
+          baseBranch: "main",
+        },
+      };
+      const store = makeStore(task, { requirePrApproval: true });
+
+      const github = {
+        findPrForBranch: vi.fn(),
+        createPr: vi.fn(),
+        getPrMergeStatus: vi.fn(async () => makeReadyMergeStatus(null)),
+        mergePr: vi.fn(),
+      };
+
+      const result = await processPullRequestMergeTask(
+        store as never,
+        "/repo",
+        task.id,
+        github as never,
+        () => undefined,
+      );
+
+      expect(result).toBe("waiting");
+      expect(github.mergePr).not.toHaveBeenCalled();
+      const lastUpdate = (store as { _updates: Array<{ patch: Record<string, unknown> }> })._updates.at(-1);
+      expect(lastUpdate?.patch).toEqual({ status: "awaiting-pr-checks" });
+    });
+
+    it("merges when requirePrApproval is true and reviewDecision is APPROVED", async () => {
+      const task: MockTask = {
+        id: "FN-9101",
+        title: "test",
+        description: "desc",
+        column: "in-review",
+        prInfo: {
+          number: 100,
+          url: "https://github.com/x/y/pull/100",
+          status: "open",
+          headBranch: "fusion/fn-9101",
+          baseBranch: "main",
+        },
+      };
+      const store = makeStore(task, { requirePrApproval: true });
+
+      const merged = {
+        number: 100,
+        url: "https://github.com/x/y/pull/100",
+        status: "merged" as const,
+        headBranch: "fusion/fn-9101",
+        baseBranch: "main",
+      };
+      const github = {
+        findPrForBranch: vi.fn(),
+        createPr: vi.fn(),
+        getPrMergeStatus: vi.fn(async () => makeReadyMergeStatus("APPROVED")),
+        mergePr: vi.fn(async () => merged),
+      };
+
+      const result = await processPullRequestMergeTask(
+        store as never,
+        "/repo",
+        task.id,
+        github as never,
+        () => undefined,
+      );
+
+      expect(result).toBe("merged");
+      expect(github.mergePr).toHaveBeenCalledWith({ number: 100, method: "squash" });
+    });
+
+    it("preserves existing behavior when requirePrApproval is false", async () => {
+      const task: MockTask = {
+        id: "FN-9102",
+        title: "test",
+        description: "desc",
+        column: "in-review",
+        prInfo: {
+          number: 100,
+          url: "https://github.com/x/y/pull/100",
+          status: "open",
+          headBranch: "fusion/fn-9102",
+          baseBranch: "main",
+        },
+      };
+      const store = makeStore(task, { requirePrApproval: false });
+
+      const merged = {
+        number: 100,
+        url: "https://github.com/x/y/pull/100",
+        status: "merged" as const,
+        headBranch: "fusion/fn-9102",
+        baseBranch: "main",
+      };
+      const github = {
+        findPrForBranch: vi.fn(),
+        createPr: vi.fn(),
+        // reviewDecision: null but mergeReady: true — without the gate,
+        // this should still merge (the buggy default that #21's reviewer
+        // flagged as too aggressive on free private repos).
+        getPrMergeStatus: vi.fn(async () => makeReadyMergeStatus(null)),
+        mergePr: vi.fn(async () => merged),
+      };
+
+      const result = await processPullRequestMergeTask(
+        store as never,
+        "/repo",
+        task.id,
+        github as never,
+        () => undefined,
+      );
+
+      expect(result).toBe("merged");
+      expect(github.mergePr).toHaveBeenCalled();
+    });
   });
 });

@@ -132,10 +132,9 @@ describe("getAgentHealthStatus", () => {
     });
   });
 
-  // Heartbeat scheduling is driven by agent.state on the server; there is no
-  // separate "disabled" UI concept anymore. Non-task-worker agents with a
-  // legacy `runtimeConfig.enabled === false` on disk are rendered by state
-  // just like any other agent.
+  // Heartbeat disabled is a real durable-agent state in the UI. Task workers
+  // still follow execution-state health because their runtimeConfig.enabled
+  // flag only opts them out of scheduler timers.
 
   describe("task worker health classification", () => {
     it('returns "Running" for metadata-marked task workers with disabled heartbeat', () => {
@@ -173,7 +172,7 @@ describe("getAgentHealthStatus", () => {
       expect(status.color).toBe("var(--state-active-text)");
     });
 
-    it('ignores legacy runtimeConfig.enabled=false on non-task-worker agents', () => {
+    it('returns "Heartbeat Disabled" for non-task-worker agents with heartbeat disabled', () => {
       const agent = makeAgent({
         name: "Reviewer",
         role: "reviewer",
@@ -181,8 +180,21 @@ describe("getAgentHealthStatus", () => {
         runtimeConfig: { enabled: false },
       });
       const status = getAgentHealthStatus(agent);
-      // No persisted heartbeat, no lastHeartbeatAt → Starting... not Disabled.
-      expect(status.label).toBe("Starting...");
+      expect(status.label).toBe("Heartbeat Disabled");
+      expect(status.stateDerived).toBe(false);
+      expect(status.color).toBe("var(--state-paused-text)");
+    });
+
+    it('returns "Heartbeat Disabled" even when a disabled durable agent has a recent heartbeat', () => {
+      const agent = makeAgent({
+        name: "Reviewer",
+        role: "reviewer",
+        state: "active",
+        lastHeartbeatAt: new Date(FIXED_NOW - 1_000).toISOString(),
+        runtimeConfig: { enabled: false, heartbeatIntervalMs: 60_000 },
+      });
+      const status = getAgentHealthStatus(agent);
+      expect(status.label).toBe("Heartbeat Disabled");
     });
   });
 
@@ -436,9 +448,9 @@ describe("getAgentHealthStatus", () => {
       expect(getAgentHealthStatus(agent).label).toBe("Healthy");
     });
 
-    it("ignores runtimeConfig.enabled and uses interval-based staleness", () => {
-      // 6 minute interval → 24 minute threshold. 25 minutes elapsed is stale regardless of any
-      // legacy enabled flag or per-run timeout.
+    it("uses interval-based staleness for enabled durable agents", () => {
+      // 6 minute interval → 24 minute threshold. 25 minutes elapsed is stale
+      // regardless of any per-run timeout.
       const agent = makeAgent({
         state: "active",
         lastHeartbeatAt: new Date(FIXED_NOW - 25 * 60 * 1000).toISOString(), // 25 minutes ago
@@ -454,8 +466,7 @@ describe("getAgentHealthStatus", () => {
         { agent: makeAgent({ state: "paused" }), expectedIconType: "Pause" },
         { agent: makeAgent({ state: "running" }), expectedIconType: "Activity" },
         { agent: makeAgent({ state: "idle" }), expectedIconType: "Bot" },
-        // state=active + no lastHeartbeatAt → "Starting..." → Bot icon
-        { agent: makeAgent({ state: "active", runtimeConfig: { enabled: false } }), expectedIconType: "Bot" },
+        { agent: makeAgent({ state: "active", runtimeConfig: { enabled: false } }), expectedIconType: "Pause" },
         {
           agent: makeAgent({
             name: "executor-FN-1661",

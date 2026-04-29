@@ -34,6 +34,7 @@ const mockCheckForUpdates = vi.fn();
 const mockFetchRemoteSettings = vi.fn();
 const mockUpdateRemoteSettings = vi.fn();
 const mockFetchRemoteStatus = vi.fn();
+const mockInstallCloudflared = vi.fn();
 const mockStartRemoteTunnel = vi.fn();
 const mockStopRemoteTunnel = vi.fn();
 const mockRegenerateRemotePersistentToken = vi.fn();
@@ -73,6 +74,7 @@ vi.mock("../../api", () => ({
   fetchRemoteSettings: (...args: unknown[]) => mockFetchRemoteSettings(...args),
   updateRemoteSettings: (...args: unknown[]) => mockUpdateRemoteSettings(...args),
   fetchRemoteStatus: (...args: unknown[]) => mockFetchRemoteStatus(...args),
+  installCloudflared: (...args: unknown[]) => mockInstallCloudflared(...args),
   startRemoteTunnel: (...args: unknown[]) => mockStartRemoteTunnel(...args),
   stopRemoteTunnel: (...args: unknown[]) => mockStopRemoteTunnel(...args),
   regenerateRemotePersistentToken: (...args: unknown[]) => mockRegenerateRemotePersistentToken(...args),
@@ -282,6 +284,7 @@ describe("SettingsModal", () => {
       },
     });
     mockFetchRemoteStatus.mockResolvedValue({ provider: null, state: "stopped", url: null, lastError: null });
+    mockInstallCloudflared.mockResolvedValue({ success: true, command: "brew install cloudflared" });
     mockStartRemoteTunnel.mockResolvedValue({ state: "starting", provider: "tailscale" });
     mockStopRemoteTunnel.mockResolvedValue({ state: "stopped", provider: null });
     mockRegenerateRemotePersistentToken.mockResolvedValue({ token: "token", maskedToken: "****" });
@@ -1693,6 +1696,69 @@ describe("SettingsModal", () => {
       await waitFor(() => {
         expect(screen.getByText("https://tail.example", { selector: ".remote-status-url" })).toBeInTheDocument();
       });
+    });
+
+    it("shows cloudflared available indicator when Cloudflare is selected and cloudflared is installed", async () => {
+      mockFetchRemoteStatus.mockResolvedValue({ provider: "cloudflare", state: "stopped", url: null, lastError: null, cloudflaredAvailable: true });
+
+      renderModal();
+      await waitForSettingsModalReady();
+      await openRemoteSection();
+      await userEvent.click(screen.getByLabelText("Cloudflare"));
+
+      expect(await screen.findByText("cloudflared is installed")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Install cloudflared" })).not.toBeInTheDocument();
+    });
+
+    it("shows install button when Cloudflare is selected and cloudflared is not available", async () => {
+      mockFetchRemoteStatus.mockResolvedValue({ provider: "cloudflare", state: "stopped", url: null, lastError: null, cloudflaredAvailable: false });
+
+      renderModal();
+      await waitForSettingsModalReady();
+      await openRemoteSection();
+      await userEvent.click(screen.getByLabelText("Cloudflare"));
+
+      expect(await screen.findByText("cloudflared is not installed")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Install cloudflared" })).toBeInTheDocument();
+      expect(screen.getByText("cloudflared must be installed to start the tunnel")).toBeInTheDocument();
+    });
+
+    it("install button triggers install and refreshes status", async () => {
+      const addToast = vi.fn();
+      mockFetchRemoteStatus
+        .mockResolvedValueOnce({ provider: "cloudflare", state: "stopped", url: null, lastError: null, cloudflaredAvailable: false })
+        .mockResolvedValueOnce({ provider: "cloudflare", state: "stopped", url: null, lastError: null, cloudflaredAvailable: true });
+      mockInstallCloudflared.mockResolvedValueOnce({ success: true, command: "brew install cloudflared" });
+
+      renderModal({ addToast });
+      await waitForSettingsModalReady();
+      await openRemoteSection();
+      await userEvent.click(screen.getByLabelText("Cloudflare"));
+
+      const installButton = await screen.findByRole("button", { name: "Install cloudflared" });
+      await userEvent.click(installButton);
+
+      await waitFor(() => {
+        expect(mockInstallCloudflared).toHaveBeenCalledWith(undefined);
+      });
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith("cloudflared installed successfully", "success");
+      });
+      expect(await screen.findByText("cloudflared is installed")).toBeInTheDocument();
+    });
+
+    it("install button shows error on failure", async () => {
+      mockFetchRemoteStatus.mockResolvedValue({ provider: "cloudflare", state: "stopped", url: null, lastError: null, cloudflaredAvailable: false });
+      mockInstallCloudflared.mockResolvedValueOnce({ success: false, command: "brew install cloudflared", error: "Command failed" });
+
+      renderModal();
+      await waitForSettingsModalReady();
+      await openRemoteSection();
+      await userEvent.click(screen.getByLabelText("Cloudflare"));
+
+      await userEvent.click(await screen.findByRole("button", { name: "Install cloudflared" }));
+
+      expect(await screen.findByText("Command failed")).toBeInTheDocument();
     });
 
     it("shows lifecycle state changes for start and stop actions, including error state", async () => {

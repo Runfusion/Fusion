@@ -4217,13 +4217,9 @@ describe("HeartbeatTriggerScheduler", () => {
       expect(scheduler.getRegisteredAgents()).toContain("agent-001");
     });
 
-    it("registers regardless of the legacy enabled flag (state is the source of truth)", () => {
-      // runtimeConfig.enabled is no longer honored by the scheduler — pause
-      // and resume happen through agent.state, and the agent:updated listener
-      // drives register/unregister. Callers that still pass `enabled: false`
-      // should not silently lose the timer.
+    it("does not register when heartbeat is explicitly disabled", () => {
       scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 10000, enabled: false });
-      expect(scheduler.getRegisteredAgents()).toContain("agent-001");
+      expect(scheduler.getRegisteredAgents()).not.toContain("agent-001");
     });
 
     it("applies default 3600-second interval when intervalMs is undefined", async () => {
