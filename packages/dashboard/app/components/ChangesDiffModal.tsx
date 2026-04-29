@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import type { MergeDetails, Column } from "@fusion/core";
 import { highlightDiff } from "../utils/highlightDiff";
+import { truncateMiddle } from "../utils/truncatePath";
 import "./TaskDiffShared.css";
 import "./ChangesDiffModal.css";
 
@@ -222,7 +223,7 @@ export function ChangesDiffModal({
                   >
                     {getStatusLabel(file.status)}
                   </span>
-                  <span className="changes-diff-file-path">{file.path}</span>
+                  <span className="changes-diff-file-path">{truncateMiddle(file.path)}</span>
                   <span className="changes-diff-file-stat">
                     +{file.additions} -{file.deletions}
                   </span>

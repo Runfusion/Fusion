@@ -469,6 +469,7 @@ describe("Settings view", () => {
     controller.setInteractiveView("settings");
 
     const { lastFrame, stdin, unmount } = render(renderDashboardAppNode(controller));
+    await waitForFrameContains(lastFrame, "──── Remote ────");
     stdin.write("\t");
     await new Promise((r) => setTimeout(r, 20));
 
@@ -529,6 +530,7 @@ describe("Settings view", () => {
     controller.setInteractiveView("settings");
 
     const { lastFrame, stdin, unmount } = render(renderDashboardAppNode(controller));
+    await waitForFrameContains(lastFrame, "──── Remote ────");
     stdin.write("\t");
     await new Promise((r) => setTimeout(r, 20));
 

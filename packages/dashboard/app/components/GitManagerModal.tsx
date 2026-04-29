@@ -4,6 +4,7 @@ import type { Task } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
+import { truncateMiddle } from "../utils/truncatePath";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import type {
@@ -1114,7 +1115,7 @@ function ChangesPanel({
                     />
                   </label>
                   <FileStatusIcon status={f.status} />
-                  <span className="gm-file-name" title={f.file}>{f.file}</span>
+                  <span className="gm-file-name" title={f.file}>{truncateMiddle(f.file)}</span>
                   <FileStatusBadge status={f.status} />
                   <button
                     className="gm-icon-btn"
@@ -1186,7 +1187,7 @@ function ChangesPanel({
                     />
                   </label>
                   <FileStatusIcon status={f.status} />
-                  <span className="gm-file-name" title={f.file}>{f.file}</span>
+                  <span className="gm-file-name" title={f.file}>{truncateMiddle(f.file)}</span>
                   <FileStatusBadge status={f.status} />
                   <button
                     className="gm-icon-btn"

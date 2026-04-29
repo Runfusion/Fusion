@@ -24,6 +24,13 @@ export function truncateMiddle(path: string, maxLength: number = 60): string {
     return path.slice(0, headLen) + ellipsis;
   }
 
+  const suffixWithSlash = path.slice(lastSep);
+  // Primary behavior: always prefer showing full filename (and extension)
+  // when it can fit with an ellipsis prefix.
+  if (ellipsis.length + suffixWithSlash.length <= maxLength) {
+    return ellipsis + suffixWithSlash;
+  }
+
   // Find all separator positions to use as candidate split points
   const seps: number[] = [];
   for (let i = 1; i < path.length; i++) {
@@ -62,12 +69,6 @@ export function truncateMiddle(path: string, maxLength: number = 60): string {
   }
 
   if (bestResult) return bestResult;
-
-  // Fallback: just ellipsis + the filename portion (with leading "/")
-  const suffixWithSlash = path.slice(lastSep);
-  if (ellipsis.length + suffixWithSlash.length <= maxLength) {
-    return ellipsis + suffixWithSlash;
-  }
 
   // Filename itself is too long — truncate from the end
   const endLen = maxLength - ellipsis.length;

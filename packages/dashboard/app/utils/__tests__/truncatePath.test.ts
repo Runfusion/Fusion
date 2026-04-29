@@ -20,13 +20,11 @@ describe("truncateMiddle", () => {
     expect(truncateMiddle(path, 60)).toBe(path);
   });
 
-  it("truncates a long path from the middle", () => {
+  it("truncates a long path by prioritizing the filename suffix", () => {
     const path = "packages/dashboard/app/components/TaskChangesTab.tsx";
     const result = truncateMiddle(path, 30);
-    expect(result).toContain("...");
+    expect(result).toBe(".../TaskChangesTab.tsx");
     expect(result.length).toBeLessThanOrEqual(30);
-    // Filename should be preserved
-    expect(result.endsWith("TaskChangesTab.tsx")).toBe(true);
   });
 
   it("preserves the full path when under maxLength", () => {
@@ -84,12 +82,11 @@ describe("truncateMiddle", () => {
     expect(result).toContain("...");
   });
 
-  it("preserves start portion when truncating", () => {
+  it("does not require preserving the start when filename suffix fits", () => {
     const path = "packages/dashboard/app/components/TaskChangesTab.tsx";
     const result = truncateMiddle(path, 35);
-    expect(result.startsWith("packages")).toBe(true);
-    expect(result).toContain("...");
-    expect(result.endsWith("TaskChangesTab.tsx")).toBe(true);
+    expect(result).toBe(".../TaskChangesTab.tsx");
+    expect(result.endsWith("/TaskChangesTab.tsx")).toBe(true);
   });
 
   it("works with paths that have dots but no slashes", () => {
@@ -102,5 +99,19 @@ describe("truncateMiddle", () => {
     const path = "a".repeat(61);
     const result = truncateMiddle(path, 60);
     expect(result.length).toBeLessThanOrEqual(60);
+  });
+
+  it("shows full filename for deeply nested paths when filename fits", () => {
+    const path = "a/b/c/d/e/f/Component.tsx";
+    const result = truncateMiddle(path, 20);
+    expect(result).toBe(".../Component.tsx");
+    expect(result.endsWith("/Component.tsx")).toBe(true);
+  });
+
+  it("preserves extension when filename fits", () => {
+    const path = "deeply/nested/another/path/verylongname.test.tsx";
+    const result = truncateMiddle(path, 24);
+    expect(result).toBe("...verylongname.test.tsx");
+    expect(result.endsWith(".test.tsx")).toBe(true);
   });
 });
