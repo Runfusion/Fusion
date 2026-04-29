@@ -20,19 +20,23 @@ import { existsSync, mkdirSync, renameSync } from "node:fs";
 import type { GlobalSettings } from "./types.js";
 import { DEFAULT_GLOBAL_SETTINGS } from "./types.js";
 
+function getHomeDir(): string {
+  return process.env.HOME || process.env.USERPROFILE || homedir();
+}
+
 /** Legacy directory for global settings (original name before rename to `.fusion`). */
 export function legacyGlobalDir(): string {
-  return join(homedir(), ".pi", "fusion");
+  return join(getHomeDir(), ".pi", "fusion");
 }
 
 /** Legacy directory for global settings from the earliest fn version (`.pi/kb`). */
 export function legacyGlobalDirOriginal(): string {
-  return join(homedir(), ".pi", "kb");
+  return join(getHomeDir(), ".pi", "kb");
 }
 
 /** Default directory for global fusion settings: `~/.fusion/` */
 export function defaultGlobalDir(): string {
-  return join(homedir(), ".fusion");
+  return join(getHomeDir(), ".fusion");
 }
 
 /**

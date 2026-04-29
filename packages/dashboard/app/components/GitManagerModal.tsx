@@ -5,6 +5,7 @@ import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
 import { truncateMiddle } from "../utils/truncatePath";
+import { getPathBasename } from "../utils/pathDisplay";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import type {
@@ -1624,7 +1625,7 @@ function WorktreesPanel({ worktrees }: { worktrees: GitWorktree[] }) {
                 {worktree.isMain && <span className="gm-badge main">main</span>}
                 {worktree.isBare && <span className="gm-badge bare">bare</span>}
                 <span className="gm-worktree-path" title={worktree.path}>
-                  {worktree.path.split("/").pop() || worktree.path}
+                  {getPathBasename(worktree.path) || worktree.path}
                 </span>
               </div>
               <div className="gm-worktree-detail">

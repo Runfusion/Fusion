@@ -10,7 +10,7 @@ import {
 } from "@fusion/core";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { AgentSemaphore } from "./concurrency.js";
 import { generateReservedWorktreeName, slugify } from "./worktree-names.js";
 import { schedulerLog } from "./logger.js";
@@ -466,7 +466,7 @@ export class Scheduler {
     reservedNames: Set<string>,
   ): string {
     if (task.worktree) {
-      const existingName = task.worktree.split("/").pop();
+      const existingName = basename(task.worktree);
       if (existingName) reservedNames.add(existingName);
       return task.worktree;
     }
@@ -659,7 +659,7 @@ export class Scheduler {
       let started = 0;
       const reservedWorktreeNames = new Set(
         tasks
-          .map((task) => task.worktree?.split("/").pop())
+          .map((task) => (task.worktree ? basename(task.worktree) : undefined))
           .filter((name): name is string => Boolean(name)),
       );
 

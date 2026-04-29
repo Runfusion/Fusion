@@ -4,7 +4,7 @@ import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 import { createSession, submitResponse, RateLimitError, SessionNotFoundError, InvalidSessionStateError } from "@fusion/dashboard/planning";
 import { watchFile, unwatchFile, statSync, existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { GitHubClient } from "@fusion/dashboard";
 import {
   getGhErrorMessage,
@@ -30,7 +30,7 @@ function asLocalProjectContext(store: TaskStore): ProjectContext {
   return {
     projectId: cwd,
     projectPath: cwd,
-    projectName: cwd.split("/").filter(Boolean).at(-1) ?? "current-project",
+    projectName: basename(cwd) || "current-project",
     isRegistered: false,
     store,
   };

@@ -407,7 +407,11 @@ export class TerminalService extends EventEmitter {
     cwd = path.resolve(this.projectRoot, cwd);
 
     // Ensure path is within project root (path traversal protection)
-    if (!cwd.startsWith(this.projectRoot)) {
+    const relativeToProjectRoot = path.relative(this.projectRoot, cwd);
+    if (
+      relativeToProjectRoot.startsWith("..") ||
+      path.isAbsolute(relativeToProjectRoot)
+    ) {
       console.warn(`Path traversal attempt blocked: ${requestedCwd}`);
       return this.projectRoot;
     }

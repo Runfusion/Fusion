@@ -1,4 +1,5 @@
 import type { ProjectSettings } from "@fusion/core";
+import { basename } from "node:path";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import { getFusionAuthPath } from "../auth-paths.js";
 import { fetchFromRemoteNode, readStoredAuthProvidersFromDisk } from "./register-settings-sync-helpers.js";
@@ -74,7 +75,7 @@ export const registerSettingsSyncRoutes: ApiRouteRegistrar = (ctx) => {
       // Build sync payload
       const payload = {
         global: globalSettings,
-        projects: { [store.getRootDir().split("/").pop()!]: projectSettings.project },
+        projects: { [basename(store.getRootDir())]: projectSettings.project },
         exportedAt: new Date().toISOString(),
         version: 1 as const,
       };

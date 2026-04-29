@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { ProjectInfo } from "../api";
 import type { ProjectStatus } from "@fusion/core";
+import { getTrailingPath } from "../utils/pathDisplay";
 
 export interface ProjectSelectorProps {
   projects: ProjectInfo[];
@@ -354,7 +355,7 @@ export function ProjectSelector({
                         {project.name}
                       </span>
                       <span className="project-selector__item-path">
-                        {project.path.split("/").slice(-2).join("/")}
+                        {getTrailingPath(project.path, 2)}
                       </span>
                     </div>
                     {currentProject?.id === project.id && (

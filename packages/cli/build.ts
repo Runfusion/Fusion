@@ -21,8 +21,9 @@
 import { join, dirname } from "node:path";
 import { cpSync, mkdirSync, existsSync, rmSync, writeFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
-const cliRoot = dirname(new URL(import.meta.url).pathname);
+const cliRoot = dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = join(cliRoot, "..", "..");
 const outDir = join(cliRoot, "dist");
 const dashboardClientSrc = join(workspaceRoot, "packages", "dashboard", "dist", "client");

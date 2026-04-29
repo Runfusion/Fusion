@@ -5107,6 +5107,12 @@ and show an appropriate message to the user.\`
       return { type: "already-used", path: alreadyUsedMatch[1], message: output };
     }
 
+    // Pattern: already checked out at '/path/to/worktree'
+    const alreadyCheckedOutMatch = output.match(/is already checked out at '([^']+)'/);
+    if (alreadyCheckedOutMatch) {
+      return { type: "already-used", path: alreadyCheckedOutMatch[1], message: output };
+    }
+
     // Pattern: invalid reference: 'branch-name'
     // Also covers: unable to resolve reference, stale file handle, not a valid ref
     if (

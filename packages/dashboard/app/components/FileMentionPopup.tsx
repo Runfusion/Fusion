@@ -1,5 +1,6 @@
 import { File } from "lucide-react";
 import type { FileSearchItem } from "../hooks/useFileMention";
+import { getDisplayDirname } from "../utils/pathDisplay";
 import "./FileMentionPopup.css";
 
 import type { ReactNode } from "react";
@@ -54,7 +55,7 @@ export function FileMentionPopup({
       {!loading && files.length > 0 && (
         <ul className="file-mention-popup-list" role="listbox">
           {files.map((file, index) => {
-            const dirPath = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/") + 1) : "";
+            const dirPath = getDisplayDirname(file.path);
             const highlightName = file.name;
 
             return (

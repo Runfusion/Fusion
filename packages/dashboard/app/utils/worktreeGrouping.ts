@@ -1,4 +1,5 @@
 import type { Task } from "@fusion/core";
+import { getPathBasename } from "./pathDisplay";
 
 export interface WorktreeGroupData {
   label: string;
@@ -11,9 +12,7 @@ export interface WorktreeGroupData {
  * e.g. ".worktrees/FN-001" → "FN-001", "/path/to/fn/fn-001" → "fn-001"
  */
 export function getWorktreeLabel(worktreePath: string): string {
-  // Take the last segment of the path
-  const segments = worktreePath.replace(/\/+$/, "").split("/");
-  return segments[segments.length - 1] || worktreePath;
+  return getPathBasename(worktreePath) || worktreePath;
 }
 
 /**

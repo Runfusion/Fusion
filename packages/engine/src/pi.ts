@@ -792,8 +792,11 @@ async function registerExtensionProviders(cwd: string, modelRegistry: ModelRegis
  *   `/project` → null (not a worktree)
  */
 function getProjectRootFromWorktree(cwd: string): string | null {
-  // Match paths like /project/.worktrees/task-id or /project/.worktrees/task-id/...
-  const match = cwd.match(/^(.+?)\/\.worktrees\/[^/]+/);
+  // Match paths like:
+  //   /project/.worktrees/task-id
+  //   /project/.worktrees/task-id/src/file.ts
+  //   C:\project\.worktrees\task-id
+  const match = cwd.match(/^(.+?)[\\/]\.worktrees[\\/][^\\/]+(?:[\\/]|$)/);
   if (match) {
     return match[1]!;
   }

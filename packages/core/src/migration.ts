@@ -16,6 +16,10 @@ import { isAbsolute, join, resolve, basename, dirname } from "node:path";
 import type { CentralCore } from "./central-core.js";
 import { CentralCore as CentralCoreClass } from "./central-core.js";
 
+function getHomeDir(): string {
+  return process.env.HOME || process.env.USERPROFILE || homedir();
+}
+
 /**
  * Check whether `<dir>/<folderName>/<dbName>` exists as a non-empty regular file.
  * Used to decide if a directory contains a current (.fusion/fusion.db) project database.
@@ -192,7 +196,7 @@ export class FirstRunDetector {
     const visited = new Set<string>();
 
     let current = resolve(startDir);
-    const home = homedir();
+    const home = getHomeDir();
     const root = dirname(current) === current ? current : "/"; // Handle Windows vs Unix root
     // Also stop at the OS temp directory — it is a shared system boundary and
     // should never itself host a project; stopping here prevents the walk from
@@ -299,7 +303,7 @@ export class FirstRunDetector {
   }
 
   private getDefaultGlobalDir(): string {
-    return join(homedir(), ".pi", "kb");
+    return join(getHomeDir(), ".pi", "kb");
   }
 }
 

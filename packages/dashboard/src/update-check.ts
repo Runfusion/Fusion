@@ -110,8 +110,9 @@ export async function performUpdateCheck(
 ): Promise<UpdateCheckResult> {
   const now = Date.now();
   const cached = readCachedUpdateCheck(fusionDir);
+  const cacheMatchesCurrentVersion = !cached || cached.currentVersion === currentVersion;
   const ttl = ttlForFrequency(options.frequency);
-  const cacheStillFresh = cached && now - cached.lastChecked < ttl;
+  const cacheStillFresh = cached && cacheMatchesCurrentVersion && now - cached.lastChecked < ttl;
 
   // `on-startup`: refresh exactly once per process lifetime; afterwards
   // serve the freshly-written cache for the rest of the run.
@@ -119,7 +120,8 @@ export async function performUpdateCheck(
     !options.force &&
     options.frequency === "on-startup" &&
     hasRefreshedThisProcess &&
-    cached
+    cached &&
+    cacheMatchesCurrentVersion
   ) {
     return cached;
   }
@@ -131,11 +133,12 @@ export async function performUpdateCheck(
   // For `manual`, never go to the network on a regular check — only the
   // `/update-check/refresh` endpoint (which sets `force: true`) should.
   // Return whatever's in the cache so the UI can still display the last
-  // known result; if there's nothing cached, return a no-op disabled-style
-  // payload.
+  // known result, but only when it matches the currently installed version.
+  // After an upgrade, the old cache would otherwise keep showing a stale
+  // "current version" until the next manual refresh.
   if (!options.force && options.frequency === "manual") {
     return (
-      cached ?? {
+      (cacheMatchesCurrentVersion ? cached : null) ?? {
         currentVersion,
         latestVersion: null,
         updateAvailable: false,

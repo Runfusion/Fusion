@@ -615,7 +615,8 @@ function resolveAgentsMdPath(cwd: string): string | undefined {
   }
 
   // Fall back to global path
-  const globalPath = join(homedir(), ".pi", "agent", "AGENTS.md");
+  const globalHome = process.env.HOME || process.env.USERPROFILE || homedir();
+  const globalPath = join(globalHome, ".pi", "agent", "AGENTS.md");
   if (existsSync(globalPath)) return globalPath;
 
   return undefined;

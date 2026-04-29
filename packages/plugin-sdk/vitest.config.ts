@@ -1,5 +1,6 @@
 import { defineConfig } from "vitest/config";
 import { cpus } from "node:os";
+import { fileURLToPath } from "node:url";
 
 const defaultMaxWorkers = Math.max(1, cpus().length - 1);
 const requestedMaxWorkers = Number.parseInt(process.env.VITEST_MAX_WORKERS ?? String(defaultMaxWorkers), 10);
@@ -9,7 +10,7 @@ process.env.VITEST_MAX_WORKERS = String(maxWorkers);
 export default defineConfig({
   resolve: {
     alias: {
-      "@fusion/core": new URL("../core/src/index.ts", import.meta.url).pathname,
+      "@fusion/core": fileURLToPath(new URL("../core/src/index.ts", import.meta.url)),
     },
   },
   test: {

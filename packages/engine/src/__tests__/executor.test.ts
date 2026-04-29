@@ -966,6 +966,56 @@ describe("TaskExecutor worktree recovery", () => {
     expect(worktreeAddCalls).toHaveLength(1);
   });
 
+  it("extractWorktreeConflictInfo classifies already checked out errors as already-used", () => {
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    const error: any = new Error(
+      "fatal: 'fusion/fn-050' is already checked out at '/tmp/test/.worktrees/green-sage'",
+    );
+    error.stderr = Buffer.from(
+      "fatal: 'fusion/fn-050' is already checked out at '/tmp/test/.worktrees/green-sage'",
+    );
+
+    const conflictInfo = (executor as any).extractWorktreeConflictInfo(error);
+    expect(conflictInfo).toMatchObject({
+      type: "already-used",
+      path: "/tmp/test/.worktrees/green-sage",
+    });
+  });
+
+  it("recovers from already checked out worktree conflict and retries", async () => {
+    const store = createMockStore();
+    let callCount = 0;
+
+    mockedExecSync.mockImplementation((cmd: string | string[]) => {
+      const command = typeof cmd === "string" ? cmd : cmd[0];
+      if (command.includes("git worktree add") && callCount++ === 0) {
+        const error: any = new Error(
+          "fatal: 'fusion/fn-050' is already checked out at '/tmp/test/.worktrees/green-sage'",
+        );
+        error.stderr = Buffer.from(
+          "fatal: 'fusion/fn-050' is already checked out at '/tmp/test/.worktrees/green-sage'",
+        );
+        throw error;
+      }
+      return Buffer.from("");
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute(makeTask());
+
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-050",
+      expect.stringContaining("Cleaned up conflicting worktree, retrying"),
+      "/tmp/test/.worktrees/swift-falcon",
+    );
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-050",
+      expect.objectContaining({ worktree: expect.any(String) }),
+    );
+  });
+
   it("recovers from worktree conflict and retries", async () => {
     const store = createMockStore();
     let callCount = 0;

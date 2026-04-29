@@ -6,7 +6,7 @@
  */
 
 import { TaskStore, type RegisteredProject, CentralCore, GlobalSettingsStore } from "@fusion/core";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, basename } from "node:path";
 import { existsSync } from "node:fs";
 
 /** Project context for CLI operations */
@@ -198,7 +198,7 @@ export async function detectProjectFromCwd(
       // Use empty string for id to indicate unregistered status.
       return {
         id: "",
-        name: currentDir.split("/").filter(Boolean).at(-1) ?? "current-project",
+        name: basename(currentDir) || "current-project",
         path: currentDir,
       };
     }
@@ -309,4 +309,3 @@ export async function getStore(
   const context = await resolveProject(projectName, cwd, globalDir);
   return context.store;
 }
-

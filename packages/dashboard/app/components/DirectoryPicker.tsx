@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { Folder, FolderOpen, ChevronRight, ChevronUp, Loader2, Eye, EyeOff, AlertCircle } from "lucide-react";
 import { browseDirectory, type BrowseDirectoryResult } from "../api";
+import { getPathBreadcrumbs } from "../utils/pathDisplay";
 import "./DirectoryPicker.css";
 
 export interface DirectoryPickerProps {
@@ -99,9 +100,7 @@ export function DirectoryPicker({ value, onChange, placeholder, onInputKeyDown, 
     }
   }, [browser.showHidden]);
 
-  const breadcrumbs = browser.currentPath
-    ? browser.currentPath.split("/").filter(Boolean)
-    : [];
+  const breadcrumbs = browser.currentPath ? getPathBreadcrumbs(browser.currentPath) : [];
 
   return (
     <div className="directory-picker">
@@ -129,26 +128,17 @@ export function DirectoryPicker({ value, onChange, placeholder, onInputKeyDown, 
         <div className="directory-picker-browser" role="tree" aria-label="Directory browser">
           {/* Breadcrumbs */}
           <div className="directory-picker-breadcrumbs">
-            <button
-              type="button"
-              className="directory-picker-breadcrumb"
-              onClick={() => handleNavigate("/")}
-              title="Root"
-            >
-              /
-            </button>
-            {breadcrumbs.map((segment, i) => {
-              const segPath = "/" + breadcrumbs.slice(0, i + 1).join("/");
+            {breadcrumbs.map((breadcrumb, index) => {
               return (
-                <span key={segPath} className="directory-picker-breadcrumb-item">
-                  <ChevronRight size={12} className="directory-picker-breadcrumb-sep" />
+                <span key={breadcrumb.path} className="directory-picker-breadcrumb-item">
+                  {index > 0 && <ChevronRight size={12} className="directory-picker-breadcrumb-sep" />}
                   <button
                     type="button"
                     className="directory-picker-breadcrumb"
-                    onClick={() => handleNavigate(segPath)}
-                    title={segPath}
+                    onClick={() => handleNavigate(breadcrumb.path)}
+                    title={breadcrumb.path}
                   >
-                    {segment}
+                    {breadcrumb.label}
                   </button>
                 </span>
               );

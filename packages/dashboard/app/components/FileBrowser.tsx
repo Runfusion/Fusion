@@ -5,6 +5,7 @@ import type { FileNode } from "../api";
 import { copyFile, moveFile, deleteFile, renameFile, downloadFileUrl, downloadZipUrl } from "../api";
 import { appendTokenQuery } from "../auth";
 import { getErrorMessage } from "@fusion/core";
+import { getParentDisplayPath, joinDisplayPath, normalizeDisplayPath } from "../utils/pathDisplay";
 
 interface FileBrowserProps {
   entries: FileNode[];
@@ -37,7 +38,7 @@ function formatTime(mtime?: string): string {
 
 /** Build the full relative path for a file/directory entry */
 function entryPath(currentPath: string, name: string): string {
-  return currentPath === "." ? name : `${currentPath}/${name}`;
+  return joinDisplayPath(currentPath, name);
 }
 
 // ── Context Menu State ──────────────────────────────────────────────────
@@ -550,16 +551,14 @@ export function FileBrowser({
           <button
             className="file-browser-up"
             onClick={() => {
-              const parts = currentPath.split("/").filter(Boolean);
-              parts.pop();
-              onNavigate(parts.length === 0 ? "." : parts.join("/"));
+              onNavigate(getParentDisplayPath(currentPath));
             }}
           >
             <ChevronRight size={16} style={{ transform: "rotate(-90deg)" }} />
             Up one level
           </button>
         )}
-        <span className="file-browser-path">{currentPath === "." ? "Root" : currentPath}</span>
+        <span className="file-browser-path">{currentPath === "." ? "Root" : normalizeDisplayPath(currentPath)}</span>
       </div>
 
       <div className="file-browser-list">

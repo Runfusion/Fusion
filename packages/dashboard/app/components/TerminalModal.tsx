@@ -13,6 +13,7 @@ import {
 import { useTerminal } from "../hooks/useTerminal";
 import { useTerminalSessions } from "../hooks/useTerminalSessions";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
+import { getPathBasename } from "../utils/pathDisplay";
 import "@xterm/xterm/css/xterm.css";
 
 import type { Terminal as XTerm, ITerminalAddon } from "@xterm/xterm";
@@ -750,7 +751,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
 
     const unsubConnect = onConnect((info) => {
       // Update tab title with shell name
-      updateTabTitle(activeTab.id, info.shell.split("/").pop() || info.shell);
+      updateTabTitle(activeTab.id, getPathBasename(info.shell) || info.shell);
     });
 
     const unsubExit = onExit((code) => {

@@ -9,7 +9,7 @@
  */
 
 import { existsSync, statSync } from "node:fs";
-import { dirname, resolve, normalize } from "node:path";
+import { basename, dirname, resolve, normalize } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { CentralCore, type RegisteredProject, type TaskStore } from "@fusion/core";
 import { ProjectManager } from "@fusion/engine";
@@ -250,7 +250,7 @@ export async function resolveProject(options: ResolveOptions = {}): Promise<Reso
 
       if (shouldRegister) {
         const rl = createInterface({ input: process.stdin, output: process.stdout });
-        const defaultName = fusionDir.split("/").pop() || "unnamed";
+        const defaultName = basename(fusionDir) || "unnamed";
         const name = await rl.question(`  Project name [${defaultName}]: `);
         rl.close();
 

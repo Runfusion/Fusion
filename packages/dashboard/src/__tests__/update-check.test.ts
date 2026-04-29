@@ -43,6 +43,36 @@ describe("update-check", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("ignores a fresh cache entry after the installed version changes", async () => {
+    const cached: UpdateCheckResult = {
+      currentVersion: "0.8.1",
+      latestVersion: "0.8.3",
+      updateAvailable: true,
+      lastChecked: Date.now(),
+    };
+
+    await writeFile(join(fusionDir, "update-check.json"), JSON.stringify(cached), "utf-8");
+
+    const fetchSpy = vi.fn().mockResolvedValue({
+      json: async () => ({
+        "dist-tags": {
+          latest: "0.8.3",
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const result = await performUpdateCheck(fusionDir, "0.8.3");
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(result).toEqual({
+      currentVersion: "0.8.3",
+      latestVersion: "0.8.3",
+      updateAvailable: false,
+      lastChecked: expect.any(Number),
+    });
+  });
+
   it("fetches latest version when cache is expired", async () => {
     const stale: UpdateCheckResult = {
       currentVersion: "0.6.0",
@@ -197,6 +227,17 @@ describe("update-check", () => {
       const fromCache = await performUpdateCheck(fusionDir, "0.6.0", { frequency: "manual" });
       expect(fetchSpy).not.toHaveBeenCalled();
       expect(fromCache).toEqual(cached);
+
+      // After an upgrade, ignore stale cached currentVersion instead of
+      // surfacing an outdated update banner.
+      const afterUpgrade = await performUpdateCheck(fusionDir, "0.8.3", { frequency: "manual" });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(afterUpgrade).toEqual({
+        currentVersion: "0.8.3",
+        latestVersion: null,
+        updateAvailable: false,
+        lastChecked: expect.any(Number),
+      });
 
       // force=true (used by /update-check/refresh) overrides manual.
       fetchSpy.mockResolvedValueOnce({

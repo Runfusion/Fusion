@@ -3685,7 +3685,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       entries.sort((a, b) => a.name.localeCompare(b.name));
 
-      const parentPath = resolvedPath === "/" ? null : dirname(resolvedPath);
+      const parentPath = dirname(resolvedPath) === resolvedPath ? null : dirname(resolvedPath);
 
       res.json({ currentPath: resolvedPath, parentPath, entries });
     } catch (err: unknown) {

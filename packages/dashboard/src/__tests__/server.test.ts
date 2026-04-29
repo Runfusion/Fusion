@@ -36,8 +36,8 @@ vi.mock("../terminal-service.js", () => {
 const { __mockTerminalService: mockTerminalService } = await import("../terminal-service.js") as any;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DASHBOARD_PACKAGE_VERSION = (() => {
-  const packageJsonPath = join(__dirname, "..", "..", "package.json");
+const CLI_PACKAGE_VERSION = (() => {
+  const packageJsonPath = join(__dirname, "..", "..", "..", "cli", "package.json");
   const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
     version?: unknown;
   };
@@ -305,7 +305,7 @@ describe("createServer health and headless mode", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       status: "ok",
-      version: DASHBOARD_PACKAGE_VERSION,
+      version: CLI_PACKAGE_VERSION,
       uptime: expect.any(Number),
     });
   });
@@ -317,7 +317,7 @@ describe("createServer health and headless mode", () => {
     const res = await GET(app, "/api/health");
 
     expect(res.status).toBe(200);
-    if (DASHBOARD_PACKAGE_VERSION === "0.4.0") {
+    if (CLI_PACKAGE_VERSION === "0.4.0") {
       expect(res.body.version).toBe("0.4.0");
       return;
     }

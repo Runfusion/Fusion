@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Task, TaskStore, CentralCore, AgentStore, Agent } from "@fusion/core";
@@ -184,7 +185,7 @@ describe("InProcessRuntime", () => {
 
   beforeEach(() => {
     // Create a unique temp directory for this test run
-    testDir = mkdtempSync(join("/tmp", `fn-test-${randomUUID().slice(0, 8)}-`));
+    testDir = mkdtempSync(join(tmpdir(), `fn-test-${randomUUID().slice(0, 8)}-`));
 
     // Create mock CentralCore
     mockCentralCore = {
@@ -746,12 +747,12 @@ describe("InProcessRuntime", () => {
     it("should store projectId in config", () => {
       // Access via the constructor params - runtime is created with testDir
       expect(testDir).toBeDefined();
-      expect(testDir).toContain("/tmp/fn-test-");
+      expect(testDir).toContain("fn-test-");
     });
 
     it("should store workingDirectory in config", () => {
       expect(testDir).toBeDefined();
-      expect(testDir.startsWith("/tmp/")).toBe(true);
+      expect(testDir.startsWith(tmpdir())).toBe(true);
     });
 
     it("should store maxConcurrent in config", () => {

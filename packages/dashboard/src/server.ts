@@ -48,51 +48,9 @@ import { stopAllDevServers } from "./dev-server-routes.js";
 import type { SkillsAdapter } from "./skills-adapter.js";
 import { createAuthMiddleware, authenticateUpgradeRequest, getDaemonToken } from "./auth-middleware.js";
 import { validateRemoteAuthToken } from "./remote-auth.js";
+import { getCliPackageVersion } from "./cli-package-version.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-const PACKAGE_VERSION = (() => {
-  try {
-    const packageJsonPath = join(__dirname, "..", "package.json");
-    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
-      version?: unknown;
-    };
-
-    if (typeof packageJson.version === "string" && packageJson.version.length > 0) {
-      return packageJson.version;
-    }
-  } catch {
-    // Fall through to environment fallback.
-  }
-
-  return process.env.npm_package_version ?? "0.0.0";
-})();
-
-// Walk up from this module to find the @runfusion/fusion package.json. Works
-// across layouts: monorepo source, installed dependency, and the bundled CLI
-// binary where dashboard code is inlined into bin.js next to the cli's
-// package.json. Falls back to "0.0.0" when nothing is found.
-const CLI_PACKAGE_VERSION = (() => {
-  try {
-    let cur = __dirname;
-    for (let i = 0; i < 8; i++) {
-      const pkgPath = resolve(cur, "package.json");
-      if (existsSync(pkgPath)) {
-        const parsed = JSON.parse(readFileSync(pkgPath, "utf-8")) as { name?: string; version?: string };
-        if (parsed.name === "@runfusion/fusion" && typeof parsed.version === "string" && parsed.version.length > 0) {
-          return parsed.version;
-        }
-      }
-      const parent = resolve(cur, "..");
-      if (parent === cur) break;
-      cur = parent;
-    }
-  } catch {
-    // Fall through to environment fallback.
-  }
-
-  return process.env.npm_package_version ?? "0.0.0";
-})();
 
 function parseVersion(version: string): number[] {
   return version
@@ -463,6 +421,7 @@ export function loadTlsCredentialsFromEnv(
 }
 
 export function createServer(store: TaskStore, options?: ServerOptions): ReturnType<typeof express> {
+  const cliPackageVersion = getCliPackageVersion(import.meta.url);
   // ── Derive defaults from engine when provided (explicit options override) ──
   const engine = options?.engine;
   if (engine) {
@@ -978,13 +937,13 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   app.get("/api/health", (_req, res) => {
     res.json({
       status: "ok",
-      version: PACKAGE_VERSION,
+      version: cliPackageVersion,
       uptime: Math.floor(process.uptime()),
     });
   });
 
   app.get("/api/updates/check", async (_req, res) => {
-    const currentVersion = CLI_PACKAGE_VERSION;
+    const currentVersion = cliPackageVersion;
     res.set("Cache-Control", "no-store");
 
     const controller = new AbortController();

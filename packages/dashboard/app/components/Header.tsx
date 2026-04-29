@@ -10,6 +10,7 @@ import { NodeStatusIndicator } from "./NodeStatusIndicator";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { PluginSlot } from "./PluginSlot";
 import { useViewportMode, type ViewportMode } from "../hooks/useViewportMode";
+import { getTrailingPath } from "../utils/pathDisplay";
 
 export { useViewportMode };
 
@@ -114,7 +115,7 @@ function ProjectSelector({
                     <div className="project-selector-info">
                       <span className="project-selector-name">{project.name}</span>
                       <span className="project-selector-path">
-                        {project.path.split("/").slice(-2).join("/")}
+                        {getTrailingPath(project.path, 2)}
                       </span>
                     </div>
                     {isCurrent && <Check size={14} className="project-selector-check" />}
@@ -874,7 +875,7 @@ export function Header({
                       <div className="mobile-project-switch-info">
                         <span className="mobile-project-switch-name">{project.name}</span>
                         <span className="mobile-project-switch-path">
-                          {project.path.split("/").slice(-2).join("/")}
+                          {getTrailingPath(project.path, 2)}
                         </span>
                       </div>
                       {isCurrent && <Check size={14} className="mobile-project-switch-check" />}
