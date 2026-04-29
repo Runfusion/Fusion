@@ -1518,6 +1518,11 @@ describe("SelfHealingManager", () => {
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
       });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        globalPause: false,
+        enginePaused: false,
+      });
 
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
@@ -1546,9 +1551,91 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    it("routes through enqueueMerge when wired so mergeStrategy is honored", async () => {
+      const enqueueMerge = vi.fn();
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        enqueueMerge,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        globalPause: false,
+        enginePaused: false,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-352-pr",
+          column: "in-review",
+          paused: false,
+          status: null,
+          error: null,
+          worktree: "/tmp/test-project/.worktrees/fn-352-pr",
+          steps: [{ name: "Ship it", status: "done" }],
+          workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
+          mergeDetails: undefined,
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverMergeableReviewTasks();
+
+      expect(result).toBe(1);
+      expect(enqueueMerge).toHaveBeenCalledWith("FN-352-pr");
+      expect(store.mergeTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips entirely when autoMerge is disabled (respects PR-based review flow)", async () => {
+      const enqueueMerge = vi.fn();
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        enqueueMerge,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: false,
+        globalPause: false,
+        enginePaused: false,
+      });
+
+      const result = await managerWithRecovery.recoverMergeableReviewTasks();
+
+      expect(result).toBe(0);
+      expect(store.listTasks).not.toHaveBeenCalled();
+      expect(store.mergeTask).not.toHaveBeenCalled();
+      expect(enqueueMerge).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips when globalPause or enginePaused is set", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        globalPause: true,
+        enginePaused: false,
+      });
+
+      const result = await managerWithRecovery.recoverMergeableReviewTasks();
+
+      expect(result).toBe(0);
+      expect(store.listTasks).not.toHaveBeenCalled();
+      expect(store.mergeTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
     it("skips paused in-review tasks even when otherwise mergeable", async () => {
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        globalPause: false,
+        enginePaused: false,
       });
 
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
@@ -1577,6 +1664,11 @@ describe("SelfHealingManager", () => {
     it("ignores in-review tasks that are not yet mergeable", async () => {
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        globalPause: false,
+        enginePaused: false,
       });
 
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([

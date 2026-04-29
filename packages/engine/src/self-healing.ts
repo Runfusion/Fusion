@@ -779,6 +779,14 @@ export class SelfHealingManager {
    */
   async recoverMergeableReviewTasks(): Promise<number> {
     try {
+      // Respect user merge intent. Without these gates the sweep would
+      // silently merge tasks even when the operator has opted into a
+      // PR-based review flow (`autoMerge: false`, `mergeStrategy:
+      // "pull-request"`) — see GitHub issue #21.
+      const settings = await this.store.getSettings();
+      if (!settings.autoMerge) return 0;
+      if (settings.globalPause || settings.enginePaused) return 0;
+
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
 
       const mergeable = tasks.filter((t) =>
@@ -793,15 +801,25 @@ export class SelfHealingManager {
 
       log.warn(`Found ${mergeable.length} mergeable review task(s) stuck in in-review`);
 
+      // Prefer the engine's merge queue so `mergeStrategy` (direct vs.
+      // pull-request) is honored. Fall back to a direct store merge only
+      // when no enqueue callback is wired (standalone/tests).
+      const enqueueMerge = this.options.enqueueMerge;
       let recovered = 0;
       for (const task of mergeable) {
         try {
-          await this.store.mergeTask(task.id);
+          if (enqueueMerge) {
+            enqueueMerge(task.id);
+          } else {
+            await this.store.mergeTask(task.id);
+          }
           await this.store.logEntry(
             task.id,
-            "Auto-recovered: eligible in-review task was merged and moved to done",
+            enqueueMerge
+              ? "Auto-recovered: eligible in-review task re-enqueued for merge"
+              : "Auto-recovered: eligible in-review task was merged and moved to done",
           );
-          log.log(`Recovered mergeable review task ${task.id}: merged to done`);
+          log.log(`Recovered mergeable review task ${task.id}`);
           recovered++;
         } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
           log.error(`Failed to recover mergeable review task ${task.id}: ${errorMessage}`);
