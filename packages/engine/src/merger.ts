@@ -2831,7 +2831,13 @@ export async function aiMergeTask(
             }
             const restoreOriginalBranch = async () => {
               if (!originalBranchSha) return;
-              await execAsync(`git checkout "${branch}"`, { cwd: worktreePath }).catch(
+              // Hard-reset clears any in-progress cherry-pick / merge state
+              // and resets the index, so the subsequent forced checkout has
+              // no conflicting unmerged paths to refuse on.
+              await execAsync(`git reset --hard "${originalBranchSha}"`, {
+                cwd: worktreePath,
+              }).catch(() => undefined);
+              await execAsync(`git checkout -f "${branch}"`, { cwd: worktreePath }).catch(
                 () => undefined,
               );
               await execAsync(`git reset --hard "${originalBranchSha}"`, {
@@ -3072,6 +3078,7 @@ export async function aiMergeTask(
         buildCommand: effectiveBuildCommand,
         testSource: effectiveTestSource,
         buildSource: effectiveBuildSource,
+        preMergeRebaseFallthrough,
       }, aiTracker);
 
       if (success) {
@@ -3826,6 +3833,12 @@ interface MergeAttemptParams {
   testSource?: "explicit" | "inferred";
   /** Source of the build command: 'explicit' from settings or 'inferred' (future use) */
   buildSource?: "explicit" | "inferred";
+  /** Set when the pre-merge rebase recovery cascade (Layers 1–2) failed and
+   *  the merge proceeds under smart-prefer-main fall-through. The AI prompt
+   *  uses this to inject the safety preamble; the merge cascade uses it to
+   *  suppress the unsafe `-X ours` Attempt 3. Carries the original rebase
+   *  failure message for diagnostic context. */
+  preMergeRebaseFallthrough?: string;
 }
 
 /** Mutable flags carried through the merge cascade. */
@@ -4104,6 +4117,7 @@ async function executeMergeAttempt(
       testCommand,
       buildCommand,
       sourceIssueRef,
+      preMergeRebaseFallthrough: params.preMergeRebaseFallthrough,
     });
 
     // Handle build failure
@@ -4302,6 +4316,10 @@ interface AiAgentParams {
   options: MergerOptions;
   testCommand?: string;
   buildCommand?: string;
+  /** Forwarded from MergeAttemptParams; injects the safety preamble into
+   *  the merge prompt when the pre-merge rebase recovery cascade fell
+   *  through. See MergePromptParams.preMergeRebaseFallthrough for details. */
+  preMergeRebaseFallthrough?: string;
 }
 
 /**
@@ -4340,6 +4358,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     options,
     testCommand,
     buildCommand,
+    preMergeRebaseFallthrough,
   } = params;
 
   const settings = await store.getSettings();
@@ -4468,6 +4487,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
       buildCommand,
       authorArg,
       sourceIssueRef,
+      preMergeRebaseFallthrough,
     });
 
     // Attempt prompting with fresh session (first attempt).
@@ -4495,7 +4515,10 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
         mergerLog.warn(`${taskId}: context limit hit after auto-compaction — retrying with minimal merge prompt`);
         await store.logEntry(taskId, "Context limit reached during merge after auto-compaction — retrying with reduced prompt");
 
-        // Build minimal prompt: omit diff stat, use placeholder for commit log
+        // Build minimal prompt: omit diff stat, use placeholder for commit log.
+        // The fall-through preamble is preserved (it's the safety constraint,
+        // not bulk context) so the AI's truncated retry still knows main's
+        // deletions are authoritative.
         const truncatedPrompt = buildMergePrompt({
           taskId,
           branch,
@@ -4507,6 +4530,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
           buildCommand,
           authorArg,
           sourceIssueRef,
+          preMergeRebaseFallthrough,
         });
 
         try {
@@ -4605,23 +4629,62 @@ interface MergePromptParams {
   testCommand?: string;
   buildCommand?: string;
   authorArg?: string;
+  /** When set, the pre-merge rebase aborted under smart-prefer-main and the
+   *  surgical/patch-id recovery layers couldn't unblock it. The prompt
+   *  injects an explicit safety preamble so the AI knows main's deletions
+   *  are authoritative and to prefer main on ambiguous hunks. The
+   *  deterministic post-merge verification (test + build) is the safety
+   *  gate; this preamble gives the AI a fighting chance to do the right
+   *  thing on its first try. */
+  preMergeRebaseFallthrough?: string;
 }
 
 export function buildMergePrompt(params: MergePromptParams): string {
-  const { taskId, branch, commitLog, diffStat, hasConflicts, simplifiedContext, sourceIssueRef, testCommand, buildCommand, authorArg } = params;
+  const { taskId, branch, commitLog, diffStat, hasConflicts, simplifiedContext, sourceIssueRef, testCommand, buildCommand, authorArg, preMergeRebaseFallthrough } = params;
 
   // Apply truncation to prevent context overflow for large branches/diffs
   const truncatedCommitLog = truncateWithEllipsis(commitLog, MERGE_COMMIT_LOG_MAX_CHARS);
   const truncatedDiffStat = truncateWithEllipsis(diffStat, MERGE_DIFF_STAT_MAX_CHARS);
 
-  const parts = [
+  const parts: string[] = [];
+
+  // When pre-merge rebase recovery layers (1+2) couldn't reconcile this
+  // branch with main, this AI invocation is the final automated arbiter.
+  // Give it the context and the safety constraint up front — verification
+  // (test + build) is what enforces the constraint, but the AI should still
+  // know what's expected so its first attempt has a real chance.
+  if (preMergeRebaseFallthrough) {
+    parts.push(
+      "## ⚠️ Pre-merge rebase recovery exhausted — you are the final arbiter",
+      "",
+      "The pre-merge rebase against main aborted, and the surgical (Layer 1) and",
+      "patch-id (Layer 2) recovery layers could not reconcile the branch. You are",
+      "running under `smart-prefer-main` strategy, which means:",
+      "",
+      "**SAFETY CONSTRAINT — main's deletions are authoritative.**",
+      "- If a hunk shows main has deleted lines that the branch re-adds, prefer",
+      "  main's deletion. Branch-only re-additions are likely orphan content from",
+      "  a squash-merged dependency and must NOT be re-introduced.",
+      "- If a hunk is genuinely ambiguous, prefer main's version.",
+      "- The merge result MUST pass `pnpm test` and `pnpm build`. If you can't",
+      "  produce a result that does, call `fn_report_build_failure` with concrete",
+      "  output rather than committing a regression.",
+      "",
+      `Original rebase failure for context: ${preMergeRebaseFallthrough.slice(0, 800)}`,
+      "",
+      "---",
+      "",
+    );
+  }
+
+  parts.push(
     `Finalize the merge of branch \`${branch}\` for task ${taskId}.`,
     "",
     "## Branch commits",
     "```",
     truncatedCommitLog,
     "```",
-  ];
+  );
 
   if (!simplifiedContext) {
     parts.push(

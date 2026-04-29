@@ -1,6 +1,6 @@
 import express, { type Router } from "express";
 import { randomUUID } from "node:crypto";
-import { join, dirname, resolve } from "node:path";
+import { join, dirname } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createSecureServer as createHttp2SecureServer, type Http2SecureServer } from "node:http2";
