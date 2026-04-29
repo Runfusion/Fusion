@@ -7,7 +7,6 @@ import {
   type MissionStore,
   type MissionFeature,
   type PrInfo,
-  type UnavailableNodePolicy,
 } from "@fusion/core";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -168,7 +167,7 @@ export class Scheduler {
   /** Tracks mission-linked tasks observed with status=failed before moveTask clears status/error. */
   private failedTaskIds = new Set<string>();
   /** Tracks tasks blocked by unavailable-node policy to deduplicate block log entries. */
-  private blockedNodeTaskIds = new Set<string>();
+  private wasNodeBlocked = new Set<string>();
 
   /**
    * Async listener guard convention:
@@ -401,7 +400,7 @@ export class Scheduler {
       this.options.missionAutopilot.stop();
     }
     this.failedTaskIds.clear();
-    this.blockedNodeTaskIds.clear();
+    this.wasNodeBlocked.clear();
     schedulerLog.log("Stopped");
   }
 
@@ -763,38 +762,26 @@ export class Scheduler {
         schedulerLog.log(`Task ${task.id} routed to node=${effectiveNode.nodeId ?? "local"} (source=${effectiveNode.source})`);
 
         // Enforce unavailable-node policy
-        if (effectiveNode.nodeId !== undefined && this.options.nodeHealthMonitor) {
-          const nodeStatus = this.options.nodeHealthMonitor.getNodeHealth(effectiveNode.nodeId);
-          const policyResult = applyUnavailableNodePolicy(
-            nodeStatus,
-            settings.unavailableNodePolicy as UnavailableNodePolicy | undefined,
-            false,
-          );
+        if (effectiveNode.nodeId && this.options.nodeHealthMonitor) {
+          const nodeHealth = this.options.nodeHealthMonitor.getNodeHealth(effectiveNode.nodeId);
+          const decision = applyUnavailableNodePolicy({
+            effectiveNode,
+            nodeHealth,
+            policy: settings.unavailableNodePolicy,
+          });
 
-          if (!policyResult.allowed) {
-            if (!this.blockedNodeTaskIds.has(task.id)) {
-              this.blockedNodeTaskIds.add(task.id);
-              schedulerLog.log(
-                `Task ${task.id} dispatch blocked — node ${effectiveNode.nodeId} is ${nodeStatus ?? "unknown"} (policy: block)`,
-              );
-              await this.store.logEntry(
-                task.id,
-                `Routing blocked: node ${effectiveNode.nodeId} is ${nodeStatus ?? "unknown"}, policy=block`,
-              );
+          if (!decision.allowed) {
+            if (!this.wasNodeBlocked.has(task.id)) {
+              this.wasNodeBlocked.add(task.id);
+              schedulerLog.warn(`Task ${task.id} blocked: ${decision.reason}`);
+              await this.store.logEntry(task.id, decision.reason);
             }
             continue;
           }
 
-          this.blockedNodeTaskIds.delete(task.id);
-
-          if (policyResult.fallbackToLocal) {
-            schedulerLog.log(
-              `Task ${task.id} falling back to local — node ${effectiveNode.nodeId} is ${nodeStatus ?? "unknown"} (policy: fallback-local)`,
-            );
-            await this.store.logEntry(
-              task.id,
-              `Routing fallback to local: node ${effectiveNode.nodeId} is ${nodeStatus ?? "unknown"}, policy=fallback-local`,
-            );
+          if (decision.fallbackToLocal) {
+            schedulerLog.log(`Task ${task.id} falling back to local: ${decision.reason}`);
+            await this.store.logEntry(task.id, decision.reason);
             effectiveNode = { nodeId: undefined, source: "local" };
           }
         }
@@ -810,6 +797,7 @@ export class Scheduler {
           effectiveNodeSource: effectiveNode.source,
         });
         await this.store.moveTask(task.id, "in-progress");
+        this.wasNodeBlocked.delete(task.id);
         await this.store.logEntry(task.id, `Node routing resolved: ${effectiveNode.nodeId ?? "local"} (source: ${effectiveNode.source})`);
         this.options.onSchedule?.(task);
         started++;

@@ -1,45 +1,42 @@
 import type { NodeStatus, UnavailableNodePolicy } from "@fusion/core";
+import type { EffectiveNode } from "./effective-node.js";
 
-export interface PolicyResult {
-  allowed: boolean;
-  fallbackToLocal: boolean;
-  reason: string;
-}
+export type PolicyDecision =
+  | { allowed: true; fallbackToLocal: false }
+  | { allowed: true; fallbackToLocal: true; reason: string }
+  | { allowed: false; reason: string };
 
 const UNHEALTHY_STATUSES: ReadonlySet<NodeStatus> = new Set(["offline", "error", "connecting"]);
 
-export function applyUnavailableNodePolicy(
-  nodeStatus: NodeStatus | undefined,
-  policy: UnavailableNodePolicy | undefined,
-  isLocal: boolean,
-): PolicyResult {
-  if (isLocal) {
-    return { allowed: true, fallbackToLocal: false, reason: "local-execution" };
+export function applyUnavailableNodePolicy(params: {
+  effectiveNode: EffectiveNode;
+  nodeHealth: NodeStatus | undefined;
+  policy: UnavailableNodePolicy | undefined;
+}): PolicyDecision {
+  const { effectiveNode, nodeHealth, policy } = params;
+
+  if (effectiveNode.source === "local") {
+    return { allowed: true, fallbackToLocal: false };
   }
 
-  if (nodeStatus === undefined) {
-    return { allowed: true, fallbackToLocal: false, reason: "unknown-health" };
+  if (nodeHealth === "online" || nodeHealth === undefined) {
+    return { allowed: true, fallbackToLocal: false };
   }
 
-  if (nodeStatus === "online") {
-    return { allowed: true, fallbackToLocal: false, reason: "healthy" };
-  }
-
-  if (!UNHEALTHY_STATUSES.has(nodeStatus)) {
-    return { allowed: true, fallbackToLocal: false, reason: "healthy" };
+  if (!effectiveNode.nodeId || !UNHEALTHY_STATUSES.has(nodeHealth)) {
+    return { allowed: true, fallbackToLocal: false };
   }
 
   if (policy === "fallback-local") {
     return {
       allowed: true,
       fallbackToLocal: true,
-      reason: `fallback-local:${nodeStatus}`,
+      reason: `Node ${effectiveNode.nodeId} is ${nodeHealth}; falling back to local per policy`,
     };
   }
 
   return {
     allowed: false,
-    fallbackToLocal: false,
-    reason: `blocked:${nodeStatus}`,
+    reason: `Node ${effectiveNode.nodeId} is ${nodeHealth}; policy is block`,
   };
 }

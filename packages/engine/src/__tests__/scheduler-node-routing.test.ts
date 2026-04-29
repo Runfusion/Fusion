@@ -61,9 +61,9 @@ function createMockStore(task: Task, settings: Record<string, unknown> = {}): Ta
   } as unknown as TaskStore;
 }
 
-function createMockHealthMonitor(statusMap: Record<string, NodeStatus | undefined>) {
+function createMockNodeHealthMonitor(healthMap: Record<string, NodeStatus | undefined>) {
   return {
-    getNodeHealth: vi.fn((id: string) => statusMap[id]),
+    getNodeHealth: vi.fn((id: string) => healthMap[id]),
   } as unknown as import("../node-health-monitor.js").NodeHealthMonitor;
 }
 
@@ -137,7 +137,7 @@ describe("Scheduler node routing", () => {
   it("blocks dispatch when node is unhealthy and policy is block", async () => {
     const task = createMockTask({ id: "FN-104", nodeId: "node-offline" });
     const store = createMockStore(task, { maxConcurrent: 1, maxWorktrees: 1, unavailableNodePolicy: "block" });
-    const healthMonitor = createMockHealthMonitor({ "node-offline": "offline" });
+    const healthMonitor = createMockNodeHealthMonitor({ "node-offline": "offline" });
     const scheduler = new Scheduler(store, { nodeHealthMonitor: healthMonitor });
     (scheduler as unknown as { running: boolean }).running = true;
 
@@ -145,13 +145,14 @@ describe("Scheduler node routing", () => {
 
     expect(store.updateTask).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledWith(task.id, "Routing blocked: node node-offline is offline, policy=block");
+    expect(store.logEntry).toHaveBeenCalledWith(task.id, "Node node-offline is offline; policy is block");
+    expect(schedulerLog.warn).toHaveBeenCalledWith("Task FN-104 blocked: Node node-offline is offline; policy is block");
   });
 
   it("deduplicates blocked log entries across polling cycles", async () => {
     const task = createMockTask({ id: "FN-105", nodeId: "node-offline" });
     const store = createMockStore(task, { maxConcurrent: 1, maxWorktrees: 1, unavailableNodePolicy: "block" });
-    const healthMonitor = createMockHealthMonitor({ "node-offline": "offline" });
+    const healthMonitor = createMockNodeHealthMonitor({ "node-offline": "offline" });
     const scheduler = new Scheduler(store, { nodeHealthMonitor: healthMonitor });
     (scheduler as unknown as { running: boolean }).running = true;
 
@@ -159,7 +160,7 @@ describe("Scheduler node routing", () => {
     await scheduler.schedule();
 
     const blockLogs = vi.mocked(store.logEntry).mock.calls.filter(([, message]) =>
-      String(message).includes("Routing blocked: node node-offline is offline, policy=block"),
+      String(message).includes("Node node-offline is offline; policy is block"),
     );
     expect(blockLogs).toHaveLength(1);
   });
@@ -167,7 +168,7 @@ describe("Scheduler node routing", () => {
   it("falls back to local dispatch when node is unhealthy and policy is fallback-local", async () => {
     const task = createMockTask({ id: "FN-106", nodeId: "node-error" });
     const store = createMockStore(task, { maxConcurrent: 1, maxWorktrees: 1, unavailableNodePolicy: "fallback-local" });
-    const healthMonitor = createMockHealthMonitor({ "node-error": "error" });
+    const healthMonitor = createMockNodeHealthMonitor({ "node-error": "error" });
     const scheduler = new Scheduler(store, { nodeHealthMonitor: healthMonitor });
     (scheduler as unknown as { running: boolean }).running = true;
 
@@ -177,13 +178,13 @@ describe("Scheduler node routing", () => {
       effectiveNodeId: null,
       effectiveNodeSource: "local",
     }));
-    expect(store.logEntry).toHaveBeenCalledWith(task.id, "Routing fallback to local: node node-error is error, policy=fallback-local");
+    expect(store.logEntry).toHaveBeenCalledWith(task.id, "Node node-error is error; falling back to local per policy");
   });
 
   it("dispatches normally when node is online with block policy", async () => {
     const task = createMockTask({ id: "FN-107", nodeId: "node-online" });
     const store = createMockStore(task, { maxConcurrent: 1, maxWorktrees: 1, unavailableNodePolicy: "block" });
-    const healthMonitor = createMockHealthMonitor({ "node-online": "online" });
+    const healthMonitor = createMockNodeHealthMonitor({ "node-online": "online" });
     const scheduler = new Scheduler(store, { nodeHealthMonitor: healthMonitor });
     (scheduler as unknown as { running: boolean }).running = true;
 
@@ -198,7 +199,7 @@ describe("Scheduler node routing", () => {
   it("dispatches normally when node health is unknown", async () => {
     const task = createMockTask({ id: "FN-108", nodeId: "node-unknown" });
     const store = createMockStore(task, { maxConcurrent: 1, maxWorktrees: 1, unavailableNodePolicy: "block" });
-    const healthMonitor = createMockHealthMonitor({ "node-unknown": undefined });
+    const healthMonitor = createMockNodeHealthMonitor({ "node-unknown": undefined });
     const scheduler = new Scheduler(store, { nodeHealthMonitor: healthMonitor });
     (scheduler as unknown as { running: boolean }).running = true;
 
@@ -210,25 +211,27 @@ describe("Scheduler node routing", () => {
     }));
   });
 
-  it("clears block and dispatches after node recovers", async () => {
+  it("clears block dedup after successful dispatch", async () => {
     const task = createMockTask({ id: "FN-109", nodeId: "node-flaky" });
     const store = createMockStore(task, { maxConcurrent: 1, maxWorktrees: 1, unavailableNodePolicy: "block" });
-    const getNodeHealth = vi.fn()
+    const getNodeHealth = vi
+      .fn()
       .mockReturnValueOnce("offline" satisfies NodeStatus)
-      .mockReturnValueOnce("online" satisfies NodeStatus);
+      .mockReturnValueOnce("online" satisfies NodeStatus)
+      .mockReturnValueOnce("offline" satisfies NodeStatus);
     const scheduler = new Scheduler(store, {
       nodeHealthMonitor: { getNodeHealth } as unknown as import("../node-health-monitor.js").NodeHealthMonitor,
     });
     (scheduler as unknown as { running: boolean }).running = true;
 
     await scheduler.schedule();
-    expect(store.updateTask).not.toHaveBeenCalled();
-
     await scheduler.schedule();
-    expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
-      effectiveNodeId: "node-flaky",
-      effectiveNodeSource: "task-override",
-    }));
+    await scheduler.schedule();
+
+    const blockLogs = vi.mocked(store.logEntry).mock.calls.filter(([, message]) =>
+      String(message).includes("Node node-flaky is offline; policy is block"),
+    );
+    expect(blockLogs).toHaveLength(2);
   });
 
   it("skips policy check when no health monitor is provided", async () => {
@@ -248,7 +251,7 @@ describe("Scheduler node routing", () => {
   it("never queries health for local tasks", async () => {
     const task = createMockTask({ id: "FN-111", nodeId: undefined });
     const store = createMockStore(task, { maxConcurrent: 1, maxWorktrees: 1 });
-    const healthMonitor = createMockHealthMonitor({});
+    const healthMonitor = createMockNodeHealthMonitor({});
     const scheduler = new Scheduler(store, { nodeHealthMonitor: healthMonitor });
     (scheduler as unknown as { running: boolean }).running = true;
 
