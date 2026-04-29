@@ -50,6 +50,7 @@ export type { Statement } from "./db.js";
 export { ArchiveDatabase } from "./archive-db.js";
 export { detectLegacyData, migrateFromLegacy, getMigrationStatus } from "./db-migrate.js";
 export { GlobalSettingsStore, resolveGlobalDir } from "./global-settings.js";
+export { isValidSqliteDatabaseFile } from "./sqlite-validation.js";
 export { DaemonTokenManager, DAEMON_TOKEN_PREFIX, DAEMON_TOKEN_HEX_LENGTH, isDaemonTokenFormat } from "./daemon-token.js";
 export { discoverPiExtensions, formatPiExtensionSource, getEnabledPiExtensionPaths, getFusionAgentDir, getFusionAgentSettingsPath, getLegacyPiAgentDir, getPiExtensionDiscoveryDirs, reconcileClaudeCliPaths, resolvePiExtensionProjectRoot, updatePiExtensionDisabledIds } from "./pi-extensions.js";
 export type { PiExtensionEntry, PiExtensionSettings, PiExtensionSource } from "./pi-extensions.js";

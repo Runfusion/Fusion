@@ -117,6 +117,16 @@ describe("project-context", () => {
       expect(found?.path).toBe(resolve(projectPath));
       expect(found?.name).toBe("legacy-project");
     });
+
+    it("should ignore invalid fusion.db files in the cwd", async () => {
+      const projectPath = join(tempDir, "invalid-project");
+      mkdirSync(join(projectPath, ".fusion"), { recursive: true });
+      writeFileSync(join(projectPath, ".fusion", "fusion.db"), "SQLite format 3\x00");
+
+      const found = await detectProjectFromCwd(projectPath, central);
+
+      expect(found).toBeUndefined();
+    });
   });
 
   describe("formatProjectLine", () => {

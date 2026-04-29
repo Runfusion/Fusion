@@ -11,7 +11,7 @@
 import { existsSync, statSync } from "node:fs";
 import { basename, dirname, resolve, normalize } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { CentralCore, type RegisteredProject, type TaskStore } from "@fusion/core";
+import { CentralCore, isValidSqliteDatabaseFile, type RegisteredProject, type TaskStore } from "@fusion/core";
 import { ProjectManager } from "@fusion/engine";
 
 // Singleton instances for reuse across commands
@@ -106,8 +106,8 @@ export function findKbDir(startPath: string): string | null {
 
   // Safety limit to prevent infinite loops
   for (let i = 0; i < 100; i++) {
-    const kbPath = resolve(current, ".fusion");
-    if (existsSync(kbPath) && statSync(kbPath).isDirectory()) {
+    const dbPath = resolve(current, ".fusion", "fusion.db");
+    if (isValidSqliteDatabaseFile(dbPath)) {
       return current;
     }
 
@@ -454,8 +454,7 @@ export async function isProjectNameTaken(
  * Validate that a path contains an initialized fn project (.fusion/ directory exists).
  */
 export function isKbProject(path: string): boolean {
-  const kbPath = resolve(path, ".fusion");
-  return existsSync(kbPath) && statSync(kbPath).isDirectory();
+  return isValidSqliteDatabaseFile(resolve(path, ".fusion", "fusion.db"));
 }
 
 /**

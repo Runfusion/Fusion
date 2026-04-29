@@ -3765,7 +3765,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const central = options?.centralCore ?? new (await import("@fusion/core")).CentralCore();
       const shouldClose = !options?.centralCore;
-      if (shouldClose) await central.init();
+      if (shouldClose || (typeof central.isInitialized === "function" && !central.isInitialized())) await central.init();
       
       const state = await central.getGlobalConcurrencyState();
       if (shouldClose) await central.close();
@@ -3794,7 +3794,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const central = options?.centralCore ?? new (await import("@fusion/core")).CentralCore();
       const shouldClose = !options?.centralCore;
-      if (shouldClose) await central.init();
+      if (shouldClose || (typeof central.isInitialized === "function" && !central.isInitialized())) await central.init();
 
       const state = await central.updateGlobalConcurrency({ globalMaxConcurrent });
       if (shouldClose) await central.close();
@@ -3815,17 +3815,39 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/first-run-status", async (_req, res) => {
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const { CentralCore, FirstRunDetector } = await import("@fusion/core");
+      const central = options?.centralCore ?? new CentralCore();
+      const shouldClose = !options?.centralCore;
+      const detector = new FirstRunDetector(central.getGlobalDir());
+
+      try {
+        if (shouldClose || (typeof central.isInitialized === "function" && !central.isInitialized())) {
+          await central.init();
+        }
+
+        const projects = await central.listProjects();
+        const hasProjects = projects.length > 0;
+        const singleProjectPath = projects.length === 1 ? projects[0].path : null;
+
+        res.json({ hasProjects, singleProjectPath });
+      } catch (error) {
+        const detectedProjects = await detector.detectExistingProjects(process.cwd());
+        const hasProjects = detectedProjects.length > 0;
+        const singleProjectPath = detectedProjects.length === 1 ? detectedProjects[0].path : null;
+
+        console.warn(
+          `[routes:first-run-status] Falling back to detected projects after central DB error: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+
+        res.json({ hasProjects, singleProjectPath });
+      } finally {
+        if (shouldClose) {
+          await central.close();
+        }
+      }
       
-      const projects = await central.listProjects();
-      await central.close();
-      
-      const hasProjects = projects.length > 0;
-      const singleProjectPath = projects.length === 1 ? projects[0].path : null;
-      
-      res.json({ hasProjects, singleProjectPath });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
@@ -3841,18 +3863,29 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    */
   router.get("/setup-state", async (_req, res) => {
     try {
-      const { FirstRunDetector } = await import("@fusion/core");
-      const { CentralCore } = await import("@fusion/core");
-
-      const detector = new FirstRunDetector();
-      const state = await detector.detectFirstRunState();
+      const { CentralCore, FirstRunDetector } = await import("@fusion/core");
+      const central = options?.centralCore ?? new CentralCore();
+      const shouldClose = !options?.centralCore;
+      const detector = new FirstRunDetector(central.getGlobalDir());
       const detectedProjects = await detector.detectExistingProjects(process.cwd());
+      let state = await detector.detectFirstRunState();
+      let projects: Array<{ id: string; name: string; path: string }> = [];
 
-      // Get central DB info
-      const central = new CentralCore();
-      await central.init();
-      const projects = await central.listProjects();
-      await central.close();
+      try {
+        if (shouldClose || (typeof central.isInitialized === "function" && !central.isInitialized())) {
+          await central.init();
+        }
+        state = await detector.detectFirstRunState(central);
+        projects = await central.listProjects();
+      } catch (error) {
+        console.warn(
+          `[routes:setup-state] Unable to read central DB state: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      } finally {
+        if (shouldClose) {
+          await central.close();
+        }
+      }
 
       res.json({
         state,
@@ -3890,8 +3923,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         throw badRequest("projects must be an array");
       }
 
-      const central = new CentralCore();
-      await central.init();
+      const central = options?.centralCore ?? new CentralCore();
+      const shouldClose = !options?.centralCore;
+
+      if (shouldClose || (typeof central.isInitialized === "function" && !central.isInitialized())) {
+        await central.init();
+      }
 
       try {
         const coordinator = new MigrationCoordinator(central);
@@ -3903,7 +3940,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           errors: result.errors,
         });
       } finally {
-        await central.close();
+        if (shouldClose) {
+          await central.close();
+        }
       }
     } catch (err: unknown) {
       if (err instanceof ApiError) {

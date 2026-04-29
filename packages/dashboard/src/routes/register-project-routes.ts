@@ -1,6 +1,7 @@
 import * as fsPromises from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
-import { ensureMemoryFileWithBackend } from "@fusion/core";
+import { ensureMemoryFileWithBackend, isValidSqliteDatabaseFile } from "@fusion/core";
+import type { CentralCore as CentralCoreApi } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import { execFileAsync } from "../exec-file.js";
 import { getOrCreateProjectStore } from "../project-store-resolver.js";
@@ -17,9 +18,33 @@ const {
 export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
   const { router, options, runtimeLogger, prioritizeProjectsForCurrentDirectory, rethrowAsApiError } = ctx;
 
+  async function withCentralCore<T>(
+    run: (central: CentralCoreApi) => Promise<T>,
+    onError?: (error: unknown) => Promise<T> | T,
+  ): Promise<T> {
+    const sharedCentral = options?.centralCore;
+    const shouldClose = !sharedCentral;
+    const central = sharedCentral ?? new (await import("@fusion/core")).CentralCore();
+
+    try {
+      if (!sharedCentral || (typeof central.isInitialized === "function" && !central.isInitialized())) {
+        await central.init();
+      }
+      return await run(central);
+    } catch (error) {
+      if (onError) {
+        return await onError(error);
+      }
+      throw error;
+    } finally {
+      if (shouldClose) {
+        await central.close();
+      }
+    }
+  }
+
   // ── Project Management Routes (Multi-Project Support) ───────────────────────
-  // These routes require CentralCore which is imported dynamically to avoid
-  // circular dependencies and ensure the central database is initialized.
+  // These routes require CentralCore for the shared project registry.
 
   /**
    * GET /api/projects
@@ -28,16 +53,20 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.get("/projects", async (_req, res) => {
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
-
-      // Reconcile stale "initializing" projects before listing so the
-      // dashboard never shows permanent loading spinners for legacy records.
-      await central.reconcileProjectStatuses();
-
-      const projects = prioritizeProjectsForCurrentDirectory(await central.listProjects());
-      await central.close();
+      const projects = await withCentralCore(
+        async (central) => {
+          // Reconcile stale "initializing" projects before listing so the
+          // dashboard never shows permanent loading spinners for legacy records.
+          await central.reconcileProjectStatuses();
+          return prioritizeProjectsForCurrentDirectory(await central.listProjects());
+        },
+        (error) => {
+          runtimeLogger.child("projects").warn(
+            `Failed to list registered projects: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return [];
+        },
+      );
 
       res.json(projects);
     } catch (err: unknown) {
@@ -56,18 +85,26 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.get("/projects/across-nodes", async (_req, res) => {
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const { localProjects, allNodes } = await withCentralCore(
+        async (central) => {
+          // Reconcile stale "initializing" projects before listing
+          await central.reconcileProjectStatuses();
 
-      // Reconcile stale "initializing" projects before listing
-      await central.reconcileProjectStatuses();
+          // Get local projects and registered nodes in parallel
+          const [projects, nodes] = await Promise.all([
+            central.listProjects(),
+            central.listNodes(),
+          ]);
 
-      // Get local projects and registered nodes in parallel
-      const [localProjects, allNodes] = await Promise.all([
-        central.listProjects(),
-        central.listNodes(),
-      ]);
+          return { localProjects: projects, allNodes: nodes };
+        },
+        (error) => {
+          runtimeLogger.child("projects:across-nodes").warn(
+            `Failed to load local project registry: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return { localProjects: [], allNodes: [] };
+        },
+      );
 
       // Filter to online remote nodes with URLs
       const remoteNodes = allNodes.filter(
@@ -79,7 +116,6 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
       // no cross-node aggregation overhead.
       if (remoteNodes.length === 0) {
         const prioritizedProjects = prioritizeProjectsForCurrentDirectory(localProjects);
-        await central.close();
         res.json(prioritizedProjects);
         return;
       }
@@ -158,8 +194,6 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
 
       // Apply directory prioritization
       const prioritizedProjects = prioritizeProjectsForCurrentDirectory(mergedProjects);
-
-      await central.close();
 
       res.json(prioritizedProjects);
     } catch (err: unknown) {
@@ -304,19 +338,17 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
         hasFusionDir = false;
       }
 
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const activeProject = await withCentralCore(async (central) => {
+        const project = await central.registerProject({
+          name: normalizedName,
+          path: normalizedPath,
+          isolationMode,
+          nodeId,
+        });
 
-      const project = await central.registerProject({
-        name: normalizedName,
-        path: normalizedPath,
-        isolationMode,
-        nodeId,
+        // Activate the project (registration sets it to 'initializing')
+        return await central.updateProject(project.id, { status: "active" });
       });
-
-      // Activate the project (registration sets it to 'initializing')
-      const activeProject = await central.updateProject(project.id, { status: "active" });
 
       // Bootstrap memory files (non-blocking, non-fatal)
       ensureMemoryFileWithBackend(normalizedPath).catch(() => {
@@ -341,9 +373,6 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
           );
         }
       }
-
-      await central.close();
-
       res.status(201).json({ ...activeProject, _meta: { hasFusionDir: hasFusionDir ? undefined : false } });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -379,15 +408,19 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
       }
 
       // Get list of existing projects to check for duplicates
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
-      const existingProjects = await central.listProjects();
-      await central.close();
+      const existingProjects = await withCentralCore(
+        async (central) => await central.listProjects(),
+        (error) => {
+          runtimeLogger.child("projects:detect").warn(
+            `Failed to load existing projects during detection: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return [];
+        },
+      );
 
       const existingPaths = new Set(existingProjects.map((p: { path: string }) => p.path));
 
-      // Scan for .fusion/fusion.db or .fusion/fusion.db files (indicating fn projects)
+      // Scan for openable .fusion/fusion.db files (indicating fn projects)
       const detected: Array<{ path: string; suggestedName: string; existing: boolean }> = [];
 
       try {
@@ -397,25 +430,7 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
           if (!entry.isDirectory()) continue;
 
           const dirPath = join(searchPath, entry.name);
-          // Check for .fusion/fusion.db or .fusion directory (async to avoid blocking event loop)
-          let hasKbDb = false;
-          let hasFusionDir = false;
-          try {
-            await access(join(dirPath, ".fusion", "fusion.db"));
-            hasKbDb = true;
-          } catch {
-            hasKbDb = false;
-          }
-          if (!hasKbDb) {
-            try {
-              await access(join(dirPath, ".fusion"));
-              hasFusionDir = true;
-            } catch {
-              hasFusionDir = false;
-            }
-          }
-
-          if (hasKbDb || hasFusionDir) {
+          if (isValidSqliteDatabaseFile(join(dirPath, ".fusion", "fusion.db"))) {
             detected.push({
               path: dirPath,
               suggestedName: entry.name,
@@ -442,12 +457,7 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.get("/projects/:id", async (req, res) => {
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
-
-      const project = await central.getProject(req.params.id);
-      await central.close();
+      const project = await withCentralCore(async (central) => await central.getProject(req.params.id));
 
       if (!project) {
         throw notFound("Project not found");
@@ -475,29 +485,24 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
       if (status !== undefined) updates.status = status as import("@fusion/core").ProjectStatus;
       if (isolationMode !== undefined) updates.isolationMode = isolationMode as "in-process" | "child-process";
 
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
-
-      const project = await central.updateProject(req.params.id, updates);
-      if (!project) {
-        await central.close();
-        throw notFound("Project not found");
-      }
-
-      let resultProject = project;
-      if (nodeId !== undefined) {
-        if (nodeId === null) {
-          resultProject = await central.unassignProjectFromNode(req.params.id);
-        } else if (typeof nodeId === "string" && nodeId.trim()) {
-          resultProject = await central.assignProjectToNode(req.params.id, nodeId.trim());
-        } else {
-          await central.close();
-          throw badRequest("nodeId must be a non-empty string or null");
+      const resultProject = await withCentralCore(async (central) => {
+        const project = await central.updateProject(req.params.id, updates);
+        if (!project) {
+          throw notFound("Project not found");
         }
-      }
 
-      await central.close();
+        if (nodeId === undefined) {
+          return project;
+        }
+        if (nodeId === null) {
+          return await central.unassignProjectFromNode(req.params.id);
+        }
+        if (typeof nodeId === "string" && nodeId.trim()) {
+          return await central.assignProjectToNode(req.params.id, nodeId.trim());
+        }
+
+        throw badRequest("nodeId must be a non-empty string or null");
+      });
 
       res.json(resultProject);
     } catch (err: unknown) {
@@ -515,12 +520,9 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.delete("/projects/:id", async (req, res) => {
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
-
-      await central.unregisterProject(req.params.id);
-      await central.close();
+      await withCentralCore(async (central) => {
+        await central.unregisterProject(req.params.id);
+      });
 
       res.json({ success: true });
     } catch (err: unknown) {
@@ -541,49 +543,47 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.get("/projects/:id/health", async (req, res) => {
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
+      const health = await withCentralCore(async (central) => {
+        const project = await central.getProject(req.params.id);
+        if (!project) {
+          throw notFound("Project not found");
+        }
 
-      const project = await central.getProject(req.params.id);
-      if (!project) {
-        await central.close();
-        throw notFound("Project not found");
-      }
+        // Use the project-scoped store resolver to get the correct store for
+        // this project. This ensures we compute counts from the right project,
+        // regardless of which project is the dashboard's default.
+        const projectStore = await getOrCreateProjectStore(req.params.id);
 
-      // Use the project-scoped store resolver to get the correct store for
-      // this project. This ensures we compute counts from the right project,
-      // regardless of which project is the dashboard's default.
-      const projectStore = await getOrCreateProjectStore(req.params.id);
+        // Compute live task counts from the project-specific store
+        const tasks = await projectStore.listTasks({ slim: true });
+        const activeCols = new Set(["triage", "todo", "in-progress", "in-review"]);
+        const activeTaskCount = tasks.filter((t) => activeCols.has(t.column)).length;
+        const inFlightAgentCount = tasks.filter((t) => t.column === "in-progress").length;
+        const totalTasksCompleted = tasks.filter((t) => t.column === "done" || t.column === "archived").length;
 
-      // Compute live task counts from the project-specific store
-      const tasks = await projectStore.listTasks({ slim: true });
-      const activeCols = new Set(["triage", "todo", "in-progress", "in-review"]);
-      const activeTaskCount = tasks.filter((t) => activeCols.has(t.column)).length;
-      const inFlightAgentCount = tasks.filter((t) => t.column === "in-progress").length;
-      const totalTasksCompleted = tasks.filter((t) => t.column === "done" || t.column === "archived").length;
+        // Get central health metadata (if available) to preserve non-count fields
+        const centralHealth = await central.getProjectHealth(req.params.id);
 
-      // Get central health metadata (if available) to preserve non-count fields
-      const centralHealth = await central.getProjectHealth(req.params.id);
-      await central.close();
+        // Build response: use central health as base if available, otherwise synthesize
+        const healthBase = centralHealth ?? {
+          projectId: req.params.id,
+          status: project.status ?? "active",
+          activeTaskCount: 0,
+          inFlightAgentCount: 0,
+          totalTasksCompleted: 0,
+          totalTasksFailed: 0,
+          updatedAt: new Date().toISOString(),
+        };
 
-      // Build response: use central health as base if available, otherwise synthesize
-      const healthBase = centralHealth ?? {
-        projectId: req.params.id,
-        status: project.status ?? "active",
-        activeTaskCount: 0,
-        inFlightAgentCount: 0,
-        totalTasksCompleted: 0,
-        totalTasksFailed: 0,
-        updatedAt: new Date().toISOString(),
-      };
-
-      res.json({
-        ...healthBase,
-        activeTaskCount,
-        inFlightAgentCount,
-        totalTasksCompleted,
+        return {
+          ...healthBase,
+          activeTaskCount,
+          inFlightAgentCount,
+          totalTasksCompleted,
+        };
       });
+
+      res.json(health);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
@@ -599,12 +599,7 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.get("/projects/:id/config", async (req, res) => {
     try {
-      const { CentralCore } = await import("@fusion/core");
-      const central = new CentralCore();
-      await central.init();
-
-      const project = await central.getProject(req.params.id);
-      await central.close();
+      const project = await withCentralCore(async (central) => await central.getProject(req.params.id));
 
       if (!project) {
         throw notFound("Project not found");
@@ -635,20 +630,14 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
         await options.engineManager.pauseProject(projectId);
       } else {
         // Fallback: update CentralCore directly (dev mode)
-        const { CentralCore } = await import("@fusion/core");
-        const central = new CentralCore();
-        await central.init();
-        await central.updateProject(projectId, { status: "paused" });
-        await central.updateProjectHealth(projectId, { status: "paused" });
-        await central.close();
+        await withCentralCore(async (central) => {
+          await central.updateProject(projectId, { status: "paused" });
+          await central.updateProjectHealth(projectId, { status: "paused" });
+        });
       }
 
       // Fetch and return the updated project
-      const { CentralCore: CentralCore2 } = await import("@fusion/core");
-      const central = new CentralCore2();
-      await central.init();
-      const project = await central.getProject(projectId);
-      await central.close();
+      const project = await withCentralCore(async (central) => await central.getProject(projectId));
 
       if (!project) {
         throw new ApiError(404, `Project ${projectId} not found`);
@@ -677,20 +666,14 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
         await options.engineManager.resumeProject(projectId);
       } else {
         // Fallback: update CentralCore directly (dev mode)
-        const { CentralCore } = await import("@fusion/core");
-        const central = new CentralCore();
-        await central.init();
-        await central.updateProject(projectId, { status: "active" });
-        await central.updateProjectHealth(projectId, { status: "active" });
-        await central.close();
+        await withCentralCore(async (central) => {
+          await central.updateProject(projectId, { status: "active" });
+          await central.updateProjectHealth(projectId, { status: "active" });
+        });
       }
 
       // Fetch and return the updated project
-      const { CentralCore: CentralCore2 } = await import("@fusion/core");
-      const central = new CentralCore2();
-      await central.init();
-      const project = await central.getProject(projectId);
-      await central.close();
+      const project = await withCentralCore(async (central) => await central.getProject(projectId));
 
       if (!project) {
         throw new ApiError(404, `Project ${projectId} not found`);

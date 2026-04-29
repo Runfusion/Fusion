@@ -13,7 +13,7 @@ import { join, resolve, basename } from "node:path";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 const execAsync = promisify(exec);
-import { CentralCore, QMD_INSTALL_COMMAND, isQmdAvailable } from "@fusion/core";
+import { CentralCore, QMD_INSTALL_COMMAND, isQmdAvailable, isValidSqliteDatabaseFile } from "@fusion/core";
 import { maybeInstallClaudeSkillForNewProject } from "./claude-skills-runner.js";
 import { isGitRepo } from "./git.js";
 import {
@@ -41,9 +41,11 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
   const cwd = options.path ? resolve(options.path) : process.cwd();
   const fusionDir = join(cwd, ".fusion");
   const dbPath = join(fusionDir, "fusion.db");
+  const hasDbPath = existsSync(dbPath);
+  const hasValidDb = hasDbPath && isValidSqliteDatabaseFile(dbPath);
 
   // Check if already initialized
-  if (existsSync(fusionDir) && existsSync(dbPath)) {
+  if (existsSync(fusionDir) && hasDbPath && hasValidDb) {
     // Check if registered in central DB
     const central = new CentralCore();
     await central.init();
@@ -67,6 +69,13 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
     console.log(`  Or: rm -rf ${fusionDir} && fn init`);
     await central.close();
     return;
+  }
+
+  if (existsSync(fusionDir) && hasDbPath && !hasValidDb) {
+    throw new Error(
+      `Existing database at ${dbPath} is not a valid SQLite database. ` +
+      "Restore it from .fusion/backups or move it aside before re-running fn init.",
+    );
   }
 
   // Get or generate project name
@@ -95,12 +104,8 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
 
   // Create fusion.db (empty SQLite file)
   if (!existsSync(dbPath)) {
-    // SQLite database header for an empty database
-    const sqliteHeader = Buffer.from([
-      0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66,
-      0x6f, 0x72, 0x6d, 0x61, 0x74, 0x20, 0x33, 0x00
-    ]);
-    writeFileSync(dbPath, sqliteHeader);
+    // A zero-byte bootstrap file is a valid SQLite starting point.
+    writeFileSync(dbPath, "");
     console.log(`  ✓ Created fusion.db`);
   }
 

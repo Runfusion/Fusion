@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { tempWorkspace, useIsolatedCwd } from "@fusion/test-utils";
@@ -20,8 +20,46 @@ import { CentralCore } from "../central-core.js";
 function createFakeKbProject(dir: string): void {
   const kbDir = join(dir, ".fusion");
   mkdirSync(kbDir, { recursive: true });
-  // Create empty fusion.db file (SQLite needs actual format, but for detection an empty file works)
+  // A zero-byte file is a valid SQLite bootstrap database.
+  writeFileSync(join(kbDir, "fusion.db"), "");
+}
+
+function createInvalidKbProject(dir: string): void {
+  const kbDir = join(dir, ".fusion");
+  mkdirSync(kbDir, { recursive: true });
   writeFileSync(join(kbDir, "fusion.db"), "SQLite format 3\x00");
+}
+
+async function withDefaultFirstRunDetector<T>(
+  homeDir: string,
+  fn: (detector: FirstRunDetector) => Promise<T> | T,
+): Promise<T> {
+  const savedHome = process.env.HOME;
+  const savedUserProfile = process.env.USERPROFILE;
+  const savedVitest = process.env.VITEST;
+  process.env.HOME = homeDir;
+  process.env.USERPROFILE = homeDir;
+  delete process.env.VITEST;
+
+  try {
+    return await fn(new FirstRunDetector());
+  } finally {
+    if (savedHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = savedHome;
+    }
+    if (savedUserProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = savedUserProfile;
+    }
+    if (savedVitest === undefined) {
+      delete process.env.VITEST;
+    } else {
+      process.env.VITEST = savedVitest;
+    }
+  }
 }
 
 // Helper to create a fake git remote
@@ -222,6 +260,16 @@ describe("FirstRunDetector", () => {
 
       expect(projects).toHaveLength(0);
     });
+
+    it("should ignore invalid fusion.db files when scanning for local projects", async () => {
+      const tempProjectDir = tempWorkspace("kb-invalid-detect-");
+      createInvalidKbProject(tempProjectDir);
+
+      const detector = new FirstRunDetector(tempGlobalDir);
+      const projects = await detector.detectExistingProjects(tempProjectDir);
+
+      expect(projects).toHaveLength(0);
+    });
   });
 
   describe("generateProjectName", () => {
@@ -259,6 +307,18 @@ describe("FirstRunDetector", () => {
     it("should return correct path", () => {
       const detector = new FirstRunDetector(tempGlobalDir);
       expect(detector.getCentralDbPath()).toBe(join(tempGlobalDir, "fusion-central.db"));
+    });
+
+    it("should default to ~/.fusion when no explicit global dir is provided", async () => {
+      const homeDir = tempWorkspace("kb-default-global-dir-");
+
+      try {
+        await withDefaultFirstRunDetector(homeDir, (detector) => {
+          expect(detector.getCentralDbPath()).toBe(join(homeDir, ".fusion", "fusion-central.db"));
+        });
+      } finally {
+        rmSync(homeDir, { recursive: true, force: true });
+      }
     });
   });
 });

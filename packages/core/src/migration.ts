@@ -10,18 +10,20 @@
  * @module migration
  */
 
-import { existsSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, resolve, basename, dirname } from "node:path";
 import type { CentralCore } from "./central-core.js";
 import { CentralCore as CentralCoreClass } from "./central-core.js";
+import { resolveGlobalDir } from "./global-settings.js";
+import { isValidSqliteDatabaseFile } from "./sqlite-validation.js";
 
 function getHomeDir(): string {
   return process.env.HOME || process.env.USERPROFILE || homedir();
 }
 
 /**
- * Check whether `<dir>/<folderName>/<dbName>` exists as a non-empty regular file.
+ * Check whether `<dir>/<folderName>/<dbName>` exists as an openable SQLite file.
  * Used to decide if a directory contains a current (.fusion/fusion.db) project database.
  */
 function hasProjectDbFile(dir: string, folderName: string, dbName: string): boolean {
@@ -29,14 +31,7 @@ function hasProjectDbFile(dir: string, folderName: string, dbName: string): bool
   const dbPath = join(projectDir, dbName);
 
   if (!existsSync(projectDir)) return false;
-  if (!existsSync(dbPath)) return false;
-
-  try {
-    const stat = statSync(dbPath);
-    return stat.isFile() && stat.size > 0;
-  } catch {
-    return false;
-  }
+  return isValidSqliteDatabaseFile(dbPath);
 }
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -303,7 +298,7 @@ export class FirstRunDetector {
   }
 
   private getDefaultGlobalDir(): string {
-    return join(getHomeDir(), ".pi", "kb");
+    return resolveGlobalDir();
   }
 }
 

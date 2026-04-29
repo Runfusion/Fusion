@@ -220,7 +220,12 @@ export class CentralDatabase {
       mkdirSync(this.globalDir, { recursive: true });
     }
 
-    this.db = new DatabaseSync(this.dbPath);
+    try {
+      this.db = new DatabaseSync(this.dbPath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to open Fusion central database at ${this.dbPath}: ${message}`);
+    }
 
     // Enable WAL mode for concurrent reader/writer access
     this.db.exec("PRAGMA journal_mode = WAL");

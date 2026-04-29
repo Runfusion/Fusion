@@ -677,7 +677,12 @@ export class Database {
       mkdirSync(fusionDir, { recursive: true });
     }
 
-    this.db = new DatabaseSync(this.dbPath);
+    try {
+      this.db = new DatabaseSync(this.dbPath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to open Fusion database at ${this.dbPath}: ${message}`);
+    }
 
     // WAL is meaningless for `:memory:` connections — SQLite ignores it
     // and there's no other writer to coordinate with — so we skip it. The

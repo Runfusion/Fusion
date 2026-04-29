@@ -170,6 +170,17 @@ describe("MigrationOrchestrator", () => {
 
       expect(detected).toHaveLength(0);
     });
+
+    it("should ignore header-only fusion.db files that are not real SQLite databases", async () => {
+      const projectDir = join(tempDir, "invalid-project");
+      mkdirSync(projectDir, { recursive: true });
+      mkdirSync(join(projectDir, ".fusion"), { recursive: true });
+      writeFileSync(join(projectDir, ".fusion", "fusion.db"), "SQLite format 3\x00");
+
+      const detected = await orchestrator.detectExistingProjects(projectDir);
+
+      expect(detected).toHaveLength(0);
+    });
   });
 
   describe("autoRegisterProjects", () => {

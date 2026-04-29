@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, existsSync, rmSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, existsSync, rmSync, writeFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInit } from "../init.js";
@@ -17,19 +17,28 @@ const mockCentralClose = vi.fn();
 const mockGetProjectByPath = vi.fn();
 const mockRegisterProject = vi.fn();
 const mockUpdateProject = vi.fn().mockResolvedValue({});
-
-vi.mock("@fusion/core", () => ({
-  CentralCore: vi.fn().mockImplementation(() => ({
-    init: mockCentralInit,
-    close: mockCentralClose,
-    getProjectByPath: mockGetProjectByPath,
-    registerProject: mockRegisterProject,
-    updateProject: mockUpdateProject,
-  })),
-  isQmdAvailable: vi.fn(() => Promise.resolve(true)),
-  QMD_INSTALL_COMMAND: "bun install -g @tobilu/qmd",
-  resolveGlobalDir: vi.fn(),
+const { mockIsValidSqliteDatabaseFile } = vi.hoisted(() => ({
+  mockIsValidSqliteDatabaseFile: vi.fn(),
 }));
+
+vi.mock("@fusion/core", async () => {
+  const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");
+  return {
+    ...actual,
+    CentralCore: vi.fn().mockImplementation(() => ({
+      init: mockCentralInit,
+      close: mockCentralClose,
+      getProjectByPath: mockGetProjectByPath,
+      registerProject: mockRegisterProject,
+      updateProject: mockUpdateProject,
+    })),
+    isQmdAvailable: vi.fn(() => Promise.resolve(true)),
+    QMD_INSTALL_COMMAND: "bun install -g @tobilu/qmd",
+    resolveGlobalDir: vi.fn(),
+    isValidSqliteDatabaseFile: (...args: Parameters<typeof mockIsValidSqliteDatabaseFile>) =>
+      mockIsValidSqliteDatabaseFile(...args),
+  };
+});
 
 function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -61,6 +70,13 @@ describe("init command", () => {
       name: "test-project",
       path: tempProjectDir,
       isolationMode: "in-process",
+    });
+    mockIsValidSqliteDatabaseFile.mockImplementation((dbPath: string) => {
+      if (!existsSync(dbPath)) {
+        return false;
+      }
+
+      return readFileSync(dbPath).length === 0;
     });
   });
 
@@ -100,6 +116,18 @@ describe("init command", () => {
     await runInit({ path: tempProjectDir });
 
     expect(existsSync(dbPath)).toBe(true);
+    expect(statSync(dbPath).size).toBe(0);
+  });
+
+  it("should reject existing invalid fusion.db files", async () => {
+    const fusionDir = join(tempProjectDir, ".fusion");
+    const dbPath = join(fusionDir, "fusion.db");
+    mkdirSync(fusionDir, { recursive: true });
+    writeFileSync(dbPath, "not a sqlite database");
+
+    await expect(runInit({ path: tempProjectDir })).rejects.toThrow(
+      `Existing database at ${dbPath} is not a valid SQLite database.`,
+    );
   });
 
   it("should be idempotent - report already initialized", async () => {

@@ -5,9 +5,8 @@
  * for operating on tasks across multiple registered projects.
  */
 
-import { TaskStore, type RegisteredProject, CentralCore, GlobalSettingsStore } from "@fusion/core";
+import { TaskStore, type RegisteredProject, CentralCore, GlobalSettingsStore, isValidSqliteDatabaseFile } from "@fusion/core";
 import { resolve, dirname, basename } from "node:path";
-import { existsSync } from "node:fs";
 
 /** Project context for CLI operations */
 export interface ProjectContext {
@@ -187,7 +186,7 @@ export async function detectProjectFromCwd(
   while (true) {
     // Check for fn database
     const kbPath = resolve(currentDir, ".fusion", "fusion.db");
-    if (existsSync(kbPath)) {
+    if (isValidSqliteDatabaseFile(kbPath)) {
       // Found a fn project - check if it's registered
       const project = await central.getProjectByPath(currentDir);
       if (project) {

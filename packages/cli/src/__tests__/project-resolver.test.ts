@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { existsSync, statSync } from "node:fs";
 import { TaskStore } from "@fusion/core";
 
+const { mockIsValidSqliteDatabaseFile } = vi.hoisted(() => ({
+  mockIsValidSqliteDatabaseFile: vi.fn(),
+}));
+
 // Mock fs module
 vi.mock("node:fs", () => ({
   existsSync: vi.fn(),
@@ -23,6 +27,8 @@ vi.mock("@fusion/core", async () => {
       getProjectHealth = vi.fn().mockResolvedValue(undefined);
       isInitialized = vi.fn().mockReturnValue(true);
     },
+    isValidSqliteDatabaseFile: (...args: Parameters<typeof mockIsValidSqliteDatabaseFile>) =>
+      mockIsValidSqliteDatabaseFile(...args),
     TaskStore: vi.fn().mockImplementation(() => ({
       init: vi.fn().mockResolvedValue(undefined),
       listTasks: vi.fn().mockResolvedValue([]),
@@ -69,6 +75,7 @@ describe("Project Resolver", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetProjectResolution();
+    mockIsValidSqliteDatabaseFile.mockReturnValue(false);
     vi.mocked(TaskStore).mockImplementation(() => ({
       init: vi.fn().mockResolvedValue(undefined),
       listTasks: vi.fn().mockResolvedValue([]),
@@ -81,49 +88,38 @@ describe("Project Resolver", () => {
 
   describe("findKbDir", () => {
     it("should find .fusion directory in current path", () => {
-      vi.mocked(existsSync)
-        .mockReturnValueOnce(true)
-        .mockReturnValue(false);
-      vi.mocked(statSync).mockReturnValue({ isDirectory: () => true } as any);
+      mockIsValidSqliteDatabaseFile.mockImplementation((path) => String(path) === "/project/.fusion/fusion.db");
 
       const result = findKbDir("/project");
       expect(result).toBe("/project");
     });
 
     it("should walk up parent directories to find .fusion", () => {
-      vi.mocked(existsSync)
-        .mockReturnValueOnce(false)
-        .mockReturnValueOnce(true)
-        .mockReturnValue(false);
-      vi.mocked(statSync).mockReturnValue({ isDirectory: () => true } as any);
+      mockIsValidSqliteDatabaseFile.mockImplementation((path) => String(path) === "/a/b/.fusion/fusion.db");
 
       const result = findKbDir("/a/b/c");
       expect(result).toBe("/a/b");
     });
 
     it("should return null if no .fusion found", () => {
-      vi.mocked(existsSync).mockReturnValue(false);
       const result = findKbDir("/some/path");
       expect(result).toBeNull();
     });
 
-    it("should return null if .fusion is not a directory", () => {
-      vi.mocked(existsSync).mockReturnValue(true);
-      vi.mocked(statSync).mockReturnValue({ isDirectory: () => false } as any);
+    it("should return null if fusion.db is not a valid SQLite database", () => {
+      mockIsValidSqliteDatabaseFile.mockReturnValue(false);
       const result = findKbDir("/project");
       expect(result).toBeNull();
     });
   });
 
   describe("isKbProject", () => {
-    it("should return true if .fusion directory exists", () => {
-      vi.mocked(existsSync).mockReturnValue(true);
-      vi.mocked(statSync).mockReturnValue({ isDirectory: () => true } as any);
+    it("should return true if fusion.db is a valid SQLite database", () => {
+      mockIsValidSqliteDatabaseFile.mockImplementation((path) => String(path) === "/project/.fusion/fusion.db");
       expect(isKbProject("/project")).toBe(true);
     });
 
-    it("should return false if .fusion directory does not exist", () => {
-      vi.mocked(existsSync).mockReturnValue(false);
+    it("should return false if fusion.db is invalid or missing", () => {
       expect(isKbProject("/project")).toBe(false);
     });
   });
@@ -200,8 +196,7 @@ describe("Project Resolver", () => {
     });
 
     it("should throw NOT_REGISTERED if .fusion exists but project not registered", async () => {
-      vi.mocked(existsSync).mockReturnValueOnce(true).mockReturnValue(true);
-      vi.mocked(statSync).mockReturnValue({ isDirectory: () => true } as any);
+      mockIsValidSqliteDatabaseFile.mockImplementation((path) => String(path) === "/unregistered/.fusion/fusion.db");
 
       const core = await getCentralCore();
       core.listProjects.mockResolvedValue([]);
@@ -213,8 +208,6 @@ describe("Project Resolver", () => {
     });
 
     it("should throw NO_PROJECTS when no projects registered and no .fusion found", async () => {
-      vi.mocked(existsSync).mockReturnValue(false);
-
       const core = await getCentralCore();
       core.listProjects.mockResolvedValue([]);
 
@@ -283,11 +276,8 @@ describe("Project Resolver", () => {
         updatedAt: "",
       };
 
-      vi.mocked(existsSync).mockImplementation((path) => {
-        const p = String(path);
-        return p === "/workspace/cwd-match/.fusion" || p === "/workspace/cwd-match";
-      });
-      vi.mocked(statSync).mockReturnValue({ isDirectory: () => true } as any);
+      mockIsValidSqliteDatabaseFile.mockImplementation((path) => String(path) === "/workspace/cwd-match/.fusion/fusion.db");
+      vi.mocked(existsSync).mockImplementation((path) => String(path) === "/workspace/cwd-match");
 
       const core = await getCentralCore();
       core.listProjects.mockResolvedValue([mockProject]);
@@ -329,8 +319,8 @@ describe("Project Resolver", () => {
         updatedAt: "",
       };
 
-      vi.mocked(existsSync).mockImplementation((path) => String(path) === "/workspace/missing-cwd/.fusion");
-      vi.mocked(statSync).mockReturnValue({ isDirectory: () => true } as any);
+      mockIsValidSqliteDatabaseFile.mockImplementation((path) => String(path) === "/workspace/missing-cwd/.fusion/fusion.db");
+      vi.mocked(existsSync).mockReturnValue(false);
 
       const core = await getCentralCore();
       core.listProjects.mockResolvedValue([match]);

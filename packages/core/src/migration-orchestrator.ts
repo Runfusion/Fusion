@@ -31,6 +31,7 @@ import type {
   RegisteredProject,
 } from "./types.js";
 import type { CentralCore } from "./central-core.js";
+import { isValidSqliteDatabaseFile } from "./sqlite-validation.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -200,38 +201,10 @@ export class MigrationOrchestrator {
 
   /**
    * Check if a directory contains a valid kb project.
-   * Validates that .fusion/fusion.db (or legacy .fusion/fusion.db) exists and is a file.
+   * Validates that .fusion/fusion.db is an openable SQLite database.
    */
   private isKbProject(dir: string): boolean {
-    // Check current layout: .fusion/fusion.db
-    const fusionPath = join(dir, ".fusion");
-    if (existsSync(fusionPath)) {
-      const fusionDb = join(fusionPath, "fusion.db");
-      if (existsSync(fusionDb)) {
-        try {
-          const stats = statSync(fusionDb);
-          if (stats.isFile()) return true;
-        } catch { /* fall through */ }
-      }
-    }
-
-    // Fall back to legacy layout: .fusion/fusion.db
-    const kbPath = join(dir, ".fusion");
-    if (!existsSync(kbPath)) {
-      return false;
-    }
-
-    const dbPath = join(kbPath, "fusion.db");
-    if (!existsSync(dbPath)) {
-      return false;
-    }
-
-    try {
-      const stats = statSync(dbPath);
-      return stats.isFile();
-    } catch {
-      return false;
-    }
+    return isValidSqliteDatabaseFile(join(dir, ".fusion", "fusion.db"));
   }
 
   /**
