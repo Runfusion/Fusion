@@ -50,6 +50,30 @@ describe("validateNodeOverrideChange", () => {
     },
   );
 
+  it("returns exact task-in-progress reason and actionable guidance in message", () => {
+    const result = validateNodeOverrideChange(
+      { id: "FN-999", column: "in-progress", nodeId: "node-a" },
+      "node-b",
+    );
+
+    expect(result).toMatchObject({
+      allowed: false,
+      reason: "task-in-progress",
+    });
+    expect(result.message).toContain("FN-999");
+    expect(result.message?.toLowerCase()).toContain("wait");
+    expect(result.message?.toLowerCase()).toContain("pause");
+    expect(result.message?.toLowerCase()).toContain("stop");
+  });
+
+  it("blocks setting nodeId on in-progress task even when existing nodeId is undefined", () => {
+    const result = validateNodeOverrideChange({ id: "FN-404", column: "in-progress" }, "node-new");
+
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe("task-in-progress");
+    expect(result.message).toContain("FN-404");
+  });
+
   it("allows nodeId change on in-progress task when newNodeId is undefined (no-op)", () => {
     const result = validateNodeOverrideChange(
       { id: "FN-2", column: "in-progress", nodeId: "node-a" },

@@ -56,6 +56,21 @@ describe("task node override persistence", () => {
     expect(fetched.nodeId).toBeUndefined();
   });
 
+  it("treats updateTask nodeId undefined as a no-op", async () => {
+    const created = await store.createTask({ description: "Task to keep node", nodeId: "node-stable" });
+    await store.updateTask(created.id, { nodeId: undefined });
+
+    const fetched = await store.getTask(created.id);
+    expect(fetched.nodeId).toBe("node-stable");
+  });
+
+  it("normalizes createTask nodeId null to undefined", async () => {
+    const created = await store.createTask({ description: "Task with null node", nodeId: null });
+
+    const fetched = await store.getTask(created.id);
+    expect(fetched.nodeId).toBeUndefined();
+  });
+
   it("persists nodeId across store reload", async () => {
     const diskRoot = makeTmpDir();
     const diskGlobal = makeTmpDir();
@@ -101,5 +116,15 @@ describe("task node override persistence", () => {
     expect(tasks.find((task) => task.id === first.id)?.nodeId).toBe("node-one");
     expect(tasks.find((task) => task.id === second.id)?.nodeId).toBe("node-two");
     expect(tasks.find((task) => task.id === third.id)?.nodeId).toBeUndefined();
+  });
+
+  it("persists different nodeId values independently across multiple tasks", async () => {
+    const first = await store.createTask({ description: "Node alpha", nodeId: "node-alpha" });
+    const second = await store.createTask({ description: "Node beta", nodeId: "node-beta" });
+    const third = await store.createTask({ description: "No override" });
+
+    expect((await store.getTask(first.id)).nodeId).toBe("node-alpha");
+    expect((await store.getTask(second.id)).nodeId).toBe("node-beta");
+    expect((await store.getTask(third.id)).nodeId).toBeUndefined();
   });
 });

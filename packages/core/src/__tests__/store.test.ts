@@ -557,6 +557,33 @@ describe("TaskStore", () => {
       const updated = await store.updateTask(task.id, { nodeId: null });
       expect(updated.nodeId).toBeUndefined();
     });
+
+    it("does not throw when nodeId update is undefined on an in-progress task", async () => {
+      const task = await store.createTask({ description: "In progress no-op", nodeId: "node-stable" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+
+      const updated = await store.updateTask(task.id, { nodeId: undefined });
+      expect(updated.nodeId).toBe("node-stable");
+    });
+
+    it("includes task ID in nodeId override blocking error", async () => {
+      const task = await store.createTask({ description: "In progress blocked id" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+
+      await expect(store.updateTask(task.id, { nodeId: "node-abc" })).rejects.toThrow(task.id);
+    });
+
+    it("allows priority updates on in-progress tasks without changing existing nodeId", async () => {
+      const task = await store.createTask({ description: "In progress priority", nodeId: "node-keep" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+
+      const updated = await store.updateTask(task.id, { priority: "high" });
+      expect(updated.priority).toBe("high");
+      expect(updated.nodeId).toBe("node-keep");
+    });
   });
 
   describe("selectNextTaskForAgent", () => {

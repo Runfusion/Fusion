@@ -36,7 +36,49 @@ describe("unavailableNodePolicy settings contract", () => {
     expect(validateUnavailableNodePolicy("block")).toBe("block");
     expect(validateUnavailableNodePolicy("fallback-local")).toBe("fallback-local");
     expect(validateUnavailableNodePolicy(undefined)).toBeUndefined();
+    expect(validateUnavailableNodePolicy("")).toBeUndefined();
+    expect(validateUnavailableNodePolicy(null)).toBeUndefined();
     expect(validateUnavailableNodePolicy("fallback-remote")).toBeUndefined();
     expect(validateUnavailableNodePolicy(42)).toBeUndefined();
+  });
+});
+
+describe("defaultNodeId settings contract", () => {
+  it("defaults defaultNodeId to undefined", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.defaultNodeId).toBeUndefined();
+  });
+
+  it("classifies defaultNodeId as project-only scope", () => {
+    expect(isProjectSettingsKey("defaultNodeId")).toBe(true);
+    expect(isGlobalSettingsKey("defaultNodeId")).toBe(false);
+  });
+
+  it("includes defaultNodeId in PROJECT_SETTINGS_KEYS", () => {
+    expect(PROJECT_SETTINGS_KEYS).toContain("defaultNodeId");
+  });
+
+  it("allows defaultNodeId to be a string or undefined", () => {
+    const withDefaultNode = {
+      ...DEFAULT_PROJECT_SETTINGS,
+      defaultNodeId: "node-primary",
+    };
+    const withoutDefaultNode = {
+      ...DEFAULT_PROJECT_SETTINGS,
+      defaultNodeId: undefined,
+    };
+
+    expect(withDefaultNode.defaultNodeId).toBe("node-primary");
+    expect(withoutDefaultNode.defaultNodeId).toBeUndefined();
+  });
+
+  it("round-trips defaultNodeId via object serialization", () => {
+    const settings = {
+      ...DEFAULT_PROJECT_SETTINGS,
+      defaultNodeId: "node-persisted",
+    };
+
+    const roundTripped = JSON.parse(JSON.stringify(settings)) as typeof settings;
+
+    expect(roundTripped.defaultNodeId).toBe("node-persisted");
   });
 });
