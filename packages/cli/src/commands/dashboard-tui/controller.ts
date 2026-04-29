@@ -4,6 +4,24 @@ import { execSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { getCachedUpdateStatus } from "../../update-cache.js";
 
+// `os.freemem()` on macOS only counts truly-free pages and excludes the large
+// "inactive"/cached pool that the OS will reclaim on demand — so total-free
+// reads ~95%+ used on an otherwise-idle machine. `os.availableMemory()` (Node
+// 22+) reports memory the OS considers available, matching Activity Monitor's
+// notion of "used". Fall back to freemem on older runtimes.
+function getAvailableMemory(): number {
+  const fn = (os as unknown as { availableMemory?: () => number }).availableMemory;
+  if (typeof fn === "function") {
+    try {
+      const v = fn.call(os);
+      if (Number.isFinite(v) && v >= 0) return v;
+    } catch {
+      // fall through
+    }
+  }
+  return os.freemem();
+}
+
 const TUI_DEBUG_LOG = process.env.FUSION_TUI_DEBUG_LOG;
 function tuiDebug(tag: string, data: Record<string, unknown>): void {
   if (!TUI_DEBUG_LOG) return;
@@ -236,7 +254,7 @@ export class DashboardTUI {
       loadAvg: [load[0] ?? 0, load[1] ?? 0, load[2] ?? 0],
       cpuCount: os.cpus().length,
       systemTotalMem: os.totalmem(),
-      systemFreeMem: os.freemem(),
+      systemFreeMem: getAvailableMemory(),
       pid: process.pid,
       nodeVersion: process.version,
       platform: `${process.platform}/${process.arch}`,
@@ -244,7 +262,7 @@ export class DashboardTUI {
 
     if (this.autoKillVitestOnPressure) {
       const total = os.totalmem();
-      const free = os.freemem();
+      const free = getAvailableMemory();
       if (total > 0) {
         const usedRatio = (total - free) / total;
         // 30s minimum gap between auto-kills — vitest restart and OS reclaim

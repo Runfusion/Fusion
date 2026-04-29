@@ -236,6 +236,15 @@ function SystemPanel({ state, isFocused }: { state: DashboardState; isFocused: b
             <Text dimColor>URL</Text>
             <Text color="cyanBright" wrap="truncate-end">{info.baseUrl}</Text>
           </Box>
+          {info.authToken && (
+            // Pinned right after URL so the token is part of the primary
+            // identity row and wraps to a new line at narrow widths instead
+            // of being pushed off-panel.
+            <Box flexDirection="row" gap={1} flexShrink={0}>
+              <Text dimColor>Token</Text>
+              <Text color="yellow" wrap="truncate-end">{info.authToken}</Text>
+            </Box>
+          )}
           <Box flexDirection="row" gap={1} flexShrink={0}>
             <Text dimColor>Engine</Text>
             {info.engineMode === "dev" && <Text color="yellow">dev</Text>}
@@ -258,12 +267,6 @@ function SystemPanel({ state, isFocused }: { state: DashboardState; isFocused: b
             <Text dimColor>Uptime</Text>
             <Text>{formatUptime(Date.now() - info.startTimeMs)}</Text>
           </Box>
-          {info.authToken && (
-            <Box flexDirection="row" gap={1} flexShrink={0}>
-              <Text dimColor>Token</Text>
-              <Text color="yellow">{info.authToken}</Text>
-            </Box>
-          )}
         </Box>
       )}
     </Panel>
