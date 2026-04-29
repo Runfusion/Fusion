@@ -239,10 +239,9 @@ describe("agents-view mobile CSS", () => {
   });
 
   it("defines mobile org chart sizing rules", () => {
-    expect(mobileMediaBlock).toContain(".org-chart-node");
-    expect(extractRuleBlock(mobileMediaBlock, ".org-chart-node")).toContain("min-width: calc(var(--space-2xl) * 5)");
-    expect(extractRuleBlock(mobileMediaBlock, ".org-chart-node-card")).toContain("padding: var(--space-sm)");
     expect(extractRuleBlock(mobileMediaBlock, ".agent-org-chart")).toContain("gap: var(--space-sm)");
+    expect(extractRuleBlock(mobileMediaBlock, ".agent-org-chart")).toContain("--org-chart-node-width: calc(var(--space-2xl) * 5)");
+    expect(extractRuleBlock(mobileMediaBlock, ".org-chart-node-card")).toContain("padding: var(--space-sm)");
     expect(extractRuleBlock(mobileMediaBlock, ".org-chart-node__badge")).toContain("font-size: calc(var(--space-sm) + var(--space-xs) * 0.625)");
   });
 });

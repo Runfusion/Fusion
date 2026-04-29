@@ -696,6 +696,8 @@
 
 /* === FN-1167: Agent Org Chart + Chain of Command === */
 .agent-org-chart {
+  --org-chart-node-width: calc(var(--space-xl) * 9 + var(--space-xs));
+  --org-chart-connector-gap: var(--space-xs);
   display: flex;
   align-items: flex-start;
   justify-content: flex-start;
@@ -703,7 +705,7 @@
   padding: var(--space-lg);
   overflow-x: auto;
   overflow-y: visible;
-  min-height: calc(var(--space-xl) * 9 + var(--space-xs));
+  min-height: var(--org-chart-node-width);
 }
 
 .agent-org-chart__loading,
@@ -719,7 +721,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  min-width: calc(var(--space-xl) * 9 + var(--space-xs));
+  width: var(--org-chart-node-width);
+  min-width: var(--org-chart-node-width);
   flex: 0 0 auto;
 }
 
@@ -792,9 +795,9 @@
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(var(--space-lg) * -1);
+  bottom: calc(var(--org-chart-connector-gap) * -1);
   width: 1px;
-  height: var(--space-lg);
+  height: calc(var(--org-chart-connector-gap) * 2);
   background: var(--border);
 }
 
@@ -805,15 +808,15 @@
   justify-content: center;
   gap: var(--space-lg);
   padding-top: var(--space-xl);
-  margin-top: var(--space-xs);
+  margin-top: var(--org-chart-connector-gap);
 }
 
 .org-chart-children::before {
   content: "";
   position: absolute;
   top: 0;
-  left: var(--space-xl);
-  right: var(--space-xl);
+  left: calc(var(--org-chart-node-width) / 2);
+  right: calc(var(--org-chart-node-width) / 2);
   height: 1px;
   background: var(--border);
 }
@@ -899,6 +902,7 @@
   }
 
   .agent-org-chart {
+    --org-chart-node-width: calc(var(--space-2xl) * 5);
     padding: var(--space-sm);
     padding-bottom: calc(var(--space-lg) + var(--space-sm));
     gap: var(--space-sm);
@@ -906,10 +910,6 @@
 
   .agents-view-loading {
     min-height: calc(var(--space-2xl) * 4);
-  }
-
-  .org-chart-node {
-    min-width: calc(var(--space-2xl) * 5);
   }
 
   .org-chart-node-card {

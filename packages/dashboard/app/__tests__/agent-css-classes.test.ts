@@ -174,7 +174,8 @@ describe("Agent CSS classes", () => {
     const orgChartSection = orgChartStart >= 0 ? agentsViewCss.slice(orgChartStart) : "";
     expect(orgChartSection).toContain("gap: var(--space-xl)");
     expect(orgChartSection).toContain("padding: var(--space-lg)");
-    expect(orgChartSection).toContain("min-height: calc(var(--space-xl) * 9 + var(--space-xs))");
+    expect(orgChartSection).toContain("--org-chart-node-width: calc(var(--space-xl) * 9 + var(--space-xs))");
+    expect(orgChartSection).toContain("min-height: var(--org-chart-node-width)");
     expect(orgChartSection).toContain("border: 1px solid var(--border)");
     expect(orgChartSection).toContain("color: var(--text)");
     expect(orgChartSection).toContain("color: var(--text-muted)");
