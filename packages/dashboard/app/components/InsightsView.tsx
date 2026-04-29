@@ -1,17 +1,11 @@
 /**
  * InsightsView - Dashboard component for displaying and managing project insights
  *
- * Features:
- * - Displays insights grouped by all supported insight categories
- * - Manual insight generation trigger
- * - Per-insight dismiss action
- * - Per-insight task creation action
- * - Loading, error, and empty states
- * - Accessible feedback for all actions
+ * Two-pane layout: categories on the left, insights for the selected category on the right.
  */
 
 import "./InsightsView.css";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Sparkles,
   RefreshCw,
@@ -39,7 +33,6 @@ interface InsightsViewProps {
   onCreateTask?: (title: string, description: string) => void;
 }
 
-// Category icons mapping
 const CATEGORY_ICONS: Record<InsightCategory, React.ComponentType<{ size?: number; className?: string }>> = {
   architecture: Building,
   quality: CheckCircle,
@@ -75,11 +68,33 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
     totalCount,
   } = useInsights(projectId);
 
-  // Track inline feedback messages
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusType, setStatusType] = useState<"success" | "error" | "info">("info");
 
-  // Clear status message after delay
+  const populatedSections = useMemo(
+    () => sections.filter((section) => section.items.length > 0),
+    [sections],
+  );
+
+  const [selectedCategory, setSelectedCategory] = useState<InsightCategory | null>(null);
+
+  // Keep selection valid as data changes; default to first populated section.
+  useEffect(() => {
+    if (populatedSections.length === 0) {
+      if (selectedCategory !== null) setSelectedCategory(null);
+      return;
+    }
+    const stillExists = selectedCategory && populatedSections.some((s) => s.category === selectedCategory);
+    if (!stillExists) {
+      setSelectedCategory(populatedSections[0].category);
+    }
+  }, [populatedSections, selectedCategory]);
+
+  const activeSection: InsightSection | undefined = useMemo(
+    () => populatedSections.find((s) => s.category === selectedCategory) ?? populatedSections[0],
+    [populatedSections, selectedCategory],
+  );
+
   useEffect(() => {
     if (statusMessage) {
       const timer = setTimeout(() => setStatusMessage(null), 5000);
@@ -87,7 +102,6 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
     }
   }, [statusMessage]);
 
-  // Handle manual run
   const handleRun = useCallback(async () => {
     try {
       setStatusMessage("Generating insights...");
@@ -104,7 +118,6 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
     }
   }, [runInsights, addToast]);
 
-  // Handle dismiss
   const handleDismiss = useCallback(
     async (id: string, title: string) => {
       try {
@@ -124,7 +137,6 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
     [dismiss, addToast],
   );
 
-  // Handle create task
   const handleCreateTask = useCallback(
     async (id: string, title: string) => {
       try {
@@ -147,29 +159,53 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
     [createTaskFromInsight, onCreateTask, addToast],
   );
 
-  // Render section
-  const renderSection = (section: InsightSection) => {
+  const renderCategoryItem = (section: InsightSection) => {
     const IconComponent = CATEGORY_ICONS[section.category] ?? Sparkles;
-    const isAnyActionInFlight =
-      section.items.some((item) => dismissStates.get(item.id)?.running || createTaskStates.get(item.id)?.running) ?? false;
+    const isActive = activeSection?.category === section.category;
+    return (
+      <li key={section.category}>
+        <button
+          type="button"
+          className={`insights-category-item${isActive ? " insights-category-item--active" : ""}`}
+          onClick={() => setSelectedCategory(section.category)}
+          aria-current={isActive ? "true" : undefined}
+          data-testid={`insights-category-${section.category}`}
+        >
+          <IconComponent size={16} className="insights-category-icon" />
+          <span className="insights-category-label">{section.label}</span>
+          <span className="insights-category-count">{section.items.length}</span>
+        </button>
+      </li>
+    );
+  };
+
+  const renderActiveInsights = () => {
+    if (!activeSection) return null;
+    const IconComponent = CATEGORY_ICONS[activeSection.category] ?? Sparkles;
 
     return (
-      <section key={section.category} className="insights-section" data-testid={`insights-section-${section.category}`}>
+      <section
+        className="insights-section"
+        data-testid={`insights-section-${activeSection.category}`}
+      >
         <div className="insights-section-header">
           <div className="insights-section-title">
-            <IconComponent size={18} className="insights-section-icon" />
-            <h3>{section.label}</h3>
-            <span className="insights-section-count">{section.items.length}</span>
+            <IconComponent size={20} className="insights-section-icon" />
+            <h3>{activeSection.label}</h3>
+            <span className="insights-section-count">{activeSection.items.length}</span>
           </div>
         </div>
 
         <div className="insights-section-content">
           <ul className="insights-list">
-            {section.items.map((insight) => {
+            {activeSection.items.map((insight) => {
               const dismissState = dismissStates.get(insight.id);
               const createState = createTaskStates.get(insight.id);
               const isDismissInFlight = dismissState?.running ?? false;
               const isCreateInFlight = createState?.running ?? false;
+              const isAnyActionInFlight = activeSection.items.some(
+                (item) => dismissStates.get(item.id)?.running || createTaskStates.get(item.id)?.running,
+              );
 
               return (
                 <li key={insight.id} className="insight-item" data-insight-id={insight.id}>
@@ -177,7 +213,7 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
                     <h4 className="insight-item-title">{insight.title}</h4>
                     <div className="insight-item-actions">
                       <button
-                        className="btn btn-sm btn-icon"
+                        className="insight-item-action-btn"
                         onClick={() => void handleCreateTask(insight.id, insight.title)}
                         disabled={isCreateInFlight || isAnyActionInFlight}
                         title="Create task from this insight"
@@ -185,13 +221,13 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
                         data-testid={`create-task-${insight.id}`}
                       >
                         {isCreateInFlight ? (
-                          <RefreshCw size={14} className="spin" />
+                          <RefreshCw size={20} className="spin" />
                         ) : (
-                          <Plus size={14} />
+                          <Plus size={20} />
                         )}
                       </button>
                       <button
-                        className="btn btn-sm btn-icon"
+                        className="insight-item-action-btn"
                         onClick={() => void handleDismiss(insight.id, insight.title)}
                         disabled={isDismissInFlight || isAnyActionInFlight}
                         title="Dismiss this insight"
@@ -199,9 +235,9 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
                         data-testid={`dismiss-${insight.id}`}
                       >
                         {isDismissInFlight ? (
-                          <RefreshCw size={14} className="spin" />
+                          <RefreshCw size={20} className="spin" />
                         ) : (
-                          <X size={14} />
+                          <X size={20} />
                         )}
                       </button>
                     </div>
@@ -243,9 +279,10 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
         <div className="insights-view-actions">
           {onClose && (
             <button
-              className="btn btn-icon insights-view-close"
+              className="btn btn-sm insights-view-close"
               onClick={onClose}
               aria-label="Close insights view"
+              title="Close"
             >
               <X size={16} />
             </button>
@@ -282,7 +319,6 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
         </div>
       </div>
 
-      {/* Inline status region */}
       <div
         className="insights-status-region"
         aria-live="polite"
@@ -301,7 +337,6 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
         )}
       </div>
 
-      {/* Run error callout */}
       {runError && (
         <div className="insights-error-callout" role="alert" data-testid="run-error">
           <AlertCircle size={16} />
@@ -309,7 +344,6 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
         </div>
       )}
 
-      {/* Latest run info */}
       {latestRun && (
         <div className="insights-run-info" data-testid="latest-run">
           <span className="insights-run-status">
@@ -348,8 +382,15 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
           </button>
         </div>
       ) : (
-        <div className="insights-sections">
-          {sections.filter((section) => section.items.length > 0).map(renderSection)}
+        <div className="insights-body">
+          <aside className="insights-sidebar" aria-label="Insight categories">
+            <ul className="insights-category-list">
+              {populatedSections.map(renderCategoryItem)}
+            </ul>
+          </aside>
+          <div className="insights-detail">
+            {renderActiveInsights()}
+          </div>
         </div>
       )}
     </div>

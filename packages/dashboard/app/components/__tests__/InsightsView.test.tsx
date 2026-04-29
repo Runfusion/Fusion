@@ -232,11 +232,14 @@ describe("InsightsView", () => {
 
       render(<InsightsView {...defaultProps} />);
 
+      // Sidebar lists every populated category
+      expect(screen.getByTestId("insights-category-features")).toBeInTheDocument();
+      expect(screen.getByTestId("insights-category-architecture")).toBeInTheDocument();
+      expect(screen.getByTestId("insights-category-competitive_analysis")).toBeInTheDocument();
+      expect(screen.getByTestId("insights-category-research")).toBeInTheDocument();
+      expect(screen.getByTestId("insights-category-trends")).toBeInTheDocument();
+      // Detail pane shows the first populated section by default
       expect(screen.getByTestId("insights-section-features")).toBeInTheDocument();
-      expect(screen.getByTestId("insights-section-architecture")).toBeInTheDocument();
-      expect(screen.getByTestId("insights-section-competitive_analysis")).toBeInTheDocument();
-      expect(screen.getByTestId("insights-section-research")).toBeInTheDocument();
-      expect(screen.getByTestId("insights-section-trends")).toBeInTheDocument();
     });
 
     it("should render loading state", () => {
@@ -450,12 +453,16 @@ describe("InsightsView", () => {
 
       render(<InsightsView {...defaultProps} />);
 
-      expect(screen.getAllByTestId(/insights-section-/)).toHaveLength(2);
+      // Sidebar lists exactly the two populated categories
+      expect(screen.getAllByTestId(/^insights-category-/)).toHaveLength(2);
+      expect(screen.getByTestId("insights-category-features")).toBeInTheDocument();
+      expect(screen.getByTestId("insights-category-competitive_analysis")).toBeInTheDocument();
+      expect(screen.queryByTestId("insights-category-architecture")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("insights-category-research")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("insights-category-trends")).not.toBeInTheDocument();
+      // Detail shows the first populated section (features)
       expect(screen.getByTestId("insights-section-features")).toBeInTheDocument();
-      expect(screen.getByTestId("insights-section-competitive_analysis")).toBeInTheDocument();
-      expect(screen.queryByTestId("insights-section-architecture")).not.toBeInTheDocument();
-      expect(screen.queryByTestId("insights-section-research")).not.toBeInTheDocument();
-      expect(screen.queryByTestId("insights-section-trends")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("insights-section-competitive_analysis")).not.toBeInTheDocument();
     });
 
     it("should render status badge with correct CSS class for generated status", () => {
