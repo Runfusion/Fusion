@@ -84,6 +84,10 @@ const MAX_WORKFLOW_STEP_RETRIES = 3;
 const MAX_TASK_DONE_SESSION_RETRIES = 3;
 /** Maximum todo requeues after exhausting in-session fn_task_done retries. */
 const MAX_TASK_DONE_REQUEUE_RETRIES = 3;
+/** How long to wait before recovering a completed task still stuck in in-progress. */
+const COMPLETED_TASK_WATCHDOG_MS = 60_000;
+/** How long to wait before retrying a workflow rerun handoff that never reached in-progress. */
+const WORKFLOW_RERUN_WATCHDOG_MS = 15_000;
 
 /**
  * @deprecated Kept exported so existing unit tests in executor.test.ts still
@@ -502,6 +506,10 @@ export class TaskExecutor {
   private spawnedAgents = new Map<string, Set<string>>();
   /** Per-task baseline of session stats used for delta persistence across repeated updates. */
   private tokenUsageBaselines = new Map<string, { inputTokens: number; outputTokens: number; cachedTokens: number; totalTokens: number }>();
+  /** One-shot watchdogs for completed tasks that should have transitioned to in-review. */
+  private completedTaskWatchdogs = new Map<string, ReturnType<typeof setTimeout>>();
+  /** One-shot watchdogs for workflow reruns that should have bounced back to in-progress. */
+  private workflowRerunWatchdogs = new Map<string, ReturnType<typeof setTimeout>>();
 
   private async finalizeAlreadyReviewedTask(taskId: string): Promise<"merged" | "blocked" | "missing"> {
     const latestTask = await this.store.getTask(taskId);
@@ -605,6 +613,7 @@ export class TaskExecutor {
     store.on("task:moved", ({ task, from, to }) => {
       executorLog.log(`[event:task:moved] ${task.id}: ${from} → ${to}`);
       if (to === "in-progress") {
+        this.clearWorkflowRerunWatchdog(task.id);
         executorLog.log(`[event:task:moved] Initiating execute() for ${task.id}`);
         void (async () => {
           const taskForExecution = await this.resetMergeStateIfNeeded(task, from);
@@ -613,6 +622,7 @@ export class TaskExecutor {
           executorLog.error(`Failed to start ${task.id}:`, err),
         );
       } else if (from === "in-progress") {
+        this.clearCompletedTaskWatchdog(task.id);
         // Task moved away from in-progress — terminate any active sessions
         if (this.activeSessions.has(task.id)) {
           executorLog.log(`${task.id} moved from in-progress to ${to} — terminating agent session`);
@@ -949,6 +959,147 @@ export class TaskExecutor {
     }
   }
 
+  private clearCompletedTaskWatchdog(taskId: string): void {
+    const handle = this.completedTaskWatchdogs.get(taskId);
+    if (!handle) return;
+    clearTimeout(handle);
+    this.completedTaskWatchdogs.delete(taskId);
+  }
+
+  private clearWorkflowRerunWatchdog(taskId: string): void {
+    const handle = this.workflowRerunWatchdogs.get(taskId);
+    if (!handle) return;
+    clearTimeout(handle);
+    this.workflowRerunWatchdogs.delete(taskId);
+  }
+
+  private scheduleCompletedTaskWatchdog(taskId: string, trigger: string): void {
+    this.clearCompletedTaskWatchdog(taskId);
+
+    const handle = setTimeout(async () => {
+      this.completedTaskWatchdogs.delete(taskId);
+
+      let currentTask: Task | null = null;
+      try {
+        currentTask = await this.store.getTask(taskId);
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        executorLog.warn(`${taskId}: completed-task watchdog could not read latest task state: ${errorMessage}`);
+        return;
+      }
+
+      if (!currentTask || currentTask.column !== "in-progress" || currentTask.paused) {
+        return;
+      }
+      if (this.activeSessions.has(taskId) || this.activeStepExecutors.has(taskId) || this.recoveringCompleted.has(taskId)) {
+        return;
+      }
+      if (!this.isTaskWorkComplete(currentTask)) {
+        return;
+      }
+
+      executorLog.warn(
+        `${taskId}: completed-task watchdog fired after ${COMPLETED_TASK_WATCHDOG_MS / 1000}s ` +
+        `(${trigger}) — attempting direct recovery to in-review`,
+      );
+      await this.store.logEntry(
+        taskId,
+        `Watchdog: task remained in-progress ${COMPLETED_TASK_WATCHDOG_MS / 1000}s after ${trigger} — attempting direct recovery to in-review`,
+      ).catch(() => undefined);
+
+      this.recoveringCompleted.add(taskId);
+      try {
+        const recovered = await this.recoverCompletedTask(currentTask);
+        if (!recovered) {
+          await this.store.logEntry(
+            taskId,
+            "Watchdog recovery attempt could not finalize completed task — leaving for follow-up recovery",
+          ).catch(() => undefined);
+        }
+      } finally {
+        this.recoveringCompleted.delete(taskId);
+      }
+    }, COMPLETED_TASK_WATCHDOG_MS);
+
+    this.completedTaskWatchdogs.set(taskId, handle);
+  }
+
+  private async performWorkflowRerunBounce(taskId: string, worktreePath: string): Promise<void> {
+    // moveTask(in-progress → todo) clears `task.worktree`; restore it before
+    // the return trip so the dashboard never renders the task under
+    // "Unassigned" and self-healing can't reclaim the worktree as idle.
+    const latestTask = await this.store.getTask(taskId);
+    if (!latestTask) {
+      throw new Error("task missing during workflow rerun bounce");
+    }
+
+    if (latestTask.column === "in-progress") {
+      await this.store.moveTask(taskId, "todo");
+      await this.store.updateTask(taskId, { worktree: worktreePath });
+      await this.store.moveTask(taskId, "in-progress");
+      return;
+    }
+
+    if (latestTask.column === "todo") {
+      await this.store.updateTask(taskId, { worktree: worktreePath });
+      await this.store.moveTask(taskId, "in-progress");
+      return;
+    }
+
+    throw new Error(`task is in '${latestTask.column}', cannot bounce to in-progress`);
+  }
+
+  private scheduleWorkflowRerun(taskId: string, worktreePath: string, successMessage: string): void {
+    this.clearWorkflowRerunWatchdog(taskId);
+
+    setTimeout(async () => {
+      try {
+        await this.performWorkflowRerunBounce(taskId, worktreePath);
+        executorLog.log(successMessage);
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        executorLog.error(`${taskId}: failed to schedule rerun bounce: ${errorMessage}`);
+      }
+    }, 0);
+
+    const watchdog = setTimeout(async () => {
+      this.workflowRerunWatchdogs.delete(taskId);
+
+      let currentTask: Task | null = null;
+      try {
+        currentTask = await this.store.getTask(taskId);
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        executorLog.warn(`${taskId}: workflow rerun watchdog could not read latest task state: ${errorMessage}`);
+        return;
+      }
+
+      if (!currentTask || currentTask.paused || currentTask.column === "in-progress") {
+        return;
+      }
+
+      executorLog.warn(
+        `${taskId}: workflow rerun watchdog fired after ${WORKFLOW_RERUN_WATCHDOG_MS / 1000}s ` +
+        `— task is still ${currentTask.column}; retrying handoff once`,
+      );
+      await this.store.logEntry(
+        taskId,
+        `Watchdog: workflow rerun handoff stalled for ${WORKFLOW_RERUN_WATCHDOG_MS / 1000}s ` +
+        `(still ${currentTask.column}) — retrying once`,
+      ).catch(() => undefined);
+
+      try {
+        await this.performWorkflowRerunBounce(taskId, worktreePath);
+        executorLog.warn(`${taskId}: workflow rerun watchdog retry succeeded`);
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        executorLog.error(`${taskId}: workflow rerun watchdog retry failed: ${errorMessage}`);
+      }
+    }, WORKFLOW_RERUN_WATCHDOG_MS);
+
+    this.workflowRerunWatchdogs.set(taskId, watchdog);
+  }
+
   private async shouldFinalizeCompletedTask(taskId: string, taskDone: boolean): Promise<boolean> {
     const task = await this.store.getTask(taskId);
     const completionBlocker = await this.getTaskCompletionBlocker(task);
@@ -1156,6 +1307,7 @@ export class TaskExecutor {
 
       await this.persistTokenUsage(task.id);
       await this.store.moveTask(task.id, "in-review");
+      this.clearCompletedTaskWatchdog(task.id);
       await this.store.logEntry(task.id, "Auto-recovered: task work was complete but stuck in in-progress — moved to in-review");
       executorLog.log(`✓ ${task.id} auto-recovered completed task → in-review`);
       this.options.onComplete?.(task);
@@ -1796,6 +1948,8 @@ export class TaskExecutor {
               await audit.filesystem({ type: "file:capture-modified", target: task.id, metadata: { files: modifiedFiles } });
             }
 
+            this.scheduleCompletedTaskWatchdog(task.id, "step-session completion");
+
             // Run workflow steps before moving to in-review — skip in fast mode
             if (executionMode !== "fast") {
               const workflowResult = await this.runWorkflowSteps(task, worktreePath, settings);
@@ -1823,6 +1977,7 @@ export class TaskExecutor {
             await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null });
 
             await this.store.moveTask(task.id, "in-review");
+            this.clearCompletedTaskWatchdog(task.id);
             // Audit trail: record task move (FN-1404)
             await audit.database({ type: "task:move", target: task.id, metadata: { to: "in-review" } });
             executorLog.log(`✓ ${task.id} completed (step-session) → in-review`);
@@ -2245,6 +2400,7 @@ export class TaskExecutor {
               await this.store.logEntry(task.id, "Execution paused after completion — finalizing to in-review");
               await this.persistTokenUsage(task.id);
               await this.store.moveTask(task.id, "in-review");
+              this.clearCompletedTaskWatchdog(task.id);
               this.options.onComplete?.(task);
             } else {
               executorLog.log(`${task.id} paused (graceful session exit) — moving to todo`);
@@ -2275,6 +2431,7 @@ export class TaskExecutor {
               taskDone = true;
               executorLog.log(`${task.id} all steps done — treating as implicit fn_task_done`);
               await this.store.logEntry(task.id, "All steps complete — implicit fn_task_done (agent did not call tool explicitly)", undefined, this.currentRunContext);
+              this.scheduleCompletedTaskWatchdog(task.id, "implicit fn_task_done");
             }
           }
 
@@ -2286,6 +2443,8 @@ export class TaskExecutor {
               await this.store.updateTask(task.id, { modifiedFiles });
               executorLog.log(`${task.id}: captured ${modifiedFiles.length} modified files`);
             }
+
+            this.scheduleCompletedTaskWatchdog(task.id, "task completion");
 
             // Run workflow steps before moving to in-review — skip in fast mode
             if (executionMode !== "fast") {
@@ -2315,6 +2474,7 @@ export class TaskExecutor {
 
             await this.persistTokenUsage(task.id);
             await this.store.moveTask(task.id, "in-review");
+            this.clearCompletedTaskWatchdog(task.id);
             executorLog.log(`✓ ${task.id} completed → in-review`);
             this.options.onComplete?.(task);
           } else {
@@ -2396,6 +2556,7 @@ export class TaskExecutor {
                   taskDone = true;
                   executorLog.log(`${task.id} all steps done — treating as implicit fn_task_done`);
                   await this.store.logEntry(task.id, "All steps complete — implicit fn_task_done (agent did not call tool explicitly)", undefined, this.currentRunContext);
+                  this.scheduleCompletedTaskWatchdog(task.id, "implicit fn_task_done");
                 }
               }
             }
@@ -2407,6 +2568,8 @@ export class TaskExecutor {
                 await this.store.updateTask(task.id, { modifiedFiles });
                 executorLog.log(`${task.id}: captured ${modifiedFiles.length} modified files`);
               }
+
+              this.scheduleCompletedTaskWatchdog(task.id, "task completion retry");
 
               // Run workflow steps before moving to in-review — skip in fast mode
               if (executionMode !== "fast") {
@@ -2428,6 +2591,7 @@ export class TaskExecutor {
 
               await this.persistTokenUsage(task.id);
               await this.store.moveTask(task.id, "in-review");
+              this.clearCompletedTaskWatchdog(task.id);
               executorLog.log(`✓ ${task.id} completed on retry → in-review`);
               this.options.onComplete?.(task);
             } else {
@@ -2995,6 +3159,7 @@ export class TaskExecutor {
           await store.updateTask(taskId, { summary: params.summary });
         }
         await store.logEntry(taskId, "Task marked done by agent");
+        this.scheduleCompletedTaskWatchdog(taskId, "fn_task_done");
         const successMessage = params.summary
           ? "Task marked complete with summary. All steps done. Moving to in-review."
           : "Task marked complete. All steps done. Moving to in-review.";
@@ -3243,6 +3408,7 @@ export class TaskExecutor {
     stepName: string,
   ): Promise<void> {
     executorLog.log(`${task.id}: workflow revision requested by step "${stepName}"`);
+    this.clearCompletedTaskWatchdog(task.id);
 
     const updatedTask = await this.store.getTask(task.id);
     const reopen = await this.reopenLastStepForRevision(task.id, updatedTask);
@@ -3267,29 +3433,11 @@ export class TaskExecutor {
     // This prevents the race condition where the scheduler re-dispatches
     // while the old execution guard is still set.
     executorLog.log(`${task.id}: scheduling fresh execution after revision request`);
-    setTimeout(async () => {
-      try {
-        // Move task to todo briefly, then back to in-progress to trigger fresh execution
-        // The task is already in in-progress, so we need to:
-        // 1. Move to todo (this triggers the guard to clear)
-        // 2. Move back to in-progress (this triggers fresh execution)
-        // moveTask(in-progress → todo) clears `task.worktree`; restore it before
-        // the return trip so the dashboard never renders the task under
-        // "Unassigned" and self-healing can't reclaim the worktree as idle.
-        await this.store.moveTask(task.id, "todo");
-        await this.store.updateTask(task.id, { worktree: worktreePath });
-        await this.store.moveTask(task.id, "in-progress");
-        executorLog.log(`${task.id}: revision rerun scheduled — moved to todo then in-progress`);
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        executorLog.error(`${task.id}: failed to schedule revision rerun: ${errorMessage}`);
-        // Fallback: log entry and let scheduler pick it up on next tick
-        await this.store.logEntry(
-          task.id,
-          "Workflow revision requested — executor ready for fresh execution",
-        );
-      }
-    }, 0);
+    this.scheduleWorkflowRerun(
+      task.id,
+      worktreePath,
+      `${task.id}: revision rerun scheduled — moved to todo then in-progress`,
+    );
   }
 
   /**
@@ -3407,6 +3555,7 @@ ${feedback}
     failureFeedback: string,
     stepName: string,
   ): Promise<boolean> {
+    this.clearCompletedTaskWatchdog(task.id);
     const currentRetries = task.workflowStepRetries ?? 0;
 
     if (currentRetries >= MAX_WORKFLOW_STEP_RETRIES) {
@@ -3439,26 +3588,11 @@ ${feedback}
 
     // 5. Schedule fresh execution after guard unwinds
     executorLog.log(`${task.id}: scheduling fresh execution after workflow step failure (retry ${retryCount}/${MAX_WORKFLOW_STEP_RETRIES})`);
-    setTimeout(async () => {
-      try {
-        // Move task to todo briefly, then back to in-progress to trigger fresh execution.
-        // moveTask(in-progress → todo) clears `task.worktree`; restore it before
-        // the return trip so the dashboard never renders the task under
-        // "Unassigned" and self-healing can't reclaim the worktree as idle.
-        await this.store.moveTask(task.id, "todo");
-        await this.store.updateTask(task.id, { worktree: worktreePath });
-        await this.store.moveTask(task.id, "in-progress");
-        executorLog.log(`${task.id}: workflow step retry scheduled — moved to todo then in-progress`);
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        executorLog.error(`${task.id}: failed to schedule workflow step retry: ${errorMessage}`);
-        // Fallback: log entry and let scheduler pick it up on next tick
-        await this.store.logEntry(
-          task.id,
-          "Workflow step failed — executor ready for fresh execution",
-        );
-      }
-    }, 0);
+    this.scheduleWorkflowRerun(
+      task.id,
+      worktreePath,
+      `${task.id}: workflow step retry scheduled — moved to todo then in-progress`,
+    );
 
     return true;
   }
@@ -3476,6 +3610,7 @@ ${feedback}
     reason: string,
   ): Promise<void> {
     const taskId = task.id;
+    this.clearCompletedTaskWatchdog(taskId);
 
     // 1. Add a task comment explaining the failure
     await this.store.addTaskComment(
@@ -3510,20 +3645,11 @@ ${feedback}
     });
 
     // 6. Schedule the move after the guard unwinds (per guard-unwind requirement)
-    setTimeout(async () => {
-      try {
-        // moveTask(in-progress → todo) clears `task.worktree`; restore it before
-        // the return trip so the dashboard never renders the task under
-        // "Unassigned" and self-healing can't reclaim the worktree as idle.
-        await this.store.moveTask(taskId, "todo");
-        await this.store.updateTask(taskId, { worktree: worktreePath });
-        await this.store.moveTask(taskId, "in-progress");
-        executorLog.log(`${taskId}: sent back to in-progress for remediation`);
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        executorLog.error(`${taskId}: failed to move back to in-progress: ${errorMessage}`);
-      }
-    }, 0);
+    this.scheduleWorkflowRerun(
+      taskId,
+      worktreePath,
+      `${taskId}: sent back to in-progress for remediation`,
+    );
   }
 
   /**

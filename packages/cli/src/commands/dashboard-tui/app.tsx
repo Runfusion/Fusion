@@ -259,9 +259,9 @@ function SystemPanel({ state, isFocused }: { state: DashboardState; isFocused: b
             <Text>{formatUptime(Date.now() - info.startTimeMs)}</Text>
           </Box>
           {info.authToken && (
-            <Box flexDirection="row" gap={1} flexShrink={1}>
+            <Box flexDirection="row" gap={1} flexShrink={0}>
               <Text dimColor>Token</Text>
-              <Text wrap="truncate-end" color="yellow">{info.authToken}</Text>
+              <Text color="yellow">{info.authToken}</Text>
             </Box>
           )}
         </Box>
@@ -718,7 +718,10 @@ function StatusModeGrid({
   // System fixed at 4 rows. Bottom row scales with available space.
   // Logs fills what remains.
   const middleHeight = Math.max(1, rows - 2);
-  const SYSTEM_HEIGHT = 4;
+  // System panel is normally 4 rows (border 2 + 2 content rows so chips wrap to
+  // a second line). When auth is on, the Token chip is long enough that it
+  // routinely wraps to a third row; bump to 5 so it isn't clipped.
+  const SYSTEM_HEIGHT = state.systemInfo?.authToken ? 5 : 4;
   const bottomShare = Math.min(10, Math.max(6, Math.floor(middleHeight * 0.35)));
   const logsShare = Math.max(1, middleHeight - SYSTEM_HEIGHT - bottomShare);
   // LogsPanel chrome: border 2 + title 1 + filter 1 = 4.
@@ -738,7 +741,7 @@ function StatusModeGrid({
         {/* System: full width, pinned to 4 rows tall (border 2 + 2 content
             rows so the chips always have room to wrap to a second line if
             needed). flexShrink=0 so it never shrinks below this height. */}
-        <Box height={4} flexShrink={0} overflow="hidden">
+        <Box height={SYSTEM_HEIGHT} flexShrink={0} overflow="hidden">
           <SystemPanel state={state} isFocused={focused === "system"} />
         </Box>
         {wideLayout ? (

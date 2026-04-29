@@ -1,6 +1,6 @@
 import express, { type Router } from "express";
 import { randomUUID } from "node:crypto";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createSecureServer as createHttp2SecureServer, type Http2SecureServer } from "node:http2";
@@ -68,15 +68,24 @@ const PACKAGE_VERSION = (() => {
   return process.env.npm_package_version ?? "0.0.0";
 })();
 
+// Walk up from this module to find the @runfusion/fusion package.json. Works
+// across layouts: monorepo source, installed dependency, and the bundled CLI
+// binary where dashboard code is inlined into bin.js next to the cli's
+// package.json. Falls back to "0.0.0" when nothing is found.
 const CLI_PACKAGE_VERSION = (() => {
   try {
-    const packageJsonPath = join(__dirname, "..", "..", "cli", "package.json");
-    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
-      version?: unknown;
-    };
-
-    if (typeof packageJson.version === "string" && packageJson.version.length > 0) {
-      return packageJson.version;
+    let cur = __dirname;
+    for (let i = 0; i < 8; i++) {
+      const pkgPath = resolve(cur, "package.json");
+      if (existsSync(pkgPath)) {
+        const parsed = JSON.parse(readFileSync(pkgPath, "utf-8")) as { name?: string; version?: string };
+        if (parsed.name === "@runfusion/fusion" && typeof parsed.version === "string" && parsed.version.length > 0) {
+          return parsed.version;
+        }
+      }
+      const parent = resolve(cur, "..");
+      if (parent === cur) break;
+      cur = parent;
     }
   } catch {
     // Fall through to environment fallback.

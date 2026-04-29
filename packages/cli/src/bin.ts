@@ -344,9 +344,6 @@ Options:
 
 Columns: triage, todo, in-progress, in-review, done, archived
 Supported file types: png, jpg, gif, webp, txt, log, json, yaml, yml, toml, csv, xml
-
-The AI engine uses pi (github.com/badlogic/pi-mono) for agent sessions.
-Requires configured API keys — run "pi" first to set up authentication.
 `.trim();
 
 function extractGlobalProjectFlag(argv: string[]): { cleanedArgs: string[]; projectName?: string } {
@@ -405,11 +402,10 @@ async function main() {
     process.exit(0);
   }
 
-  if (args.length === 0) {
-    // No subcommand — launch dashboard on the default port.
-    const { runDashboard } = await import("./commands/dashboard.js");
-    await runDashboard(4040);
-    return;
+  // No subcommand (or only flags) — default to the dashboard command so flags
+  // like --no-auth, --port, --host, etc. work without typing `dashboard`.
+  if (args.length === 0 || args[0]!.startsWith("-")) {
+    args.unshift("dashboard");
   }
 
   const command = args[0];

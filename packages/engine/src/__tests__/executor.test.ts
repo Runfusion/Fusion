@@ -10967,6 +10967,149 @@ describe("FN-2883 fast-path guards", () => {
   });
 });
 
+describe("TaskExecutor watchdogs", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("recovers a completed task still stuck in-progress after the completion watchdog delay", async () => {
+    const store = createMockStore();
+    const stuckTask = {
+      id: "FN-WD-1",
+      title: "Watchdog test",
+      description: "desc",
+      column: "in-progress" as const,
+      paused: false,
+      dependencies: [],
+      steps: [{ name: "Step 0", status: "done" as const }],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    store.getTask.mockImplementation(async () => stuckTask);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const recoverSpy = vi.spyOn(executor, "recoverCompletedTask").mockResolvedValue(true);
+
+    (executor as any).scheduleCompletedTaskWatchdog("FN-WD-1", "fn_task_done");
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(recoverSpy).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-WD-1" }));
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-WD-1",
+      expect.stringContaining("Watchdog: task remained in-progress 60s after fn_task_done"),
+    );
+  });
+
+  it("clears the completion watchdog once the task leaves in-progress", async () => {
+    const store = createMockStore();
+    const stuckTask = {
+      id: "FN-WD-2",
+      title: "Watchdog clear test",
+      description: "desc",
+      column: "in-progress" as const,
+      paused: false,
+      dependencies: [],
+      steps: [{ name: "Step 0", status: "done" as const }],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    store.getTask.mockImplementation(async () => stuckTask);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const recoverSpy = vi.spyOn(executor, "recoverCompletedTask").mockResolvedValue(true);
+
+    (executor as any).scheduleCompletedTaskWatchdog("FN-WD-2", "fn_task_done");
+    store._trigger("task:moved", { task: { id: "FN-WD-2" }, from: "in-progress", to: "in-review" });
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(recoverSpy).not.toHaveBeenCalled();
+  });
+
+  it("retries a stalled workflow rerun handoff once after the watchdog delay", async () => {
+    const store = createMockStore();
+    const mutableTask: {
+      id: string;
+      title: string;
+      description: string;
+      column: "in-progress" | "todo";
+      paused: boolean;
+      worktree: string;
+      dependencies: string[];
+      steps: { name: string; status: "done" }[];
+      currentStep: number;
+      log: unknown[];
+      createdAt: string;
+      updatedAt: string;
+    } = {
+      id: "FN-WD-3",
+      title: "Workflow watchdog test",
+      description: "desc",
+      column: "in-progress",
+      paused: false,
+      worktree: "/tmp/fn-wd-3",
+      dependencies: [],
+      steps: [{ name: "Step 0", status: "done" as const }],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    let inProgressAttempts = 0;
+
+    store.getTask.mockImplementation(async () => mutableTask as any);
+    store.updateTask.mockImplementation(async (_taskId: string, patch: any) => {
+      if (patch.worktree !== undefined) {
+        mutableTask.worktree = patch.worktree;
+      }
+      return {};
+    });
+    store.moveTask.mockImplementation(async (_taskId: string, column: string) => {
+      if (column === "todo") {
+        mutableTask.column = "todo";
+        return {};
+      }
+      if (column === "in-progress") {
+        inProgressAttempts += 1;
+        if (inProgressAttempts === 1) {
+          throw new Error("guard still unwinding");
+        }
+        mutableTask.column = "in-progress";
+      }
+      return {};
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    (executor as any).scheduleWorkflowRerun(
+      "FN-WD-3",
+      "/tmp/fn-wd-3",
+      "FN-WD-3: workflow step retry scheduled — moved to todo then in-progress",
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mutableTask.column).toBe("todo");
+
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(inProgressAttempts).toBe(2);
+    expect(mutableTask.column).toBe("in-progress");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-WD-3",
+      expect.stringContaining("Watchdog: workflow rerun handoff stalled for 15s"),
+    );
+  });
+});
+
 // ── StepSessionExecutor integration tests ──────────────────────────────────
 
 describe("StepSessionExecutor integration", () => {
