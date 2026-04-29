@@ -80,7 +80,7 @@ describe("SetupWizardModal", () => {
     );
 
     expect(screen.getByText("Welcome to Fusion")).toBeDefined();
-    expect(screen.getByText(/Let's set up your first project/)).toBeDefined();
+    expect(screen.getByText("Project Name")).toBeDefined();
     expect(screen.getByLabelText("Fusion logo")).toBeDefined();
     expect(screen.getByText("Advanced settings")).toBeDefined();
     expect(screen.getByRole("link", { name: "Need help?" })).toHaveAttribute(
@@ -192,6 +192,7 @@ describe("SetupWizardModal", () => {
       />
     );
 
+    fireEvent.click(screen.getByText("Advanced settings"));
     fireEvent.click(screen.getByLabelText("Clone Git Repository"));
 
     expect(screen.getByLabelText("Repository URL")).toBeDefined();
@@ -217,6 +218,7 @@ describe("SetupWizardModal", () => {
       />
     );
 
+    fireEvent.click(screen.getByText("Advanced settings"));
     fireEvent.click(screen.getByLabelText("Clone Git Repository"));
     fireEvent.change(screen.getByLabelText("Repository URL"), {
       target: { value: "https://github.com/runfusion/fusion.git" },
@@ -249,6 +251,7 @@ describe("SetupWizardModal", () => {
     const registerBtn = screen.getByText("Register Project").closest("button")!;
     expect(registerBtn.disabled).toBe(true);
 
+    fireEvent.click(screen.getByText("Advanced settings"));
     fireEvent.click(screen.getByLabelText("Clone Git Repository"));
     fireEvent.change(screen.getByPlaceholderText("/path/for/new-clone"), {
       target: { value: "/tmp/repo" },
@@ -272,6 +275,7 @@ describe("SetupWizardModal", () => {
       />
     );
 
+    fireEvent.click(screen.getByText("Advanced settings"));
     fireEvent.click(screen.getByLabelText("Clone Git Repository"));
 
     const nameInput = screen.getByPlaceholderText("my-project") as HTMLInputElement;
@@ -308,8 +312,9 @@ describe("SetupWizardModal", () => {
     fireEvent.click(screen.getByText("Register Project"));
 
     await waitFor(() => {
-      expect(screen.getByText("Path does not exist")).toBeDefined();
+      expect(mockRegisterProject).toHaveBeenCalled();
     });
+    expect(await screen.findByText("Path does not exist")).toBeDefined();
   });
 
   it("shows completion state after successful registration", async () => {
@@ -342,9 +347,10 @@ describe("SetupWizardModal", () => {
     fireEvent.click(screen.getByText("Register Project"));
 
     await waitFor(() => {
-      expect(screen.getByText("All Set!")).toBeDefined();
-      expect(screen.getByText("Get Started")).toBeDefined();
+      expect(mockRegisterProject).toHaveBeenCalled();
     });
+    expect(await screen.findByText("All Set!")).toBeDefined();
+    expect(await screen.findByText("Get Started")).toBeDefined();
 
     expect(onProjectRegistered).toHaveBeenCalledWith(mockProject);
   });
