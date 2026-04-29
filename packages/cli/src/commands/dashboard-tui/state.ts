@@ -350,6 +350,10 @@ export interface DashboardState {
   autoKillVitestOnPressure: boolean;
   vitestKillThreshold: number;
   updateStatus: UpdateStatus | null;
+  // Transient flash shown after the user copies a log entry. `at` is a
+  // monotonic timestamp so the view can render "Copied!" briefly before the
+  // controller clears it via setTimeout.
+  clipboardFlash: { ok: boolean; at: number } | null;
 }
 
 export const SECTION_ORDER: SectionId[] = ["system", "logs", "utilities", "stats", "settings"];
@@ -377,5 +381,6 @@ export function createInitialState(): DashboardState {
     autoKillVitestOnPressure: true,
     vitestKillThreshold: 0.9,
     updateStatus: null,
+    clipboardFlash: null,
   };
 }

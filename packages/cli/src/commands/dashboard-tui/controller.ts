@@ -90,6 +90,8 @@ export class DashboardTUI {
   // Throttle so we don't spam kills while the sampler keeps firing during
   // sustained pressure (sampler runs every 2s).
   private lastAutoKillAt = 0;
+  clipboardFlash: { ok: boolean; at: number } | null = null;
+  private clipboardFlashTimer: ReturnType<typeof setTimeout> | null = null;
   interactiveData: InteractiveData | null = null;
   interactiveView: InteractiveView = "board";
   interactiveInputLocked = false;
@@ -162,6 +164,7 @@ export class DashboardTUI {
       autoKillVitestOnPressure: this.autoKillVitestOnPressure,
       vitestKillThreshold: this.vitestKillThreshold,
       updateStatus: this.updateStatus,
+      clipboardFlash: this.clipboardFlash,
     };
     return this.cachedSnapshot;
   }
@@ -419,6 +422,17 @@ export class DashboardTUI {
 
   log(message: string, prefix?: string): void {
     this.addLog({ level: "info", message, prefix });
+  }
+
+  flashClipboard(ok: boolean): void {
+    this.clipboardFlash = { ok, at: Date.now() };
+    if (this.clipboardFlashTimer) clearTimeout(this.clipboardFlashTimer);
+    this.clipboardFlashTimer = setTimeout(() => {
+      this.clipboardFlash = null;
+      this.clipboardFlashTimer = null;
+      this.notify();
+    }, 1800);
+    this.notify();
   }
 
   warn(message: string, prefix?: string): void {
@@ -712,6 +726,10 @@ export class DashboardTUI {
     if (this.resizeDebounceTimer) {
       clearTimeout(this.resizeDebounceTimer);
       this.resizeDebounceTimer = null;
+    }
+    if (this.clipboardFlashTimer) {
+      clearTimeout(this.clipboardFlashTimer);
+      this.clipboardFlashTimer = null;
     }
 
     if (this.inkInstance) {

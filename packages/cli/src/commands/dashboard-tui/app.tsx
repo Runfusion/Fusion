@@ -493,13 +493,17 @@ function LogsPanel({
   const hiddenAbove = visibleStart;
   const hiddenBelow = entries.length - visibleEnd;
 
+  const panelTitle = state.clipboardFlash
+    ? `Logs (${state.logEntries.length}/1000) · ${state.clipboardFlash.ok ? "✓ Copied!" : "✗ Copy failed"}`
+    : `Logs (${state.logEntries.length}/1000)`;
   return (
-    <Panel title={`Logs (${state.logEntries.length}/1000)`} isFocused={isFocused} flexGrow={1}>
+    <Panel title={panelTitle} isFocused={isFocused} flexGrow={1}>
       {logsExpandedMode && entries[cursor] ? (
         <ExpandedLog
           entry={entries[cursor]}
           index={cursor}
           total={entries.length}
+          clipboardFlash={state.clipboardFlash}
         />
       ) : entries.length === 0 ? (
         <Text dimColor>No log entries yet.</Text>
@@ -584,10 +588,27 @@ function LogsPanel({
   );
 }
 
-function ExpandedLog({ entry, index, total }: { entry: LogEntry; index: number; total: number }) {
+function ExpandedLog({
+  entry,
+  index,
+  total,
+  clipboardFlash,
+}: {
+  entry: LogEntry;
+  index: number;
+  total: number;
+  clipboardFlash: { ok: boolean; at: number } | null;
+}) {
   return (
     <Box flexDirection="column" flexGrow={1} width="100%">
-      <Text dimColor>Entry {index + 1}/{total} · [Enter/Esc] close · [c] copy</Text>
+      <Box flexDirection="row" gap={1}>
+        <Text dimColor>Entry {index + 1}/{total} · [Enter/Esc] close · [c] copy</Text>
+        {clipboardFlash && (
+          <Text color={clipboardFlash.ok ? "greenBright" : "redBright"} bold>
+            {clipboardFlash.ok ? "✓ Copied!" : "✗ Copy failed"}
+          </Text>
+        )}
+      </Box>
       <Box height={1} />
       <Box flexDirection="row" gap={1}>
         <Text dimColor>Time:</Text>
@@ -4039,12 +4060,20 @@ export function DashboardApp({ controller }: DashboardAppProps) {
       }
 
       if (input === "c" || input === "C") {
-        const target = filteredEntries[state.selectedLogIndex];
+        // Clamp the index to match the display logic in LogsPanel — the cursor
+        // shown is always Math.min(Math.max(idx, 0), entries.length - 1), so
+        // we copy whatever the user is actually looking at instead of silently
+        // hitting `undefined` when selectedLogIndex is briefly out of range.
+        const idx = filteredEntries.length === 0
+          ? -1
+          : Math.min(Math.max(state.selectedLogIndex, 0), filteredEntries.length - 1);
+        const target = idx >= 0 ? filteredEntries[idx] : undefined;
         if (target) {
           const ts = formatTimestamp(target.timestamp);
           const prefix = target.prefix ? `[${target.prefix}] ` : "";
           const text = `${ts} ${target.level.toUpperCase()} ${prefix}${target.message}`;
           void copyToClipboard(text).then((ok) => {
+            controller.flashClipboard(ok);
             if (ok) {
               controller.log("Log entry copied to clipboard.", "clipboard");
             } else {
@@ -4054,6 +4083,9 @@ export function DashboardApp({ controller }: DashboardAppProps) {
               );
             }
           });
+        } else {
+          controller.warn("No log entry to copy.", "clipboard");
+          controller.flashClipboard(false);
         }
         return;
       }
