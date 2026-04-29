@@ -367,6 +367,16 @@ describe("MobileNavBar", () => {
     expect(container.querySelector(".mobile-nav-bar")).toBeNull();
   });
 
+  it("returns null when keyboardOpen is true on mobile", () => {
+    const { container } = render(<MobileNavBar {...createDefaultProps()} keyboardOpen={true} />);
+    expect(container.querySelector(".mobile-nav-bar")).toBeNull();
+  });
+
+  it("renders nav bar when keyboardOpen is false on mobile", () => {
+    const { container } = render(<MobileNavBar {...createDefaultProps()} keyboardOpen={false} />);
+    expect(container.querySelector(".mobile-nav-bar")).not.toBeNull();
+  });
+
   it("applies footer-visible class when footer is shown", () => {
     const { container } = render(<MobileNavBar {...createDefaultProps()} footerVisible={true} />);
     expect(container.querySelector(".mobile-nav-bar--with-footer")).not.toBeNull();

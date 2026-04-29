@@ -38,6 +38,7 @@ import { useAppSettings } from "./hooks/useAppSettings";
 import { useDeepLink } from "./hooks/useDeepLink";
 import { useFavorites } from "./hooks/useFavorites";
 import { useAuthOnboarding } from "./hooks/useAuthOnboarding";
+import { useMobileKeyboard } from "./hooks/useMobileKeyboard";
 import { useSetupReadiness } from "./hooks/useSetupReadiness";
 import { useUpdateCheck } from "./hooks/useUpdateCheck";
 import { useViewState, type TaskView } from "./hooks/useViewState";
@@ -272,6 +273,10 @@ function AppInner() {
 
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
+  const { keyboardOverlap } = useMobileKeyboard({ enabled: isMobile });
+  // Keyboard visibility controls both MobileNavBar rendering and whether
+  // the project content reserves bottom padding for the mobile nav bar.
+  const mobileKeyboardOpen = isMobile && keyboardOverlap > 0;
 
   // App-level mailbox unread count state (used for header/mobile nav badges)
   const [mailboxUnreadCount, setMailboxUnreadCount] = useState(0);
@@ -902,7 +907,7 @@ function AppInner() {
         />
       )}
       <div
-        className={`project-content${viewMode === "project" && currentProject ? " project-content--with-footer" : ""}${isMobile ? " project-content--with-mobile-nav" : ""}`}
+        className={`project-content${viewMode === "project" && currentProject ? " project-content--with-footer" : ""}${isMobile && !mobileKeyboardOpen ? " project-content--with-mobile-nav" : ""}`}
       >
         {renderMainContent()}
       </div>
@@ -926,6 +931,7 @@ function AppInner() {
         onChangeView={viewMode === "project" && currentProject ? handleTaskViewChange : () => {}}
         footerVisible={viewMode === "project" && !!currentProject}
         modalOpen={modalManager.anyModalOpen}
+        keyboardOpen={mobileKeyboardOpen}
         onOpenSettings={handleOpenSettings}
         onOpenActivityLog={modalManager.openActivityLog}
         onOpenSystemStats={modalManager.openSystemStats}

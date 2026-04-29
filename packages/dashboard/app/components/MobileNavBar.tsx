@@ -40,6 +40,8 @@ export interface MobileNavBarProps {
   footerVisible: boolean;
   /** Whether any full-screen modal is currently open (hides the tab bar) */
   modalOpen?: boolean;
+  /** Whether the on-screen mobile keyboard is open (hides the tab bar) */
+  keyboardOpen?: boolean;
   // Navigation handlers
   onOpenSettings?: () => void;
   onOpenActivityLog?: () => void;
@@ -89,6 +91,7 @@ export function MobileNavBar({
   onChangeView,
   footerVisible,
   modalOpen = false,
+  keyboardOpen = false,
   onOpenSettings,
   onOpenActivityLog,
   onOpenSystemStats,
@@ -168,7 +171,7 @@ export function MobileNavBar({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [isMoreOpen]);
 
-  if (mode !== "mobile" || modalOpen) {
+  if (mode !== "mobile" || modalOpen || keyboardOpen) {
     return null;
   }
 
