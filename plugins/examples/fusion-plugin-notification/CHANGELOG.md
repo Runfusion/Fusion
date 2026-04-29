@@ -1,5 +1,26 @@
 # @fusion-plugin-examples/notification
 
+## 0.2.7
+
+### Patch Changes
+
+- Updated dependencies [48208db]
+- Updated dependencies [a654795]
+- Updated dependencies [a654795]
+- Updated dependencies [a654795]
+- Updated dependencies [a654795]
+- Updated dependencies [a654795]
+- Updated dependencies [91f9f20]
+- Updated dependencies [b91533c]
+- Updated dependencies [7f42c7f]
+- Updated dependencies [17a072c]
+- Updated dependencies [1beebc0]
+- Updated dependencies [a654795]
+- Updated dependencies [bb5402a]
+- Updated dependencies [a654795]
+- Updated dependencies [a654795]
+  - @fusion/plugin-sdk@0.9.0
+
 ## 0.2.6
 
 ### Patch Changes
