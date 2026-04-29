@@ -318,6 +318,7 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const { confirm } = useConfirm();
   const modalRef = useRef<HTMLDivElement>(null);
+  const settingsContentRef = useRef<HTMLDivElement>(null);
   useModalResizePersist(modalRef, true, "fusion:settings-modal-size");
   const [form, setForm] = useState<SettingsFormState>({
     maxConcurrent: 2,
@@ -789,6 +790,10 @@ export function SettingsModal({
     };
   }, [activeSection, loadAuthStatus]);
 
+  const scrollSettingsToTop = useCallback(() => {
+    settingsContentRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
   const handleLogin = useCallback(async (providerId: string) => {
     setAuthActionInProgress(providerId);
     setLoginInstructions((prev) => {
@@ -828,6 +833,7 @@ export function SettingsModal({
               return next;
             });
             addToast("Login successful", "success");
+            scrollSettingsToTop();
           }
         } catch {
           // Continue polling on transient errors
@@ -845,7 +851,7 @@ export function SettingsModal({
         return next;
       });
     }
-  }, [addToast]);
+  }, [addToast, scrollSettingsToTop]);
 
   const handleLogout = useCallback(async (providerId: string) => {
     setAuthActionInProgress(providerId);
@@ -881,12 +887,13 @@ export function SettingsModal({
       });
       await loadAuthStatus();
       addToast("API key saved", "success");
+      scrollSettingsToTop();
     } catch (err) {
       setApiKeyErrors((prev) => ({ ...prev, [providerId]: getErrorMessage(err) || "Failed to save API key" }));
     } finally {
       setAuthActionInProgress(null);
     }
-  }, [apiKeyInputs, addToast, loadAuthStatus]);
+  }, [apiKeyInputs, addToast, loadAuthStatus, scrollSettingsToTop]);
 
   const handleClearApiKey = useCallback(async (providerId: string) => {
     setAuthActionInProgress(providerId);
@@ -4776,7 +4783,7 @@ export function SettingsModal({
                 );
               })}
             </nav>
-            <div className="settings-content">
+            <div className="settings-content" ref={settingsContentRef}>
               {renderSectionFields()}
             </div>
           </div>

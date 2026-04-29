@@ -13,6 +13,7 @@ const mockUpdateGlobalSettings = vi.fn();
 const mockFetchAuthStatus = vi.fn();
 const mockLoginProvider = vi.fn();
 const mockLogoutProvider = vi.fn();
+const mockSaveApiKey = vi.fn();
 const mockFetchModels = vi.fn();
 const mockTestNtfyNotification = vi.fn();
 const mockTestNotification = vi.fn();
@@ -54,6 +55,7 @@ vi.mock("../../api", () => ({
   fetchAuthStatus: (...args: unknown[]) => mockFetchAuthStatus(...args),
   loginProvider: (...args: unknown[]) => mockLoginProvider(...args),
   logoutProvider: (...args: unknown[]) => mockLogoutProvider(...args),
+  saveApiKey: (...args: unknown[]) => mockSaveApiKey(...args),
   fetchModels: (...args: unknown[]) => mockFetchModels(...args),
   testNtfyNotification: (...args: unknown[]) => mockTestNtfyNotification(...args),
   testNotification: (...args: unknown[]) => mockTestNotification(...args),
@@ -193,6 +195,7 @@ describe("SettingsModal", () => {
     mockFetchSettingsByScope.mockResolvedValue({ global: defaultSettings, project: {} });
     mockFetchAuthStatus.mockResolvedValue({ providers: [] });
     mockFetchModels.mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] });
+    mockSaveApiKey.mockResolvedValue(undefined);
     mockTestNotification.mockResolvedValue({ success: true });
     mockFetchBackups.mockResolvedValue({ backups: [], totalSize: 0 });
     mockFetchMemoryFiles.mockResolvedValue({
@@ -718,6 +721,71 @@ describe("SettingsModal", () => {
       expect(screen.getByTestId("auth-provider-icon-openai")).toBeInTheDocument();
       expect(screen.getByTestId("auth-status-github")).toHaveTextContent("✓ Active");
       expect(screen.getByTestId("auth-status-openai")).toHaveTextContent("✗ Not connected");
+    });
+
+    it("scrolls settings content to top after OAuth login succeeds", async () => {
+      const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+      mockLoginProvider.mockResolvedValue({ url: "https://example.com/auth", instructions: "" });
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [{ id: "github", name: "GitHub", authenticated: false, type: "oauth" }],
+      });
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [{ id: "github", name: "GitHub", authenticated: true, type: "oauth" }],
+      });
+
+      vi.spyOn(globalThis, "setInterval").mockImplementation((callback: TimerHandler) => {
+        void Promise.resolve().then(() => {
+          if (typeof callback === "function") callback();
+        });
+        return 1 as unknown as ReturnType<typeof setInterval>;
+      });
+
+      const { container } = renderModal();
+      await waitForSettingsModalReady();
+
+      const settingsContent = container.querySelector(".settings-content") as HTMLDivElement;
+      expect(settingsContent).toBeInTheDocument();
+      const scrollToSpy = vi.fn();
+      Object.defineProperty(settingsContent, "scrollTo", {
+        value: scrollToSpy,
+        writable: true,
+      });
+
+      await userEvent.click(screen.getByRole("button", { name: "Login" }));
+
+      await waitFor(() => {
+        expect(scrollToSpy).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+      });
+      expect(openSpy).toHaveBeenCalled();
+    });
+
+    it("scrolls settings content to top after API key save succeeds", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [{ id: "openai", name: "OpenAI", authenticated: false, type: "api_key" }],
+      });
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [{ id: "openai", name: "OpenAI", authenticated: true, type: "api_key" }],
+      });
+
+      const { container } = renderModal();
+      await waitForSettingsModalReady();
+
+      const settingsContent = container.querySelector(".settings-content") as HTMLDivElement;
+      expect(settingsContent).toBeInTheDocument();
+      const scrollToSpy = vi.fn();
+      Object.defineProperty(settingsContent, "scrollTo", {
+        value: scrollToSpy,
+        writable: true,
+      });
+
+      const openAiCard = screen.getByTestId("auth-provider-icon-openai").closest(".auth-provider-card") as HTMLElement;
+      await userEvent.type(within(openAiCard).getByPlaceholderText("Enter API key"), "sk-test-key");
+      await userEvent.click(within(openAiCard).getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockSaveApiKey).toHaveBeenCalledWith("openai", "sk-test-key");
+        expect(scrollToSpy).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+      });
     });
   });
 
