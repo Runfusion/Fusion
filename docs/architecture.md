@@ -744,6 +744,50 @@ In `packages/engine/src/ipc/ipc-protocol.ts`:
                         + InProcessRuntime
 ```
 
+## Task Routing Architecture
+
+Task dispatch routing is resolved in two layers:
+
+1. **Task routing resolution** (`packages/engine/src/effective-node.ts`)
+   - `resolveEffectiveNode(task, settings)` applies precedence:
+     1. `Task.nodeId` → `task-override`
+     2. `ProjectSettings.defaultNodeId` → `project-default`
+     3. no node set → `local`
+2. **Runtime selection** (`packages/engine/src/project-manager.ts`)
+   - `child-process` isolation always uses `ChildProcessRuntime`
+   - `in-process` isolation uses `RemoteNodeRuntime` when the registered project host node is remote
+   - otherwise uses `InProcessRuntime`
+
+### Dispatch flow in scheduler
+
+On dispatch (`packages/engine/src/scheduler.ts`), scheduler:
+- resolves effective node/source,
+- persists `effectiveNodeId` + `effectiveNodeSource` on the task,
+- logs activity: `Node routing resolved: <node|local> (source: <source>)`.
+
+### Active-task node-override guard
+
+`packages/core/src/node-override-guard.ts` enforces immutable routing overrides for active tasks:
+- `validateNodeOverrideChange()` blocks node override updates while task column is `in-progress`
+- returns reason `task-in-progress`
+
+`TaskStore.updateTask()` applies this guard before persisting `nodeId` changes.
+
+### Unavailable-node policy status
+
+`unavailableNodePolicy` is a validated/stored project setting (`block` default, `fallback-local` allowed) and is exposed in dashboard/CLI controls.
+
+Current implementation note: scheduler dispatch does **not yet** enforce health-based `block`/`fallback-local` behavior; node-health enforcement is reserved for a follow-up path (see scheduler `nodeHealthMonitor` reserved comment).
+
+### Routing activity visibility
+
+Routing decisions are visible in task activity/log entries and in task metadata (`effectiveNodeId`, `effectiveNodeSource`), and surfaced in dashboard routing UI + `fn task show` output.
+
+See also:
+- [Settings Reference → Node Routing settings](./settings-reference.md#node-routing-settings-project-scope)
+- [Task Management → Node Routing](./task-management.md#node-routing)
+- [Multi-Project → Node Routing](./multi-project.md#node-routing)
+
 ---
 
 ## 12) Settings Hierarchy
@@ -840,3 +884,5 @@ Git behavior is implemented primarily in engine executor/merger + dashboard/CLI 
 - **Pi extension:** `packages/cli/src/extension.ts`
 - **Runtime abstraction:** `packages/engine/src/project-runtime.ts`
 - **Multi-project orchestrator:** `packages/engine/src/hybrid-executor.ts`
+- **Task routing resolver:** `packages/engine/src/effective-node.ts`
+- **Node override guard:** `packages/core/src/node-override-guard.ts`

@@ -245,6 +245,70 @@ Each task may override:
 
 Overrides are configured from the task model tab or task creation actions.
 
+## Node Routing
+
+Tasks execute on an effective node selected by routing precedence:
+
+1. **Per-task node override** (`Task.nodeId`)
+2. **Project default node** (`defaultNodeId` in project settings)
+3. **Local execution** (no node configured)
+
+At dispatch time, scheduler routing is persisted on the task as:
+- `effectiveNodeId`
+- `effectiveNodeSource` (`task-override`, `project-default`, or `local`)
+
+### Per-task node override
+
+You can set or clear a task override from:
+
+- Task detail modal → **Routing** tab
+- Quick/create flows that support node selection
+- Bulk task actions
+- CLI:
+  - `fn task set-node <task-id> <node-name-or-id>`
+  - `fn task clear-node <task-id>`
+  - `fn task create "..." --node <node-name-or-id>`
+- Pi extension tool `fn_task_update` with `nodeId`
+
+### Active-task blocking
+
+Node override changes are blocked while a task is active/in progress. Core validation (`validateNodeOverrideChange`) returns `reason: "task-in-progress"` and users must pause/stop or wait for completion before changing routing.
+
+### Task detail routing summary
+
+The Routing tab shows:
+
+- Effective node (with health indicator when known)
+- Routing source (override vs project default vs local)
+- Unavailable-node policy value (`block` or `fallback-local`)
+- Lock banner when routing is currently immutable for an active task
+
+### Activity log entries
+
+When a task is dispatched, task activity/log records include routing decisions such as:
+
+- `Node routing resolved: <node-or-local> (source: <source>)`
+
+Use `fn task show <id>` or task logs to inspect current node routing context.
+
+### Examples
+
+```bash
+# Route one task to a specific remote node
+fn task set-node FN-204 edge-runner
+
+# Remove override and return to project default routing
+fn task clear-node FN-204
+
+# Create a task with node override immediately
+fn task create "Reproduce flaky node error" --node edge-runner
+
+# Inspect routing summary from CLI
+fn task show FN-204
+```
+
+See also: [Settings Reference → Node Routing settings](./settings-reference.md#node-routing-settings-project-scope) and [Architecture → Task Routing Architecture](./architecture.md#task-routing-architecture).
+
 ## Review Level
 
 Review levels control the rigor of the review process for a task:

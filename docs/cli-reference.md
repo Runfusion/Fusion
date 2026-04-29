@@ -301,6 +301,7 @@ Task lifecycle and task operations.
 ```bash
 fn task create "Fix login race condition"
 fn task create "Fix bug" --attach screenshot.png --depends FN-010
+fn task create "Investigate flaky runner" --node edge-runner
 fn task plan "Design a new authentication flow"
 ```
 
@@ -312,6 +313,11 @@ fn task show FN-001
 fn task logs FN-001 --follow --limit 50 --type tool
 ```
 
+`fn task show <id>` includes routing context when available:
+- task node override
+- project default node fallback
+- unavailable-node policy value
+
 ### Execution and status
 
 ```bash
@@ -322,6 +328,18 @@ fn task retry FN-001
 fn task pause FN-001
 fn task unpause FN-001
 ```
+
+### Node routing controls
+
+```bash
+fn task set-node FN-001 edge-runner
+fn task clear-node FN-001
+```
+
+Notes:
+- `set-node` resolves either node name or node ID.
+- `set-node` and `clear-node` are blocked while the task is in progress.
+- Use `fn node list` / `fn node show <name>` to discover node IDs and status.
 
 ### Collaboration and guidance
 
@@ -497,6 +515,8 @@ Show and manage settings.
 ```bash
 fn settings
 fn settings set maxConcurrent 4
+fn settings set defaultNodeId node_abc123
+fn settings set unavailableNodePolicy fallback-local
 fn settings export [--scope global|project|both] [--output <file>]
 fn settings import <file> [--scope global|project|both] [--merge] [--yes]
 ```
@@ -583,6 +603,7 @@ Subcommands: `search`, `install`.
 | `--dev` | `fn dashboard`, `fn desktop` |
 | `--attach` | `fn task create` |
 | `--depends` | `fn task create` |
+| `--node` | `fn task create` |
 | `--feedback` | `fn task refine` |
 | `--yes` | confirmation-skipping flows (`task plan`, `settings import`, git pull/push, etc.) |
 | `--limit`, `-l` | `fn task import` (default: 30, max: 100), `fn skills search` (default: 10, max: 50) |

@@ -80,6 +80,53 @@ Projects can run with:
 - **`in-process`** (default): low overhead, shared process
 - **`child-process`**: stronger isolation with independent process boundary
 
+## Node Routing
+
+Multi-project deployments use two related node fields at different layers:
+
+1. **Project runtime placement** (`projects.nodeId` in `~/.fusion/fusion-central.db`)
+   - Decides where a project runtime is hosted in multi-project orchestration.
+2. **Task dispatch default** (`defaultNodeId` in project settings)
+   - Decides where tasks route when they do not have a per-task override.
+
+These fields are intentionally distinct.
+
+### Runtime placement (`projects.nodeId`)
+
+`ProjectManager` uses project registration data plus isolation mode to pick runtime type:
+
+- `isolationMode: "child-process"` → always `ChildProcessRuntime`
+- `isolationMode: "in-process"` + remote `projects.nodeId` → `RemoteNodeRuntime`
+- `isolationMode: "in-process"` + local/unset/missing node assignment → `InProcessRuntime`
+
+So `projects.nodeId` is a **project host-node assignment**, not a per-task override.
+
+### Task routing defaults (`defaultNodeId` + `Task.nodeId`)
+
+Within a project runtime, effective task routing resolves as:
+
+1. task override (`Task.nodeId`)
+2. project default (`defaultNodeId`)
+3. local execution
+
+This allows each project to maintain independent routing behavior even when managed from one central registry.
+
+### Unavailable node policy in multi-project context
+
+`unavailableNodePolicy` is project-scoped and can be set differently per project (`block` or `fallback-local`).
+
+Current behavior: scheduler dispatch records effective node/source for each task, but health-based block/fallback enforcement is not yet applied in the scheduler dispatch path.
+
+### Example: different node defaults per project
+
+- **Project A** (`projects.nodeId` assigned to remote host): runtime executes via `RemoteNodeRuntime`; `defaultNodeId=edge-a` routes unpinned tasks to edge-a.
+- **Project B** (`projects.nodeId` unset): runtime stays local `InProcessRuntime`; `defaultNodeId=edge-b` still marks its task dispatch default independently.
+
+See also:
+- [Settings Reference → Node Routing settings](./settings-reference.md#node-routing-settings-project-scope)
+- [Task Management → Node Routing](./task-management.md#node-routing)
+- [Architecture → Task Routing Architecture](./architecture.md#task-routing-architecture)
+
 ## Auto-Migration from Single-Project
 
 On first run after upgrade:

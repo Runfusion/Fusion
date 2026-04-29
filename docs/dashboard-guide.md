@@ -112,7 +112,15 @@ Memory view provides a multi-file editor for project and daily memory files.
 
 ## Task Detail Modal
 
-Inspect task definition, logs, comments, documents, workflow outcomes, and model overrides from a single modal.
+Inspect task definition, logs, comments, documents, workflow outcomes, model overrides, and task routing from a single modal.
+
+The **Routing** tab shows:
+- effective node
+- routing source (task override vs project default vs local)
+- unavailable-node policy value
+- per-task node override controls (locked while task is active)
+
+Project-wide routing defaults are configured in **Settings → Node Routing**.
 
 ![Task detail modal](./screenshots/task-detail.png)
 

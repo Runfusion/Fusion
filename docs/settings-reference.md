@@ -125,12 +125,8 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `maxWorktrees` | `number` | `4` | Max git worktrees. |
 | `pollIntervalMs` | `number` | `15000` | Scheduler poll interval (ms). |
 | `heartbeatMultiplier` | `number` | `1` | Global multiplier applied to all agent heartbeat intervals. Configured from the Agents screen (not Settings). |
-| `defaultNodeId` | `string` | `undefined` | Optional project default node ID. When set, tasks without a per-task `nodeId` override are routed to this node. |
-| `unavailableNodePolicy` | `"block" \| "fallback-local"` | `"block"` | Routing policy when a selected node is unavailable/unhealthy. `"block"` stops execution until the node is healthy; `"fallback-local"` runs the task on the local node instead. Applies to both project-default node routing and per-task node overrides. |
-
-CLI usage:
-- `fn settings set defaultNodeId <node-id>`
-- `fn settings set unavailableNodePolicy <block|fallback-local>`
+| `defaultNodeId` | `string` | `undefined` | Optional project default execution node for task dispatch. When set, tasks without a per-task `nodeId` override resolve to this node (`routing source: project-default`). See [Task Management → Node Routing](./task-management.md#node-routing). |
+| `unavailableNodePolicy` | `"block" \| "fallback-local"` | `"block"` | Project routing policy value used by dashboard/CLI routing controls. Current scheduler dispatch records effective routing but does not yet apply health-based block/fallback enforcement in the dispatch path. See [Architecture → Task Routing Architecture](./architecture.md#task-routing-architecture). |
 
 | `groupOverlappingFiles` | `boolean` | `true` | Serialize execution when file scopes overlap. |
 | `overlapIgnorePaths` | `string[]` | `[]` | Optional project-relative file or directory paths to exclude from overlap blocking (for example `docs` or `generated/openapi.json`). Entries are trimmed, deduplicated, and must not be absolute or contain `..` traversal. |
@@ -225,6 +221,30 @@ CLI usage:
 | `reviewHandoffPolicy` | `"disabled" \| "comment-triggered" \| "always"` | `"disabled"` | Policy for agent-to-user review handoff detection. |
 | `showQuickChatFAB` | `boolean` | `false` | Show floating quick-chat button (chat remains available via More menu). |
 | `experimentalFeatures` | `Record<string, boolean>` | `{}` | Project-scoped experimental feature flags. |
+
+### Node Routing settings (project scope)
+
+Node routing controls in the project settings table are configured from **Settings → Node Routing** in the dashboard or via CLI:
+
+- `fn settings set defaultNodeId <node-id>`
+- `fn settings set unavailableNodePolicy <block|fallback-local>`
+
+Routing precedence for task dispatch is:
+1. per-task override (`Task.nodeId`)
+2. project default (`defaultNodeId`)
+3. local execution
+
+### Project Default Node vs central project node assignment
+
+Fusion also stores `projects.nodeId` in the **central registry database** (`~/.fusion/fusion-central.db`). That value is a multi-project runtime placement field used by `ProjectManager` (for selecting remote vs local project runtime), not the same setting as `defaultNodeId` task dispatch routing.
+
+- `defaultNodeId` (project settings): task-level dispatch default
+- `projects.nodeId` (central registry): which node hosts the project runtime in multi-project mode
+
+See also:
+- [Task Management → Node Routing](./task-management.md#node-routing)
+- [Multi-Project → Node Routing](./multi-project.md#node-routing)
+- [Architecture → Task Routing Architecture](./architecture.md#task-routing-architecture)
 
 ### Remote Access settings (project-scoped)
 
