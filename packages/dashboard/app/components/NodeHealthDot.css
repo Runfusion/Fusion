@@ -1,0 +1,19 @@
+.node-health-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.node-health-dot--compact {
+  gap: var(--space-xs);
+}
+
+.node-health-dot--compact .status-dot {
+  width: var(--space-xs);
+  height: var(--space-xs);
+}
+
+.node-health-dot__label {
+  color: var(--text-muted);
+  text-transform: capitalize;
+}

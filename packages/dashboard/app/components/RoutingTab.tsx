@@ -13,13 +13,6 @@ interface RoutingTabProps {
   onTaskUpdated?: (task: Task) => void;
 }
 
-const STATUS_DOT: Record<NodeInfo["status"], string> = {
-  online: "🟢",
-  offline: "🔴",
-  connecting: "🟡",
-  error: "🔴",
-};
-
 type RoutingSettings = Settings & {
   defaultNodeId?: string;
   unavailableNodePolicy?: "block" | "fallback-local";
@@ -82,7 +75,7 @@ export function RoutingTab({ task, settings, addToast, onTaskUpdated }: RoutingT
 
   const effectiveNode = effectiveNodeId ? nodesById.get(effectiveNodeId) : undefined;
   const effectiveNodeName = effectiveNode
-    ? `${STATUS_DOT[effectiveNode.status]} ${effectiveNode.name} (${effectiveNode.type})`
+    ? `${effectiveNode.name} (${effectiveNode.type}) — ${effectiveNode.status}`
     : effectiveNodeId
       ? `${effectiveNodeId} (node unavailable or unknown)`
       : "Local (no routing configured)";
@@ -180,8 +173,8 @@ export function RoutingTab({ task, settings, addToast, onTaskUpdated }: RoutingT
         >
           <option value="">Use project default</option>
           {sortedNodes.map((node) => (
-            <option key={node.id} value={node.id}>
-              {STATUS_DOT[node.status]} {node.name} ({node.type})
+            <option key={node.id} value={node.id} title={`Status: ${node.status}`}>
+              {node.name} ({node.type}) — {node.status}
             </option>
           ))}
         </select>

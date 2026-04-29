@@ -2198,7 +2198,17 @@ describe("ListView - Bulk Selection", () => {
       fireEvent.click(screen.getByLabelText("Select FN-001"));
 
       expect(await screen.findByLabelText("Node Override")).toBeInTheDocument();
-      expect(await screen.findByRole("option", { name: "Node One (Online)" })).toBeInTheDocument();
+      expect(await screen.findByRole("option", { name: "● Node One (Online)" })).toBeInTheDocument();
+    });
+
+    it("renders non-online statuses with distinct symbols and labels", async () => {
+      const tasks = [createMockTask({ id: "FN-001" })];
+      vi.mocked(fetchNodes).mockResolvedValue([{ id: "node-2", name: "Node Two", status: "offline" } as never]);
+
+      render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} projectId={TEST_PROJECT_ID} availableModels={availableModels} />);
+      fireEvent.click(screen.getByLabelText("Select FN-001"));
+
+      expect(await screen.findByRole("option", { name: "○ Node Two (Offline)" })).toBeInTheDocument();
     });
 
     it("applies explicit node override through batchUpdateTaskModels", async () => {

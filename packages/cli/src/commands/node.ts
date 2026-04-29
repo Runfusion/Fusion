@@ -1,6 +1,12 @@
 import { CentralCore, type NodeConfig } from "@fusion/core";
 import { createInterface } from "node:readline/promises";
 
+const GREEN = "\x1b[32m";
+const RED = "\x1b[31m";
+const YELLOW = "\x1b[33m";
+const GRAY = "\x1b[90m";
+const RESET = "\x1b[0m";
+
 // ── Options Interfaces ───────────────────────────────────────────────────────
 
 /** Options for node list command. */
@@ -133,19 +139,51 @@ export function formatLastActivity(timestamp?: string | null): string {
  */
 function getStatusIndicator(status: string): string {
   switch (status) {
-    case "online": return "●";
-    case "offline": return "○";
-    case "error": return "✕";
-    case "connecting": return "◐";
-    default: return "○";
+    case "online":
+      return `${GREEN}●${RESET}`;
+    case "offline":
+      return `${RED}○${RESET}`;
+    case "error":
+      return `${RED}✕${RESET}`;
+    case "connecting":
+      return `${YELLOW}◐${RESET}`;
+    default:
+      return `${GRAY}○${RESET}`;
   }
+}
+
+function colorizeStatusText(status: string): string {
+  switch (status) {
+    case "online":
+      return `${GREEN}${status}${RESET}`;
+    case "offline":
+    case "error":
+      return `${RED}${status}${RESET}`;
+    case "connecting":
+      return `${YELLOW}${status}${RESET}`;
+    default:
+      return `${GRAY}${status}${RESET}`;
+  }
+}
+
+// eslint-disable-next-line no-control-regex
+const ANSI_ESCAPE_PATTERN = new RegExp("\\u001b\\[[0-9;]*m", "g");
+
+function stripAnsi(text: string): string {
+  return text.replace(ANSI_ESCAPE_PATTERN, "");
+}
+
+function visualPadEnd(text: string, minWidth: number): string {
+  const visibleLength = stripAnsi(text).length;
+  if (visibleLength >= minWidth) return text;
+  return `${text}${" ".repeat(minWidth - visibleLength)}`;
 }
 
 /**
  * Get color-coded status string.
  */
 function formatStatus(status: string): string {
-  return `${getStatusIndicator(status)} ${status}`;
+  return `${getStatusIndicator(status)} ${colorizeStatusText(status)}`;
 }
 
 // ── Core Command Functions ──────────────────────────────────────────────────
@@ -201,7 +239,7 @@ export async function runNodeList(options: NodeListOptions = {}): Promise<void> 
     for (const node of sorted) {
       const name = node.name.padEnd(16);
       const type = node.type.padEnd(8);
-      const statusStr = formatStatus(node.status).padEnd(12);
+      const statusStr = visualPadEnd(formatStatus(node.status), 12);
       const max = String(node.maxConcurrent).padStart(3);
 
       if (hasMetrics && node.systemMetrics) {
@@ -527,7 +565,7 @@ export async function runMeshStatus(options: MeshStatusOptions = {}): Promise<vo
     for (const node of sorted) {
       const name = node.name.padEnd(16);
       const type = node.type.padEnd(8);
-      const statusStr = formatStatus(node.status).padEnd(12);
+      const statusStr = visualPadEnd(formatStatus(node.status), 12);
       const url = node.type === "remote" ? (node.url ?? "-") : "(local)";
       console.log(`  ${name}  ${type} ${statusStr} ${url}`);
     }

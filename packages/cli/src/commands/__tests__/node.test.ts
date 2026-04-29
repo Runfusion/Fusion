@@ -245,6 +245,7 @@ describe("node commands", () => {
     expect(parsed).toHaveLength(1);
     expect(parsed[0].name).toBe("json-node");
     expect(parsed[0].apiKey).toBe("none");
+    expect(output).not.toMatch(/\x1b\[[0-9;]*m/);
   });
 
   it("runNodeList masks API keys in JSON output", async () => {
@@ -277,9 +278,18 @@ describe("node commands", () => {
     await runNodeList();
 
     const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(output).toContain("● online");
-    expect(output).toContain("○ offline");
-    expect(output).toContain("✕ error");
+    expect(output).toContain("\x1b[32m●\x1b[0m \x1b[32monline\x1b[0m");
+    expect(output).toContain("\x1b[31m○\x1b[0m \x1b[31moffline\x1b[0m");
+    expect(output).toContain("\x1b[31m✕\x1b[0m \x1b[31merror\x1b[0m");
+  });
+
+  it("runNodeList colorizes connecting status", async () => {
+    mockListNodes.mockResolvedValue([makeNode({ name: "connecting-node", status: "connecting" })]);
+
+    await runNodeList();
+
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("\x1b[33m◐\x1b[0m \x1b[33mconnecting\x1b[0m");
   });
 
   // ── runNodeConnect Tests ─────────────────────────────────────────────────

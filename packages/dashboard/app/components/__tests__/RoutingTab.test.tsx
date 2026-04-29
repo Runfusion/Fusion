@@ -76,19 +76,28 @@ describe("RoutingTab", () => {
 
     expect(await screen.findByText("Per-task override")).toBeInTheDocument();
     expect(screen.getByText(/Effective node/i)).toBeInTheDocument();
+    expect(screen.getAllByText("Alpha (local) — online")[0]).toBeInTheDocument();
+  });
+
+  it("renders selector options with status text", async () => {
+    render(<RoutingTab task={makeTask()} settings={makeSettings()} addToast={addToast} />);
+
+    expect(await screen.findByRole("option", { name: "Alpha (local) — online" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Beta (remote) — offline" })).toBeInTheDocument();
   });
 
   it("renders routing summary with project default", async () => {
     render(
       <RoutingTab
         task={makeTask()}
-        settings={makeSettings({ defaultNodeId: "node-a" })}
+        settings={makeSettings({ defaultNodeId: "node-b" })}
         addToast={addToast}
       />,
     );
 
     expect(await screen.findByText("Project default")).toBeInTheDocument();
     expect(screen.getByText(/Effective node/i)).toBeInTheDocument();
+    expect(screen.getByText("Unhealthy")).toBeInTheDocument();
   });
 
   it("renders no-routing summary when no override or project default exists", async () => {

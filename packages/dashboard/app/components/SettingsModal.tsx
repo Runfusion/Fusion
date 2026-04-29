@@ -36,6 +36,7 @@ import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPr
 import { appendTokenQuery } from "../auth";
 import { useConfirm } from "../hooks/useConfirm";
 import { useNodes } from "../hooks/useNodes";
+import { NodeHealthDot } from "./NodeHealthDot";
 
 // ---------------------------------------------------------------------------
 // GitHub star count — fetched once per session, cached in localStorage (1 h).
@@ -49,13 +50,6 @@ function getNodeStatusLabel(status: "online" | "offline" | "connecting" | "error
   if (status === "connecting") return "Connecting";
   if (status === "error") return "Error";
   return "Offline";
-}
-
-function getNodeStatusClass(status: "online" | "offline" | "connecting" | "error"): string {
-  if (status === "online") return "settings-node-status--online";
-  if (status === "connecting") return "settings-node-status--connecting";
-  if (status === "error") return "settings-node-status--error";
-  return "settings-node-status--offline";
 }
 
 /**
@@ -2701,9 +2695,9 @@ export function SettingsModal({
                 const selectedNode = nodes.find((node) => node.id === form.defaultNodeId);
                 if (!selectedNode) return null;
                 return (
-                  <div className={`settings-node-status ${getNodeStatusClass(selectedNode.status)}`}>
-                    <span className="settings-node-status__dot" aria-hidden="true" />
-                    <span>{`Selected node: ${getNodeStatusLabel(selectedNode.status)}`}</span>
+                  <div className="settings-node-status">
+                    <span className="settings-node-status__prefix">Selected node:</span>
+                    <NodeHealthDot status={selectedNode.status} showLabel />
                   </div>
                 );
               })()}

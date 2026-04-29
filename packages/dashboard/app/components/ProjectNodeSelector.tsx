@@ -10,13 +10,6 @@ interface ProjectNodeSelectorProps {
   disabled?: boolean;
 }
 
-const STATUS_DOT: Record<NodeInfo["status"], string> = {
-  online: "🟢",
-  offline: "🔴",
-  connecting: "🟡",
-  error: "🔴",
-};
-
 export function ProjectNodeSelector({
   projectId,
   currentNodeId,
@@ -48,9 +41,10 @@ export function ProjectNodeSelector({
           <option
             key={node.id}
             value={node.id}
+            title={`Status: ${node.status}`}
             className={node.status === "offline" || node.status === "error" ? "project-node-selector__option--dim" : ""}
           >
-            {STATUS_DOT[node.status]} {node.name} ({node.type})
+            {node.name} ({node.type}) — {node.status}
           </option>
         ))}
       </select>

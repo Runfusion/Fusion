@@ -70,6 +70,39 @@ html {
   justify-content: center;
 }
 
+.status-dot {
+  width: var(--space-sm);
+  height: var(--space-sm);
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.status-dot--online {
+  background: var(--color-success);
+}
+
+.status-dot--offline,
+.status-dot--error {
+  background: var(--color-error);
+}
+
+.status-dot--connecting {
+  background: var(--color-warning);
+  animation: status-dot-pulse var(--transition-slow) ease-in-out infinite;
+}
+
+@keyframes status-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.4;
+  }
+}
+
 /* === Design Tokens (Theme-Agnostic Defaults) === */
 :root {
   /* Typography */

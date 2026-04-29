@@ -168,7 +168,8 @@ describe("SettingsModal Node Routing section", () => {
     renderModal();
     await openNodeRouting();
     expect(screen.getByLabelText("Default Execution Node")).toHaveValue("node-remote-1");
-    expect(screen.getByText(/Selected node: Online/i)).toBeInTheDocument();
+    expect(screen.getByText(/Selected node:/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("Node status: Online")).toBeInTheDocument();
   });
 
   it("lists all available nodes in selector", async () => {

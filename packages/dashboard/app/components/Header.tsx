@@ -7,6 +7,7 @@ import type { ProjectInfo } from "../api";
 import type { NodeConfig, ProjectStatus } from "@fusion/core";
 import { fetchScripts } from "../api";
 import { NodeStatusIndicator } from "./NodeStatusIndicator";
+import { NodeHealthDot } from "./NodeHealthDot";
 import { PluginSlot } from "./PluginSlot";
 import { useViewportMode, type ViewportMode } from "../hooks/useViewportMode";
 
@@ -939,7 +940,7 @@ export function Header({
                       aria-selected={!isRemote}
                       data-testid="node-option-local"
                     >
-                      <span className="node-selector-option-dot node-selector-option-dot--local" />
+                      <NodeHealthDot status="online" compact />
                       <span className="node-selector-option-label">Local</span>
                     </button>
 
@@ -956,7 +957,7 @@ export function Header({
                         aria-selected={currentNode?.id === node.id}
                         data-testid={`node-option-${node.id}`}
                       >
-                        <span className={`node-selector-option-dot node-selector-option-dot--${node.status}`} />
+                        <NodeHealthDot status={node.status} compact />
                         <span className="node-selector-option-label">{node.name}</span>
                         <span className="node-selector-option-status">{node.status}</span>
                       </button>

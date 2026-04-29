@@ -38,6 +38,13 @@ function getNodeStatusLabel(status: NodeInfo["status"]): string {
   return "Offline";
 }
 
+function getNodeStatusSymbol(status: NodeInfo["status"]): string {
+  if (status === "online") return "●";
+  if (status === "connecting") return "◐";
+  if (status === "error") return "✕";
+  return "○";
+}
+
 function readVisibleColumns(projectId?: string): Set<ListColumn> {
   try {
     const saved = getScopedItem("kb-dashboard-list-columns", projectId);
@@ -772,7 +779,9 @@ export function ListView({
                 <option value="__no_change__">No change</option>
                 <option value="">Use project default</option>
                 {availableNodes.map((node) => (
-                  <option key={node.id} value={node.id}>{`${node.name || node.id} (${getNodeStatusLabel(node.status)})`}</option>
+                  <option key={node.id} value={node.id}>
+                    {`${getNodeStatusSymbol(node.status)} ${node.name || node.id} (${getNodeStatusLabel(node.status)})`}
+                  </option>
                 ))}
               </select>
             </div>

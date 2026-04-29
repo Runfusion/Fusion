@@ -11,6 +11,7 @@ import { CustomModelDropdown } from "./CustomModelDropdown";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { useNodes } from "../hooks/useNodes";
 import type { NodeInfo } from "../api";
+import { NodeHealthDot } from "./NodeHealthDot";
 
 const STORAGE_KEY = "kb-quick-entry-text";
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
@@ -68,13 +69,6 @@ function getNodeStatusLabel(status: NodeInfo["status"]): string {
   if (status === "connecting") return "Connecting";
   if (status === "error") return "Error";
   return "Offline";
-}
-
-function getNodeStatusClass(status: NodeInfo["status"]): string {
-  if (status === "online") return "quick-entry-node-status--online";
-  if (status === "connecting") return "quick-entry-node-status--connecting";
-  if (status === "error") return "quick-entry-node-status--error";
-  return "quick-entry-node-status--offline";
 }
 
 function getModelSelectionValue(provider?: string, modelId?: string): string {
@@ -1400,9 +1394,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                 const selectedNode = nodes.find((node) => node.id === nodeId);
                 if (!selectedNode) return null;
                 return (
-                  <span className={`quick-entry-node-status ${getNodeStatusClass(selectedNode.status)}`}>
-                    <span className="quick-entry-node-status__dot" aria-hidden="true" />
-                    {getNodeStatusLabel(selectedNode.status)}
+                  <span className="quick-entry-node-status">
+                    <NodeHealthDot status={selectedNode.status} showLabel />
                   </span>
                 );
               })()}
