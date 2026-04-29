@@ -7022,6 +7022,77 @@ Task with acceptance criteria
     });
 });
 
+  describe("task provenance", () => {
+    it("defaults sourceType to unknown when source is omitted", async () => {
+      const task = await store.createTask({ description: "Provenance default" });
+      const fetched = await store.getTask(task.id);
+      expect(fetched.sourceType).toBe("unknown");
+    });
+
+    it("persists simple source type from createTask", async () => {
+      const task = await store.createTask({
+        description: "Created from dashboard",
+        source: { sourceType: "dashboard_ui" },
+      });
+      const fetched = await store.getTask(task.id);
+      expect(fetched.sourceType).toBe("dashboard_ui");
+    });
+
+    it("roundtrips full provenance metadata", async () => {
+      const task = await store.createTask({
+        description: "Heartbeat-generated task",
+        source: {
+          sourceType: "agent_heartbeat",
+          sourceAgentId: "agent-123",
+          sourceRunId: "run-456",
+          sourceSessionId: "session-789",
+          sourceMessageId: "msg-001",
+          sourceMetadata: { reason: "scheduled" },
+        },
+      });
+
+      const fetched = await store.getTask(task.id);
+      expect(fetched.sourceType).toBe("agent_heartbeat");
+      expect(fetched.sourceAgentId).toBe("agent-123");
+      expect(fetched.sourceRunId).toBe("run-456");
+      expect(fetched.sourceSessionId).toBe("session-789");
+      expect(fetched.sourceMessageId).toBe("msg-001");
+      expect(fetched.sourceMetadata).toEqual({ reason: "scheduled" });
+    });
+
+    it("sets duplicate and refine provenance parent links", async () => {
+      const source = await store.createTask({ description: "Original" });
+      const duplicated = await store.duplicateTask(source.id);
+      expect(duplicated.sourceType).toBe("task_duplicate");
+      expect(duplicated.sourceParentTaskId).toBe(source.id);
+
+      await store.moveTask(source.id, "todo");
+      await store.moveTask(source.id, "in-progress");
+      await store.moveTask(source.id, "in-review");
+      await store.moveTask(source.id, "done");
+      const refined = await store.refineTask(source.id, "Needs polish");
+      expect(refined.sourceType).toBe("task_refine");
+      expect(refined.sourceParentTaskId).toBe(source.id);
+    });
+
+    it("preserves provenance on updateTask", async () => {
+      const task = await store.createTask({
+        description: "Will be updated",
+        source: {
+          sourceType: "automation",
+          sourceAgentId: "agent-auto",
+          sourceMetadata: { trigger: "nightly" },
+        },
+      });
+
+      await store.updateTask(task.id, { title: "Updated" });
+      const fetched = await store.getTask(task.id);
+      expect(fetched.sourceType).toBe("automation");
+      expect(fetched.sourceAgentId).toBe("agent-auto");
+      expect(fetched.sourceMetadata).toEqual({ trigger: "nightly" });
+    });
+  });
+
   // ── Title Handling Tests ────────────────────────────────────────
 
   describe("title handling", () => {

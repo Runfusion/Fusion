@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority } from "./types.js";
+import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType } from "./types.js";
 import { VALID_TRANSITIONS, DEFAULT_SETTINGS, isGlobalSettingsKey, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { normalizeTaskPriority } from "./task-priority.js";
 import { GlobalSettingsStore } from "./global-settings.js";
@@ -94,6 +94,13 @@ interface TaskRow {
   nodeId: string | null;
   effectiveNodeId: string | null;
   effectiveNodeSource: string | null;
+  sourceType: string | null;
+  sourceAgentId: string | null;
+  sourceRunId: string | null;
+  sourceSessionId: string | null;
+  sourceMessageId: string | null;
+  sourceParentTaskId: string | null;
+  sourceMetadata: string | null;
   checkedOutBy: string | null;
   checkedOutAt: string | null;
 }
@@ -621,6 +628,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       nodeId: row.nodeId || undefined,
       effectiveNodeId: row.effectiveNodeId || undefined,
       effectiveNodeSource: (row.effectiveNodeSource as Task["effectiveNodeSource"]) || undefined,
+      sourceType: (row.sourceType as SourceType) || undefined,
+      sourceAgentId: row.sourceAgentId || undefined,
+      sourceRunId: row.sourceRunId || undefined,
+      sourceSessionId: row.sourceSessionId || undefined,
+      sourceMessageId: row.sourceMessageId || undefined,
+      sourceParentTaskId: row.sourceParentTaskId || undefined,
+      sourceMetadata: fromJson<Record<string, unknown>>(row.sourceMetadata) ?? undefined,
       checkedOutBy: row.checkedOutBy || undefined,
       checkedOutAt: row.checkedOutAt || undefined,
     };
@@ -844,6 +858,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "attachments", "prInfo", "issueInfo", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
       "breakIntoSubtasks", "enabledWorkflowSteps", "modifiedFiles",
       "missionId", "sliceId", "assignedAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
+      "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
       "checkedOutBy", "checkedOutAt",
       // `log` is fetched in slim mode so the server can aggregate
       // `timedExecutionMs` from `[timing] … in <N>ms` entries before
@@ -892,6 +907,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "comments", "workflowStepResults", "prInfo", "issueInfo", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
       "breakIntoSubtasks", "enabledWorkflowSteps", "modifiedFiles",
       "missionId", "sliceId", "assignedAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
+      "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
       "checkedOutBy", "checkedOutAt",
     ];
 
@@ -932,9 +948,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         dependencies, steps, log, attachments, steeringComments,
         comments, workflowStepResults, prInfo, issueInfo,
         sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl,
-        mergeDetails, breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, assignedAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, checkedOutBy, checkedOutAt
+        mergeDetails, breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, assignedAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt
       ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
       ON CONFLICT(id) DO UPDATE SET
         title = excluded.title,
@@ -1005,6 +1021,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         nodeId = excluded.nodeId,
         effectiveNodeId = excluded.effectiveNodeId,
         effectiveNodeSource = excluded.effectiveNodeSource,
+        sourceType = excluded.sourceType,
+        sourceAgentId = excluded.sourceAgentId,
+        sourceRunId = excluded.sourceRunId,
+        sourceSessionId = excluded.sourceSessionId,
+        sourceMessageId = excluded.sourceMessageId,
+        sourceParentTaskId = excluded.sourceParentTaskId,
+        sourceMetadata = excluded.sourceMetadata,
         checkedOutBy = excluded.checkedOutBy,
         checkedOutAt = excluded.checkedOutAt
     `).run(
@@ -1077,6 +1100,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.nodeId ?? null,
       task.effectiveNodeId ?? null,
       task.effectiveNodeSource ?? null,
+      task.sourceType ?? null,
+      task.sourceAgentId ?? null,
+      task.sourceRunId ?? null,
+      task.sourceSessionId ?? null,
+      task.sourceMessageId ?? null,
+      task.sourceParentTaskId ?? null,
+      toJsonNullable(task.sourceMetadata),
       task.checkedOutBy ?? null,
       task.checkedOutAt ?? null,
     );
@@ -2071,6 +2101,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       priority: normalizeTaskPriority(input.priority),
       tokenUsage: input.tokenUsage,
       sourceIssue: input.sourceIssue,
+      sourceType: input.source?.sourceType ?? "unknown",
+      sourceAgentId: input.source?.sourceAgentId,
+      sourceRunId: input.source?.sourceRunId,
+      sourceSessionId: input.source?.sourceSessionId,
+      sourceMessageId: input.source?.sourceMessageId,
+      sourceParentTaskId: input.source?.sourceParentTaskId,
+      sourceMetadata: input.source?.sourceMetadata,
       column: input.column || "triage",
       dependencies: input.dependencies || [],
       breakIntoSubtasks: input.breakIntoSubtasks === true ? true : undefined,
@@ -2137,6 +2174,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       priority: normalizeTaskPriority(sourceTask.priority),
       column: "triage",
       modelPresetId: sourceTask.modelPresetId,
+      sourceType: "task_duplicate",
+      sourceParentTaskId: id,
       dependencies: [], // Fresh task should have no dependencies
       steps: [], // Reset execution state
       currentStep: 0,
@@ -2214,6 +2253,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       priority: normalizeTaskPriority(sourceTask.priority),
       column: "triage",
       dependencies: [id], // Refinement depends on the original being complete
+      sourceType: "task_refine",
+      sourceParentTaskId: id,
       steps: [], // Reset execution state
       currentStep: 0,
       log: [{ timestamp: now, action: `Created as refinement of ${id}` }],

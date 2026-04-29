@@ -785,6 +785,34 @@ export class CheckoutConflictError extends Error {
   }
 }
 
+/** Origin types for task creation provenance tracking. */
+export type SourceType =
+  | "dashboard_ui"
+  | "quick_chat"
+  | "chat_session"
+  | "agent_heartbeat"
+  | "automation"
+  | "cron"
+  | "workflow_step"
+  | "github_import"
+  | "task_refine"
+  | "task_duplicate"
+  | "cli"
+  | "api"
+  | "recovery"
+  | "unknown";
+
+/** Provenance metadata for how a task was created. */
+export interface TaskSource {
+  sourceType: SourceType;
+  sourceAgentId?: string;
+  sourceRunId?: string;
+  sourceSessionId?: string;
+  sourceMessageId?: string;
+  sourceParentTaskId?: string;
+  sourceMetadata?: Record<string, unknown>;
+}
+
 export interface Task {
   id: string;
   title?: string;
@@ -941,6 +969,14 @@ export interface Task {
   effectiveNodeId?: string;
   /** How the effectiveNodeId was determined. Set by the scheduler at dispatch time. */
   effectiveNodeSource?: "task-override" | "project-default" | "local";
+  /** Provenance: how this task was created. */
+  sourceType?: SourceType;
+  sourceAgentId?: string;
+  sourceRunId?: string;
+  sourceSessionId?: string;
+  sourceMessageId?: string;
+  sourceParentTaskId?: string;
+  sourceMetadata?: Record<string, unknown>;
   /** Explicitly assigned user ID for task-user linking. Used during review handoff to indicate
    *  which user should review the task. The sentinel value "requesting-user" indicates the
    *  user who created or steered the task. */
@@ -982,6 +1018,8 @@ export interface TaskCreateInput {
   sourceIssue?: TaskSourceIssue;
   /** Optional persisted aggregate token usage snapshot for task creation/import paths. */
   tokenUsage?: TaskTokenUsage;
+  /** Provenance metadata for task creation. */
+  source?: TaskSource;
   /**
    * Optional task importance level. Omitted values default to `normal`.
    */

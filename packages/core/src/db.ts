@@ -86,7 +86,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 52;
+const SCHEMA_VERSION = 53;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -211,7 +211,14 @@ CREATE TABLE IF NOT EXISTS tasks (
   missionId TEXT,
   sliceId TEXT,
   assignedAgentId TEXT,
-  assigneeUserId TEXT
+  assigneeUserId TEXT,
+  sourceType TEXT,
+  sourceAgentId TEXT,
+  sourceRunId TEXT,
+  sourceSessionId TEXT,
+  sourceMessageId TEXT,
+  sourceParentTaskId TEXT,
+  sourceMetadata TEXT
 );
 
 -- Config table (single row with project settings)
@@ -1961,6 +1968,23 @@ export class Database {
     if (version < 52) {
       this.applyMigration(52, () => {
         this.addColumnIfMissing("tasks", "mergeConflictBounceCount", "INTEGER DEFAULT 0");
+      });
+    }
+
+
+    // Task provenance/source tracking columns (FN-2917).
+    if (version < 53) {
+      this.applyMigration(53, () => {
+        this.addColumnIfMissing("tasks", "sourceType", "TEXT");
+        this.addColumnIfMissing("tasks", "sourceAgentId", "TEXT");
+        this.addColumnIfMissing("tasks", "sourceRunId", "TEXT");
+        this.addColumnIfMissing("tasks", "sourceSessionId", "TEXT");
+        this.addColumnIfMissing("tasks", "sourceMessageId", "TEXT");
+        this.addColumnIfMissing("tasks", "sourceParentTaskId", "TEXT");
+        this.addColumnIfMissing("tasks", "sourceMetadata", "TEXT");
+        this.db.prepare(
+          `UPDATE tasks SET sourceType = 'unknown' WHERE sourceType IS NULL`
+        ).run();
       });
     }
 
