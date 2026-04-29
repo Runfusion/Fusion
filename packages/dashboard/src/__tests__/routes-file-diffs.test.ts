@@ -359,6 +359,58 @@ describe("resolveDiffBase", () => {
     expect(diffBase).toBe("parent-123");
   });
 
+  it("display recovery: prefers merge-base over outdated-but-ancestor baseCommitSha", async () => {
+    // Regression: FN-2840 showed 33 changed files in review (12 commits)
+    // because the worktree was rebased onto newer main, leaving an old
+    // baseCommitSha as a still-valid ancestor of HEAD. The actual task
+    // touched only 4 files (3 commits). Prefer merge-base(HEAD, main) when
+    // it's a descendant of baseCommitSha — it's a tighter fork point.
+    const runGit = vi.fn(async (args: string[]) => {
+      const cmd = args.join(" ");
+      if (cmd === "merge-base HEAD main") return "rebased-onto-main";
+      if (cmd === "merge-base --is-ancestor old-base HEAD") return "";
+      if (cmd === "merge-base --is-ancestor old-base rebased-onto-main") return "";
+      throw new Error(`Unexpected command: ${cmd}`);
+    });
+
+    const diffBase = await resolveDiffBase(
+      { baseCommitSha: "old-base" },
+      "/tmp/worktree",
+      "HEAD",
+      runGit,
+      { enableDisplayRecovery: true },
+    );
+
+    expect(diffBase).toBe("rebased-onto-main");
+  });
+
+  it("display recovery: keeps baseCommitSha when merge-base is not a descendant (FN-2855)", async () => {
+    // Regression: FN-2855 had baseBranch nulled (deleted upstream feature
+    // branch) with baseCommitSha pointing to a commit on that feature
+    // branch. merge-base(HEAD, main) returns an older commit that is NOT
+    // a descendant of baseCommitSha — so widening to it would surface 108
+    // unrelated upstream files. Keep the task-scoped baseCommitSha.
+    const runGit = vi.fn(async (args: string[]) => {
+      const cmd = args.join(" ");
+      if (cmd === "merge-base HEAD main") return "older-main-commit";
+      if (cmd === "merge-base --is-ancestor task-base-789 HEAD") return "";
+      if (cmd === "merge-base --is-ancestor task-base-789 older-main-commit") {
+        throw new Error("not an ancestor — feature branch base");
+      }
+      throw new Error(`Unexpected command: ${cmd}`);
+    });
+
+    const diffBase = await resolveDiffBase(
+      { baseCommitSha: "task-base-789" },
+      "/tmp/worktree",
+      "HEAD",
+      runGit,
+      { enableDisplayRecovery: true },
+    );
+
+    expect(diffBase).toBe("task-base-789");
+  });
+
   it("display recovery: does NOT trigger when baseBranch is set (merger-parity case)", async () => {
     // When baseBranch is recorded, the regular merge-base path runs first.
     // Recovery is only meant for the post-rebase "no baseBranch + stale

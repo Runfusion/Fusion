@@ -36,16 +36,23 @@ export interface ResolveDiffBaseTaskInput {
 
 export interface ResolveDiffBaseOptions {
   /**
-   * Display-only recovery: when the normal resolution would fall through to
-   * `headRef~1` (because `baseBranch` is missing AND `baseCommitSha` is no
-   * longer an ancestor of HEAD — e.g., the worktree was rebased onto
-   * `origin/main` after `baseCommitSha` was recorded), attempt one final
-   * `merge-base(headRef, "main")` (then `origin/main`) before giving up to
-   * `headRef~1`.
+   * Display-only recovery: when `baseBranch` is missing, also try
+   * `merge-base(headRef, "main")` (then `origin/main`) and prefer it over
+   * `baseCommitSha` if it's a descendant of `baseCommitSha` (i.e. tighter).
+   * Catches two cases:
    *
-   * This is for the dashboard "files changed" UI only. The merger never opts
-   * in — its scope checks must stay tied to the recorded task base, not a
-   * widened display range.
+   * 1. **Stale baseCommitSha** (FN-2957): worktree rebased onto `origin/main`
+   *    after `baseCommitSha` was recorded; baseCommitSha is no longer an
+   *    ancestor of HEAD. Without recovery the code falls to `headRef~1`,
+   *    showing only the latest commit's files.
+   * 2. **Outdated baseCommitSha** (FN-2840): worktree rebased onto newer
+   *    `main`; baseCommitSha is *still* an ancestor of HEAD but the range
+   *    `baseCommitSha..HEAD` now sweeps in upstream main commits as if they
+   *    were task changes (33 files instead of the 4 the task actually
+   *    touched). The merge-base is a tighter, more accurate fork point.
+   *
+   * Display-only — the merger never opts in. Its scope checks must stay
+   * tied to the recorded task base, not a widened display range.
    *
    * Default: false.
    */
@@ -114,33 +121,50 @@ export async function resolveDiffBase(
     }
   }
 
-  if (task.baseCommitSha) {
-    try {
-      await runGit(["merge-base", "--is-ancestor", task.baseCommitSha, headRef], cwd, 5000);
-      return task.baseCommitSha;
-    } catch {
-      // stale or unreachable — fall through
-    }
-  }
-
-  // Display-only recovery before the HEAD~1 fallback. Only kicks in when the
-  // caller explicitly opted in AND the original resolution skipped the
-  // merge-base step (no baseBranch was recorded). This catches the case where
-  // a worktree got rebased onto origin/main after baseCommitSha was
-  // recorded, leaving the SHA as a non-ancestor of HEAD.
+  // Display-only recovery: compute merge-base(HEAD, main) when baseBranch is
+  // missing. Used both to recover from a stale baseCommitSha and to tighten
+  // an outdated-but-still-ancestor baseCommitSha. See ResolveDiffBaseOptions.
+  let recoveredBase: string | undefined;
   if (options.enableDisplayRecovery && !task.baseBranch?.trim()) {
     try {
-      const out = (await runGit(["merge-base", headRef, "main"], cwd, 5000)).trim();
-      if (out) return out;
+      recoveredBase = (await runGit(["merge-base", headRef, "main"], cwd, 5000)).trim() || undefined;
     } catch {
       try {
-        const out = (await runGit(["merge-base", headRef, "origin/main"], cwd, 5000)).trim();
-        if (out) return out;
+        recoveredBase = (await runGit(["merge-base", headRef, "origin/main"], cwd, 5000)).trim() || undefined;
       } catch {
-        // no recovery possible — fall through to HEAD~1
+        // no recovery available
       }
     }
   }
+
+  if (task.baseCommitSha) {
+    let baseShaIsAncestor = false;
+    try {
+      await runGit(["merge-base", "--is-ancestor", task.baseCommitSha, headRef], cwd, 5000);
+      baseShaIsAncestor = true;
+    } catch {
+      // stale or unreachable
+    }
+
+    if (baseShaIsAncestor) {
+      // Prefer recoveredBase only if it's strictly tighter (a descendant of
+      // baseCommitSha). When baseCommitSha is on a deleted feature branch
+      // it won't be an ancestor of merge-base(HEAD, main), so we keep the
+      // task-scoped SHA — preserves FN-2855 behavior.
+      if (recoveredBase && recoveredBase !== task.baseCommitSha) {
+        try {
+          await runGit(["merge-base", "--is-ancestor", task.baseCommitSha, recoveredBase], cwd, 5000);
+          return recoveredBase;
+        } catch {
+          // recoveredBase not a descendant — keep baseCommitSha
+        }
+      }
+      return task.baseCommitSha;
+    }
+  }
+
+  // baseCommitSha unusable (stale or unset) — use recoveredBase if available.
+  if (recoveredBase) return recoveredBase;
 
   try {
     return (await runGit(["rev-parse", `${headRef}~1`], cwd, 5000)).trim() || undefined;
