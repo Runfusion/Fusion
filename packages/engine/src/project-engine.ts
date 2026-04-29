@@ -811,8 +811,8 @@ export class ProjectEngine {
       if (!tailscale.enabled) {
         return { provider, reason: "provider_not_enabled", message: "Tailscale provider is disabled" };
       }
-      if (!tailscale.hostname?.trim() || !Number.isFinite(tailscale.targetPort) || tailscale.targetPort <= 0) {
-        return { provider, reason: "provider_not_configured", message: "Tailscale hostname and target port must be configured" };
+      if (!Number.isFinite(tailscale.targetPort) || tailscale.targetPort <= 0) {
+        return { provider, reason: "provider_not_configured", message: "Tailscale target port must be configured" };
       }
 
       const executable = await this.checkExecutableAvailable("tailscale");

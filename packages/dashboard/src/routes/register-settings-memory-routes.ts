@@ -96,9 +96,27 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       return parsed;
     }
 
+    // Prefer the actual public funnel URL captured from `tailscale funnel`
+    // output (https://<machine>.<tailnet>.ts.net/) — that's what a remote
+    // device must hit. The configured hostname label is only useful as a
+    // fallback before the tunnel reports its URL.
+    const liveTunnel = tunnelUrl?.trim();
+    if (liveTunnel) {
+      try {
+        const parsed = new URL(liveTunnel);
+        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+          return parsed;
+        }
+      } catch {
+        // fall through to hostname-based fallback
+      }
+    }
+
     const hostname = remoteAccess.providers.tailscale.hostname?.trim();
     if (!hostname) {
-      throw new ApiError(409, "Tailscale hostname is not configured", { code: "REMOTE_URL_NOT_CONFIGURED" });
+      throw new ApiError(409, "Tailscale tunnel URL not yet available — start the tunnel first", {
+        code: "REMOTE_URL_NOT_READY",
+      });
     }
 
     const baseUrl = new URL(`http://${hostname}`);
@@ -605,7 +623,8 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
     try {
       const { store: scopedStore, engine } = await getProjectContext(req);
       const tokenType = req.query.tokenType === "short-lived" ? "short-lived" : "persistent";
-      const format = req.query.format === "image/svg" ? "image/svg" : "text";
+      const formatQuery = req.query.format;
+      const format = formatQuery === "image/svg" ? "image/svg" : formatQuery === "terminal" ? "terminal" : "text";
       const payload = await buildRemoteLoginUrlForTokenType(scopedStore, tokenType, getCurrentTunnelUrl(engine ?? options?.engine));
       if (format === "image/svg") {
         const svg = await QRCode.toString(payload.loginUrl, {
@@ -615,6 +634,11 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
           width: 256,
         });
         res.json({ url: payload.loginUrl, tokenType: payload.tokenType, expiresAt: payload.expiresAt, format, data: svg });
+        return;
+      }
+      if (format === "terminal") {
+        const ascii = await QRCode.toString(payload.loginUrl, { type: "terminal", small: true, errorCorrectionLevel: "M" });
+        res.json({ url: payload.loginUrl, tokenType: payload.tokenType, expiresAt: payload.expiresAt, format, data: ascii });
         return;
       }
       res.json({ url: payload.loginUrl, tokenType: payload.tokenType, expiresAt: payload.expiresAt, format, data: payload.loginUrl });

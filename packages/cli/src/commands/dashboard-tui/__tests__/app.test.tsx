@@ -479,7 +479,6 @@ describe("Settings view", () => {
     await waitForFrameContains(lastFrame, "Short-lived expires:", 6000);
 
     stdin.write("K");
-    await waitForFrameContains(lastFrame, "QR text payload:", 6000);
     await waitForFrameContains(lastFrame, "ASCII-QR-PAYLOAD", 6000);
     unmount();
   });
@@ -541,7 +540,7 @@ describe("Settings view", () => {
     unmount();
   });
 
-  it("renders SVG QR fallback instruction", async () => {
+  it("renders ASCII QR payload when terminal format is returned", async () => {
     const controller = newController();
     controller.setSystemInfo(makeSystemInfo());
     controller.setInteractiveData(makeInteractiveData({
@@ -549,8 +548,8 @@ describe("Settings view", () => {
         getQrPayload: async () => ({
           url: "https://remote.example.com?token=svg",
           expiresAt: new Date().toISOString(),
-          format: "image/svg",
-          data: "<svg/>",
+          format: "terminal",
+          data: "▀▀▀ASCII-QR▀▀▀",
         }),
       },
     }));
@@ -561,7 +560,7 @@ describe("Settings view", () => {
     stdin.write("\u001B[C");
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("K");
-    await waitForFrameContains(lastFrame, "QR SVG returned by server.");
+    await waitForFrameContains(lastFrame, "▀▀▀ASCII-QR▀▀▀");
     unmount();
   });
 });

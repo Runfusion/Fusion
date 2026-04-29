@@ -43,6 +43,7 @@ import type {
   DashboardState,
   InteractiveData,
   InteractiveView,
+  RemoteStatus,
   UpdateStatus,
 } from "./state.js";
 import { SECTION_ORDER } from "./state.js";
@@ -129,6 +130,11 @@ export class DashboardTUI {
   private lastCpuUsage: NodeJS.CpuUsage | null = null;
   private lastCpuSampleAt = 0;
 
+  // Polled remote tunnel status; null until first successful fetch (or when
+  // no remote API is wired up).
+  private remoteStatus: RemoteStatus | null = null;
+  private remoteStatusTimer: ReturnType<typeof setInterval> | null = null;
+
   constructor() {
     this.logBuffer = new LogRingBuffer();
   }
@@ -165,6 +171,7 @@ export class DashboardTUI {
       vitestKillThreshold: this.vitestKillThreshold,
       updateStatus: this.updateStatus,
       clipboardFlash: this.clipboardFlash,
+      remoteStatus: this.remoteStatus,
     };
     return this.cachedSnapshot;
   }
@@ -365,6 +372,25 @@ export class DashboardTUI {
   setInteractiveData(data: InteractiveData): void {
     this.interactiveData = data;
     this.notify();
+    this.startRemoteStatusPolling();
+  }
+
+  private startRemoteStatusPolling(): void {
+    if (this.remoteStatusTimer) return;
+    const tick = async () => {
+      const remote = this.interactiveData?.remote;
+      if (!remote) return;
+      try {
+        const status = await remote.getStatus();
+        const changed = JSON.stringify(this.remoteStatus) !== JSON.stringify(status);
+        this.remoteStatus = status;
+        if (changed) this.notify();
+      } catch {
+        // network/auth errors are non-fatal — leave the prior value alone
+      }
+    };
+    void tick();
+    this.remoteStatusTimer = setInterval(() => { void tick(); }, 3000);
   }
 
   setInteractiveView(view: InteractiveView): void {
@@ -717,6 +743,11 @@ export class DashboardTUI {
     if (this.systemStatsTimer) {
       clearInterval(this.systemStatsTimer);
       this.systemStatsTimer = null;
+    }
+
+    if (this.remoteStatusTimer) {
+      clearInterval(this.remoteStatusTimer);
+      this.remoteStatusTimer = null;
     }
 
     if (this.resizeListener && process.stdout && typeof process.stdout.off === "function") {

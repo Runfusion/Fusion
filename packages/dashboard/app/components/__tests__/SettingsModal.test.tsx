@@ -1614,17 +1614,15 @@ describe("SettingsModal", () => {
       await openRemoteSection();
 
       await userEvent.click(screen.getByLabelText("Tailscale"));
-      expect(screen.getByLabelText("Hostname label")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Hostname label")).not.toBeInTheDocument();
       expect(screen.getByLabelText("Target port")).toBeInTheDocument();
       expect(screen.getByLabelText("Accept routes")).toBeInTheDocument();
       expect(screen.queryByLabelText("Tunnel name")).not.toBeInTheDocument();
 
-      await userEvent.clear(screen.getByLabelText("Hostname label"));
-      await userEvent.type(screen.getByLabelText("Hostname label"), "tail-new.ts.net");
       fireEvent.change(screen.getByLabelText("Target port"), { target: { value: "4242" } });
 
       await userEvent.click(screen.getByLabelText("Cloudflare"));
-      expect(screen.queryByLabelText("Hostname label")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Target port")).not.toBeInTheDocument();
 
       if (!screen.queryByLabelText("Tunnel name")) {
         const advancedDetails = screen.getByText(/Advanced \(Named Tunnel\)/i, { selector: "summary" }).closest("details") as HTMLDetailsElement;
@@ -1857,12 +1855,12 @@ describe("SettingsModal", () => {
       await openRemoteSection();
 
       await userEvent.click(screen.getByLabelText("Tailscale"));
-      expect(screen.getByLabelText("Hostname label")).toBeInTheDocument();
+      expect(screen.getByLabelText("Target port")).toBeInTheDocument();
       expect(screen.queryByText(/Advanced \(Named Tunnel\)/i)).not.toBeInTheDocument();
 
       await userEvent.click(screen.getByLabelText("Cloudflare"));
       expect(screen.getByText(/Advanced \(Named Tunnel\)/i)).toBeInTheDocument();
-      expect(screen.queryByLabelText("Hostname label")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Target port")).not.toBeInTheDocument();
     });
 
     it("sets quick tunnel false when opening Cloudflare advanced details", async () => {

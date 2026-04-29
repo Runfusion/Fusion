@@ -2205,9 +2205,10 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
               }
               return await response.json();
             },
-            getQrPayload: async (tokenType: "persistent" | "short-lived", ttlMs?: number) => {
+            getQrPayload: async (tokenType: "persistent" | "short-lived", ttlMs?: number, format?: "text" | "terminal" | "image/svg") => {
               const params = new URLSearchParams({ tokenType });
               if (typeof ttlMs === "number") params.set("ttlMs", String(ttlMs));
+              if (format) params.set("format", format);
               const response = await fetch(`${baseUrl}/api/remote/qr?${params.toString()}`, { headers: buildAuthHeaders() });
               if (!response.ok) {
                 const payload = await response.json().catch(() => null);

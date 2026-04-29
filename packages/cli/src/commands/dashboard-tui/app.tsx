@@ -959,6 +959,20 @@ function MainHeader({ state }: { state: DashboardState }) {
         );
       })}
       <Box flexGrow={1} />
+      {state.remoteStatus?.state === "running" && (
+        <Box flexShrink={0} marginRight={1}>
+          <Text wrap="truncate-end" color="green" bold>● tunnel</Text>
+          {state.remoteStatus.url && cols >= 100 && (
+            <Text wrap="truncate-end" color="green"> {state.remoteStatus.url}</Text>
+          )}
+          {cols >= 80 && <Text wrap="truncate-end" dimColor>  [^Q] QR</Text>}
+        </Box>
+      )}
+      {state.remoteStatus?.state === "starting" && (
+        <Box flexShrink={0} marginRight={1}>
+          <Text wrap="truncate-end" color="yellow">● tunnel starting…</Text>
+        </Box>
+      )}
       {showHelpHint && <Box flexShrink={0}><Text wrap="truncate-end" dimColor>[?] help  [q] quit</Text></Box>}
     </Box>
   );
@@ -2308,16 +2322,11 @@ function SettingsInteractiveView({ state, controller }: { state: DashboardState;
 
   async function handleFetchRemoteQr(tokenType: "persistent" | "short-lived", ttlMs?: number) {
     if (!data?.remote) return;
-    const result = await data.remote.getQrPayload(tokenType, ttlMs);
+    const result = await data.remote.getQrPayload(tokenType, ttlMs, "terminal");
     setRemoteUrl(result.url);
     setRemoteTokenMeta(result.expiresAt ? `expires ${new Date(result.expiresAt).toLocaleString()}` : tokenType);
-    if (result.format === "text") {
-      setRemoteQrDisplay(result.data ?? result.url);
-      setRemoteQrFallback(null);
-      return;
-    }
-    setRemoteQrDisplay(null);
-    setRemoteQrFallback("QR SVG returned by server. Open the authenticated URL on your phone/browser to continue.");
+    setRemoteQrDisplay(result.data ?? result.url);
+    setRemoteQrFallback(null);
   }
 
   useInput((input, key) => {
@@ -2628,7 +2637,11 @@ function SettingsInteractiveView({ state, controller }: { state: DashboardState;
                   <Text dimColor wrap="truncate-end">Short-lived expires: {new Date(shortLivedExpiresAt).toLocaleString()}</Text>
                 )}
                 {remoteQrDisplay && (
-                  <Text wrap="truncate-end">QR text payload: {remoteQrDisplay}</Text>
+                  <Box flexDirection="column">
+                    {remoteQrDisplay.split("\n").map((line, idx) => (
+                      <Text key={idx}>{line}</Text>
+                    ))}
+                  </Box>
                 )}
                 {remoteQrFallback && (
                   <Text color="yellow" wrap="truncate-end">{remoteQrFallback}</Text>
@@ -3881,16 +3894,60 @@ export function DashboardApp({ controller }: DashboardAppProps) {
     useCallback(() => controller.getSnapshot(), [controller]),
   );
 
+  // Global QR overlay state — populated when the user hits Ctrl+Q on a
+  // running tunnel. `loading` covers the network request; `error` surfaces
+  // the message inline so the overlay never sits blank.
+  const [qrOverlay, setQrOverlay] = useState<
+    | { state: "loading" }
+    | { state: "ready"; url: string; ascii: string; tokenType: string; expiresAt: string | null }
+    | { state: "error"; message: string }
+    | null
+  >(null);
+
   // Global key handling
   useInput((input, key) => {
     // Quit — route through SIGINT so the dashboard's shutdown handler runs
     // (stops dev-server child process groups, engines, mesh, etc.). Calling
     // process.exit(0) directly here orphans node/vitest children spawned by
     // user-project dev servers.
-    if (input === "q" || input === "Q" || (key.ctrl && input === "c")) {
+    if (((input === "q" || input === "Q") && !key.ctrl) || (key.ctrl && input === "c")) {
       void controller.stop();
       exit();
       process.kill(process.pid, "SIGINT");
+      return;
+    }
+
+    // QR overlay open/close — Ctrl+Q toggles, Esc closes when open.
+    if (qrOverlay && key.escape) {
+      setQrOverlay(null);
+      return;
+    }
+    if (key.ctrl && input === "q") {
+      if (qrOverlay) {
+        setQrOverlay(null);
+        return;
+      }
+      const remote = state.interactiveData?.remote;
+      if (!remote) return;
+      if (state.remoteStatus?.state !== "running") {
+        setQrOverlay({ state: "error", message: "No remote tunnel is running. Start one in Settings (g)." });
+        return;
+      }
+      setQrOverlay({ state: "loading" });
+      void remote
+        .getQrPayload("persistent", undefined, "terminal")
+        .then((payload) => {
+          setQrOverlay({
+            state: "ready",
+            url: payload.url,
+            ascii: payload.data ?? "",
+            tokenType: "persistent",
+            expiresAt: payload.expiresAt,
+          });
+        })
+        .catch((err: unknown) => {
+          setQrOverlay({ state: "error", message: err instanceof Error ? err.message : String(err) });
+        });
       return;
     }
 
@@ -4149,6 +4206,26 @@ export function DashboardApp({ controller }: DashboardAppProps) {
       {state.showHelp && (
         <Box position="absolute" marginTop={3} marginLeft={4}>
           <HelpOverlay />
+        </Box>
+      )}
+      {qrOverlay && (
+        <Box position="absolute" marginTop={2} marginLeft={2} flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1}>
+          <Text bold color="cyanBright">Remote Access — Scan to connect</Text>
+          {qrOverlay.state === "loading" && <Text dimColor>Generating QR…</Text>}
+          {qrOverlay.state === "error" && <Text color="red">{qrOverlay.message}</Text>}
+          {qrOverlay.state === "ready" && (
+            <>
+              {qrOverlay.ascii.split("\n").map((line, idx) => (
+                <Text key={idx}>{line}</Text>
+              ))}
+              <Text wrap="truncate-end">{qrOverlay.url}</Text>
+              <Text dimColor>
+                {qrOverlay.tokenType}
+                {qrOverlay.expiresAt ? ` · expires ${new Date(qrOverlay.expiresAt).toLocaleString()}` : ""}
+              </Text>
+            </>
+          )}
+          <Text dimColor>[Esc] close</Text>
         </Box>
       )}
     </Box>

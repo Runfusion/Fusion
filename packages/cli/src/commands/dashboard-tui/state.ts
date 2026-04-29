@@ -70,7 +70,7 @@ export interface RemoteTokenResult {
 export interface RemoteQrPayload {
   url: string;
   expiresAt: string | null;
-  format: "text" | "image/svg";
+  format: "text" | "image/svg" | "terminal";
   data?: string;
 }
 
@@ -290,7 +290,7 @@ export interface InteractiveData {
     regeneratePersistentToken: () => Promise<RemoteTokenResult>;
     generateShortLivedToken: (ttlMs: number) => Promise<RemoteTokenResult>;
     getRemoteUrl: (tokenType: "persistent" | "short-lived", ttlMs?: number) => Promise<{ url: string; tokenType: "persistent" | "short-lived"; expiresAt: string | null }>;
-    getQrPayload: (tokenType: "persistent" | "short-lived", ttlMs?: number) => Promise<RemoteQrPayload>;
+    getQrPayload: (tokenType: "persistent" | "short-lived", ttlMs?: number, format?: "text" | "terminal" | "image/svg") => Promise<RemoteQrPayload>;
   };
   git: {
     getStatus: (projectPath: string) => Promise<GitStatus>;
@@ -354,6 +354,10 @@ export interface DashboardState {
   // monotonic timestamp so the view can render "Copied!" briefly before the
   // controller clears it via setTimeout.
   clipboardFlash: { ok: boolean; at: number } | null;
+  // Latest remote tunnel status, polled by the controller while
+  // `interactiveData.remote` is available. Used to surface tunnel state
+  // (state/url) globally in the TUI header.
+  remoteStatus: RemoteStatus | null;
 }
 
 export const SECTION_ORDER: SectionId[] = ["system", "logs", "utilities", "stats", "settings"];
@@ -382,5 +386,6 @@ export function createInitialState(): DashboardState {
     vitestKillThreshold: 0.9,
     updateStatus: null,
     clipboardFlash: null,
+    remoteStatus: null,
   };
 }

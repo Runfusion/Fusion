@@ -677,6 +677,19 @@ export function SettingsModal({
     });
   }, [activeSection, loadRemoteData]);
 
+  // Poll remote status while the tunnel is starting so the UI flips to
+  // "running" without the user closing/reopening the modal. Stops polling
+  // once it reaches a terminal state.
+  useEffect(() => {
+    if (activeSection !== "remote") return;
+    const state = remoteStatus?.state;
+    if (state !== "starting" && state !== "stopping") return;
+    const interval = setInterval(() => {
+      fetchRemoteStatus(projectId).then(setRemoteStatus).catch(() => {});
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [activeSection, projectId, remoteStatus?.state]);
+
   // When the tunnel is running, fetch a persistent-token authenticated URL +
   // QR so the user can share/scan it without digging into Advanced Settings.
   useEffect(() => {
@@ -4025,8 +4038,7 @@ export function SettingsModal({
               <div className="form-group remote-provider-settings">
                 {activeProvider === "tailscale" ? (
                   <>
-                    <label htmlFor="remoteTailscaleHostname">Hostname label</label>
-                    <input id="remoteTailscaleHostname" type="text" placeholder="tailnet label" value={String(remoteForm.remoteTailscaleHostname || (typeof window !== "undefined" ? window.location.hostname : ""))} onChange={(e) => setForm((f) => ({ ...f, remoteTailscaleHostname: e.target.value } as SettingsFormState))} />
+                    <small>Tailscale Funnel exposes the configured port on your tailnet's public {`https://<machine>.<tailnet>.ts.net/`} URL — no hostname configuration is needed.</small>
                     <label htmlFor="remoteTailscaleTargetPort">Target port</label>
                     <input id="remoteTailscaleTargetPort" type="number" min={1} max={65535} value={Number(remoteForm.remoteTailscaleTargetPort ?? 4040)} onChange={(e) => setForm((f) => ({ ...f, remoteTailscaleTargetPort: Number(e.target.value || 4040) } as SettingsFormState))} />
                     <label htmlFor="remoteTailscaleAcceptRoutes" className="checkbox-label">
@@ -4087,7 +4099,7 @@ export function SettingsModal({
                   const savePayload: Partial<RemoteSettings> = {
                     remoteActiveProvider: activeProvider,
                     remoteTailscaleEnabled: activeProvider === "tailscale",
-                    remoteTailscaleHostname: String(formState.remoteTailscaleHostname || (typeof window !== "undefined" ? window.location.hostname : "")),
+                    remoteTailscaleHostname: String(formState.remoteTailscaleHostname ?? ""),
                     remoteTailscaleTargetPort: Number(formState.remoteTailscaleTargetPort ?? 4040),
                     remoteTailscaleAcceptRoutes: Boolean(formState.remoteTailscaleAcceptRoutes),
                     remoteCloudflareEnabled: activeProvider === "cloudflare",
