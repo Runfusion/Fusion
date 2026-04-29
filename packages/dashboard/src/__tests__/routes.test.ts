@@ -3234,6 +3234,105 @@ describe("PATCH /tasks/:id", () => {
     expect(store.updateTask).toHaveBeenCalledWith("KB-001", { nodeId: null });
   });
 
+  it("allows changing nodeId on a triage task", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "KB-001",
+      column: "triage",
+    });
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, nodeId: "node-xyz" });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({ nodeId: "node-xyz" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { nodeId: "node-xyz" });
+  });
+
+  it("allows changing nodeId on an in-review task", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "KB-001",
+      column: "in-review",
+    });
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, nodeId: "node-xyz" });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({ nodeId: "node-xyz" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { nodeId: "node-xyz" });
+  });
+
+  it("allows changing nodeId on a done task", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "KB-001",
+      column: "done",
+    });
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, nodeId: "node-xyz" });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({ nodeId: "node-xyz" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { nodeId: "node-xyz" });
+  });
+
+  it("allows clearing nodeId on a triage task", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "KB-001",
+      column: "triage",
+      nodeId: "node-old",
+    });
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, nodeId: undefined });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({ nodeId: null }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { nodeId: null });
+  });
+
+  it("allows clearing nodeId on an in-review task", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "KB-001",
+      column: "in-review",
+      nodeId: "node-old",
+    });
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, nodeId: undefined });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({ nodeId: null }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { nodeId: null });
+  });
+
+  it("allows clearing nodeId on a done task", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "KB-001",
+      column: "done",
+      nodeId: "node-old",
+    });
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, nodeId: undefined });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({ nodeId: null }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { nodeId: null });
+  });
+
   it("returns 409 when clearing nodeId on an in-progress task", async () => {
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...FAKE_TASK_DETAIL,
@@ -13900,6 +13999,20 @@ describe("GET /settings", () => {
     expect(res.body.githubTokenConfigured).toBeUndefined();
   });
 
+  it("returns defaultNodeId and unavailableNodePolicy when configured", async () => {
+    (store.getSettingsFast as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      defaultNodeId: "node-abc",
+      unavailableNodePolicy: "fallback-local",
+    });
+
+    const res = await GET(buildApp(), "/api/settings");
+
+    expect(res.status).toBe(200);
+    expect(res.body.defaultNodeId).toBe("node-abc");
+    expect(res.body.unavailableNodePolicy).toBe("fallback-local");
+  });
+
   it("returns 500 on store error", async () => {
     (store.getSettingsFast as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Config read failed"));
 
@@ -13938,6 +14051,70 @@ describe("PUT /settings", () => {
 
     expect(res.status).toBe(200);
     expect(store.updateSettings).toHaveBeenCalledWith({ maxConcurrent: 8 });
+  });
+
+  it("updates defaultNodeId when provided", async () => {
+    const updatedSettings = { ...DEFAULT_SETTINGS, defaultNodeId: "node-abc" };
+    (store.updateSettings as ReturnType<typeof vi.fn>).mockResolvedValue(updatedSettings);
+
+    const res = await REQUEST(
+      buildApp(),
+      "PUT",
+      "/api/settings",
+      JSON.stringify({ defaultNodeId: "node-abc" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateSettings).toHaveBeenCalledWith({ defaultNodeId: "node-abc" });
+  });
+
+  it("clears defaultNodeId when null is provided", async () => {
+    const updatedSettings = { ...DEFAULT_SETTINGS, defaultNodeId: undefined };
+    (store.updateSettings as ReturnType<typeof vi.fn>).mockResolvedValue(updatedSettings);
+
+    const res = await REQUEST(
+      buildApp(),
+      "PUT",
+      "/api/settings",
+      JSON.stringify({ defaultNodeId: null }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateSettings).toHaveBeenCalledWith({ defaultNodeId: null });
+  });
+
+  it("updates unavailableNodePolicy to fallback-local", async () => {
+    const updatedSettings = { ...DEFAULT_SETTINGS, unavailableNodePolicy: "fallback-local" };
+    (store.updateSettings as ReturnType<typeof vi.fn>).mockResolvedValue(updatedSettings);
+
+    const res = await REQUEST(
+      buildApp(),
+      "PUT",
+      "/api/settings",
+      JSON.stringify({ unavailableNodePolicy: "fallback-local" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateSettings).toHaveBeenCalledWith({ unavailableNodePolicy: "fallback-local" });
+  });
+
+  it("updates unavailableNodePolicy to block", async () => {
+    const updatedSettings = { ...DEFAULT_SETTINGS, unavailableNodePolicy: "block" };
+    (store.updateSettings as ReturnType<typeof vi.fn>).mockResolvedValue(updatedSettings);
+
+    const res = await REQUEST(
+      buildApp(),
+      "PUT",
+      "/api/settings",
+      JSON.stringify({ unavailableNodePolicy: "block" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateSettings).toHaveBeenCalledWith({ unavailableNodePolicy: "block" });
   });
 
   it("strips server-owned fields before calling store.updateSettings", async () => {
