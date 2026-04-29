@@ -1087,11 +1087,16 @@
   margin-left: calc(16px + var(--space-sm)); /* align with text after icon + gap */
 }
 
+/* Truncate parent dirs from the LEFT so the filename stays visible. JSX
+ * wraps the path in `<bdo dir="ltr">` to preserve readable left-to-right
+ * display while `direction: rtl` flips the ellipsis to the start. */
 .changes-file-path {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
   font-family: var(--font-mono);
   font-size: 12px;
 }

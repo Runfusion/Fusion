@@ -4,7 +4,6 @@ import type { Task } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
-import { truncateMiddle } from "../utils/truncatePath";
 import { getPathBasename } from "../utils/pathDisplay";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
@@ -1054,6 +1053,8 @@ function ChangesPanel({
         </div>
       )}
 
+      <div className="gm-changes-split">
+      <div className="gm-changes-lists">
       {/* Unstaged Changes */}
       <div className="gm-file-section">
         <div className="gm-file-section-header">
@@ -1116,7 +1117,7 @@ function ChangesPanel({
                     />
                   </label>
                   <FileStatusIcon status={f.status} />
-                  <span className="gm-file-name" title={f.file}>{truncateMiddle(f.file, 40)}</span>
+                  <span className="gm-file-name" title={f.file}><bdo dir="ltr">{f.file}</bdo></span>
                   <FileStatusBadge status={f.status} />
                   <button
                     className="gm-icon-btn"
@@ -1188,7 +1189,7 @@ function ChangesPanel({
                     />
                   </label>
                   <FileStatusIcon status={f.status} />
-                  <span className="gm-file-name" title={f.file}>{truncateMiddle(f.file, 40)}</span>
+                  <span className="gm-file-name" title={f.file}><bdo dir="ltr">{f.file}</bdo></span>
                   <FileStatusBadge status={f.status} />
                   <button
                     className="gm-icon-btn"
@@ -1207,33 +1208,43 @@ function ChangesPanel({
         </div>
       </div>
 
-      {/* Diff Viewer */}
-      {(selectedDiffTarget || loadingChangeDiff || changeDiff || changeDiffError) && (
-        <div className="gm-diff-section">
-          {selectedDiffTarget && (
-            <div className="gm-diff-target">
-              <FileDiff size={14} />
-              <span>{selectedDiffTarget.staged ? "Staged" : "Unstaged"} diff: </span>
-              <code>{selectedDiffTarget.file}</code>
-            </div>
-          )}
-          {loadingChangeDiff && (
-            <div className="gm-diff-loading">
-              <Loader2 size={16} className="spin" />
-              Loading diff...
-            </div>
-          )}
-          {changeDiffError && !loadingChangeDiff && (
-            <div className="gm-diff-error">{changeDiffError}</div>
-          )}
-          {changeDiff && !loadingChangeDiff && (
-            <div className="gm-diff-viewer">
-              {changeDiff.stat && <pre className="gm-diff-stat">{changeDiff.stat}</pre>}
-              <pre className="gm-diff-patch">{changeDiff.patch}</pre>
-            </div>
-          )}
-        </div>
-      )}
+      </div>
+      {/* Diff Viewer (right pane on desktop, stacked below on mobile) */}
+      <div className="gm-changes-diff">
+        {(selectedDiffTarget || loadingChangeDiff || changeDiff || changeDiffError) ? (
+          <div className="gm-diff-section">
+            {selectedDiffTarget && (
+              <div className="gm-diff-target">
+                <FileDiff size={14} />
+                <span>{selectedDiffTarget.staged ? "Staged" : "Unstaged"} diff: </span>
+                <code>{selectedDiffTarget.file}</code>
+              </div>
+            )}
+            {loadingChangeDiff && (
+              <div className="gm-diff-loading">
+                <Loader2 size={16} className="spin" />
+                Loading diff...
+              </div>
+            )}
+            {changeDiffError && !loadingChangeDiff && (
+              <div className="gm-diff-error">{changeDiffError}</div>
+            )}
+            {changeDiff && !loadingChangeDiff && (
+              <div className="gm-diff-viewer">
+                {changeDiff.stat && <pre className="gm-diff-stat">{changeDiff.stat}</pre>}
+                <pre className="gm-diff-patch">{changeDiff.patch}</pre>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="gm-diff-empty">
+            <FileDiff size={20} />
+            <span>Select a file to view its diff</span>
+          </div>
+        )}
+      </div>
+      </div>
+      {/* /gm-changes-split */}
 
       {/* Commit Form */}
       <form className="gm-commit-form" onSubmit={onCommit}>

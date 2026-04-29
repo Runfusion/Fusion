@@ -220,7 +220,7 @@ export function CommitDiffTab({ commitSha, mergeDetails }: CommitDiffTabProps) {
                   {getStatusLabel(file.status)}
                 </span>
                 <span className="changes-file-path" title={file.path}>
-                  {file.path}
+                  <bdo dir="ltr">{file.path}</bdo>
                 </span>
                 <span
                   className="changes-file-stat"

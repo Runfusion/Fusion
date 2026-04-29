@@ -2035,6 +2035,86 @@
   color: var(--color-error);
 }
 
+/* ── Split-pane: file lists on left, diff viewer on right ─────────────────
+ * Lazygit-style layout so the file lists stay visible while reading a diff.
+ * `.gm-content` (the panel scroll container) keeps overflow-y: auto, and the
+ * left column uses `position: sticky` so it pins to the top as the right
+ * column scrolls. Mobile (≤720px) collapses to a single column with the
+ * lists rendered first and the diff below — sticky disabled because there's
+ * no horizontal room for a second pane and a sticky list would eat the
+ * already-tight viewport.
+ */
+.gm-changes-split {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  gap: var(--space-md);
+  align-items: start;
+}
+
+.gm-changes-lists {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  position: sticky;
+  top: 0;
+  align-self: start;
+  /* Cap the sticky column so its internal lists never push past the viewport
+   * — without this, two long lists at max-height 200px each + headers can
+   * exceed the available scroll-port height and the column visually clips. */
+  max-height: calc(100dvh - var(--overlay-padding-top, 10vh) - 280px);
+  overflow-y: auto;
+  /* Don't let the sticky scrollbar overlap the diff column. */
+  padding-right: 2px;
+}
+
+.gm-changes-diff {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  /* Allow children (long file paths, code lines) to shrink below intrinsic
+   * width — required for `overflow: hidden` / `word-break` to work in the
+   * diff viewer. Without this the right column would push the layout wider
+   * than the modal. */
+  min-width: 0;
+  /* Match the lists' top so empty/loading/diff states align with the list
+   * column visually. */
+  padding-top: 0;
+}
+
+/* Empty placeholder shown when no file is selected. Gives the right pane
+ * structure on first open instead of a blank gap. */
+.gm-diff-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-2xl) var(--space-lg);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-dim);
+  font-size: 13px;
+  min-height: 140px;
+}
+
+@media (max-width: 720px) {
+  .gm-changes-split {
+    grid-template-columns: 1fr;
+  }
+  .gm-changes-lists {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+    padding-right: 0;
+  }
+  .gm-diff-empty {
+    /* Don't take a full screen of empty state on mobile — collapse to a
+     * compact hint when no file is selected. */
+    min-height: 0;
+    padding: var(--space-md);
+  }
+}
+
 /* ── File Section ── */
 
 .gm-file-section {
@@ -2118,11 +2198,18 @@
   accent-color: var(--todo);
 }
 
+/* Show as much of the path as fits, truncating the LEFT side (parent dirs)
+ * with an ellipsis so the filename — the most identifying part — stays
+ * visible. `direction: rtl` flips the truncation side; the JSX wraps the
+ * value in `<bdo dir="ltr">` so the displayed text still reads naturally
+ * left-to-right. */
 .gm-file-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text);
@@ -3555,6 +3642,8 @@
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
