@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createSkillsAdapter } from "../skills-adapter.js";
+import { createSkillsAdapter, extractSkillName } from "../skills-adapter.js";
 import { writeFile, mkdir, access } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
@@ -529,5 +529,12 @@ describe("createSkillsAdapter - readSkillContent", () => {
     expect(result.files).toHaveLength(1);
 
     await cleanup(skillDir);
+  });
+});
+
+describe("extractSkillName", () => {
+  it("normalizes Windows separators before deriving the display name", () => {
+    expect(extractSkillName("skills\\tooling\\windows-fix", "npm")).toBe("tooling/windows-fix");
+    expect(extractSkillName("windows-fix", "npm")).toBe("windows-fix");
   });
 });

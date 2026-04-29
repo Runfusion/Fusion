@@ -25,6 +25,7 @@ describe("getWorktreeLabel", () => {
   it("extracts humanized worktree names", () => {
     expect(getWorktreeLabel(".worktrees/swirly-monkey")).toBe("swirly-monkey");
     expect(getWorktreeLabel("/tmp/project/.worktrees/quiet-falcon")).toBe("quiet-falcon");
+    expect(getWorktreeLabel("C:\\repo\\.worktrees\\quiet-falcon")).toBe("quiet-falcon");
     expect(getWorktreeLabel(".worktrees/bright-orchid-2")).toBe("bright-orchid-2");
   });
 });

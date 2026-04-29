@@ -36,6 +36,9 @@ describe("CLI bundle output", () => {
     expect(content).not.toMatch(/from\s+["']@fusion\/core["']/);
     expect(content).not.toMatch(/from\s+["']@fusion\/dashboard["']/);
     expect(content).not.toMatch(/from\s+["']@fusion\/engine["']/);
+    expect(content).not.toContain('"@fusion/core"');
+    expect(content).not.toContain('"@fusion/dashboard"');
+    expect(content).not.toContain('"@fusion/engine"');
   });
 
   it("contains inlined workspace code", () => {

@@ -8,10 +8,12 @@ const TEMP_HOME_PREFIX = "fn-test-home-";
 describe("test isolation setup", () => {
   it("process.env.HOME is overridden to a temp directory", () => {
     const home = process.env.HOME;
+    const userProfile = process.env.USERPROFILE;
 
     expect(home).toBeDefined();
     expect(home).toContain(tmpdir());
     expect(home).toContain(TEMP_HOME_PREFIX);
+    expect(userProfile).toBe(home);
   });
 
   it("homedir() resolves to the temp HOME", () => {

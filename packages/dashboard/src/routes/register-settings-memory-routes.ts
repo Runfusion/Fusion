@@ -40,6 +40,7 @@ import {
   writeProjectMemoryFile,
   updatePiExtensionDisabledIds,
 } from "@fusion/core";
+import { createFnAgent as engineCreateFnAgent } from "@fusion/engine";
 import { ApiError, badRequest } from "../api-error.js";
 import { generateRemoteToken, issueRemoteAuthToken, maskRemoteToken } from "../remote-auth.js";
 import { invalidateAllGlobalSettingsCaches } from "../project-store-resolver.js";
@@ -1008,7 +1009,6 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let session: any = null;
         try {
-          await initCreateFnAgentForInsights();
           if (!createFnAgentForInsights) {
             throw new ApiError(503, "AI service unavailable for dream processing");
           }
@@ -1070,20 +1070,8 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
 
   // ── Memory Insights Routes ───────────────────────────────────────────
 
-  // Lazy-loaded createFnAgent for AI operations (same pattern as ai-refine.ts)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let createFnAgentForInsights: any;
-
-  async function initCreateFnAgentForInsights(): Promise<void> {
-    if (createFnAgentForInsights) return;
-    try {
-      // Use dynamic import with @vite-ignore to prevent static analysis issues
-      const engine = await import(/* @vite-ignore */ "@fusion/engine");
-      createFnAgentForInsights = engine.createFnAgent;
-    } catch {
-      createFnAgentForInsights = undefined;
-    }
-  }
+  const createFnAgentForInsights: any = engineCreateFnAgent;
 
   /**
    * GET /api/memory/insights
@@ -1148,8 +1136,6 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let session: any = null;
     try {
-      await initCreateFnAgentForInsights();
-
       if (!createFnAgentForInsights) {
         throw new ApiError(503, "AI engine not available");
       }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { describeModel, compactSessionContext, COMPACTION_FALLBACK_INSTRUCTIONS, createFnAgent, promptWithFallback, type AgentOptions } from "../pi.js";
+import { describeModel, compactSessionContext, COMPACTION_FALLBACK_INSTRUCTIONS, createFnAgent, getProjectRootFromWorktree, promptWithFallback, type AgentOptions } from "../pi.js";
 import { createAgentSession, type AgentSession } from "@mariozechner/pi-coding-agent";
 import { piLog } from "../logger.js";
 
@@ -77,6 +77,18 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
 // Import mock accessors after mocking (must use dynamic import for hoisted mocks)
 let resolveSessionSkillsMock: ReturnType<typeof vi.fn>;
 let createSkillsOverrideFromSelectionMock: ReturnType<typeof vi.fn>;
+
+describe("getProjectRootFromWorktree", () => {
+  it("detects POSIX worktree paths", () => {
+    expect(getProjectRootFromWorktree("/repo/.worktrees/fn-001")).toBe("/repo");
+    expect(getProjectRootFromWorktree("/repo/.worktrees/fn-001/src/file.ts")).toBe("/repo");
+  });
+
+  it("detects Windows worktree paths", () => {
+    expect(getProjectRootFromWorktree("C:\\repo\\.worktrees\\fn-001")).toBe("C:\\repo");
+    expect(getProjectRootFromWorktree("C:\\repo\\.worktrees\\fn-001\\src\\file.ts")).toBe("C:\\repo");
+  });
+});
 
 // Initialize mocks before first test
 beforeEach(() => {

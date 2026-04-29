@@ -791,7 +791,7 @@ async function registerExtensionProviders(cwd: string, modelRegistry: ModelRegis
  *   `/project/.worktrees/fn-001/src/file.ts` → `/project`
  *   `/project` → null (not a worktree)
  */
-function getProjectRootFromWorktree(cwd: string): string | null {
+export function getProjectRootFromWorktree(cwd: string): string | null {
   // Match paths like:
   //   /project/.worktrees/task-id
   //   /project/.worktrees/task-id/src/file.ts

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, relative, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 
 const FUSION_DISABLED_EXTENSIONS_KEY = "fusionDisabledExtensions";
 
@@ -276,13 +276,28 @@ export function reconcileClaudeCliPaths(
   return filtered;
 }
 
+function getDisplayPathWithinRoot(root: string, targetPath: string): string | null {
+  const usesWindowsPaths = /^[A-Za-z]:[\\/]/.test(root) || /^[A-Za-z]:[\\/]/.test(targetPath) || root.includes("\\") || targetPath.includes("\\");
+  const pathApi = usesWindowsPaths ? win32 : { relative, isAbsolute, sep };
+  const rel = pathApi.relative(root, targetPath);
+  if (rel === "") {
+    return "";
+  }
+  if (!rel || rel === ".." || rel.startsWith(`..${pathApi.sep}`) || pathApi.isAbsolute(rel)) {
+    return null;
+  }
+  return rel.split(pathApi.sep).join("/");
+}
+
 export function formatPiExtensionSource(source: PiExtensionSource, extensionPath: string, cwd: string, home?: string): string {
   const homeDir = getHomeDir(home);
   const projectRoot = resolvePiExtensionProjectRoot(cwd);
-  const relativePath = extensionPath.startsWith(homeDir)
-    ? `~${extensionPath.slice(homeDir.length)}`
-    : extensionPath.startsWith(projectRoot)
-      ? relative(projectRoot, extensionPath).split(sep).join("/")
+  const relativeToHome = getDisplayPathWithinRoot(homeDir, extensionPath);
+  const relativeToProject = getDisplayPathWithinRoot(projectRoot, extensionPath);
+  const relativePath = relativeToHome !== null
+    ? relativeToHome.length > 0 ? `~/${relativeToHome}` : "~"
+    : relativeToProject !== null
+      ? relativeToProject || "."
       : extensionPath;
   return `${source}: ${relativePath}`;
 }
