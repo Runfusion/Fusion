@@ -1,7 +1,7 @@
 import "./InlineCreateCard.css";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Brain, Link, Lightbulb, ListTree, Zap, ChevronDown, ChevronUp, Bot, Maximize2, Minimize2 } from "lucide-react";
+import { Brain, Link, Lightbulb, ListTree, Zap, ChevronDown, ChevronUp, Bot, Maximize2, Minimize2, Server } from "lucide-react";
 import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, type Task, type TaskCreateInput, type TaskPriority, type Settings } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
@@ -98,6 +98,7 @@ export function InlineCreateCard({
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const [showNodePicker, setShowNodePicker] = useState(false);
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [isModelModalOpen, setIsModelModalOpen] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
@@ -127,6 +128,7 @@ export function InlineCreateCard({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const agentPickerRef = useRef<HTMLDivElement>(null);
+  const nodePickerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setDescription(getScopedItem(STORAGE_KEY, projectId) || "");
@@ -187,6 +189,19 @@ export function InlineCreateCard({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showAgentPicker]);
+
+  useEffect(() => {
+    if (!showNodePicker) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (nodePickerRef.current?.contains(target)) return;
+      setShowNodePicker(false);
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showNodePicker]);
 
   useEffect(() => {
     let cancelled = false;
@@ -374,6 +389,7 @@ export function InlineCreateCard({
       setSelectedAgentId(null);
       setNodeId(undefined);
       setShowDeps(false);
+      setShowNodePicker(false);
       setShowAgentPicker(false);
       setIsModelModalOpen(false);
       setShowPresets(false);
@@ -422,8 +438,9 @@ export function InlineCreateCard({
           return;
         }
         // Close dropdowns first if open
-        if (showDeps || showAgentPicker || isModelModalOpen || showPresets) {
+        if (showDeps || showNodePicker || showAgentPicker || isModelModalOpen || showPresets) {
           setShowDeps(false);
+          setShowNodePicker(false);
           setShowAgentPicker(false);
           setIsModelModalOpen(false);
           setShowPresets(false);
@@ -457,6 +474,7 @@ export function InlineCreateCard({
       description,
       isDescriptionExpanded,
       showDeps,
+      showNodePicker,
       showAgentPicker,
       isModelModalOpen,
       showPresets,
@@ -475,6 +493,7 @@ export function InlineCreateCard({
       const next = !prev;
       if (next) {
         setIsModelModalOpen(false);
+        setShowNodePicker(false);
         setShowAgentPicker(false);
       }
       return next;
@@ -484,11 +503,13 @@ export function InlineCreateCard({
   const toggleModelsDropdown = useCallback(() => {
     setIsModelModalOpen(true);
     setShowDeps(false);
+    setShowNodePicker(false);
     setShowAgentPicker(false);
   }, []);
 
   const loadAgents = useCallback(async () => {
     if (agents.length > 0) {
+      setShowNodePicker(false);
       setShowAgentPicker(true);
       return;
     }
@@ -497,6 +518,7 @@ export function InlineCreateCard({
     try {
       const result = await fetchAgents(undefined, projectId);
       setAgents(result);
+      setShowNodePicker(false);
       setShowAgentPicker(true);
     } catch (err) {
       const msg = getErrorMessage(err);
@@ -509,6 +531,7 @@ export function InlineCreateCard({
 
   const selectedAgent = selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) : undefined;
   const selectedAgentLabel = selectedAgent?.name ?? selectedAgentId;
+  const selectedNode = nodeId ? nodes.find((node) => node.id === nodeId) : undefined;
 
   const handleExecutorChange = useCallback((value: string) => {
     const next = parseModelSelection(value);
@@ -835,36 +858,66 @@ export function InlineCreateCard({
               })()}
             </div>
 
-            <label className="inline-create-node-wrap" htmlFor="inline-create-node-select">
-              <span className="visually-hidden">Execution Node Override</span>
-              <select
-                id="inline-create-node-select"
-                className="select inline-create-node-select"
-                data-testid="inline-create-node-select"
-                value={nodeId ?? ""}
-                onChange={(e) => {
-                  const nextNodeId = e.target.value;
-                  setNodeId(nextNodeId || undefined);
+            <div className="node-trigger-wrap" ref={nodePickerRef}>
+              <button
+                type="button"
+                className="btn btn-sm dep-trigger"
+                data-testid="inline-create-node-button"
+                onClick={() => {
+                  setShowNodePicker((prev) => {
+                    const next = !prev;
+                    if (next) {
+                      setShowDeps(false);
+                      setShowAgentPicker(false);
+                      setIsModelModalOpen(false);
+                      setShowPresets(false);
+                    }
+                    return next;
+                  });
                 }}
               >
-                <option value="">Execution Node: Project default / local</option>
-                {nodes.map((node) => (
-                  <option key={node.id} value={node.id}>
-                    {`${node.name} (${getNodeStatusLabel(node.status)})`}
-                  </option>
-                ))}
-              </select>
-              {(() => {
-                const selectedNode = nodes.find((node) => node.id === nodeId);
-                if (!selectedNode) return null;
-                return (
+                <Server size={12} style={{ verticalAlign: "middle" }} />
+                {selectedNode ? ` ${selectedNode.name}` : " Node"}
+                {selectedNode && (
                   <span className={`inline-create-node-status ${getNodeStatusClass(selectedNode.status)}`}>
                     <span className="inline-create-node-status__dot" aria-hidden="true" />
                     {getNodeStatusLabel(selectedNode.status)}
                   </span>
-                );
-              })()}
-            </label>
+                )}
+              </button>
+              {showNodePicker && (
+                <div className="dep-dropdown node-picker-dropdown" onMouseDown={(e) => e.preventDefault()}>
+                  <div className="dep-dropdown-search-header">Select execution node</div>
+                  <button
+                    type="button"
+                    className={`dep-dropdown-item node-picker-item${nodeId === undefined ? " selected" : ""}`}
+                    onClick={() => {
+                      setNodeId(undefined);
+                      setShowNodePicker(false);
+                    }}
+                  >
+                    <span className="dep-dropdown-title">Project default / local</span>
+                  </button>
+                  {nodes.map((node) => (
+                    <button
+                      key={node.id}
+                      type="button"
+                      className={`dep-dropdown-item node-picker-item${nodeId === node.id ? " selected" : ""}`}
+                      onClick={() => {
+                        setNodeId(node.id);
+                        setShowNodePicker(false);
+                      }}
+                    >
+                      <span className={`inline-create-node-status ${getNodeStatusClass(node.status)}`}>
+                        <span className="inline-create-node-status__dot" aria-hidden="true" />
+                      </span>
+                      <span className="dep-dropdown-title">{node.name}</span>
+                      <span className="node-picker-status-label">{getNodeStatusLabel(node.status)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
             <div className="agent-trigger-wrap" ref={agentPickerRef}>
               <button
@@ -957,6 +1010,7 @@ export function InlineCreateCard({
                     const next = !prev;
                     if (next) {
                       setShowDeps(false);
+                      setShowNodePicker(false);
                       setShowAgentPicker(false);
                       setIsModelModalOpen(false);
                     }

@@ -22,6 +22,7 @@ vi.mock("lucide-react", () => ({
   ChevronDown: () => null,
   ChevronUp: () => null,
   Bot: () => null,
+  Server: () => null,
   Maximize2: () => null,
   Minimize2: () => null,
 }));
@@ -1398,18 +1399,67 @@ describe("InlineCreateCard button visibility when collapsed", () => {
 
 
 describe("InlineCreateCard node override", () => {
+  it("opens node picker from button", () => {
+    renderCard();
+    expandCard();
+
+    fireEvent.click(screen.getByTestId("inline-create-node-button"));
+
+    expect(screen.getByText("Select execution node")).toBeInTheDocument();
+  });
+
+  it("closes node picker on outside click", () => {
+    renderCard();
+    expandCard();
+
+    fireEvent.click(screen.getByTestId("inline-create-node-button"));
+    expect(screen.getByText("Select execution node")).toBeInTheDocument();
+
+    fireEvent.mouseDown(document.body);
+
+    expect(screen.queryByText("Select execution node")).not.toBeInTheDocument();
+  });
+
   it("includes nodeId in payload when execution node override is selected", async () => {
     const onSubmit = vi.fn().mockResolvedValue({ id: "FN-777" } as Task);
     renderCard([], { onSubmit });
 
     fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Run on node" } });
     expandCard();
-    fireEvent.change(screen.getByTestId("inline-create-node-select"), { target: { value: "node-1" } });
+    fireEvent.click(screen.getByTestId("inline-create-node-button"));
+    fireEvent.click(screen.getByRole("button", { name: /Node One/i }));
     fireEvent.click(screen.getByTestId("save-button"));
 
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ nodeId: "node-1" }));
     });
+  });
+
+  it("clears node override when project default is selected", async () => {
+    const onSubmit = vi.fn().mockResolvedValue({ id: "FN-778" } as Task);
+    renderCard([], { onSubmit });
+
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Run locally" } });
+    expandCard();
+    fireEvent.click(screen.getByTestId("inline-create-node-button"));
+    fireEvent.click(screen.getByRole("button", { name: /Node Two/i }));
+    fireEvent.click(screen.getByTestId("inline-create-node-button"));
+    fireEvent.click(screen.getByRole("button", { name: /Project default \/ local/i }));
+    fireEvent.click(screen.getByTestId("save-button"));
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ nodeId: undefined }));
+    });
+  });
+
+  it("shows selected node name on the node button", () => {
+    renderCard();
+    expandCard();
+
+    fireEvent.click(screen.getByTestId("inline-create-node-button"));
+    fireEvent.click(screen.getByRole("button", { name: /Node Two/i }));
+
+    expect(screen.getByTestId("inline-create-node-button")).toHaveTextContent("Node Two");
   });
 });
 

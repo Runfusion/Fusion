@@ -6,7 +6,7 @@ import type { Task, TaskCreateInput, Settings } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import type { ModelInfo, RefinementType, Agent } from "../api";
 import { fetchModels, fetchSettings, refineText, getRefineErrorMessage, updateGlobalSettings, fetchAgents, uploadAttachment } from "../api";
-import { Link, Paperclip, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot } from "lucide-react";
+import { Link, Paperclip, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Server } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { useNodes } from "../hooks/useNodes";
@@ -119,6 +119,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentsProjectId, setAgentsProjectId] = useState<string | undefined>(undefined);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const [showNodePicker, setShowNodePicker] = useState(false);
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [activeModelSubmenu, setActiveModelSubmenu] = useState<"plan" | "executor" | "validator" | null>(null);
@@ -132,7 +133,10 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const modelMenuPortalRef = useRef<HTMLDivElement>(null);
   const agentPickerRef = useRef<HTMLDivElement>(null);
   const agentPickerPortalRef = useRef<HTMLDivElement>(null);
+  const nodePickerRef = useRef<HTMLDivElement>(null);
+  const nodePickerPortalRef = useRef<HTMLDivElement>(null);
   const [agentPickerPosition, setAgentPickerPosition] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
+  const [nodePickerPosition, setNodePickerPosition] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
   const [modelMenuPosition, setModelMenuPosition] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
   // Dependency dropdown portal refs and state
   const depTriggerRef = useRef<HTMLButtonElement>(null);
@@ -357,6 +361,21 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   }, [isModelMenuOpen]);
 
   useEffect(() => {
+    if (!showNodePicker) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (nodePickerRef.current?.contains(target)) return;
+      if (nodePickerPortalRef.current?.contains(target)) return;
+      setShowNodePicker(false);
+      setNodePickerPosition(null);
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showNodePicker]);
+
+  useEffect(() => {
     if (!showAgentPicker) return;
 
     const handleClickOutside = (e: MouseEvent) => {
@@ -384,6 +403,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setSelectedAgentId(null);
     setShowAgentPicker(false);
     setAgentPickerPosition(null);
+    setShowNodePicker(false);
+    setNodePickerPosition(null);
     setExecutorProvider(undefined);
     setExecutorModelId(undefined);
     setValidatorProvider(undefined);
@@ -545,6 +566,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
           setIsRefineMenuOpen(false);
           return;
         }
+        if (showNodePicker) {
+          setShowNodePicker(false);
+          setNodePickerPosition(null);
+          return;
+        }
         if (showAgentPicker) {
           setShowAgentPicker(false);
           setAgentPickerPosition(null);
@@ -574,6 +600,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       isExpanded,
       showDeps,
       showAgentPicker,
+      showNodePicker,
       isModelMenuOpen,
       activeModelSubmenu,
       isRefineMenuOpen,
@@ -838,6 +865,65 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     });
   }, [getEffectiveViewport]);
 
+  const updateNodePickerPosition = useCallback(() => {
+    const trigger = nodePickerRef.current?.querySelector("button") as HTMLButtonElement | null;
+    if (!trigger) return;
+
+    const rect = trigger.getBoundingClientRect();
+    const { width: viewportWidth, height: viewportHeight, offsetTop, offsetLeft } = getEffectiveViewport();
+    const horizontalPadding = 16;
+    const verticalPadding = 16;
+    const gap = 4;
+    const isMobile = viewportWidth <= 768;
+
+    const preferredHeight = isMobile
+      ? Math.min(viewportHeight * 0.6, 320)
+      : Math.min(viewportHeight * 0.5, 320);
+
+    const preferredWidth = isMobile
+      ? Math.min(viewportWidth - horizontalPadding * 2, 280)
+      : Math.max(rect.width, 240);
+
+    const width = Math.min(
+      preferredWidth,
+      Math.max(viewportWidth - horizontalPadding * 2, 200),
+    );
+
+    const triggerTop = rect.top - offsetTop;
+    const triggerBottom = rect.bottom - offsetTop;
+    const triggerLeft = rect.left - offsetLeft;
+
+    const spaceBelow = viewportHeight - triggerBottom;
+    const spaceAbove = triggerTop;
+    const availableBelow = Math.max(spaceBelow - verticalPadding - gap, 160);
+    const availableAbove = Math.max(spaceAbove - verticalPadding - gap, 160);
+    const openUpward = spaceBelow < preferredHeight && spaceAbove > spaceBelow;
+
+    const maxHeight = Math.max(
+      Math.min(openUpward ? availableAbove : availableBelow, preferredHeight),
+      160,
+    );
+
+    const left = Math.min(
+      Math.max(triggerLeft, horizontalPadding),
+      viewportWidth - horizontalPadding - width,
+    ) + offsetLeft;
+
+    const top = openUpward
+      ? Math.max(verticalPadding + offsetTop, triggerTop - maxHeight - gap + offsetTop)
+      : Math.min(
+          triggerBottom + gap + offsetTop,
+          viewportHeight + offsetTop - verticalPadding - maxHeight,
+        );
+
+    setNodePickerPosition({
+      top,
+      left,
+      width,
+      maxHeight,
+    });
+  }, [getEffectiveViewport]);
+
   // Keep model menu portal anchored during scroll/resize
   useEffect(() => {
     if (!isModelMenuOpen) return;
@@ -937,6 +1023,31 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       }
     };
   }, [showAgentPicker, updateAgentPickerPosition]);
+
+  // Keep node picker portal anchored during scroll/resize
+  useEffect(() => {
+    if (!showNodePicker) return;
+
+    const handleReposition = () => updateNodePickerPosition();
+
+    window.addEventListener("resize", handleReposition);
+    window.addEventListener("scroll", handleReposition, true);
+
+    const vv = window.visualViewport;
+    if (vv) {
+      vv.addEventListener("resize", handleReposition);
+      vv.addEventListener("scroll", handleReposition);
+    }
+
+    return () => {
+      window.removeEventListener("resize", handleReposition);
+      window.removeEventListener("scroll", handleReposition, true);
+      if (vv) {
+        vv.removeEventListener("resize", handleReposition);
+        vv.removeEventListener("scroll", handleReposition);
+      }
+    };
+  }, [showNodePicker, updateNodePickerPosition]);
 
   const handlePlanningModelChange = useCallback((value: string) => {
     const next = parseModelSelection(value);
@@ -1107,6 +1218,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
 
   const selectedAgent = selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) : undefined;
   const selectedAgentLabel = selectedAgent?.name ?? selectedAgentId;
+  const selectedNode = nodeId ? nodes.find((node) => node.id === nodeId) : undefined;
 
   // Show expanded controls based on disclosure state (user preference), not textarea focus
   const showExpandedControls = isDisclosureExpanded;
@@ -1272,6 +1384,9 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                       setModelMenuPosition(null);
                       setActiveModelSubmenu(null);
                       setShowAgentPicker(false);
+                      setAgentPickerPosition(null);
+                      setShowNodePicker(false);
+                      setNodePickerPosition(null);
                       // Position the dropdown before rendering
                       updateDepDropdownPosition();
                     } else {
@@ -1362,6 +1477,9 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               onClick={() => {
                 setShowDeps(false);
                 setShowAgentPicker(false);
+                setAgentPickerPosition(null);
+                setShowNodePicker(false);
+                setNodePickerPosition(null);
                 setActiveModelSubmenu(null);
                 setIsModelMenuOpen(true);
                 updateModelMenuPosition();
@@ -1371,35 +1489,86 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               {modelMenuLabel}
             </button>
 
-            <label className="quick-entry-node-wrap" htmlFor="quick-entry-node-select">
-              <span className="visually-hidden">Execution Node Override</span>
-              <select
-                id="quick-entry-node-select"
-                className="select quick-entry-node-select"
-                data-testid="quick-entry-node-select"
-                value={nodeId ?? ""}
-                onChange={(e) => {
-                  const nextNodeId = e.target.value;
-                  setNodeId(nextNodeId || undefined);
+            <div className="node-trigger-wrap" ref={nodePickerRef}>
+              <button
+                type="button"
+                className="btn btn-sm dep-trigger"
+                data-testid="quick-entry-node-button"
+                onClick={() => {
+                  setShowDeps(false);
+                  setShowAgentPicker(false);
+                  setAgentPickerPosition(null);
+                  setIsModelMenuOpen(false);
+                  setModelMenuPosition(null);
+                  setActiveModelSubmenu(null);
+                  setShowNodePicker((prev) => {
+                    const next = !prev;
+                    if (next) {
+                      updateNodePickerPosition();
+                    } else {
+                      setNodePickerPosition(null);
+                    }
+                    return next;
+                  });
                 }}
               >
-                <option value="">Execution Node: Project default / local</option>
-                {nodes.map((node) => (
-                  <option key={node.id} value={node.id}>
-                    {`${node.name} (${getNodeStatusLabel(node.status)})`}
-                  </option>
-                ))}
-              </select>
-              {(() => {
-                const selectedNode = nodes.find((node) => node.id === nodeId);
-                if (!selectedNode) return null;
-                return (
+                <Server size={12} style={{ verticalAlign: "middle" }} />
+                {` ${selectedNode?.name ?? "Node"}`}
+                {selectedNode && (
                   <span className="quick-entry-node-status">
                     <NodeHealthDot status={selectedNode.status} showLabel />
                   </span>
-                );
-              })()}
-            </label>
+                )}
+              </button>
+            </div>
+
+            {showNodePicker && portalRoot && nodePickerPosition && createPortal(
+              <div
+                ref={nodePickerPortalRef}
+                className="dep-dropdown node-picker-dropdown node-picker-dropdown--portal"
+                onMouseDown={(e) => e.preventDefault()}
+                style={{
+                  position: "fixed",
+                  top: `${nodePickerPosition.top}px`,
+                  left: `${nodePickerPosition.left}px`,
+                  width: `${nodePickerPosition.width}px`,
+                  maxHeight: nodePickerPosition.maxHeight ? `${nodePickerPosition.maxHeight}px` : undefined,
+                  overflowY: nodePickerPosition.maxHeight ? "auto" : undefined,
+                }}
+              >
+                <div className="dep-dropdown-search-header">Select execution node</div>
+                <div
+                  className={`dep-dropdown-item node-picker-item${nodeId == null ? " selected" : ""}`}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    setNodeId(undefined);
+                    setShowNodePicker(false);
+                    setNodePickerPosition(null);
+                  }}
+                >
+                  <span className="node-picker-item-name">Project default / local</span>
+                </div>
+                {nodes.map((node) => (
+                  <div
+                    key={node.id}
+                    className={`dep-dropdown-item node-picker-item${nodeId === node.id ? " selected" : ""}`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setNodeId(node.id);
+                      setShowNodePicker(false);
+                      setNodePickerPosition(null);
+                    }}
+                  >
+                    <span className="quick-entry-node-status">
+                      <NodeHealthDot status={node.status} />
+                    </span>
+                    <span className="node-picker-item-name">{node.name}</span>
+                    <span className="node-picker-item-status">{getNodeStatusLabel(node.status)}</span>
+                  </div>
+                ))}
+              </div>,
+              portalRoot,
+            )}
 
             <div className="agent-trigger-wrap" ref={agentPickerRef}>
               <button
@@ -1410,6 +1579,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                     setShowAgentPicker(false);
                     setAgentPickerPosition(null);
                   } else {
+                    setShowNodePicker(false);
+                    setNodePickerPosition(null);
                     void loadAgents();
                   }
                 }}

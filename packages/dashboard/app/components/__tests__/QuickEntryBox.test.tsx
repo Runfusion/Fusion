@@ -132,6 +132,7 @@ vi.mock("lucide-react", () => ({
   ChevronUp: () => null,
   ChevronRight: () => null,
   Bot: () => null,
+  Server: () => null,
   Maximize2: () => null,
   Minimize2: () => null,
 }));
@@ -3021,11 +3022,65 @@ describe("QuickEntryBox", () => {
 
     fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Route this task" } });
     expandQuickEntry();
-    fireEvent.change(screen.getByTestId("quick-entry-node-select"), { target: { value: "node-2" } });
+    fireEvent.click(screen.getByTestId("quick-entry-node-button"));
+    fireEvent.click(screen.getByText("Node Two"));
     clickSave();
 
     await waitFor(() => {
       expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ nodeId: "node-2" }));
     });
+  });
+
+  it("opens node picker menu from the node button", () => {
+    renderQuickEntryBox({});
+
+    expandQuickEntry();
+    fireEvent.click(screen.getByTestId("quick-entry-node-button"));
+
+    expect(screen.getByText("Select execution node")).toBeInTheDocument();
+    const nodePicker = document.body.querySelector(".node-picker-dropdown");
+    expect(nodePicker?.classList.contains("node-picker-dropdown--portal")).toBe(true);
+  });
+
+  it("closes node picker when clicking outside", () => {
+    renderQuickEntryBox({});
+
+    expandQuickEntry();
+    fireEvent.click(screen.getByTestId("quick-entry-node-button"));
+    expect(screen.getByText("Select execution node")).toBeInTheDocument();
+
+    const outside = document.createElement("div");
+    document.body.appendChild(outside);
+    fireEvent.mouseDown(outside);
+
+    expect(screen.queryByText("Select execution node")).not.toBeInTheDocument();
+  });
+
+  it("clears node override when selecting project default / local", async () => {
+    const onCreate = vi.fn().mockResolvedValue(undefined);
+    renderQuickEntryBox({ onCreate });
+
+    fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Default node route" } });
+    expandQuickEntry();
+    fireEvent.click(screen.getByTestId("quick-entry-node-button"));
+    fireEvent.click(screen.getByText("Node One"));
+
+    fireEvent.click(screen.getByTestId("quick-entry-node-button"));
+    fireEvent.click(screen.getByText("Project default / local"));
+    clickSave();
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ nodeId: undefined }));
+    });
+  });
+
+  it("shows selected node name on the node button", () => {
+    renderQuickEntryBox({});
+
+    expandQuickEntry();
+    fireEvent.click(screen.getByTestId("quick-entry-node-button"));
+    fireEvent.click(screen.getByText("Node Two"));
+
+    expect(screen.getByTestId("quick-entry-node-button")).toHaveTextContent("Node Two");
   });
 });

@@ -61,6 +61,7 @@ vi.mock("lucide-react", () => ({
   ChevronUp: () => null,
   ChevronRight: () => null,
   Bot: () => null,
+  Server: () => null,
   Maximize2: () => null,
   Minimize2: () => null,
 }));
