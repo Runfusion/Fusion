@@ -1950,17 +1950,30 @@ async function aiGenerateCommitBody(opts: {
 
   let session: Awaited<ReturnType<typeof createResolvedAgentSession>>["session"] | undefined;
   try {
+    // Prefer the dedicated title-summarization model from settings — it's a
+    // small, fast model intended exactly for short summarization tasks like
+    // this. Falls back to the merger's default model only when the
+    // summarization model isn't configured.
+    const useTitleSummarizer =
+      !!opts.settings.titleSummarizerProvider && !!opts.settings.titleSummarizerModelId;
+    const provider = useTitleSummarizer
+      ? opts.settings.titleSummarizerProvider!
+      : (opts.settings.defaultProviderOverride && opts.settings.defaultModelIdOverride
+          ? opts.settings.defaultProviderOverride
+          : opts.settings.defaultProvider);
+    const modelId = useTitleSummarizer
+      ? opts.settings.titleSummarizerModelId!
+      : (opts.settings.defaultProviderOverride && opts.settings.defaultModelIdOverride
+          ? opts.settings.defaultModelIdOverride
+          : opts.settings.defaultModelId);
+
     const created = await createResolvedAgentSession({
       sessionPurpose: "merger",
       cwd: opts.rootDir,
       systemPrompt,
       tools: "readonly",
-      defaultProvider: opts.settings.defaultProviderOverride && opts.settings.defaultModelIdOverride
-        ? opts.settings.defaultProviderOverride
-        : opts.settings.defaultProvider,
-      defaultModelId: opts.settings.defaultProviderOverride && opts.settings.defaultModelIdOverride
-        ? opts.settings.defaultModelIdOverride
-        : opts.settings.defaultModelId,
+      defaultProvider: provider,
+      defaultModelId: modelId,
     });
     session = created.session;
     await session.prompt(userPrompt);

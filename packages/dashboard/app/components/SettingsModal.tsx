@@ -1118,12 +1118,12 @@ export function SettingsModal({
     },
     {
       laneId: "summarization",
-      label: "Title Summarization Model",
+      label: "Title and Git Commit Message Summarization Model",
       globalProviderKey: "titleSummarizerGlobalProvider",
       globalModelKey: "titleSummarizerGlobalModelId",
       projectProviderKey: "titleSummarizerProvider",
       projectModelKey: "titleSummarizerModelId",
-      helperText: "AI model used for auto-generating task titles from descriptions.",
+      helperText: "AI model used for auto-generating task titles from descriptions and for synthesizing fallback merge commit message bodies when the branch's commit log is empty.",
         fallbackOrder: "Project override → Global summarization lane → Project planning lane → Project default lane → Global default lane → Automatic resolution",
     },
   ];
@@ -1865,13 +1865,16 @@ export function SettingsModal({
         const inUsePresetIds = new Set(Object.values(form.defaultPresetBySize || {}).filter(Boolean));
 
         // Filter model lanes to show in project scope.
+        // The "summarization" lane is intentionally excluded here — it has a
+        // dedicated picker further down ("AI Title and Git Commit Message
+        // Summarization") so the project tab doesn't surface the same model
+        // setting twice.
         const projectModelLanes = MODEL_LANES.filter(
           (lane) =>
             lane.laneId === "default"
             || lane.laneId === "execution"
             || lane.laneId === "planning"
-            || lane.laneId === "validator"
-            || lane.laneId === "summarization",
+            || lane.laneId === "validator",
         );
         const resolvedPlanningModel = resolvePlanningSettingsModel(form);
         const resolvedDefaultModel = resolveProjectDefaultModel(form);
@@ -2255,8 +2258,16 @@ export function SettingsModal({
               </div>
             ) : null}
 
-            {/* --- AI Summarization --- */}
-            <h4 className="settings-section-heading settings-section-heading--spaced">AI Summarization</h4>
+            {/* --- AI Title and Git Commit Message Summarization --- */}
+            <h4 className="settings-section-heading settings-section-heading--spaced">
+              AI Title and Git Commit Message Summarization
+            </h4>
+            <p className="settings-description">
+              Configures the model used for two short-summary jobs:
+              auto-generating task titles from long descriptions, and
+              synthesizing fallback merge commit message bodies when the
+              branch's commit log is empty.
+            </p>
             <div className="form-group">
               <label htmlFor="autoSummarizeTitles" className="checkbox-label">
                 <input
@@ -2269,14 +2280,16 @@ export function SettingsModal({
               </label>
               <small>
                 When enabled, tasks created without a title but with descriptions over 200 characters
-                will automatically get an AI-generated title (max 60 characters).
+                will automatically get an AI-generated title (max 60 characters). The same model is
+                also used to generate fallback merge commit message bodies when the branch's commit
+                log is empty (e.g. squash merges with no unique commits).
               </small>
             </div>
 
             {(form.autoSummarizeTitles || false) && (
               <>
                 <div className="form-group">
-                  <label>Title summarization model</label>
+                  <label>Title and commit message summarization model</label>
                   {modelsLoading ? (
                     <small>Loading available models...</small>
                   ) : availableModels.length === 0 ? (
@@ -2284,7 +2297,7 @@ export function SettingsModal({
                   ) : (
                     <CustomModelDropdown
                       id="titleSummarizerModel"
-                      label="Title summarization model"
+                      label="Title and commit message summarization model"
                       models={availableModels}
                       value={
                         form.titleSummarizerProvider && form.titleSummarizerModelId
