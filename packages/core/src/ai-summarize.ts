@@ -314,16 +314,18 @@ export async function summarizeTitle(
 // ── Commit Body Summarization ────────────────────────────────────────────
 
 /** System prompt for fallback merge commit body generation. */
-export const COMMIT_BODY_SYSTEM_PROMPT = `You write concise commit message bodies for merge commits.
+export const COMMIT_BODY_SYSTEM_PROMPT = `You write commit message bodies for merge commits.
 
-Your job is to summarize the changes described in a \`git diff --stat\` into a short, useful body.
+Your job is to summarize what landed — using the branch's step commit subjects (when provided) and the \`git diff --stat\` — into a useful body that lets a reader understand what changed without reading the diff.
 
 ## Guidelines
 - Output ONLY the body text — no code fences, no preamble, no subject line
-- 2–6 short bullet points starting with "- "
-- Be specific about what changed; reference filenames where helpful
-- Keep total output under 600 characters
-- Do not invent details that aren't in the input — if uncertain, stay general`;
+- Bullet points starting with "- "; use as many as the change warrants (typically 3–10)
+- Be specific: reference modules, components, or filenames that meaningfully changed
+- Group related edits when it aids clarity; keep each bullet a single line
+- Lead with the most consequential changes; trivial bumps go last or get omitted
+- Do not invent details that aren't in the input — if uncertain, stay general
+- Hard cap: 1500 characters total; aim for the level of detail the change actually needs`;
 
 /**
  * Maximum input length for commit body summarization. Diff stats can be
@@ -374,26 +376,38 @@ export async function summarizeCommitBody(
   opts?: {
     branch?: string;
     taskId?: string;
+    commitLog?: string;
     signal?: AbortSignal;
     timeoutMs?: number;
   },
 ): Promise<string | null> {
   const trimmedStat = (diffStat ?? "").trim();
-  if (trimmedStat.length === 0) {
+  const trimmedCommitLog = (opts?.commitLog ?? "").trim();
+  if (trimmedStat.length === 0 && trimmedCommitLog.length === 0) {
     return null;
   }
 
   const truncatedStat = trimmedStat.length > MAX_COMMIT_BODY_INPUT_LENGTH
     ? trimmedStat.slice(0, MAX_COMMIT_BODY_INPUT_LENGTH) + "\n…(truncated)"
     : trimmedStat;
+  const truncatedCommitLog = trimmedCommitLog.length > MAX_COMMIT_BODY_INPUT_LENGTH
+    ? trimmedCommitLog.slice(0, MAX_COMMIT_BODY_INPUT_LENGTH) + "\n…(truncated)"
+    : trimmedCommitLog;
 
   const userPromptParts: string[] = [];
   if (opts?.branch) userPromptParts.push(`Branch: ${opts.branch}`);
   if (opts?.taskId) userPromptParts.push(`Task: ${opts.taskId}`);
   if (userPromptParts.length > 0) userPromptParts.push("");
-  userPromptParts.push("Files changed (`git diff --stat`):");
-  userPromptParts.push(truncatedStat);
-  userPromptParts.push("");
+  if (truncatedCommitLog.length > 0) {
+    userPromptParts.push("Step commits being merged in (most recent first):");
+    userPromptParts.push(truncatedCommitLog);
+    userPromptParts.push("");
+  }
+  if (truncatedStat.length > 0) {
+    userPromptParts.push("Files changed (`git diff --stat`):");
+    userPromptParts.push(truncatedStat);
+    userPromptParts.push("");
+  }
   userPromptParts.push("Write the commit body now.");
   const userPrompt = userPromptParts.join("\n");
 

@@ -1055,23 +1055,75 @@ function resetMergeWithWarn(rootDir: string, taskId: string, label: string): voi
 
 /**
  * Build the canonical merge commit message from the branch's step commits.
- * Subject is always `feat[(taskId)]: merge <branch>`; body is one bullet per
- * step commit subject (already constructed upstream as `commitLog`). This is
- * deterministic — no LLM involvement — so the recorded message can be trusted
- * to reflect the actual diff.
+ * Subject is always `feat[(taskId)]: merge <branch>`. Body has three parts so
+ * `git log` shows what actually landed instead of a bare "merge":
+ *   1. AI-generated summary (via the title-summarizer model lane), built from
+ *      the branch's step-commit subjects + diffstat. Best-effort — bounded by
+ *      timeout, falls through silently on any failure.
+ *   2. The raw step-commit list (always included as ground truth so a reader
+ *      can verify the AI summary against the actual commits).
+ *   3. The diffstat block so file-level changes are visible inline.
+ *
+ * The AI summary is additive context, never the sole source of truth — the
+ * step commits and diffstat below it are deterministic.
  */
-function buildDeterministicMergeMessage(params: {
+async function buildDeterministicMergeMessage(params: {
   taskId: string;
   branch: string;
   commitLog: string;
+  diffStat?: string;
   includeTaskId: boolean;
-}): { subjectArg: string; bodyArg: string } {
-  const { taskId, branch, commitLog, includeTaskId } = params;
+  rootDir?: string;
+  settings?: Settings;
+  signal?: AbortSignal;
+}): Promise<{ subjectArg: string; bodyArg: string }> {
+  const { taskId, branch, commitLog, diffStat, includeTaskId, rootDir, settings, signal } = params;
   const prefix = includeTaskId ? `feat(${taskId})` : "feat";
   const subject = `${prefix}: merge ${branch}`;
-  const body = commitLog && commitLog.trim().length > 0
-    ? commitLog.trim()
+
+  const trimmedCommitLog = commitLog?.trim() ?? "";
+  const trimmedDiffStat = diffStat?.trim() ?? "";
+
+  const commitsSection = trimmedCommitLog.length > 0
+    ? trimmedCommitLog
     : `- merge ${branch}`;
+
+  // Best-effort AI summary using the title-summarizer lane (small/fast model).
+  // Falls back to the project default when not configured. Any failure (no
+  // runtime, timeout, empty response) returns null and we skip the summary.
+  let aiSummary: string | null = null;
+  if (rootDir && settings && (trimmedCommitLog.length > 0 || trimmedDiffStat.length > 0)) {
+    const useTitleSummarizer =
+      !!settings.titleSummarizerProvider && !!settings.titleSummarizerModelId;
+    const provider = useTitleSummarizer
+      ? settings.titleSummarizerProvider!
+      : (settings.defaultProviderOverride && settings.defaultModelIdOverride
+          ? settings.defaultProviderOverride
+          : settings.defaultProvider);
+    const modelId = useTitleSummarizer
+      ? settings.titleSummarizerModelId!
+      : (settings.defaultProviderOverride && settings.defaultModelIdOverride
+          ? settings.defaultModelIdOverride
+          : settings.defaultModelId);
+
+    aiSummary = await summarizeCommitBody(trimmedDiffStat, rootDir, provider, modelId, {
+      branch,
+      taskId,
+      commitLog: trimmedCommitLog,
+      signal,
+    }).catch(() => null);
+  }
+
+  const sections: string[] = [];
+  if (aiSummary && aiSummary.trim().length > 0) {
+    sections.push(aiSummary.trim());
+  }
+  sections.push(`Commits merged:\n${commitsSection}`);
+  if (trimmedDiffStat.length > 0) {
+    sections.push(`Files changed:\n${trimmedDiffStat}`);
+  }
+  const body = sections.join("\n\n");
+
   // -m args are double-quoted in the shell command, so escape backslashes,
   // double quotes, dollar signs, and backticks.
   const escape = (s: string) => s.replace(/(["\\$`])/g, "\\$1");
@@ -1106,6 +1158,9 @@ async function commitOrAmendMergeWithFixes(
   includeTaskId: boolean,
   preAttemptHeadSha: string,
   authorArg: string,
+  diffStat?: string,
+  settings?: Settings,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   try {
     // Stage everything (squash state + verification fixes the agent left
@@ -1159,11 +1214,15 @@ async function commitOrAmendMergeWithFixes(
       return false;
     }
 
-    const { subjectArg, bodyArg } = buildDeterministicMergeMessage({
+    const { subjectArg, bodyArg } = await buildDeterministicMergeMessage({
       taskId,
       branch,
       commitLog,
+      diffStat,
       includeTaskId,
+      rootDir,
+      settings,
+      signal,
     });
     const trailerArg = buildTaskIdTrailerArg(taskId);
 
@@ -3268,6 +3327,9 @@ export async function aiMergeTask(
                 includeTaskId,
                 preAttemptHeadSha,
                 authorArg,
+                diffStat,
+                settings,
+                options.signal,
               );
               if (!finalized) {
                 // Phantom-merge guard: refused to fabricate a commit. Reset
@@ -3370,6 +3432,9 @@ export async function aiMergeTask(
               includeTaskId,
               preAttemptHeadSha,
               authorArg,
+              diffStat,
+              settings,
+              options.signal,
             );
             if (!finalized) {
               // Phantom-merge guard: the verification fix passed but no
@@ -3883,11 +3948,7 @@ interface MergeAttemptParams {
   attemptNum: 1 | 2 | 3;
   options: MergerOptions;
   result: MergeResult;
-  settings: {
-    commitAuthorEnabled?: boolean;
-    commitAuthorName?: string;
-    commitAuthorEmail?: string;
-  };
+  settings: Settings;
   testCommand?: string;
   buildCommand?: string;
   /** Source of the test command: 'explicit' from settings or 'inferred' from project files */
@@ -4231,11 +4292,15 @@ async function executeMergeAttempt(
     // of mergeDetails surface. Subject keeps the conventional-commit shape.
     try {
       const authorArg = getCommitAuthorArg(params.settings);
-      const { subjectArg, bodyArg } = buildDeterministicMergeMessage({
+      const { subjectArg, bodyArg } = await buildDeterministicMergeMessage({
         taskId,
         branch,
         commitLog,
+        diffStat,
         includeTaskId,
+        rootDir,
+        settings: params.settings,
+        signal: options.signal,
       });
       const trailerArg = buildTaskIdTrailerArg(taskId);
       await execAsync(
