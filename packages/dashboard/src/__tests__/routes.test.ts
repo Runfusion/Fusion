@@ -14401,6 +14401,53 @@ describe("PUT /settings", () => {
     expect(store.updateSettings).not.toHaveBeenCalled();
   });
 
+  it("accepts unavailableNodePolicy fallback-local", async () => {
+    const updatedSettings = {
+      ...DEFAULT_SETTINGS,
+      unavailableNodePolicy: "fallback-local",
+    };
+    (store.updateSettings as ReturnType<typeof vi.fn>).mockResolvedValue(updatedSettings);
+
+    const res = await REQUEST(
+      buildApp(),
+      "PUT",
+      "/api/settings",
+      JSON.stringify({ unavailableNodePolicy: "fallback-local" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateSettings).toHaveBeenCalledWith({ unavailableNodePolicy: "fallback-local" });
+  });
+
+  it("rejects invalid unavailableNodePolicy values", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "PUT",
+      "/api/settings",
+      JSON.stringify({ unavailableNodePolicy: "auto-retry" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("unavailableNodePolicy");
+    expect(store.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-string unavailableNodePolicy values", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "PUT",
+      "/api/settings",
+      JSON.stringify({ unavailableNodePolicy: 42 }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("unavailableNodePolicy");
+    expect(store.updateSettings).not.toHaveBeenCalled();
+  });
+
   it("returns 500 on store update error", async () => {
     (store.updateSettings as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Write failed"));
 

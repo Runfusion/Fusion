@@ -35,6 +35,7 @@ import {
   validateBackupRetention,
   validateBackupSchedule,
   validateImportData,
+  validateUnavailableNodePolicy,
   writeInsightsMemory,
   writeMemory,
   writeProjectMemoryFile,
@@ -333,6 +334,13 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         !["none", "compact", "full"].includes(clientSettings.archiveAgentLogMode)
       ) {
         throw badRequest("archiveAgentLogMode must be one of: none, compact, full");
+      }
+      if (clientSettings.unavailableNodePolicy !== undefined) {
+        const validatedUnavailableNodePolicy = validateUnavailableNodePolicy(clientSettings.unavailableNodePolicy);
+        if (validatedUnavailableNodePolicy === undefined) {
+          throw badRequest("unavailableNodePolicy must be one of: block, fallback-local");
+        }
+        clientSettings.unavailableNodePolicy = validatedUnavailableNodePolicy;
       }
 
       // Validate memoryBackendType if provided - must be string or null (for explicit clear)
