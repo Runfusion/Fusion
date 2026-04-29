@@ -342,6 +342,43 @@ describe("AgentsView", () => {
       });
     });
 
+    it.each(["active", "running"] as const)("applies active highlight state classes across views for %s agents", async (state) => {
+      const highlightAgent: Agent = {
+        id: `agent-highlight-${state}`,
+        name: `Highlight ${state}`,
+        role: "executor",
+        state,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        metadata: {},
+      };
+
+      mockFetchAgents.mockResolvedValue([highlightAgent]);
+      mockFetchAgentStats.mockResolvedValue({ total: 1, byState: { [state]: 1 }, byRole: { executor: 1 } });
+      mockFetchOrgTree.mockResolvedValue([{ agent: highlightAgent, children: [] }]);
+
+      render(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(document.querySelector(`.agent-card--${state}`)).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Board view" }));
+      await waitFor(() => {
+        expect(document.querySelector(`.agent-board-card--${state}`)).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Tree view" }));
+      await waitFor(() => {
+        expect(document.querySelector(`.agent-tree__node--${state}`)).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Org Chart view" }));
+      await waitFor(() => {
+        expect(document.querySelector(`.org-chart-node-card--${state}`)).toBeTruthy();
+      });
+    });
+
     it("shows terminated agents when explicitly filtered", async () => {
       render(<AgentsView addToast={mockAddToast} />);
       await openControlsPanel();

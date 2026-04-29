@@ -258,6 +258,11 @@
   background: var(--card-hover);
 }
 
+.agent-tree__node--active,
+.agent-tree__node--running {
+  background: var(--state-active-bg);
+}
+
 .agent-tree__indent--0 { padding-left: 0; }
 .agent-tree__indent--1 { padding-left: var(--space-xl); }
 .agent-tree__indent--2 { padding-left: calc(var(--space-xl) * 2); }
@@ -657,14 +662,20 @@
 
 .agent-board-card--idle { border-top-color: var(--state-idle-border); }
 .agent-board-card--active,
-.agent-board-card--running { border-top-color: var(--state-active-border); }
+.agent-board-card--running {
+  border-top-color: var(--state-active-border);
+  background: var(--state-active-bg);
+}
 .agent-board-card--paused { border-top-color: var(--state-paused-border); }
 .agent-board-card--error,
 .agent-board-card--terminated { border-top-color: var(--state-error-border); }
 
 .agent-card--idle { border-left-color: var(--state-idle-border); }
 .agent-card--active,
-.agent-card--running { border-left-color: var(--state-active-border); }
+.agent-card--running {
+  border-left-color: var(--state-active-border);
+  background: var(--state-active-bg);
+}
 .agent-card--paused { border-left-color: var(--state-paused-border); }
 .agent-card--error,
 .agent-card--terminated { border-left-color: var(--state-error-border); }
@@ -720,6 +731,11 @@
   background: var(--card-hover);
   transform: translateY(calc(var(--space-xs) * -0.25));
   outline: none;
+}
+
+.org-chart-node-card--active,
+.org-chart-node-card--running {
+  background: var(--state-active-bg);
 }
 
 .org-chart-node__header {

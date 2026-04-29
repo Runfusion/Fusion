@@ -63,7 +63,10 @@ function getStateBadgeClass(state: AgentState): string {
   }
 }
 
-function getStateCardClass(prefix: "agent-card" | "agent-board-card", state: AgentState): string {
+function getStateCardClass(
+  prefix: "agent-card" | "agent-board-card" | "agent-tree__node" | "org-chart-node-card",
+  state: AgentState,
+): string {
   switch (state) {
     case "running":
       return `${prefix}--running`;
@@ -106,11 +109,12 @@ function AgentTreeNode({
   const expanded = isExpanded(agent.id);
   const health = getHealthStatus(agent);
   const stateBadgeClass = getStateBadgeClass(agent.state);
+  const stateNodeClass = getStateCardClass("agent-tree__node", agent.state);
 
   return (
     <>
       <div
-        className={`agent-tree__node${agent.reportsTo ? " agent-is-child" : ""} agent-tree__indent--${Math.min(depth, 4)}`}
+        className={`${stateNodeClass}${agent.reportsTo ? " agent-is-child" : ""} agent-tree__indent--${Math.min(depth, 4)}`}
       >
         <button
           className={`agent-tree__toggle${childCount === 0 ? " agent-tree__toggle--leaf" : ""}`}
@@ -193,11 +197,12 @@ function OrgChartNode({
   const { agent, children } = node;
   const health = getHealthStatus(agent);
   const stateBadgeClass = getStateBadgeClass(agent.state);
+  const stateNodeClass = getStateCardClass("org-chart-node-card", agent.state);
 
   return (
     <div className={`org-chart-node${children.length > 0 ? " org-chart-node--has-children" : ""}`}>
       <div
-        className="org-chart-node-card"
+        className={stateNodeClass}
         onClick={() => onSelect(agent.id)}
         role="button"
         tabIndex={0}
