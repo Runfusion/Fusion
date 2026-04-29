@@ -1,5 +1,12 @@
 # runfusion.ai
 
+## 0.8.1
+
+### Patch Changes
+
+- Updated dependencies [a8dbdbc]
+  - @runfusion/fusion@0.8.1
+
 ## 0.8.0
 
 ### Patch Changes

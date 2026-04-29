@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/notification",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "type": "module",
   "description": "Example Fusion plugin that sends webhook notifications on task lifecycle events",
   "keywords": [

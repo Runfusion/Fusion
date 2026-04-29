@@ -2,6 +2,44 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.8.1
+
+### @fusion/dashboard
+
+#### Patch Changes
+
+- @fusion/core@0.8.1
+- @fusion/engine@0.8.1
+- @fusion-plugin-examples/hermes-runtime@0.2.3
+- @fusion-plugin-examples/openclaw-runtime@0.2.3
+- @fusion-plugin-examples/paperclip-runtime@0.2.3
+
+### @fusion/engine
+
+#### Patch Changes
+
+- @fusion/core@0.8.1
+- @fusion/pi-claude-cli@0.8.1
+
+### @fusion/plugin-sdk
+
+#### Patch Changes
+
+- @fusion/core@0.8.1
+
+### @runfusion/fusion
+
+#### Patch Changes
+
+- a8dbdbc: Include linked GitHub issue references (`Ref: owner/repo#N`) in executor and merger commit message instructions and merger fallback commits when tasks are sourced from GitHub issues.
+
+### runfusion.ai
+
+#### Patch Changes
+
+- Updated dependencies [a8dbdbc]
+  - @runfusion/fusion@0.8.1
+
 ## 0.8.0
 
 ### @fusion/dashboard

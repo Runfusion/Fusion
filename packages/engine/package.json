@@ -1,6 +1,6 @@
 {
   "name": "@fusion/engine",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "license": "MIT",
   "description": "Fusion engine: executor, merger, scheduler, and automation runtime for the Fusion AI coding agent.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",

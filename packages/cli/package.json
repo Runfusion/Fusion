@@ -1,6 +1,6 @@
 {
   "name": "@runfusion/fusion",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "license": "MIT",
   "description": "Fusion CLI: HTTP API server, daemon, dashboard launcher, and task tooling for the Fusion AI coding agent.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",

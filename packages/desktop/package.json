@@ -1,6 +1,6 @@
 {
   "name": "@fusion/desktop",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "license": "MIT",
   "description": "Fusion desktop: Electron wrapper around the Fusion dashboard for macOS, Windows, and Linux.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",

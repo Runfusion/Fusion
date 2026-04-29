@@ -431,6 +431,9 @@ importers:
       '@mariozechner/pi-coding-agent':
         specifier: '*'
         version: 0.62.0(@modelcontextprotocol/sdk@1.28.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+      cross-spawn:
+        specifier: ^7.0.6
+        version: 7.0.6
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
