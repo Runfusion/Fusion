@@ -2103,6 +2103,42 @@ describe("aiMergeTask — retry logic with escalating strategies", () => {
     expect(agentCallCount).toBe(1);
   });
 
+  it("attempt 2 throws when squash fails for a non-conflict reason (no U files)", async () => {
+    // Regression: previously any squash error was treated as conflicts. If
+    // the failure was non-conflict (hook, IO, lock) and no U files existed,
+    // the cascade fell into "all conflicts auto-resolved" and returned true,
+    // recording merge metadata for a merge that never happened.
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+
+    let mergeCallCount = 0;
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse")) return Buffer.from("abc123");
+      if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("--stat")) return "1 file changed";
+      if (cmdStr.includes("merge --squash")) {
+        mergeCallCount++;
+        // Simulate a non-conflict failure on every squash attempt
+        // (e.g. pre-commit hook rejected, repo locked).
+        throw new Error("fatal: pre-commit hook returned non-zero status");
+      }
+      // Critical: no conflicted files surface
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) return "";
+      if (cmdStr.includes("diff --cached --quiet")) return "1";
+      if (cmdStr.includes("reset --merge")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(
+      /failed without producing conflicts/i,
+    );
+    expect(mergeCallCount).toBeGreaterThanOrEqual(1);
+  });
+
   it("attempt 1 fails, attempt 2 auto-resolves lock files: sets resolutionStrategy to 'auto-resolve'", async () => {
     const store = createMockStore(
       { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },

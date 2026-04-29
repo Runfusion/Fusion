@@ -2834,6 +2834,15 @@ export async function aiMergeTask(
         throw error; // No retries left — fatal
       }
 
+      // Non-conflict squash failure: don't retry — the underlying cause
+      // (broken hook, IO error, locked repo) won't fix itself by retrying.
+      if (error.name === "MergeNonConflictError") {
+        try {
+          execSync("git reset --merge", { cwd: rootDir, stdio: "pipe" });
+        } catch { /* best-effort */ }
+        throw error;
+      }
+
       // Clean up on error before potentially rethrowing or retrying
       if (attemptNum < 3 && smartConflictResolution) {
         mergerLog.log(`${taskId}: attempt ${attemptNum} error, cleaning up for retry...`);
@@ -3281,7 +3290,7 @@ async function executeMergeAttempt(
       // First, do a standard merge to get conflicts
       // Note: git merge --squash exits with code 1 when conflicts exist
       // This is expected - we catch it and proceed with auto-resolution
-      let mergeExitedWithConflicts = false;
+      let mergeError: unknown;
       try {
         await execAsync(`git merge --squash "${branch}"`, {
           cwd: rootDir,
@@ -3289,12 +3298,30 @@ async function executeMergeAttempt(
         throwIfAborted(options.signal, taskId);
       } catch (error: unknown) {
         rethrowIfMergeAborted(error);
-        // Merge exits with code 1 when conflicts exist - this is expected
-        mergeExitedWithConflicts = true;
+        // Capture the error so we can distinguish "exit code 1 with conflicts"
+        // (expected, recoverable) from "any other failure" (hooks, IO, locks).
+        mergeError = error;
       }
 
       // Use new API: get conflicted files and classify them
       const conflictedFiles = await getConflictedFiles(rootDir);
+
+      // Don't paper over non-conflict failures: if the merge errored AND no
+      // U files exist, the failure was something other than a merge conflict
+      // (pre-commit hook, disk error, repo lock, etc.). Returning success
+      // here would store merge metadata for a merge that never happened.
+      // The outer mergeAttempt catch propagates this sentinel name without
+      // retrying (retrying would just re-run the same broken command).
+      if (mergeError && conflictedFiles.length === 0) {
+        const cause = mergeError instanceof Error ? mergeError.message : String(mergeError);
+        const fatal = new Error(
+          `${taskId}: git merge --squash failed without producing conflicts ` +
+          `(${cause}) — refusing to treat as a no-op merge.`,
+        );
+        fatal.name = "MergeNonConflictError";
+        throw fatal;
+      }
+      const mergeExitedWithConflicts = mergeError !== undefined;
       if (conflictedFiles.length > 0 || mergeExitedWithConflicts) {
         // Classify each conflicted file
         const classified: { file: string; type: ConflictType }[] = [];
