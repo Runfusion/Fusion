@@ -867,6 +867,35 @@ describe("aiMergeTask — empty squash merge (branch already merged via dep)", (
     expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
   });
 
+  it("does not record commitSha when squash is empty (would be pre-merge HEAD)", async () => {
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr === "git rev-parse HEAD" || cmdStr.startsWith("git rev-parse HEAD ")) return "premergehead999";
+      if (cmdStr.includes("git log")) return "- feat: something" as any;
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("git diff") && cmdStr.includes("--stat")) return "1 file changed" as any;
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --cached --quiet")) return "0" as any;
+      if (cmdStr.includes("show --shortstat")) return " 5 files changed, 12 insertions(+), 3 deletions(-)\n" as any;
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    const store = createMockStore();
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(result.merged).toBe(true);
+
+    // mergeDetails should be stored without commitSha (which would be the
+    // pre-merge HEAD, unrelated to this task).
+    const updateCalls = (store.updateTask as ReturnType<typeof vi.fn>).mock.calls;
+    const mergeDetailsCall = updateCalls.find((call: any[]) => call[1]?.mergeDetails !== undefined);
+    expect(mergeDetailsCall).toBeDefined();
+    expect(mergeDetailsCall![1].mergeDetails.commitSha).toBeUndefined();
+  });
+
   it("still cleans up branch and worktree when squash is empty", async () => {
     mockedExecSync.mockImplementation((cmd: any) => {
       const cmdStr = String(cmd);

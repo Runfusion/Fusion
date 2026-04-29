@@ -133,8 +133,20 @@ async function execWithProcessGroup(
 }
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { getTaskMergeBlocker, normalizeMergeConflictStrategy, type TaskStore, type MergeResult, type MergeDetails, type WorkflowStep, type WorkflowStepResult, type Settings, type AgentPromptsConfig, type CanonicalMergeConflictStrategy } from "@fusion/core";
-import { resolveAgentPrompt } from "@fusion/core";
+import {
+  getTaskMergeBlocker,
+  normalizeMergeConflictStrategy,
+  resolveProjectDefaultModel,
+  resolveAgentPrompt,
+  type TaskStore,
+  type MergeResult,
+  type MergeDetails,
+  type WorkflowStep,
+  type WorkflowStepResult,
+  type Settings,
+  type AgentPromptsConfig,
+  type CanonicalMergeConflictStrategy,
+} from "@fusion/core";
 import { describeModel, promptWithFallback } from "./pi.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
 import { createResolvedAgentSession, extractRuntimeHint } from "./agent-session-helpers.js";
@@ -2182,6 +2194,14 @@ export async function aiMergeTask(
     await tryFastForwardFromOrigin(rootDir, taskId);
   }
 
+  // Tracks the "empty squash" success path — when `git merge --squash`
+  // staged nothing, mergeAttempt returns true without making a new commit.
+  // HEAD then points at pre-merge main, which has nothing to do with this
+  // task. We avoid recording that sha as commitSha (which would mislead
+  // every consumer of mergeDetails). Set by the squashIsEmpty / staged===0
+  // sites in mergeAttempt + attemptWithSideStrategy.
+  let mergeWasEmpty = false;
+
   // 3. Check branch exists
   try {
     execSync(`git rev-parse --verify "${branch}"`, {
@@ -2854,6 +2874,11 @@ export async function aiMergeTask(
     merged = await mergeAttempt(3);
   }
 
+  // Bubble the empty-merge flag up to the metadata block.
+  if (aiTracker.mergeWasEmpty) {
+    mergeWasEmpty = true;
+  }
+
   // If all attempts failed
   if (!merged) {
     // Final cleanup
@@ -2896,7 +2921,7 @@ export async function aiMergeTask(
       deletions = deletionsMatch ? Number.parseInt(deletionsMatch[1], 10) : 0;
     } catch { /* non-fatal */ }
 
-    // Guard: if the squash collapsed to an empty commit, recording its SHA
+    // Guard 1: if the squash collapsed to an empty commit, recording its SHA
     // misleads every consumer (TaskChangesTab shows "no changes" even though
     // modifiedFiles is non-empty). Real cause: the branch contained commits
     // already on main (duplicate cherry-picks), and conflict resolution
@@ -2906,10 +2931,17 @@ export async function aiMergeTask(
     // then, store mergeDetails without commitSha so the UI falls back to
     // task.modifiedFiles instead of a broken diff.
     const isEmptyCommit = filesChanged === 0;
-    const recordedSha = isEmptyCommit ? undefined : commitSha;
+    // Guard 2: the empty-squash success paths in mergeAttempt /
+    // attemptWithSideStrategy return true without committing when nothing
+    // was staged. The recorded HEAD then has nothing to do with this task.
+    const recordedSha = (isEmptyCommit || mergeWasEmpty) ? undefined : commitSha;
     if (isEmptyCommit) {
       mergerLog.warn(
         `${taskId}: local squash produced an empty commit (${commitSha?.slice(0, 8)}) — branch likely contained dupes of main. Skipping commitSha; recovery will backfill when real commit lands.`,
+      );
+    } else if (mergeWasEmpty) {
+      mergerLog.warn(
+        `${taskId}: merge succeeded without committing (branch already on main). Skipping commitSha; nothing new landed locally.`,
       );
     }
 
@@ -3045,6 +3077,30 @@ export async function aiMergeTask(
       });
       if (pushResult.pushed) {
         mergerLog.log(`${taskId}: pushed merged result to remote`);
+        // Push may trigger an internal pull --rebase that rewrites HEAD (see
+        // pushToRemoteAfterMerge); refresh the recorded commitSha so
+        // mergeDetails / recovery don't reference a now-orphaned commit.
+        try {
+          const postPushSha = execSync("git rev-parse HEAD", {
+            cwd: rootDir,
+            stdio: "pipe",
+            encoding: "utf-8",
+          }).trim() || undefined;
+          if (postPushSha) {
+            const existingTask = await store.getTask(taskId).catch(() => null);
+            const existingDetails = existingTask?.mergeDetails;
+            if (existingDetails?.commitSha && existingDetails.commitSha !== postPushSha) {
+              await store.updateTask(taskId, {
+                mergeDetails: { ...existingDetails, commitSha: postPushSha },
+              });
+              mergerLog.log(
+                `${taskId}: post-push HEAD changed from ${existingDetails.commitSha.slice(0, 8)} to ${postPushSha.slice(0, 8)} — refreshed mergeDetails.commitSha`,
+              );
+            }
+          }
+        } catch (refreshErr: any) {
+          mergerLog.warn(`${taskId}: failed to refresh mergeDetails after push: ${refreshErr.message}`);
+        }
       } else {
         mergerLog.warn(`${taskId}: push to remote failed: ${pushResult.error}`);
       }
@@ -3207,9 +3263,13 @@ interface MergeAttemptParams {
   buildSource?: "explicit" | "inferred";
 }
 
-/** Mutable flag to track AI agent invocation */
+/** Mutable flags carried through the merge cascade. */
 interface AiInvocationTracker {
   aiWasInvoked: boolean;
+  /** True when a "success" was the empty-squash path (no commit made). The
+   *  merge metadata block uses this to avoid recording pre-merge HEAD as
+   *  this task's commitSha. */
+  mergeWasEmpty?: boolean;
 }
 
 /**
@@ -3245,9 +3305,9 @@ async function executeMergeAttempt(
   // before reaching here — only the two smart variants legitimately run attempt 3.
   if (attemptNum === 3) {
     if (params.mergeConflictStrategy === "smart-prefer-main") {
-      return attemptWithSideStrategy(params, "ours");
+      return attemptWithSideStrategy(params, "ours", aiTracker);
     }
-    return attemptWithSideStrategy(params, "theirs");
+    return attemptWithSideStrategy(params, "theirs", aiTracker);
   }
 
   // Attempt 1 & 2: Standard squash merge
@@ -3346,6 +3406,10 @@ async function executeMergeAttempt(
               { cwd: rootDir },
             );
             mergerLog.log(`${taskId}: committed after auto-resolving all conflicts`);
+          } else {
+            // Auto-resolution left nothing to commit — branch's changes were
+            // either fully duplicated on main or all-resolved-to-ours.
+            aiTracker.mergeWasEmpty = true;
           }
           // Run deterministic verification before completing the merge
           if (testCommand || buildCommand) {
@@ -3375,6 +3439,7 @@ async function executeMergeAttempt(
 
         if (squashIsEmpty) {
           mergerLog.log(`${taskId}: squash merge staged nothing — already merged`);
+          aiTracker.mergeWasEmpty = true;
           // Run deterministic verification (nothing staged but still verify)
           if (testCommand || buildCommand) {
             throwIfAborted(options.signal, taskId);
@@ -3408,6 +3473,7 @@ async function executeMergeAttempt(
 
       if (squashIsEmpty) {
         mergerLog.log(`${taskId}: squash merge staged nothing — already merged`);
+        aiTracker.mergeWasEmpty = true;
         // Run deterministic verification (nothing staged but still verify)
         if (testCommand || buildCommand) {
           throwIfAborted(options.signal, taskId);
@@ -3546,6 +3612,7 @@ async function executeMergeAttempt(
 async function attemptWithSideStrategy(
   params: MergeAttemptParams,
   side: "theirs" | "ours" = "theirs",
+  aiTracker?: AiInvocationTracker,
 ): Promise<boolean> {
   const { rootDir, branch, commitLog, includeTaskId, taskId, store, settings, testCommand, buildCommand, testSource, buildSource } = params;
 
@@ -3575,7 +3642,9 @@ async function attemptWithSideStrategy(
     }).trim();
 
     if (staged === "0") {
-      // Nothing staged - already merged
+      // Nothing staged - already merged. Mark empty so the metadata block
+      // doesn't record pre-merge HEAD as this task's commitSha.
+      if (aiTracker) aiTracker.mergeWasEmpty = true;
       // Run deterministic verification even when nothing is staged
       if (testCommand || buildCommand) {
         throwIfAborted(params.options.signal, taskId);
@@ -4224,8 +4293,9 @@ If issues are found that need attention, describe them clearly.`;
   });
 
   try {
-    const stepProvider = workflowStep.modelProvider || settings.defaultProvider;
-    const stepModelId = workflowStep.modelId || settings.defaultModelId;
+    const defaultModel = resolveProjectDefaultModel(settings);
+    const stepProvider = workflowStep.modelProvider || defaultModel.provider;
+    const stepModelId = workflowStep.modelId || defaultModel.modelId;
     const useOverride = !!(workflowStep.modelProvider && workflowStep.modelId);
 
     // Post-merge step agents inherit merger instructions
