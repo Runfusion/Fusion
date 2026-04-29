@@ -251,6 +251,64 @@
   color: var(--text-muted);
 }
 
+.detail-source-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.detail-source-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.detail-source-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.detail-source-number {
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.detail-source-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  padding: var(--space-xs);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.detail-source-toggle:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.detail-source-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.detail-source-chevron--expanded {
+  transform: rotate(90deg);
+}
+
+.detail-source-section .detail-source-grid {
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+}
+
 /* Agent Log tab: stretch to fill the remaining modal body height
    so the log viewer uses all available space above the action bar. */
 .detail-section--agent-log {
@@ -1542,6 +1600,14 @@
   .detail-source-grid,
   .detail-source-edit-grid {
     grid-template-columns: 1fr;
+  }
+
+  .detail-source-header {
+    align-items: flex-start;
+  }
+
+  .detail-source-summary {
+    flex-wrap: wrap;
   }
 
   .detail-body {

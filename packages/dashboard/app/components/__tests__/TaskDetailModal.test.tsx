@@ -48,7 +48,7 @@ vi.mock("lucide-react", () => ({
   MessageSquare: () => null,
   ChevronUp: () => null,
   ChevronDown: () => null,
-  ChevronRight: () => null,
+  ChevronRight: (props: any) => <svg data-testid="chevron-right-icon" {...props} />,
   X: () => null,
   Maximize2: () => null,
   Minimize2: () => null,
@@ -4193,7 +4193,8 @@ describe("TaskDetailModal", () => {
       vi.clearAllMocks();
     });
 
-    it("renders source issue fields and link in read mode", () => {
+    it("renders source issue collapsed by default and expands details on toggle", async () => {
+      const user = userEvent.setup();
       render(
         <TaskDetailModal
           task={makeTask({
@@ -4214,13 +4215,28 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByText("Source Issue")).toBeTruthy();
+      expect(screen.getByText("Source issue")).toBeTruthy();
+      expect(screen.getByRole("link", { name: "(#2473)" })).toHaveAttribute(
+        "href",
+        "https://github.com/runfusion/fusion/issues/2473",
+      );
+      expect(screen.queryByText("Provider")).toBeNull();
+
+      const toggle = screen.getByRole("button", { name: "Expand source issue details" });
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      const chevron = screen.getByTestId("chevron-right-icon");
+      expect(chevron.classList.contains("detail-source-chevron--expanded")).toBe(false);
+
+      await user.click(toggle);
+
+      expect(screen.getByRole("button", { name: "Collapse source issue details" })).toHaveAttribute("aria-expanded", "true");
+      expect(screen.getByText("Provider")).toBeTruthy();
       expect(screen.getByText("github")).toBeTruthy();
       expect(screen.getByText("runfusion/fusion")).toBeTruthy();
-      expect(screen.getByText("I_kgDOExample")).toBeTruthy();
       const sourceLink = screen.getByRole("link", { name: "https://github.com/runfusion/fusion/issues/2473" });
       expect(sourceLink).toHaveAttribute("href", "https://github.com/runfusion/fusion/issues/2473");
       expect(sourceLink).toHaveAttribute("target", "_blank");
+      expect(screen.getByTestId("chevron-right-icon").classList.contains("detail-source-chevron--expanded")).toBe(true);
     });
 
     it("hides source issue read section when sourceIssue metadata is missing", () => {
@@ -4236,7 +4252,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.queryByText("Source Issue")).toBeNull();
+      expect(screen.queryByText("Source issue")).toBeNull();
       expect(screen.queryByText("No source issue metadata recorded.")).toBeNull();
     });
 

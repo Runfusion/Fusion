@@ -438,7 +438,7 @@ describe("Settings view", () => {
     await waitForFrameContains(lastFrame, "Remote");
     expect(lastFrame() ?? "").toContain("cloudflare");
 
-    stdin.write("\t");
+    stdin.write("\u001B[C");
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("C");
     await new Promise((r) => setTimeout(r, 20));
@@ -470,9 +470,9 @@ describe("Settings view", () => {
 
     const { lastFrame, stdin, unmount } = render(renderDashboardAppNode(controller));
     await waitForFrameContains(lastFrame, "──── Remote ────");
-    stdin.write("\t");
-    await new Promise((r) => setTimeout(r, 20));
 
+    stdin.write("\u001B[C");
+    await new Promise((r) => setTimeout(r, 20));
     stdin.write("L");
     await waitForFrameContains(lastFrame, "TTL ms:");
     stdin.write("\r");
@@ -508,9 +508,8 @@ describe("Settings view", () => {
     controller.setInteractiveView("settings");
 
     const { lastFrame, stdin, unmount } = render(renderDashboardAppNode(controller));
-    stdin.write("\t");
+    stdin.write("\u001B[C");
     await new Promise((r) => setTimeout(r, 20));
-
     stdin.write("P");
     await waitForFrameContains(lastFrame, "Persistent token: tok_****");
     expect(regeneratePersistentToken).toHaveBeenCalledTimes(1);
@@ -531,9 +530,9 @@ describe("Settings view", () => {
 
     const { lastFrame, stdin, unmount } = render(renderDashboardAppNode(controller));
     await waitForFrameContains(lastFrame, "──── Remote ────");
-    stdin.write("\t");
-    await new Promise((r) => setTimeout(r, 20));
 
+    stdin.write("\u001B[C");
+    await new Promise((r) => setTimeout(r, 20));
     stdin.write("L");
     await waitForFrameContains(lastFrame, "TTL ms:");
     stdin.write("a");
@@ -559,7 +558,7 @@ describe("Settings view", () => {
     controller.setInteractiveView("settings");
 
     const { lastFrame, stdin, unmount } = render(renderDashboardAppNode(controller));
-    stdin.write("\t");
+    stdin.write("\u001B[C");
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("K");
     await waitForFrameContains(lastFrame, "QR SVG returned by server.");

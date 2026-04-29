@@ -1,6 +1,6 @@
 import "./TaskDetailModal.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pencil, Bot, X, ChevronDown } from "lucide-react";
+import { Pencil, Bot, X, ChevronDown, ChevronRight } from "lucide-react";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import ReactMarkdown from "react-markdown";
@@ -359,6 +359,7 @@ export function TaskDetailModal({
   // Split-menu dropdown state for footer actions
   const [showMoveMenu, setShowMoveMenu] = useState(false);
   const [showActionsMenu, setShowActionsMenu] = useState(false);
+  const [sourceIssueExpanded, setSourceIssueExpanded] = useState(false);
   const moveMenuRef = useRef<HTMLDivElement>(null);
   const moveButtonRef = useRef<HTMLButtonElement>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
@@ -395,6 +396,7 @@ export function TaskDetailModal({
     setEditSourceIssueExternalId(task.sourceIssue?.externalIssueId ?? "");
     setEditSourceIssueUrl(task.sourceIssue?.url ?? "");
     setEditExecutionMode(normalizeExecutionModeValue(task.executionMode));
+    setSourceIssueExpanded(false);
     setIsEditing(false);
   }, [task.id, task.title, task.description, task.sourceIssue, task.executionMode]);
 
@@ -1695,38 +1697,68 @@ export function TaskDetailModal({
           <MergeDetails task={task} />
           {task.sourceIssue && (
             <div className="detail-section detail-source-section">
-              <h4>Source Issue</h4>
-              <dl className="detail-source-grid">
-                <div>
-                  <dt>Provider</dt>
-                  <dd>{task.sourceIssue.provider}</dd>
+              <div className="detail-source-header">
+                <div className="detail-source-summary">
+                  <span className="detail-source-label">Source issue</span>
+                  {task.sourceIssue.url ? (
+                    <a
+                      className="detail-source-link detail-source-number"
+                      href={task.sourceIssue.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {`(#${task.sourceIssue.issueNumber})`}
+                    </a>
+                  ) : (
+                    <span className="detail-source-number">{`(#${task.sourceIssue.issueNumber})`}</span>
+                  )}
                 </div>
-                <div>
-                  <dt>Repository</dt>
-                  <dd>{task.sourceIssue.repository}</dd>
-                </div>
-                <div>
-                  <dt>Issue Identifier</dt>
-                  <dd>{task.sourceIssue.externalIssueId}</dd>
-                </div>
-                <div>
-                  <dt>URL</dt>
-                  <dd>
-                    {task.sourceIssue.url ? (
-                      <a
-                        className="detail-source-link"
-                        href={task.sourceIssue.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        {task.sourceIssue.url}
-                      </a>
-                    ) : (
-                      <span className="detail-source-empty">(none)</span>
-                    )}
-                  </dd>
-                </div>
-              </dl>
+                <button
+                  type="button"
+                  className="detail-source-toggle"
+                  aria-expanded={sourceIssueExpanded}
+                  aria-label={sourceIssueExpanded ? "Collapse source issue details" : "Expand source issue details"}
+                  onClick={() => setSourceIssueExpanded((expanded) => !expanded)}
+                >
+                  <ChevronRight
+                    size={16}
+                    className={sourceIssueExpanded ? "detail-source-chevron--expanded" : undefined}
+                  />
+                </button>
+              </div>
+              {sourceIssueExpanded && (
+                <dl className="detail-source-grid">
+                  <div>
+                    <dt>Provider</dt>
+                    <dd>{task.sourceIssue.provider}</dd>
+                  </div>
+                  <div>
+                    <dt>Repository</dt>
+                    <dd>{task.sourceIssue.repository}</dd>
+                  </div>
+                  <div>
+                    <dt>Issue Identifier</dt>
+                    <dd>{task.sourceIssue.externalIssueId}</dd>
+                  </div>
+                  <div>
+                    <dt>URL</dt>
+                    <dd>
+                      {task.sourceIssue.url ? (
+                        <a
+                          className="detail-source-link"
+                          href={task.sourceIssue.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {task.sourceIssue.url}
+                        </a>
+                      ) : (
+                        <span className="detail-source-empty">(none)</span>
+                      )}
+                    </dd>
+                  </div>
+                </dl>
+              )}
             </div>
           )}
           <div className="detail-section detail-agent-section">
