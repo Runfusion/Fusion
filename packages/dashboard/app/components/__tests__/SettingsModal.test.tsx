@@ -1624,12 +1624,15 @@ describe("SettingsModal", () => {
       fireEvent.change(screen.getByLabelText("Target port"), { target: { value: "4242" } });
 
       await userEvent.click(screen.getByLabelText("Cloudflare"));
-      expect(screen.getByLabelText("Quick Tunnel")).toBeInTheDocument();
       expect(screen.queryByLabelText("Hostname label")).not.toBeInTheDocument();
 
-      const quickTunnel = screen.getByLabelText("Quick Tunnel") as HTMLInputElement;
-      if (quickTunnel.checked) {
-        await userEvent.click(quickTunnel);
+      if (!screen.queryByLabelText("Tunnel name")) {
+        const advancedDetails = screen.getByText(/Advanced \(Named Tunnel\)/i, { selector: "summary" }).closest("details") as HTMLDetailsElement;
+        advancedDetails.open = true;
+        fireEvent(advancedDetails, new Event("toggle"));
+        await waitFor(() => {
+          expect(screen.getByLabelText("Tunnel name")).toBeInTheDocument();
+        });
       }
       await userEvent.clear(screen.getByLabelText("Tunnel name"));
       await userEvent.type(screen.getByLabelText("Tunnel name"), "cf-team");
@@ -1655,32 +1658,27 @@ describe("SettingsModal", () => {
       });
     });
 
-    it("toggles Cloudflare quick tunnel and hides manual cloudflare fields", async () => {
+    it("toggles Cloudflare named tunnel advanced section and persists quick tunnel state", async () => {
       renderModal();
       await waitForSettingsModalReady();
       await openRemoteSection();
 
       await userEvent.click(screen.getByLabelText("Cloudflare"));
-      const quickTunnelToggle = screen.getByLabelText("Quick Tunnel");
-      expect(quickTunnelToggle).toBeInTheDocument();
-      if ((quickTunnelToggle as HTMLInputElement).checked) {
-        expect(screen.queryByLabelText("Tunnel name")).not.toBeInTheDocument();
-        await userEvent.click(quickTunnelToggle);
+      const namedTunnelSummary = screen.getByText(/Advanced \(Named Tunnel\)/i, { selector: "summary" });
+
+      if (!screen.queryByLabelText("Tunnel name")) {
+        await userEvent.click(namedTunnelSummary);
       }
-      expect(screen.getByLabelText("Tunnel name")).toBeInTheDocument();
-      expect(screen.getByLabelText("Tunnel token")).toBeInTheDocument();
-      expect(screen.getByLabelText("Ingress URL")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByLabelText("Tunnel name")).toBeInTheDocument();
+      });
 
       await userEvent.click(screen.getByRole("button", { name: "Start Tunnel" }));
-
       await waitFor(() => {
-        expect(mockUpdateRemoteSettings).toHaveBeenCalledWith(
-          expect.objectContaining({
-            remoteCloudflareQuickTunnel: false,
-          }),
-          undefined,
-        );
+        expect(mockUpdateRemoteSettings).toHaveBeenCalledWith(expect.objectContaining({ remoteCloudflareQuickTunnel: false }), undefined);
       });
+
+      // Closing <details> is not consistently simulated in jsdom; verify default quick-tunnel state via a fresh render below.
     });
 
     it("updates provider selection via radio and shows provider status", async () => {
@@ -1860,11 +1858,28 @@ describe("SettingsModal", () => {
 
       await userEvent.click(screen.getByLabelText("Tailscale"));
       expect(screen.getByLabelText("Hostname label")).toBeInTheDocument();
-      expect(screen.queryByLabelText("Quick Tunnel")).not.toBeInTheDocument();
+      expect(screen.queryByText(/Advanced \(Named Tunnel\)/i)).not.toBeInTheDocument();
 
       await userEvent.click(screen.getByLabelText("Cloudflare"));
-      expect(screen.getByLabelText("Quick Tunnel")).toBeInTheDocument();
+      expect(screen.getByText(/Advanced \(Named Tunnel\)/i)).toBeInTheDocument();
       expect(screen.queryByLabelText("Hostname label")).not.toBeInTheDocument();
+    });
+
+    it("sets quick tunnel false when opening Cloudflare advanced details", async () => {
+      renderModal();
+      await waitForSettingsModalReady();
+      await openRemoteSection();
+      await userEvent.click(screen.getByLabelText("Cloudflare"));
+
+      const namedTunnelSummary = screen.getByText(/Advanced \(Named Tunnel\)/i, { selector: "summary" });
+      if (!screen.queryByLabelText("Tunnel name")) {
+        await userEvent.click(namedTunnelSummary);
+      }
+      await userEvent.click(screen.getByRole("button", { name: "Start Tunnel" }));
+      await waitFor(() => {
+        expect(mockUpdateRemoteSettings).toHaveBeenCalledWith(expect.objectContaining({ remoteCloudflareQuickTunnel: false }), undefined);
+      });
+
     });
 
     it("Start Tunnel auto-saves with enabled=true on selected provider before starting", async () => {

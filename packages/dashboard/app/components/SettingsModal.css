@@ -646,6 +646,37 @@
   content: "▾";
 }
 
+.remote-cf-advanced-details {
+  margin-top: var(--space-xs);
+}
+
+.remote-cf-advanced-details > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  list-style: none;
+}
+
+.remote-cf-advanced-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.remote-cf-advanced-details > summary::before {
+  content: "▸";
+  margin-right: var(--space-xs);
+}
+
+.remote-cf-advanced-details[open] > summary::before {
+  content: "▾";
+}
+
+.remote-cf-advanced-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
 .remote-tunnel-actions {
   margin-top: var(--space-md);
 }
