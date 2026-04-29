@@ -886,6 +886,22 @@
   gap: var(--space-sm);
 }
 
+/* Keep the compact Refresh and expand buttons visually aligned in the Changes
+   header even though one is text and the other is icon-only. */
+.task-changes-tab .changes-header-actions-secondary > .btn {
+  height: calc(var(--space-lg) + var(--space-sm) + (var(--space-xs) / 2));
+  box-sizing: border-box;
+}
+
+.task-changes-tab .changes-header-actions-secondary > .btn-icon {
+  width: calc(var(--space-lg) + var(--space-sm) + (var(--space-xs) / 2));
+  min-width: calc(var(--space-lg) + var(--space-sm) + (var(--space-xs) / 2));
+  min-height: calc(var(--space-lg) + var(--space-sm) + (var(--space-xs) / 2));
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+}
+
 .changes-nav {
   display: inline-flex;
   align-items: center;

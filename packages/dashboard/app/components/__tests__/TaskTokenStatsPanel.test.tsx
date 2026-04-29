@@ -116,4 +116,21 @@ describe("TaskTokenStatsPanel", () => {
     expect(screen.getByText("No timed events recorded yet.")).toBeInTheDocument();
     expect(screen.getByText("No completed workflow step timings yet.")).toBeInTheDocument();
   });
+
+  it("falls back to timedExecutionMs when live task updates strip timing log entries", () => {
+    render(
+      <TaskTokenStatsPanel
+        loading={false}
+        tokenUsage={undefined}
+        task={makeTask({
+          log: [],
+          timedExecutionMs: 240_000,
+          workflowStepResults: [],
+        })}
+      />,
+    );
+
+    expect(screen.getByText("Timed duration")).toBeInTheDocument();
+    expect(screen.getAllByText("4m 0s").length).toBeGreaterThan(0);
+  });
 });

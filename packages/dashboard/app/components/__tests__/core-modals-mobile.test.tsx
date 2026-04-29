@@ -58,6 +58,44 @@ describe("core modals mobile css coverage", () => {
     expect(mobileBlock).toContain("max-width: 100%;");
   });
 
+  it("ChangesDiffModal: mobile fullscreen rule clears desktop min size and fills the viewport", () => {
+    const css = loadAllAppCss();
+    const mobileBlock = getMainMobileBlock(css);
+
+    const modalRuleMatch = mobileBlock.match(/\.changes-diff-modal\s*\{[^}]*\}/s);
+    expect(modalRuleMatch).toBeTruthy();
+    const modalRule = modalRuleMatch![0];
+
+    expect(modalRule).toContain("min-width: 0");
+    expect(modalRule).toContain("min-height: 0");
+    expect(modalRule).toContain("width: 100vw");
+    expect(modalRule).toContain("max-width: 100vw");
+    expect(modalRule).toContain("height: 100dvh");
+
+    const headerRuleMatch = mobileBlock.match(/\.changes-diff-modal-header\s*\{[^}]*\}/s);
+    expect(headerRuleMatch).toBeTruthy();
+    expect(headerRuleMatch![0]).toContain("flex-wrap: wrap");
+
+    const actionsRuleMatch = mobileBlock.match(/\.changes-diff-header-actions\s*\{[^}]*\}/s);
+    expect(actionsRuleMatch).toBeTruthy();
+    expect(actionsRuleMatch![0]).toContain("flex: 1 1 100%");
+  });
+
+  it("AgentDetailView: mobile fullscreen rule clears desktop min size and fills the viewport", () => {
+    const css = loadAllAppCss();
+    const mobileBlock = getMainMobileBlock(css);
+
+    const modalRuleMatch = mobileBlock.match(/\.agent-detail-modal\s*\{[^}]*\}/s);
+    expect(modalRuleMatch).toBeTruthy();
+    const modalRule = modalRuleMatch![0];
+
+    expect(modalRule).toContain("min-width: 0");
+    expect(modalRule).toContain("min-height: 0");
+    expect(modalRule).toContain("width: 100vw");
+    expect(modalRule).toContain("max-width: 100vw");
+    expect(modalRule).toContain("height: 100dvh");
+  });
+
   it("NewTaskModal: modal body unsets desktop max-height for mobile", () => {
     const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);

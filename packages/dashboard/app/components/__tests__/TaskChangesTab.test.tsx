@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { loadAllAppCss } from "../../test/cssFixture";
 import { TaskChangesTab } from "../TaskChangesTab";
 import type { MergeDetails, Column } from "@fusion/core";
 
@@ -968,5 +969,30 @@ describe("TaskChangesTab — compact spacing class", () => {
     for (const content of Array.from(fileContents)) {
       expect(content.getAttribute("style")).toBeNull();
     }
+  });
+});
+
+describe("TaskChangesTab — action button sizing", () => {
+  it("keeps Refresh and expand buttons on the same compact height", () => {
+    const css = loadAllAppCss();
+
+    const sharedButtonRuleMatch = css.match(
+      /\.task-changes-tab\s+\.changes-header-actions-secondary\s*>\s*\.btn\s*\{([^}]*)\}/s,
+    );
+    expect(sharedButtonRuleMatch).toBeTruthy();
+    const sharedButtonRule = sharedButtonRuleMatch![1];
+    const heightMatch = sharedButtonRule.match(/height:\s*([^;]+);/);
+    expect(heightMatch).toBeTruthy();
+    const expectedHeight = heightMatch![1].trim();
+
+    const iconButtonRuleMatch = css.match(
+      /\.task-changes-tab\s+\.changes-header-actions-secondary\s*>\s*\.btn-icon\s*\{([^}]*)\}/s,
+    );
+    expect(iconButtonRuleMatch).toBeTruthy();
+    const iconButtonRule = iconButtonRuleMatch![1];
+
+    expect(iconButtonRule).toContain(`width: ${expectedHeight};`);
+    expect(iconButtonRule).toContain(`min-width: ${expectedHeight};`);
+    expect(iconButtonRule).toContain(`min-height: ${expectedHeight};`);
   });
 });

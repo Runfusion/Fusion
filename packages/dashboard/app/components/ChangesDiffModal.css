@@ -176,15 +176,31 @@
 
 @media (max-width: 768px) {
   .changes-diff-modal {
+    /* Reset the desktop min-width: 720px / min-height: 420px — they pin the
+       modal wider/taller than narrow phone viewports and can push the sheet
+       off-screen. The fullscreen width/height below then take effect normally.
+       !important is required because persisted desktop sizes can be restored
+       as inline width/height styles and would otherwise win on mobile. */
+    min-width: 0 !important;
+    min-height: 0 !important;
+    width: 100% !important;
     width: 100vw !important;
     height: 100vh !important;
     height: 100dvh !important;
-    max-width: 100%;
+    max-width: 100vw !important;
     max-height: 100vh;
-    max-height: 100dvh;
+    max-height: 100dvh !important;
+    margin: 0;
     border-radius: 0;
+    border: none;
     /* Disable user resize on mobile — fullscreen layout. */
     resize: none;
+  }
+
+  .changes-diff-modal-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    overflow: hidden;
   }
 
   .changes-diff-header-title {
@@ -193,6 +209,8 @@
   }
 
   .changes-diff-header-actions {
+    flex: 1 1 100%;
+    justify-content: flex-end;
     flex-wrap: wrap;
     gap: var(--space-xs);
   }

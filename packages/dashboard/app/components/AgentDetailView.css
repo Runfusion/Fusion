@@ -989,12 +989,18 @@
   }
 
   .agent-detail-modal {
+    /* Reset the desktop min-width: 480px / min-height: 320px — otherwise the
+       fullscreen mobile sheet can still overflow narrow viewports. The
+       !important width/height overrides also beat any persisted desktop size. */
+    min-width: 0 !important;
+    min-height: 0 !important;
     width: 100vw !important;
     height: 100vh !important;
     height: 100dvh !important;
-    max-width: 100%;
+    max-width: 100vw !important;
     max-height: 100vh;
     max-height: 100dvh;
+    margin: 0;
     border-radius: 0;
     border: none;
     /* Disable user resize on mobile — modal is fullscreen. The !important on
@@ -1370,4 +1376,3 @@
     justify-content: center;
   }
 }
-

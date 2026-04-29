@@ -355,6 +355,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previousTask.description === nextTask.description &&
     previousTask.column === nextTask.column &&
     previousTask.columnMovedAt === nextTask.columnMovedAt &&
+    previousTask.timedExecutionMs === nextTask.timedExecutionMs &&
     previousTask.updatedAt === nextTask.updatedAt &&
     previousTask.createdAt === nextTask.createdAt &&
     previousTask.status === nextTask.status &&
@@ -752,7 +753,7 @@ function TaskCardComponent({
       title: `Execution time ${elapsedLabel}. Completed ${completedAt}`,
       ariaLabel: `Execution time ${elapsedLabel}. Completed ${completedAt}`,
     };
-  }, [task.column, task.columnMovedAt, task.updatedAt, task.workflowStepResults, task.log, timeIndicatorNowMs]);
+  }, [task.column, task.columnMovedAt, task.timedExecutionMs, task.updatedAt, task.workflowStepResults, task.log, timeIndicatorNowMs]);
 
   useEffect(() => {
     if (!hasGitHubBadge || !isInViewport) {

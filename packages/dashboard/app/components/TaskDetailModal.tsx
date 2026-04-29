@@ -1214,8 +1214,16 @@ export function TaskDetailModal({
       exitSpecEditMode();
       return;
     }
-    await handleSaveSpec(specEditContent);
+
+    // Exit edit mode immediately so the UI transitions back to preview as soon
+    // as save is initiated. If save fails, restore edit mode for retry.
     setIsEditingSpec(false);
+    try {
+      await handleSaveSpec(specEditContent);
+    } catch (err) {
+      setIsEditingSpec(true);
+      throw err;
+    }
   }, [specEditContent, workingTask.prompt, handleSaveSpec, exitSpecEditMode]);
 
   const handleRequestRevisionFromEdit = useCallback(async () => {

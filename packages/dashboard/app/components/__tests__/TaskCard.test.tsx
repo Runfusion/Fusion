@@ -564,6 +564,37 @@ describe("TaskCard", () => {
     expect(timer?.getAttribute("title")).toContain("Execution time 12m");
   });
 
+  it("updates the in-progress timer when timedExecutionMs changes", () => {
+    const updatedAt = "2026-04-25T12:00:00.000Z";
+    const { container, rerender } = render(
+      <TaskCard
+        task={makeTask({
+          column: "in-progress",
+          timedExecutionMs: 60_000,
+          updatedAt,
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card-time-indicator")?.textContent).toContain("1m");
+
+    rerender(
+      <TaskCard
+        task={makeTask({
+          column: "in-progress",
+          timedExecutionMs: 120_000,
+          updatedAt,
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card-time-indicator")?.textContent).toContain("2m");
+  });
+
   it("shows timer chip for done cards summing workflow runtime + timed events", () => {
     const { container } = render(
       <TaskCard

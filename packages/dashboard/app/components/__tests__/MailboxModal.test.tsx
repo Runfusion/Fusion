@@ -166,11 +166,9 @@ describe("MailboxModal", () => {
   it("shows inbox messages after loading", async () => {
     render(<MailboxModal {...defaultProps} />);
     await waitFor(() => {
-      expect(screen.getByTestId("mailbox-inbox-list")).toBeDefined();
+      expect(screen.getByTestId("mailbox-item-msg-001")).toBeDefined();
+      expect(screen.getByTestId("mailbox-item-msg-002")).toBeDefined();
     });
-    // Should show both messages
-    expect(screen.getByTestId("mailbox-item-msg-001")).toBeDefined();
-    expect(screen.getByTestId("mailbox-item-msg-002")).toBeDefined();
   });
 
   it("shows unread dot for unread messages", async () => {

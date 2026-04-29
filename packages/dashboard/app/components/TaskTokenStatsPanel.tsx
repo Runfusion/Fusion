@@ -8,6 +8,7 @@ interface TaskTokenStatsPanelProps {
   task?: Pick<
     Task,
     | "log"
+    | "timedExecutionMs"
     | "workflowStepResults"
     | "executionMode"
     | "status"
@@ -106,7 +107,8 @@ function summarizeWorkflowTiming(results: WorkflowStepResult[]): WorkflowTimingS
 export function TaskTokenStatsPanel({ tokenUsage, loading, task }: TaskTokenStatsPanelProps) {
   const timingEvents = extractTimingEvents(task?.log ?? []);
   const timedTimingEvents = timingEvents.filter((event) => typeof event.durationMs === "number");
-  const totalTimingDurationMs = timedTimingEvents.reduce((sum, event) => sum + (event.durationMs ?? 0), 0);
+  const logTimingDurationMs = timedTimingEvents.reduce((sum, event) => sum + (event.durationMs ?? 0), 0);
+  const totalTimingDurationMs = Math.max(logTimingDurationMs, task?.timedExecutionMs ?? 0);
   const longestTimingEvent = timedTimingEvents.reduce<TimingEvent | undefined>((longest, event) => {
     if (!longest || (event.durationMs ?? 0) > (longest.durationMs ?? 0)) {
       return event;

@@ -92,6 +92,25 @@ export function AppModals({
   onReopenOnboarding,
 }: AppModalsProps) {
   const [firstCreatedTask, setFirstCreatedTask] = useState<Task | null>(null);
+  const detailTask = modalManager.detailTask
+    ? (() => {
+        const liveTask = tasks.find((task) => task.id === modalManager.detailTask?.id);
+        if (!liveTask) {
+          return modalManager.detailTask;
+        }
+
+        if ("prompt" in modalManager.detailTask) {
+          return {
+            ...modalManager.detailTask,
+            ...liveTask,
+            prompt: modalManager.detailTask.prompt,
+            log: modalManager.detailTask.log,
+          };
+        }
+
+        return liveTask;
+      })()
+    : null;
 
   // Use the override handler if provided, otherwise fall back to modalManager.closeSettings
   const handleSettingsClose = onSettingsClose ?? modalManager.closeSettings;
@@ -133,10 +152,10 @@ export function AppModals({
 
   return (
     <>
-      {modalManager.detailTask && (
+      {detailTask && (
         <ModalErrorBoundary>
           <TaskDetailModal
-            task={modalManager.detailTask}
+            task={detailTask}
             projectId={projectId}
             tasks={tasks}
             onClose={deepLink.handleDetailClose}

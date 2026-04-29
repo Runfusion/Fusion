@@ -1323,8 +1323,11 @@ describe("QuickChatFAB", () => {
       expect(screen.getByTestId("quick-chat-model-select")).toBeDefined();
     });
 
-    // Open the model dropdown
+    // Open the model dropdown after model loading completes
     const trigger = screen.getByRole("button", { name: "Select model override" });
+    await waitFor(() => {
+      expect(trigger).not.toBeDisabled();
+    });
     fireEvent.click(trigger);
 
     // The portaled dropdown should show

@@ -5,8 +5,12 @@ import type { ModalManager } from "../../hooks/useModalManager";
 import type { Toast } from "../../hooks/useToast";
 
 // Mock the modals to avoid rendering all of them
+const mockTaskDetailModalProps = vi.fn();
 vi.mock("../TaskDetailModal", () => ({
-  TaskDetailModal: () => null,
+  TaskDetailModal: (props: any) => {
+    mockTaskDetailModalProps(props);
+    return null;
+  },
 }));
 
 const mockSettingsModalProps = vi.fn();
@@ -215,6 +219,7 @@ describe("AppModals", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockTaskDetailModalProps.mockClear();
     mockScheduledTasksModalProps.mockClear();
     mockModelOnboardingModalProps.mockClear();
     mockSettingsModalProps.mockClear();
@@ -240,6 +245,81 @@ describe("AppModals", () => {
       />
     );
     expect(document.body).toBeDefined();
+  });
+
+  it("passes the live board task snapshot into the open detail modal while preserving prompt data", async () => {
+    const manager = {
+      ...mockModalManager,
+      detailTask: {
+        id: "FN-123",
+        title: "Stale detail task",
+        description: "Original",
+        column: "todo",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [{ timestamp: "2026-04-25T12:00:00.000Z", action: "Created task" }],
+        prompt: "# Spec",
+        createdAt: "2026-04-25T12:00:00.000Z",
+        updatedAt: "2026-04-25T12:00:00.000Z",
+      },
+    };
+    const liveTask = {
+      id: "FN-123",
+      title: "Live board task",
+      description: "Updated",
+      column: "in-progress" as const,
+      status: "executing",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      tokenUsage: {
+        inputTokens: 1200,
+        outputTokens: 300,
+        cachedTokens: 100,
+        totalTokens: 1600,
+        firstUsedAt: "2026-04-25T12:05:00.000Z",
+        lastUsedAt: "2026-04-25T12:10:00.000Z",
+      },
+      createdAt: "2026-04-25T12:00:00.000Z",
+      updatedAt: "2026-04-25T12:10:00.000Z",
+    };
+
+    render(
+      <AppModals
+        projectId={undefined}
+        tasks={[liveTask]}
+        projects={[]}
+        currentProject={null}
+        addToast={vi.fn()}
+        toasts={mockToasts}
+        removeToast={vi.fn()}
+        modalManager={manager}
+        projectActions={{ handleAddProject: vi.fn(), handleSetupComplete: vi.fn(), handleModelOnboardingComplete: vi.fn() }}
+        taskHandlers={{ handleModalCreate: vi.fn(), handlePlanningTaskCreated: vi.fn(), handlePlanningTasksCreated: vi.fn(), handleSubtaskTasksCreated: vi.fn(), handleGitHubImport: vi.fn() }}
+        taskOperations={{ moveTask: vi.fn(), deleteTask: vi.fn(), mergeTask: vi.fn(), retryTask: vi.fn(), duplicateTask: vi.fn() }}
+        deepLink={{ handleDetailClose: vi.fn() }}
+        settings={mockSettings}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockTaskDetailModalProps).toHaveBeenCalled();
+    });
+
+    const detailTask = mockTaskDetailModalProps.mock.calls.at(-1)?.[0]?.task;
+    expect(detailTask).toMatchObject({
+      id: "FN-123",
+      title: "Live board task",
+      column: "in-progress",
+      status: "executing",
+      tokenUsage: liveTask.tokenUsage,
+      prompt: "# Spec",
+    });
+    expect(detailTask.log).toEqual([
+      { timestamp: "2026-04-25T12:00:00.000Z", action: "Created task" },
+    ]);
   });
 
   describe("ModelOnboardingModal wiring", () => {
