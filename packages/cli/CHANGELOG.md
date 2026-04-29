@@ -1,5 +1,12 @@
 # @runfusion/fusion
 
+## 0.8.2
+
+### Patch Changes
+
+- 531b13e: Recover automatically from SQLite FTS5 corruption errors during task upserts by rebuilding the `tasks_fts` index and retrying once. Also adds FTS5 index rebuild/integrity helpers in core database code and extends task store health checks to validate FTS5 integrity.
+- 531b13e: Add executor watchdogs to recover stuck `fn_task_done` and workflow rerun handoffs faster.
+
 ## 0.8.1
 
 ### Patch Changes

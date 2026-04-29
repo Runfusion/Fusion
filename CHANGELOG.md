@@ -2,6 +2,46 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.8.2
+
+### @fusion/dashboard
+
+#### Patch Changes
+
+- @fusion/core@0.8.2
+- @fusion/engine@0.8.2
+- @fusion-plugin-examples/hermes-runtime@0.2.4
+- @fusion-plugin-examples/openclaw-runtime@0.2.4
+- @fusion-plugin-examples/paperclip-runtime@0.2.4
+
+### @fusion/engine
+
+#### Patch Changes
+
+- @fusion/core@0.8.2
+- @fusion/pi-claude-cli@0.8.2
+
+### @fusion/plugin-sdk
+
+#### Patch Changes
+
+- @fusion/core@0.8.2
+
+### @runfusion/fusion
+
+#### Patch Changes
+
+- 531b13e: Recover automatically from SQLite FTS5 corruption errors during task upserts by rebuilding the `tasks_fts` index and retrying once. Also adds FTS5 index rebuild/integrity helpers in core database code and extends task store health checks to validate FTS5 integrity.
+- 531b13e: Add executor watchdogs to recover stuck `fn_task_done` and workflow rerun handoffs faster.
+
+### runfusion.ai
+
+#### Patch Changes
+
+- Updated dependencies [531b13e]
+- Updated dependencies [531b13e]
+  - @runfusion/fusion@0.8.2
+
 ## 0.8.1
 
 ### @fusion/dashboard

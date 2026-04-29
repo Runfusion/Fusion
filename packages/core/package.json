@@ -1,6 +1,6 @@
 {
   "name": "@fusion/core",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "license": "MIT",
   "description": "Fusion core: task store, scheduler, settings, and shared domain types backing the Fusion AI coding agent.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",

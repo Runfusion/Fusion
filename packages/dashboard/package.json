@@ -1,6 +1,6 @@
 {
   "name": "@fusion/dashboard",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "license": "MIT",
   "description": "Fusion dashboard: React UI and HTTP API server for monitoring and controlling the Fusion AI coding agent.",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
