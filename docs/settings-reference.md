@@ -43,6 +43,10 @@ Defaults from `DEFAULT_GLOBAL_SETTINGS`; key scope from `GLOBAL_SETTINGS_KEYS`.
 | `ntfyBaseUrl` | `string` | `undefined` | Optional custom ntfy server base URL (must use `http://` or `https://`). If blank/unset, Fusion uses `https://ntfy.sh` for both runtime and test notifications. |
 | `ntfyEvents` | `("in-review" \| "merged" \| "failed" \| "awaiting-approval" \| "awaiting-user-review" \| "planning-awaiting-input" \| "gridlock")[]` | `["in-review","merged","failed","awaiting-approval","awaiting-user-review","planning-awaiting-input","gridlock"]` | Event types that trigger ntfy notifications. `planning-awaiting-input` fires when planning mode is waiting on user input. `gridlock` fires when all schedulable todo tasks are blocked. |
 | `ntfyDashboardHost` | `string` | `undefined` | Dashboard host used to build deep links in notifications. |
+| `webhookEnabled` | `boolean` | `false` | Enable webhook notifications for task lifecycle events. Part of the legacy flat settings; prefer `notificationProviders` for new setups. |
+| `webhookUrl` | `string` | `undefined` | Webhook endpoint URL. Must be `http://` or `https://`. Part of legacy flat settings. |
+| `webhookFormat` | `"slack" \| "discord" \| "generic"` | `"generic"` | Webhook payload format. Part of legacy flat settings. |
+| `webhookEvents` | `string[]` | `[]` | Event filter for webhook notifications. Empty/omitted means all events. Part of legacy flat settings. |
 | `notificationProviders` | `NotificationProviderConfig[]` | `[]` | Array of pluggable notification provider configurations. Each entry uses `{ id, name, enabled, config }` and is dispatched by provider ID (for example `ntfy` or `webhook`). |
 | `defaultProjectId` | `string` | `undefined` | Default project for multi-project CLI operations when `--project` is omitted. |
 | `setupComplete` | `boolean` | `undefined` | Tracks completion of first-run setup. |
@@ -74,7 +78,7 @@ Defaults from `DEFAULT_GLOBAL_SETTINGS`; key scope from `GLOBAL_SETTINGS_KEYS`.
 Fusion now supports a provider-list notification model via `notificationProviders` while keeping legacy flat ntfy/webhook settings intact.
 
 - **Recommended for new setups:** configure providers in `notificationProviders`.
-- **Backward compatible:** existing `ntfyEnabled`, `ntfyTopic`, `ntfyBaseUrl`, `ntfyEvents`, and `ntfyDashboardHost` still work unchanged.
+- **Backward compatible:** existing flat settings continue to work unchanged, including `ntfyEnabled`, `ntfyTopic`, `ntfyBaseUrl`, `ntfyEvents`, `ntfyDashboardHost`, `webhookEnabled`, `webhookUrl`, `webhookFormat`, and `webhookEvents`.
 - This is additive/non-breaking; no migration is required for existing ntfy users.
 
 `notificationProviders` entry shape (`NotificationProviderConfig`):
@@ -101,6 +105,17 @@ When `id` is `"webhook"`, the provider `config` supports:
 | `webhookUrl` | `string` | _required_ | Must be a valid `http://` or `https://` URL. |
 | `webhookFormat` | `"slack" \| "discord" \| "generic"` | `"generic"` | Invalid/omitted values fall back to `"generic"`. |
 | `events` | `string[]` | `[]` | Event filter list. Empty/omitted means all events are sent. |
+
+#### ntfy provider config
+
+When `id` is `"ntfy"` in `notificationProviders`, the provider `config` supports:
+
+| Field | Type | Default | Notes |
+|---|---|---:|---|
+| `topic` | `string` | _required_ | ntfy topic name (1–64 chars, alphanumeric + `-_`). |
+| `ntfyBaseUrl` | `string` | `"https://ntfy.sh"` | Optional custom ntfy server URL. |
+| `events` | `("in-review" \| "merged" \| "failed" \| "awaiting-approval" \| "awaiting-user-review" \| "planning-awaiting-input" \| "gridlock")[]` | `DEFAULT_NTFY_EVENTS` | Event filter list used by the provider. |
+| `dashboardHost` | `string` | `undefined` | Dashboard host for deep links in notifications. |
 
 Disable daily update checks globally:
 
