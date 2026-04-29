@@ -10,6 +10,11 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Changesets are committed with published package changes.
+!.changeset/
+!.changeset/*.md
+!.changeset/*.json
+
 # Coverage reports
 coverage/
 
