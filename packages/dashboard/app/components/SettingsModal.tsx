@@ -487,13 +487,8 @@ export function SettingsModal({
     };
 
     updateMobilePicker();
-    if (typeof mediaQuery.addEventListener === "function") {
-      mediaQuery.addEventListener("change", updateMobilePicker);
-      return () => mediaQuery.removeEventListener("change", updateMobilePicker);
-    }
-
-    mediaQuery.addListener(updateMobilePicker);
-    return () => mediaQuery.removeListener(updateMobilePicker);
+    mediaQuery.addEventListener("change", updateMobilePicker);
+    return () => mediaQuery.removeEventListener("change", updateMobilePicker);
   }, []);
 
   useEffect(() => {
@@ -3977,7 +3972,7 @@ export function SettingsModal({
                 {activeProvider === "tailscale" ? (
                   <>
                     <label htmlFor="remoteTailscaleHostname">Hostname label</label>
-                    <input id="remoteTailscaleHostname" type="text" placeholder="tailnet label (optional)" value={String(remoteForm.remoteTailscaleHostname ?? "")} onChange={(e) => setForm((f) => ({ ...f, remoteTailscaleHostname: e.target.value } as SettingsFormState))} />
+                    <input id="remoteTailscaleHostname" type="text" placeholder="tailnet label" value={String(remoteForm.remoteTailscaleHostname ?? (typeof window !== "undefined" ? window.location.hostname : ""))} onChange={(e) => setForm((f) => ({ ...f, remoteTailscaleHostname: e.target.value } as SettingsFormState))} />
                     <label htmlFor="remoteTailscaleTargetPort">Target port</label>
                     <input id="remoteTailscaleTargetPort" type="number" min={1} max={65535} value={Number(remoteForm.remoteTailscaleTargetPort ?? 4040)} onChange={(e) => setForm((f) => ({ ...f, remoteTailscaleTargetPort: Number(e.target.value || 4040) } as SettingsFormState))} />
                     <label htmlFor="remoteTailscaleAcceptRoutes" className="checkbox-label">
@@ -4038,7 +4033,7 @@ export function SettingsModal({
                   const savePayload: Partial<RemoteSettings> = {
                     remoteActiveProvider: activeProvider,
                     remoteTailscaleEnabled: activeProvider === "tailscale",
-                    remoteTailscaleHostname: String(formState.remoteTailscaleHostname ?? ""),
+                    remoteTailscaleHostname: String(formState.remoteTailscaleHostname ?? (typeof window !== "undefined" ? window.location.hostname : "")),
                     remoteTailscaleTargetPort: Number(formState.remoteTailscaleTargetPort ?? 4040),
                     remoteTailscaleAcceptRoutes: Boolean(formState.remoteTailscaleAcceptRoutes),
                     remoteCloudflareEnabled: activeProvider === "cloudflare",
