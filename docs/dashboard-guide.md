@@ -44,6 +44,7 @@ Quick Chat is an optional floating panel for fast, project-scoped assistant conv
 - Controlled by the project setting `showQuickChatFAB`
 - Supports agent mentions (`@agent`) and file mentions
 - Uses the same model/provider infrastructure as full Chat view
+- On small screens, compact tool-call summaries in the floating panel intentionally stay single-line (count + tool names + status) to preserve message density
 - `switchSession()` resumes the existing thread for the selected target (agent-only or agent+model)
 - `startFreshSession()` is the explicit new-thread action and always creates a new persisted session
 - Resume lookups use a targeted session query instead of loading the full active session list first

@@ -718,6 +718,7 @@
 
   .quick-chat-panel .chat-tool-calls-group-status {
     justify-content: flex-end;
+    margin-left: auto;
   }
 }
 
