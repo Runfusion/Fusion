@@ -2,7 +2,7 @@ import "./ModelOnboardingModal.css";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { X, Loader2, CheckCircle, Key, Zap, GitPullRequest, Rocket, Plus, ChevronRight } from "lucide-react";
 import { getErrorMessage, type Task } from "@fusion/core";
-import type { AuthProvider, ModelInfo, CustomProviderConfig } from "../api";
+import type { AuthProvider, ModelInfo, CustomProvider, CustomProviderConfig } from "../api";
 import {
   fetchAuthStatus,
   fetchGlobalSettings,
@@ -24,6 +24,15 @@ import { ClaudeCliProviderCard } from "./ClaudeCliProviderCard";
 import { LoginInstructions } from "./LoginInstructions";
 import { CustomProviderForm } from "./CustomProviderForm";
 import { appendTokenQuery } from "../auth";
+
+const mapLegacyCustomProviderToConfig = (provider: CustomProvider): CustomProviderConfig => ({
+  id: provider.id,
+  name: provider.name,
+  baseUrl: provider.baseUrl,
+  api: provider.apiType === "anthropic-compatible" ? "anthropic-messages" : "openai-responses",
+  apiKey: provider.apiKey,
+  models: provider.models?.map((model) => ({ id: model.id, name: model.name })) ?? [],
+});
 
 /** Provider-specific API key setup metadata for onboarding form rendering */
 interface ApiKeyInfo {
@@ -746,14 +755,7 @@ export function ModelOnboardingModal({
   const loadCustomProviders = useCallback(async () => {
     try {
       const data = await fetchCustomProviders();
-      setCustomProviders((data.providers ?? []).map((provider) => ({
-        id: provider.id,
-        name: provider.name,
-        baseUrl: provider.baseUrl,
-        api: provider.apiType === "anthropic-compatible" ? "anthropic-messages" : "openai-completions",
-        apiKey: provider.apiKey,
-        models: (provider.models ?? []).map((model) => ({ id: model.id, name: model.name })),
-      })));
+      setCustomProviders((data.providers ?? []).map(mapLegacyCustomProviderToConfig));
     } catch {
       // best effort
     }

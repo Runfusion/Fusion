@@ -8,6 +8,7 @@ import {
   isNtfyEventEnabled,
   resolveNtfyEvents,
 } from "../notifier.js";
+import { NotificationService } from "../notification/notification-service.js";
 
 // Mock the logger
 vi.mock("../logger.js", () => ({
@@ -1051,6 +1052,38 @@ describe("NtfyNotifier", () => {
 
       // Should only send one notification
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("emits a single merged notification when notifier shares an already-started NotificationService", async () => {
+      const sharedService = new NotificationService(store, { projectId: "proj-1" });
+      await sharedService.start();
+
+      notifier = new NtfyNotifier(store, { projectId: "proj-1" }, sharedService);
+      await notifier.start();
+
+      const task = createTask("FN-777", "Single Merge Notification");
+      const mergeResult: MergeResult = {
+        task,
+        branch: "fusion/fn-777",
+        merged: true,
+        worktreeRemoved: true,
+        branchDeleted: true,
+      };
+
+      store.triggerTaskMerged(mergeResult);
+      await flushAsyncWork();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://ntfy.sh/test-topic",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Title: "Task FN-777 merged",
+          }),
+        }),
+      );
+
+      await sharedService.stop();
     });
 
     it("allows notifications for different tasks independently", async () => {

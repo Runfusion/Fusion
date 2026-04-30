@@ -11,7 +11,7 @@ import {
 } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, AgentPromptsConfig, ThinkingLevel } from "@fusion/core";
 import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotesDetailed, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, updateRemoteSettings, fetchRemoteStatus, installCloudflared, startRemoteTunnel, stopRemoteTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteQr, fetchRemoteUrl, fetchCustomProviders, createCustomProvider, updateCustomProvider, deleteCustomProvider } from "../api";
-import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemoteDetailed, RemoteSettings, RemoteStatus, UpdateCheckResponse, CustomProviderConfig } from "../api";
+import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemoteDetailed, RemoteSettings, RemoteStatus, UpdateCheckResponse, CustomProvider, CustomProviderConfig } from "../api";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import type { ToastType } from "../hooks/useToast";
@@ -45,6 +45,15 @@ import { NodeHealthDot } from "./NodeHealthDot";
 const GITHUB_STAR_CACHE_KEY = "fusion_github_star_count";
 const GITHUB_STAR_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const GITHUB_STAR_CLICKED_KEY = "fusion:github-star-clicked";
+
+const mapLegacyCustomProviderToConfig = (provider: CustomProvider): CustomProviderConfig => ({
+  id: provider.id,
+  name: provider.name,
+  baseUrl: provider.baseUrl,
+  api: provider.apiType === "anthropic-compatible" ? "anthropic-messages" : "openai-responses",
+  apiKey: provider.apiKey,
+  models: provider.models?.map((model) => ({ id: model.id, name: model.name })) ?? [],
+});
 
 function getNodeStatusLabel(status: "online" | "offline" | "connecting" | "error"): string {
   if (status === "online") return "Online";
@@ -786,14 +795,9 @@ export function SettingsModal({
     if (activeSection === "authentication") {
       setAuthLoading(true);
       loadAuthStatus().finally(() => setAuthLoading(false));
-      void fetchCustomProviders().then((data) => setCustomProviders((data.providers ?? []).map((provider) => ({
-        id: provider.id,
-        name: provider.name,
-        baseUrl: provider.baseUrl,
-        api: provider.apiType === "anthropic-compatible" ? "anthropic-messages" : "openai-completions",
-        apiKey: provider.apiKey,
-        models: (provider.models ?? []).map((model) => ({ id: model.id, name: model.name })),
-      })))).catch(() => undefined);
+      void fetchCustomProviders()
+        .then((data) => setCustomProviders((data.providers ?? []).map(mapLegacyCustomProviderToConfig)))
+        .catch(() => undefined);
     }
     // Clean up polling when leaving auth section
     return () => {
@@ -806,14 +810,7 @@ export function SettingsModal({
 
   const loadCustomProviders = useCallback(async () => {
     const data = await fetchCustomProviders();
-    setCustomProviders((data.providers ?? []).map((provider) => ({
-      id: provider.id,
-      name: provider.name,
-      baseUrl: provider.baseUrl,
-      api: provider.apiType === "anthropic-compatible" ? "anthropic-messages" : "openai-completions",
-      apiKey: provider.apiKey,
-      models: (provider.models ?? []).map((model) => ({ id: model.id, name: model.name })),
-    })));
+    setCustomProviders((data.providers ?? []).map(mapLegacyCustomProviderToConfig));
   }, []);
 
   const handleSaveCustomProvider = useCallback(async (config: CustomProviderConfig) => {

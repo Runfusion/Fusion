@@ -586,7 +586,7 @@ describe("TaskCard", () => {
     expect(timer).not.toBeNull();
     // 8m workflow + 4m timed = 12m
     expect(timer?.textContent).toContain("12m");
-    expect(timer?.getAttribute("title")).toContain("Execution time 12m");
+    expect(timer?.getAttribute("title")).toContain("In progress 12m");
   });
 
   it("updates the in-progress timer when timedExecutionMs changes", () => {
