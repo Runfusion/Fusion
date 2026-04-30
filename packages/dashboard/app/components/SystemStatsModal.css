@@ -113,6 +113,54 @@
   gap: var(--space-md);
 }
 
+.system-stats-modal__row--memory-used {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.system-stats-modal__row--memory-used dd {
+  width: 100%;
+  justify-content: flex-end;
+}
+
+.system-stats-modal__memory-progress-wrapper {
+  width: 100%;
+}
+
+.system-stats-modal__memory-progress-track {
+  width: 100%;
+  height: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: var(--border);
+  overflow: hidden;
+}
+
+.system-stats-modal__memory-progress-track--warning {
+  box-shadow: inset 0 0 0 var(--btn-border-width) var(--color-warning);
+}
+
+.system-stats-modal__memory-progress-track--critical {
+  box-shadow: inset 0 0 0 var(--btn-border-width) var(--color-error);
+}
+
+.system-stats-modal__memory-progress-fill {
+  height: 100%;
+  border-radius: var(--radius-sm);
+  transition: width var(--transition-normal), background-color var(--transition-normal);
+}
+
+.system-stats-modal__memory-progress-fill--normal {
+  background: var(--color-success);
+}
+
+.system-stats-modal__memory-progress-fill--warning {
+  background: var(--color-warning);
+}
+
+.system-stats-modal__memory-progress-fill--critical {
+  background: var(--color-error);
+}
+
 .system-stats-modal__row dt {
   margin: 0;
   font-size: 0.85rem;

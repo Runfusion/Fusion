@@ -48,20 +48,19 @@ const GITHUB_STAR_CLICKED_KEY = "fusion:github-star-clicked";
 
 const mapLegacyCustomProviderToConfig = (
   provider: CustomProvider | CustomProviderConfig,
-): CustomProviderConfig => {
-  if ("api" in provider) {
-    return provider;
-  }
-
-  return {
-    id: provider.id,
-    name: provider.name,
-    baseUrl: provider.baseUrl,
-    api: provider.apiType === "anthropic-compatible" ? "anthropic-messages" : "openai-responses",
-    apiKey: provider.apiKey,
-    models: provider.models?.map((model) => ({ id: model.id, name: model.name })) ?? [],
-  };
-};
+): CustomProviderConfig => ({
+  id: provider.id,
+  name: provider.name,
+  baseUrl: provider.baseUrl,
+  api:
+    "api" in provider
+      ? provider.api
+      : provider.apiType === "anthropic-compatible"
+        ? "anthropic-messages"
+        : "openai-responses",
+  apiKey: provider.apiKey,
+  models: provider.models?.map((model) => ({ id: model.id, name: model.name })) ?? [],
+});
 
 function getNodeStatusLabel(status: "online" | "offline" | "connecting" | "error"): string {
   if (status === "online") return "Online";

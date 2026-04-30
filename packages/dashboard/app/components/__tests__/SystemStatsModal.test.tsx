@@ -105,12 +105,45 @@ describe("SystemStatsModal", () => {
     expect(screen.getByText("900 MB")).toBeDefined();
     expect(screen.getByText("9.00 GB")).toBeDefined();
     expect(screen.getByText("90.0% of 10.00 GB")).toBeDefined();
+
+    const memoryUsageProgress = screen.getByRole("progressbar", {
+      name: "System memory used: 90.0% (9.00 GB of 10.00 GB)",
+    });
+    expect(memoryUsageProgress).toHaveAttribute("aria-valuenow", "90");
+    expect(memoryUsageProgress).toHaveAttribute("aria-valuemin", "0");
+    expect(memoryUsageProgress).toHaveAttribute("aria-valuemax", "100");
+    expect(memoryUsageProgress.className).toContain("system-stats-modal__memory-progress-track--critical");
+    const criticalFill = memoryUsageProgress.querySelector(".system-stats-modal__memory-progress-fill");
+    expect(criticalFill?.className).toContain("system-stats-modal__memory-progress-fill--critical");
+
     expect(screen.getByText("1.20 0.80 0.50")).toBeDefined();
     expect(screen.getByText("Vitest Processes")).toBeDefined();
     expect(screen.getByText(/Last auto-kill:/)).toBeDefined();
 
     const criticalValues = document.querySelectorAll(".system-stats-modal__value--critical");
     expect(criticalValues.length).toBeGreaterThan(0);
+  });
+
+  it("keeps memory value and bar severity aligned for warning thresholds", async () => {
+    mockFetchSystemStats.mockResolvedValue({
+      ...sampleStats,
+      systemStats: {
+        ...sampleStats.systemStats,
+        systemFreeMem: 2 * 1024 * 1024 * 1024,
+      },
+    });
+
+    render(<SystemStatsModal isOpen={true} onClose={vi.fn()} />);
+
+    const memoryUsageProgress = await screen.findByRole("progressbar", {
+      name: "System memory used: 80.0% (8.00 GB of 10.00 GB)",
+    });
+    expect(memoryUsageProgress.className).toContain("system-stats-modal__memory-progress-track--warning");
+    const warningFill = memoryUsageProgress.querySelector(".system-stats-modal__memory-progress-fill");
+    expect(warningFill?.className).toContain("system-stats-modal__memory-progress-fill--warning");
+
+    const memoryValue = screen.getByText("8.00 GB");
+    expect(memoryValue.className).toContain("system-stats-modal__value--warning");
   });
 
   it("shows refresh button icon when the modal is open", async () => {

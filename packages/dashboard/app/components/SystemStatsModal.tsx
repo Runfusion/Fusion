@@ -209,9 +209,15 @@ export function SystemStatsModal({ isOpen, onClose, projectId }: SystemStatsModa
     : "Waiting for first update";
   const taskStats = stats?.taskStats;
   const usedSystemMem = system ? system.systemTotalMem - system.systemFreeMem : 0;
-  const usedSystemClassName = system
-    ? severityClassName(systemMemSeverity(usedSystemMem, system.systemTotalMem))
-    : "";
+  const usedSystemMemSeverity = system ? systemMemSeverity(usedSystemMem, system.systemTotalMem) : "normal";
+  const usedSystemClassName = system ? severityClassName(usedSystemMemSeverity) : "";
+  const usedSystemMemPercent =
+    system && Number.isFinite(system.systemTotalMem) && system.systemTotalMem > 0
+      ? Math.max(0, Math.min(100, (usedSystemMem / system.systemTotalMem) * 100))
+      : 0;
+  const usedSystemMemProgressLabel = system
+    ? `System memory used: ${usedSystemMemPercent.toFixed(1)}% (${formatBytes(usedSystemMem)} of ${formatBytes(system.systemTotalMem)})`
+    : "System memory usage unavailable";
   const vitestProcessCount = stats?.vitestProcessCount;
   const killResultClassName = killResult
     ? killResult.killed > 0
@@ -314,7 +320,7 @@ export function SystemStatsModal({ isOpen, onClose, projectId }: SystemStatsModa
             <section className="system-stats-modal__section" aria-label="System memory stats">
               <h3 className="system-stats-modal__section-title">System</h3>
               <dl className="system-stats-modal__grid">
-                <div className="system-stats-modal__row">
+                <div className="system-stats-modal__row system-stats-modal__row--memory-used">
                   <dt>Memory Used</dt>
                   <dd>
                     <span className={`system-stats-modal__value ${usedSystemClassName}`.trim()}>
@@ -324,6 +330,21 @@ export function SystemStatsModal({ isOpen, onClose, projectId }: SystemStatsModa
                       {system ? `${toPercent(usedSystemMem, system.systemTotalMem)} of ${formatBytes(system.systemTotalMem)}` : ""}
                     </span>
                   </dd>
+                  <div className="system-stats-modal__memory-progress-wrapper">
+                    <div
+                      className={`system-stats-modal__memory-progress-track system-stats-modal__memory-progress-track--${usedSystemMemSeverity}`}
+                      role="progressbar"
+                      aria-valuenow={Math.round(usedSystemMemPercent)}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label={usedSystemMemProgressLabel}
+                    >
+                      <div
+                        className={`system-stats-modal__memory-progress-fill system-stats-modal__memory-progress-fill--${usedSystemMemSeverity}`}
+                        style={{ width: `${usedSystemMemPercent}%` }}
+                      />
+                    </div>
+                  </div>
                 </div>
                 <div className="system-stats-modal__row">
                   <dt>Memory Free</dt>
