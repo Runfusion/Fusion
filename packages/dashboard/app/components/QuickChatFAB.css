@@ -464,14 +464,20 @@
   padding: var(--space-sm);
 }
 
-.quick-chat-panel-input .btn-icon {
-  min-width: calc(var(--space-lg) + var(--space-xl));
-  min-height: calc(var(--space-lg) + var(--space-xl));
-  width: calc(var(--space-lg) + var(--space-xl));
-  height: calc(var(--space-lg) + var(--space-xl));
+/* Keep the attachment trigger compact inside the input wrapper so the composer
+   stays a single inline row with the text field. */
+.quick-chat-attach-btn {
+  min-width: calc(var(--space-lg) + var(--space-md));
+  min-height: calc(var(--space-lg) + var(--space-md));
+  width: calc(var(--space-lg) + var(--space-md));
+  height: calc(var(--space-lg) + var(--space-md));
+  flex-shrink: 0;
 }
 
+/* Only the outer send/stop action keeps the larger touch target. */
 .quick-chat-panel-input > button {
+  min-width: calc(var(--space-lg) + var(--space-xl));
+  min-height: calc(var(--space-lg) + var(--space-xl));
   width: calc(var(--space-lg) + var(--space-xl));
   height: calc(var(--space-lg) + var(--space-xl));
   border-radius: var(--radius-sm);
@@ -601,7 +607,6 @@
     height: calc(var(--space-lg) * 2 + var(--space-sm));
   }
 
-  .quick-chat-panel-input .btn-icon,
   .quick-chat-panel-input > button {
     min-width: calc(var(--space-lg) + var(--space-xl));
     min-height: calc(var(--space-lg) + var(--space-xl));

@@ -1755,7 +1755,7 @@ export function QuickChatFAB({
               />
               <button
                 type="button"
-                className="btn-icon"
+                className="btn-icon quick-chat-attach-btn"
                 data-testid="quick-chat-attach-btn"
                 aria-label="Attach files"
                 onClick={() => fileInputRef.current?.click()}
