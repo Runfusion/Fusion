@@ -1064,7 +1064,7 @@ describe("QuickChatFAB", () => {
     });
   });
 
-  it("renders tool calls in quick chat messages", async () => {
+  it("renders compact tool calls in quick chat messages with single-row essentials", async () => {
     mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
       setTimeout(() => {
         handlers.onText?.("Used read tool");
@@ -1095,8 +1095,14 @@ describe("QuickChatFAB", () => {
       expect(screen.getByText("Tool calls")).toBeInTheDocument();
     });
 
-    const preview = document.querySelector(".chat-tool-call-preview");
-    expect(preview).toHaveTextContent("result: contents");
+    const toolCallSummary = document.querySelector(".chat-tool-call summary");
+    expect(toolCallSummary).toBeTruthy();
+    if (!toolCallSummary) return;
+
+    expect(within(toolCallSummary as HTMLElement).getByText("read")).toBeInTheDocument();
+    expect(within(toolCallSummary as HTMLElement).getByText("completed")).toBeInTheDocument();
+    expect((toolCallSummary as HTMLElement).querySelector(".chat-tool-call-status-dot")).toBeTruthy();
+    expect((toolCallSummary as HTMLElement).querySelector(".chat-tool-call-preview")).toBeNull();
   });
 
   it("renders multiple tool calls collapsed in quick chat", async () => {
@@ -1133,6 +1139,12 @@ describe("QuickChatFAB", () => {
     const toolCallsContainer = document.querySelector(".chat-tool-calls") as HTMLElement | null;
     expect(toolCallsContainer).toHaveClass("chat-tool-calls--compact");
     expect(screen.getByText("read, grep")).toBeInTheDocument();
+
+    const groupSummary = document.querySelector(".chat-tool-calls-group-summary") as HTMLElement | null;
+    expect(groupSummary).toBeTruthy();
+    if (!groupSummary) return;
+    expect(within(groupSummary).getByText("2 tool calls")).toBeInTheDocument();
+    expect((groupSummary.querySelector(".chat-tool-calls-names") as HTMLElement | null)?.textContent).toContain("read, grep");
   });
 
   it("compact group class applied in quick chat", async () => {

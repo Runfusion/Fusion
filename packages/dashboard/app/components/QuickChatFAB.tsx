@@ -128,13 +128,14 @@ function renderToolCalls(toolCalls?: ToolCallInfo[], compact = false): ReactNode
     const isError = toolCall.status === "completed" && toolCall.isError;
     const argsSummary = formatToolArgsSummary(toolCall.args);
     const resultSummary = formatToolResultSummary(toolCall.result);
-    const summaryPreview = isRunning
+    const baseSummaryPreview = isRunning
       ? argsSummary
       : resultSummary
         ? `result: ${resultSummary}`
         : argsSummary
           ? `args: ${argsSummary}`
           : null;
+    const summaryPreview = compact ? null : baseSummaryPreview;
     const statusLabel = isRunning ? "running" : isError ? "error" : "completed";
 
     return (
@@ -145,7 +146,7 @@ function renderToolCalls(toolCalls?: ToolCallInfo[], compact = false): ReactNode
       >
         <summary>
           <span className="chat-tool-call-status-dot" aria-hidden="true" />
-          <span className="chat-tool-call-name">{toolCall.toolName}</span>
+          <span className="chat-tool-call-name" title={toolCall.toolName}>{toolCall.toolName}</span>
           {summaryPreview && <span className="chat-tool-call-preview" title={summaryPreview}>{summaryPreview}</span>}
           <span className="chat-tool-call-status-text">{statusLabel}</span>
         </summary>
@@ -200,7 +201,7 @@ function renderToolCalls(toolCalls?: ToolCallInfo[], compact = false): ReactNode
       <details className={`chat-tool-calls-group${compact ? " chat-tool-calls-group--compact" : ""}`} data-testid="chat-tool-calls-group" open={hasRunning}>
         <summary className="chat-tool-calls-group-summary">
           <Wrench size={12} aria-hidden="true" />
-          <span>{toolCalls.length} tool calls</span>
+          <span className="chat-tool-calls-count">{toolCalls.length} tool calls</span>
           <span className="chat-tool-calls-names" title={namesSummary}>{namesSummary}</span>
           {statusSummary && <span className="chat-tool-calls-group-status">{statusSummary}</span>}
         </summary>

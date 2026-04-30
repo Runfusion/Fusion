@@ -47,6 +47,7 @@ Quick Chat is an optional floating panel for fast, project-scoped assistant conv
 - `switchSession()` resumes the existing thread for the selected target (agent-only or agent+model)
 - `startFreshSession()` is the explicit new-thread action and always creates a new persisted session
 - Resume lookups use a targeted session query instead of loading the full active session list first
+- Tool-call summaries in the floating quick-chat panel are intentionally condensed into a single-line header row (especially on small screens) so tool name + status stay scannable without multi-line wrapping
 
 ## Mailbox View
 

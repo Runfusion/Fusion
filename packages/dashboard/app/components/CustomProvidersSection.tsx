@@ -15,8 +15,29 @@ type ProviderApiType = CustomProvider["apiType"];
 const API_TYPES: ProviderApiType[] = ["openai-compatible", "anthropic-compatible"];
 
 function normalizeProviders(result: Awaited<ReturnType<typeof fetchCustomProviders>>): CustomProvider[] {
-  if (Array.isArray(result)) return result;
-  return Array.isArray(result.providers) ? result.providers : [];
+  const legacyProviders = Array.isArray(result)
+    ? result
+    : Array.isArray((result as { providers?: unknown }).providers)
+      ? (result as { providers: (typeof result)[number][] }).providers
+      : [];
+
+  return legacyProviders.map((provider) => {
+    if ("apiType" in provider) {
+      return provider as unknown as CustomProvider;
+    }
+
+    return {
+      id: provider.id,
+      name: provider.name ?? provider.id,
+      baseUrl: provider.baseUrl,
+      ...(provider.apiKey ? { apiKey: provider.apiKey } : {}),
+      apiType: provider.api === "anthropic-messages" ? "anthropic-compatible" : "openai-compatible",
+      models: (provider.models ?? []).map((model) => ({
+        id: model.id,
+        name: model.name ?? model.id,
+      })),
+    } satisfies CustomProvider;
+  });
 }
 
 function parseModels(modelsInput: string): { id: string; name: string }[] {
