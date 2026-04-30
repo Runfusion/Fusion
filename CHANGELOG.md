@@ -2,6 +2,50 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.9.4
+
+### @fusion/dashboard
+
+#### Patch Changes
+
+- @fusion/core@0.9.4
+- @fusion/engine@0.9.4
+- @fusion-plugin-examples/hermes-runtime@0.2.11
+- @fusion-plugin-examples/openclaw-runtime@0.2.11
+- @fusion-plugin-examples/paperclip-runtime@0.2.11
+
+### @fusion/engine
+
+#### Patch Changes
+
+- @fusion/core@0.9.4
+- @fusion/pi-claude-cli@0.9.4
+
+### @fusion/plugin-sdk
+
+#### Patch Changes
+
+- @fusion/core@0.9.4
+
+### @runfusion/fusion
+
+#### Patch Changes
+
+- 299b66e: Fix InProcessRuntime creating a nested `.fusion/.fusion/fusion.db`. RoutineStore was being constructed with the project's `.fusion` directory, but its constructor appends `.fusion` internally. Pass the project root instead, matching AutomationStore.
+- c3c8007: Add ghost-review fallback recovery to the self-healing maintenance loop. Catches any `in-review` task that fell through every more-specific recovery scan and has been idle past `taskStuckTimeoutMs`, kicks it back to `todo` with transient status cleared. Preserves human-handoff (`awaiting-user-review`, `awaiting-approval`) and active-merge (`merging`, `merging-pr`) statuses; rate-limited naturally by `updatedAt` refresh so a re-stuck task can only be kicked once per timeout window.
+- 24e142d: Merge commits now get an AI-generated summary subject describing what changed (e.g. `feat(FN-XXXX): add user-invited webhook handler`) instead of the bare `feat(FN-XXXX): merge fusion/fn-XXXX`. The merger calls the existing `summarizeCommitSubject` lane alongside the body summarizer; on failure or when disabled, falls back to the legacy `merge <branch>` form.
+
+  Default for `useAiMergeCommitSummary` is now `true` (was `false`). Existing projects that haven't explicitly set the flag will pick up the new behavior on next start. The Settings UI already exposes the toggle.
+
+### runfusion.ai
+
+#### Patch Changes
+
+- Updated dependencies [299b66e]
+- Updated dependencies [c3c8007]
+- Updated dependencies [24e142d]
+  - @runfusion/fusion@0.9.4
+
 ## 0.9.3
 
 ### @fusion/dashboard

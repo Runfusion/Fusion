@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/openclaw-runtime",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "type": "module",
   "description": "Provides OpenClaw runtime for Fusion AI agents",
   "keywords": [
