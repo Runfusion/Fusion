@@ -5,6 +5,7 @@ import type { ChatSession } from "@fusion/core";
 import * as apiModule from "../../api";
 import { useAgents } from "../../hooks/useAgents";
 import { QuickChatFAB } from "../QuickChatFAB";
+import { _resetInitialViewportHeight } from "../../hooks/useMobileKeyboard";
 
 vi.mock("../../api", () => ({
   fetchResumeChatSession: vi.fn(),
@@ -1929,6 +1930,7 @@ describe("QuickChatFAB", () => {
     let savedOntouchstart: typeof window.ontouchstart;
 
     beforeEach(() => {
+      _resetInitialViewportHeight();
       savedVisualViewport = window.visualViewport;
       savedInnerWidth = window.innerWidth;
       savedInnerHeight = window.innerHeight;
@@ -2001,6 +2003,55 @@ describe("QuickChatFAB", () => {
 
       return { listeners, mockVV };
     }
+
+    it("auto-focuses the composer when quick chat opens on mobile with a ready session", async () => {
+      mockMobileVisualViewport({
+        innerHeight: 800,
+        vvHeight: 800,
+      });
+
+      render(<QuickChatFAB addToast={addToast} open={true} onOpenChange={vi.fn()} />);
+
+      const input = await screen.findByTestId("quick-chat-input");
+
+      await waitFor(() => {
+        expect(input).not.toBeDisabled();
+        expect(document.activeElement).toBe(input);
+      });
+    });
+
+    it("auto-focuses when mobile composer becomes enabled after async session initialization", async () => {
+      const createdSession: ChatSession = {
+        ...mockSession,
+        id: "session-mobile-delayed",
+      };
+
+      let resolveSessionCreation: ((value: { session: ChatSession }) => void) | null = null;
+      mockCreateChatSession.mockImplementationOnce(
+        () => new Promise((resolve) => {
+          resolveSessionCreation = resolve;
+        }),
+      );
+
+      mockMobileVisualViewport({
+        innerHeight: 800,
+        vvHeight: 800,
+      });
+
+      render(<QuickChatFAB addToast={addToast} open={true} onOpenChange={vi.fn()} projectId="proj-123" />);
+
+      const input = await screen.findByTestId("quick-chat-input");
+      expect(input).toBeDisabled();
+
+      await act(async () => {
+        resolveSessionCreation?.({ session: createdSession });
+      });
+
+      await waitFor(() => {
+        expect(input).not.toBeDisabled();
+        expect(document.activeElement).toBe(input);
+      });
+    });
 
     it("sets keyboard overlap CSS variable when mobile viewport shrinks", async () => {
       const { listeners, mockVV } = mockMobileVisualViewport({

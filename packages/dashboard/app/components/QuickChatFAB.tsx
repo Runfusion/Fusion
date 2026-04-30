@@ -806,6 +806,7 @@ export function QuickChatFAB({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
+  const shouldAutoFocusComposerRef = useRef(false);
 
   const resolvedModelSelection = selectedModel || configuredDefaultModelSelection;
 
@@ -834,6 +835,7 @@ export function QuickChatFAB({
   }, [chatMode, parsedModelSelection, selectedAgentId]);
 
   const hasChatTarget = chatMode === "agent" ? Boolean(selectedAgentId) : Boolean(parsedModelSelection);
+  const inputDisabled = !hasChatTarget || !activeSession;
 
   useEffect(() => {
     if (agents.length === 0) {
@@ -968,12 +970,44 @@ export function QuickChatFAB({
   }, [pendingAttachments]);
 
   useEffect(() => {
-    if (!isOpen) return;
-    const frame = requestAnimationFrame(() => {
-      inputRef.current?.focus();
-    });
-    return () => cancelAnimationFrame(frame);
+    if (!isOpen) {
+      shouldAutoFocusComposerRef.current = false;
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    shouldAutoFocusComposerRef.current = window.innerWidth <= QUICK_CHAT_DESKTOP_BREAKPOINT;
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || inputDisabled || !shouldAutoFocusComposerRef.current) {
+      return;
+    }
+
+    const input = inputRef.current;
+    if (!input) {
+      return;
+    }
+
+    const activeElement = document.activeElement;
+    const panelContainsFocus = activeElement ? panelRef.current?.contains(activeElement) : false;
+    const isBodyFocused = activeElement === document.body;
+
+    if (!panelContainsFocus && !isBodyFocused) {
+      shouldAutoFocusComposerRef.current = false;
+      return;
+    }
+
+    const frame = requestAnimationFrame(() => {
+      input.focus();
+      shouldAutoFocusComposerRef.current = false;
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [isOpen, inputDisabled]);
 
   // Attachment object URLs must be revoked when the composer unmounts.
   useEffect(() => {
@@ -1085,8 +1119,6 @@ export function QuickChatFAB({
     }
     return "Select a model to start chatting";
   }, [chatMode, selectedAgent, selectedModelTag]);
-
-  const inputDisabled = !hasChatTarget || !activeSession;
 
   const pendingPreview = pendingMessage.length > 50
     ? `${pendingMessage.slice(0, 50)}…`
