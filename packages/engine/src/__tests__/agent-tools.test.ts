@@ -8,6 +8,8 @@ import {
   createMemoryTools,
   createTaskCreateTool,
   createDelegateTaskTool,
+  createTaskLogTool,
+  createTaskLogToolWithContext,
   createSendMessageTool,
   createReadMessagesTool,
   qmdAgentMemoryCollectionName,
@@ -124,6 +126,47 @@ describe("createDelegateTaskTool", () => {
     expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
       source: { sourceType: "api" },
     }));
+  });
+});
+
+describe("createTaskLogTool", () => {
+  it("returns a graceful archived read-only message instead of throwing", async () => {
+    const store = {
+      logEntry: vi.fn().mockRejectedValue(new Error("Task FN-100 is archived — logging is read-only")),
+    };
+
+    const tool = createTaskLogTool(store as any, "FN-100");
+    const result = await tool.execute(
+      "call-1",
+      { message: "Important note", outcome: "none" } as any,
+      undefined,
+      undefined,
+      {} as any,
+    );
+
+    const responseText = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(responseText).toBe("ERROR: Cannot log to archived task — this task is read-only");
+  });
+});
+
+describe("createTaskLogToolWithContext", () => {
+  it("returns a graceful archived read-only message instead of throwing", async () => {
+    const store = {
+      logEntry: vi.fn().mockRejectedValue(new Error("Task FN-101 is ARCHIVED")),
+    };
+    const runContext = { runId: "run-1", agentId: "agent-1" };
+
+    const tool = createTaskLogToolWithContext(store as any, "FN-101", runContext as any);
+    const result = await tool.execute(
+      "call-2",
+      { message: "Important note", outcome: "none" } as any,
+      undefined,
+      undefined,
+      {} as any,
+    );
+
+    const responseText = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(responseText).toBe("ERROR: Cannot log to archived task — this task is read-only");
   });
 });
 

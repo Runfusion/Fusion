@@ -112,6 +112,38 @@ describe("TaskStore task documents", () => {
     ).rejects.toThrow("Task KB-DOES-NOT-EXIST not found");
   });
 
+  it("rejects upsertTaskDocument on cleanup-archived task", async () => {
+    const task = await store.createTask({ description: "Cleanup archived docs test" });
+    await store.moveTask(task.id, "todo");
+    await store.moveTask(task.id, "in-progress");
+    await store.moveTask(task.id, "in-review");
+    await store.moveTask(task.id, "done");
+    await store.archiveTask(task.id, true);
+
+    await expect(
+      store.upsertTaskDocument(task.id, {
+        key: "plan",
+        content: "should fail",
+      }),
+    ).rejects.toThrow(/archived/i);
+  });
+
+  it("rejects upsertTaskDocument on non-cleanup archived task", async () => {
+    const task = await store.createTask({ description: "Non-cleanup archived docs test" });
+    await store.moveTask(task.id, "todo");
+    await store.moveTask(task.id, "in-progress");
+    await store.moveTask(task.id, "in-review");
+    await store.moveTask(task.id, "done");
+    await store.archiveTask(task.id, false);
+
+    await expect(
+      store.upsertTaskDocument(task.id, {
+        key: "plan",
+        content: "should fail",
+      }),
+    ).rejects.toThrow(/archived/i);
+  });
+
   it("updates a document, increments revision, and archives previous content", async () => {
     const task = await store.createTask({ description: "Update task" });
 

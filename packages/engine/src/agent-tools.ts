@@ -472,7 +472,19 @@ export function createTaskLogTool(store: TaskStore, taskId: string): ToolDefinit
       "Use for significant events — not every small step.",
     parameters: taskLogParams,
     execute: async (_id: string, params: Static<typeof taskLogParams>) => {
-      await store.logEntry(taskId, params.message, params.outcome);
+      try {
+        await store.logEntry(taskId, params.message, params.outcome);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } catch (err: any) {
+        if (typeof err?.message === "string" && err.message.toLowerCase().includes("archived")) {
+          return {
+            content: [{ type: "text" as const, text: "ERROR: Cannot log to archived task — this task is read-only" }],
+            details: {},
+          };
+        }
+        throw err;
+      }
+
       return {
         content: [{ type: "text" as const, text: `Logged: ${params.message}` }],
         details: {},
@@ -498,7 +510,19 @@ export function createTaskLogToolWithContext(store: TaskStore, taskId: string, r
       "Use for significant events — not every small step.",
     parameters: taskLogParams,
     execute: async (_id: string, params: Static<typeof taskLogParams>) => {
-      await store.logEntry(taskId, params.message, params.outcome, runContext);
+      try {
+        await store.logEntry(taskId, params.message, params.outcome, runContext);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } catch (err: any) {
+        if (typeof err?.message === "string" && err.message.toLowerCase().includes("archived")) {
+          return {
+            content: [{ type: "text" as const, text: "ERROR: Cannot log to archived task — this task is read-only" }],
+            details: {},
+          };
+        }
+        throw err;
+      }
+
       return {
         content: [{ type: "text" as const, text: `Logged: ${params.message}` }],
         details: {},

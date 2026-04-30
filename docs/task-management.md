@@ -183,6 +183,10 @@ Behavior:
 
 - `fn task archive <id>` moves done task to `archived`
 - Cleanup mode can persist compact metadata and remove the task directory
+- Archived tasks are read-only for task log/document writes:
+  - `logEntry()` throws `Task <id> is archived — logging is read-only`
+  - `upsertTaskDocument()` throws `Task <id> is archived — documents are read-only`
+  - `fn_task_log` returns `ERROR: Cannot log to archived task — this task is read-only`
 
 ### Cleanup behavior
 

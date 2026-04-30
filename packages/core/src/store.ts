@@ -1152,6 +1152,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return this.rowToTask(row);
   }
 
+  private isTaskArchived(id: string): boolean {
+    const row = this.db.prepare('SELECT "column" FROM tasks WHERE id = ?').get(id) as { column: Column } | undefined;
+    if (row) {
+      return row.column === "archived";
+    }
+
+    return this.archiveDb.get(id) !== undefined;
+  }
+
   /**
    * Return the ids of live tasks whose `dependencies` array contains `id`.
    *
@@ -3166,6 +3175,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         outcome: truncateTaskLogOutcome(outcome),
       };
       if (runContext) {
+        if (this.isTaskArchived(id)) {
+          throw new Error(`Task ${id} is archived — logging is read-only`);
+        }
+
         const dir = this.taskDir(id);
         const task = await this.readTaskJson(dir);
 
@@ -3199,9 +3212,18 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
       // Fast path for high-volume log entries: update only the log + updatedAt fields
       // instead of reading/writing the entire task payload on every append.
-      const row = this.db.prepare("SELECT log FROM tasks WHERE id = ?").get(id) as { log: string | null } | undefined;
+      const row = this.db.prepare('SELECT log, "column" FROM tasks WHERE id = ?').get(id) as
+        | { log: string | null; column: Column }
+        | undefined;
       if (!row) {
+        if (this.isTaskArchived(id)) {
+          throw new Error(`Task ${id} is archived — logging is read-only`);
+        }
         throw new Error(`Task ${id} not found`);
+      }
+
+      if (row.column === "archived") {
+        throw new Error(`Task ${id} is archived — logging is read-only`);
       }
 
       const log = fromJson<TaskLogEntry[]>(row.log) || [];
@@ -4750,10 +4772,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       );
     }
 
-    const taskExists = this.db.prepare("SELECT id FROM tasks WHERE id = ?").get(taskId) as
-      | { id: string }
+    const taskExists = this.db.prepare('SELECT id, "column" FROM tasks WHERE id = ?').get(taskId) as
+      | { id: string; column: Column }
       | undefined;
+    if (taskExists?.column === "archived") {
+      throw new Error(`Task ${taskId} is archived — documents are read-only`);
+    }
     if (!taskExists) {
+      if (this.isTaskArchived(taskId)) {
+        throw new Error(`Task ${taskId} is archived — documents are read-only`);
+      }
       throw new Error(`Task ${taskId} not found`);
     }
 

@@ -6903,6 +6903,44 @@ Task with acceptance criteria
     });
   });
 
+  describe("logEntry on archived tasks", () => {
+    it("rejects logEntry on cleanup-archived task with archived error", async () => {
+      const task = await store.createTask({ description: "Cleanup archive log test" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+      await store.archiveTask(task.id, true);
+
+      await expect(store.logEntry(task.id, "should fail")).rejects.toThrow(/archived/i);
+      await expect(store.logEntry(task.id, "should fail")).rejects.not.toThrow(/not found/i);
+    });
+
+    it("rejects logEntry on non-cleanup archived task with archived error", async () => {
+      const task = await store.createTask({ description: "Non-cleanup archive log test" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+      await store.archiveTask(task.id, false);
+
+      await expect(store.logEntry(task.id, "should fail")).rejects.toThrow(/archived/i);
+    });
+
+    it("rejects logEntry with runContext on cleanup-archived task", async () => {
+      const task = await store.createTask({ description: "Cleanup archive runContext log test" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.moveTask(task.id, "done");
+      await store.archiveTask(task.id, true);
+
+      await expect(
+        store.logEntry(task.id, "should fail", "outcome", { runId: "run-1", agentId: "agent-1" }),
+      ).rejects.toThrow(/archived/i);
+    });
+  });
+
   describe("unarchiveTask", () => {
     it("unarchives an archived task (moves archived → done)", async () => {
       const task = await store.createTask({ description: "Test task" });

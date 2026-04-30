@@ -138,6 +138,21 @@ describe("task_document_write tool", () => {
     expect(getText(result)).toContain("ERROR: Failed to save document");
     expect(getText(result)).toContain("database temporarily unavailable");
   });
+
+  it("returns archived read-only details when document writes are blocked", async () => {
+    const { store, upsertTaskDocument } = createMockStore();
+    upsertTaskDocument.mockRejectedValue(new Error("Task FN-007 is archived — documents are read-only"));
+
+    const tool = createTaskDocumentWriteTool(store, TASK_ID);
+    const result = await runTool(tool, "call-archived", {
+      key: "research",
+      content: "Notes",
+      author: "agent",
+    });
+
+    expect(getText(result)).toContain("ERROR: Failed to save document");
+    expect(getText(result)).toContain("archived");
+  });
 });
 
 describe("task_document_read tool", () => {
