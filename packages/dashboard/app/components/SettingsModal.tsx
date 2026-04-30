@@ -10,8 +10,8 @@ import {
   resolveTitleSummarizerSettingsModel,
 } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, AgentPromptsConfig, ThinkingLevel } from "@fusion/core";
-import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotesDetailed, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, updateRemoteSettings, fetchRemoteStatus, installCloudflared, startRemoteTunnel, stopRemoteTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteQr, fetchRemoteUrl, fetchCustomProviders, createCustomProvider, updateCustomProvider, deleteCustomProvider } from "../api";
-import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemoteDetailed, RemoteSettings, RemoteStatus, UpdateCheckResponse, CustomProvider, CustomProviderConfig } from "../api";
+import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotesDetailed, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, updateRemoteSettings, fetchRemoteStatus, installCloudflared, startRemoteTunnel, stopRemoteTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteQr, fetchRemoteUrl } from "../api";
+import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemoteDetailed, RemoteSettings, RemoteStatus, UpdateCheckResponse } from "../api";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import type { ToastType } from "../hooks/useToast";
@@ -32,7 +32,7 @@ import { PluginSlot } from "./PluginSlot";
 import { AgentPromptsManager } from "./AgentPromptsManager";
 import { LoginInstructions } from "./LoginInstructions";
 import { ProviderIcon } from "./ProviderIcon";
-import { CustomProviderForm } from "./CustomProviderForm";
+import { CustomProvidersSection } from "./CustomProvidersSection";
 import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPresets";
 import { appendTokenQuery } from "../auth";
 import { useConfirm } from "../hooks/useConfirm";
@@ -45,22 +45,6 @@ import { NodeHealthDot } from "./NodeHealthDot";
 const GITHUB_STAR_CACHE_KEY = "fusion_github_star_count";
 const GITHUB_STAR_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const GITHUB_STAR_CLICKED_KEY = "fusion:github-star-clicked";
-
-const mapLegacyCustomProviderToConfig = (
-  provider: CustomProvider | CustomProviderConfig,
-): CustomProviderConfig => ({
-  id: provider.id,
-  name: provider.name,
-  baseUrl: provider.baseUrl,
-  api:
-    "api" in provider
-      ? provider.api
-      : provider.apiType === "anthropic-compatible"
-        ? "anthropic-messages"
-        : "openai-responses",
-  apiKey: provider.apiKey,
-  models: provider.models?.map((model) => ({ id: model.id, name: model.name })) ?? [],
-});
 
 function getNodeStatusLabel(status: "online" | "offline" | "connecting" | "error"): string {
   if (status === "online") return "Online";
@@ -422,11 +406,6 @@ export function SettingsModal({
   const [loginInstructions, setLoginInstructions] = useState<Record<string, string>>({});
   const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
   const [apiKeyErrors, setApiKeyErrors] = useState<Record<string, string>>({});
-  const [customProviders, setCustomProviders] = useState<CustomProviderConfig[]>([]);
-  const [customProviderEditing, setCustomProviderEditing] = useState<CustomProviderConfig | null>(null);
-  const [showCustomProviderForm, setShowCustomProviderForm] = useState(false);
-  const [customProviderSaving, setCustomProviderSaving] = useState(false);
-  const [customProviderError, setCustomProviderError] = useState<string | undefined>();
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Model state
@@ -802,9 +781,6 @@ export function SettingsModal({
     if (activeSection === "authentication") {
       setAuthLoading(true);
       loadAuthStatus().finally(() => setAuthLoading(false));
-      void fetchCustomProviders()
-        .then((data) => setCustomProviders((data.providers ?? []).map(mapLegacyCustomProviderToConfig)))
-        .catch(() => undefined);
     }
     // Clean up polling when leaving auth section
     return () => {
@@ -814,50 +790,6 @@ export function SettingsModal({
       }
     };
   }, [activeSection, loadAuthStatus]);
-
-  const loadCustomProviders = useCallback(async () => {
-    const data = await fetchCustomProviders();
-    setCustomProviders((data.providers ?? []).map(mapLegacyCustomProviderToConfig));
-  }, []);
-
-  const handleSaveCustomProvider = useCallback(async (config: CustomProviderConfig) => {
-    setCustomProviderSaving(true);
-    setCustomProviderError(undefined);
-    try {
-      if (customProviderEditing) {
-        await updateCustomProvider(customProviderEditing.id, config);
-      } else {
-        await createCustomProvider(config);
-      }
-      await loadCustomProviders();
-      await fetchModels();
-      setShowCustomProviderForm(false);
-      setCustomProviderEditing(null);
-    } catch (err) {
-      setCustomProviderError(getErrorMessage(err) || "Failed to save custom provider");
-    } finally {
-      setCustomProviderSaving(false);
-    }
-  }, [customProviderEditing, loadCustomProviders]);
-
-  const handleDeleteCustomProvider = useCallback(async (provider: CustomProviderConfig) => {
-    const ok = await confirm({
-      title: "Delete custom provider",
-      message: `Delete custom provider '${provider.id}'?`,
-      confirmLabel: "Delete",
-      cancelLabel: "Cancel",
-      danger: true,
-    });
-    if (!ok) return;
-
-    try {
-      await deleteCustomProvider(provider.id);
-      await loadCustomProviders();
-      await fetchModels();
-    } catch (err) {
-      addToast(getErrorMessage(err) || "Failed to delete custom provider", "error");
-    }
-  }, [addToast, confirm, loadCustomProviders]);
 
   const scrollSettingsToTop = useCallback(() => {
     settingsContentRef.current?.scrollTo({ top: 0, behavior: "smooth" });
@@ -4707,58 +4639,7 @@ export function SettingsModal({
               </div>
             )}
 
-            <details className="auth-advanced-disclosure">
-              <summary>Advanced — Custom Providers</summary>
-              <div className="auth-advanced-content">
-                <div className="auth-custom-provider-list">
-                  {customProviders.map((provider) => (
-                    <div key={provider.id} className="auth-custom-provider-item">
-                      <div>
-                        <strong>{provider.name || provider.id}</strong>
-                        <small className="settings-muted">{provider.id}</small>
-                      </div>
-                      <div className="auth-custom-provider-actions">
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          onClick={() => {
-                            setCustomProviderEditing({
-                              id: provider.id,
-                              name: provider.name,
-                              baseUrl: provider.baseUrl,
-                              api: provider.api,
-                              apiKey: provider.apiKey,
-                              models: provider.models?.map((model) => ({ id: model.id, name: model.name })) ?? [],
-                            });
-                            setShowCustomProviderForm(true);
-                          }}
-                        >
-                          Edit
-                        </button>
-                        <button type="button" className="btn btn-sm" onClick={() => { void handleDeleteCustomProvider(provider); }}>Delete</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {!showCustomProviderForm ? (
-                  <button type="button" className="btn btn-sm" onClick={() => { setCustomProviderEditing(null); setShowCustomProviderForm(true); }}>
-                    Add Custom Provider
-                  </button>
-                ) : (
-                  <CustomProviderForm
-                    initialConfig={customProviderEditing ?? undefined}
-                    onSave={handleSaveCustomProvider}
-                    onCancel={() => {
-                      setShowCustomProviderForm(false);
-                      setCustomProviderEditing(null);
-                      setCustomProviderError(undefined);
-                    }}
-                    saving={customProviderSaving}
-                    error={customProviderError}
-                  />
-                )}
-              </div>
-            </details>
+            <CustomProvidersSection />
 
           </>
         );
