@@ -339,6 +339,8 @@ See [Memory Plugin Contract](./memory-plugin-contract.md) for the full plan.
 - `AgentLogger` (`agent-logger.ts`) — structured per-agent run logging
 - `RunAudit` (`run-audit.ts`) — mutation audit tracking (DB/git/filesystem)
 - `Notifier` (`notifier.ts`) — legacy ntfy compatibility shim (`NtfyNotifier`) plus shared ntfy helpers
+  - Runtime ownership: `NtfyNotifier` no longer owns an independent task-lifecycle listener graph; `ProjectEngine` injects the canonical `NotificationService` instance so task lifecycle notifications (`task:moved`, `task:updated`, `task:merged`) are emitted through a single path.
+  - Compatibility scope: `NtfyNotifier` remains responsible for gridlock-only compatibility notifications (`notifyGridlock`) and legacy helper APIs.
 - `NotificationService` (`notification/notification-service.ts`) — provider lifecycle + event dispatch orchestration
 - `NotificationProvider` interface (`@fusion/core` `notification/provider.ts`) — pluggable provider contract
 - Built-in providers: `NtfyNotificationProvider` (`notification/ntfy-provider.ts`), `WebhookNotificationProvider` (`notification/webhook-provider.ts`)

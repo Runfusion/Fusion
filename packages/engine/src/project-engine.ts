@@ -269,10 +269,14 @@ export class ProjectEngine {
       await this.notificationService.start();
 
       // Backward-compatibility shim for gridlock notifications.
-      this.notifier = new NtfyNotifier(store, {
-        projectId: this.options.projectId,
-        ntfyBaseUrl: this.options.ntfyBaseUrl,
-      });
+      this.notifier = new NtfyNotifier(
+        store,
+        {
+          projectId: this.options.projectId,
+          ntfyBaseUrl: this.options.ntfyBaseUrl,
+        },
+        this.notificationService,
+      );
       await this.notifier.start();
     }
 

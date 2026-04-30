@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectEngine } from "../project-engine.js";
 import { runtimeLog } from "../logger.js";
 import { TunnelProcessManager } from "../remote-access/tunnel-process-manager.js";
+import { NtfyNotifier } from "../notifier.js";
+import { NotificationService } from "../notification/index.js";
 
 const mocks = vi.hoisted(() => ({
   syncInsightExtractionAutomation: vi.fn(),
@@ -16,6 +18,11 @@ const mocks = vi.hoisted(() => ({
   aiMergeTask: vi.fn(),
   execFile: vi.fn(),
   currentStore: null as Record<string, unknown> | null,
+  notifierStart: vi.fn(async () => undefined),
+  notifierStop: vi.fn(),
+  notifierNotifyGridlock: vi.fn(),
+  notificationServiceStart: vi.fn(async () => undefined),
+  notificationServiceStop: vi.fn(),
 }));
 
 vi.mock("@fusion/core", async () => {
@@ -69,16 +76,16 @@ vi.mock("../pr-comment-handler.js", () => ({
 
 vi.mock("../notifier.js", () => ({
   NtfyNotifier: vi.fn().mockImplementation(() => ({
-    start: vi.fn(async () => undefined),
-    stop: vi.fn(),
-    notifyGridlock: vi.fn(),
+    start: mocks.notifierStart,
+    stop: mocks.notifierStop,
+    notifyGridlock: mocks.notifierNotifyGridlock,
   })),
 }));
 
 vi.mock("../notification/index.js", () => ({
   NotificationService: vi.fn().mockImplementation(() => ({
-    start: vi.fn().mockResolvedValue(undefined),
-    stop: vi.fn(),
+    start: mocks.notificationServiceStart,
+    stop: mocks.notificationServiceStop,
   })),
 }));
 
@@ -209,7 +216,7 @@ const baseSettings: Record<string, unknown> = {
   remoteAccess: baseRemoteAccess,
 };
 
-function createEngine() {
+function createEngine(options?: ConstructorParameters<typeof ProjectEngine>[2]) {
   return new ProjectEngine(
     {
       projectId: "proj_test",
@@ -219,11 +226,17 @@ function createEngine() {
       maxWorktrees: 2,
     },
     {} as never,
-    { skipNotifier: true },
+    { skipNotifier: true, ...options },
   );
 }
 
 beforeEach(() => {
+  mocks.notifierStart.mockClear();
+  mocks.notifierStop.mockClear();
+  mocks.notifierNotifyGridlock.mockClear();
+  mocks.notificationServiceStart.mockClear();
+  mocks.notificationServiceStop.mockClear();
+
   mocks.execFile.mockImplementation((
     _file: string,
     _args: string[],
@@ -240,6 +253,32 @@ beforeEach(() => {
 
     callback?.(null, { stdout: "/usr/bin/mock\n", stderr: "" });
     return {} as never;
+  });
+});
+
+describe("ProjectEngine notification ownership wiring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    const mockStore = createMockStore(baseSettings);
+    mocks.currentStore = mockStore.store;
+  });
+
+  it("constructs NtfyNotifier with the same NotificationService instance and starts canonical listeners once", async () => {
+    const engine = createEngine({ skipNotifier: false, projectId: "proj_for_notifier" });
+
+    await engine.start();
+
+    expect(NotificationService).toHaveBeenCalledTimes(1);
+    expect(NtfyNotifier).toHaveBeenCalledTimes(1);
+    const notifierCtorArgs = vi.mocked(NtfyNotifier).mock.calls[0];
+    expect(notifierCtorArgs?.[2]).toBe(vi.mocked(NotificationService).mock.results[0]?.value);
+
+    expect(mocks.notificationServiceStart).toHaveBeenCalledTimes(1);
+    expect(mocks.notifierStart).toHaveBeenCalledTimes(1);
+
+    await engine.stop();
+    expect(mocks.notificationServiceStop).toHaveBeenCalledTimes(1);
+    expect(mocks.notifierStop).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -182,11 +182,12 @@ export class NtfyNotifier {
   constructor(
     private store: NtfyNotifierStore,
     options: NtfyNotifierOptions = {},
+    notificationService?: NotificationService,
   ) {
     this.defaultNtfyBaseUrl = resolveNtfyBaseUrl(options.ntfyBaseUrl);
     this.ntfyBaseUrl = this.defaultNtfyBaseUrl;
     this.projectId = options.projectId;
-    this.notificationService = new NotificationService(store, {
+    this.notificationService = notificationService ?? new NotificationService(store, {
       projectId: this.projectId,
       ntfyBaseUrl: options.ntfyBaseUrl,
     });

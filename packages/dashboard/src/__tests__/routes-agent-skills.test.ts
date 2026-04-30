@@ -50,6 +50,7 @@ vi.mock("@fusion/core", () => {
     parseSingleAgentManifest: (...args: unknown[]) => mockParseSingleAgentManifest(...args),
     prepareAgentCompaniesImport: (...args: unknown[]) => mockPrepareAgentCompaniesImport(...args),
     AgentCompaniesParseError: MockAgentCompaniesParseError,
+    DEFAULT_HEARTBEAT_PROCEDURE_PATH: ".fusion/agents/heartbeat-procedure.md",
   };
 });
 
