@@ -24,6 +24,8 @@ import { aiMergeTask } from "./merger.js";
 import { PRIORITY_MERGE } from "./concurrency.js";
 import { runtimeLog } from "./logger.js";
 import type { HeartbeatTriggerScheduler } from "./agent-heartbeat.js";
+import { ResearchOrchestrator } from "./research-orchestrator.js";
+import { ResearchStepRunner } from "./research-step-runner.js";
 import { TunnelProcessManager } from "./remote-access/tunnel-process-manager.js";
 import type {
   TunnelProvider,
@@ -142,6 +144,7 @@ export class ProjectEngine {
   private gridlockDetector?: GridlockDetector;
   private cronRunner?: CronRunner;
   private automationStore?: AutomationStoreType;
+  private researchOrchestrator?: ResearchOrchestrator;
   private remoteTunnelManager?: TunnelProcessManager;
   private remoteTunnelRestoreDiagnostics: TunnelRestoreDiagnostics = {
     outcome: "skipped",
@@ -243,6 +246,15 @@ export class ProjectEngine {
 
     const store = this.runtime.getTaskStore();
     const cwd = this.config.workingDirectory;
+    const settings = await store.getSettings();
+
+    if (typeof (store as { getResearchStore?: () => unknown }).getResearchStore === "function") {
+      this.researchOrchestrator = new ResearchOrchestrator({
+        store: store.getResearchStore(),
+        stepRunner: new ResearchStepRunner(),
+        maxConcurrentRuns: settings.researchMaxConcurrentRuns ?? 3,
+      });
+    }
 
     this.remoteTunnelManager = new TunnelProcessManager();
     try {
@@ -544,6 +556,11 @@ export class ProjectEngine {
   /** Get the RoutineStore (if initialized). */
   getRoutineStore(): import("@fusion/core").RoutineStore | undefined {
     return this.runtime.getRoutineStore();
+  }
+
+  /** Get the ResearchOrchestrator (if initialized). Returns undefined before start(). */
+  getResearchOrchestrator(): ResearchOrchestrator | undefined {
+    return this.researchOrchestrator;
   }
 
   /** Get the remote tunnel manager (available after start()). */

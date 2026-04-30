@@ -168,7 +168,7 @@ export class ResearchStore extends EventEmitter<ResearchStoreEvents> {
     return deleted;
   }
 
-  appendEvent(runId: string, event: Omit<ResearchEvent, "id" | "timestamp">): ResearchEvent {
+  addEvent(runId: string, event: Omit<ResearchEvent, "id" | "timestamp">): ResearchEvent {
     const run = this.getRun(runId);
     if (!run) throw new Error(`Research run not found: ${runId}`);
 
@@ -181,7 +181,12 @@ export class ResearchStore extends EventEmitter<ResearchStoreEvents> {
     };
 
     this.updateRun(runId, { events: [...run.events, created] });
+    this.emit("event:added", { runId, event: created });
     return created;
+  }
+
+  appendEvent(runId: string, event: Omit<ResearchEvent, "id" | "timestamp">): ResearchEvent {
+    return this.addEvent(runId, event);
   }
 
   addSource(runId: string, source: Omit<ResearchSource, "id">): ResearchSource {
@@ -190,6 +195,7 @@ export class ResearchStore extends EventEmitter<ResearchStoreEvents> {
 
     const created: ResearchSource = { ...source, id: generateId("RSRC") };
     this.updateRun(runId, { sources: [...run.sources, created] });
+    this.emit("source:added", { runId, source: created });
     return created;
   }
 

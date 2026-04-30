@@ -144,7 +144,8 @@ describe("ResearchView", () => {
     render(<ResearchView projectId="p1" />);
 
     await waitFor(() => {
-      expect(screen.getByText("Failed")).toHaveClass("research-view__status-badge--failed");
+      expect(screen.getByText("Failed")).toHaveClass("failed");
+      expect(screen.getByText("Failed")).toHaveClass("card-status-badge");
     });
   });
 

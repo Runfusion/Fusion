@@ -1389,6 +1389,22 @@ export interface GlobalSettings {
    *  triggers a vitest auto-kill. Clamped to [50, 99] in the UI.
    *  Default: 90. */
   vitestKillThresholdPct?: number;
+  /** Enable or disable the research subsystem globally.
+   *  When false, dashboard/API entrypoints should reject new research runs.
+   *  Default: true when research store exists. */
+  researchGlobalEnabled?: boolean;
+  /** Maximum concurrent research runs allowed by default.
+   *  Default: 3. */
+  researchGlobalMaxConcurrentRuns?: number;
+  /** Default timeout for end-to-end research runs in milliseconds.
+   *  Default: 300000 (5 minutes). */
+  researchGlobalDefaultTimeout?: number;
+  /** Default maximum number of sources the orchestrator may fetch per run.
+   *  Default: 20. */
+  researchGlobalMaxSourcesPerRun?: number;
+  /** Default maximum number of synthesis rounds per run.
+   *  Default: 2. */
+  researchGlobalMaxSynthesisRounds?: number;
 }
 
 export type RemoteAccessProvider = "tailscale" | "cloudflare";
@@ -1514,6 +1530,21 @@ export interface ProjectSettings {
    *  - "block": prevent execution until the selected node is healthy/available (default)
    *  - "fallback-local": run on the local node when the selected node is unavailable */
   unavailableNodePolicy?: UnavailableNodePolicy;
+  /** Enable or disable the research subsystem for this project.
+   *  When undefined, falls back to global settings. */
+  researchEnabled?: boolean;
+  /** Project-level maximum concurrent research runs.
+   *  When undefined, falls back to global settings (default 3). */
+  researchMaxConcurrentRuns?: number;
+  /** Project-level default run timeout in milliseconds.
+   *  When undefined, falls back to global settings (default 300000). */
+  researchDefaultTimeout?: number;
+  /** Project-level source fetch cap per run.
+   *  When undefined, falls back to global settings (default 20). */
+  researchMaxSourcesPerRun?: number;
+  /** Project-level synthesis round cap per run.
+   *  When undefined, falls back to global settings (default 2). */
+  researchMaxSynthesisRounds?: number;
   /** ID of the pinned default execution node. Tasks without a per-task override run on this node. */
   defaultNodeId?: string;
   /** Shell command to run inside each new worktree immediately after creation.

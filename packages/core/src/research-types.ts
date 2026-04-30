@@ -159,4 +159,113 @@ export interface ResearchStoreEvents {
   "run:completed": [ResearchRun];
   "run:failed": [ResearchRun];
   "run:cancelled": [ResearchRun];
+  "event:added": [{ runId: string; event: ResearchEvent }];
+  "source:added": [{ runId: string; source: ResearchSource }];
+}
+
+export const RESEARCH_ORCHESTRATION_PHASES = [
+  "planning",
+  "searching",
+  "fetching",
+  "synthesizing",
+  "finalizing",
+  "completed",
+  "failed",
+  "cancelled",
+] as const;
+
+export type ResearchOrchestrationPhase = typeof RESEARCH_ORCHESTRATION_PHASES[number];
+
+export const RESEARCH_ORCHESTRATION_STEP_STATUSES = ["pending", "running", "completed", "failed", "skipped"] as const;
+
+export type ResearchOrchestrationStepStatus = typeof RESEARCH_ORCHESTRATION_STEP_STATUSES[number];
+
+export type ResearchOrchestrationStepType = "source-query" | "content-fetch" | "synthesis-pass";
+
+export interface ResearchOrchestrationStep {
+  id: string;
+  type: ResearchOrchestrationStepType;
+  phase: ResearchOrchestrationPhase;
+  status: ResearchOrchestrationStepStatus;
+  order: number;
+  name: string;
+  input?: Record<string, unknown>;
+  output?: Record<string, unknown>;
+  error?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export type ResearchOrchestrationEventType =
+  | "phase-changed"
+  | "step-started"
+  | "step-completed"
+  | "step-failed"
+  | "source-found"
+  | "synthesis-progress"
+  | "run-cancelled";
+
+export interface ResearchOrchestrationEvent {
+  type: ResearchOrchestrationEventType;
+  phase: ResearchOrchestrationPhase;
+  message: string;
+  stepId?: string;
+  timestamp: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ResearchProviderConfig {
+  timeoutMs?: number;
+  rateLimitPerMinute?: number;
+  maxResults?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ResearchOrchestrationProvider {
+  type: string;
+  config?: ResearchProviderConfig;
+}
+
+export interface ResearchModelSettings {
+  provider?: string;
+  modelId?: string;
+  temperature?: number;
+  maxTokens?: number;
+  timeoutMs?: number;
+}
+
+export interface ResearchOrchestrationConfig {
+  providers: ResearchOrchestrationProvider[];
+  maxSources: number;
+  maxSynthesisRounds: number;
+  phaseTimeoutMs?: number;
+  stepTimeoutMs?: number;
+  rateLimitPerMinute?: number;
+  synthesisModel?: ResearchModelSettings;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ResearchSynthesisRequest {
+  query: string;
+  sources: ResearchSource[];
+  round: number;
+  desiredFormat?: "markdown" | "json" | "bullets";
+  instructions?: string;
+}
+
+export interface ResearchSynthesisResult {
+  output: string;
+  citations: string[];
+  confidence?: number;
+  usage?: ResearchTokenUsage;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ResearchCancellationState {
+  runId: string;
+  controller: AbortController;
+  requestedAt: string;
+  acknowledgedAt?: string;
+  gracefulShutdown: boolean;
+  reason?: string;
 }

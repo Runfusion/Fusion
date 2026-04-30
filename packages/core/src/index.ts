@@ -585,6 +585,8 @@ export {
   RESEARCH_EXPORT_FORMATS,
   RESEARCH_SOURCE_TYPES,
   RESEARCH_EVENT_TYPES,
+  RESEARCH_ORCHESTRATION_PHASES,
+  RESEARCH_ORCHESTRATION_STEP_STATUSES,
 } from "./research-types.js";
 export type {
   ResearchRunStatus,
@@ -603,6 +605,19 @@ export type {
   ResearchRunUpdateInput,
   ResearchRunListOptions,
   ResearchStoreEvents,
+  ResearchOrchestrationPhase,
+  ResearchOrchestrationStepStatus,
+  ResearchOrchestrationStepType,
+  ResearchOrchestrationStep,
+  ResearchOrchestrationEventType,
+  ResearchOrchestrationEvent,
+  ResearchProviderConfig,
+  ResearchOrchestrationProvider,
+  ResearchModelSettings,
+  ResearchOrchestrationConfig,
+  ResearchSynthesisRequest,
+  ResearchSynthesisResult,
+  ResearchCancellationState,
 } from "./research-types.js";
 
 export { TodoStore } from "./todo-store.js";

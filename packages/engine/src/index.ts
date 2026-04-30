@@ -53,6 +53,17 @@ export { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees, reapOrphanWo
 export { createLogger, type Logger } from "./logger.js";
 export { isUsageLimitError, UsageLimitPauser } from "./usage-limit-detector.js";
 export { withRateLimitRetry } from "./rate-limit-retry.js";
+export { ResearchOrchestrator, type ResearchOrchestratorOptions, type ResearchOrchestratorStatus, type ResearchOrchestratorStartOptions } from "./research-orchestrator.js";
+export {
+  ResearchStepRunner,
+  ResearchStepTimeoutError,
+  ResearchStepAbortError,
+  ResearchStepProviderError,
+  type ResearchProvider,
+  type ResearchStepRunnerApi,
+  type ResearchStepRunnerOptions,
+  type ResearchStepResult,
+} from "./research-step-runner.js";
 export { PrMonitor, type PrComment, type TrackedPr, type OnNewCommentsCallback } from "./pr-monitor.js";
 export { PrCommentHandler } from "./pr-comment-handler.js";
 export {

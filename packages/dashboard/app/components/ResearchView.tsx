@@ -67,79 +67,89 @@ export function ResearchView({ projectId, addToast }: ResearchViewProps) {
         </button>
       </header>
 
-      {isLoading && (
-        <div className="research-view__state card" data-testid="research-state-loading">
-          Loading research runs…
-        </div>
-      )}
-
-      {!isLoading && error && (
-        <div className="research-view__state research-view__state--error card" data-testid="research-state-error">
-          <p>{error}</p>
-          <button className="btn btn-danger" type="button" onClick={() => void load()}>
-            Retry
-          </button>
-        </div>
-      )}
-
-      {!isLoading && !error && runs.length === 0 && (
-        <div className="research-view__state card" data-testid="research-state-empty">
-          No research runs yet. Start a run from the API or upcoming orchestration workflow.
-        </div>
-      )}
-
-      {!isLoading && !error && runs.length > 0 && (
-        <>
-          <div className="research-view__stats" data-testid="research-state-running">
-            <div className="card research-view__stat-card">
-              <div className="research-view__stat-label">Total Runs</div>
-              <div className="research-view__stat-value">{stats?.total ?? runs.length}</div>
-            </div>
-            <div className="card research-view__stat-card">
-              <div className="research-view__stat-label">Running</div>
-              <div className="research-view__stat-value">{stats?.byStatus.running ?? 0}</div>
-            </div>
-            <div className="card research-view__stat-card">
-              <div className="research-view__stat-label">Completed</div>
-              <div className="research-view__stat-value">{stats?.byStatus.completed ?? 0}</div>
-            </div>
+      <div className="research-view__content">
+        {isLoading && (
+          <div className="research-view__state card" data-testid="research-state-loading">
+            Loading research runs…
           </div>
+        )}
 
-          <div className="research-view__list">
-            {runs.map((run) => (
-              <article key={run.id} className="card research-view__run-card">
-                <div className="research-view__run-head">
-                  <span
-                    className={`card-status-badge ${
-                      run.status === "failed"
-                        ? "research-view__status-badge--failed"
-                        : `card-status-badge--${
-                            run.status === "pending"
-                              ? "todo"
-                              : run.status === "running"
-                                ? "in-progress"
-                                : run.status === "completed"
-                                  ? "done"
-                                  : "archived"
-                          }`
-                    }`}
-                  >
-                    {STATUS_LABELS[run.status]}
-                  </span>
-                  <span className="card-id">{run.id}</span>
-                </div>
-                <h3 className="research-view__run-title">{run.topic || run.query}</h3>
-                <p className="research-view__run-query">{run.query}</p>
-                {run.results?.summary && <p data-testid="research-state-results">{run.results.summary}</p>}
-              </article>
-            ))}
+        {!isLoading && error && (
+          <div className="research-view__state research-view__state--error card" data-testid="research-state-error">
+            <p>{error}</p>
+            <button className="btn btn-danger" type="button" onClick={() => void load()}>
+              Retry
+            </button>
           </div>
+        )}
 
-          {!hasResults && (
-            <p className="research-view__hint">Runs are active, but no summarized results are available yet.</p>
-          )}
-        </>
-      )}
+        {!isLoading && !error && runs.length === 0 && (
+          <div className="research-view__state card" data-testid="research-state-empty">
+            <p className="research-view__state-title">No research runs yet</p>
+            <p className="research-view__state-copy">
+              Connect a research provider to begin collecting sources and generating synthesis reports. New runs can be
+              started through the API today and will appear here automatically.
+            </p>
+          </div>
+        )}
+
+        {!isLoading && !error && runs.length > 0 && (
+          <>
+            <div className="research-view__stats" data-testid="research-state-running">
+              <div className="card research-view__stat-card">
+                <div className="research-view__stat-label">Total Runs</div>
+                <div className="research-view__stat-value">{stats?.total ?? runs.length}</div>
+              </div>
+              <div className="card research-view__stat-card">
+                <div className="research-view__stat-label">Running</div>
+                <div className="research-view__stat-value">{stats?.byStatus.running ?? 0}</div>
+              </div>
+              <div className="card research-view__stat-card">
+                <div className="research-view__stat-label">Completed</div>
+                <div className="research-view__stat-value">{stats?.byStatus.completed ?? 0}</div>
+              </div>
+            </div>
+
+            <div className="research-view__list">
+              {runs.map((run) => (
+                <article key={run.id} className="card research-view__run-card">
+                  <div className="research-view__run-head">
+                    <span
+                      className={`card-status-badge ${
+                        run.status === "failed"
+                          ? "failed"
+                          : `card-status-badge--${
+                              run.status === "pending"
+                                ? "todo"
+                                : run.status === "running"
+                                  ? "in-progress"
+                                  : run.status === "completed"
+                                    ? "done"
+                                    : "archived"
+                            }`
+                      }`}
+                    >
+                      {STATUS_LABELS[run.status]}
+                    </span>
+                    <span className="card-id">{run.id}</span>
+                  </div>
+                  <h3 className="research-view__run-title">{run.topic || run.query}</h3>
+                  <p className="research-view__run-query">{run.query}</p>
+                  {run.results?.summary && (
+                    <p className="research-view__run-summary" data-testid="research-state-results">
+                      {run.results.summary}
+                    </p>
+                  )}
+                </article>
+              ))}
+            </div>
+
+            {!hasResults && (
+              <p className="research-view__hint">Runs are active, but no summarized results are available yet.</p>
+            )}
+          </>
+        )}
+      </div>
     </section>
   );
 }

@@ -64,6 +64,11 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   // Dashboard TUI memory guard
   vitestAutoKillEnabled: true,
   vitestKillThresholdPct: 90,
+  researchGlobalEnabled: true,
+  researchGlobalMaxConcurrentRuns: 3,
+  researchGlobalDefaultTimeout: 300000,
+  researchGlobalMaxSourcesPerRun: 20,
+  researchGlobalMaxSynthesisRounds: 2,
 } satisfies CompleteSettings<GlobalSettings>;
 
 /** Default values for project-level settings. */
@@ -212,6 +217,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   reflectionAfterTask: true,
   reviewHandoffPolicy: "disabled",
   showQuickChatFAB: false,
+  researchEnabled: true,
+  researchMaxConcurrentRuns: 3,
+  researchDefaultTimeout: 300000,
+  researchMaxSourcesPerRun: 20,
+  researchMaxSynthesisRounds: 2,
   experimentalFeatures: {},
 } satisfies CompleteSettings<ProjectSettings>;
 
