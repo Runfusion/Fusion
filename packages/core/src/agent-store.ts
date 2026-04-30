@@ -7,8 +7,9 @@
  * edited as normal project files.
  */
 
-import { mkdir, readFile, writeFile, readdir, unlink, rename } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { mkdir, readFile, writeFile, readdir, unlink, rename, access } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type {
@@ -36,7 +37,7 @@ import type {
   AgentRatingInput,
   Task,
 } from "./types.js";
-import { AGENT_VALID_TRANSITIONS, agentToConfigSnapshot, diffConfigSnapshots, isEphemeralAgent, CheckoutConflictError, DEFAULT_HEARTBEAT_PROCEDURE_PATH } from "./types.js";
+import { AGENT_VALID_TRANSITIONS, agentToConfigSnapshot, diffConfigSnapshots, isEphemeralAgent, CheckoutConflictError, DEFAULT_HEARTBEAT_PROCEDURE_PATH, getDefaultHeartbeatProcedurePath } from "./types.js";
 import type { RunMutationContext } from "./types.js";
 import type { TaskStore } from "./store.js";
 import { computeAccessState } from "./agent-permissions.js";
@@ -211,9 +212,92 @@ export class AgentStore extends EventEmitter {
    * Should be called before other operations.
    */
   async init(): Promise<void> {
-    const _ = this.db;
+    void this.db;
     await mkdir(this.agentsDir, { recursive: true });
     await this.importLegacyFileDataOnce();
+    await this.migrateHeartbeatProcedurePathOnce();
+  }
+
+  /**
+   * One-shot migration that re-points every non-ephemeral agent off the
+   * legacy shared `.fusion/HEARTBEAT.md` path onto their own per-agent
+   * `.fusion/agents/<id>/HEARTBEAT.md` file. The legacy file's contents
+   * are copied to the new location when present so operator edits are
+   * preserved across the upgrade. The legacy file itself is left in place
+   * — the migration is non-destructive in case the operator wants a
+   * reference copy.
+   *
+   * Idempotent: tracks completion in the `__meta` table and short-circuits
+   * on subsequent calls. Failures during file copy are logged via the
+   * legacy console (no log dependency in core) and do not block startup —
+   * the agent's `heartbeatProcedurePath` is still flipped, and the engine's
+   * heartbeat resolver will fall back to the built-in template until the
+   * file is seeded on next dashboard interaction.
+   */
+  private async migrateHeartbeatProcedurePathOnce(): Promise<void> {
+    const migrationKey = "heartbeatProcedurePathPerAgent";
+    const migrationVersion = "1";
+    const row = this.db.prepare("SELECT value FROM __meta WHERE key = ?").get(migrationKey) as
+      | { value: string }
+      | undefined;
+    if (row?.value === migrationVersion) {
+      return;
+    }
+
+    // The legacy shared file lives at <projectRoot>/.fusion/HEARTBEAT.md.
+    // `this.rootDir` is already `<projectRoot>/.fusion`, so the file is just
+    // "HEARTBEAT.md" relative to it.
+    let legacyContent: string | null = null;
+    try {
+      legacyContent = await readFile(join(this.rootDir, "HEARTBEAT.md"), "utf-8");
+    } catch {
+      legacyContent = null;
+    }
+
+    const agents = await this.listAgents({ includeEphemeral: false });
+    let migratedCount = 0;
+    for (const agent of agents) {
+      if (agent.heartbeatProcedurePath !== DEFAULT_HEARTBEAT_PROCEDURE_PATH) {
+        continue;
+      }
+
+      const newRelPath = getDefaultHeartbeatProcedurePath(agent.id);
+      const newAbsPath = join(this.rootDir, "..", newRelPath);
+
+      // Best-effort copy of operator edits to the new per-agent location.
+      // Skip the write when the per-agent file already exists (someone
+      // could have set this up manually) so we never clobber it.
+      if (legacyContent !== null) {
+        try {
+          await mkdir(dirname(newAbsPath), { recursive: true });
+          // Only seed the file if it doesn't already exist.
+          try {
+            await access(newAbsPath, fsConstants.F_OK);
+          } catch {
+            await writeFile(newAbsPath, legacyContent, "utf-8");
+          }
+        } catch {
+          // Non-fatal — proceed with path flip even if the file copy failed.
+        }
+      }
+
+      const updated: Agent = {
+        ...agent,
+        heartbeatProcedurePath: newRelPath,
+        updatedAt: new Date().toISOString(),
+      };
+      await this.writeAgent(updated);
+      migratedCount += 1;
+    }
+
+    this.db.prepare(`
+      INSERT INTO __meta (key, value)
+      VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(migrationKey, migrationVersion);
+    if (migratedCount > 0) {
+      this.db.bumpLastModified();
+    }
   }
 
   /**
@@ -376,11 +460,14 @@ export class AgentStore extends EventEmitter {
     const runtimeConfig = resolveCreationRuntimeConfig(input.runtimeConfig, metadata);
 
     // Default heartbeatProcedurePath for new non-ephemeral agents so operators
-    // get an editable HEARTBEAT.md file from day one. Ephemeral task workers
-    // skip this — they're short-lived and don't need persistent procedure files.
+    // get an editable HEARTBEAT.md file from day one. Each agent gets its
+    // own per-agent file (under `.fusion/agents/<id>/HEARTBEAT.md`) so
+    // tweaks to one agent's procedure do not bleed into the rest of the
+    // team. Ephemeral task workers skip this — they're short-lived and
+    // don't need persistent procedure files.
     const ephemeral = isEphemeralAgent({ metadata, name: input.name, role: input.role, reportsTo: input.reportsTo });
     const resolvedHeartbeatProcedurePath = input.heartbeatProcedurePath
-      ?? (ephemeral ? undefined : DEFAULT_HEARTBEAT_PROCEDURE_PATH);
+      ?? (ephemeral ? undefined : getDefaultHeartbeatProcedurePath(agentId));
 
     const agent: Agent = {
       id: agentId,

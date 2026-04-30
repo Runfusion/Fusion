@@ -871,9 +871,12 @@ export function QuickChatFAB({
           );
           if (hasDefaultModel) {
             setSelectedModel(defaultSelection);
-            if (agents.length === 0) {
-              setChatMode("model");
-            }
+            // Switch to model mode regardless of whether agents are present —
+            // a configured default model is an explicit user preference and
+            // should drive the panel to its corresponding mode immediately,
+            // otherwise the tag/dropdown auto-selection would be invisible
+            // until the user manually toggles modes.
+            setChatMode("model");
             return;
           }
         }
@@ -1548,7 +1551,7 @@ export function QuickChatFAB({
           <div className="quick-chat-panel-header">
             <div className="quick-chat-panel-title-wrap">
               <h3>Quick Chat</h3>
-              {selectedModelTag && (
+              {chatMode === "model" && selectedModelTag && (
                 <span className="quick-chat-model-tag" data-testid="quick-chat-model-tag" title={selectedModelTag}>
                   {selectedModelTag}
                 </span>

@@ -1927,11 +1927,33 @@ export type TriggerCallback = (
   context: WakeContext,
 ) => Promise<void>;
 
-/** Per-agent timer state */
+/** Per-agent timer state. The active handle is either the initial
+ *  phase-aligned `setTimeout` waiting for the first overdue tick, or the
+ *  steady-state `setInterval` installed once that first tick fires.
+ */
 interface AgentTimer {
   intervalMs: number;
+  kind: "timeout" | "interval";
   handle: ReturnType<typeof setInterval>;
 }
+
+/** Optional context passed to registerAgent, used to phase-align the
+ *  initial timer fire to the agent's persisted heartbeat history.
+ */
+export interface RegisterAgentOptions {
+  /** ISO timestamp of the agent's last heartbeat. When set, the initial
+   *  fire is scheduled at `lastHeartbeatAt + intervalMs` rather than
+   *  `now + intervalMs`, so a process restart does not cost agents up to
+   *  one full interval of silence.
+   */
+  lastHeartbeatAt?: string | null;
+}
+
+/** Maximum random jitter (ms) added to the initial fire when an agent's
+ *  next tick is already overdue. Prevents a thundering herd when the
+ *  scheduler boots and many agents want to fire immediately.
+ */
+const OVERDUE_FIRE_JITTER_MS = 5_000;
 
 /**
  * True when an agent's state indicates it should be ticking right now.
@@ -2018,9 +2040,13 @@ export class HeartbeatTriggerScheduler {
     this.unwatchAssignments();
     this.unwatchAgentLifecycle();
 
-    // Clear all timers
+    // Clear all timers (mix of phase-alignment timeouts and steady intervals).
     for (const [agentId, timer] of this.timers) {
-      clearInterval(timer.handle);
+      if (timer.kind === "timeout") {
+        clearTimeout(timer.handle as unknown as ReturnType<typeof setTimeout>);
+      } else {
+        clearInterval(timer.handle);
+      }
       heartbeatLog.log(`Cleared timer for ${agentId}`);
     }
     this.timers.clear();
@@ -2040,10 +2066,19 @@ export class HeartbeatTriggerScheduler {
 
   /**
    * Register an agent for timer-based heartbeat triggers.
+   *
+   * The first fire is phase-aligned to `options.lastHeartbeatAt + intervalMs`
+   * when supplied. This means a process restart resumes each agent's
+   * existing schedule rather than waiting up to a full interval before the
+   * first tick — the previous behavior caused agents on long intervals
+   * (e.g. 1h) to appear "overdue" in the UI for nearly a full interval after
+   * every dashboard restart even though nothing was actually wrong with them.
+   *
    * @param agentId - The agent ID
    * @param config - Per-agent heartbeat config
+   * @param options - Optional registration context (e.g., lastHeartbeatAt)
    */
-  registerAgent(agentId: string, config: AgentHeartbeatConfig): void {
+  registerAgent(agentId: string, config: AgentHeartbeatConfig, options?: RegisterAgentOptions): void {
     if (config.enabled === false) {
       this.unregisterAgent(agentId);
       return;
@@ -2063,12 +2098,14 @@ export class HeartbeatTriggerScheduler {
     const registrationEpoch = (this.registrationEpochs.get(agentId) ?? 0) + 1;
     this.registrationEpochs.set(agentId, registrationEpoch);
 
+    const lastHeartbeatAt = options?.lastHeartbeatAt ?? null;
+
     // Register immediately with multiplier=1 so agents don't wait for async settings I/O.
-    this.applyTimerRegistration(agentId, intervalMs, 1, usingDefaultInterval);
+    this.applyTimerRegistration(agentId, intervalMs, 1, usingDefaultInterval, lastHeartbeatAt);
 
     // If project settings are available, refresh registration with the current multiplier.
     if (this.taskStore && typeof (this.taskStore as { getSettings?: () => Promise<Settings> }).getSettings === "function") {
-      void this.applyProjectMultiplierRegistration(agentId, intervalMs, usingDefaultInterval, registrationEpoch);
+      void this.applyProjectMultiplierRegistration(agentId, intervalMs, usingDefaultInterval, registrationEpoch, lastHeartbeatAt);
     }
   }
 
@@ -2077,6 +2114,7 @@ export class HeartbeatTriggerScheduler {
     baseIntervalMs: number,
     usingDefaultInterval: boolean,
     expectedEpoch: number,
+    lastHeartbeatAt: string | null,
   ): Promise<void> {
     let multiplier = 1;
 
@@ -2095,7 +2133,33 @@ export class HeartbeatTriggerScheduler {
       return;
     }
 
-    this.applyTimerRegistration(agentId, baseIntervalMs, multiplier, usingDefaultInterval);
+    this.applyTimerRegistration(agentId, baseIntervalMs, multiplier, usingDefaultInterval, lastHeartbeatAt);
+  }
+
+  /**
+   * Compute the delay until the agent's next scheduled fire, given when it
+   * last heartbeat. When `lastHeartbeatAt` is missing or unparseable, falls
+   * back to a full-interval delay (matching the original behavior for
+   * agents that have never ticked). When the next fire is already overdue,
+   * returns a small randomized jitter to spread thundering herds at boot.
+   */
+  private static computeInitialDelayMs(
+    intervalMs: number,
+    lastHeartbeatAt: string | null,
+    now: number = Date.now(),
+  ): number {
+    if (!lastHeartbeatAt) {
+      return intervalMs;
+    }
+    const lastMs = Date.parse(lastHeartbeatAt);
+    if (!Number.isFinite(lastMs)) {
+      return intervalMs;
+    }
+    const remaining = lastMs + intervalMs - now;
+    if (remaining <= 0) {
+      return Math.floor(Math.random() * OVERDUE_FIRE_JITTER_MS);
+    }
+    return Math.min(remaining, intervalMs);
   }
 
   private applyTimerRegistration(
@@ -2103,28 +2167,67 @@ export class HeartbeatTriggerScheduler {
     baseIntervalMs: number,
     multiplier: number,
     usingDefaultInterval: boolean,
+    lastHeartbeatAt: string | null,
   ): void {
     const effectiveIntervalMs = Math.max(1000, Math.round(baseIntervalMs * multiplier));
+    const initialDelayMs = HeartbeatTriggerScheduler.computeInitialDelayMs(
+      effectiveIntervalMs,
+      lastHeartbeatAt,
+    );
 
     this.clearAgentTimer(agentId);
 
-    const handle = setInterval(() => {
-      void this.onTimerTick(agentId, effectiveIntervalMs);
-    }, effectiveIntervalMs);
+    const armSteadyInterval = () => {
+      // The setTimeout fired and was consumed; replace it with the long-lived
+      // setInterval that drives every subsequent tick. Use the same
+      // effectiveIntervalMs so the cadence remains correct.
+      const intervalHandle = setInterval(() => {
+        void this.onTimerTick(agentId, effectiveIntervalMs);
+      }, effectiveIntervalMs);
+      this.timers.set(agentId, {
+        intervalMs: effectiveIntervalMs,
+        kind: "interval",
+        handle: intervalHandle,
+      });
+    };
 
-    this.timers.set(agentId, { intervalMs: effectiveIntervalMs, handle });
+    if (initialDelayMs >= effectiveIntervalMs) {
+      // No phase-shift needed (agent has never ticked, or the saved
+      // lastHeartbeatAt is somehow in the future). Skip the timeout hop and
+      // arm the steady-state interval directly so the behavior matches the
+      // pre-phase-alignment scheduler.
+      armSteadyInterval();
+    } else {
+      const timeoutHandle = setTimeout(() => {
+        // Fire the overdue/phase-aligned tick first, then transition to the
+        // steady cadence. The tick fires regardless of whether the steady
+        // interval install succeeds, so a missed tick can never silently
+        // happen here.
+        void this.onTimerTick(agentId, effectiveIntervalMs);
+        armSteadyInterval();
+      }, initialDelayMs);
+      this.timers.set(agentId, {
+        intervalMs: effectiveIntervalMs,
+        kind: "timeout",
+        handle: timeoutHandle as unknown as ReturnType<typeof setInterval>,
+      });
+    }
+
+    const phaseSuffix = lastHeartbeatAt
+      ? `, first fire in ${initialDelayMs}ms (phase-aligned to lastHeartbeatAt)`
+      : "";
 
     if (multiplier !== 1) {
       heartbeatLog.log(
-        `Registered timer for ${agentId} (every ${baseIntervalMs}ms, multiplier ${multiplier} → ${effectiveIntervalMs}ms effective)`,
+        `Registered timer for ${agentId} (every ${baseIntervalMs}ms, multiplier ${multiplier} → ${effectiveIntervalMs}ms effective${phaseSuffix})`,
       );
       return;
     }
 
     heartbeatLog.log(
       usingDefaultInterval
-        ? `Registered timer for ${agentId} (every ${effectiveIntervalMs}ms, default interval)`
-        : `Registered timer for ${agentId} (every ${effectiveIntervalMs}ms)`,
+        ? `Registered timer for ${agentId} (every ${effectiveIntervalMs}ms, default interval${phaseSuffix})`
+        : `Registered timer for ${agentId} (every ${effectiveIntervalMs}ms${phaseSuffix})`,
     );
   }
 
@@ -2133,7 +2236,14 @@ export class HeartbeatTriggerScheduler {
     if (!timer) {
       return;
     }
-    clearInterval(timer.handle);
+    // Both kinds share the same opaque handle type at runtime, but we route
+    // through the matching clear function for clarity and to satisfy strict
+    // type narrowing on platforms that distinguish the two.
+    if (timer.kind === "timeout") {
+      clearTimeout(timer.handle as unknown as ReturnType<typeof setTimeout>);
+    } else {
+      clearInterval(timer.handle);
+    }
     this.timers.delete(agentId);
   }
 
@@ -2291,7 +2401,9 @@ export class HeartbeatTriggerScheduler {
       return;
     }
 
-    this.registerAgent(agent.id, this.getAgentTimerConfig(agent));
+    this.registerAgent(agent.id, this.getAgentTimerConfig(agent), {
+      lastHeartbeatAt: agent.lastHeartbeatAt,
+    });
     heartbeatLog.log(`Timer armed for ${agent.id} (${reason})`);
   }
 
@@ -2307,7 +2419,9 @@ export class HeartbeatTriggerScheduler {
       return;
     }
 
-    this.registerAgent(agent.id, this.getAgentTimerConfig(agent));
+    this.registerAgent(agent.id, this.getAgentTimerConfig(agent), {
+      lastHeartbeatAt: agent.lastHeartbeatAt,
+    });
     heartbeatLog.log(`Timer refreshed for ${agent.id} (${reason})`);
   }
 
