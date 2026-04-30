@@ -213,6 +213,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           modelId: parentTask?.modelId,
           validatorModelProvider: parentTask?.validatorModelProvider,
           validatorModelId: parentTask?.validatorModelId,
+          source: { sourceType: "api", sourceParentTaskId: typeof parentTaskId === "string" ? parentTaskId : undefined },
         });
 
         tempIdToTaskId.set(item.tempId, task.id);
@@ -816,6 +817,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         description: summary.description,
         column: "triage",
         dependencies: summary.suggestedDependencies.length > 0 ? summary.suggestedDependencies : undefined,
+        source: { sourceType: "api" },
       });
 
       // Update task with suggested size if provided
@@ -953,6 +955,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
           description: typeof item.description === "string" ? item.description.trim() : item.title.trim(),
           column: "triage",
           dependencies: undefined,
+          source: { sourceType: "api", sourceMetadata: { planningSessionId } },
         });
 
         tempIdToTaskId.set(item.id, task.id);

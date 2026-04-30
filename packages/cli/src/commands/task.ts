@@ -134,7 +134,11 @@ export async function runTaskCreate(descriptionArg?: string, attachFiles?: strin
   }
 
   const store = projectContext?.store ?? await getStore(projectName);
-  const task = await store.createTask({ description: description.trim(), dependencies: depends });
+  const task = await store.createTask({
+    description: description.trim(),
+    dependencies: depends,
+    source: { sourceType: "cli" },
+  });
 
   let resolvedNode: { id: string; name?: string } | undefined;
   if (nodeName) {
@@ -921,6 +925,10 @@ export async function runTaskImportGitHubInteractive(
         issueNumber: issue.number,
         url: issue.html_url,
       },
+      source: {
+        sourceType: "github_import",
+        sourceMetadata: { issueUrl: issue.html_url },
+      },
     });
 
     const label = task.title || task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "");
@@ -1063,6 +1071,10 @@ export async function runTaskImportFromGitHub(
         externalIssueId: String(issue.number),
         issueNumber: issue.number,
         url: issue.html_url,
+      },
+      source: {
+        sourceType: "github_import",
+        sourceMetadata: { issueUrl: issue.html_url },
       },
     });
 
@@ -1637,6 +1649,7 @@ export async function runTaskPlan(initialPlanArg?: string, yesFlag = false, proj
             description: result.data.description,
             column: "triage",
             dependencies: result.data.suggestedDependencies,
+            source: { sourceType: "cli" },
           });
 
           console.log();

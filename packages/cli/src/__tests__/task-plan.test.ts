@@ -413,6 +413,7 @@ describe("runTaskPlan", () => {
       description: "A well-planned task",
       column: "triage",
       dependencies: ["FN-001"],
+      source: { sourceType: "cli" },
     });
   });
 

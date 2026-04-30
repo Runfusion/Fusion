@@ -187,6 +187,7 @@ describe("createDelegateTaskTool", () => {
       dependencies: undefined,
       column: "todo",
       assignedAgentId: "agent-001",
+      source: { sourceType: "api" },
     });
 
     const text = (result.content[0] as { text: string }).text;
@@ -281,6 +282,7 @@ describe("createDelegateTaskTool", () => {
       dependencies: ["FN-010"],
       column: "todo",
       assignedAgentId: "agent-001",
+      source: { sourceType: "api" },
     });
 
     const text = (result.content[0] as { text: string }).text;

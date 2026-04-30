@@ -3229,6 +3229,11 @@ describe("HeartbeatMonitor", () => {
           description: "Follow-up task",
           dependencies: undefined,
           column: "triage",
+          source: {
+            sourceType: "agent_heartbeat",
+            sourceAgentId: "agent-001",
+            sourceRunId: undefined,
+          },
         });
       });
     });
@@ -3744,6 +3749,11 @@ describe("HeartbeatMonitor", () => {
         description: "Follow-up task",
         dependencies: undefined,
         column: "triage",
+        source: {
+          sourceType: "agent_heartbeat",
+          sourceAgentId: "agent-001",
+          sourceRunId: undefined,
+        },
       });
 
       const responseText = result.content[0] && "text" in result.content[0] ? result.content[0].text : "";

@@ -1387,7 +1387,10 @@ export function ModelOnboardingModal({
     let success = false;
 
     try {
-      const createdTask = await createTask({ description: trimmedDescription }, projectId);
+      const createdTask = await createTask({
+        description: trimmedDescription,
+        source: { sourceType: "dashboard_ui" },
+      }, projectId);
       setInlineCreatedTask(createdTask);
       setShowTaskCreated(true);
       trackOnboardingEvent("onboarding:first-task-created", { taskId: createdTask?.id });

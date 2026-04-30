@@ -3083,7 +3083,7 @@ export class TaskExecutor {
   }
 
   private createTaskCreateTool(): ToolDefinition {
-    return sharedCreateTaskCreateTool(this.store);
+    return sharedCreateTaskCreateTool(this.store, { sourceType: "api" });
   }
 
   private createTaskDocumentWriteTool(taskId: string): ToolDefinition {

@@ -918,7 +918,7 @@ describe("onboarding flow integration", () => {
 
       await waitFor(() => {
         expect(mockCreateTask).toHaveBeenCalledWith(
-          { description: "Ship onboarding telemetry" },
+          { description: "Ship onboarding telemetry", source: { sourceType: "dashboard_ui" } },
           "proj_123",
         );
       });

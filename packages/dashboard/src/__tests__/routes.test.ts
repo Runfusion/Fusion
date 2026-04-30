@@ -6957,6 +6957,13 @@ describe("POST /github/issues/import", () => {
         issueNumber: 1,
         url: "https://github.com/owner/repo/issues/1",
       },
+      source: {
+        sourceType: "github_import",
+        sourceMetadata: {
+          issueUrl: "https://github.com/owner/repo/issues/1",
+          issueNumber: 1,
+        },
+      },
     });
   });
 
@@ -7057,6 +7064,13 @@ describe("POST /github/issues/import", () => {
         externalIssueId: "1",
         issueNumber: 1,
         url: "https://github.com/owner/repo/issues/1",
+      },
+      source: {
+        sourceType: "github_import",
+        sourceMetadata: {
+          issueUrl: "https://github.com/owner/repo/issues/1",
+          issueNumber: 1,
+        },
       },
     });
   });

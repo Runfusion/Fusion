@@ -385,6 +385,10 @@ export class RoutineRunner {
         column: (step.taskColumn as Column) || "triage",
         modelProvider: step.modelProvider?.trim() || undefined,
         modelId: step.modelId?.trim() || undefined,
+        source: {
+          sourceType: "automation",
+          sourceMetadata: { routineId: routine.id, stepId: step.id },
+        },
       };
       try {
         const task = await this.options.taskStore.createTask(taskInput);

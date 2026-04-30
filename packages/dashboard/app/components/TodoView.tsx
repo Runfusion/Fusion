@@ -261,6 +261,7 @@ export function TodoView({ projectId, addToast }: TodoViewProps) {
       const input: TaskCreateInput = {
         description: item.text,
         column: "triage",
+        source: { sourceType: "dashboard_ui" },
       };
       const task: Task = await createTask(input, projectId);
       addToast(`Created ${task.id} from todo`, "success");
@@ -275,6 +276,7 @@ export function TodoView({ projectId, addToast }: TodoViewProps) {
         description: item.text,
         column: "triage",
         assignedAgentId: agentId,
+        source: { sourceType: "dashboard_ui" },
       };
       const task: Task = await createTask(input, projectId);
       const assignedAgent = agents.find((agent) => agent.id === agentId);

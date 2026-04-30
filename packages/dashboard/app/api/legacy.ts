@@ -251,6 +251,7 @@ export function createTask(input: TaskCreateInput, projectId?: string): Promise<
     reviewLevel,
     executionMode,
     priority,
+    source,
   } = input;
 
   return api<Task>(withProjectId("/tasks", projectId), {
@@ -275,6 +276,7 @@ export function createTask(input: TaskCreateInput, projectId?: string): Promise<
       reviewLevel,
       executionMode,
       priority,
+      source,
     }),
   });
 }

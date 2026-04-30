@@ -429,7 +429,7 @@ describe("TodoView", () => {
 
     await waitFor(() => {
       expect(mockCreateTask).toHaveBeenCalledWith(
-        { description: "Buy groceries", column: "triage" },
+        { description: "Buy groceries", column: "triage", source: { sourceType: "dashboard_ui" } },
         "project-1",
       );
     });
@@ -459,7 +459,7 @@ describe("TodoView", () => {
 
     await waitFor(() => {
       expect(mockCreateTask).toHaveBeenCalledWith(
-        { description: "Buy groceries", column: "triage", assignedAgentId: "agent-1" },
+        { description: "Buy groceries", column: "triage", assignedAgentId: "agent-1", source: { sourceType: "dashboard_ui" } },
         "project-1",
       );
     });

@@ -47,7 +47,7 @@ describe("useTaskHandlers", () => {
       created = await result.current.handleBoardQuickCreate(input);
     });
 
-    expect(options.createTask).toHaveBeenCalledWith({ description: "Do work", column: "triage" });
+    expect(options.createTask).toHaveBeenCalledWith({ description: "Do work", column: "triage", source: { sourceType: "dashboard_ui" } });
     expect(created).toEqual(CREATED_TASK);
   });
 
@@ -60,7 +60,7 @@ describe("useTaskHandlers", () => {
       created = await result.current.handleModalCreate({ description: "From modal" });
     });
 
-    expect(options.createTask).toHaveBeenCalledWith({ description: "From modal", column: "triage" });
+    expect(options.createTask).toHaveBeenCalledWith({ description: "From modal", column: "triage", source: { sourceType: "dashboard_ui" } });
     expect(created).toEqual(CREATED_TASK);
   });
 

@@ -11,7 +11,7 @@ import { appendFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/p
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import type { AgentStore, AgentState, AgentCapability, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message } from "@fusion/core";
+import type { AgentStore, AgentState, AgentCapability, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType } from "@fusion/core";
 import { dailyMemoryPath, ensureOpenClawMemoryFiles, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, resolveMemoryBackend, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
@@ -420,7 +420,10 @@ async function getAgentMemoryWindow(rootDir: string, agentMemory: AgentMemoryCon
  * @param store - TaskStore for task persistence
  * @returns ToolDefinition for the `fn_task_create` tool
  */
-export function createTaskCreateTool(store: TaskStore): ToolDefinition {
+export function createTaskCreateTool(
+  store: TaskStore,
+  provenance?: { sourceType: SourceType; sourceAgentId?: string; sourceRunId?: string },
+): ToolDefinition {
   return {
     name: "fn_task_create",
     label: "Create Task",
@@ -435,6 +438,11 @@ export function createTaskCreateTool(store: TaskStore): ToolDefinition {
         description: params.description,
         dependencies: params.dependencies,
         column: "triage",
+        source: provenance ? {
+          sourceType: provenance.sourceType,
+          sourceAgentId: provenance.sourceAgentId,
+          sourceRunId: provenance.sourceRunId,
+        } : undefined,
       });
       const deps = task.dependencies.length ? ` (depends on: ${task.dependencies.join(", ")})` : "";
       return {
@@ -899,6 +907,7 @@ export function createDelegateTaskTool(agentStore: AgentStore, taskStore: TaskSt
         dependencies: params.dependencies,
         column: "todo",
         assignedAgentId: params.agent_id,
+        source: { sourceType: "api" },
       });
 
       const deps = task.dependencies.length ? ` (depends on: ${task.dependencies.join(", ")})` : "";

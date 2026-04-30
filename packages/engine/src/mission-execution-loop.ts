@@ -265,6 +265,14 @@ export class MissionExecutionLoop extends EventEmitter {
           column: "in-progress",
           missionId,
           sliceId: feature.sliceId,
+          source: {
+            sourceType: "automation",
+            sourceMetadata: {
+              missionId,
+              featureId: feature.id,
+              sliceId: feature.sliceId,
+            },
+          },
         });
         validationTaskId = validationTask.id;
 

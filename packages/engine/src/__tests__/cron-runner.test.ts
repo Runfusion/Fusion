@@ -1252,6 +1252,10 @@ describe("CronRunner", () => {
         column: "todo",
         modelProvider: "anthropic",
         modelId: "claude-sonnet-4-5",
+        source: {
+          sourceType: "cron",
+          sourceMetadata: { scheduleId: "test-schedule-id", stepId: expect.any(String) },
+        },
       });
     });
 

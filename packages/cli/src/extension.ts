@@ -207,6 +207,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         description: params.description.trim(),
         dependencies: params.depends,
         assignedAgentId: params.agentId,
+        source: { sourceType: "api" },
       });
 
       const label =
@@ -878,6 +879,10 @@ export default function kbExtension(pi: ExtensionAPI) {
             issueNumber: issue.number,
             url: issue.html_url,
           },
+          source: {
+            sourceType: "github_import",
+            sourceMetadata: { issueUrl: issue.html_url },
+          },
         });
 
         await store.logEntry(task.id, "Imported from GitHub", sourceUrl);
@@ -970,6 +975,10 @@ export default function kbExtension(pi: ExtensionAPI) {
           externalIssueId: String(issue.number),
           issueNumber: issue.number,
           url: issue.html_url,
+        },
+        source: {
+          sourceType: "github_import",
+          sourceMetadata: { issueUrl: issue.html_url },
         },
       });
 

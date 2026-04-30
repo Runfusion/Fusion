@@ -1233,6 +1233,10 @@ export class ProjectEngine {
                   description: followUpDescription,
                   column: "triage",
                   priority: "high",
+                  source: {
+                    sourceType: "recovery",
+                    sourceParentTaskId: taskId,
+                  },
                 });
                 await store.addTaskComment(
                   taskId,
@@ -1368,6 +1372,10 @@ export class ProjectEngine {
                             `Last merge error: ${errorMsg}`,
                           column: "triage",
                           priority: "high",
+                          source: {
+                            sourceType: "recovery",
+                            sourceParentTaskId: taskId,
+                          },
                         });
                         await store.addTaskComment(
                           taskId,

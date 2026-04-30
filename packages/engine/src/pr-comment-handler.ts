@@ -219,6 +219,11 @@ Please review the PR comments and address any remaining issues.`;
         description,
         column: "triage",
         dependencies: [originalTaskId],
+        source: {
+          sourceType: "api",
+          sourceParentTaskId: originalTaskId,
+          sourceMetadata: { prNumber: prInfo.number, prUrl: prInfo.url },
+        },
       });
 
       prMonitorLog.log(`Created follow-up task ${task.id} for PR #${prInfo.number}`);

@@ -90,6 +90,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         thinkingLevel,
         reviewLevel,
         executionMode,
+        source,
       } = req.body;
       if (!description || typeof description !== "string") {
         throw badRequest("description is required");
@@ -169,6 +170,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           }
         : undefined;
 
+      const normalizedSource =
+        source && typeof source === "object" && "sourceType" in source && typeof (source as { sourceType?: unknown }).sourceType === "string"
+          ? source
+          : { sourceType: "api" as const };
+
       const task = await scopedStore.createTask(
         {
           title,
@@ -188,6 +194,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           summarize,
           reviewLevel: reviewLevel ?? undefined,
           executionMode: executionMode || undefined,
+          source: normalizedSource,
         },
         { onSummarize, settings: { autoSummarizeTitles: settings.autoSummarizeTitles } }
       );

@@ -1157,8 +1157,12 @@ export class HeartbeatMonitor {
           // No-task runs: fn_task_create, fn_list_agents, fn_delegate_task, messaging, memory, fn_heartbeat_done
           heartbeatTools = [];
 
-          // fn_task_create tool (no tracking needed for no-task runs)
-          heartbeatTools.push(createTaskCreateTool(taskStore));
+          // fn_task_create tool
+          heartbeatTools.push(createTaskCreateTool(taskStore, {
+            sourceType: "agent_heartbeat",
+            sourceAgentId: agentId,
+            sourceRunId: runContext?.runId,
+          }));
 
           // Agent delegation tools
           heartbeatTools.push(createListAgentsTool(this.store));
@@ -1551,7 +1555,10 @@ export class HeartbeatMonitor {
     const tools: ToolDefinition[] = [];
 
     // Wrap createTaskCreateTool with tracking and agent-link logging
-    const baseCreateTool = createTaskCreateTool(taskStore);
+    const baseCreateTool = createTaskCreateTool(taskStore, {
+      sourceType: "agent_heartbeat",
+      sourceAgentId: agentId,
+    });
     const trackedCreateTool: ToolDefinition = {
       ...baseCreateTool,
       execute: async (id: string, params: Static<typeof taskCreateParams>, signal, onUpdate, ctx) => {

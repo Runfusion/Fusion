@@ -32,14 +32,14 @@ export function useTaskHandlers(options: UseTaskHandlersOptions): UseTaskHandler
 
   const handleBoardQuickCreate = useCallback(
     async (input: TaskCreateInput): Promise<Task> => {
-      return createTask({ ...input, column: "triage" });
+      return createTask({ ...input, column: "triage", source: { sourceType: "dashboard_ui" } });
     },
     [createTask],
   );
 
   const handleModalCreate = useCallback(
     async (input: TaskCreateInput): Promise<Task> => {
-      const task = await createTask({ ...input, column: "triage" });
+      const task = await createTask({ ...input, column: "triage", source: { sourceType: "dashboard_ui" } });
       return task;
     },
     [createTask],

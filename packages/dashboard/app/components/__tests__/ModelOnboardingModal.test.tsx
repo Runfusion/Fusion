@@ -1612,12 +1612,12 @@ describe("ModelOnboardingModal", () => {
       expect(mockCreateTask).toHaveBeenCalledTimes(2);
       expect(mockCreateTask).toHaveBeenNthCalledWith(
         1,
-        { description: "Build auth" },
+        { description: "Build auth", source: { sourceType: "dashboard_ui" } },
         "proj_123",
       );
       expect(mockCreateTask).toHaveBeenNthCalledWith(
         2,
-        { description: "Build auth" },
+        { description: "Build auth", source: { sourceType: "dashboard_ui" } },
         "proj_123",
       );
     });

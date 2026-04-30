@@ -7,6 +7,7 @@ import {
   buildQmdAgentMemorySearchArgs,
   createMemoryTools,
   createTaskCreateTool,
+  createDelegateTaskTool,
   createSendMessageTool,
   createReadMessagesTool,
   qmdAgentMemoryCollectionName,
@@ -82,11 +83,47 @@ describe("createTaskCreateTool", () => {
       description: "Follow-up task",
       dependencies: ["PROJ-001"],
       column: "triage",
+      source: undefined,
     });
     expect(result.details).toEqual({ taskId: "PROJ-042" });
     const responseText = result.content[0]?.type === "text" ? result.content[0].text : "";
     expect(responseText).toContain("Created PROJ-042: Follow-up task");
     expect(responseText).toContain("(depends on: PROJ-001)");
+  });
+
+  it("passes explicit provenance to store.createTask", async () => {
+    const store = {
+      createTask: vi.fn().mockResolvedValue({ id: "PROJ-099", description: "Test", dependencies: [], column: "triage" }),
+    };
+
+    const tool = createTaskCreateTool(store as any, {
+      sourceType: "agent_heartbeat",
+      sourceAgentId: "agent-123",
+    });
+
+    await tool.execute("call-1", { description: "Test" } as any, undefined, undefined, {} as any);
+
+    expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      source: { sourceType: "agent_heartbeat", sourceAgentId: "agent-123", sourceRunId: undefined },
+    }));
+  });
+});
+
+describe("createDelegateTaskTool", () => {
+  it("creates delegated tasks with api source provenance", async () => {
+    const agentStore = {
+      getAgent: vi.fn().mockResolvedValue({ id: "agent-1", name: "Worker", role: "executor", state: "idle" }),
+    };
+    const taskStore = {
+      createTask: vi.fn().mockResolvedValue({ id: "FN-100", dependencies: [], description: "Delegated" }),
+    };
+
+    const tool = createDelegateTaskTool(agentStore as any, taskStore as any);
+    await tool.execute("call-1", { agent_id: "agent-1", description: "Delegated" } as any, undefined, undefined, {} as any);
+
+    expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      source: { sourceType: "api" },
+    }));
   });
 });
 

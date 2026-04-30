@@ -1387,6 +1387,7 @@ describe("taskCreate tool model inheritance", () => {
       modelId: parentTaskResult?.modelId,
       validatorModelProvider: parentTaskResult?.validatorModelProvider,
       validatorModelId: parentTaskResult?.validatorModelId,
+      source: { sourceType: "agent_heartbeat", sourceParentTaskId: parentTaskId },
     });
 
     expect(store.getTask).toHaveBeenCalledWith("FN-001");
@@ -1435,6 +1436,7 @@ describe("taskCreate tool model inheritance", () => {
       modelId: parentTask?.modelId,
       validatorModelProvider: parentTask?.validatorModelProvider,
       validatorModelId: parentTask?.validatorModelId,
+      source: { sourceType: "agent_heartbeat", sourceParentTaskId: parentTaskId },
     });
 
     expect(store.getTask).toHaveBeenCalledWith("FN-NONEXISTENT");

@@ -2086,6 +2086,10 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
           issueNumber: issue.number,
           url: issue.html_url,
         },
+        source: {
+          sourceType: "github_import",
+          sourceMetadata: { issueUrl: issue.html_url, issueNumber: issue.number },
+        },
       });
 
       // Log the import action
@@ -2221,6 +2225,10 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
               externalIssueId: String(issue.number),
               issueNumber: issue.number,
               url: issue.html_url,
+            },
+            source: {
+              sourceType: "github_import",
+              sourceMetadata: { issueUrl: issue.html_url, issueNumber: issue.number },
             },
           });
 
@@ -2388,6 +2396,10 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
         description,
         column: "triage",
         dependencies: [],
+        source: {
+          sourceType: "github_import",
+          sourceMetadata: { prUrl: sourceUrl, prNumber },
+        },
       });
 
       // Log the import action

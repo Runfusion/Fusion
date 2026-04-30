@@ -388,7 +388,7 @@ export class CronRunner {
     } else if (step.type === "ai-prompt") {
       return this.executeAiPromptStep(step, stepIndex, timeoutMs, stepStartedAt);
     } else if (step.type === "create-task") {
-      return this.executeCreateTaskStep(step, stepIndex, stepStartedAt);
+      return this.executeCreateTaskStep(step, stepIndex, stepStartedAt, schedule.id);
     }
 
     // Unknown step type
@@ -564,6 +564,7 @@ export class CronRunner {
     step: AutomationStep,
     stepIndex: number,
     startedAt: string,
+    scheduleId: string,
   ): Promise<AutomationStepResult> {
     // Validate that taskDescription is present and non-empty
     if (!step.taskDescription?.trim()) {
@@ -586,6 +587,10 @@ export class CronRunner {
       column: (step.taskColumn as Column) || "triage",
       modelProvider: step.modelProvider?.trim() || undefined,
       modelId: step.modelId?.trim() || undefined,
+      source: {
+        sourceType: "cron",
+        sourceMetadata: { scheduleId, stepId: step.id },
+      },
     };
 
     try {

@@ -522,6 +522,19 @@ describe("createTask", () => {
     expect(body).not.toHaveProperty("executionMode");
   });
 
+  it("passes source provenance through createTask payload", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_CREATED_TASK));
+
+    await createTask({
+      description: "Sourced task",
+      source: { sourceType: "dashboard_ui" },
+    });
+
+    const call = vi.mocked(globalThis.fetch).mock.calls[0];
+    const body = JSON.parse((call[1] as RequestInit).body as string);
+    expect(body.source).toEqual({ sourceType: "dashboard_ui" });
+  });
+
   it("sends POST with multiple fields including executionMode", async () => {
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, {
       ...FAKE_CREATED_TASK,

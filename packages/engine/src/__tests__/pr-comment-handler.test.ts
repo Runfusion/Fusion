@@ -213,6 +213,14 @@ describe("PrCommentHandler", () => {
         description: expect.stringContaining("FN-001"),
         column: "triage",
         dependencies: ["FN-001"],
+        source: {
+          sourceType: "api",
+          sourceParentTaskId: "FN-001",
+          sourceMetadata: {
+            prNumber: 42,
+            prUrl: "https://github.com/owner/repo/pull/42",
+          },
+        },
       });
     });
 

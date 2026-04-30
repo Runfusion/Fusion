@@ -1573,6 +1573,10 @@ export class TriageProcessor {
             modelId: parentTask?.modelId,
             validatorModelProvider: parentTask?.validatorModelProvider,
             validatorModelId: parentTask?.validatorModelId,
+            source: {
+              sourceType: "agent_heartbeat",
+              sourceParentTaskId: options.parentTaskId,
+            },
           });
 
           // Track the created subtask

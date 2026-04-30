@@ -4201,6 +4201,10 @@ async function executeCreateTaskStep(
       column: (step.taskColumn as import("@fusion/core").Column) || "triage",
       modelProvider: step.modelProvider?.trim() || undefined,
       modelId: step.modelId?.trim() || undefined,
+      source: {
+        sourceType: "workflow_step",
+        sourceMetadata: { stepId: step.id },
+      },
     });
 
     return {

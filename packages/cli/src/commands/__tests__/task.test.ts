@@ -409,7 +409,7 @@ describe("project-aware task command behavior", () => {
     await runTaskCreate("test task", undefined, undefined, "demo-project");
 
     expect(resolveProject).toHaveBeenCalledWith("demo-project");
-    expect(mockCreateTask).toHaveBeenCalledWith({ description: "test task", dependencies: undefined });
+    expect(mockCreateTask).toHaveBeenCalledWith({ description: "test task", dependencies: undefined, source: { sourceType: "cli" } });
     expect(logSpy.mock.calls.some((call) => String(call[0]).includes("Project: demo-project"))).toBe(true);
 
     logSpy.mockRestore();
@@ -428,7 +428,7 @@ describe("project-aware task command behavior", () => {
     await runTaskCreate("default task");
 
     expect(resolveProject).toHaveBeenCalledWith(undefined);
-    expect(mockCreateTask).toHaveBeenCalledWith({ description: "default task", dependencies: undefined });
+    expect(mockCreateTask).toHaveBeenCalledWith({ description: "default task", dependencies: undefined, source: { sourceType: "cli" } });
   });
 
   it("runTaskCreate without project flag falls back to TaskStore(process.cwd()) when resolution fails", async () => {
@@ -452,7 +452,7 @@ describe("project-aware task command behavior", () => {
     expect(resolveProject).toHaveBeenCalledWith(undefined);
     expect(TaskStore).toHaveBeenCalledWith("/current/project");
     expect(init).toHaveBeenCalledOnce();
-    expect(mockCreateTask).toHaveBeenCalledWith({ description: "local task", dependencies: undefined });
+    expect(mockCreateTask).toHaveBeenCalledWith({ description: "local task", dependencies: undefined, source: { sourceType: "cli" } });
     cwdSpy.mockRestore();
   });
 
@@ -967,6 +967,7 @@ describe("runTaskCreate with --depends", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       description: "test task",
       dependencies: ["FN-124"],
+      source: { sourceType: "cli" },
     });
   });
 
@@ -976,6 +977,7 @@ describe("runTaskCreate with --depends", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       description: "test task",
       dependencies: ["FN-124", "FN-100"],
+      source: { sourceType: "cli" },
     });
 
     const depsLine = logSpy.mock.calls.find(
@@ -992,6 +994,7 @@ describe("runTaskCreate with --depends", () => {
     expect(mockCreateTask).toHaveBeenCalledWith({
       description: "test task",
       dependencies: undefined,
+      source: { sourceType: "cli" },
     });
   });
 });
@@ -1076,6 +1079,7 @@ describe("runTaskImportGitHubInteractive", () => {
         issueNumber: 1,
         url: "https://github.com/owner/repo/issues/1",
       },
+      source: { sourceType: "github_import", sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/1" } },
     });
     expect(mockCreateTask).toHaveBeenCalledWith({
       title: "Third Issue",
@@ -1089,6 +1093,7 @@ describe("runTaskImportGitHubInteractive", () => {
         issueNumber: 3,
         url: "https://github.com/owner/repo/issues/3",
       },
+      source: { sourceType: "github_import", sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/3" } },
     });
   });
 
@@ -1146,6 +1151,7 @@ describe("runTaskImportGitHubInteractive", () => {
         issueNumber: 2,
         url: "https://github.com/owner/repo/issues/2",
       },
+      source: { sourceType: "github_import", sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/2" } },
     });
 
     const skipLine = logSpy.mock.calls.find(
@@ -1399,6 +1405,7 @@ describe("runTaskImportFromGitHub", () => {
         issueNumber: 1,
         url: "https://github.com/owner/repo/issues/1",
       },
+      source: { sourceType: "github_import", sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/1" } },
     });
 
     const successLine = logSpy.mock.calls.find(
@@ -1481,6 +1488,7 @@ describe("runTaskImportFromGitHub", () => {
         issueNumber: 1,
         url: "https://github.com/owner/repo/issues/1",
       },
+      source: { sourceType: "github_import", sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/1" } },
     });
   });
 
@@ -1502,6 +1510,7 @@ describe("runTaskImportFromGitHub", () => {
         issueNumber: 1,
         url: "https://github.com/owner/repo/issues/1",
       },
+      source: { sourceType: "github_import", sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/1" } },
     });
   });
 });
