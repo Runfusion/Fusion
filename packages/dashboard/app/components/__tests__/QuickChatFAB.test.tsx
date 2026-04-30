@@ -298,6 +298,67 @@ describe("QuickChatFAB", () => {
     });
   });
 
+  it("reselecting Use default resolves to configured default model and keeps send enabled", async () => {
+    mockAgentsHook([]);
+    mockFetchModels.mockResolvedValue({
+      models: mockModels,
+      favoriteProviders: [],
+      favoriteModels: [],
+      defaultProvider: "openai",
+      defaultModelId: "gpt-4o",
+    });
+
+    render(<QuickChatFAB addToast={addToast} projectId="proj-123" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-model-tag")).toHaveTextContent("GPT-4o");
+      expect(screen.getByTestId("quick-chat-input")).not.toBeDisabled();
+    });
+
+    await selectModelOption("Claude Sonnet 4.5");
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-model-tag")).toHaveTextContent("Claude Sonnet 4.5");
+      expect(mockCreateChatSession).toHaveBeenCalledWith(
+        {
+          agentId: "__fn_agent__",
+          modelProvider: "anthropic",
+          modelId: "claude-sonnet-4-5",
+        },
+        "proj-123",
+      );
+    });
+
+    await selectModelOption("Use default");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-model-tag")).toHaveTextContent("GPT-4o");
+      expect(screen.getByTestId("quick-chat-input")).not.toBeDisabled();
+      expect(mockCreateChatSession).toHaveBeenCalledWith(
+        {
+          agentId: "__fn_agent__",
+          modelProvider: "openai",
+          modelId: "gpt-4o",
+        },
+        "proj-123",
+      );
+    });
+
+    const input = screen.getByTestId("quick-chat-input");
+    fireEvent.change(input, { target: { value: "use default still sends" } });
+    fireEvent.click(screen.getByTestId("quick-chat-send"));
+
+    await waitFor(() => {
+      expect(mockStreamChatResponse).toHaveBeenCalledWith(
+        "session-001",
+        "use default still sends",
+        expect.any(Object),
+        [],
+        "proj-123",
+      );
+    });
+  });
+
   it("preserves existing behavior when no default model is configured and agents exist", async () => {
     mockAgentsHook(mockAgents);
     mockFetchModels.mockResolvedValue({

@@ -25,14 +25,22 @@ import { LoginInstructions } from "./LoginInstructions";
 import { CustomProviderForm } from "./CustomProviderForm";
 import { appendTokenQuery } from "../auth";
 
-const mapLegacyCustomProviderToConfig = (provider: CustomProvider): CustomProviderConfig => ({
-  id: provider.id,
-  name: provider.name,
-  baseUrl: provider.baseUrl,
-  api: provider.apiType === "anthropic-compatible" ? "anthropic-messages" : "openai-responses",
-  apiKey: provider.apiKey,
-  models: provider.models?.map((model) => ({ id: model.id, name: model.name })) ?? [],
-});
+const mapLegacyCustomProviderToConfig = (
+  provider: CustomProvider | CustomProviderConfig,
+): CustomProviderConfig => {
+  if ("api" in provider) {
+    return provider;
+  }
+
+  return {
+    id: provider.id,
+    name: provider.name,
+    baseUrl: provider.baseUrl,
+    api: provider.apiType === "anthropic-compatible" ? "anthropic-messages" : "openai-responses",
+    apiKey: provider.apiKey,
+    models: provider.models?.map((model) => ({ id: model.id, name: model.name })) ?? [],
+  };
+};
 
 /** Provider-specific API key setup metadata for onboarding form rendering */
 interface ApiKeyInfo {

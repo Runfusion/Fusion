@@ -46,14 +46,22 @@ const GITHUB_STAR_CACHE_KEY = "fusion_github_star_count";
 const GITHUB_STAR_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const GITHUB_STAR_CLICKED_KEY = "fusion:github-star-clicked";
 
-const mapLegacyCustomProviderToConfig = (provider: CustomProvider): CustomProviderConfig => ({
-  id: provider.id,
-  name: provider.name,
-  baseUrl: provider.baseUrl,
-  api: provider.apiType === "anthropic-compatible" ? "anthropic-messages" : "openai-responses",
-  apiKey: provider.apiKey,
-  models: provider.models?.map((model) => ({ id: model.id, name: model.name })) ?? [],
-});
+const mapLegacyCustomProviderToConfig = (
+  provider: CustomProvider | CustomProviderConfig,
+): CustomProviderConfig => {
+  if ("api" in provider) {
+    return provider;
+  }
+
+  return {
+    id: provider.id,
+    name: provider.name,
+    baseUrl: provider.baseUrl,
+    api: provider.apiType === "anthropic-compatible" ? "anthropic-messages" : "openai-responses",
+    apiKey: provider.apiKey,
+    models: provider.models?.map((model) => ({ id: model.id, name: model.name })) ?? [],
+  };
+};
 
 function getNodeStatusLabel(status: "online" | "offline" | "connecting" | "error"): string {
   if (status === "online") return "Online";
