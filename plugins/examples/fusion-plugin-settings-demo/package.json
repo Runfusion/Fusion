@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/settings-demo",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "type": "module",
   "description": "Example Fusion plugin demonstrating settings schema and runtime configuration",
   "keywords": [

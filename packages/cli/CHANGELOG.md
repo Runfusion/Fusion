@@ -1,5 +1,11 @@
 # @runfusion/fusion
 
+## 0.9.3
+
+### Patch Changes
+
+- bb9b0f1: Preserve in-progress card timers and stats across internal workflow rerun bounces.
+
 ## 0.9.2
 
 ### Minor Changes

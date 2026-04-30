@@ -2,6 +2,44 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.9.3
+
+### @fusion/dashboard
+
+#### Patch Changes
+
+- @fusion/core@0.9.3
+- @fusion/engine@0.9.3
+- @fusion-plugin-examples/hermes-runtime@0.2.10
+- @fusion-plugin-examples/openclaw-runtime@0.2.10
+- @fusion-plugin-examples/paperclip-runtime@0.2.10
+
+### @fusion/engine
+
+#### Patch Changes
+
+- @fusion/core@0.9.3
+- @fusion/pi-claude-cli@0.9.3
+
+### @fusion/plugin-sdk
+
+#### Patch Changes
+
+- @fusion/core@0.9.3
+
+### @runfusion/fusion
+
+#### Patch Changes
+
+- bb9b0f1: Preserve in-progress card timers and stats across internal workflow rerun bounces.
+
+### runfusion.ai
+
+#### Patch Changes
+
+- Updated dependencies [bb9b0f1]
+  - @runfusion/fusion@0.9.3
+
 ## 0.9.2
 
 ### @fusion/dashboard
