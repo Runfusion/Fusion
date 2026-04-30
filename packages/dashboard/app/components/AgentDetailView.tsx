@@ -2522,7 +2522,8 @@ function HeartbeatProcedureSection({
 }) {
   const [isUpgrading, setIsUpgrading] = useState(false);
   const currentPath = agent.heartbeatProcedurePath?.trim();
-  const onDefault = currentPath === ".fusion/HEARTBEAT.md";
+  const expectedDefaultPath = `.fusion/agents/${agent.id}/HEARTBEAT.md`;
+  const onDefault = currentPath === expectedDefaultPath;
 
   const handleUpgrade = async () => {
     setIsUpgrading(true);
@@ -2578,8 +2579,10 @@ function HeartbeatProcedureSection({
             )}
           </button>
           <span className="config-hint">
-            Sets <code>heartbeatProcedurePath</code> to <code>.fusion/HEARTBEAT.md</code>
+            Sets <code>heartbeatProcedurePath</code> to{" "}
+            <code>{expectedDefaultPath}</code>
             {" "}and seeds the file from the built-in template if it doesn't exist.
+            Each agent gets its own per-agent file, so edits stay scoped to this agent.
             Operator edits to the file are preserved.
           </span>
         </div>

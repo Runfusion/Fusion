@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import type { Agent, AgentCapability, AgentUpdateInput, TaskStore } from "@fusion/core";
-import { DEFAULT_HEARTBEAT_PROCEDURE_PATH } from "@fusion/core";
+import { getDefaultHeartbeatProcedurePath } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import type { ApiRoutesContext } from "./types.js";
 
@@ -156,12 +156,14 @@ export function registerAgentCoreListCreateRoutes(ctx: ApiRoutesContext, deps: A
       });
 
       // Seed the default heartbeat procedure file if the new agent landed on
-      // the default path (which createAgent fills in for non-ephemeral agents
-      // when no override is provided). Idempotent — operator edits are kept.
-      if (agent.heartbeatProcedurePath === DEFAULT_HEARTBEAT_PROCEDURE_PATH) {
+      // the per-agent default path (which createAgent fills in for
+      // non-ephemeral agents when no override is provided). Idempotent —
+      // operator edits are kept.
+      const expectedDefaultPath = getDefaultHeartbeatProcedurePath(agent.id);
+      if (agent.heartbeatProcedurePath === expectedDefaultPath) {
         try {
           const { ensureDefaultHeartbeatProcedureFile, HEARTBEAT_PROCEDURE } = await import("@fusion/engine");
-          await ensureDefaultHeartbeatProcedureFile(scopedStore.getRootDir(), DEFAULT_HEARTBEAT_PROCEDURE_PATH, HEARTBEAT_PROCEDURE);
+          await ensureDefaultHeartbeatProcedureFile(scopedStore.getRootDir(), expectedDefaultPath, HEARTBEAT_PROCEDURE);
         } catch {
           // Non-fatal — the heartbeat resolver falls back to the in-memory constant.
         }
@@ -470,10 +472,11 @@ export function registerAgentCoreRoutes(ctx: ApiRoutesContext, deps: AgentCoreRo
 
   /**
    * POST /api/agents/:id/upgrade-heartbeat-procedure
-   * Backfill an existing agent onto the default heartbeat procedure file.
-   * Sets `heartbeatProcedurePath` to DEFAULT_HEARTBEAT_PROCEDURE_PATH and
-   * seeds the file with the built-in HEARTBEAT_PROCEDURE if it doesn't exist.
-   * Idempotent: existing operator edits to the file are preserved.
+   * Backfill an existing agent onto the per-agent default heartbeat
+   * procedure file. Sets `heartbeatProcedurePath` to the agent's own
+   * `.fusion/agents/<id>/HEARTBEAT.md` and seeds the file with the
+   * built-in HEARTBEAT_PROCEDURE if it doesn't exist. Idempotent: existing
+   * operator edits to the file are preserved.
    */
   router.post("/agents/:id/upgrade-heartbeat-procedure", async (req, res) => {
     try {
@@ -487,20 +490,21 @@ export function registerAgentCoreRoutes(ctx: ApiRoutesContext, deps: AgentCoreRo
         throw notFound(`agent ${req.params.id} not found`);
       }
 
+      const targetPath = getDefaultHeartbeatProcedurePath(req.params.id);
       const { ensureDefaultHeartbeatProcedureFile, HEARTBEAT_PROCEDURE } = await import("@fusion/engine");
       const filePath = await ensureDefaultHeartbeatProcedureFile(
         scopedStore.getRootDir(),
-        DEFAULT_HEARTBEAT_PROCEDURE_PATH,
+        targetPath,
         HEARTBEAT_PROCEDURE,
       );
 
       const updated = await agentStore.updateAgent(req.params.id, {
-        heartbeatProcedurePath: DEFAULT_HEARTBEAT_PROCEDURE_PATH,
+        heartbeatProcedurePath: targetPath,
       });
 
       res.json({
         agent: updated,
-        heartbeatProcedurePath: DEFAULT_HEARTBEAT_PROCEDURE_PATH,
+        heartbeatProcedurePath: targetPath,
         procedureFileSeeded: filePath !== null,
       });
     } catch (err: unknown) {
