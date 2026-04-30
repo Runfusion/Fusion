@@ -11162,11 +11162,25 @@ describe("TaskExecutor watchdogs", () => {
   it("preserves the original executionStartedAt during a workflow rerun bounce", async () => {
     const store = createMockStore();
     const originalExecutionStartedAt = "2026-04-30T05:06:43.781Z";
-    const mutableTask = {
+    const mutableTask: {
+      id: string;
+      title: string;
+      description: string;
+      column: "in-progress" | "todo";
+      paused: boolean;
+      worktree: string;
+      executionStartedAt: string;
+      dependencies: string[];
+      steps: { name: string; status: string }[];
+      currentStep: number;
+      log: unknown[];
+      createdAt: string;
+      updatedAt: string;
+    } = {
       id: "FN-WD-4",
       title: "Workflow rerun timing",
       description: "desc",
-      column: "in-progress" as const,
+      column: "in-progress",
       paused: false,
       worktree: "/tmp/fn-wd-4",
       executionStartedAt: originalExecutionStartedAt,
