@@ -164,7 +164,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   autoBackupRetention: 7,
   autoBackupDir: ".fusion/backups",
   autoSummarizeTitles: false,
-  useAiMergeCommitSummary: false,
+  useAiMergeCommitSummary: true,
   titleSummarizerProvider: undefined,
   titleSummarizerModelId: undefined,
   titleSummarizerFallbackProvider: undefined,

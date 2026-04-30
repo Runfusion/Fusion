@@ -140,6 +140,7 @@ import {
   resolveTitleSummarizerSettingsModel,
   resolveAgentPrompt,
   summarizeCommitBody,
+  summarizeCommitSubject,
   summarizeMergeCommit,
   type TaskStore,
   type MergeResult,
@@ -1081,9 +1082,35 @@ async function generateAiMergeSummary(
   }
 }
 
+async function generateAiMergeSubject(
+  commitLog: string,
+  diffStat: string,
+  settings: Settings,
+  rootDir: string,
+  branch: string,
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  try {
+    const resolved = resolveTitleSummarizerSettingsModel(settings);
+    return await summarizeCommitSubject(
+      diffStat,
+      rootDir,
+      resolved.provider,
+      resolved.modelId,
+      { branch, taskId, commitLog, signal },
+    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    mergerLog.warn(`AI merge subject failed; using deterministic fallback (${message})`);
+    return null;
+  }
+}
+
 /**
  * Build the canonical merge commit message from the branch's step commits.
- * Subject is always `feat[(taskId)]: merge <branch>`.
+ * Subject is `feat[(taskId)]: <aiSubject>` when the AI subject summarizer
+ * produced one, else falls back to `feat[(taskId)]: merge <branch>`.
  */
 async function buildDeterministicMergeMessage(params: {
   taskId: string;
@@ -1092,10 +1119,12 @@ async function buildDeterministicMergeMessage(params: {
   diffStat?: string;
   includeTaskId: boolean;
   aiSummary?: string | null;
+  aiSubject?: string | null;
 }): Promise<{ subjectArg: string; bodyArg: string }> {
-  const { taskId, branch, commitLog, diffStat, includeTaskId, aiSummary } = params;
+  const { taskId, branch, commitLog, diffStat, includeTaskId, aiSummary, aiSubject } = params;
   const prefix = includeTaskId ? `feat(${taskId})` : "feat";
-  const subject = `${prefix}: merge ${branch}`;
+  const subjectSummary = aiSubject?.trim().length ? aiSubject.trim() : `merge ${branch}`;
+  const subject = `${prefix}: ${subjectSummary}`;
 
   const trimmedCommitLog = commitLog?.trim() ?? "";
   const trimmedDiffStat = diffStat?.trim() ?? "";
@@ -1149,6 +1178,7 @@ async function commitOrAmendMergeWithFixes(
   settings?: Settings,
   signal?: AbortSignal,
   aiSummary?: string | null,
+  aiSubject?: string | null,
 ): Promise<boolean> {
   try {
     // Stage everything (squash state + verification fixes the agent left
@@ -1224,6 +1254,7 @@ async function commitOrAmendMergeWithFixes(
       diffStat: messageDiffStat,
       includeTaskId,
       aiSummary,
+      aiSubject,
     });
     const trailerArg = buildTaskIdTrailerArg(taskId);
 
@@ -3196,6 +3227,9 @@ export async function aiMergeTask(
   const aiMergeSummary = settings.useAiMergeCommitSummary
     ? await generateAiMergeSummary(commitLog, diffStat, settings, rootDir)
     : null;
+  const aiMergeSubject = settings.useAiMergeCommitSummary
+    ? await generateAiMergeSubject(commitLog, diffStat, settings, rootDir, branch, taskId, options.signal)
+    : null;
 
   // 4b. Validate diff scope against task's declared File Scope
   try {
@@ -3286,6 +3320,7 @@ export async function aiMergeTask(
         commitLog,
         diffStat,
         aiSummary: aiMergeSummary,
+        aiSubject: aiMergeSubject,
         includeTaskId,
         sourceIssueRef,
         smartConflictResolution,
@@ -3431,6 +3466,7 @@ export async function aiMergeTask(
                 settings,
                 options.signal,
                 aiMergeSummary,
+                aiMergeSubject,
               );
               if (!finalized) {
                 // Phantom-merge guard: refused to fabricate a commit. Reset
@@ -3537,6 +3573,7 @@ export async function aiMergeTask(
               settings,
               options.signal,
               aiMergeSummary,
+              aiMergeSubject,
             );
             if (!finalized) {
               // Phantom-merge guard: the verification fix passed but no
@@ -4044,6 +4081,7 @@ interface MergeAttemptParams {
   commitLog: string;
   diffStat: string;
   aiSummary?: string | null;
+  aiSubject?: string | null;
   includeTaskId: boolean;
   sourceIssueRef?: string;
   smartConflictResolution: boolean;
@@ -4092,6 +4130,7 @@ async function executeMergeAttempt(
     commitLog,
     diffStat,
     aiSummary,
+    aiSubject,
     includeTaskId,
     sourceIssueRef,
     smartConflictResolution,
@@ -4424,6 +4463,7 @@ async function executeMergeAttempt(
         diffStat: actualContext.diffStat || diffStat,
         includeTaskId,
         aiSummary,
+        aiSubject,
       });
       const trailerArg = buildTaskIdTrailerArg(taskId);
       await execAsync(
