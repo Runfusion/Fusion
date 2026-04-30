@@ -42,6 +42,7 @@ const mockFetchRemoteStatus = vi.fn();
 const mockInstallCloudflared = vi.fn();
 const mockStartRemoteTunnel = vi.fn();
 const mockStopRemoteTunnel = vi.fn();
+const mockKillExternalTunnel = vi.fn();
 const mockRegenerateRemotePersistentToken = vi.fn();
 const mockGenerateShortLivedRemoteToken = vi.fn();
 const mockFetchRemoteQr = vi.fn();
@@ -87,6 +88,7 @@ vi.mock("../../api", () => ({
   installCloudflared: (...args: unknown[]) => mockInstallCloudflared(...args),
   startRemoteTunnel: (...args: unknown[]) => mockStartRemoteTunnel(...args),
   stopRemoteTunnel: (...args: unknown[]) => mockStopRemoteTunnel(...args),
+  killExternalTunnel: (...args: unknown[]) => mockKillExternalTunnel(...args),
   regenerateRemotePersistentToken: (...args: unknown[]) => mockRegenerateRemotePersistentToken(...args),
   generateShortLivedRemoteToken: (...args: unknown[]) => mockGenerateShortLivedRemoteToken(...args),
   fetchRemoteQr: (...args: unknown[]) => mockFetchRemoteQr(...args),
@@ -302,6 +304,7 @@ describe("SettingsModal", () => {
     mockInstallCloudflared.mockResolvedValue({ success: true, command: "brew install cloudflared" });
     mockStartRemoteTunnel.mockResolvedValue({ state: "starting", provider: "tailscale" });
     mockStopRemoteTunnel.mockResolvedValue({ state: "stopped", provider: null });
+    mockKillExternalTunnel.mockResolvedValue({ ok: true });
     mockRegenerateRemotePersistentToken.mockResolvedValue({ token: "token", maskedToken: "****" });
     mockGenerateShortLivedRemoteToken.mockResolvedValue({ token: "short", expiresAt: new Date(Date.now() + 60000).toISOString(), ttlMs: 60000 });
     mockFetchRemoteQr.mockResolvedValue({ url: "https://remote.example.com", tokenType: "persistent", expiresAt: null, format: "image/svg", data: "<svg></svg>" });
@@ -1929,6 +1932,46 @@ describe("SettingsModal", () => {
       });
       await waitFor(() => {
         expect(screen.getByText("Tunnel crashed")).toBeInTheDocument();
+      });
+    });
+
+    it("shows external tunnel panel with actions when external tunnel is detected", async () => {
+      mockFetchRemoteStatus.mockResolvedValue({
+        provider: "tailscale",
+        state: "stopped",
+        url: null,
+        lastError: null,
+        externalTunnel: { provider: "tailscale", url: "https://machine.ts.net/" },
+      });
+
+      renderModal();
+      await waitForSettingsModalReady();
+      await openRemoteSection();
+
+      expect(await screen.findByText("External tailscale tunnel detected")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Start Fresh" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Use Existing" })).toBeInTheDocument();
+    });
+
+    it("Start Fresh kills external tunnel before starting", async () => {
+      mockFetchRemoteStatus.mockResolvedValue({
+        provider: "tailscale",
+        state: "stopped",
+        url: null,
+        lastError: null,
+        externalTunnel: { provider: "tailscale", url: "https://machine.ts.net/" },
+      });
+
+      renderModal();
+      await waitForSettingsModalReady();
+      await openRemoteSection();
+      await userEvent.click(screen.getByLabelText("Tailscale"));
+
+      await userEvent.click(await screen.findByRole("button", { name: "Start Fresh" }));
+
+      await waitFor(() => {
+        expect(mockKillExternalTunnel).toHaveBeenCalledWith(undefined);
+        expect(mockStartRemoteTunnel).toHaveBeenCalledWith(undefined);
       });
     });
 

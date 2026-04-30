@@ -10,7 +10,7 @@ import {
   resolveTitleSummarizerSettingsModel,
 } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset, NtfyNotificationEvent, AgentPromptsConfig, ThinkingLevel } from "@fusion/core";
-import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotesDetailed, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, updateRemoteSettings, fetchRemoteStatus, installCloudflared, startRemoteTunnel, stopRemoteTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteQr, fetchRemoteUrl } from "../api";
+import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotesDetailed, fetchDashboardHealth, checkForUpdates, fetchRemoteSettings, updateRemoteSettings, fetchRemoteStatus, installCloudflared, startRemoteTunnel, stopRemoteTunnel, killExternalTunnel, regenerateRemotePersistentToken, generateShortLivedRemoteToken, fetchRemoteQr, fetchRemoteUrl } from "../api";
 import type { AuthProvider, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemoteDetailed, RemoteSettings, RemoteStatus, UpdateCheckResponse } from "../api";
 import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
@@ -425,6 +425,7 @@ export function SettingsModal({
 
   // Remote access state
   const [remoteStatus, setRemoteStatus] = useState<RemoteStatus | null>(null);
+  const [externalTunnel, setExternalTunnel] = useState<{ provider: string; url: string | null } | null>(null);
   const [remoteBusyAction, setRemoteBusyAction] = useState<string | null>(null);
   const [cloudflaredInstalling, setCloudflaredInstalling] = useState(false);
   const [cloudflaredInstallError, setCloudflaredInstallError] = useState<string | null>(null);
@@ -668,8 +669,16 @@ export function SettingsModal({
 
     if (statusResult.status === "fulfilled") {
       setRemoteStatus(statusResult.value);
+      setExternalTunnel(statusResult.value.externalTunnel ?? null);
     }
   }, [projectId]);
+
+  useEffect(() => {
+    const state = remoteStatus?.state;
+    if (state === "running" || state === "starting") {
+      setExternalTunnel(null);
+    }
+  }, [remoteStatus?.state]);
 
   useEffect(() => {
     if (activeSection !== "remote") {
@@ -689,7 +698,12 @@ export function SettingsModal({
     const state = remoteStatus?.state;
     if (state !== "starting" && state !== "stopping") return;
     const interval = setInterval(() => {
-      fetchRemoteStatus(projectId).then(setRemoteStatus).catch(() => {});
+      fetchRemoteStatus(projectId)
+        .then((status) => {
+          setRemoteStatus(status);
+          setExternalTunnel(status.externalTunnel ?? null);
+        })
+        .catch(() => {});
     }, 1000);
     return () => clearInterval(interval);
   }, [activeSection, projectId, remoteStatus?.state]);
@@ -723,6 +737,30 @@ export function SettingsModal({
       cancelled = true;
     };
   }, [activeSection, projectId, remoteStatus?.state, remoteStatus?.url]);
+
+  useEffect(() => {
+    if (activeSection !== "remote") return;
+    if (remoteStatus?.state !== "stopped" || !externalTunnel?.url) {
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const qr = await fetchRemoteQr("image/svg", { projectId, tokenType: "persistent" });
+        if (cancelled) return;
+        setTunnelShareLink({ url: externalTunnel.url, qrSvg: qr.data ?? null });
+      } catch {
+        if (!cancelled) {
+          setTunnelShareLink({ url: externalTunnel.url, qrSvg: null });
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, externalTunnel?.url, projectId, remoteStatus?.state]);
 
   // Lazy-load git remotes for the rebase-remote dropdown when the Worktrees
   // section becomes visible. Failure is non-fatal: the dropdown falls back
@@ -4039,6 +4077,25 @@ export function SettingsModal({
               {remoteStatus?.url && <code className="remote-status-url">{remoteStatus.url}</code>}
               {remoteStatus?.lastError && <span className="field-error">{remoteStatus.lastError}</span>}
             </div>
+            {tunnelState === "stopped" && externalTunnel && (
+              <div className="remote-external-tunnel-panel" role="status">
+                <div className="remote-external-tunnel-header">
+                  <Globe aria-hidden="true" />
+                  <strong>External {externalTunnel.provider} tunnel detected</strong>
+                </div>
+                {externalTunnel.url && <code className="settings-url-output">{externalTunnel.url}</code>}
+                {tunnelShareLink?.qrSvg && (
+                  <div className="remote-external-tunnel-qr">
+                    <small>Scan to open:</small>
+                    <img
+                      src={`data:image/svg+xml;utf8,${encodeURIComponent(tunnelShareLink.qrSvg)}`}
+                      alt="External tunnel QR code"
+                      className="settings-qr-preview-image"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
             {tunnelState === "running" && (remoteStatus?.url || tunnelShareLink) && (() => {
               let accessCode: string | null = null;
               let tailnetUrl: string | null = remoteStatus?.url ?? null;
@@ -4178,6 +4235,57 @@ export function SettingsModal({
                 </button>
               ) : (
                 <>
+                  {externalTunnel ? (
+                    <div className="remote-external-tunnel-actions">
+                      <button type="button" className="btn" disabled={!activeProvider || remoteBusyAction !== null} onClick={() => void runRemoteAction("start fresh", async () => {
+                        const formState = form as Record<string, unknown>;
+                        const savePayload: Partial<RemoteSettings> = {
+                          remoteActiveProvider: activeProvider,
+                          remoteTailscaleEnabled: activeProvider === "tailscale",
+                          remoteTailscaleHostname: String(formState.remoteTailscaleHostname ?? ""),
+                          remoteTailscaleTargetPort: Number(formState.remoteTailscaleTargetPort ?? 4040),
+                          remoteTailscaleAcceptRoutes: Boolean(formState.remoteTailscaleAcceptRoutes),
+                          remoteCloudflareEnabled: activeProvider === "cloudflare",
+                          remoteCloudflareQuickTunnel: Boolean(formState.remoteCloudflareQuickTunnel ?? true),
+                          remoteCloudflareTunnelName: String(formState.remoteCloudflareTunnelName ?? ""),
+                          remoteCloudflareTunnelToken: (formState.remoteCloudflareTunnelToken as string | null) || null,
+                          remoteCloudflareIngressUrl: String(formState.remoteCloudflareIngressUrl ?? ""),
+                          remoteShortLivedEnabled: Boolean(formState.remoteShortLivedEnabled),
+                          remoteShortLivedTtlMs: Number(formState.remoteShortLivedTtlMs ?? 900000),
+                          remoteRememberLastRunning: Boolean(formState.remoteRememberLastRunning),
+                        };
+                        await updateRemoteSettings(savePayload, projectId);
+                        await killExternalTunnel(projectId);
+                        await startRemoteTunnel(projectId);
+                        addToast("Remote tunnel restarted", "success");
+                      })}>
+                        {remoteBusyAction === "start fresh" ? "Restarting…" : "Start Fresh"}
+                      </button>
+                      <button type="button" className="btn btn-primary" disabled={!activeProvider || remoteBusyAction !== null} onClick={() => void runRemoteAction("use existing", async () => {
+                        const formState = form as Record<string, unknown>;
+                        const savePayload: Partial<RemoteSettings> = {
+                          remoteActiveProvider: activeProvider,
+                          remoteTailscaleEnabled: activeProvider === "tailscale",
+                          remoteTailscaleHostname: String(formState.remoteTailscaleHostname ?? ""),
+                          remoteTailscaleTargetPort: Number(formState.remoteTailscaleTargetPort ?? 4040),
+                          remoteTailscaleAcceptRoutes: Boolean(formState.remoteTailscaleAcceptRoutes),
+                          remoteCloudflareEnabled: activeProvider === "cloudflare",
+                          remoteCloudflareQuickTunnel: Boolean(formState.remoteCloudflareQuickTunnel ?? true),
+                          remoteCloudflareTunnelName: String(formState.remoteCloudflareTunnelName ?? ""),
+                          remoteCloudflareTunnelToken: (formState.remoteCloudflareTunnelToken as string | null) || null,
+                          remoteCloudflareIngressUrl: String(formState.remoteCloudflareIngressUrl ?? ""),
+                          remoteShortLivedEnabled: Boolean(formState.remoteShortLivedEnabled),
+                          remoteShortLivedTtlMs: Number(formState.remoteShortLivedTtlMs ?? 900000),
+                          remoteRememberLastRunning: Boolean(formState.remoteRememberLastRunning),
+                        };
+                        await updateRemoteSettings(savePayload, projectId);
+                        await startRemoteTunnel(projectId);
+                        addToast("Remote tunnel started", "success");
+                      })}>
+                        {remoteBusyAction === "use existing" ? "Starting…" : "Use Existing"}
+                      </button>
+                    </div>
+                  ) : (
                   <button type="button" className="btn btn-primary" disabled={!activeProvider || remoteBusyAction !== null} onClick={() => void runRemoteAction("start", async () => {
                     const formState = form as Record<string, unknown>;
                     const savePayload: Partial<RemoteSettings> = {
@@ -4204,6 +4312,7 @@ export function SettingsModal({
                   })}>
                     {remoteBusyAction === "start" ? "Starting…" : "Start Tunnel"}
                   </button>
+                  )}
                   {activeProvider === "cloudflare" && remoteStatus?.cloudflaredAvailable === false ? (
                     <small className="field-error">cloudflared must be installed to start the tunnel</small>
                   ) : null}

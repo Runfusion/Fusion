@@ -251,6 +251,49 @@ describe("remote access provider/lifecycle contracts", () => {
     }));
   });
 
+  it("returns 200 for remote status when managed tunnel is stopped", async () => {
+    const store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({
+        remoteAccess: buildRemoteAccessSettings({ activeProvider: "tailscale" }),
+      }),
+    });
+    const { app } = createApp({ store });
+
+    const status = await REQUEST(app, "GET", "/api/remote/status");
+
+    expect(status.status).toBe(200);
+    expect(status.body).toEqual(expect.objectContaining({ state: "stopped" }));
+  });
+
+  it("omits externalTunnel detection when managed tunnel is running", async () => {
+    const engine = {
+      getRemoteTunnelManager: vi.fn().mockReturnValue({
+        getStatus: vi.fn().mockReturnValue({ state: "running", provider: "tailscale", url: "https://live.ts.net/", lastError: null }),
+      }),
+      getRemoteTunnelRestoreDiagnostics: vi.fn().mockReturnValue(null),
+      detectExternalTunnel: vi.fn(),
+    };
+    const { app } = createApp({ engine });
+
+    const status = await REQUEST(app, "GET", "/api/remote/status");
+
+    expect(status.status).toBe(200);
+    expect(status.body.externalTunnel).toBeNull();
+    expect(engine.detectExternalTunnel).not.toHaveBeenCalled();
+  });
+
+  it("calls engine killExternalTunnel via kill-external endpoint", async () => {
+    const engine = {
+      killExternalTunnel: vi.fn().mockResolvedValue(undefined),
+    };
+    const { app } = createApp({ engine });
+
+    const result = await REQUEST(app, "POST", "/api/remote/tunnel/kill-external", {});
+
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual({ ok: true });
+  });
+
   it("installs cloudflared via endpoint and returns install command metadata", async () => {
     const { app } = createApp();
 

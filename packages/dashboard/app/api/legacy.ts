@@ -473,6 +473,10 @@ export interface RemoteStatus {
   lastError: string | null;
   lastErrorCode?: string | null;
   cloudflaredAvailable?: boolean | null;
+  externalTunnel?: {
+    provider: "tailscale" | "cloudflare";
+    url: string | null;
+  } | null;
   restore?: {
     outcome: "applied" | "skipped" | "failed";
     reason: string;
@@ -521,6 +525,12 @@ export function startRemoteTunnel(projectId?: string): Promise<{ state: "startin
 
 export function stopRemoteTunnel(projectId?: string): Promise<{ state: "stopped"; provider: string | null }> {
   return api<{ state: "stopped"; provider: string | null }>(withProjectId("/remote/tunnel/stop", projectId), {
+    method: "POST",
+  });
+}
+
+export function killExternalTunnel(projectId?: string): Promise<{ ok: boolean }> {
+  return api<{ ok: boolean }>(withProjectId("/remote/tunnel/kill-external", projectId), {
     method: "POST",
   });
 }

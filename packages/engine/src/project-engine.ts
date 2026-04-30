@@ -28,6 +28,7 @@ import { ResearchOrchestrator } from "./research-orchestrator.js";
 import { ResearchStepRunner } from "./research-step-runner.js";
 import { TunnelProcessManager } from "./remote-access/tunnel-process-manager.js";
 import type {
+  ExternalTunnelInfo,
   TunnelProvider,
   TunnelProviderConfig,
   TunnelRestoreDiagnostics,
@@ -640,6 +641,36 @@ export class ProjectEngine {
     }
 
     return manager.getStatus();
+  }
+
+  async detectExternalTunnel(): Promise<ExternalTunnelInfo | null> {
+    const manager = this.remoteTunnelManager;
+    if (!manager) {
+      return null;
+    }
+
+    const settings = await this.runtime.getTaskStore().getSettings();
+    const provider = settings.remoteAccess?.activeProvider ?? null;
+    if (provider !== "tailscale") {
+      return null;
+    }
+
+    return manager.detectExternalFunnel();
+  }
+
+  async killExternalTunnel(): Promise<void> {
+    const manager = this.remoteTunnelManager;
+    if (!manager) {
+      return;
+    }
+
+    const settings = await this.runtime.getTaskStore().getSettings();
+    const provider = settings.remoteAccess?.activeProvider ?? null;
+    if (provider !== "tailscale") {
+      return;
+    }
+
+    await manager.killExternalFunnel();
   }
 
   /** Get the RoutineRunner (if initialized). */

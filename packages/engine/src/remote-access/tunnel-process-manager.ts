@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
-import { spawn, type ChildProcess } from "node:child_process";
+import { exec, execFile, spawn, type ChildProcess } from "node:child_process";
 import type { Readable } from "node:stream";
+import { promisify } from "node:util";
 import { remoteTunnelLog } from "../logger.js";
 import {
   getTunnelProviderAdapter,
@@ -8,6 +9,7 @@ import {
 } from "./provider-adapters.js";
 import type {
   ManagedTunnelProcess,
+  ExternalTunnelInfo,
   TunnelErrorCode,
   TunnelLogEntry,
   TunnelLogLevel,
@@ -28,6 +30,8 @@ export interface TunnelProcessManagerOptions {
 
 const DEFAULT_MAX_LOG_ENTRIES = 400;
 const DEFAULT_STOP_TIMEOUT_MS = 5_000;
+const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
 
 class LineBuffer {
   private pending = "";
@@ -158,6 +162,64 @@ export class TunnelProcessManager extends EventEmitter implements TunnelManager 
     return this.runExclusive(async () => {
       await this.stopInternal();
     });
+  }
+
+  async detectExternalFunnel(): Promise<ExternalTunnelInfo | null> {
+    if (this.processHandle || this.status.state === "starting" || this.status.state === "running") {
+      return null;
+    }
+
+    try {
+      const { stdout } = await execFileAsync("tailscale", ["status", "--json"], { timeout: 3_000 });
+      const data = JSON.parse(String(stdout)) as { Self?: { DNSName?: string } };
+      const dnsName = data.Self?.DNSName?.replace(/\.$/, "");
+      if (!dnsName) {
+        return null;
+      }
+
+      return {
+        provider: "tailscale",
+        url: `https://${dnsName}/`,
+        pid: null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async killExternalFunnel(): Promise<void> {
+    const resetCommands: Array<{ command: string; args: string[] }> = [
+      { command: "tailscale", args: ["serve", "reset"] },
+      { command: "tailscale", args: ["funnel", "reset"] },
+      { command: "tailscale", args: ["funnel", "off"] },
+    ];
+
+    for (const resetCommand of resetCommands) {
+      try {
+        await execFileAsync(resetCommand.command, resetCommand.args, { timeout: 5_000 });
+        return;
+      } catch {
+        // continue to next strategy
+      }
+    }
+
+    try {
+      const { stdout } = await execAsync("pgrep -f \"tailscale funnel\"", { timeout: 5_000 });
+      const pids = stdout
+        .split(/\s+/)
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isInteger(value) && value > 0);
+
+      await Promise.all(pids.map(async (pid) => {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {
+          // ignore if process already stopped
+        }
+      }));
+    } catch {
+      // tailscale may not be installed or no matching process may exist
+    }
   }
 
   async switchProvider(target: TunnelProvider, config: TunnelProviderConfig): Promise<void> {

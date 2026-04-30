@@ -7,6 +7,7 @@ export { TunnelProcessManager, type TunnelProcessManagerOptions } from "./tunnel
 
 export type {
   CloudflareProviderConfig,
+  ExternalTunnelInfo,
   ManagedTunnelProcess,
   PreparedTunnelCommand,
   TailscaleProviderConfig,

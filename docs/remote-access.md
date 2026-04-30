@@ -147,12 +147,14 @@ Important behavior:
 
 - Start: `POST /api/remote/tunnel/start`
 - Stop: `POST /api/remote/tunnel/stop`
+- Kill external funnel bindings: `POST /api/remote/tunnel/kill-external`
 - Status: `GET /api/remote/status`
 
 Returned status fields include:
 
 - `state`: `stopped | starting | running | stopping | failed`
 - `provider`, `url`, `lastError`, `lastErrorCode`
+- `externalTunnel` (nullable): detected externally-running tunnel metadata (`provider`, `url`) when Fusion-managed tunnel is stopped
 - `restore` diagnostics block (`outcome`, `reason`, `at`, `provider`, optional `message`)
 
 ---
@@ -207,6 +209,8 @@ Supported actions:
 - Save Remote settings (provider config + token strategy)
 - Activate provider
 - Start/Stop tunnel
+- Detect externally-running Tailscale funnel sessions when opening Remote Access settings
+- Use Existing (adopt existing tunnel) or Start Fresh (kill external funnel bindings then start a managed tunnel)
 - Regenerate persistent token
 - Generate short-lived token
 - Show authenticated URL

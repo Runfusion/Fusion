@@ -406,8 +406,8 @@ Key server capabilities:
 - System stats snapshot and vitest process controls APIs (`GET /api/system-stats`, `POST /api/kill-vitest`) exposing dashboard process/system telemetry (including host memory rendered as both numeric values and a visual usage bar in the System Stats modal), task/agent aggregates, and manual vitest process termination
 - Remote access APIs (`/api/remote/*`) for provider config, activation, tunnel lifecycle, status, token issuance, authenticated URL generation, and QR payload generation
   - Operational runbook (prereqs/security/troubleshooting): [`docs/remote-access.md`](./remote-access.md)
-  - `/api/remote/tunnel/start` and `/api/remote/tunnel/stop` are the only lifecycle transition endpoints.
-  - `/api/remote/status` includes tunnel status plus restore diagnostics (`restore.outcome` + `restore.reason`) with parity between dashboard and headless `fn serve` runtimes.
+  - `/api/remote/tunnel/start`, `/api/remote/tunnel/stop`, and `/api/remote/tunnel/kill-external` cover tunnel lifecycle and external funnel cleanup.
+  - `/api/remote/status` includes tunnel status, external funnel detection (`externalTunnel` when managed tunnel is stopped), plus restore diagnostics (`restore.outcome` + `restore.reason`) with parity between dashboard and headless `fn serve` runtimes.
 - Remote auth handoff endpoints:
   - `POST /api/remote-access/auth/login-url` (daemon-auth protected) issues a tokenized phone-login URL for either `persistent` or `short-lived` mode.
   - `GET /remote-login?rt=<token>` (public) validates remote token strategy and redirects to dashboard auth handoff (`/?token=<daemonToken>` when daemon auth is enabled, otherwise `/`).

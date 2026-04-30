@@ -37,6 +37,12 @@ export interface TunnelStatusSnapshot {
   lastError: TunnelError | null;
 }
 
+export interface ExternalTunnelInfo {
+  provider: TunnelProvider;
+  url: string | null;
+  pid: number | null;
+}
+
 export type TunnelRestoreOutcome = "applied" | "skipped" | "failed";
 
 export type TunnelRestoreReasonCode =

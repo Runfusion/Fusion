@@ -494,18 +494,29 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       const restore = engine?.getRemoteTunnelRestoreDiagnostics();
 
       const activeProvider = tunnelStatus?.provider ?? settings.remoteAccess?.activeProvider ?? null;
+      const tunnelState = tunnelStatus?.state ?? "stopped";
       let cloudflaredAvailable: boolean | null = null;
       if (activeProvider === "cloudflare") {
         cloudflaredAvailable = await isCloudflaredAvailable();
       }
 
+      const externalTunnel = tunnelState === "stopped"
+        ? await engine?.detectExternalTunnel()
+        : null;
+
       res.json({
         provider: activeProvider,
-        state: tunnelStatus?.state ?? "stopped",
+        state: tunnelState,
         url: tunnelStatus?.url ?? null,
         lastError: tunnelStatus?.lastError?.message ?? null,
         lastErrorCode: tunnelStatus?.lastError?.code ?? null,
         cloudflaredAvailable,
+        externalTunnel: externalTunnel
+          ? {
+            provider: externalTunnel.provider,
+            url: externalTunnel.url,
+          }
+          : null,
         restore: restore ?? {
           outcome: "skipped",
           reason: "not_attempted",
@@ -631,6 +642,19 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
       rethrowAsApiError(err, "Failed to stop remote tunnel");
+    }
+  });
+
+  router.post("/remote/tunnel/kill-external", async (req, res) => {
+    try {
+      const { engine } = await getProjectContext(req);
+      if (engine) {
+        await engine.killExternalTunnel();
+      }
+      res.json({ ok: true });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to kill external remote tunnel");
     }
   });
 

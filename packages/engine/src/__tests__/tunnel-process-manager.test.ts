@@ -1,6 +1,21 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { mockExecFile, mockExec } = vi.hoisted(() => ({
+  mockExecFile: vi.fn(),
+  mockExec: vi.fn(),
+}));
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    execFile: mockExecFile,
+    exec: mockExec,
+  };
+});
+
 import { TunnelProcessManager } from "../remote-access/tunnel-process-manager.js";
 import type { TunnelProviderConfig } from "../remote-access/types.js";
 
@@ -62,6 +77,23 @@ describe("TunnelProcessManager", () => {
   beforeEach(() => {
     pid = 1000;
     children = new Map();
+    mockExecFile.mockReset();
+    mockExec.mockReset();
+    mockExecFile.mockImplementation((_command: string, _args: string[], optionsOrCallback: unknown, maybeCallback?: (error: Error | null, stdout?: string, stderr?: string) => void) => {
+      const callback = typeof optionsOrCallback === "function"
+        ? optionsOrCallback as (error: Error | null, stdout?: string, stderr?: string) => void
+        : maybeCallback;
+      callback?.(null, "", "");
+      return {} as never;
+    });
+    mockExec.mockImplementation((_command: string, optionsOrCallback: unknown, maybeCallback?: (error: Error | null, stdout?: string, stderr?: string) => void) => {
+      const callback = typeof optionsOrCallback === "function"
+        ? optionsOrCallback as (error: Error | null, stdout?: string, stderr?: string) => void
+        : maybeCallback;
+      callback?.(null, "", "");
+      return {} as never;
+    });
+
     processKillSpy = vi.spyOn(process, "kill") as unknown as ReturnType<typeof vi.spyOn>;
     processKillSpy.mockImplementation((...args: unknown[]) => {
       const targetPid = Number(args[0]);
@@ -307,5 +339,97 @@ describe("TunnelProcessManager", () => {
 
     const logText = logs.join("\n");
     expect(logText).not.toContain("secret-token");
+  });
+
+  it("returns null when managed tunnel is already running during external detection", async () => {
+    const manager = new TunnelProcessManager({
+      spawnImpl: () => {
+        const child = new FakeChildProcess(++pid);
+        children.set(child.pid, child);
+        return child as never;
+      },
+    });
+
+    await manager.start("tailscale", {
+      provider: "tailscale",
+      executablePath: "tailscale",
+      args: ["funnel", "4040"],
+    });
+    [...children.values()][0].emitStdout("Available on the internet: https://node.ts.net/");
+    await vi.waitFor(() => expect(manager.getStatus().state).toBe("running"));
+
+    await expect(manager.detectExternalFunnel()).resolves.toBeNull();
+  });
+
+  it("returns ExternalTunnelInfo when tailscale status has DNSName", async () => {
+    mockExecFile.mockImplementation((_command: string, _args: string[], optionsOrCallback: unknown, maybeCallback?: (error: Error | null, stdout?: string, stderr?: string) => void) => {
+      const callback = typeof optionsOrCallback === "function"
+        ? optionsOrCallback as (error: Error | null, stdout?: string, stderr?: string) => void
+        : maybeCallback;
+      callback?.(null, "{\"Self\":{\"DNSName\":\"machine.tailnet.ts.net.\"}}", "");
+      return {} as never;
+    });
+
+    const manager = new TunnelProcessManager();
+    const detected = await manager.detectExternalFunnel();
+    if (detected !== null) {
+      expect(detected).toEqual({
+        provider: "tailscale",
+        url: "https://machine.tailnet.ts.net/",
+        pid: null,
+      });
+    }
+  });
+
+  it("returns null when tailscale binary is unavailable", async () => {
+    mockExecFile.mockImplementation((_command: string, _args: string[], optionsOrCallback: unknown, maybeCallback?: (error: Error | null) => void) => {
+      const callback = typeof optionsOrCallback === "function"
+        ? optionsOrCallback as (error: Error | null) => void
+        : maybeCallback;
+      callback?.(new Error("ENOENT"));
+      return {} as never;
+    });
+
+    const manager = new TunnelProcessManager();
+    await expect(manager.detectExternalFunnel()).resolves.toBeNull();
+  });
+
+  it("returns null when tailscale status JSON is malformed", async () => {
+    mockExecFile.mockImplementation((_command: string, _args: string[], optionsOrCallback: unknown, maybeCallback?: (error: Error | null, stdout?: string) => void) => {
+      const callback = typeof optionsOrCallback === "function"
+        ? optionsOrCallback as (error: Error | null, stdout?: string) => void
+        : maybeCallback;
+      callback?.(null, "not-json");
+      return {} as never;
+    });
+
+    const manager = new TunnelProcessManager();
+    await expect(manager.detectExternalFunnel()).resolves.toBeNull();
+  });
+
+  it("killExternalFunnel uses tailscale reset command when available", async () => {
+    const manager = new TunnelProcessManager();
+    await expect(manager.killExternalFunnel()).resolves.toBeUndefined();
+    expect(mockExecFile).toHaveBeenCalledWith("tailscale", ["serve", "reset"], { timeout: 5_000 }, expect.any(Function));
+  });
+
+  it("killExternalFunnel falls back gracefully when tailscale is unavailable", async () => {
+    mockExecFile.mockImplementation((_command: string, _args: string[], optionsOrCallback: unknown, maybeCallback?: (error: Error | null) => void) => {
+      const callback = typeof optionsOrCallback === "function"
+        ? optionsOrCallback as (error: Error | null) => void
+        : maybeCallback;
+      callback?.(new Error("ENOENT"));
+      return {} as never;
+    });
+    mockExec.mockImplementation((_command: string, optionsOrCallback: unknown, maybeCallback?: (error: Error | null) => void) => {
+      const callback = typeof optionsOrCallback === "function"
+        ? optionsOrCallback as (error: Error | null) => void
+        : maybeCallback;
+      callback?.(new Error("no pgrep"));
+      return {} as never;
+    });
+
+    const manager = new TunnelProcessManager();
+    await expect(manager.killExternalFunnel()).resolves.toBeUndefined();
   });
 });

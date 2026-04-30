@@ -380,8 +380,8 @@ describe("createServer health and headless mode", () => {
 
     const dashStatusBody = dashStatus.body as Record<string, unknown>;
     const headlessStatusBody = headlessStatus.body as Record<string, unknown>;
-    expect(Object.keys(dashStatusBody).sort()).toEqual(["cloudflaredAvailable", "lastError", "lastErrorCode", "provider", "restore", "state", "url"]);
-    expect(Object.keys(headlessStatusBody).sort()).toEqual(["cloudflaredAvailable", "lastError", "lastErrorCode", "provider", "restore", "state", "url"]);
+    expect(Object.keys(dashStatusBody).sort()).toEqual(["cloudflaredAvailable", "externalTunnel", "lastError", "lastErrorCode", "provider", "restore", "state", "url"]);
+    expect(Object.keys(headlessStatusBody).sort()).toEqual(["cloudflaredAvailable", "externalTunnel", "lastError", "lastErrorCode", "provider", "restore", "state", "url"]);
     expect(headlessRoot.status).toBe(404);
   });
 });
