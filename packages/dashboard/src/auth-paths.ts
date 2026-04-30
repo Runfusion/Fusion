@@ -18,6 +18,10 @@ export function getFusionAuthPath(home = process.env.HOME || process.env.USERPRO
   return path.join(getFusionAgentDir(home), "auth.json");
 }
 
+export function getFusionModelsPath(home = process.env.HOME || process.env.USERPROFILE || homedir()): string {
+  return path.join(getFusionAgentDir(home), "models.json");
+}
+
 export function getAuthFileCandidates(
   cwd = process.cwd(),
   home = process.env.HOME || process.env.USERPROFILE || homedir(),

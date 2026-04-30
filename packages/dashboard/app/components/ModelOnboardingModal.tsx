@@ -2,7 +2,7 @@ import "./ModelOnboardingModal.css";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { X, Loader2, CheckCircle, Key, Zap, GitPullRequest, Rocket, Plus, ChevronRight } from "lucide-react";
 import type { Task } from "@fusion/core";
-import type { AuthProvider, ModelInfo } from "../api";
+import type { AuthProvider, ModelInfo, CustomProviderConfig } from "../api";
 import {
   fetchAuthStatus,
   fetchGlobalSettings,
@@ -13,6 +13,8 @@ import {
   fetchModels,
   updateGlobalSettings,
   createTask,
+  fetchCustomProviders,
+  createCustomProvider,
 } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
@@ -20,6 +22,7 @@ import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ProviderIcon } from "./ProviderIcon";
 import { ClaudeCliProviderCard } from "./ClaudeCliProviderCard";
 import { LoginInstructions } from "./LoginInstructions";
+import { CustomProviderForm } from "./CustomProviderForm";
 import { appendTokenQuery } from "../auth";
 
 /** Provider-specific API key setup metadata for onboarding form rendering */
@@ -593,6 +596,10 @@ export function ModelOnboardingModal({
   const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
   const [apiKeyErrors, setApiKeyErrors] = useState<Record<string, string>>({});
   const [apiKeySuccess, setApiKeySuccess] = useState<Record<string, string | null>>({});
+  const [customProviders, setCustomProviders] = useState<CustomProviderConfig[]>([]);
+  const [showCustomProviderForm, setShowCustomProviderForm] = useState(false);
+  const [customProviderSaving, setCustomProviderSaving] = useState(false);
+  const [customProviderError, setCustomProviderError] = useState<string | undefined>();
   const apiKeySuccessTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const onboardingContentRef = useRef<HTMLDivElement | null>(null);
   const modalRef = useRef<HTMLDivElement | null>(null);
@@ -736,14 +743,41 @@ export function ModelOnboardingModal({
     }
   }, []);
 
+  const loadCustomProviders = useCallback(async () => {
+    try {
+      const data = await fetchCustomProviders();
+      setCustomProviders(data.providers ?? []);
+    } catch {
+      // best effort
+    }
+  }, []);
+
+  const handleSaveCustomProvider = useCallback(async (config: CustomProviderConfig) => {
+    setCustomProviderSaving(true);
+    setCustomProviderError(undefined);
+    try {
+      await createCustomProvider(config);
+      await loadCustomProviders();
+      await fetchModels().then((response) => setAvailableModels(response.models ?? []));
+      setShowCustomProviderForm(false);
+    } catch (err) {
+      setCustomProviderError(getErrorMessage(err) || "Failed to create custom provider");
+    } finally {
+      setCustomProviderSaving(false);
+    }
+  }, [loadCustomProviders]);
+
   // Reload auth status when returning to AI Setup step from another step (not on initial mount)
   const aiSetupReturnRef = useRef(false);
   useEffect(() => {
+    if (step === "ai-setup") {
+      void loadCustomProviders();
+    }
     if (aiSetupReturnRef.current) {
       loadAuthStatus();
     }
     aiSetupReturnRef.current = step !== "ai-setup";
-  }, [step, loadAuthStatus]);
+  }, [step, loadAuthStatus, loadCustomProviders]);
 
   // OAuth status for the GitHub provider (used for OAuth-specific controls like Connect/Disconnect).
   const githubProvider = authProviders.find((p) => p.id === "github");
@@ -2010,6 +2044,30 @@ export function ModelOnboardingModal({
                         <p className="onboarding-helper-text">
                           All currently available providers are already shown above.
                         </p>
+                      )}
+
+                      {customProviders.length > 0 ? (
+                        <div className="onboarding-custom-provider-list">
+                          {customProviders.map((provider) => (
+                            <div key={provider.id} className="onboarding-custom-provider-item">
+                              <ProviderIcon provider={provider.id} size="sm" />
+                              <span>{provider.name || provider.id}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {!showCustomProviderForm ? (
+                        <button type="button" className="btn btn-sm" onClick={() => setShowCustomProviderForm(true)}>
+                          Add custom provider
+                        </button>
+                      ) : (
+                        <CustomProviderForm
+                          onSave={handleSaveCustomProvider}
+                          onCancel={() => { setShowCustomProviderForm(false); setCustomProviderError(undefined); }}
+                          saving={customProviderSaving}
+                          error={customProviderError}
+                        />
                       )}
                     </div>
                   </OnboardingDisclosure>

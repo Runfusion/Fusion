@@ -15,6 +15,10 @@ const mockLoginProvider = vi.fn();
 const mockLogoutProvider = vi.fn();
 const mockSaveApiKey = vi.fn();
 const mockFetchModels = vi.fn();
+const mockFetchCustomProviders = vi.fn();
+const mockCreateCustomProvider = vi.fn();
+const mockUpdateCustomProvider = vi.fn();
+const mockDeleteCustomProvider = vi.fn();
 const mockTestNtfyNotification = vi.fn();
 const mockTestNotification = vi.fn();
 const mockFetchBackups = vi.fn();
@@ -57,6 +61,10 @@ vi.mock("../../api", () => ({
   logoutProvider: (...args: unknown[]) => mockLogoutProvider(...args),
   saveApiKey: (...args: unknown[]) => mockSaveApiKey(...args),
   fetchModels: (...args: unknown[]) => mockFetchModels(...args),
+  fetchCustomProviders: (...args: unknown[]) => mockFetchCustomProviders(...args),
+  createCustomProvider: (...args: unknown[]) => mockCreateCustomProvider(...args),
+  updateCustomProvider: (...args: unknown[]) => mockUpdateCustomProvider(...args),
+  deleteCustomProvider: (...args: unknown[]) => mockDeleteCustomProvider(...args),
   testNtfyNotification: (...args: unknown[]) => mockTestNtfyNotification(...args),
   testNotification: (...args: unknown[]) => mockTestNotification(...args),
   fetchBackups: (...args: unknown[]) => mockFetchBackups(...args),
@@ -195,6 +203,10 @@ describe("SettingsModal", () => {
     mockFetchSettingsByScope.mockResolvedValue({ global: defaultSettings, project: {} });
     mockFetchAuthStatus.mockResolvedValue({ providers: [] });
     mockFetchModels.mockResolvedValue({ models: [], favoriteProviders: [], favoriteModels: [] });
+    mockFetchCustomProviders.mockResolvedValue({ providers: [] });
+    mockCreateCustomProvider.mockResolvedValue({ provider: {} });
+    mockUpdateCustomProvider.mockResolvedValue({ provider: {} });
+    mockDeleteCustomProvider.mockResolvedValue(undefined);
     mockSaveApiKey.mockResolvedValue(undefined);
     mockTestNotification.mockResolvedValue({ success: true });
     mockFetchBackups.mockResolvedValue({ backups: [], totalSize: 0 });
@@ -2194,3 +2206,4 @@ describe("SettingsModal", () => {
     });
   });
 });
+

@@ -15,6 +15,8 @@ const mockFetchModels = vi.fn();
 const mockFetchGlobalSettings = vi.fn();
 const mockUpdateGlobalSettings = vi.fn();
 const mockCreateTask = vi.fn();
+const mockFetchCustomProviders = vi.fn();
+const mockCreateCustomProvider = vi.fn();
 
 vi.mock("../../api", () => ({
   fetchAuthStatus: (...args: unknown[]) => mockFetchAuthStatus(...args),
@@ -26,6 +28,8 @@ vi.mock("../../api", () => ({
   fetchGlobalSettings: (...args: unknown[]) => mockFetchGlobalSettings(...args),
   updateGlobalSettings: (...args: unknown[]) => mockUpdateGlobalSettings(...args),
   createTask: (...args: unknown[]) => mockCreateTask(...args),
+  fetchCustomProviders: (...args: unknown[]) => mockFetchCustomProviders(...args),
+  createCustomProvider: (...args: unknown[]) => mockCreateCustomProvider(...args),
 }));
 
 // Mock CustomModelDropdown since it has complex portal behavior
@@ -148,6 +152,8 @@ beforeEach(() => {
   mockFetchGlobalSettings.mockResolvedValue({});
   mockUpdateGlobalSettings.mockResolvedValue({});
   mockCreateTask.mockResolvedValue({ id: "FN-TEST", description: "test task" });
+  mockFetchCustomProviders.mockResolvedValue({ providers: [] });
+  mockCreateCustomProvider.mockResolvedValue({ provider: {} });
   mockLoginProvider.mockResolvedValue({ url: "https://auth.example.com/login" });
   mockLogoutProvider.mockResolvedValue({ success: true });
   mockSaveApiKey.mockResolvedValue({ success: true });
@@ -4022,5 +4028,22 @@ describe("ModelOnboardingModal progressive disclosure", () => {
       expect(screen.getByTestId("readiness-summary")).toBeTruthy();
       expect(document.querySelectorAll(".onboarding-skip-banner")).toHaveLength(0);
     });
+  });
+});
+
+describe("ModelOnboardingModal custom provider", () => {
+  it("shows add custom provider action in advanced provider settings", async () => {
+    render(
+      <ModelOnboardingModal
+        isOpen
+        onClose={() => {}}
+        onComplete={() => {}}
+        addToast={() => {}}
+      />,
+    );
+
+    const advancedSummary = await screen.findByText("Advanced provider settings");
+    fireEvent.click(advancedSummary);
+    expect(await screen.findByRole("button", { name: "Add custom provider" })).toBeInTheDocument();
   });
 });

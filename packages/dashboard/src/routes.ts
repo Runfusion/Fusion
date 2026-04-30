@@ -110,6 +110,7 @@ import { registerAgentSkillsRoutes } from "./routes/register-agent-skills-routes
 import { registerPluginsAutomationRoutes } from "./routes/register-plugins-automation.js";
 import { registerProxyRoutes } from "./routes/register-proxy-routes.js";
 import { registerModelRoutes } from "./routes/register-model-routes.js";
+import { registerCustomProviderRoutes } from "./routes/register-custom-provider-routes.js";
 import { registerUsageRoutes } from "./routes/register-usage-routes.js";
 import { registerAuthRoutes } from "./routes/register-auth-routes.js";
 import { registerRuntimeProviderRoutes } from "./routes/register-runtime-provider-routes.js";
@@ -1456,6 +1457,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
   // Models
   registerModelRoutes(routeContext);
+  registerCustomProviderRoutes(routeContext);
 
   // ---------- Auth routes ----------
   registerAuthRoutes(routeContext);

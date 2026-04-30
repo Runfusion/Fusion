@@ -1499,6 +1499,47 @@ export function setClaudeCliEnabled(
   });
 }
 
+export interface CustomProviderModelInput {
+  id: string;
+  name?: string;
+  reasoning?: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
+}
+
+export interface CustomProviderConfig {
+  id: string;
+  name?: string;
+  baseUrl: string;
+  api: "openai-completions" | "openai-responses" | "anthropic-messages" | "google-generative-ai";
+  apiKey?: string;
+  models: CustomProviderModelInput[];
+}
+
+export function fetchCustomProviders(): Promise<{ providers: CustomProviderConfig[] }> {
+  return api<{ providers: CustomProviderConfig[] }>("/custom-providers");
+}
+
+export function createCustomProvider(config: CustomProviderConfig): Promise<{ provider: CustomProviderConfig }> {
+  return api<{ provider: CustomProviderConfig }>("/custom-providers", {
+    method: "POST",
+    body: JSON.stringify(config),
+  });
+}
+
+export function updateCustomProvider(id: string, config: CustomProviderConfig): Promise<{ provider: CustomProviderConfig }> {
+  return api<{ provider: CustomProviderConfig }>(`/custom-providers/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(config),
+  });
+}
+
+export function deleteCustomProvider(id: string): Promise<void> {
+  return api<void>(`/custom-providers/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
 /** Fetch authentication status for all OAuth providers */
 export function fetchAuthStatus(): Promise<{
   providers: AuthProvider[];
