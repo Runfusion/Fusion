@@ -727,6 +727,7 @@ export function QuickChatFAB({
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>("");
+  const [configuredDefaultModelSelection, setConfiguredDefaultModelSelection] = useState<string>("");
   const [messageInput, setMessageInput] = useState("");
   const [mentionFilter, setMentionFilter] = useState("");
   const [mentionPopupVisible, setMentionPopupVisible] = useState(false);
@@ -805,10 +806,12 @@ export function QuickChatFAB({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
 
-  const parsedModelSelection = useMemo(() => parseModelSelection(selectedModel), [selectedModel]);
+  const resolvedModelSelection = selectedModel || configuredDefaultModelSelection;
+
+  const parsedModelSelection = useMemo(() => parseModelSelection(resolvedModelSelection), [resolvedModelSelection]);
   const selectedModelInfo = useMemo(
-    () => models.find((model) => `${model.provider}/${model.id}` === selectedModel) ?? null,
-    [models, selectedModel],
+    () => models.find((model) => `${model.provider}/${model.id}` === resolvedModelSelection) ?? null,
+    [models, resolvedModelSelection],
   );
   const selectedModelTag = useMemo(
     () => formatModelTagName(selectedModelInfo, parsedModelSelection),
@@ -870,6 +873,7 @@ export function QuickChatFAB({
             (model) => `${model.provider}/${model.id}` === defaultSelection,
           );
           if (hasDefaultModel) {
+            setConfiguredDefaultModelSelection(defaultSelection);
             setSelectedModel(defaultSelection);
             // Switch to model mode regardless of whether agents are present —
             // a configured default model is an explicit user preference and
@@ -881,6 +885,8 @@ export function QuickChatFAB({
           }
         }
 
+        setConfiguredDefaultModelSelection("");
+
         // Always pre-select the first model so users can start chatting in model mode
         // without having to manually pick from the dropdown.
         const firstModel = loadedModels[0];
@@ -891,6 +897,7 @@ export function QuickChatFAB({
       .catch((error: unknown) => {
         console.error("[QuickChatFAB] Failed to load models:", error);
         setModels([]);
+        setConfiguredDefaultModelSelection("");
       })
       .finally(() => {
         setModelsLoading(false);
