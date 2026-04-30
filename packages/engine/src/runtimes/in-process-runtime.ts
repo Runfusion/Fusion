@@ -613,7 +613,7 @@ export class InProcessRuntime
         const { RoutineStore: RoutineStoreClass } = await import("@fusion/core");
         // Verify RoutineStore actually has the expected methods (FN-1519 complete)
         if (typeof RoutineStoreClass.prototype.getDueRoutines === "function") {
-          const routineStore = new RoutineStoreClass(this.taskStore.getFusionDir());
+          const routineStore = new RoutineStoreClass(this.config.workingDirectory);
           await routineStore.init();
           this.routineStore = routineStore;
 
