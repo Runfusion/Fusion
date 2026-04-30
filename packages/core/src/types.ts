@@ -1718,6 +1718,10 @@ export interface ProjectSettings {
    *  characters will automatically receive an AI-generated title (max 60 chars).
    *  Default: false. */
   autoSummarizeTitles?: boolean;
+  /** When true, merge commit messages include an AI-generated summary of the
+   *  changes instead of just listing step commit subjects. Uses the title
+   *  summarizer model. Default: false. */
+  useAiMergeCommitSummary?: boolean;
   /** AI model provider for title summarization (when autoSummarizeTitles is enabled).
    *  Must be set together with `titleSummarizerModelId`. Falls back to planningProvider,
    *  then defaultProvider if not specified. */

@@ -184,6 +184,7 @@ export type {
 
 export {
   summarizeTitle,
+  summarizeMergeCommit,
   summarizeCommitBody,
   summarizeCommitSubject,
   sanitizeCommitSubject,
@@ -191,6 +192,7 @@ export {
   getRateLimitResetTime,
   validateDescription,
   SUMMARIZE_SYSTEM_PROMPT,
+  MERGE_COMMIT_SUMMARIZE_SYSTEM_PROMPT,
   COMMIT_BODY_SYSTEM_PROMPT,
   COMMIT_SUBJECT_SYSTEM_PROMPT,
   MAX_COMMIT_SUBJECT_LENGTH,
@@ -198,6 +200,7 @@ export {
   MAX_DESCRIPTION_LENGTH,
   MIN_DESCRIPTION_LENGTH,
   MAX_TITLE_LENGTH,
+  MAX_MERGE_COMMIT_SUMMARY_LENGTH,
   MAX_COMMIT_BODY_INPUT_LENGTH,
   MAX_COMMIT_BODY_LENGTH,
   DEFAULT_COMMIT_BODY_TIMEOUT_MS,

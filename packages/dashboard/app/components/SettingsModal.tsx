@@ -1171,7 +1171,7 @@ export function SettingsModal({
       globalModelKey: "titleSummarizerGlobalModelId",
       projectProviderKey: "titleSummarizerProvider",
       projectModelKey: "titleSummarizerModelId",
-      helperText: "AI model used for auto-generating task titles from descriptions and for synthesizing fallback merge commit message bodies when the branch's commit log is empty.",
+      helperText: "AI model used for auto-generating task titles and merge commit summaries.",
         fallbackOrder: "Project override → Global summarization lane → Project planning lane → Project default lane → Global default lane → Automatic resolution",
     },
   ];
@@ -2342,8 +2342,7 @@ export function SettingsModal({
             <p className="settings-description">
               Configures the model used for two short-summary jobs:
               auto-generating task titles from long descriptions, and
-              synthesizing fallback merge commit message bodies when the
-              branch's commit log is empty.
+              generating merge commit summaries from step commits and diff stats.
             </p>
             <div className="form-group">
               <label htmlFor="autoSummarizeTitles" className="checkbox-label">
@@ -2363,7 +2362,22 @@ export function SettingsModal({
               </small>
             </div>
 
-            {(form.autoSummarizeTitles || false) && (
+            <div className="form-group">
+              <label htmlFor="useAiMergeCommitSummary" className="checkbox-label">
+                <input
+                  id="useAiMergeCommitSummary"
+                  type="checkbox"
+                  checked={form.useAiMergeCommitSummary || false}
+                  onChange={(e) => setForm((f) => ({ ...f, useAiMergeCommitSummary: e.target.checked }))}
+                />
+                AI merge commit summaries
+              </label>
+              <small>
+                When enabled, merge commit messages will include an AI-generated summary of the changes instead of just listing step commit subjects. Uses the title summarization model.
+              </small>
+            </div>
+
+            {(form.autoSummarizeTitles || form.useAiMergeCommitSummary || false) && (
               <>
                 <div className="form-group">
                   <label>Title and commit message summarization model</label>

@@ -118,6 +118,7 @@ import {
 import { mergerLog } from "../logger.js";
 import { createFnAgent } from "../pi.js";
 import { execSync, exec } from "node:child_process";
+import * as core from "@fusion/core";
 import { type TaskStore, type Task, type MergeResult, DEFAULT_SETTINGS } from "@fusion/core";
 
 const mockedCreateFnAgent = vi.mocked(createFnAgent);
@@ -5075,6 +5076,80 @@ describe("aiMergeTask — merge details collection", () => {
     expect(mergeDetails.resolutionStrategy).toBe("ai");
     expect(mergeDetails.resolutionMethod).toBe("ai");
     expect(mergeDetails.attemptsMade).toBe(1);
+  });
+
+  it("stores AI summary in mergeDetails when useAiMergeCommitSummary is enabled", async () => {
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      useAiMergeCommitSummary: true,
+    });
+
+    vi.spyOn(core, "summarizeMergeCommit").mockResolvedValue("AI summary of merged work.");
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr === "git rev-parse HEAD" || cmdStr.startsWith("git rev-parse HEAD ")) return "mergedcommit123456789";
+      if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("--stat")) return "1 file changed";
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) return "";
+      if (cmdStr.includes("diff --cached --quiet")) return "1";
+      if (cmdStr.includes("git commit")) return Buffer.from("");
+      if (cmdStr.includes("show --shortstat")) return "1 file changed, 1 insertion(+)";
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+    expect(result.merged).toBe(true);
+
+    const updateCalls = (store.updateTask as ReturnType<typeof vi.fn>).mock.calls;
+    const mergeDetailsCall = updateCalls.find((call: any[]) => call[1]?.mergeDetails !== undefined);
+    expect(mergeDetailsCall?.[1].mergeDetails.mergeCommitMessage).toBe("AI summary of merged work.");
+  });
+
+  it("falls back to raw commit log when AI merge summary returns null", async () => {
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      useAiMergeCommitSummary: true,
+    });
+
+    vi.spyOn(core, "summarizeMergeCommit").mockResolvedValue(null);
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr === "git rev-parse HEAD" || cmdStr.startsWith("git rev-parse HEAD ")) return "mergedcommit123456789";
+      if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("--stat")) return "1 file changed";
+      if (cmdStr.includes("merge --squash")) return Buffer.from("");
+      if (cmdStr.includes("diff --name-only --diff-filter=U")) return "";
+      if (cmdStr.includes("diff --cached --quiet")) return "1";
+      if (cmdStr.includes("git commit")) return Buffer.from("");
+      if (cmdStr.includes("show --shortstat")) return "1 file changed, 1 insertion(+)";
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-050");
+    expect(result.merged).toBe(true);
+
+    const updateCalls = (store.updateTask as ReturnType<typeof vi.fn>).mock.calls;
+    const mergeDetailsCall = updateCalls.find((call: any[]) => call[1]?.mergeDetails !== undefined);
+    expect(mergeDetailsCall?.[1].mergeDetails.mergeCommitMessage).toBe("- feat: something");
   });
 
   it("stores partial mergeDetails when branch is not found", async () => {

@@ -36,6 +36,9 @@ export const MIN_DESCRIPTION_LENGTH = 201;
 /** Maximum title length in characters */
 export const MAX_TITLE_LENGTH = 60;
 
+/** Maximum merge commit summary length in characters */
+export const MAX_MERGE_COMMIT_SUMMARY_LENGTH = 300;
+
 /** Rate limit: max requests per IP per hour */
 export const MAX_REQUESTS_PER_HOUR = 10;
 
@@ -303,6 +306,117 @@ export async function summarizeTitle(
     throw new AiServiceError(message);
   } finally {
     // Ensure session is disposed even on error
+    try {
+      agentResult.session.dispose?.();
+    } catch {
+      // Ignore disposal errors
+    }
+  }
+}
+
+/** System prompt for AI merge commit summary generation. */
+export const MERGE_COMMIT_SUMMARIZE_SYSTEM_PROMPT = `You summarize merge commits for a task management system.
+
+Your job is to describe what the merge accomplishes based on step commit subjects and file-change stats.
+
+## Guidelines
+- Return only summary text, no markdown or bullet list
+- Write 1-3 concise sentences
+- Mention the most meaningful modules or behaviors touched
+- Be factual and avoid inventing details
+- Keep it readable and professional`;
+
+/**
+ * Generate a concise natural-language merge summary from commit subjects and
+ * diff stats. Returns null for empty inputs.
+ */
+export async function summarizeMergeCommit(
+  commitLog: string,
+  diffStat: string,
+  rootDir: string,
+  provider?: string,
+  modelId?: string
+): Promise<string | null> {
+  const trimmedCommitLog = (commitLog ?? "").trim();
+  const trimmedDiffStat = (diffStat ?? "").trim();
+  if (trimmedCommitLog.length === 0 && trimmedDiffStat.length === 0) {
+    return null;
+  }
+
+  const createFnAgent = await getFnAgent();
+  if (!createFnAgent) {
+    throw new AiServiceError("AI engine not available");
+  }
+
+  const agentOptions: {
+    cwd: string;
+    systemPrompt: string;
+    tools: "readonly";
+    defaultProvider?: string;
+    defaultModelId?: string;
+  } = {
+    cwd: rootDir,
+    systemPrompt: MERGE_COMMIT_SUMMARIZE_SYSTEM_PROMPT,
+    tools: "readonly",
+  };
+
+  if (provider && modelId) {
+    agentOptions.defaultProvider = provider;
+    agentOptions.defaultModelId = modelId;
+  }
+
+  const agentResult = await createFnAgent(agentOptions);
+  if (!agentResult?.session) {
+    throw new AiServiceError("Failed to initialize AI agent");
+  }
+
+  try {
+    const promptParts: string[] = [
+      "Step commits being merged (most recent first):",
+      trimmedCommitLog || "(none provided)",
+      "",
+      "Files changed (`git diff --stat`):",
+      trimmedDiffStat || "(none provided)",
+      "",
+      "Write the merge summary now.",
+    ];
+    await agentResult.session.prompt(promptParts.join("\n"));
+
+    if (agentResult.session.state?.error) {
+      throw new AiServiceError(`AI session error: ${agentResult.session.state.error}`);
+    }
+
+    const messages: AgentMessage[] = agentResult.session.state?.messages ?? [];
+    const lastMessage = messages.filter((m: AgentMessage) => m.role === "assistant").pop();
+
+    let summary = "";
+    if (typeof lastMessage?.content === "string") {
+      summary = lastMessage.content.trim();
+    } else if (Array.isArray(lastMessage?.content)) {
+      summary = lastMessage.content
+        .filter((c: { type: string; text?: string }): c is { type: "text"; text: string } =>
+          c.type === "text" && typeof c.text === "string")
+        .map((c) => c.text)
+        .join("")
+        .trim();
+    }
+
+    if (!summary) {
+      throw new AiServiceError("AI returned empty response");
+    }
+
+    if (summary.length > MAX_MERGE_COMMIT_SUMMARY_LENGTH) {
+      summary = summary.slice(0, MAX_MERGE_COMMIT_SUMMARY_LENGTH).trim();
+    }
+
+    return summary;
+  } catch (err) {
+    if (err instanceof AiServiceError) {
+      throw err;
+    }
+    const message = err instanceof Error ? err.message : "AI processing failed";
+    throw new AiServiceError(message);
+  } finally {
     try {
       agentResult.session.dispose?.();
     } catch {

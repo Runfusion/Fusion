@@ -206,6 +206,7 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `autoBackupRetention` | `number` | `7` | Number of backups to retain. |
 | `autoBackupDir` | `string` | `".fusion/backups"` | Relative backup directory path. |
 | `autoSummarizeTitles` | `boolean` | `false` | Auto-generate titles for long untitled descriptions. |
+| `useAiMergeCommitSummary` | `boolean` | `false` | Use AI-generated merge commit summaries instead of raw step-commit subject lists. |
 | `titleSummarizerProvider` | `string` | `undefined` | Provider for title summarization. |
 | `titleSummarizerModelId` | `string` | `undefined` | Model ID for title summarization. |
 | `titleSummarizerFallbackProvider` | `string` | `undefined` | Fallback provider for title summarization. |
@@ -389,6 +390,8 @@ Fusion uses a dual-scope model settings system with five lanes. Global settings 
 3. Automatic provider/model resolution
 
 ### Title summarization model
+
+Used for task title auto-summarization and (when enabled) AI merge commit summaries.
 
 1. Project `titleSummarizerProvider` + `titleSummarizerModelId`
 2. Global `titleSummarizerGlobalProvider` + `titleSummarizerGlobalModelId`

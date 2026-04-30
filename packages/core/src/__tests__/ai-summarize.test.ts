@@ -1,6 +1,16 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+
+const { getFnAgentMock } = vi.hoisted(() => ({
+  getFnAgentMock: vi.fn(),
+}));
+
+vi.mock("../ai-engine-loader.js", () => ({
+  getFnAgent: getFnAgentMock,
+}));
+
 import {
   summarizeTitle,
+  summarizeMergeCommit,
   summarizeCommitBody,
   sanitizeCommitSubject,
   MAX_COMMIT_SUBJECT_LENGTH,
@@ -8,10 +18,12 @@ import {
   getRateLimitResetTime,
   validateDescription,
   SUMMARIZE_SYSTEM_PROMPT,
+  MERGE_COMMIT_SUMMARIZE_SYSTEM_PROMPT,
   COMMIT_BODY_SYSTEM_PROMPT,
   MAX_DESCRIPTION_LENGTH,
   MIN_DESCRIPTION_LENGTH,
   MAX_TITLE_LENGTH,
+  MAX_MERGE_COMMIT_SUMMARY_LENGTH,
   MAX_COMMIT_BODY_INPUT_LENGTH,
   MAX_COMMIT_BODY_LENGTH,
   DEFAULT_COMMIT_BODY_TIMEOUT_MS,
@@ -25,6 +37,8 @@ import {
 describe("ai-summarize", () => {
   beforeEach(() => {
     __resetSummarizeState();
+    getFnAgentMock.mockReset();
+    getFnAgentMock.mockResolvedValue(null);
   });
 
   // ── Constants ──────────────────────────────────────────────────────────────
@@ -166,6 +180,56 @@ describe("ai-summarize", () => {
       await expect(
         summarizeTitle(longDesc, "/tmp", "anthropic", "claude-sonnet-4-5")
       ).rejects.toThrow(AiServiceError);
+    });
+  });
+
+  describe("summarizeMergeCommit", () => {
+    it("returns null when commit log and diff stat are empty", async () => {
+      expect(await summarizeMergeCommit("", "", "/tmp")).toBeNull();
+      expect(await summarizeMergeCommit("   ", "\n\n", "/tmp")).toBeNull();
+    });
+
+    it("returns summary text when AI responds", async () => {
+      const prompt = vi.fn().mockResolvedValue(undefined);
+      getFnAgentMock.mockResolvedValue(() =>
+        Promise.resolve({
+          session: {
+            prompt,
+            dispose: vi.fn(),
+            state: {
+              messages: [
+                {
+                  role: "assistant",
+                  content: "Updated merger and settings wiring for AI commit summaries.",
+                },
+              ],
+            },
+          },
+        })
+      );
+
+      const summary = await summarizeMergeCommit(
+        "- feat: add summary\n- test: add coverage",
+        "merger.ts | 20 ++++++++++-----",
+        "/tmp"
+      );
+
+      expect(summary).toBe("Updated merger and settings wiring for AI commit summaries.");
+      expect(prompt).toHaveBeenCalledTimes(1);
+    });
+
+    it("throws AiServiceError when AI engine is unavailable", async () => {
+      await expect(
+        summarizeMergeCommit("- feat: add summary", "merger.ts | 2 ++", "/tmp")
+      ).rejects.toThrow(AiServiceError);
+      await expect(
+        summarizeMergeCommit("- feat: add summary", "merger.ts | 2 ++", "/tmp")
+      ).rejects.toThrow("AI engine not available");
+    });
+
+    it("exposes merge summary constants", () => {
+      expect(MERGE_COMMIT_SUMMARIZE_SYSTEM_PROMPT).toContain("1-3 concise sentences");
+      expect(MAX_MERGE_COMMIT_SUMMARY_LENGTH).toBe(300);
     });
   });
 

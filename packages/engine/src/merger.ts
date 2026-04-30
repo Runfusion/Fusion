@@ -137,9 +137,10 @@ import {
   getTaskMergeBlocker,
   normalizeMergeConflictStrategy,
   resolveProjectDefaultModel,
+  resolveTitleSummarizerSettingsModel,
   resolveAgentPrompt,
   summarizeCommitBody,
-  summarizeCommitSubject,
+  summarizeMergeCommit,
   type TaskStore,
   type MergeResult,
   type MergeDetails,
@@ -1054,19 +1055,31 @@ function resetMergeWithWarn(rootDir: string, taskId: string, label: string): voi
   }
 }
 
+async function generateAiMergeSummary(
+  commitLog: string,
+  diffStat: string,
+  settings: Settings,
+  rootDir: string,
+): Promise<string | null> {
+  try {
+    const resolved = resolveTitleSummarizerSettingsModel(settings);
+    return await summarizeMergeCommit(
+      commitLog,
+      diffStat,
+      rootDir,
+      resolved.provider,
+      resolved.modelId,
+    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    mergerLog.warn(`AI merge summary failed; using deterministic fallback (${message})`);
+    return null;
+  }
+}
+
 /**
  * Build the canonical merge commit message from the branch's step commits.
- * Subject is always `feat[(taskId)]: merge <branch>`. Body has three parts so
- * `git log` shows what actually landed instead of a bare "merge":
- *   1. AI-generated summary (via the title-summarizer model lane), built from
- *      the branch's step-commit subjects + diffstat. Best-effort — bounded by
- *      timeout, falls through silently on any failure.
- *   2. The raw step-commit list (always included as ground truth so a reader
- *      can verify the AI summary against the actual commits).
- *   3. The diffstat block so file-level changes are visible inline.
- *
- * The AI summary is additive context, never the sole source of truth — the
- * step commits and diffstat below it are deterministic.
+ * Subject is always `feat[(taskId)]: merge <branch>`.
  */
 async function buildDeterministicMergeMessage(params: {
   taskId: string;
@@ -1074,13 +1087,11 @@ async function buildDeterministicMergeMessage(params: {
   commitLog: string;
   diffStat?: string;
   includeTaskId: boolean;
-  rootDir?: string;
-  settings?: Settings;
-  signal?: AbortSignal;
+  aiSummary?: string | null;
 }): Promise<{ subjectArg: string; bodyArg: string }> {
-  const { taskId, branch, commitLog, diffStat, includeTaskId, rootDir, settings, signal } = params;
+  const { taskId, branch, commitLog, diffStat, includeTaskId, aiSummary } = params;
   const prefix = includeTaskId ? `feat(${taskId})` : "feat";
-  const fallbackSubject = `${prefix}: merge ${branch}`;
+  const subject = `${prefix}: merge ${branch}`;
 
   const trimmedCommitLog = commitLog?.trim() ?? "";
   const trimmedDiffStat = diffStat?.trim() ?? "";
@@ -1089,64 +1100,12 @@ async function buildDeterministicMergeMessage(params: {
     ? trimmedCommitLog
     : `- merge ${branch}`;
 
-  // Best-effort AI summary using the title-summarizer lane (small/fast model).
-  // Falls back to the project default when not configured. Any failure (no
-  // runtime, timeout, empty response) returns null and we skip the summary.
-  // Subject and body are generated in parallel so the extra subject call
-  // doesn't serialize merge time.
-  let aiSummary: string | null = null;
-  let aiSubject: string | null = null;
-  if (rootDir && settings && (trimmedCommitLog.length > 0 || trimmedDiffStat.length > 0)) {
-    const useTitleSummarizer =
-      !!settings.titleSummarizerProvider && !!settings.titleSummarizerModelId;
-    const provider = useTitleSummarizer
-      ? settings.titleSummarizerProvider!
-      : (settings.defaultProviderOverride && settings.defaultModelIdOverride
-          ? settings.defaultProviderOverride
-          : settings.defaultProvider);
-    const modelId = useTitleSummarizer
-      ? settings.titleSummarizerModelId!
-      : (settings.defaultProviderOverride && settings.defaultModelIdOverride
-          ? settings.defaultModelIdOverride
-          : settings.defaultModelId);
-
-    const [bodyResult, subjectResult] = await Promise.all([
-      summarizeCommitBody(trimmedDiffStat, rootDir, provider, modelId, {
-        branch,
-        taskId,
-        commitLog: trimmedCommitLog,
-        signal,
-      }).catch(() => null),
-      summarizeCommitSubject(trimmedDiffStat, rootDir, provider, modelId, {
-        branch,
-        taskId,
-        commitLog: trimmedCommitLog,
-        signal,
-      }).catch(() => null),
-    ]);
-    aiSummary = bodyResult;
-    aiSubject = subjectResult;
-  }
-
-  // Compose subject: prefer the AI summary; fall back to the legacy
-  // `merge <branch>` form on any failure so a wedged summarizer can never
-  // block a merge. Hard cap at 72 chars (subject + prefix) — git's soft
-  // limit is 72; the AI is already capped at 60 by sanitizeCommitSubject.
-  let subject = fallbackSubject;
-  if (aiSubject && aiSubject.length > 0) {
-    const candidate = `${prefix}: ${aiSubject}`;
-    subject = candidate.length > 72 ? candidate.slice(0, 72).trimEnd() : candidate;
-  }
-
-  const sections: string[] = [];
-  if (aiSummary && aiSummary.trim().length > 0) {
-    sections.push(aiSummary.trim());
-  }
-  sections.push(`Commits merged:\n${commitsSection}`);
-  if (trimmedDiffStat.length > 0) {
-    sections.push(`Files changed:\n${trimmedDiffStat}`);
-  }
-  const body = sections.join("\n\n");
+  const body = aiSummary?.trim().length
+    ? aiSummary.trim()
+    : [
+      `Commits merged:\n${commitsSection}`,
+      trimmedDiffStat.length > 0 ? `Files changed:\n${trimmedDiffStat}` : "",
+    ].filter(Boolean).join("\n\n");
 
   // -m args are double-quoted in the shell command, so escape backslashes,
   // double quotes, dollar signs, and backticks.
@@ -1185,6 +1144,7 @@ async function commitOrAmendMergeWithFixes(
   diffStat?: string,
   settings?: Settings,
   signal?: AbortSignal,
+  aiSummary?: string | null,
 ): Promise<boolean> {
   try {
     // Stage everything (squash state + verification fixes the agent left
@@ -1259,9 +1219,7 @@ async function commitOrAmendMergeWithFixes(
       commitLog: messageCommitLog,
       diffStat: messageDiffStat,
       includeTaskId,
-      rootDir,
-      settings,
-      signal,
+      aiSummary,
     });
     const trailerArg = buildTaskIdTrailerArg(taskId);
 
@@ -2002,31 +1960,33 @@ async function resolveSafeCommitBody(opts: {
 
   const cleanStat = opts.diffStat.trim();
   if (cleanStat.length > 0) {
-    // Prefer the dedicated title-summarization model — a small, fast tier
-    // intended for short summarization. Falls back to the project / global
-    // default model when the summarizer lane isn't configured. The core
-    // `summarizeCommitBody` helper handles missing-runtime / timeout / empty
-    // response gracefully and returns null.
-    const useTitleSummarizer =
-      !!opts.settings.titleSummarizerProvider && !!opts.settings.titleSummarizerModelId;
-    const provider = useTitleSummarizer
-      ? opts.settings.titleSummarizerProvider!
-      : (opts.settings.defaultProviderOverride && opts.settings.defaultModelIdOverride
-          ? opts.settings.defaultProviderOverride
-          : opts.settings.defaultProvider);
-    const modelId = useTitleSummarizer
-      ? opts.settings.titleSummarizerModelId!
-      : (opts.settings.defaultProviderOverride && opts.settings.defaultModelIdOverride
-          ? opts.settings.defaultModelIdOverride
-          : opts.settings.defaultModelId);
+    if (opts.settings.useAiMergeCommitSummary) {
+      // Prefer the dedicated title-summarization model — a small, fast tier
+      // intended for short summarization. Falls back to the project / global
+      // default model when the summarizer lane isn't configured. The core
+      // `summarizeCommitBody` helper handles missing-runtime / timeout / empty
+      // response gracefully and returns null.
+      const useTitleSummarizer =
+        !!opts.settings.titleSummarizerProvider && !!opts.settings.titleSummarizerModelId;
+      const provider = useTitleSummarizer
+        ? opts.settings.titleSummarizerProvider!
+        : (opts.settings.defaultProviderOverride && opts.settings.defaultModelIdOverride
+            ? opts.settings.defaultProviderOverride
+            : opts.settings.defaultProvider);
+      const modelId = useTitleSummarizer
+        ? opts.settings.titleSummarizerModelId!
+        : (opts.settings.defaultProviderOverride && opts.settings.defaultModelIdOverride
+            ? opts.settings.defaultModelIdOverride
+            : opts.settings.defaultModelId);
 
-    const ai = await summarizeCommitBody(cleanStat, opts.rootDir, provider, modelId, {
-      branch: opts.branch,
-      taskId: opts.taskId,
-      signal: opts.signal,
-      timeoutMs: opts.aiTimeoutMs,
-    }).catch(() => null);
-    if (ai && ai.trim().length > 0) return ai.trim();
+      const ai = await summarizeCommitBody(cleanStat, opts.rootDir, provider, modelId, {
+        branch: opts.branch,
+        taskId: opts.taskId,
+        signal: opts.signal,
+        timeoutMs: opts.aiTimeoutMs,
+      }).catch(() => null);
+      if (ai && ai.trim().length > 0) return ai.trim();
+    }
     return `Files changed:\n\n${cleanStat}`;
   }
 
@@ -3220,6 +3180,10 @@ export async function aiMergeTask(
     diffStat = "(unable to read diff)";
   }
 
+  const aiMergeSummary = settings.useAiMergeCommitSummary
+    ? await generateAiMergeSummary(commitLog, diffStat, settings, rootDir)
+    : null;
+
   // 4b. Validate diff scope against task's declared File Scope
   try {
     const scopeResult = await validateDiffScope(store, taskId, diffStat, settings.strictScopeEnforcement);
@@ -3308,6 +3272,7 @@ export async function aiMergeTask(
         branch,
         commitLog,
         diffStat,
+        aiSummary: aiMergeSummary,
         includeTaskId,
         sourceIssueRef,
         smartConflictResolution,
@@ -3452,6 +3417,7 @@ export async function aiMergeTask(
                 diffStat,
                 settings,
                 options.signal,
+                aiMergeSummary,
               );
               if (!finalized) {
                 // Phantom-merge guard: refused to fabricate a commit. Reset
@@ -3557,6 +3523,7 @@ export async function aiMergeTask(
               diffStat,
               settings,
               options.signal,
+              aiMergeSummary,
             );
             if (!finalized) {
               // Phantom-merge guard: the verification fix passed but no
@@ -3746,7 +3713,7 @@ export async function aiMergeTask(
       filesChanged: recordedFilesChanged,
       insertions: recordedInsertions,
       deletions: recordedDeletions,
-      mergeCommitMessage: commitLog,
+      mergeCommitMessage: aiMergeSummary || commitLog,
       mergedAt: new Date().toISOString(),
       mergeConfirmed: true,
       resolutionStrategy: result.resolutionStrategy,
@@ -4063,6 +4030,7 @@ interface MergeAttemptParams {
   branch: string;
   commitLog: string;
   diffStat: string;
+  aiSummary?: string | null;
   includeTaskId: boolean;
   sourceIssueRef?: string;
   smartConflictResolution: boolean;
@@ -4110,6 +4078,7 @@ async function executeMergeAttempt(
     branch,
     commitLog,
     diffStat,
+    aiSummary,
     includeTaskId,
     sourceIssueRef,
     smartConflictResolution,
@@ -4441,9 +4410,7 @@ async function executeMergeAttempt(
         commitLog: actualContext.commitLog || commitLog,
         diffStat: actualContext.diffStat || diffStat,
         includeTaskId,
-        rootDir,
-        settings: params.settings,
-        signal: options.signal,
+        aiSummary,
       });
       const trailerArg = buildTaskIdTrailerArg(taskId);
       await execAsync(
