@@ -840,6 +840,29 @@ describe("TaskCard", () => {
     expect(timer?.getAttribute("title")).toContain("In progress 5m");
   });
 
+  it("prefers executionStartedAt over a newer columnMovedAt for in-progress timers", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-25T12:10:00.000Z"));
+
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          column: "in-progress",
+          columnMovedAt: "2026-04-25T12:08:00.000Z",
+          executionStartedAt: "2026-04-25T12:00:00.000Z",
+          updatedAt: "2026-04-25T12:08:00.000Z",
+          createdAt: "2026-04-25T11:58:00.000Z",
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const timer = container.querySelector(".card-time-indicator");
+    expect(timer?.textContent).toContain("10m");
+    expect(timer?.getAttribute("title")).toContain("In progress 10m");
+  });
+
   it("does not render timer chip on done card without instrumentation, even with old timestamps", () => {
     const { container } = render(
       <TaskCard

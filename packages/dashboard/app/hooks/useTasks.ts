@@ -25,6 +25,23 @@ function compareTimestamps(a: string | undefined, b: string | undefined): number
   return a.localeCompare(b);
 }
 
+function mergeSameColumnTask(current: Task, incoming: Task): Task {
+  return {
+    ...incoming,
+    // Preserve stable execution metadata when a same-column live update arrives
+    // without the full task payload (common during status/log-only SSE updates).
+    columnMovedAt: current.columnMovedAt ?? incoming.columnMovedAt,
+    executionStartedAt: current.executionStartedAt ?? incoming.executionStartedAt,
+    executionCompletedAt: current.executionCompletedAt ?? incoming.executionCompletedAt,
+    worktree: incoming.worktree ?? current.worktree,
+    modifiedFiles: incoming.modifiedFiles ?? current.modifiedFiles,
+    timedExecutionMs: incoming.timedExecutionMs ?? current.timedExecutionMs,
+    workflowStepResults: incoming.workflowStepResults ?? current.workflowStepResults,
+    tokenUsage: incoming.tokenUsage ?? current.tokenUsage,
+    mergeDetails: incoming.mergeDetails ?? current.mergeDetails,
+  };
+}
+
 function mergeIncomingTask(current: Task, incoming: Task): Task {
   const updatedAtCompare = compareTimestamps(incoming.updatedAt, current.updatedAt);
   if (updatedAtCompare < 0) {
@@ -32,7 +49,7 @@ function mergeIncomingTask(current: Task, incoming: Task): Task {
   }
 
   if (current.column === incoming.column) {
-    return incoming;
+    return mergeSameColumnTask(current, incoming);
   }
 
   const columnTimestampCompare = compareTimestamps(current.columnMovedAt, incoming.columnMovedAt);

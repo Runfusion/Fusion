@@ -6220,6 +6220,30 @@ Task with acceptance criteria
     });
   });
 
+  describe("execution timing timestamps", () => {
+    it("preserves the original executionStartedAt across an internal rerun bounce", async () => {
+      const task = await store.createTask({ description: "retry bounce timing" });
+      await store.moveTask(task.id, "todo");
+      const started = await store.moveTask(task.id, "in-progress");
+      const originalExecutionStartedAt = started.executionStartedAt;
+
+      expect(originalExecutionStartedAt).toBeDefined();
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      const bouncedToTodo = await store.moveTask(task.id, "todo");
+      expect(bouncedToTodo.executionStartedAt).toBeUndefined();
+
+      await store.updateTask(task.id, {
+        worktree: "/tmp/retry-bounce",
+        executionStartedAt: originalExecutionStartedAt ?? null,
+      });
+
+      const bouncedBack = await store.moveTask(task.id, "in-progress");
+      expect(bouncedBack.executionStartedAt).toBe(originalExecutionStartedAt);
+    });
+  });
+
   describe("settings:updated event", () => {
     it("fires on updateSettings with correct old and new values", async () => {
       const events: { settings: any; previous: any }[] = [];

@@ -1103,8 +1103,12 @@ export class TaskExecutor {
       }
 
       if (latestTask.column === "in-progress") {
+        const originalExecutionStartedAt = latestTask.executionStartedAt;
         await this.store.moveTask(taskId, "todo");
-        await this.store.updateTask(taskId, { worktree: worktreePath });
+        await this.store.updateTask(taskId, {
+          worktree: worktreePath,
+          executionStartedAt: originalExecutionStartedAt ?? null,
+        });
         await this.store.moveTask(taskId, "in-progress");
         return "bounced";
       }

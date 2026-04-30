@@ -11158,6 +11158,45 @@ describe("TaskExecutor watchdogs", () => {
       expect.stringContaining("Watchdog: workflow rerun handoff stalled for 15s"),
     );
   });
+
+  it("preserves the original executionStartedAt during a workflow rerun bounce", async () => {
+    const store = createMockStore();
+    const originalExecutionStartedAt = "2026-04-30T05:06:43.781Z";
+    const mutableTask = {
+      id: "FN-WD-4",
+      title: "Workflow rerun timing",
+      description: "desc",
+      column: "in-progress" as const,
+      paused: false,
+      worktree: "/tmp/fn-wd-4",
+      executionStartedAt: originalExecutionStartedAt,
+      dependencies: [],
+      steps: [{ name: "Step 0", status: "done" as const }],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    store.getTask.mockResolvedValue(mutableTask as any);
+    store.moveTask.mockImplementation(async (_taskId: string, column: string) => {
+      mutableTask.column = column as "in-progress" | "todo";
+      return { ...mutableTask };
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const outcome = await (executor as any).performWorkflowRerunBounce("FN-WD-4", "/tmp/fn-wd-4");
+
+    expect(outcome).toBe("bounced");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-WD-4", {
+      worktree: "/tmp/fn-wd-4",
+      executionStartedAt: originalExecutionStartedAt,
+    });
+    expect(store.moveTask.mock.calls).toEqual([
+      ["FN-WD-4", "todo"],
+      ["FN-WD-4", "in-progress"],
+    ]);
+  });
 });
 
 // ── StepSessionExecutor integration tests ──────────────────────────────────

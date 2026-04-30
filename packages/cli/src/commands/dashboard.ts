@@ -1671,14 +1671,10 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         if (isEphemeralAgent(agent)) continue;
         if (agent.state !== "active" && agent.state !== "running") continue;
         const rc = agent.runtimeConfig;
-        triggerScheduler.registerAgent(
-          agent.id,
-          {
-            heartbeatIntervalMs: rc?.heartbeatIntervalMs as number | undefined,
-            maxConcurrentRuns: rc?.maxConcurrentRuns as number | undefined,
-          },
-          { lastHeartbeatAt: agent.lastHeartbeatAt },
-        );
+        triggerScheduler.registerAgent(agent.id, {
+          heartbeatIntervalMs: rc?.heartbeatIntervalMs as number | undefined,
+          maxConcurrentRuns: rc?.maxConcurrentRuns as number | undefined,
+        });
       }
       if (agents.length > 0) {
         logSink.log(`Registered ${triggerScheduler.getRegisteredAgents().length} agents for heartbeat triggers`, "engine");

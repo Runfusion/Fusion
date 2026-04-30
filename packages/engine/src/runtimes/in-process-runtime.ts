@@ -563,15 +563,11 @@ export class InProcessRuntime
           for (const agent of agents) {
             if (!isTimerManagedAgent(agent)) continue;
             const rc = agent.runtimeConfig;
-            this.triggerScheduler.registerAgent(
-              agent.id,
-              {
-                enabled: rc?.enabled as boolean | undefined,
-                heartbeatIntervalMs: rc?.heartbeatIntervalMs as number | undefined,
-                maxConcurrentRuns: rc?.maxConcurrentRuns as number | undefined,
-              },
-              { lastHeartbeatAt: agent.lastHeartbeatAt },
-            );
+            this.triggerScheduler.registerAgent(agent.id, {
+              enabled: rc?.enabled as boolean | undefined,
+              heartbeatIntervalMs: rc?.heartbeatIntervalMs as number | undefined,
+              maxConcurrentRuns: rc?.maxConcurrentRuns as number | undefined,
+            });
             registeredCount++;
           }
           if (agents.length > 0) {

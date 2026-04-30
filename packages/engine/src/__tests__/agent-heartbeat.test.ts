@@ -4619,61 +4619,6 @@ describe("HeartbeatTriggerScheduler", () => {
       expect(callback).not.toHaveBeenCalled();
     });
 
-    it("phase-aligns the first tick to lastHeartbeatAt when supplied", async () => {
-      // Simulate: last tick was 4s ago, interval is 5s.
-      // The next tick is due in 1s, not in a fresh full 5s window.
-      vi.setSystemTime(new Date("2026-04-30T05:00:00.000Z"));
-      const lastHeartbeatAt = new Date("2026-04-30T04:59:56.000Z").toISOString();
-
-      scheduler.registerAgent(
-        "agent-001",
-        { heartbeatIntervalMs: 5000 },
-        { lastHeartbeatAt },
-      );
-
-      await vi.advanceTimersByTimeAsync(999);
-      expect(callback).not.toHaveBeenCalled();
-
-      await vi.advanceTimersByTimeAsync(1);
-      expect(callback).toHaveBeenCalledOnce();
-
-      // Subsequent ticks resume the steady cadence.
-      await vi.advanceTimersByTimeAsync(5000);
-      expect(callback).toHaveBeenCalledTimes(2);
-    });
-
-    it("fires promptly with jitter when lastHeartbeatAt is already overdue", async () => {
-      // Interval is 60s but the last tick was 10 minutes ago — fire immediately
-      // (within the OVERDUE_FIRE_JITTER_MS window) instead of waiting another
-      // full 60s. This is the core fix for "agents look unresponsive after a
-      // dashboard restart" — the previous setInterval-only scheduler would
-      // have made the user wait a full interval before the catch-up tick.
-      vi.setSystemTime(new Date("2026-04-30T05:00:00.000Z"));
-      const lastHeartbeatAt = new Date("2026-04-30T04:50:00.000Z").toISOString();
-
-      scheduler.registerAgent(
-        "agent-001",
-        { heartbeatIntervalMs: 60_000 },
-        { lastHeartbeatAt },
-      );
-
-      // Jitter window is 5s; advance past it to guarantee the fire happens.
-      await vi.advanceTimersByTimeAsync(5_000);
-      expect(callback).toHaveBeenCalledOnce();
-    });
-
-    it("falls back to full-interval delay when lastHeartbeatAt is missing", async () => {
-      // No options provided — preserves the original "wait one full interval"
-      // behavior for agents that have never ticked.
-      scheduler.registerAgent("agent-001", { heartbeatIntervalMs: 5000 });
-
-      await vi.advanceTimersByTimeAsync(4999);
-      expect(callback).not.toHaveBeenCalled();
-
-      await vi.advanceTimersByTimeAsync(1);
-      expect(callback).toHaveBeenCalledOnce();
-    });
-
     it("skips tick when agent has active run", async () => {
       (store.getActiveHeartbeatRun as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: "run-active",

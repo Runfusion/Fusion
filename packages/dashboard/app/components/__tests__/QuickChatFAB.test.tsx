@@ -773,10 +773,9 @@ describe("QuickChatFAB", () => {
     const trigger = screen.getByRole("button", { name: "Select model override" });
     fireEvent.click(trigger);
 
-    // Find a model option and click it. Scope to role="option" because the
-    // selected model name also renders as a tag in the panel header in model
-    // mode, so a plain text query would match both.
-    const option = await screen.findByRole("option", { name: /Claude Sonnet 4\.5/ });
+    // Find a model option and click it
+    const optionLabel = await screen.findByText("Claude Sonnet 4.5");
+    const option = optionLabel.closest('[role="option"]') ?? optionLabel;
     fireEvent.click(option);
 
     // Panel should still be visible after selecting the model

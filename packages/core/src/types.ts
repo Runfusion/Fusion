@@ -3141,33 +3141,13 @@ export interface AgentConfigRevision {
 }
 
 /**
- * Legacy project-relative shared path for the heartbeat procedure markdown
- * file. Older builds defaulted every non-ephemeral agent to this single
- * file, which prevented per-agent customization. New code should use
- * {@link getDefaultHeartbeatProcedurePath} instead. This constant is kept
- * exported only so migrations can detect agents still pointing at the
- * shared path and re-route them to their own per-agent file.
- *
- * @deprecated Use {@link getDefaultHeartbeatProcedurePath} for new agent
- *   creation and upgrade flows.
+ * Project-relative default path for the per-tick heartbeat procedure markdown
+ * file. New non-ephemeral agents get this as their `heartbeatProcedurePath`,
+ * and the engine seeds the file with the built-in HEARTBEAT_PROCEDURE constant
+ * on first use so operators can edit it freely. Existing agents can be
+ * upgraded onto this path via the dashboard's "Upgrade Heartbeat" action.
  */
 export const DEFAULT_HEARTBEAT_PROCEDURE_PATH = ".fusion/HEARTBEAT.md";
-
-/**
- * Compute the project-relative default heartbeat procedure file path for a
- * given agent. Each agent gets their own editable HEARTBEAT.md so operators
- * can tune the per-tick procedure without changes leaking across the team.
- *
- * The path is laid out under `.fusion/agents/<agentId>/HEARTBEAT.md` so it
- * lives alongside any other future per-agent assets and survives agent
- * renames (which do not change the immutable agent id).
- */
-export function getDefaultHeartbeatProcedurePath(agentId: string): string {
-  if (!agentId || typeof agentId !== "string") {
-    throw new Error("getDefaultHeartbeatProcedurePath requires a non-empty agentId");
-  }
-  return `.fusion/agents/${agentId}/HEARTBEAT.md`;
-}
 
 /** Extract trackable config fields from an Agent into a snapshot */
 export function agentToConfigSnapshot(agent: Agent): AgentConfigSnapshot {

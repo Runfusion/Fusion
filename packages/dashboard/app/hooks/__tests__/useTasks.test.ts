@@ -334,6 +334,78 @@ describe("useTasks", () => {
       expect(result.current.tasks[0].column).toBe("in-progress");
     });
 
+    it("preserves stable execution metadata during sparse same-column updates", async () => {
+      const initialTask = createMockTask({
+        id: "FN-001",
+        column: "in-progress" as Column,
+        title: "Initial title",
+        status: "planning",
+        columnMovedAt: "2026-01-02T00:00:00Z",
+        executionStartedAt: "2026-01-01T23:50:00Z",
+        worktree: "/tmp/fn-001",
+        modifiedFiles: ["packages/dashboard/app/components/QuickChatFAB.tsx"],
+        timedExecutionMs: 120_000,
+        workflowStepResults: [
+          {
+            workflowStepId: "WS-001",
+            workflowStepName: "Verify",
+            phase: "pre-merge",
+            status: "pending",
+            startedAt: "2026-01-02T00:00:00Z",
+          },
+        ],
+        tokenUsage: {
+          inputTokens: 100,
+          outputTokens: 40,
+          cachedTokens: 10,
+          totalTokens: 150,
+          firstUsedAt: "2026-01-02T00:00:00Z",
+          lastUsedAt: "2026-01-02T00:01:00Z",
+        },
+        updatedAt: "2026-01-02T00:00:00Z",
+      });
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => {
+        expect(result.current.tasks[0].status).toBe("planning");
+      });
+
+      const sparseUpdate = {
+        ...createMockTask({
+          id: "FN-001",
+          column: "in-progress" as Column,
+          title: "Updated title",
+          status: "executing",
+          updatedAt: "2026-01-03T00:00:00Z",
+        }),
+        columnMovedAt: undefined,
+        executionStartedAt: undefined,
+        worktree: undefined,
+        modifiedFiles: undefined,
+        timedExecutionMs: undefined,
+        workflowStepResults: undefined,
+        tokenUsage: undefined,
+      };
+
+      act(() => {
+        MockEventSource.instances[0]._emit("task:updated", sparseUpdate);
+      });
+
+      expect(result.current.tasks[0].title).toBe("Updated title");
+      expect(result.current.tasks[0].status).toBe("executing");
+      expect(result.current.tasks[0].columnMovedAt).toBe("2026-01-02T00:00:00Z");
+      expect(result.current.tasks[0].executionStartedAt).toBe("2026-01-01T23:50:00Z");
+      expect(result.current.tasks[0].worktree).toBe("/tmp/fn-001");
+      expect(result.current.tasks[0].modifiedFiles).toEqual([
+        "packages/dashboard/app/components/QuickChatFAB.tsx",
+      ]);
+      expect(result.current.tasks[0].timedExecutionMs).toBe(120_000);
+      expect(result.current.tasks[0].workflowStepResults).toHaveLength(1);
+      expect(result.current.tasks[0].tokenUsage?.totalTokens).toBe(150);
+    });
+
     it("does not overwrite newer column with stale data (timestamp comparison)", async () => {
       // Start with task in in-progress
       const initialTask = createMockTask({
