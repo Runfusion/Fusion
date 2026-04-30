@@ -109,7 +109,7 @@ export function useTasks(options?: UseTasksOptions) {
   const refreshTasks = useCallback(async (options?: { clearOnError?: boolean; searchQueryOverride?: string; includeArchivedOverride?: boolean }) => {
     const requestVersion = ++fetchVersionRef.current;
     const requestProjectId = projectId; // Capture the projectId for this request
-    const query = options?.searchQueryOverride ?? searchQuery;
+    const query = options?.searchQueryOverride ?? searchQueryRef.current;
     const wantArchived = options?.includeArchivedOverride ?? includeArchivedRef.current;
 
     try {
@@ -132,7 +132,7 @@ export function useTasks(options?: UseTasksOptions) {
       }
       setTasks((current) => current);
     }
-  }, [projectId, searchQuery]);
+  }, [projectId]);
   refreshTasksRef.current = refreshTasks;
 
   /** Lazy-load archived tasks. Called by the Board when the archived column is first expanded. */

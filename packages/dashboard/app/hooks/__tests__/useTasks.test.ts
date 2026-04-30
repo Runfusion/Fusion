@@ -1521,6 +1521,54 @@ describe("useTasks", () => {
       expect(result.current.tasks[0].id).toBe("FN-001");
     });
 
+    it("does not trigger immediate refresh when searchQuery changes", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const initialTasks = [createMockTask({ id: "FN-001", description: "Task 1" })];
+      const searchedTasks = [createMockTask({ id: "FN-002", description: "bug fix" })];
+
+      mockFetchTasks
+        .mockResolvedValueOnce(initialTasks)
+        .mockResolvedValue(searchedTasks);
+
+      const { rerender } = renderHook(
+        ({ projectId, searchQuery }: { projectId?: string; searchQuery?: string }) =>
+          useTasks({ projectId, searchQuery }),
+        { initialProps: { projectId: "project-a", searchQuery: undefined as string | undefined } }
+      );
+
+      await waitFor(() => {
+        expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+      });
+
+      await act(async () => {
+        rerender({ projectId: "project-a", searchQuery: "bug" });
+      });
+
+      // Search query change should not trigger the initial-load effect.
+      expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        vi.advanceTimersByTime(299);
+      });
+      expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+      });
+
+      await waitFor(() => {
+        expect(mockFetchTasks).toHaveBeenCalledTimes(2);
+      });
+
+      expect(mockFetchTasks).toHaveBeenLastCalledWith(
+        undefined,
+        undefined,
+        "project-a",
+        "bug",
+        false,
+      );
+    });
+
     it("creates new EventSource for each project switch", async () => {
       mockFetchTasks.mockResolvedValue([]);
 
