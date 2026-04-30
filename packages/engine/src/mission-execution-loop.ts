@@ -716,6 +716,12 @@ Your job is to:
 
 Be thorough and precise. A contract assertion represents a commitment made during planning - the implementation must fully satisfy it or it is considered failed.
 
+Evaluation guidance:
+- "pass" means all required assertions are fully satisfied.
+- "fail" means one or more assertions are unmet or only partially satisfied.
+- "blocked" means you cannot evaluate due to missing/insufficient evidence or external constraints.
+- Partial satisfaction must be marked as failed with clear expected vs actual details.
+
 Response format: Return ONLY a JSON object (no additional text) with this structure:
 {
   "status": "pass|fail|blocked",

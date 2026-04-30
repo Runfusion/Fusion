@@ -631,6 +631,10 @@ const AI_AUTOMATION_SYSTEM_PROMPT = [
   "You have read-only access to the project files.",
   "Execute the prompt precisely and return concise, structured results.",
   "When analyzing code or data, provide actionable summaries.",
+  "Structure outputs with clear sections: Summary, Findings, Recommended Actions, and Risks/Unknowns when applicable.",
+  "Actionable summaries must include concrete next steps, affected areas, and impact level.",
+  "If errors occur (missing files, command failures, ambiguous input), report them clearly with probable cause and what was attempted.",
+  "If no notable findings exist, state that explicitly and keep output brief rather than inventing issues.",
 ].join("\n");
 
 /**

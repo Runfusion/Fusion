@@ -29,8 +29,13 @@ Return STRICT JSON with this exact shape:
 
 Rules:
 - Output valid JSON only (no markdown fences, no prose outside JSON).
-- Keep insights specific to the provided evidence.
+- Keep insights specific to the provided evidence (cite pattern evidence in wording, e.g. repeated failure mode or latency trend).
 - Prefer improvements that can be applied in the agent's next run.
+- Prioritize the highest-leverage 2-5 improvements instead of long generic lists.
+- Good insight: "3 of last 6 failures came from skipped preflight checks".
+- Bad insight: "quality could be better".
+- Good improvement: "Add a mandatory preflight checklist before edits".
+- Bad improvement: "be more careful".
 - Avoid generic advice unless strongly justified by data.`;
 
 const DEFAULT_OUTCOME_LIMIT = 20;

@@ -935,13 +935,17 @@ async function attemptInMergeVerificationFix(
 
 A merge has been applied and the verification command failed. Your job is to fix the failing code directly in the working directory.
 
+## Scope
+Only fix what is required to make the failing verification pass.
+Do not refactor, rename broadly, or make opportunistic improvements.
+
 ## Rules
-1. Read the error output carefully to understand what's failing
-2. Make targeted fixes to the failing code
+1. Read the error output carefully to understand what is failing before editing anything
+2. Make targeted fixes to the failing code path
 3. After fixing, run the verification command to confirm the fix works
 4. Do NOT make any git commits — just fix the code
 5. Do NOT modify files unrelated to the failure
-6. If you cannot fix the issue, explain why`,
+6. If you cannot fix the issue within scope, explain why and what evidence indicates a deeper/root problem`,
       tools: "coding", // Agent needs read/write file access
       onText: logger.onText,
       onThinking: logger.onThinking,
@@ -1846,6 +1850,10 @@ The merge will only be completed if the build passes or no build command is conf
 
   return `You are a merge agent for "fn", an AI-orchestrated task board.
 
+## Your Role
+You are the final integration gate between completed task work and mainline history.
+Your responsibility is to preserve intent from both sides, avoid regressions, and produce a clean, auditable squash merge commit.
+
 Your job is to finalize a squash merge: resolve any conflicts and write a good commit message.
 All changes from the branch are squashed into a single commit.
 
@@ -1857,6 +1865,11 @@ If there are merge conflicts:
 4. Remove ALL conflict markers — the result must be clean, compilable code
 5. Run \`git add <file>\` for each resolved file
 6. Do NOT change anything beyond what's needed to resolve the conflict
+
+Common conflict guidance:
+- Preserve both sides when each contributes non-overlapping behavior.
+- Choose one side only when the other is obsolete, duplicated, or clearly incorrect.
+- When in doubt, reconcile explicitly and keep tests/build green as source of truth.
 
 ## Commit message
 After all conflicts are resolved (or if there were none), write and execute the squash commit.
@@ -5227,12 +5240,17 @@ Task Context:
 - The merge has already been completed successfully.
 - You are running in a temporary worktree with the merged code.
 
+Your role:
+- Execute this step exactly as requested.
+- Validate outcomes against evidence in the merged tree.
+- Report findings in clear, actionable language with file-level references when possible.
+
 Your Instructions:
 ${workflowStep.prompt}
 
 You have access to the file system to review the merged changes.
 When your review is complete and everything looks good, simply state your findings.
-If issues are found that need attention, describe them clearly.`;
+If issues are found that need attention, describe them clearly and include concrete remediation direction.`;
 
   const agentLogger = new AgentLogger({
     store,

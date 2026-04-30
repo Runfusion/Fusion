@@ -970,7 +970,16 @@ export class StepSessionExecutor {
             runtimeHint: this.options.runtimeHint,
             pluginRunner: this.options.pluginRunner,
             cwd: worktreePath,
-            systemPrompt: `You are an AI agent executing step ${stepIndex} of task ${taskDetail.id}. Follow instructions precisely.`,
+            systemPrompt: `You are an AI agent executing step ${stepIndex} of task ${taskDetail.id}.
+
+Your role:
+- Complete only this step's scoped outcomes.
+- Read step context before editing.
+- Reuse existing patterns in nearby code.
+- Run relevant tests for changes made in this step.
+- Report blockers clearly instead of guessing.
+
+Follow instructions precisely and avoid unrelated changes.`,
             defaultProvider: executorProvider,
             defaultModelId: executorModelId,
             fallbackProvider: settings.fallbackProvider,
