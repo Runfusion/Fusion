@@ -27,6 +27,8 @@ const TERMINAL_FONT_SIZE_KEY = "kb-terminal-font-size";
 const DEFAULT_FONT_SIZE = 14;
 const MIN_TERMINAL_FONT_SIZE = 8;
 const MAX_TERMINAL_FONT_SIZE = 32;
+const XTERM_FONT_FAMILY =
+  '"MesloLGS NF", "MesloLGM Nerd Font", "JetBrainsMono Nerd Font", "FiraCode Nerd Font", "Hack Nerd Font", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace';
 
 export function ctrlChar(key: string): string {
   if (!key) {
@@ -528,7 +530,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, projectId }: Te
           cursorBlink: true,
           cursorStyle: "block",
           fontSize: fontSizeRef.current,
-          fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+          fontFamily: XTERM_FONT_FAMILY,
           theme: {
             background: "#1e1e1e",
             foreground: "#d4d4d4",

@@ -1,5 +1,5 @@
 import { exec } from "node:child_process";
-import { promisify } from "node:util";
+
 import {
   resolveProjectDefaultModel,
   type TaskStore,
@@ -15,8 +15,24 @@ import { createLogger } from "./logger.js";
 import { defaultShell } from "./shell-utils.js";
 import { createFnAgent, promptWithFallback } from "./pi.js";
 
-const execAsync = promisify(exec);
 const log = createLogger("cron-runner");
+
+function execCommand(command: string, options: Parameters<typeof exec>[1]): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    exec(command, options, (error, stdout, stderr) => {
+      const stdoutText = typeof stdout === "string" ? stdout : String(stdout ?? "");
+      const stderrText = typeof stderr === "string" ? stderr : String(stderr ?? "");
+      if (error) {
+        const errWithOutput = error as Error & { stdout?: string; stderr?: string };
+        errWithOutput.stdout = stdoutText;
+        errWithOutput.stderr = stderrText;
+        reject(errWithOutput);
+        return;
+      }
+      resolve({ stdout: stdoutText, stderr: stderrText });
+    });
+  });
+}
 
 /** Default execution timeout: 5 minutes. */
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -273,7 +289,7 @@ export class CronRunner {
 
     try {
       const timeoutMs = schedule.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-      const { stdout, stderr } = await execAsync(schedule.command, {
+      const { stdout, stderr } = await execCommand(schedule.command, {
         timeout: timeoutMs,
         maxBuffer: MAX_BUFFER,
         shell: defaultShell,
@@ -428,7 +444,7 @@ export class CronRunner {
     }
 
     try {
-      const { stdout, stderr } = await execAsync(step.command, {
+      const { stdout, stderr } = await execCommand(step.command, {
         timeout: timeoutMs,
         maxBuffer: MAX_BUFFER,
         shell: defaultShell,
@@ -523,11 +539,12 @@ export class CronRunner {
 
       const response = await Promise.race([resultPromise, timeoutPromise]);
 
-      const output = response.length > MAX_OUTPUT_LENGTH
-        ? response.slice(0, MAX_OUTPUT_LENGTH) + "\n[output truncated]"
-        : response;
+      const responseText = String(response ?? "");
+      const output = responseText.length > MAX_OUTPUT_LENGTH
+        ? responseText.slice(0, MAX_OUTPUT_LENGTH) + "\n[output truncated]"
+        : responseText;
 
-      log.log(`    ✓ AI prompt step "${step.name}" completed (${response.length} chars)`);
+      log.log(`    ✓ AI prompt step "${step.name}" completed (${responseText.length} chars)`);
 
       return {
         stepId: step.id,
@@ -677,12 +694,14 @@ export async function createAiPromptExecutor(cwd: string): Promise<AiPromptExecu
 }
 
 /** Combine and truncate stdout/stderr to stay within storage limits. */
-function truncateOutput(stdout: string, stderr: string): string {
-  let combined = stdout;
-  if (stderr) {
+function truncateOutput(stdout: string | null | undefined, stderr: string | null | undefined): string {
+  const out = stdout ?? "";
+  const err = stderr ?? "";
+  let combined = out;
+  if (err) {
     // Add separator only if there's also stdout content
-    combined += stdout ? "\n--- stderr ---\n" : "";
-    combined += stderr;
+    combined += out ? "\n--- stderr ---\n" : "";
+    combined += err;
   }
   if (combined.length > MAX_OUTPUT_LENGTH) {
     combined = combined.slice(0, MAX_OUTPUT_LENGTH) + "\n[output truncated]";

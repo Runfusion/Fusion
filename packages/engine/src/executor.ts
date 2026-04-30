@@ -1115,6 +1115,7 @@ export class TaskExecutor {
   private async performWorkflowRerunBounce(
     taskId: string,
     worktreePath: string,
+    preserveResumeState: boolean = true,
   ): Promise<"bounced" | "skipped-pending"> {
     // Re-entry guard: if a previous bounce for the same task is still
     // mid-flight (e.g., the watchdog fired before the original sequence
@@ -1139,7 +1140,11 @@ export class TaskExecutor {
         // moveTask's default reopen-to-todo path resets every step to
         // pending and rewrites PROMPT.md checkboxes, which would discard
         // the partial progress this bounce is supposed to retry on top of.
-        await this.store.moveTask(taskId, "todo", { preserveResumeState: true });
+        if (preserveResumeState) {
+          await this.store.moveTask(taskId, "todo", { preserveResumeState: true });
+        } else {
+          await this.store.moveTask(taskId, "todo");
+        }
         await this.store.updateTask(taskId, {
           worktree: worktreePath,
           executionStartedAt: originalExecutionStartedAt ?? null,
@@ -1160,12 +1165,17 @@ export class TaskExecutor {
     }
   }
 
-  private scheduleWorkflowRerun(taskId: string, worktreePath: string, successMessage: string): void {
+  private scheduleWorkflowRerun(
+    taskId: string,
+    worktreePath: string,
+    successMessage: string,
+    preserveResumeState: boolean = true,
+  ): void {
     this.clearWorkflowRerunWatchdog(taskId);
 
     setTimeout(async () => {
       try {
-        const outcome = await this.performWorkflowRerunBounce(taskId, worktreePath);
+        const outcome = await this.performWorkflowRerunBounce(taskId, worktreePath, preserveResumeState);
         if (outcome === "bounced") {
           executorLog.log(successMessage);
         } else {
@@ -1204,7 +1214,7 @@ export class TaskExecutor {
       ).catch(() => undefined);
 
       try {
-        const outcome = await this.performWorkflowRerunBounce(taskId, worktreePath);
+        const outcome = await this.performWorkflowRerunBounce(taskId, worktreePath, preserveResumeState);
         if (outcome === "bounced") {
           executorLog.warn(`${taskId}: workflow rerun watchdog retry succeeded`);
         } else {
@@ -1434,7 +1444,7 @@ export class TaskExecutor {
           if (!workflowResult.allPassed) {
             // For recovery path, treat any failure (including revision) as hard failure
             // Send back to in-progress so executor can attempt to fix the issues
-            await this.sendTaskBackForFix(task, task.worktree!, workflowResult.feedback, workflowResult.stepName || "Unknown", "Workflow step failed during recovery");
+            await this.sendTaskBackForFix(task, task.worktree!, workflowResult.feedback, workflowResult.stepName || "Unknown", "Workflow step failed during recovery", false);
             return true; // Still transitioned out of in-progress
           }
         } else {
@@ -3197,8 +3207,19 @@ export class TaskExecutor {
           };
         }
 
-        const task = await store.updateStep(taskId, step, status as StepStatus);
-        const stepInfo = task.steps[step];
+        const stepIndex = step - 1;
+        if (!Number.isInteger(stepIndex) || stepIndex < 0) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: `Invalid step number: ${step}. Steps are 1-indexed.`,
+            }],
+            details: {},
+          };
+        }
+
+        const task = await store.updateStep(taskId, stepIndex, status as StepStatus);
+        const stepInfo = task.steps[stepIndex];
         const persistedStatus = stepInfo.status;
         const progress = task.steps.filter((s) => s.status === "done").length;
 
@@ -3854,6 +3875,7 @@ ${feedback}
     failureFeedback: string,
     stepName: string,
     reason: string,
+    preserveResumeState: boolean = true,
   ): Promise<void> {
     const taskId = task.id;
     this.clearCompletedTaskWatchdog(taskId);
@@ -3895,6 +3917,7 @@ ${feedback}
       taskId,
       worktreePath,
       `${taskId}: sent back to in-progress for remediation`,
+      preserveResumeState,
     );
   }
 

@@ -740,7 +740,8 @@ export function SettingsModal({
 
   useEffect(() => {
     if (activeSection !== "remote") return;
-    if (remoteStatus?.state !== "stopped" || !externalTunnel?.url) {
+    const tunnelUrl = externalTunnel?.url;
+    if (remoteStatus?.state !== "stopped" || !tunnelUrl) {
       return;
     }
 
@@ -749,10 +750,10 @@ export function SettingsModal({
       try {
         const qr = await fetchRemoteQr("image/svg", { projectId, tokenType: "persistent" });
         if (cancelled) return;
-        setTunnelShareLink({ url: externalTunnel.url, qrSvg: qr.data ?? null });
+        setTunnelShareLink({ url: tunnelUrl, qrSvg: qr.data ?? null });
       } catch {
         if (!cancelled) {
-          setTunnelShareLink({ url: externalTunnel.url, qrSvg: null });
+          setTunnelShareLink({ url: tunnelUrl, qrSvg: null });
         }
       }
     })();

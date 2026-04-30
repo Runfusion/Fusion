@@ -10,7 +10,7 @@
  * @module migration
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, resolve, basename, dirname } from "node:path";
 import type { CentralCore } from "./central-core.js";
@@ -255,11 +255,32 @@ export class FirstRunDetector {
         if (name) return name;
       }
     } catch {
-      // Git not available or no remote - fall through to directory name
+      // Git CLI unavailable/blocked in some environments; fall through to config parsing.
+    }
+
+    const remoteFromConfig = this.readOriginRemoteFromGitConfig(projectPath);
+    if (remoteFromConfig) {
+      const name = this.extractRepoName(remoteFromConfig);
+      if (name) return name;
     }
 
     // Fallback to directory name
     return basename(projectPath);
+  }
+
+  private readOriginRemoteFromGitConfig(projectPath: string): string | null {
+    try {
+      const gitConfig = readFileSync(join(projectPath, ".git", "config"), "utf8");
+      const originSectionMatch = gitConfig.match(/\[remote\s+"origin"\]([\s\S]*?)(?:\n\[|$)/);
+      if (!originSectionMatch) {
+        return null;
+      }
+
+      const urlMatch = originSectionMatch[1]?.match(/^\s*url\s*=\s*(.+)$/m);
+      return urlMatch?.[1]?.trim() || null;
+    } catch {
+      return null;
+    }
   }
 
   /**

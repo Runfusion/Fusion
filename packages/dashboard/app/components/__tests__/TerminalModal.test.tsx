@@ -551,6 +551,24 @@ describe("TerminalModal", () => {
     expect(mockTerminalInstance.open).toHaveBeenCalledWith(terminalDiv);
   });
 
+  it("initializes xterm with a Nerd Font-preferred monospace stack", async () => {
+    const { Terminal } = await import("@xterm/xterm");
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(mockTerminalInstance.open).toHaveBeenCalled();
+    });
+
+    expect(Terminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fontFamily:
+          '"MesloLGS NF", "MesloLGM Nerd Font", "JetBrainsMono Nerd Font", "FiraCode Nerd Font", "Hack Nerd Font", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+      }),
+    );
+    expect(screen.getByTestId("terminal-font-size-value").textContent).toBe("14px");
+  });
+
   describe("shortcut panel", () => {
     it("is hidden by default and toggles from header action", async () => {
       render(<TerminalModal isOpen={true} onClose={mockOnClose} />);

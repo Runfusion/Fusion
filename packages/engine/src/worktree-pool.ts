@@ -7,6 +7,15 @@ import { worktreePoolLog } from "./logger.js";
 
 const execAsync = promisify(exec);
 
+function getExecStdout(result: unknown): string {
+  if (typeof result === "string") return result;
+  if (result && typeof result === "object" && "stdout" in result) {
+    const stdout = (result as { stdout?: unknown }).stdout;
+    return typeof stdout === "string" ? stdout : String(stdout ?? "");
+  }
+  return "";
+}
+
 export async function isGitRepository(dir: string): Promise<boolean> {
   try {
     await execAsync("git rev-parse --git-dir", {
@@ -23,10 +32,11 @@ export async function isGitRepository(dir: string): Promise<boolean> {
 
 export async function getRegisteredWorktreePaths(rootDir: string): Promise<Set<string>> {
   try {
-    const { stdout } = await execAsync("git worktree list --porcelain", {
+    const result = await execAsync("git worktree list --porcelain", {
       cwd: rootDir,
       encoding: "utf-8",
     });
+    const stdout = getExecStdout(result);
 
     const paths = new Set<string>();
     for (const line of stdout.split("\n")) {
@@ -190,58 +200,6 @@ export class WorktreePool {
 
     // Remove untracked files (but not .gitignore'd build caches)
     await execAsync("git clean -fd", { cwd: worktreePath });
-
-    // If the target branch already exists in the repo, check it out as-is so
-    // we preserve prior commits (resume path). Do NOT force-reset with -B.
-    let branchExists = false;
-    try {
-      await execAsync(`git rev-parse --verify "refs/heads/${branchName}"`, { cwd: worktreePath });
-      branchExists = true;
-    } catch {
-      // Branch does not exist — will be created below
-    }
-
-    if (branchExists) {
-      // Resume path: switch to the existing branch without destroying its history.
-      try {
-        await execAsync(`git checkout "${branchName}"`, { cwd: worktreePath });
-        return branchName;
-      } catch (err: unknown) {
-        const execError = err instanceof Error ? err : new Error(String(err));
-        const stderr = "stderr" in execError && typeof execError.stderr === "string"
-          ? execError.stderr.toString()
-          : execError.message;
-        const match = stderr.match(/already used by worktree at '([^']+)'/);
-        if (!match) {
-          throw err;
-        }
-        const conflictingPath = match[1];
-        if (!existsSync(conflictingPath)) {
-          await execAsync("git worktree prune", { cwd: worktreePath });
-          await execAsync(`git checkout "${branchName}"`, { cwd: worktreePath });
-          return branchName;
-        }
-        // Another live worktree has this branch — create a suffixed one from the same tip
-        for (let suffix = 2; suffix <= 6; suffix++) {
-          const suffixedName = `${branchName}-${suffix}`;
-          try {
-            await execAsync(`git checkout -B "${suffixedName}" "${branchName}"`, { cwd: worktreePath });
-            return suffixedName;
-          } catch (suffixErr: unknown) {
-            const suffixExecError = suffixErr instanceof Error ? suffixErr : new Error(String(suffixErr));
-            const suffixStderr = "stderr" in suffixExecError && typeof suffixExecError.stderr === "string"
-              ? suffixExecError.stderr.toString()
-              : "";
-            if (!suffixStderr.includes("already used by worktree")) {
-              throw suffixErr;
-            }
-          }
-        }
-        throw new Error(
-          `Cannot check out existing branch for task: "${branchName}" and suffixes -2 through -6 are all in use by other worktrees`,
-        );
-      }
-    }
 
     const base = startPoint || "main";
     await execAsync(`git checkout --detach ${base}`, {
@@ -537,10 +495,11 @@ export async function scanOrphanedBranches(rootDir: string, store: TaskStore): P
   // List all local branches matching fusion/*
   let allBranches: string[];
   try {
-    const { stdout } = await execAsync("git branch --list 'fusion/*'", {
+    const result = await execAsync("git branch --list 'fusion/*'", {
       cwd: rootDir,
       encoding: "utf-8",
     });
+    const stdout = getExecStdout(result);
     allBranches = stdout
       .split("\n")
       .map((line) => line.trim().replace(/^\*?\s*/, ""))
