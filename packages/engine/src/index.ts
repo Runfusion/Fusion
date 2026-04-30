@@ -64,6 +64,25 @@ export {
   type ResearchStepRunnerOptions,
   type ResearchStepResult,
 } from "./research-step-runner.js";
+export { ResearchProviderRegistry } from "./research/provider-registry.js";
+export {
+  ResearchProviderError,
+  type ResearchProviderType,
+  type ResearchProviderConfig,
+  type ResearchProviderErrorCode,
+  type ResearchFetchResult,
+} from "./research/types.js";
+export {
+  WebSearchProvider,
+  type WebSearchProviderOptions,
+  PageFetchProvider,
+  type PageFetchProviderOptions,
+  GitHubProvider,
+  LocalDocsProvider,
+  type LocalDocsProviderOptions,
+  LLMSynthesisProvider,
+  type LLMSynthesisProviderOptions,
+} from "./research/providers/index.js";
 export { PrMonitor, type PrComment, type TrackedPr, type OnNewCommentsCallback } from "./pr-monitor.js";
 export { PrCommentHandler } from "./pr-comment-handler.js";
 export {

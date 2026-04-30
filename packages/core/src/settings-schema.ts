@@ -69,6 +69,17 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   researchGlobalDefaultTimeout: 300000,
   researchGlobalMaxSourcesPerRun: 20,
   researchGlobalMaxSynthesisRounds: 2,
+  researchWebSearchProvider: "none",
+  researchSearxngUrl: undefined,
+  researchBraveApiKey: undefined,
+  researchGoogleSearchApiKey: undefined,
+  researchGoogleSearchCx: undefined,
+  researchTavilyApiKey: undefined,
+  researchGitHubEnabled: false,
+  researchLocalDocsEnabled: true,
+  researchMaxSearchResults: 10,
+  researchFetchTimeoutMs: 30_000,
+  researchUserAgent: "FusionResearchBot/1.0",
 } satisfies CompleteSettings<GlobalSettings>;
 
 /** Default values for project-level settings. */

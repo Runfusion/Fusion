@@ -1187,6 +1187,9 @@ export interface DaemonTokenSettings {
  * These are user preferences that persist across all fn projects.
  * The dashboard UI shows these under a "Global" section.
  */
+/** Web search backend for auto-research provider. */
+export type WebSearchBackend = "searxng" | "brave" | "google" | "tavily" | "none";
+
 export interface GlobalSettings {
   /** Theme mode preference: dark, light, or system (follows OS). Default: "dark". */
   themeMode?: ThemeMode;
@@ -1405,6 +1408,28 @@ export interface GlobalSettings {
   /** Default maximum number of synthesis rounds per run.
    *  Default: 2. */
   researchGlobalMaxSynthesisRounds?: number;
+  /** Web search backend for auto-research. Default: "none" (disabled). */
+  researchWebSearchProvider?: WebSearchBackend;
+  /** SearXNG instance URL (required when researchWebSearchProvider is "searxng"). */
+  researchSearxngUrl?: string;
+  /** Brave Search API key (required when researchWebSearchProvider is "brave"). */
+  researchBraveApiKey?: string;
+  /** Google Custom Search API key (required when researchWebSearchProvider is "google"). */
+  researchGoogleSearchApiKey?: string;
+  /** Google Custom Search engine ID (required when researchWebSearchProvider is "google"). */
+  researchGoogleSearchCx?: string;
+  /** Tavily API key (required when researchWebSearchProvider is "tavily"). */
+  researchTavilyApiKey?: string;
+  /** Enable GitHub repository/issue search provider. Default: false. */
+  researchGitHubEnabled?: boolean;
+  /** Enable local project documentation search provider. Default: true. */
+  researchLocalDocsEnabled?: boolean;
+  /** Maximum search results per provider query. Default: 10. */
+  researchMaxSearchResults?: number;
+  /** HTTP fetch timeout in milliseconds for page/content fetching. Default: 30000. */
+  researchFetchTimeoutMs?: number;
+  /** User-Agent header for HTTP requests made by research providers. Default: "FusionResearchBot/1.0". */
+  researchUserAgent?: string;
 }
 
 export type RemoteAccessProvider = "tailscale" | "cloudflare";

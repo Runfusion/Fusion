@@ -5,7 +5,6 @@ import {
   fetchCustomProviders,
   updateCustomProvider,
   type CustomProvider,
-  type CustomProviderConfig,
 } from "../api";
 import { AlertCircle, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { OnboardingDisclosure } from "./OnboardingDisclosure";
