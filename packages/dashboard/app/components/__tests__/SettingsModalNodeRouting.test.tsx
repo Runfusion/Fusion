@@ -244,9 +244,17 @@ describe("SettingsModal Node Routing section", () => {
     expect(screen.queryByLabelText("Unavailable Node Policy")).not.toBeInTheDocument();
   });
 
-  it("shows informational note", async () => {
+  it("applies description and note classes for node routing spacing", async () => {
     renderModal();
     await openNodeRouting();
-    expect(screen.getByText(/These settings apply at the project level/)).toBeInTheDocument();
+
+    const descriptionText = screen.getByText(/Configure how tasks are routed to execution nodes/);
+    const noteText = screen.getByText(/These settings apply at the project level/);
+
+    expect(descriptionText).toBeInTheDocument();
+    expect(noteText).toBeInTheDocument();
+
+    expect(descriptionText.closest("p")).toHaveClass("settings-section-description");
+    expect(noteText.closest("p")).toHaveClass("settings-node-routing-note");
   });
 });

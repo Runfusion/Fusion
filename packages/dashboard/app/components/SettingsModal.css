@@ -330,6 +330,15 @@
   margin-top: var(--space-xl);
 }
 
+.settings-section-description {
+  margin: 0;
+  padding: 0 var(--space-xl);
+  margin-bottom: var(--space-sm);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .settings-plugins-subsection-toggle {
   display: inline-flex;
   gap: var(--space-xs);
@@ -1548,7 +1557,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: var(--space-md) var(--space-lg);
-  margin-top: var(--space-lg);
+  margin-top: var(--space-sm);
   color: var(--text-muted);
   font-size: 13px;
   line-height: 1.5;
