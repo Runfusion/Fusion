@@ -2353,6 +2353,35 @@ describe("ChatView mobile behavior", () => {
     }
   });
 
+  it("mobile mode: send button sends on first touch and keeps composer focused", async () => {
+    const restoreMatchMedia = mockMobileViewport();
+    const sendMessage = vi.fn();
+
+    try {
+      setupMockChat({
+        activeSession: activeSessionFixture,
+        messages: [],
+        sendMessage,
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const input = screen.getByTestId("chat-input") as HTMLTextAreaElement;
+      fireEvent.change(input, { target: { value: "Hello mobile" } });
+      input.focus();
+
+      const sendButton = screen.getByTestId("chat-send-btn");
+      fireEvent.touchStart(sendButton);
+      fireEvent.click(sendButton);
+
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage).toHaveBeenCalledWith("Hello mobile", []);
+      expect(document.activeElement).toBe(input);
+    } finally {
+      restoreMatchMedia.mockRestore();
+    }
+  });
+
   it("mobile mode: sets and clears keyboard overlap CSS vars on chat thread", async () => {
     const restoreMatchMedia = mockMobileViewport();
     const { listeners, mockVV } = mockMobileVisualViewport({

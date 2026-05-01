@@ -754,6 +754,8 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
   const hideSkillMenuTimeoutRef = useRef<number | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const preserveComposerFocusRef = useRef(false);
+  const handledMobileSendRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([]);
   const mentionCursorPosRef = useRef(0);
@@ -830,6 +832,24 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
 
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
   }, [keyboardOverlap]);
+
+  // Lock body scroll on mobile while the keyboard is up so iOS can't shift
+  // the visual viewport (offsetTop > 0) and push the input off the top.
+  useEffect(() => {
+    if (!isMobile || !keyboardOpen) return;
+    const scrollY = window.scrollY;
+    const html = document.documentElement;
+    const body = document.body;
+    const prev = { htmlOverflow: html.style.overflow, bodyOverflow: body.style.overflow };
+    window.scrollTo(0, 0);
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    return () => {
+      html.style.overflow = prev.htmlOverflow;
+      body.style.overflow = prev.bodyOverflow;
+      window.scrollTo(0, scrollY);
+    };
+  }, [isMobile, keyboardOpen]);
 
   // Close context menu on outside click
   useEffect(() => {
@@ -977,6 +997,20 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
       return [];
     });
   }, [messageInput, pendingAttachments, activeSession, sendMessage]);
+
+  const focusComposerInput = useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (window.innerWidth > 768) return;
+    const input = inputRef.current;
+    if (!input || input.disabled) return;
+    input.focus({ preventScroll: true });
+  }, []);
+
+  const markPreserveComposerFocus = useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (window.innerWidth > 768) return;
+    preserveComposerFocusRef.current = true;
+  }, []);
 
   const handleSkillSelect = useCallback(
     (skill: DiscoveredSkill) => {
@@ -1223,6 +1257,13 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
   );
 
   const handleInputBlur = useCallback(() => {
+    if (preserveComposerFocusRef.current) {
+      window.requestAnimationFrame(() => {
+        focusComposerInput();
+      });
+      return;
+    }
+
     if (hideSkillMenuTimeoutRef.current !== null) {
       window.clearTimeout(hideSkillMenuTimeoutRef.current);
     }
@@ -1236,7 +1277,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
       fileMention.dismissMention();
       hideSkillMenuTimeoutRef.current = null;
     }, 120);
-  }, [fileMention]);
+  }, [fileMention, focusComposerInput]);
 
   const handleInputFocus = useCallback(() => {
     if (hideSkillMenuTimeoutRef.current !== null) {
@@ -1672,6 +1713,13 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                   onBlur={handleInputBlur}
                   onFocus={handleInputFocus}
                   onPaste={handlePaste}
+                  onTouchStart={(event) => {
+                    if (typeof window === "undefined") return;
+                    if (window.innerWidth > 768) return;
+                    if (document.activeElement === event.currentTarget) return;
+                    event.preventDefault();
+                    event.currentTarget.focus({ preventScroll: true });
+                  }}
                   rows={1}
                   data-testid="chat-input"
                 />
@@ -1723,8 +1771,43 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                 </button>
               ) : (
                 <button
+                  type="button"
                   className="chat-input-send"
-                  onClick={() => void handleSend()}
+                  onPointerDown={(event) => {
+                    if (typeof window === "undefined" || window.innerWidth > 768) return;
+                    event.preventDefault();
+                    if (event.pointerType && event.pointerType !== "mouse") {
+                      handledMobileSendRef.current = true;
+                      markPreserveComposerFocus();
+                      focusComposerInput();
+                      void handleSend();
+                      window.setTimeout(() => {
+                        preserveComposerFocusRef.current = false;
+                      }, 300);
+                    }
+                  }}
+                  onTouchStart={(event) => {
+                    if (typeof window === "undefined" || window.innerWidth > 768) return;
+                    event.preventDefault();
+                    handledMobileSendRef.current = true;
+                    markPreserveComposerFocus();
+                    focusComposerInput();
+                    void handleSend();
+                    window.setTimeout(() => {
+                      preserveComposerFocusRef.current = false;
+                    }, 300);
+                  }}
+                  onMouseDown={(event) => {
+                    if (typeof window === "undefined" || window.innerWidth > 768) return;
+                    event.preventDefault();
+                  }}
+                  onClick={() => {
+                    if (handledMobileSendRef.current) {
+                      handledMobileSendRef.current = false;
+                      return;
+                    }
+                    void handleSend();
+                  }}
                   disabled={!messageInput.trim() && pendingAttachments.length === 0}
                   data-testid="chat-send-btn"
                 >
