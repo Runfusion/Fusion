@@ -834,20 +834,18 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
   }, [keyboardOverlap]);
 
   // Lock body scroll on mobile while the keyboard is up so iOS can't shift
-  // the visual viewport (offsetTop > 0) and push the input off the top.
+  // the visual viewport (offsetTop > 0). Avoid forcing window.scrollTo(0, 0),
+  // which can jump the page when send briefly toggles focus.
   useEffect(() => {
     if (!isMobile || !keyboardOpen) return;
-    const scrollY = window.scrollY;
     const html = document.documentElement;
     const body = document.body;
     const prev = { htmlOverflow: html.style.overflow, bodyOverflow: body.style.overflow };
-    window.scrollTo(0, 0);
     html.style.overflow = "hidden";
     body.style.overflow = "hidden";
     return () => {
       html.style.overflow = prev.htmlOverflow;
       body.style.overflow = prev.bodyOverflow;
-      window.scrollTo(0, scrollY);
     };
   }, [isMobile, keyboardOpen]);
 
