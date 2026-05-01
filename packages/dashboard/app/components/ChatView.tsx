@@ -419,7 +419,7 @@ function NewChatDialog({ projectId, onClose, onCreate }: NewChatDialogProps) {
     }
   }, [favoriteModels, favoriteProviders]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
 
     if (chatMode === "agent") {
