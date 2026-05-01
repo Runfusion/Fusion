@@ -22,6 +22,7 @@ export const PROJECT_STORAGE_KEYS: string[] = [
   "kb-mission-last-goal",
   "kb-usage-view-mode",
   "kb-usage-hidden-windows",
+  "kb-usage-modal-size",
   "kb-chat-active-session",
 ];
 

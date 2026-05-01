@@ -252,7 +252,7 @@ describe("UsageIndicator", () => {
     const modal = screen.getByTestId("usage-modal") as HTMLElement;
     expect(modal).toHaveClass("usage-modal--popover");
     expect(modal.style.top).toBe("88px");
-    expect(modal.style.right).toBe("84px");
+    expect(modal.style.left).toBe("520px");
   });
 
   it("renders as full-screen modal when anchorRect is null", () => {

@@ -8,6 +8,8 @@ const dashboardClientSrc = join(__dirname, "..", "dashboard", "dist", "client");
 const dashboardClientDest = join(__dirname, "dist", "client");
 const piClaudeCliSrc = join(__dirname, "..", "pi-claude-cli");
 const piClaudeCliDest = join(__dirname, "dist", "pi-claude-cli");
+const droidCliSrc = join(__dirname, "..", "droid-cli");
+const droidCliDest = join(__dirname, "dist", "droid-cli");
 const dashboardClientStub = `<!doctype html>
 <html lang="en">
   <head>
@@ -62,6 +64,27 @@ export default defineConfig({
     } else {
       console.warn(
         `WARNING: pi-claude-cli source not found at ${piClaudeCliSrc}; useClaudeCli will not work in the published package.`,
+      );
+    }
+
+    // Stage the vendored @fusion/droid-cli pi extension into dist/, following
+    // the same pattern as pi-claude-cli above. The extension ships raw .ts
+    // source that pi loads via jiti at runtime, so it cannot be bundled by
+    // esbuild. This lets us drop @fusion/droid-cli from the published
+    // package's dependencies — the workspace package is private and would 404
+    // on `pnpm install` of @runfusion/fusion otherwise.
+    if (existsSync(droidCliDest)) {
+      rmSync(droidCliDest, { recursive: true, force: true });
+    }
+    if (existsSync(droidCliSrc)) {
+      mkdirSync(droidCliDest, { recursive: true });
+      cpSync(join(droidCliSrc, "index.ts"), join(droidCliDest, "index.ts"));
+      cpSync(join(droidCliSrc, "src"), join(droidCliDest, "src"), { recursive: true });
+      cpSync(join(droidCliSrc, "package.json"), join(droidCliDest, "package.json"));
+      console.log("Copied droid-cli extension to dist/droid-cli/");
+    } else {
+      console.warn(
+        `WARNING: droid-cli source not found at ${droidCliSrc}; useDroidCli will not work in the published package.`,
       );
     }
 

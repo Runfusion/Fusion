@@ -82,6 +82,32 @@ function getUsageColorClass(percentUsed: number): string {
 }
 
 const HIDDEN_WINDOWS_STORAGE_KEY = "kb-usage-hidden-windows";
+const MODAL_SIZE_STORAGE_KEY = "kb-usage-modal-size";
+
+interface ModalSize {
+  width: number;
+  height: number;
+}
+
+function getSavedModalSize(projectId: string | undefined): ModalSize | null {
+  const stored = getScopedItem(MODAL_SIZE_STORAGE_KEY, projectId);
+  if (!stored) return null;
+  try {
+    const parsed = JSON.parse(stored);
+    if (
+      parsed &&
+      typeof parsed.width === "number" &&
+      typeof parsed.height === "number" &&
+      parsed.width > 0 &&
+      parsed.height > 0
+    ) {
+      return { width: parsed.width, height: parsed.height };
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
 
 function getHiddenWindows(projectId: string | undefined): Record<string, string[]> {
   const stored = getScopedItem(HIDDEN_WINDOWS_STORAGE_KEY, projectId);
@@ -447,8 +473,42 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect }: Usage
     getHiddenWindows(projectId)
   );
   const contentRef = useRef<HTMLDivElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
   const wasOpenRef = useRef(isOpen);
   const hasCompletedInitialFetchRef = useRef(false);
+  const [savedSize, setSavedSize] = useState<ModalSize | null>(() => getSavedModalSize(projectId));
+
+  useEffect(() => {
+    setSavedSize(getSavedModalSize(projectId));
+  }, [projectId]);
+
+  // Persist user resizes via ResizeObserver (debounced).
+  useEffect(() => {
+    if (!isOpen || !isDesktopViewport) return;
+    const el = modalRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      if (width <= 0 || height <= 0) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        setScopedItem(
+          MODAL_SIZE_STORAGE_KEY,
+          JSON.stringify({ width: Math.round(width), height: Math.round(height) }),
+          projectId
+        );
+      }, 250);
+    });
+    observer.observe(el);
+    return () => {
+      if (timer) clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, [isOpen, isDesktopViewport, projectId]);
 
   // Reset initial fetch flag when modal closes to show skeleton on next open
   useEffect(() => {
@@ -584,15 +644,24 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect }: Usage
   const showDesktopPopover = Boolean(anchorRect && isDesktopViewport);
   const desktopGap = 8;
   const maxTopPadding = 12;
+  const defaultPopoverWidth = 420;
+  const popoverWidth = savedSize?.width ?? defaultPopoverWidth;
   const desktopTop = showDesktopPopover
     ? Math.min((anchorRect?.bottom ?? 0) + desktopGap, window.innerHeight - maxTopPadding)
     : undefined;
-  const desktopRight = showDesktopPopover
-    ? Math.max(window.innerWidth - (anchorRect?.right ?? 0), 0)
+  // Anchor popover so its right edge aligns with the anchor button's right edge,
+  // but use `left` positioning so native resize (bottom-right handle) feels natural.
+  const desktopLeft = showDesktopPopover
+    ? Math.max(8, (anchorRect?.right ?? 0) - popoverWidth)
     : undefined;
+
+  const sizeStyle: CSSProperties = isDesktopViewport && savedSize
+    ? { width: savedSize.width, height: savedSize.height }
+    : {};
 
   const usageContent = (
       <div
+        ref={modalRef}
         className={`usage-modal${showDesktopPopover ? " usage-modal--popover" : " modal"}`}
         data-testid="usage-modal"
         style={
@@ -600,9 +669,10 @@ export function UsageIndicator({ isOpen, onClose, projectId, anchorRect }: Usage
             ? ({
                 position: "fixed",
                 top: desktopTop,
-                right: desktopRight,
+                left: desktopLeft,
+                ...sizeStyle,
               } as CSSProperties)
-            : undefined
+            : sizeStyle
         }
       >
         <div className="modal-header">
