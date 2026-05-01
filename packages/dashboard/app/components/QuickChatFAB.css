@@ -230,6 +230,17 @@
   text-overflow: ellipsis;
 }
 
+@media (min-width: 769px) {
+  .quick-chat-model-tag {
+    max-width: 14ch;
+    font-size: 0.6875rem;
+    line-height: 1.2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+  }
+}
+
 /* Icon-only fallback when the model name is too long for the header. */
 .quick-chat-model-tag--icon {
   max-width: none;
@@ -637,21 +648,17 @@
 /* === Quick Chat Mobile (FN: full-screen) =================================== */
 @media (max-width: 768px) {
   .quick-chat-panel {
-    /* Full-screen sheet that ignores drag position on mobile. `top`
-       follows visualViewport.offsetTop because on the *second* input
-       focus iOS Safari shifts the visual viewport (offsetTop > 0)
-       instead of repositioning the keyboard, so a fixed panel pinned
-       at layout top:0 ends up rendering at visual -offsetTop and slides
-       off-screen. Translating the panel by offsetTop puts the header
-       back at visual y=0 — i.e. the user still sees the top of the
-       chat box. The CSS variable is written directly to the DOM via
-       a layout effect, so it tracks the keyboard 1:1 with no React
-       state lag. */
+    /* Full-screen sheet that ignores drag position on mobile. We pin
+       every edge with !important so any stray inline value cannot pull
+       the panel off-screen. iOS's would-be visual-viewport shift on
+       input focus is suppressed at the source by the input's
+       onTouchStart handler in QuickChatFAB.tsx, so we don't need to
+       compensate with translateY here. */
     position: fixed !important;
     inset: 0 !important;
     left: 0 !important;
     right: 0 !important;
-    top: var(--vv-offset-top, 0px) !important;
+    top: 0 !important;
     bottom: 0 !important;
     width: 100vw !important;
     height: 100vh !important;

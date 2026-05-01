@@ -900,6 +900,12 @@ export function QuickChatFAB({
   // session). Focus is transferred to the real input once it is enabled —
   // iOS keeps the keyboard up across that transfer.
   const stealthInputRef = useRef<HTMLInputElement | null>(null);
+  // Set true briefly while the keyboard is dismissing. While set, the
+  // visualViewport apply() ignores incoming vv.height values so iOS's
+  // mid-dismiss reports cannot shrink the panel back down — the panel
+  // visually grows to full height immediately on blur and the keyboard
+  // slides down on top of it.
+  const suppressVvShrinkRef = useRef(false);
 
   // Pin the document at the top while the panel is open on mobile.
   // Otherwise iOS can leave window.scrollY > 0 (e.g. after the keyboard
@@ -939,12 +945,16 @@ export function QuickChatFAB({
 
   // Mirror visualViewport metrics onto the panel as CSS variables
   // directly, bypassing React state. --vv-height shrinks the panel to
-  // the visible area; --vv-offset-top translates it back into view when
-  // iOS shifts the visual viewport on input focus (which would otherwise
-  // slide the position:fixed panel off-screen, especially on the second
-  // focus after the keyboard has been dismissed once). Going through
-  // setState here introduced per-event React reconciliation lag that
-  // showed up as visible jank during the keyboard animation.
+  // the visible area; --vv-offset-top compensates for iOS shifting the
+  // visual viewport on input focus (without it the position:fixed panel
+  // slides off-screen on the second focus after the keyboard has been
+  // dismissed once).
+  //
+  // We deliberately do NOT throttle via requestAnimationFrame here.
+  // iOS fires visualViewport resize/scroll events on the same frame as
+  // its own keyboard animation; deferring our write to the next frame
+  // makes the panel lag iOS by one paint, which is visible as a slide.
+  // Synchronous writes keep the panel locked to the visual viewport.
   useLayoutEffect(() => {
     if (!isOpen) return;
     if (typeof window === "undefined" || !window.visualViewport) return;
@@ -952,24 +962,18 @@ export function QuickChatFAB({
     if (!panel) return;
 
     const vv = window.visualViewport;
-    let frame = 0;
     const apply = () => {
-      frame = 0;
+      if (suppressVvShrinkRef.current) return;
       panel.style.setProperty("--vv-height", `${vv.height}px`);
       panel.style.setProperty("--vv-offset-top", `${vv.offsetTop || 0}px`);
     };
-    const schedule = () => {
-      if (frame) return;
-      frame = requestAnimationFrame(apply);
-    };
 
     apply();
-    vv.addEventListener("resize", schedule);
-    vv.addEventListener("scroll", schedule);
+    vv.addEventListener("resize", apply);
+    vv.addEventListener("scroll", apply);
     return () => {
-      if (frame) cancelAnimationFrame(frame);
-      vv.removeEventListener("resize", schedule);
-      vv.removeEventListener("scroll", schedule);
+      vv.removeEventListener("resize", apply);
+      vv.removeEventListener("scroll", apply);
     };
   }, [isOpen]);
 
@@ -1454,6 +1458,24 @@ export function QuickChatFAB({
   );
 
   const handleInputBlur = useCallback(() => {
+    // Pre-grow the panel ahead of iOS's keyboard dismiss animation so the
+    // user sees the panel snap to full height immediately instead of
+    // following the keyboard slide-down. The suppress flag prevents the
+    // visualViewport listener from clobbering this with mid-dismiss
+    // reports while iOS is still animating the keyboard out.
+    if (
+      typeof window !== "undefined"
+      && window.innerWidth <= QUICK_CHAT_DESKTOP_BREAKPOINT
+      && panelRef.current
+    ) {
+      suppressVvShrinkRef.current = true;
+      panelRef.current.style.removeProperty("--vv-height");
+      panelRef.current.style.removeProperty("--vv-offset-top");
+      window.setTimeout(() => {
+        suppressVvShrinkRef.current = false;
+      }, 450);
+    }
+
     if (hideMentionPopupTimeoutRef.current !== null) {
       window.clearTimeout(hideMentionPopupTimeoutRef.current);
     }
@@ -1469,6 +1491,10 @@ export function QuickChatFAB({
   }, [fileMention]);
 
   const handleInputFocus = useCallback(() => {
+    // Re-enable visualViewport tracking — the suppress flag set on blur
+    // would otherwise still be in effect if the user re-focused inside
+    // the suppress window.
+    suppressVvShrinkRef.current = false;
     if (hideMentionPopupTimeoutRef.current !== null) {
       window.clearTimeout(hideMentionPopupTimeoutRef.current);
       hideMentionPopupTimeoutRef.current = null;
@@ -1986,6 +2012,21 @@ export function QuickChatFAB({
                   onBlur={handleInputBlur}
                   onFocus={handleInputFocus}
                   onPaste={handlePaste}
+                  // Intercept the touch *before* iOS's default focus-and-
+                  // scroll handler runs. Without this, on the second focus
+                  // (after a keyboard dismiss) iOS shifts the visual
+                  // viewport to "scroll" the input into view, which yanks
+                  // the position:fixed panel up off-screen for ~1s before
+                  // settling back. preventDefault on touchstart suppresses
+                  // that auto-scroll; we then focus programmatically with
+                  // preventScroll so the keyboard still comes up.
+                  onTouchStart={(event) => {
+                    if (typeof window === "undefined") return;
+                    if (window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT) return;
+                    if (document.activeElement === event.currentTarget) return;
+                    event.preventDefault();
+                    event.currentTarget.focus({ preventScroll: true });
+                  }}
                   placeholder={inputPlaceholder}
                   disabled={inputDisabled}
                   data-testid="quick-chat-input"
