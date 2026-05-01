@@ -2537,6 +2537,47 @@ describe("ChatView mobile behavior", () => {
     }
   });
 
+  it("mobile mode: does not force window scroll when keyboard opens", async () => {
+    const restoreMatchMedia = mockMobileViewport();
+    const { listeners, mockVV } = mockMobileVisualViewport({
+      innerHeight: 800,
+      vvHeight: 800,
+    });
+
+    const scrollToSpy = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+
+    try {
+      setupMockChat({
+        activeSession: activeSessionFixture,
+        messages: [{ id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hello", createdAt: "2026-04-08T00:00:00.000Z" }],
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      Object.defineProperty(window, "innerHeight", {
+        value: 560,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(mockVV, "height", {
+        value: 560,
+        writable: true,
+        configurable: true,
+      });
+
+      act(() => {
+        for (const cb of listeners.resize) cb();
+      });
+
+      await waitFor(() => {
+        expect(scrollToSpy).not.toHaveBeenCalled();
+      });
+    } finally {
+      scrollToSpy.mockRestore();
+      restoreMatchMedia.mockRestore();
+    }
+  });
+
   it("mobile mode: does not subscribe to keyboard tracking without active session", async () => {
     const restoreMatchMedia = mockMobileViewport();
     const { mockVV } = mockMobileVisualViewport({

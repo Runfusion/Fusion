@@ -761,7 +761,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
   const mentionCursorPosRef = useRef(0);
   const mode = useViewportMode();
   const isMobile = mode === "mobile";
-  const { keyboardOverlap, viewportHeight, keyboardOpen } = useMobileKeyboard({
+  const { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen } = useMobileKeyboard({
     enabled: isMobile && !!activeSession,
   });
 
@@ -769,6 +769,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     keyboardOpen
       ? ({
           "--keyboard-overlap": `${keyboardOverlap}px`,
+          "--vv-offset-top": `${viewportOffsetTop}px`,
           ...(viewportHeight !== null ? { "--vv-height": `${viewportHeight}px` } : {}),
         } as CSSProperties)
       : {};
@@ -815,9 +816,13 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     };
   }, []);
 
-  // Scroll to bottom on new messages or streaming
+  // Scroll thread container to bottom on new messages or streaming.
+  // Avoid Element.scrollIntoView() here because on mobile Safari it can
+  // scroll the page viewport instead of only the chat thread.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const messagesContainer = messagesContainerRef.current;
+    if (!messagesContainer) return;
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
   }, [messages, streamingText]);
 
   useEffect(() => {
@@ -1001,7 +1006,18 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     if (window.innerWidth > 768) return;
     const input = inputRef.current;
     if (!input || input.disabled) return;
+
+    const previousScrollX = window.scrollX;
+    const previousScrollY = window.scrollY;
     input.focus({ preventScroll: true });
+
+    // iOS can still jump layout viewport on focus changes even with preventScroll.
+    // Restore scroll position on the next frame to keep the thread anchored.
+    window.requestAnimationFrame(() => {
+      if (window.scrollX !== previousScrollX || window.scrollY !== previousScrollY) {
+        window.scrollTo(previousScrollX, previousScrollY);
+      }
+    });
   }, []);
 
   const markPreserveComposerFocus = useCallback(() => {
@@ -1781,7 +1797,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                       void handleSend();
                       window.setTimeout(() => {
                         preserveComposerFocusRef.current = false;
-                      }, 300);
+                      }, 1500);
                     }
                   }}
                   onTouchStart={(event) => {
@@ -1793,7 +1809,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                     void handleSend();
                     window.setTimeout(() => {
                       preserveComposerFocusRef.current = false;
-                    }, 300);
+                    }, 1500);
                   }}
                   onMouseDown={(event) => {
                     if (typeof window === "undefined" || window.innerWidth > 768) return;
