@@ -96,6 +96,36 @@
   padding: 12px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.planning-sidebar-toggle-archived {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.planning-sidebar-toggle-archived:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.planning-sidebar-toggle-archived.active {
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+  border-color: var(--todo);
+  color: var(--todo);
 }
 
 .planning-sidebar-new {
@@ -216,7 +246,13 @@
 .planning-sidebar-status-complete { color: var(--success, #3fb950); }
 .planning-sidebar-status-error { color: var(--danger, #f85149); }
 
-.planning-sidebar-item-delete {
+.planning-sidebar-item-actions {
+  display: flex;
+  align-items: stretch;
+}
+
+.planning-sidebar-item-delete,
+.planning-sidebar-item-archive {
   flex-shrink: 0;
   width: 32px;
   display: none;
@@ -230,13 +266,24 @@
 }
 
 .planning-sidebar-item:hover .planning-sidebar-item-delete,
-.planning-sidebar-item:focus-within .planning-sidebar-item-delete {
+.planning-sidebar-item:focus-within .planning-sidebar-item-delete,
+.planning-sidebar-item:hover .planning-sidebar-item-archive,
+.planning-sidebar-item:focus-within .planning-sidebar-item-archive {
   display: flex;
 }
 
 .planning-sidebar-item-delete:hover {
   color: var(--danger, #f85149);
   background: color-mix(in srgb, var(--danger, #f85149) 15%, transparent);
+}
+
+.planning-sidebar-item-archive:hover {
+  color: var(--todo);
+  background: color-mix(in srgb, var(--todo) 15%, transparent);
+}
+
+.planning-sidebar-item.archived .planning-sidebar-item-button {
+  opacity: 0.6;
 }
 
 .planning-sidebar-confirm {
@@ -304,8 +351,9 @@
   .planning-mobile-back {
     display: inline-flex;
   }
-  /* Always keep delete button visible on mobile (no hover) */
-  .planning-sidebar-item-delete {
+  /* Always keep action buttons visible on mobile (no hover) */
+  .planning-sidebar-item-delete,
+  .planning-sidebar-item-archive {
     display: flex;
   }
 }
