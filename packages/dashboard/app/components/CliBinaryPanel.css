@@ -2,10 +2,13 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 16px;
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
-  border-radius: 8px;
-  background: var(--surface-2, rgba(255, 255, 255, 0.02));
+  /* Match the horizontal indent every other top-level child of
+     .settings-content uses (.form-group, .settings-section-heading, etc.).
+     Top margin matches .form-group so consecutive sections breathe the same. */
+  padding: 0 var(--space-xl);
+  margin-top: var(--space-lg);
+  border: 0;
+  background: transparent;
 }
 
 .cli-binary-header {
