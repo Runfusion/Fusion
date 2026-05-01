@@ -85,6 +85,14 @@ vi.mock("../ClaudeCliProviderCard", () => ({
   ),
 }));
 
+vi.mock("../DroidCliProviderCard", () => ({
+  DroidCliProviderCard: ({ authenticated }: { authenticated: boolean }) => (
+    <div data-testid="droid-cli-provider-card" data-authenticated={authenticated ? "true" : "false"}>
+      Factory AI — via Droid CLI
+    </div>
+  ),
+}));
+
 vi.mock("lucide-react", async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return {

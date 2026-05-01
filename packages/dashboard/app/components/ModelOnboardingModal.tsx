@@ -1713,6 +1713,18 @@ export function ModelOnboardingModal({
   );
 
   const renderAiProviderCard = (provider: AuthProvider) => {
+    if (provider.id === "droid-cli" && provider.type === "cli") {
+      return (
+        <DroidCliProviderCard
+          key={provider.id}
+          authenticated={provider.authenticated}
+          onToggled={() => {
+            void loadAuthStatus();
+          }}
+        />
+      );
+    }
+
     if (provider.id === "claude-cli" && provider.type === "cli") {
       return (
         <ClaudeCliProviderCard
