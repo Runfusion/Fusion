@@ -800,6 +800,9 @@ Common built-in dashboard flags include:
 - `nodesView`
 - `devServerView`
 - `todoView`
+- `researchView`
+- `remoteAccess`
+- `agentOnboarding` (gates the planning-style New Agent onboarding flow in Agents view)
 
 ---
 

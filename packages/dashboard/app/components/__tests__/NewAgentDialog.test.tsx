@@ -1786,5 +1786,34 @@ describe("NewAgentDialog", () => {
       const createCall = mockCreateAgent.mock.calls[0][0];
       expect(createCall.metadata).toBeUndefined();
     });
+
+    it("prefills fields from onboarding draft", async () => {
+      render(
+        <NewAgentDialog
+          isOpen={true}
+          onClose={mockOnClose}
+          onCreated={mockOnCreated}
+          prefillDraft={{
+            name: "Draft Agent",
+            role: "reviewer",
+            instructionsText: "Review with care",
+            thinkingLevel: "medium",
+            maxTurns: 25,
+            title: "Draft title",
+            icon: "🧪",
+            soul: "Patient",
+          }}
+        />,
+      );
+
+      await waitFor(() => expect(mockFetchModels).toHaveBeenCalled());
+      expect(screen.getByRole("button", { name: "Model" })).toBeTruthy();
+      fireEvent.click(screen.getByText("Back"));
+
+      expect((getStepZeroField(/Name/) as HTMLInputElement).value).toBe("Draft Agent");
+      expect((getStepZeroField(/Title/) as HTMLInputElement).value).toBe("Draft title");
+      expect((getStepZeroField(/Icon/) as HTMLInputElement).value).toBe("🧪");
+      expect((getStepZeroField(/^Inline Instructions/) as HTMLTextAreaElement).value).toContain("Review with care");
+    });
   });
 });

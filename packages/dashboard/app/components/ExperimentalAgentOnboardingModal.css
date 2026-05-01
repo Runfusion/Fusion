@@ -1,0 +1,16 @@
+.experimental-agent-onboarding-modal__textarea {
+  min-height: calc(var(--space-2xl) * 4);
+}
+
+.experimental-agent-onboarding-modal__summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+}
+
+@media (max-width: 768px) {
+  .experimental-agent-onboarding-modal__textarea {
+    min-height: calc(var(--space-2xl) * 3);
+  }
+}

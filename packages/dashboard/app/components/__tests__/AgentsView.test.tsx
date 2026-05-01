@@ -1179,7 +1179,7 @@ describe("AgentsView", () => {
       fireEvent.click(screen.getByText("New Agent"));
 
       await waitFor(() => {
-        expect(screen.getByRole("dialog", { name: "Agent onboarding" })).toBeTruthy();
+        expect(screen.getByRole("dialog", { name: "Experimental agent onboarding" })).toBeTruthy();
         expect(screen.queryByRole("dialog", { name: "Create new agent" })).toBeNull();
       });
     });

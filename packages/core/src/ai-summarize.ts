@@ -850,7 +850,7 @@ export function sanitizeTitle(raw: string | undefined | null): string | null {
     .trim();
 
   // Drop "Title:" / "Subject:" / "Here is the title:" preambles the model may add.
-  title = title.replace(/^(?:title|subject|here(?:'s| is)(?: the)? title|generated title)\s*[:\-]\s*/i, "").trim();
+  title = title.replace(/^(?:title|subject|here(?:'s| is)(?: the)? title|generated title)\s*[:-]\s*/i, "").trim();
 
   // Strip markdown emphasis markers — keep the inner text.
   title = title

@@ -1,7 +1,7 @@
 import "./NewAgentDialog.css";
 import { useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
-import type { Agent, AgentCapability, ModelInfo, AgentGenerationSpec, PluginRuntimeInfo } from "../api";
+import type { Agent, AgentCapability, ModelInfo, AgentGenerationSpec, PluginRuntimeInfo, AgentOnboardingSummary } from "../api";
 import { createAgent, fetchAgents, fetchModels, updateGlobalSettings } from "../api";
 import * as apiModule from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
@@ -15,6 +15,7 @@ export interface NewAgentDialogProps {
   onClose: () => void;
   onCreated: () => void;
   projectId?: string;
+  prefillDraft?: AgentOnboardingSummary | null;
 }
 
 const AGENT_ROLES: { value: AgentCapability; label: string; icon: string }[] = [
@@ -40,7 +41,7 @@ interface RuntimeConfig {
 
 type StepZeroTab = "presets" | "custom";
 
-export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAgentDialogProps) {
+export function NewAgentDialog({ isOpen, onClose, onCreated, projectId, prefillDraft = null }: NewAgentDialogProps) {
   const [step, setStep] = useState(0);
   const [stepZeroTab, setStepZeroTab] = useState<StepZeroTab>("presets");
   const [name, setName] = useState("");
@@ -217,6 +218,26 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId }: NewAge
     // Advance to Step 1 so user can review model selection
     setStep(1);
   }, []);
+
+  useEffect(() => {
+    if (!isOpen || !prefillDraft) return;
+    setStep(1);
+    setStepZeroTab("custom");
+    setName(prefillDraft.name ?? "");
+    setTitle(prefillDraft.title ?? "");
+    setIcon(prefillDraft.icon ?? "");
+    setRole((VALID_CAPABILITIES.has(prefillDraft.role) ? prefillDraft.role : "custom") as AgentCapability);
+    setReportsTo(prefillDraft.reportsTo ?? "");
+    setInstructionsText(prefillDraft.instructionsText ?? "");
+    setSoul(prefillDraft.soul ?? "");
+    setMemory(prefillDraft.memory ?? "");
+    setSelectedSkills(prefillDraft.skills ?? []);
+    setRuntimeConfig((current) => ({
+      ...current,
+      thinkingLevel: prefillDraft.thinkingLevel ?? current.thinkingLevel,
+      maxTurns: prefillDraft.maxTurns ?? current.maxTurns,
+    }));
+  }, [isOpen, prefillDraft]);
 
   if (!isOpen) return null;
 

@@ -261,6 +261,17 @@ Before clicking **Create**, the final review step remains editable for identity/
 
 The final `createAgent(...)` call always uses the latest values from these step-2 controls.
 
+### Experimental planning-style onboarding
+
+When **Settings → Experimental Features → Planning-style Agent Onboarding** (`experimentalFeatures.agentOnboarding`) is enabled, clicking **New Agent** opens an AI-guided onboarding modal instead of jumping straight to the classic dialog.
+
+- The onboarding flow asks clarifying questions using repo-aware context (existing agents + preset/template options).
+- It generates a **draft** agent configuration summary (name/role/instructions and optional template or pattern provenance).
+- Clicking **Continue to agent form** hands that draft into the existing `NewAgentDialog` as a prefill for human review and edits.
+- The onboarding flow does **not** auto-create agents directly.
+
+When `experimentalFeatures.agentOnboarding` is disabled, the original `NewAgentDialog` behavior remains unchanged and opens immediately from **New Agent**.
+
 The dashboard provides quick-start presets for common agent roles. Each preset includes:
 
 - **Name and icon** - Display identification

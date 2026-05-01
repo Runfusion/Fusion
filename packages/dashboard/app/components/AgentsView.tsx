@@ -1,7 +1,7 @@
 import "./AgentsView.css";
 import { useState, useEffect, useCallback, useRef, useMemo, useId, lazy, Suspense } from "react";
 import { Plus, Play, Pause, Activity, Trash2, RefreshCw, Bot, List, ChevronRight, ChevronDown, GitBranch, Filter, Upload, Network, SlidersHorizontal } from "lucide-react";
-import type { Agent, AgentCapability, AgentState, OrgTreeNode } from "../api";
+import type { Agent, AgentCapability, AgentOnboardingSummary, AgentState, OrgTreeNode } from "../api";
 import { updateAgent, updateAgentState, deleteAgent, startAgentRun, fetchOrgTree, fetchSettings, updateSettings } from "../api";
 
 const AgentDetailView = lazy(() => import("./AgentDetailView").then((m) => ({ default: m.AgentDetailView })));
@@ -14,7 +14,7 @@ import { useConfirm } from "../hooks/useConfirm";
 import { useAgentHierarchy } from "../hooks/useAgentHierarchy";
 import type { AgentNode } from "../hooks/useAgentHierarchy";
 import { NewAgentDialog } from "./NewAgentDialog";
-import { AgentOnboardingModal } from "./AgentOnboardingModal";
+import { ExperimentalAgentOnboardingModal } from "./ExperimentalAgentOnboardingModal";
 import { AgentImportModal } from "./AgentImportModal";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
 import { getAgentHealthStatus } from "../utils/agentHealth";
@@ -269,6 +269,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   });
   const [isCreating, setIsCreating] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+  const [onboardingDraft, setOnboardingDraft] = useState<AgentOnboardingSummary | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [agentView, setAgentView] = useState<"list" | "board" | "tree" | "org">(() => {
@@ -921,19 +922,23 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
 
         <NewAgentDialog
           isOpen={isCreating}
-          onClose={() => setIsCreating(false)}
-          onCreated={() => { setIsCreating(false); void loadAgents(); }}
+          onClose={() => {
+            setIsCreating(false);
+            setOnboardingDraft(null);
+          }}
+          onCreated={() => { setIsCreating(false); setOnboardingDraft(null); void loadAgents(); }}
           projectId={projectId}
+          prefillDraft={onboardingDraft}
         />
 
-        <AgentOnboardingModal
+        <ExperimentalAgentOnboardingModal
           isOpen={isOnboardingOpen}
           onClose={() => setIsOnboardingOpen(false)}
-          onCreated={() => {
+          onUseDraft={(draft) => {
+            setOnboardingDraft(draft);
             setIsOnboardingOpen(false);
-            void loadAgents();
+            setIsCreating(true);
           }}
-          addToast={addToast}
           projectId={projectId}
           existingAgents={agents}
         />
