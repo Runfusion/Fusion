@@ -812,6 +812,10 @@ export function QuickChatFAB({
 
   const [chatMode, setChatMode] = useState<"agent" | "model">("agent");
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  const [newSessionChooserOpen, setNewSessionChooserOpen] = useState(false);
+  const [newSessionMode, setNewSessionMode] = useState<"agent" | "model">("model");
+  const [newSessionAgentId, setNewSessionAgentId] = useState<string>("");
+  const [newSessionModel, setNewSessionModel] = useState<string>("");
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>("");
@@ -876,6 +880,7 @@ export function QuickChatFAB({
     streamingText,
     streamingThinking,
     streamingToolCalls,
+    sessions,
     sessionsLoading,
     messagesLoading,
     sendMessage,
@@ -883,8 +888,10 @@ export function QuickChatFAB({
     pendingMessage,
     clearPendingMessage,
     switchSession,
+    selectSession,
     startModelChat,
     startFreshSession,
+    refreshSessions,
   } = useQuickChat(projectId, addToast);
 
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -1078,6 +1085,11 @@ export function QuickChatFAB({
       });
   }, [isOpen, agents.length, selectedModel]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    void refreshSessions();
+  }, [isOpen, refreshSessions]);
+
   // Initialize/switch quick chat session whenever the selected target changes.
   useEffect(() => {
     if (!isOpen) {
@@ -1201,20 +1213,12 @@ export function QuickChatFAB({
     };
   }, []);
 
-  const handleAgentChange = useCallback((agentId: string) => {
-    setSelectedAgentId(agentId);
-  }, []);
-
-  const handleModelChange = useCallback((value: string) => {
-    setSelectedModel(value);
-  }, []);
-
   const handleStartFreshChat = useCallback(() => {
-    if (!hasChatTarget || sessionsLoading) {
-      return;
-    }
-    void startFreshSession();
-  }, [hasChatTarget, sessionsLoading, startFreshSession]);
+    setNewSessionChooserOpen(true);
+    setNewSessionMode("model");
+    setNewSessionAgentId(agents[0]?.id ?? "");
+    setNewSessionModel(selectedModel || configuredDefaultModelSelection || "");
+  }, [agents, configuredDefaultModelSelection, selectedModel]);
 
   const selectedAgent = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId) ?? null,
@@ -1287,6 +1291,14 @@ export function QuickChatFAB({
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }, [messages, streamingText, streamingThinking, isOpen]);
 
+  const sessionOptions = useMemo(
+    () => sessions.map((session, index) => ({
+      id: session.id,
+      label: session.title?.trim() || `Session ${index + 1}`,
+    })),
+    [sessions],
+  );
+
   const inputPlaceholder = useMemo(() => {
     if (chatMode === "agent") {
       if (selectedAgent) {
@@ -1300,6 +1312,53 @@ export function QuickChatFAB({
     }
     return "Select a model to start chatting";
   }, [chatMode, selectedAgent, selectedModelTag]);
+
+  const handleSessionSwitch = useCallback((sessionId: string) => {
+    const selectedSession = sessions.find((session) => session.id === sessionId);
+    if (!selectedSession) {
+      return;
+    }
+
+    if (selectedSession.modelProvider && selectedSession.modelId) {
+      setChatMode("model");
+      setSelectedModel(`${selectedSession.modelProvider}/${selectedSession.modelId}`);
+    } else {
+      setChatMode("agent");
+      setSelectedAgentId(selectedSession.agentId);
+    }
+
+    void selectSession(selectedSession);
+  }, [selectSession, sessions]);
+
+  const handleCreateFreshSession = useCallback(async () => {
+    if (sessionsLoading) return;
+
+    if (newSessionMode === "agent") {
+      if (!newSessionAgentId) return;
+      setChatMode("agent");
+      setSelectedAgentId(newSessionAgentId);
+      await startFreshSession(newSessionAgentId);
+    } else {
+      const parsed = parseModelSelection(newSessionModel || selectedModel || configuredDefaultModelSelection);
+      if (!parsed) return;
+      setChatMode("model");
+      setSelectedModel(`${parsed.modelProvider}/${parsed.modelId}`);
+      await startFreshSession(FN_AGENT_ID, parsed.modelProvider, parsed.modelId);
+    }
+
+    await refreshSessions();
+    setNewSessionChooserOpen(false);
+    setNewSessionMode("model");
+  }, [
+    configuredDefaultModelSelection,
+    newSessionAgentId,
+    newSessionMode,
+    newSessionModel,
+    refreshSessions,
+    selectedModel,
+    sessionsLoading,
+    startFreshSession,
+  ]);
 
   const pendingPreview = pendingMessage.length > 50
     ? `${pendingMessage.slice(0, 50)}…`
@@ -1827,43 +1886,13 @@ export function QuickChatFAB({
               })()}
             </div>
             <div className="quick-chat-panel-header-actions">
-              {agents.length > 0 && (
-                <div className="quick-chat-header-mode-toggle" data-testid="quick-chat-mode-toggle">
-                  <button
-                    type="button"
-                    className={`quick-chat-mode-btn${chatMode === "agent" ? " quick-chat-mode-btn--active" : ""}`}
-                    data-testid="quick-chat-mode-agent"
-                    onClick={() => {
-                      setChatMode("agent");
-                      setSelectedModel("");
-                    }}
-                    aria-label="Switch to agent mode"
-                    title="Agent mode"
-                  >
-                    Agent
-                  </button>
-                  <button
-                    type="button"
-                    className={`quick-chat-mode-btn${chatMode === "model" ? " quick-chat-mode-btn--active" : ""}`}
-                    data-testid="quick-chat-mode-model"
-                    onClick={() => {
-                      setChatMode("model");
-                      setSelectedAgentId("");
-                    }}
-                    aria-label="Switch to model mode"
-                    title="Model mode"
-                  >
-                    Model
-                  </button>
-                </div>
-              )}
               <button
                 type="button"
                 className="btn-icon quick-chat-new-chat-btn"
                 data-testid="quick-chat-new-thread"
                 aria-label="Start a new chat"
                 onClick={handleStartFreshChat}
-                disabled={!hasChatTarget || sessionsLoading}
+                disabled={sessionsLoading}
               >
                 <Plus size={16} />
               </button>
@@ -1879,40 +1908,96 @@ export function QuickChatFAB({
             </div>
           </div>
 
-          {chatMode === "agent" && agents.length > 0 && (
-            <div className="quick-chat-panel-agent-select">
-              <label htmlFor="quick-chat-agent-select" className="visually-hidden">Select agent</label>
-              <select
-                id="quick-chat-agent-select"
-                value={selectedAgentId}
-                onChange={(event) => handleAgentChange(event.target.value)}
-                data-testid="quick-chat-agent-select"
-              >
-                {agents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>
-                    {getAgentLabel(agent)}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+          <div className="quick-chat-panel-agent-select" data-testid="quick-chat-session-select">
+            <label htmlFor="quick-chat-session-select" className="visually-hidden">Select session</label>
+            <select
+              id="quick-chat-session-select"
+              value={activeSession?.id ?? ""}
+              onChange={(event) => handleSessionSwitch(event.target.value)}
+              data-testid="quick-chat-session-dropdown"
+            >
+              <option value="" disabled>{sessionsLoading ? "Loading sessions…" : "Select a session"}</option>
+              {sessionOptions.map((sessionOption) => (
+                <option key={sessionOption.id} value={sessionOption.id}>{sessionOption.label}</option>
+              ))}
+            </select>
+          </div>
 
-          {chatMode === "model" && (
-            <div className="quick-chat-panel-agent-select" data-testid="quick-chat-model-select">
-              <label htmlFor="quick-chat-model-override" className="visually-hidden">Select model override</label>
-              <CustomModelDropdown
-                id="quick-chat-model-override"
-                models={models}
-                value={selectedModel}
-                onChange={handleModelChange}
-                label="Select model override"
-                placeholder={modelsLoading ? "Loading models…" : "Select a model"}
-                disabled={modelsLoading || models.length === 0}
-                favoriteProviders={favoriteProviders}
-                favoriteModels={favoriteModels}
-                onToggleFavorite={onToggleFavorite}
-                onToggleModelFavorite={onToggleModelFavorite}
-              />
+          {newSessionChooserOpen && (
+            <div className="quick-chat-new-session-chooser" data-testid="quick-chat-new-session-chooser">
+              <div className="quick-chat-inline-mode-toggle" data-testid="quick-chat-inline-mode-toggle">
+                <button
+                  type="button"
+                  className={`quick-chat-mode-btn${newSessionMode === "model" ? " quick-chat-mode-btn--active" : ""}`}
+                  data-testid="quick-chat-inline-mode-model"
+                  onClick={() => setNewSessionMode("model")}
+                >
+                  Model
+                </button>
+                <button
+                  type="button"
+                  className={`quick-chat-mode-btn${newSessionMode === "agent" ? " quick-chat-mode-btn--active" : ""}`}
+                  data-testid="quick-chat-inline-mode-agent"
+                  onClick={() => setNewSessionMode("agent")}
+                >
+                  Agent
+                </button>
+              </div>
+
+              {newSessionMode === "agent" ? (
+                <div className="quick-chat-panel-agent-select">
+                  <label htmlFor="quick-chat-new-agent-select" className="visually-hidden">Select agent for new chat</label>
+                  <select
+                    id="quick-chat-new-agent-select"
+                    value={newSessionAgentId}
+                    onChange={(event) => setNewSessionAgentId(event.target.value)}
+                    data-testid="quick-chat-new-agent-select"
+                  >
+                    {agents.map((agent) => (
+                      <option key={agent.id} value={agent.id}>{getAgentLabel(agent)}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="quick-chat-panel-agent-select" data-testid="quick-chat-new-model-select">
+                  <CustomModelDropdown
+                    id="quick-chat-new-model-select"
+                    models={models}
+                    value={newSessionModel}
+                    onChange={setNewSessionModel}
+                    label="Select model override"
+                    placeholder={modelsLoading ? "Loading models…" : "Select a model"}
+                    disabled={modelsLoading || models.length === 0}
+                    favoriteProviders={favoriteProviders}
+                    favoriteModels={favoriteModels}
+                    onToggleFavorite={onToggleFavorite}
+                    onToggleModelFavorite={onToggleModelFavorite}
+                  />
+                </div>
+              )}
+
+              <div className="quick-chat-new-session-actions">
+                <button
+                  type="button"
+                  className="btn"
+                  data-testid="quick-chat-new-session-cancel"
+                  onClick={() => {
+                    setNewSessionChooserOpen(false);
+                    setNewSessionMode("model");
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  data-testid="quick-chat-new-session-submit"
+                  onClick={() => void handleCreateFreshSession()}
+                  disabled={sessionsLoading || (newSessionMode === "agent" ? !newSessionAgentId : !parseModelSelection(newSessionModel || selectedModel || configuredDefaultModelSelection))}
+                >
+                  Create
+                </button>
+              </div>
             </div>
           )}
 
