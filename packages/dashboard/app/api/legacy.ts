@@ -7040,6 +7040,7 @@ export interface AiSessionSummary {
   projectId: string | null;
   lockedByTab: string | null;
   updatedAt: string;
+  archived?: boolean;
 }
 
 export interface ConversationHistoryEntry {
@@ -7070,14 +7071,33 @@ export function parseConversationHistory(raw: string): ConversationHistoryEntry[
   }
 }
 
-export async function fetchAiSessions(projectId?: string): Promise<AiSessionSummary[]> {
-  const params = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
-  const res = await fetch(buildApiUrl(`/ai-sessions${params}`), {
+export async function fetchAiSessions(
+  projectId?: string,
+  options?: { includeCompleted?: boolean; includeArchived?: boolean },
+): Promise<AiSessionSummary[]> {
+  const search = new URLSearchParams();
+  if (projectId) search.set("projectId", projectId);
+  if (options?.includeCompleted) search.set("includeCompleted", "1");
+  if (options?.includeArchived) search.set("includeArchived", "1");
+  const qs = search.toString();
+  const res = await fetch(buildApiUrl(`/ai-sessions${qs ? `?${qs}` : ""}`), {
     headers: withTokenHeader(),
   });
   if (!res.ok) return [];
   const data = await res.json();
   return data.sessions ?? [];
+}
+
+export async function archiveAiSession(id: string): Promise<void> {
+  return api<void>(`/ai-sessions/${encodeURIComponent(id)}/archive`, {
+    method: "POST",
+  });
+}
+
+export async function unarchiveAiSession(id: string): Promise<void> {
+  return api<void>(`/ai-sessions/${encodeURIComponent(id)}/unarchive`, {
+    method: "POST",
+  });
 }
 
 export async function fetchAiSession(id: string): Promise<AiSessionDetail | null> {

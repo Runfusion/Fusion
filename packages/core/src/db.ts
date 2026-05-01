@@ -2126,6 +2126,20 @@ export class Database {
       });
     }
 
+    // Allow users to archive completed/errored AI sessions out of the
+    // planning sidebar without deleting them. Cleanup still removes them
+    // after the configured TTL; archive is purely for hiding.
+    if (version < 57) {
+      this.applyMigration(57, () => {
+        if (this.hasTable("ai_sessions")) {
+          this.addColumnIfMissing("ai_sessions", "archived", "INTEGER DEFAULT 0");
+          this.db.exec(
+            "CREATE INDEX IF NOT EXISTS idxAiSessionsArchived ON ai_sessions(archived)",
+          );
+        }
+      });
+    }
+
   }
 
   /**

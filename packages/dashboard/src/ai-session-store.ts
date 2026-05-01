@@ -35,6 +35,8 @@ export interface AiSessionRow {
   updatedAt: string;
   lockedByTab: string | null;
   lockedAt: string | null;
+  /** 1 if archived (hidden from planning sidebar), 0 otherwise. */
+  archived?: number;
 }
 
 /** Summary returned by listActive (omits large fields) */
@@ -46,6 +48,7 @@ export interface AiSessionSummary {
   projectId: string | null;
   lockedByTab: string | null;
   updatedAt: string;
+  archived?: boolean;
 }
 
 export interface AiSessionStoreEvents {
@@ -215,19 +218,97 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
     if (projectId) {
       return this.db
         .prepare(
-          `SELECT id, type, status, title, projectId, lockedByTab, updatedAt FROM ai_sessions
-           WHERE status IN ('generating', 'awaiting_input', 'error') AND projectId = ?
+          `SELECT id, type, status, title, projectId, lockedByTab, updatedAt, archived FROM ai_sessions
+           WHERE status IN ('generating', 'awaiting_input', 'error')
+             AND COALESCE(archived, 0) = 0
+             AND projectId = ?
            ORDER BY updatedAt DESC`,
         )
         .all(projectId) as unknown as AiSessionSummary[];
     }
     return this.db
       .prepare(
-        `SELECT id, type, status, title, projectId, lockedByTab, updatedAt FROM ai_sessions
+        `SELECT id, type, status, title, projectId, lockedByTab, updatedAt, archived FROM ai_sessions
          WHERE status IN ('generating', 'awaiting_input', 'error')
+           AND COALESCE(archived, 0) = 0
          ORDER BY updatedAt DESC`,
       )
       .all() as unknown as AiSessionSummary[];
+  }
+
+  /**
+   * List sessions regardless of status (including `complete`).
+   * Used by the planning sidebar so previously completed sessions remain
+   * selectable on refresh — `listActive` filters them out, which would
+   * otherwise hide a session that finished while the modal was closed.
+   * By default archived sessions are excluded; pass `includeArchived` to
+   * surface them too. Completed sessions are pruned by `cleanupOld` after
+   * the configured TTL, so this list does not grow unbounded.
+   */
+  listAll(projectId?: string, options?: { includeArchived?: boolean }): AiSessionSummary[] {
+    const archivedClause = options?.includeArchived ? "" : " WHERE COALESCE(archived, 0) = 0";
+    if (projectId) {
+      const where = options?.includeArchived
+        ? "WHERE projectId = ?"
+        : "WHERE projectId = ? AND COALESCE(archived, 0) = 0";
+      return this.db
+        .prepare(
+          `SELECT id, type, status, title, projectId, lockedByTab, updatedAt, archived FROM ai_sessions
+           ${where}
+           ORDER BY updatedAt DESC`,
+        )
+        .all(projectId) as unknown as AiSessionSummary[];
+    }
+    return this.db
+      .prepare(
+        `SELECT id, type, status, title, projectId, lockedByTab, updatedAt, archived FROM ai_sessions
+         ${archivedClause}
+         ORDER BY updatedAt DESC`,
+      )
+      .all() as unknown as AiSessionSummary[];
+  }
+
+  /**
+   * Mark a session as archived (hidden from planning sidebar). Only
+   * terminal sessions (`complete` or `error`) are archivable — archiving
+   * an in-flight session would orphan the live agent. Returns true when
+   * the row was updated. Emits `ai_session:updated` so other tabs sync.
+   */
+  archive(id: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare(
+        `UPDATE ai_sessions
+         SET archived = 1, updatedAt = ?
+         WHERE id = ? AND status IN ('complete', 'error')`,
+      )
+      .run(now, id) as { changes?: number };
+
+    const changed = Number(result.changes ?? 0) > 0;
+    if (changed) {
+      const row = this.get(id);
+      if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
+    }
+    return changed;
+  }
+
+  /** Restore an archived session so it reappears in the sidebar. */
+  unarchive(id: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare(
+        `UPDATE ai_sessions
+         SET archived = 0, updatedAt = ?
+         WHERE id = ?`,
+      )
+      .run(now, id) as { changes?: number };
+
+    const changed = Number(result.changes ?? 0) > 0;
+    if (changed) {
+      const row = this.get(id);
+      if (row) this.emit("ai_session:updated", toSummary(row, row.updatedAt));
+    }
+    return changed;
   }
 
   /**
@@ -565,5 +646,6 @@ function toSummary(session: AiSessionRow, updatedAt: string): AiSessionSummary {
     projectId: session.projectId,
     lockedByTab: session.lockedByTab ?? null,
     updatedAt,
+    archived: Number(session.archived ?? 0) === 1,
   };
 }

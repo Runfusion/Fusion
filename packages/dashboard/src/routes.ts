@@ -3371,8 +3371,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
   /**
    * GET /api/ai-sessions
-   * List active background AI sessions (generating or awaiting_input).
-   * Query: { projectId?: string }
+   * List background AI sessions. By default returns only active/retryable
+   * statuses (generating, awaiting_input, error). Pass `includeCompleted=1`
+   * to also include `complete` sessions — used by the planning sidebar so a
+   * session that finished while the modal was closed remains selectable.
+   * Pass `includeArchived=1` (only meaningful with `includeCompleted`) to
+   * also surface sessions the user has explicitly archived.
+   * Query: { projectId?, includeCompleted?, includeArchived? }
    */
   router.get("/ai-sessions", (req, res) => {
     if (!aiSessionStore) {
@@ -3380,7 +3385,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       return;
     }
     const projectId = typeof req.query.projectId === "string" ? req.query.projectId : undefined;
-    const sessions = aiSessionStore.listActive(projectId);
+    const includeCompleted =
+      req.query.includeCompleted === "1" || req.query.includeCompleted === "true";
+    const includeArchived =
+      req.query.includeArchived === "1" || req.query.includeArchived === "true";
+    const sessions = includeCompleted
+      ? aiSessionStore.listAll(projectId, { includeArchived })
+      : aiSessionStore.listActive(projectId);
     res.json({ sessions });
   });
 
@@ -3425,6 +3436,42 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       throw notFound("Session not found");
     }
     res.json(session);
+  });
+
+  /**
+   * POST /api/ai-sessions/:id/archive
+   * Hide a completed/errored session from the planning sidebar without
+   * deleting it. Only terminal sessions are archivable; archiving an
+   * in-flight session is rejected so we don't orphan a live agent.
+   */
+  router.post("/ai-sessions/:id/archive", (req, res) => {
+    if (!aiSessionStore) {
+      throw notFound("AI sessions not available");
+    }
+    const session = aiSessionStore.get(req.params.id);
+    if (!session) {
+      throw notFound("Session not found");
+    }
+    if (session.status !== "complete" && session.status !== "error") {
+      throw badRequest("Only completed or errored sessions can be archived");
+    }
+    const ok = aiSessionStore.archive(req.params.id);
+    res.json({ archived: ok });
+  });
+
+  /**
+   * POST /api/ai-sessions/:id/unarchive
+   * Restore a previously archived session.
+   */
+  router.post("/ai-sessions/:id/unarchive", (req, res) => {
+    if (!aiSessionStore) {
+      throw notFound("AI sessions not available");
+    }
+    if (!aiSessionStore.get(req.params.id)) {
+      throw notFound("Session not found");
+    }
+    const ok = aiSessionStore.unarchive(req.params.id);
+    res.json({ archived: !ok });
   });
 
   router.post("/ai-sessions/:id/lock", (req, res) => {
