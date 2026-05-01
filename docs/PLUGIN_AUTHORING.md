@@ -17,6 +17,10 @@ A comprehensive guide to creating Fusion plugins that extend the task board with
 11. [Testing Plugins](#11-testing-plugins)
 12. [Publishing Plugins](#12-publishing-plugins)
 13. [Example Plugins](#13-example-plugins)
+14. [Registering Skills](#14-registering-skills)
+15. [Registering Workflow Steps](#15-registering-workflow-steps)
+16. [Plugin Prompt Contributions](#16-plugin-prompt-contributions)
+17. [Plugin Binary Setup Hooks](#17-plugin-binary-setup-hooks)
 
 ---
 
@@ -1006,3 +1010,115 @@ export default definePlugin({
 ---
 
 For more information, see the [Plugin SDK Reference](../packages/plugin-sdk/src/index.ts).
+
+---
+
+## 14. Registering Skills
+
+Plugins can contribute reusable skills that are surfaced in agent sessions through Fusion's skill-selection flow.
+
+```typescript
+import type { PluginSkillContribution } from "@fusion/plugin-sdk";
+
+const skills: PluginSkillContribution[] = [
+  {
+    skillId: "web-research",
+    name: "Web Research",
+    description: "Finds and summarizes web sources for a task",
+    skillFiles: ["skills/web-research/SKILL.md"],
+    enabled: true,
+    triggerPatterns: ["research", "search the web", "find sources"],
+  },
+];
+```
+
+`skillFiles` are relative to the plugin root. `skillId` must be kebab-case.
+
+## 15. Registering Workflow Steps
+
+Plugins can ship workflow step templates that users can enable like built-in quality gates.
+
+```typescript
+import type { PluginWorkflowStepContribution } from "@fusion/plugin-sdk";
+
+const workflowSteps: PluginWorkflowStepContribution[] = [
+  {
+    stepId: "strict-review",
+    name: "Strict Review",
+    description: "Run an AI review with strict failure criteria",
+    mode: "prompt",
+    phase: "pre-merge",
+    prompt: "Review this task for correctness, regressions, and missing tests.",
+    toolMode: "readonly",
+    defaultOn: true,
+  },
+  {
+    stepId: "smoke-build",
+    name: "Smoke Build",
+    description: "Build package before merge",
+    mode: "script",
+    scriptName: "build",
+    toolMode: "coding",
+  },
+];
+```
+
+Use `mode: "prompt" | "script"` and `toolMode: "readonly" | "coding"`.
+
+## 16. Plugin Prompt Contributions
+
+Prompt contributions let a plugin inject additional instructions into specific prompt surfaces.
+
+Supported surfaces:
+- `executor-system`
+- `executor-task`
+- `triage`
+- `reviewer`
+- `heartbeat`
+
+```typescript
+import type { PluginPromptContributions } from "@fusion/plugin-sdk";
+
+const promptContributions: PluginPromptContributions = {
+  enabledByDefault: false,
+  contributions: [
+    {
+      surface: "reviewer",
+      position: "append",
+      content: "Always call out missing tests and unsafe assumptions.",
+      condition: "Only for backend code changes",
+    },
+  ],
+};
+```
+
+Use `enabledByDefault: false` when contributions should require explicit opt-in.
+
+## 17. Plugin Binary Setup Hooks
+
+Plugins can expose setup metadata and lifecycle hooks for optional binaries or runtimes.
+
+```typescript
+import type { PluginSetupCheckResult, PluginSetupHooks, PluginSetupManifest } from "@fusion/plugin-sdk";
+
+const setupManifest: PluginSetupManifest = {
+  binaryName: "agent-browser",
+  description: "Headless browser runtime for web-enabled agents",
+  channel: "stable",
+  defaultTimeoutMs: 120_000,
+};
+
+const setupHooks: PluginSetupHooks = {
+  async checkSetup(ctx): Promise<PluginSetupCheckResult> {
+    return { status: "not-installed" };
+  },
+  async install(ctx) {
+    // Use async process execution with timeout; never use execSync.
+  },
+  async uninstall(ctx) {
+    // Remove managed binary/runtime artifacts.
+  },
+};
+```
+
+`checkSetup` is required. `install` and `uninstall` are optional.

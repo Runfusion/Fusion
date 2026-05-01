@@ -12,6 +12,11 @@
  */
 
 import type { TaskStore } from "./store.js";
+import type { Task, WorkflowStepMode, WorkflowStepToolMode } from "./types.js";
+
+const SLUG_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+const PROMPT_CONTRIBUTION_SURFACES = ["executor-system", "executor-task", "triage", "reviewer", "heartbeat"] as const;
+const SETUP_CHANNELS = ["stable", "beta", "nightly"] as const;
 
 // ── Plugin Manifest ───────────────────────────────────────────────────
 
@@ -39,6 +44,14 @@ export interface PluginManifest {
   settingsSchema?: Record<string, PluginSettingSchema>;
   /** Optional agent runtime metadata for discovery (runtime factory is in FusionPlugin.runtime) */
   runtime?: PluginRuntimeManifestMetadata;
+  /** Optional skill metadata used for discovery UIs. */
+  skills?: Array<{ skillId: string; name: string }>;
+  /** Optional workflow step metadata used for discovery UIs. */
+  workflowSteps?: Array<{ stepId: string; name: string }>;
+  /** Prompt surfaces this plugin contributes to. */
+  promptSurfaces?: PluginPromptSurface[];
+  /** Setup metadata for plugin-managed binaries/runtimes. */
+  setup?: PluginSetupManifest;
 }
 
 // ── Plugin Setting Schema ──────────────────────────────────────────────
@@ -206,6 +219,122 @@ export interface PluginRuntimeRegistration {
   factory: PluginRuntimeFactory;
 }
 
+// ── Plugin Contribution Types ───────────────────────────────────────
+
+/**
+ * Plugin-contributed skill surfaced in agent sessions via the skill-selection system.
+ */
+export interface PluginSkillContribution {
+  /** Unique skill identifier within the plugin namespace (kebab-case). */
+  skillId: string;
+  /** Human-readable skill name. */
+  name: string;
+  /** What the skill does. */
+  description: string;
+  /** Paths (relative to plugin root) to SKILL.md or equivalent definitions. */
+  skillFiles: string[];
+  /** Whether this skill is enabled by default. Defaults to true. */
+  enabled?: boolean;
+  /** Optional keyword/pattern hints used by skill matching. */
+  triggerPatterns?: string[];
+}
+
+/**
+ * Workflow step template contributed by a plugin. These templates are
+ * materialized into concrete WorkflowStep instances when selected for a task.
+ */
+export interface PluginWorkflowStepContribution {
+  /** Unique step identifier within the plugin namespace (kebab-case). */
+  stepId: string;
+  /** Human-readable step name. */
+  name: string;
+  /** Short description for UI. */
+  description: string;
+  /** Execution mode, aligned with WorkflowStepMode. */
+  mode: WorkflowStepMode;
+  /** Task lifecycle phase where this step runs. Defaults to "pre-merge". */
+  phase?: "pre-merge" | "post-merge";
+  /** Prompt text used when mode is "prompt". */
+  prompt?: string;
+  /** Script name used when mode is "script". */
+  scriptName?: string;
+  /** Tool access level, aligned with WorkflowStepToolMode. */
+  toolMode?: WorkflowStepToolMode;
+  /** Whether this step is enabled by default. Defaults to true. */
+  enabled?: boolean;
+  /** Whether this step is auto-selected on new tasks. */
+  defaultOn?: boolean;
+  /** Optional model provider override for prompt steps. */
+  modelProvider?: string;
+  /** Optional model ID override for prompt steps. */
+  modelId?: string;
+}
+
+/**
+ * Prompt injection surfaces for plugin-contributed instructions.
+ * - executor-system: Appended to executor agent system prompt
+ * - executor-task: Injected into per-task execution context
+ * - triage: Appended to triage/planning prompts
+ * - reviewer: Appended to reviewer/validation prompts
+ * - heartbeat: Appended to heartbeat agent system prompts
+ */
+export type PluginPromptSurface = (typeof PROMPT_CONTRIBUTION_SURFACES)[number];
+
+export interface PluginPromptContribution {
+  /** Which prompt surface this contribution targets. */
+  surface: PluginPromptSurface;
+  /** Prompt text to inject. */
+  content: string;
+  /** Position relative to existing prompt content. Defaults to "append". */
+  position?: "append" | "prepend";
+  /** Human-readable applicability description, reserved for future filtering. */
+  condition?: string;
+}
+
+export interface PluginPromptContributions {
+  contributions: PluginPromptContribution[];
+  /** Whether contributions are active by default. Defaults to false for safety. */
+  enabledByDefault?: boolean;
+}
+
+export type PluginSetupStatus = "not-installed" | "installing" | "installed" | "error";
+
+export interface PluginSetupCheckResult {
+  status: PluginSetupStatus;
+  /** Installed version if available. */
+  version?: string;
+  /** Installed binary path if detected. */
+  binaryPath?: string;
+  /** Error details when status is "error". */
+  error?: string;
+}
+
+/**
+ * Plugin-managed setup hooks. All process execution in hooks MUST be async
+ * (never execSync) to avoid blocking the engine event loop.
+ */
+export interface PluginSetupHooks {
+  /** Check whether required binaries/runtimes are installed and ready. */
+  checkSetup: (ctx: PluginContext) => Promise<PluginSetupCheckResult>;
+  /** Install required binaries/runtimes. */
+  install?: (ctx: PluginContext) => Promise<void>;
+  /** Uninstall managed binaries/runtimes. */
+  uninstall?: (ctx: PluginContext) => Promise<void>;
+}
+
+export interface PluginSetupManifest {
+  /** Binary/runtime name being managed (e.g. "agent-browser"). */
+  binaryName: string;
+  /** What this binary/runtime provides. */
+  description: string;
+  /** Expected or pinned version. */
+  version?: string;
+  /** Installation channel. */
+  channel?: (typeof SETUP_CHANNELS)[number];
+  /** Timeout for setup/install commands. Defaults to 120000. */
+  defaultTimeoutMs?: number;
+}
+
 // ── Fusion Plugin ────────────────────────────────────────────────────
 
 export type PluginState = "installed" | "started" | "stopped" | "error";
@@ -229,6 +358,17 @@ export interface FusionPlugin {
   uiSlots?: PluginUiSlotDefinition[];
   /** Agent runtime registration for providing custom runtime implementations */
   runtime?: PluginRuntimeRegistration;
+  /** Plugin-contributed skills surfaced by the skill resolver. */
+  skills?: PluginSkillContribution[];
+  /** Plugin-contributed workflow step templates. */
+  workflowSteps?: PluginWorkflowStepContribution[];
+  /** Plugin-contributed prompt injections. */
+  promptContributions?: PluginPromptContributions;
+  /** Plugin-managed setup metadata and lifecycle hooks. */
+  setup?: {
+    manifest: PluginSetupManifest;
+    hooks: PluginSetupHooks;
+  };
 }
 
 // ── Plugin Installation ───────────────────────────────────────────────
@@ -281,7 +421,7 @@ export function validatePluginManifest(manifest: unknown): { valid: boolean; err
   // Required fields
   if (!m.id || typeof m.id !== "string" || m.id.trim() === "") {
     errors.push("id is required and must be a non-empty string");
-  } else if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(m.id)) {
+  } else if (!SLUG_PATTERN.test(m.id)) {
     errors.push("id must be a valid slug (lowercase, alphanumeric, hyphens only, cannot start or end with hyphen)");
   }
 
@@ -344,7 +484,7 @@ export function validatePluginManifest(manifest: unknown): { valid: boolean; err
       // runtimeId is required
       if (!runtime.runtimeId || typeof runtime.runtimeId !== "string" || runtime.runtimeId.trim() === "") {
         errors.push("runtime.runtimeId is required and must be a non-empty string");
-      } else if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(runtime.runtimeId as string)) {
+      } else if (!SLUG_PATTERN.test(runtime.runtimeId as string)) {
         errors.push("runtime.runtimeId must be a valid slug (lowercase, alphanumeric, hyphens only, cannot start or end with hyphen)");
       }
 
@@ -364,12 +504,92 @@ export function validatePluginManifest(manifest: unknown): { valid: boolean; err
     }
   }
 
+  // Optional: plugin skill discovery metadata
+  if (m.skills !== undefined) {
+    if (!Array.isArray(m.skills)) {
+      errors.push("skills must be an array");
+    } else {
+      for (const [index, skill] of m.skills.entries()) {
+        if (!skill || typeof skill !== "object") {
+          errors.push(`skills[${index}] must be an object`);
+          continue;
+        }
+        const skillMeta = skill as Record<string, unknown>;
+        if (!skillMeta.skillId || typeof skillMeta.skillId !== "string" || skillMeta.skillId.trim() === "") {
+          errors.push(`skills[${index}].skillId is required and must be a non-empty string`);
+        } else if (!SLUG_PATTERN.test(skillMeta.skillId)) {
+          errors.push(`skills[${index}].skillId must be a valid slug (lowercase, alphanumeric, hyphens only, cannot start or end with hyphen)`);
+        }
+        if (!skillMeta.name || typeof skillMeta.name !== "string" || skillMeta.name.trim() === "") {
+          errors.push(`skills[${index}].name is required and must be a non-empty string`);
+        }
+      }
+    }
+  }
+
+  // Optional: plugin workflow step discovery metadata
+  if (m.workflowSteps !== undefined) {
+    if (!Array.isArray(m.workflowSteps)) {
+      errors.push("workflowSteps must be an array");
+    } else {
+      for (const [index, step] of m.workflowSteps.entries()) {
+        if (!step || typeof step !== "object") {
+          errors.push(`workflowSteps[${index}] must be an object`);
+          continue;
+        }
+        const stepMeta = step as Record<string, unknown>;
+        if (!stepMeta.stepId || typeof stepMeta.stepId !== "string" || stepMeta.stepId.trim() === "") {
+          errors.push(`workflowSteps[${index}].stepId is required and must be a non-empty string`);
+        } else if (!SLUG_PATTERN.test(stepMeta.stepId)) {
+          errors.push(`workflowSteps[${index}].stepId must be a valid slug (lowercase, alphanumeric, hyphens only, cannot start or end with hyphen)`);
+        }
+        if (!stepMeta.name || typeof stepMeta.name !== "string" || stepMeta.name.trim() === "") {
+          errors.push(`workflowSteps[${index}].name is required and must be a non-empty string`);
+        }
+        if (stepMeta.mode !== undefined && (typeof stepMeta.mode !== "string" || !["prompt", "script"].includes(stepMeta.mode))) {
+          errors.push(`workflowSteps[${index}].mode must be one of: prompt, script`);
+        }
+      }
+    }
+  }
+
+  // Optional: prompt surface metadata
+  if (m.promptSurfaces !== undefined) {
+    if (!Array.isArray(m.promptSurfaces)) {
+      errors.push("promptSurfaces must be an array");
+    } else {
+      for (const [index, surface] of m.promptSurfaces.entries()) {
+        if (typeof surface !== "string" || !PROMPT_CONTRIBUTION_SURFACES.includes(surface as PluginPromptSurface)) {
+          errors.push(`promptSurfaces[${index}] must be one of: ${PROMPT_CONTRIBUTION_SURFACES.join(", ")}`);
+        }
+      }
+    }
+  }
+
+  // Optional: setup manifest metadata
+  if (m.setup !== undefined) {
+    if (typeof m.setup !== "object" || m.setup === null) {
+      errors.push("setup must be an object");
+    } else {
+      const setup = m.setup as Record<string, unknown>;
+      if (!setup.binaryName || typeof setup.binaryName !== "string" || setup.binaryName.trim() === "") {
+        errors.push("setup.binaryName is required and must be a non-empty string");
+      }
+      if (!setup.description || typeof setup.description !== "string" || setup.description.trim() === "") {
+        errors.push("setup.description is required and must be a non-empty string");
+      }
+      if (setup.channel !== undefined && (typeof setup.channel !== "string" || !SETUP_CHANNELS.includes(setup.channel as (typeof SETUP_CHANNELS)[number]))) {
+        errors.push(`setup.channel must be one of: ${SETUP_CHANNELS.join(", ")}`);
+      }
+      if (setup.defaultTimeoutMs !== undefined && (typeof setup.defaultTimeoutMs !== "number" || !Number.isFinite(setup.defaultTimeoutMs) || setup.defaultTimeoutMs <= 0)) {
+        errors.push("setup.defaultTimeoutMs must be a positive finite number");
+      }
+    }
+  }
+
   return {
     valid: errors.length === 0,
     errors,
   };
 }
 
-// ── Re-export Task type for hook signatures ───────────────────────────
-// The Task type is used in hook signatures; we import it via types.js
-import type { Task } from "./types.js";

@@ -226,6 +226,7 @@ describe("PluginManager", () => {
     });
 
     expect(screen.getByText("No plugins installed.")).toBeTruthy();
+    expect(screen.getByText("Agent Browser Runtime")).toBeTruthy();
     expect(screen.getByText("Hermes Runtime")).toBeTruthy();
     expect(screen.getByText("Paperclip Runtime")).toBeTruthy();
     expect(screen.getByText("OpenClaw Runtime")).toBeTruthy();
@@ -503,7 +504,7 @@ describe("PluginManager", () => {
     });
   });
 
-  it("shows installed status and disables bundled runtime install button when already installed", async () => {
+  it("keeps bundled plugin manageable after install", async () => {
     vi.mocked(fetchPlugins).mockResolvedValueOnce([
       {
         ...mockPlugins[0],
@@ -521,9 +522,17 @@ describe("PluginManager", () => {
     const hermesCard = screen.getByText("Hermes Runtime").closest(".plugin-bundled-runtime-item");
     expect(hermesCard).toBeTruthy();
 
-    const installButton = within(hermesCard as HTMLElement).getByRole("button", { name: /^Installed$/i });
-    expect(installButton).toBeDisabled();
+    const manageButton = within(hermesCard as HTMLElement).getByRole("button", { name: /^Manage$/i });
+    expect(manageButton).not.toBeDisabled();
     expect(within(hermesCard as HTMLElement).getAllByText("Installed").length).toBeGreaterThanOrEqual(1);
+
+    await userEvent.click(manageButton);
+
+    await waitFor(() => {
+      expect(fetchPluginSettings).toHaveBeenCalledWith("fusion-plugin-hermes-runtime", undefined);
+    });
+
+    expect(screen.getByTestId("plugin-manager-detail")).toBeTruthy();
   });
 
   describe("SSE Live Updates", () => {

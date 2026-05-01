@@ -48,6 +48,12 @@ interface BundledRuntimePlugin {
 
 const BUNDLED_RUNTIME_PLUGINS: BundledRuntimePlugin[] = [
   {
+    id: "fusion-plugin-agent-browser-runtime",
+    name: "Agent Browser Runtime",
+    path: "./plugins/fusion-plugin-agent-browser-runtime",
+    experimental: true,
+  },
+  {
     id: "fusion-plugin-hermes-runtime",
     name: "Hermes Runtime",
     path: "./plugins/fusion-plugin-hermes-runtime",
@@ -351,6 +357,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
                       </label>
                       {schema.type === "string" && !schema.multiline && (
                         <input
+                          className="input"
                           type="text"
                           id={`setting-${key}`}
                           value={(pluginSettings[key] as string) ?? ""}
@@ -361,6 +368,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
                       )}
                       {schema.type === "string" && schema.multiline && (
                         <textarea
+                          className="input"
                           id={`setting-${key}`}
                           rows={4}
                           value={(pluginSettings[key] as string) ?? ""}
@@ -371,6 +379,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
                       )}
                       {schema.type === "password" && (
                         <input
+                          className="input"
                           type="password"
                           id={`setting-${key}`}
                           value={(pluginSettings[key] as string) ?? ""}
@@ -381,6 +390,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
                       )}
                       {schema.type === "number" && (
                         <input
+                          className="input"
                           type="number"
                           id={`setting-${key}`}
                           value={(pluginSettings[key] as number) ?? ""}
@@ -400,6 +410,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
                       )}
                       {schema.type === "enum" && (
                         <select
+                          className="select"
                           id={`setting-${key}`}
                           value={(pluginSettings[key] as string) ?? ""}
                           onChange={(e) => setPluginSettings({ ...pluginSettings, [key]: e.target.value })}
@@ -416,6 +427,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
                           {(pluginSettings[key] as unknown[] | undefined)?.map((item, index) => (
                             <div key={index} className="plugin-settings-array-item">
                               <input
+                                className="input"
                                 type={schema.itemType === "number" ? "number" : "text"}
                                 value={(item as string | number) ?? ""}
                                 onChange={(e) => {
@@ -497,11 +509,11 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
   }
 
   const installedPluginIds = new Set(plugins.map((plugin) => plugin.id));
+  const installedPluginsById = new Map(plugins.map((plugin) => [plugin.id, plugin]));
 
-  // Bundled runtime plugin IDs — these are shown in the dedicated section below,
-  // so we exclude them from the main plugin list to avoid duplication.
-  const bundledPluginIds = new Set(BUNDLED_RUNTIME_PLUGINS.map((p) => p.id));
-  const userInstalledPlugins = plugins.filter((p) => !bundledPluginIds.has(p.id));
+  // Keep bundled plugins in the main list once installed so users can always
+  // access enable/disable, settings, and uninstall controls.
+  const installedPlugins = plugins;
 
   const renderBundledRuntimeSection = () => (
     <section className="plugin-bundled-runtime-section" aria-label="Bundled Runtime Plugins">
@@ -529,11 +541,20 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
               </div>
               <button
                 className={`btn ${isInstalled ? "btn-secondary" : "btn-primary"} btn-sm`}
-                onClick={() => handleInstallBundledRuntimePlugin(bundledPlugin)}
-                disabled={isInstalled || installingBundledPluginId === bundledPlugin.id}
+                onClick={() => {
+                  if (isInstalled) {
+                    const installedPlugin = installedPluginsById.get(bundledPlugin.id);
+                    if (installedPlugin) {
+                      void handleSelectPlugin(installedPlugin);
+                    }
+                    return;
+                  }
+                  void handleInstallBundledRuntimePlugin(bundledPlugin);
+                }}
+                disabled={installingBundledPluginId === bundledPlugin.id}
               >
                 {isInstalled
-                  ? "Installed"
+                  ? "Manage"
                   : installingBundledPluginId === bundledPlugin.id
                     ? "Installing..."
                     : `Install ${bundledPlugin.name}`}
@@ -592,7 +613,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
         <div className="settings-empty-state">Loading plugins...</div>
       ) : (
         <>
-          {userInstalledPlugins.length === 0 ? (
+          {installedPlugins.length === 0 ? (
             <div className="settings-empty-state">
               <Package size={32} className="text-muted" />
               <p>No plugins installed.</p>
@@ -600,7 +621,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
             </div>
           ) : (
             <div className="plugin-list">
-              {userInstalledPlugins.map((plugin) => (
+              {installedPlugins.map((plugin) => (
                 <div key={plugin.id} className="plugin-item">
                   <div className="plugin-info">
                     <span className="plugin-name">{plugin.name}</span>

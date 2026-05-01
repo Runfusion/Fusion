@@ -1,4 +1,13 @@
 import { describe, it, expect } from "vitest";
+import type {
+  FusionPlugin,
+  PluginPromptContribution,
+  PluginPromptContributions,
+  PluginSetupHooks,
+  PluginSetupManifest,
+  PluginSkillContribution,
+  PluginWorkflowStepContribution,
+} from "../plugin-types.js";
 import { validatePluginManifest } from "../plugin-types.js";
 
 describe("validatePluginManifest", () => {
@@ -989,5 +998,189 @@ describe("PluginRuntimeRegistration", () => {
     };
 
     expect(typeof registration.factory).toBe("function");
+  });
+});
+
+describe("plugin contribution types", () => {
+  it("accepts a minimal PluginSkillContribution shape", () => {
+    const skill: PluginSkillContribution = {
+      skillId: "browser-scan",
+      name: "Browser Scan",
+      description: "Scans web pages",
+      skillFiles: ["skills/browser/SKILL.md"],
+    };
+    expect(skill.skillId).toBe("browser-scan");
+  });
+
+  it("accepts a full PluginSkillContribution shape", () => {
+    const skill: PluginSkillContribution = {
+      skillId: "deep-research",
+      name: "Deep Research",
+      description: "Performs deep research tasks",
+      skillFiles: ["skills/research/SKILL.md", "skills/research/README.md"],
+      enabled: false,
+      triggerPatterns: ["research", "investigate"],
+    };
+    expect(skill.enabled).toBe(false);
+    expect(skill.triggerPatterns).toContain("research");
+  });
+
+  it("accepts prompt and script workflow step contributions", () => {
+    const promptStep: PluginWorkflowStepContribution = {
+      stepId: "quality-review",
+      name: "Quality Review",
+      description: "Ask reviewer agent to evaluate quality",
+      mode: "prompt",
+      prompt: "Review this change",
+      toolMode: "readonly",
+    };
+    const scriptStep: PluginWorkflowStepContribution = {
+      stepId: "run-tests",
+      name: "Run Tests",
+      description: "Run test suite",
+      mode: "script",
+      scriptName: "test",
+      toolMode: "coding",
+      phase: "post-merge",
+    };
+
+    expect(promptStep.mode).toBe("prompt");
+    expect(scriptStep.mode).toBe("script");
+  });
+
+  it("accepts all plugin prompt contribution surfaces", () => {
+    const contributions: PluginPromptContribution[] = [
+      { surface: "executor-system", content: "executor system" },
+      { surface: "executor-task", content: "executor task", position: "prepend" },
+      { surface: "triage", content: "triage" },
+      { surface: "reviewer", content: "reviewer" },
+      { surface: "heartbeat", content: "heartbeat", condition: "only for heartbeat audits" },
+    ];
+
+    expect(contributions).toHaveLength(5);
+    expect(contributions[1]?.position).toBe("prepend");
+    expect(contributions[4]?.condition).toContain("heartbeat");
+  });
+
+  it("accepts prompt contributions wrapper with optional enabledByDefault", () => {
+    const promptContributions: PluginPromptContributions = {
+      contributions: [{ surface: "triage", content: "Always gather constraints" }],
+    };
+
+    expect(promptContributions.enabledByDefault).toBeUndefined();
+  });
+
+  it("accepts setup manifest and hooks shapes", async () => {
+    const manifest: PluginSetupManifest = {
+      binaryName: "agent-browser",
+      description: "Headless browser runtime",
+      channel: "stable",
+      defaultTimeoutMs: 120000,
+    };
+
+    const hooks: PluginSetupHooks = {
+      checkSetup: async () => ({ status: "installed", version: "1.2.3", binaryPath: "/tmp/agent-browser" }),
+      install: async () => {},
+      uninstall: async () => {},
+    };
+
+    const result = await hooks.checkSetup({} as any);
+    expect(manifest.binaryName).toBe("agent-browser");
+    expect(result.status).toBe("installed");
+  });
+
+  it("accepts FusionPlugin with all new contribution types and remains backward compatible", () => {
+    const withContributions: FusionPlugin = {
+      manifest: { id: "full-plugin", name: "Full Plugin", version: "1.0.0" },
+      state: "installed",
+      hooks: {},
+      skills: [{ skillId: "web-tools", name: "Web Tools", description: "Web helper", skillFiles: ["skills/SKILL.md"] }],
+      workflowSteps: [{ stepId: "verify", name: "Verify", description: "Verify output", mode: "prompt", prompt: "verify" }],
+      promptContributions: {
+        enabledByDefault: false,
+        contributions: [{ surface: "reviewer", content: "Use strict review" }],
+      },
+      setup: {
+        manifest: { binaryName: "agent-browser", description: "Browser runtime" },
+        hooks: {
+          checkSetup: async () => ({ status: "not-installed" }),
+        },
+      },
+    };
+
+    const backwardCompatible: FusionPlugin = {
+      manifest: { id: "legacy-plugin", name: "Legacy Plugin", version: "1.0.0" },
+      state: "installed",
+      hooks: {},
+    };
+
+    expect(withContributions.skills?.[0]?.skillId).toBe("web-tools");
+    expect(backwardCompatible.skills).toBeUndefined();
+  });
+});
+
+describe("validatePluginManifest contribution metadata", () => {
+  it("accepts valid contribution metadata", () => {
+    const result = validatePluginManifest({
+      id: "plugin-a",
+      name: "Plugin A",
+      version: "1.0.0",
+      skills: [{ skillId: "web-reader", name: "Web Reader" }],
+      workflowSteps: [{ stepId: "quality-gate", name: "Quality Gate", mode: "prompt" }],
+      promptSurfaces: ["executor-system", "reviewer"],
+      setup: { binaryName: "agent-browser", description: "Browser runtime", channel: "beta" },
+    });
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  it("rejects invalid skill slug metadata", () => {
+    const result = validatePluginManifest({
+      id: "plugin-a",
+      name: "Plugin A",
+      version: "1.0.0",
+      skills: [{ skillId: "Bad Skill", name: "Skill" }],
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("skills[0].skillId must be a valid slug (lowercase, alphanumeric, hyphens only, cannot start or end with hyphen)");
+  });
+
+  it("rejects invalid workflow step mode metadata", () => {
+    const result = validatePluginManifest({
+      id: "plugin-a",
+      name: "Plugin A",
+      version: "1.0.0",
+      workflowSteps: [{ stepId: "quality-gate", name: "Quality Gate", mode: "invalid" }],
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("workflowSteps[0].mode must be one of: prompt, script");
+  });
+
+  it("rejects invalid prompt surfaces metadata", () => {
+    const result = validatePluginManifest({
+      id: "plugin-a",
+      name: "Plugin A",
+      version: "1.0.0",
+      promptSurfaces: ["invalid-surface"],
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("promptSurfaces[0] must be one of: executor-system, executor-task, triage, reviewer, heartbeat");
+  });
+
+  it("rejects incomplete setup metadata", () => {
+    const result = validatePluginManifest({
+      id: "plugin-a",
+      name: "Plugin A",
+      version: "1.0.0",
+      setup: { binaryName: "" },
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("setup.binaryName is required and must be a non-empty string");
+    expect(result.errors).toContain("setup.description is required and must be a non-empty string");
   });
 });
