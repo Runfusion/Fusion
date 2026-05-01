@@ -179,12 +179,12 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
 
   // Global group (shared across all Fusion projects)
   { id: "__global_header", label: "Global", scope: undefined, isGroupHeader: true },
+  { id: "global-general", label: "General", scope: "global" },
   { id: "appearance", label: "Appearance", scope: "global" },
   { id: "notifications", label: "Notifications", scope: "global" },
   { id: "node-sync", label: "Node Sync", scope: "global" },
   { id: "global-models", label: "Models", scope: "global" },
   { id: "research-global", label: "Research Defaults", scope: "global" },
-  { id: "updates", label: "Updates", scope: "global" },
   { id: "experimental", label: "Experimental Features", scope: "global" },
   { id: "remote", label: "Remote Access", scope: "global" },
 
@@ -1818,6 +1818,13 @@ export function SettingsModal({
               </label>
               <small>Show the floating chat button in the dashboard. Chat is still accessible from the Chat tab in the mobile navigation.</small>
             </div>
+          </>
+        );
+      case "global-general":
+        return (
+          <>
+            {renderScopeBanner()}
+            <h4 className="settings-section-heading">General</h4>
             <div className="form-group">
               <label htmlFor="showGitHubStarButton" className="checkbox-label">
                 <input
@@ -1836,6 +1843,53 @@ export function SettingsModal({
               </small>
             </div>
             <CliBinaryPanel />
+            <h4 className="settings-section-heading settings-section-heading--spaced">Updates</h4>
+            <div className="form-group">
+              <label htmlFor="updateCheckEnabled" className="checkbox-label">
+                <input
+                  id="updateCheckEnabled"
+                  type="checkbox"
+                  checked={form.updateCheckEnabled !== false}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, updateCheckEnabled: e.target.checked }))
+                  }
+                />
+                Check for updates automatically
+              </label>
+              <small>
+                When enabled, Fusion checks npm for new versions of{" "}
+                <code>@runfusion/fusion</code> and shows update notices in the CLI and dashboard.
+                Cadence is governed by the frequency below.
+              </small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="updateCheckFrequency">Frequency</label>
+              <select
+                id="updateCheckFrequency"
+                value={form.updateCheckFrequency ?? "daily"}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    updateCheckFrequency: e.target.value as
+                      | "manual"
+                      | "on-startup"
+                      | "daily"
+                      | "weekly",
+                  }))
+                }
+                disabled={form.updateCheckEnabled === false}
+              >
+                <option value="manual">Manual only — never auto-check</option>
+                <option value="on-startup">On startup — once per server launch</option>
+                <option value="daily">Daily (recommended)</option>
+                <option value="weekly">Weekly</option>
+              </select>
+              <small>
+                Controls how often the dashboard re-fetches the npm registry.
+                Use the version + refresh control in the header to trigger an
+                immediate check at any time.
+              </small>
+            </div>
           </>
         );
       case "global-models": {
@@ -2013,61 +2067,6 @@ export function SettingsModal({
               </small>
             </div>
 
-          </>
-        );
-      }
-
-      case "updates": {
-        return (
-          <>
-            {renderScopeBanner()}
-            <h4 className="settings-section-heading">Updates</h4>
-            <div className="form-group">
-              <label htmlFor="updateCheckEnabled" className="checkbox-label">
-                <input
-                  id="updateCheckEnabled"
-                  type="checkbox"
-                  checked={form.updateCheckEnabled !== false}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, updateCheckEnabled: e.target.checked }))
-                  }
-                />
-                Check for updates automatically
-              </label>
-              <small>
-                When enabled, Fusion checks npm for new versions of{" "}
-                <code>@runfusion/fusion</code> and shows update notices in the CLI and dashboard.
-                Cadence is governed by the frequency below.
-              </small>
-            </div>
-            <div className="form-group">
-              <label htmlFor="updateCheckFrequency">Frequency</label>
-              <select
-                id="updateCheckFrequency"
-                value={form.updateCheckFrequency ?? "daily"}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    updateCheckFrequency: e.target.value as
-                      | "manual"
-                      | "on-startup"
-                      | "daily"
-                      | "weekly",
-                  }))
-                }
-                disabled={form.updateCheckEnabled === false}
-              >
-                <option value="manual">Manual only — never auto-check</option>
-                <option value="on-startup">On startup — once per server launch</option>
-                <option value="daily">Daily (recommended)</option>
-                <option value="weekly">Weekly</option>
-              </select>
-              <small>
-                Controls how often the dashboard re-fetches the npm registry.
-                Use the version + refresh control in the header to trigger an
-                immediate check at any time.
-              </small>
-            </div>
           </>
         );
       }
