@@ -33,6 +33,7 @@ Mission → Milestone → Slice → Feature → Task
 - **Agent tools** — `fn_agent_stop`, `fn_agent_start`
 - **Skills tools** — `fn_skills_search`, `fn_skills_install`
 - **Insight tools** — `fn_insight_list`, `fn_insight_show`, `fn_insight_run_list`, `fn_insight_run_show`
+- **Other tools** — `fn_research_run`, `fn_research_list`, `fn_research_get`, `fn_research_cancel`
 <!-- END: tool-categories -->
 - **Dashboard** — Use `/fn` command to start/stop the dashboard
 

@@ -4677,6 +4677,14 @@ describe("Code review verdict enforcement - fn_task_update blocking", () => {
     expect(allowed.content[0].text).toContain("→ done");
   });
 
+  it("registers research runtime tools in customTools", async () => {
+    const tools = await captureTools();
+    expect(tools.fn_research_run).toBeTypeOf("function");
+    expect(tools.fn_research_list).toBeTypeOf("function");
+    expect(tools.fn_research_get).toBeTypeOf("function");
+    expect(tools.fn_research_cancel).toBeTypeOf("function");
+  });
+
   it("REVISE tool response text includes re-review instructions", async () => {
     mockedReviewStep.mockResolvedValue({ verdict: "REVISE", review: "Bug found", summary: "Issues" });
 

@@ -11,8 +11,11 @@ import { appendFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/p
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import type { AgentStore, AgentState, AgentCapability, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType } from "@fusion/core";
-import { dailyMemoryPath, ensureOpenClawMemoryFiles, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, resolveMemoryBackend, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
+import type { AgentStore, AgentState, AgentCapability, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus } from "@fusion/core";
+import { dailyMemoryPath, ensureOpenClawMemoryFiles, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, resolveMemoryBackend, resolveResearchSettings, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
+import { ResearchOrchestrator } from "./research-orchestrator.js";
+import { ResearchProviderRegistry } from "./research/provider-registry.js";
+import { ResearchStepRunner } from "./research-step-runner.js";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import type { AgentReflectionService } from "./agent-reflection.js";
@@ -98,6 +101,31 @@ export const memoryGetParams = Type.Object({
   path: Type.String({ description: "Memory path from fn_memory_search, e.g. .fusion/memory/MEMORY.md or .fusion/memory/YYYY-MM-DD.md" }),
   startLine: Type.Optional(Type.Number({ description: "1-based start line (default: 1)" })),
   lineCount: Type.Optional(Type.Number({ description: "Number of lines to read (default: 120, max: 400)" })),
+});
+
+export const researchRunParams = Type.Object({
+  query: Type.String({ description: "Research question or topic to investigate" }),
+  wait_for_completion: Type.Optional(Type.Boolean({ description: "Wait for completion in this call (default: false)" })),
+  max_wait_ms: Type.Optional(Type.Number({ description: "Max wait time when wait_for_completion=true (default: 90000, capped by settings)" })),
+});
+
+export const researchListParams = Type.Object({
+  status: Type.Optional(Type.Union([
+    Type.Literal("pending"),
+    Type.Literal("running"),
+    Type.Literal("completed"),
+    Type.Literal("failed"),
+    Type.Literal("cancelled"),
+  ], { description: "Optional status filter" })),
+  limit: Type.Optional(Type.Number({ description: "Max runs to return (default: 10)" })),
+});
+
+export const researchGetParams = Type.Object({
+  id: Type.String({ description: "Research run ID" }),
+});
+
+export const researchCancelParams = Type.Object({
+  id: Type.String({ description: "Research run ID to cancel" }),
 });
 
 export const memoryAppendParams = Type.Object({
@@ -1027,6 +1055,230 @@ export function createSendMessageTool(messageStore: MessageStore, fromAgentId: s
  * @param agentId - The agent ID whose inbox to read
  * @returns ToolDefinition for the `fn_read_messages` tool
  */
+type ResearchToolsOptions = {
+  store: TaskStore;
+  rootDir: string;
+  getSettings: () => Promise<Settings>;
+};
+
+function formatResearchRunDetails(run: ResearchRun) {
+  const findings = run.results?.findings ?? [];
+  const citations = run.results?.citations ?? [];
+  return {
+    runId: run.id,
+    status: run.status,
+    query: run.query,
+    summary: run.results?.summary ?? null,
+    findings,
+    citations,
+    sourceCount: run.sources.length,
+    error: run.error ?? null,
+    setup: null as null | { code: string; message: string },
+  };
+}
+
+function researchUnavailable(code: string, message: string) {
+  return {
+    content: [{ type: "text" as const, text: message }],
+    details: {
+      runId: null,
+      status: "unavailable",
+      summary: null,
+      findings: [],
+      citations: [],
+      error: message,
+      setup: { code, message },
+    },
+  };
+}
+
+export function createResearchTools(options: ResearchToolsOptions): ToolDefinition[] {
+  const orchestratorState: {
+    orchestrator: ResearchOrchestrator | null;
+    providerRegistry: ResearchProviderRegistry | null;
+    inFlight: Map<string, Promise<void>>;
+  } = {
+    orchestrator: null,
+    providerRegistry: null,
+    inFlight: new Map(),
+  };
+
+  const ensureOrchestrator = async (): Promise<ResearchOrchestrator | null> => {
+    const settings = await options.getSettings();
+    const resolved = resolveResearchSettings(settings);
+    if (!resolved.enabled) {
+      return null;
+    }
+
+    if (!orchestratorState.providerRegistry) {
+      orchestratorState.providerRegistry = new ResearchProviderRegistry(settings, options.rootDir);
+    } else {
+      orchestratorState.providerRegistry.refreshSettings(settings);
+    }
+
+    const registry = orchestratorState.providerRegistry;
+    const availableProviders = registry.getAvailableProviders();
+    if (availableProviders.length === 0) {
+      return null;
+    }
+
+    if (!orchestratorState.orchestrator) {
+      const stepRunner = new ResearchStepRunner({
+        providers: availableProviders
+          .map((type) => registry.getProvider(type))
+          .filter((provider): provider is NonNullable<typeof provider> => Boolean(provider)),
+      });
+      orchestratorState.orchestrator = new ResearchOrchestrator({
+        store: options.store.getResearchStore(),
+        stepRunner,
+        maxConcurrentRuns: resolved.limits.maxConcurrentRuns,
+      });
+    }
+
+    return orchestratorState.orchestrator;
+  };
+
+  const runTool: ToolDefinition = {
+    name: "fn_research_run",
+    label: "Run Research",
+    description: "Start a bounded research run and optionally wait for completion to get findings.",
+    parameters: researchRunParams,
+    execute: async (_id: string, params: Static<typeof researchRunParams>) => {
+      const settings = await options.getSettings();
+      const resolved = resolveResearchSettings(settings);
+      if (!resolved.enabled) {
+        return researchUnavailable("feature-disabled", "Research is disabled in settings. Enable researchSettings.enabled or global research defaults first.");
+      }
+      const orchestrator = await ensureOrchestrator();
+      if (!orchestrator) {
+        return researchUnavailable("provider-unavailable", "Research providers are not configured. Add provider credentials in Settings → Authentication and select a research provider.");
+      }
+
+      const registry = orchestratorState.providerRegistry;
+      const availableProviderTypes = registry?.getAvailableProviders() ?? [];
+      const runId = orchestrator.createRun({
+        providers: availableProviderTypes
+          .filter((type) => type !== "llm-synthesis")
+          .map((type) => ({ type, config: { maxResults: resolved.limits.maxSourcesPerRun, timeoutMs: resolved.limits.requestTimeoutMs } })),
+        maxSources: resolved.limits.maxSourcesPerRun,
+        maxSynthesisRounds: Math.max(1, settings.researchMaxSynthesisRounds ?? settings.researchGlobalMaxSynthesisRounds ?? 2),
+        phaseTimeoutMs: resolved.limits.maxDurationMs,
+        stepTimeoutMs: resolved.limits.requestTimeoutMs,
+      });
+
+      const runPromise = orchestrator.startRun(runId, params.query);
+      orchestratorState.inFlight.set(runId, runPromise.then(() => undefined).catch(() => undefined));
+      void runPromise.finally(() => orchestratorState.inFlight.delete(runId));
+
+      if (!params.wait_for_completion) {
+        const started = options.store.getResearchStore().getRun(runId);
+        if (!started) {
+          return {
+            content: [{ type: "text" as const, text: `Started research run ${runId} for: ${params.query}` }],
+            details: { runId, status: "pending", summary: null, findings: [], citations: [], sourceCount: 0, error: null, setup: null },
+          };
+        }
+        return {
+          content: [{ type: "text" as const, text: `Started research run ${runId} for: ${params.query}` }],
+          details: formatResearchRunDetails(started),
+        };
+      }
+
+      const maxWaitMs = Math.max(1_000, Math.min(params.max_wait_ms ?? 90_000, resolved.limits.maxDurationMs));
+      const completed = await Promise.race([
+        runPromise,
+        new Promise<ResearchRun>((resolve) => setTimeout(() => {
+          const latest = options.store.getResearchStore().getRun(runId);
+          resolve(latest ?? ({
+            id: runId,
+            query: params.query,
+            status: "running",
+            sources: [],
+            events: [],
+            tags: [],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          } as ResearchRun));
+        }, maxWaitMs)),
+      ]);
+      const details = formatResearchRunDetails(completed);
+      const text = details.status === "completed"
+        ? `Research run ${runId} completed. ${details.summary ?? "No summary generated."}`
+        : `Research run ${runId} is ${details.status}. Use fn_research_get for updates.`;
+      return { content: [{ type: "text" as const, text }], details };
+    },
+  };
+
+  const listTool: ToolDefinition = {
+    name: "fn_research_list",
+    label: "List Research Runs",
+    description: "List recent research runs with status and summary snippets.",
+    parameters: researchListParams,
+    execute: async (_id: string, params: Static<typeof researchListParams>) => {
+      const limit = Math.max(1, Math.min(params.limit ?? 10, 50));
+      const runs = options.store.getResearchStore().listRuns({
+        status: params.status as ResearchRunStatus | undefined,
+        limit,
+      });
+      const text = runs.length
+        ? runs.map((run) => `- ${run.id} [${run.status}] ${run.query}`).join("\n")
+        : "No research runs found.";
+      return {
+        content: [{ type: "text" as const, text }],
+        details: { runs: runs.map((run) => formatResearchRunDetails(run)) },
+      };
+    },
+  };
+
+  const getTool: ToolDefinition = {
+    name: "fn_research_get",
+    label: "Get Research Run",
+    description: "Get one research run with structured findings and citations.",
+    parameters: researchGetParams,
+    execute: async (_id: string, params: Static<typeof researchGetParams>) => {
+      const run = options.store.getResearchStore().getRun(params.id);
+      if (!run) {
+        return {
+          content: [{ type: "text" as const, text: `Research run ${params.id} not found.` }],
+          details: { runId: params.id, status: "missing", summary: null, findings: [], citations: [], error: "not found", setup: null },
+        };
+      }
+      const details = formatResearchRunDetails(run);
+      return {
+        content: [{ type: "text" as const, text: `Research run ${run.id} is ${run.status}.` }],
+        details,
+      };
+    },
+  };
+
+  const cancelTool: ToolDefinition = {
+    name: "fn_research_cancel",
+    label: "Cancel Research Run",
+    description: "Cancel an active research run.",
+    parameters: researchCancelParams,
+    execute: async (_id: string, params: Static<typeof researchCancelParams>) => {
+      const orchestrator = await ensureOrchestrator();
+      if (!orchestrator) {
+        return researchUnavailable("provider-unavailable", "Research orchestrator is unavailable because research providers are not configured.");
+      }
+      const cancelled = orchestrator.cancelRun(params.id);
+      const run = options.store.getResearchStore().getRun(params.id);
+      if (!run) {
+        return {
+          content: [{ type: "text" as const, text: `Research run ${params.id} not found.` }],
+          details: { runId: params.id, status: "missing", summary: null, findings: [], citations: [], error: "not found", setup: null },
+        };
+      }
+      return {
+        content: [{ type: "text" as const, text: cancelled ? `Cancellation requested for ${params.id}.` : `Run ${params.id} is not active.` }],
+        details: formatResearchRunDetails(run),
+      };
+    },
+  };
+
+  return [runTool, listTool, getTool, cancelTool];
+}
+
 export function createReadMessagesTool(messageStore: MessageStore, agentId: string): ToolDefinition {
   return {
     name: "fn_read_messages",

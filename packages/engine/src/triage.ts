@@ -40,6 +40,7 @@ import {
   createDelegateTaskTool,
   createListAgentsTool,
   createMemoryTools,
+  createResearchTools,
   createTaskDocumentReadTool,
   createTaskDocumentWriteTool,
 } from "./agent-tools.js";
@@ -230,6 +231,10 @@ When the planning conversation produces a structured plan, save it as a document
 - Order steps by dependency (foundation before integration, implementation before final validation)
 - Testing & Verification must run before Documentation & Delivery
 - Avoid giant catch-all steps; split outcomes so execution can be verified incrementally
+
+## Research tools
+When spec work needs missing domain context, you may use research tools (\`fn_research_run\`, \`fn_research_list\`, \`fn_research_get\`, \`fn_research_cancel\`). Keep research bounded to the task at hand, prefer concise queries, and write durable findings into task documents when useful.
+If research is unavailable or unconfigured, continue planning with repository context and clearly note assumptions.
 
 ## Guidelines
 - Read the project structure and relevant source files to understand context BEFORE writing
@@ -867,6 +872,11 @@ export class TriageProcessor {
           }),
           createTaskDocumentWriteTool(this.store, task.id),
           createTaskDocumentReadTool(this.store, task.id),
+          ...createResearchTools({
+            store: this.store,
+            rootDir: this.rootDir,
+            getSettings: async () => this.store.getSettings(),
+          }),
           ...createMemoryTools(this.rootDir, settings),
           // Agent delegation tools — discover and delegate work to other agents.
           ...(this.options.agentStore ? [

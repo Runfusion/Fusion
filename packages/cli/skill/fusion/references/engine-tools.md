@@ -17,6 +17,10 @@ These tools are **not** part of the pi extension's user-invokable `extension.ts`
 | `fn_memory_search` | triage, executor, heartbeat | Search project/agent memory snippets | `query` (string), `limit?` (number) |
 | `fn_memory_get` | triage, executor, heartbeat | Read a bounded memory file window | `path` (string), `startLine?` (number), `lineCount?` (number) |
 | `fn_memory_append` | executor, heartbeat (when writable backend enabled) | Append long-term/daily memory notes | `scope?` (`project` \| `agent`), `layer` (`long-term` \| `daily`), `content` (string) |
+| `fn_research_run` | triage, executor | Start a bounded research run (optionally wait for completion) and return structured findings metadata | `query` (string), `wait_for_completion?` (boolean), `max_wait_ms?` (number) |
+| `fn_research_list` | triage, executor | List recent research runs with status/summary metadata | `status?` (`pending` \| `running` \| `completed` \| `failed` \| `cancelled`), `limit?` (number) |
+| `fn_research_get` | triage, executor | Read one research run's structured findings/citations payload | `id` (string) |
+| `fn_research_cancel` | triage, executor | Cancel an active research run via orchestrator cancellation path | `id` (string) |
 | `fn_reflect_on_performance` | executor | Generate reflection insights from prior runs | `focus_area?` (string) |
 | `fn_list_agents` | triage, executor, heartbeat | List agents (optionally filtered) | `role?` (string), `state?` (string), `includeEphemeral?` (boolean) |
 | `fn_delegate_task` | triage, executor, heartbeat | Create and assign a new task to a specific agent | `agent_id` (string), `description` (string), `dependencies?` (string[]) |

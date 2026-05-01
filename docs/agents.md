@@ -121,6 +121,24 @@ Agent deletion is available from both the detail header lifecycle controls and t
 
 ![Agents view](./screenshots/agents-view.png)
 
+## Research Tools in Planning/Execution Sessions
+
+Triage and executor runtime sessions now include a bounded research tool surface:
+
+- `fn_research_run` — create/start a bounded research run for a focused query
+- `fn_research_list` — list recent runs and statuses
+- `fn_research_get` — fetch one run's structured findings payload
+- `fn_research_cancel` — cancel an active run
+
+These tools return structured metadata (`runId`, `status`, `summary`, `findings`, `citations`, `error`, `setup`) in addition to concise text so downstream model steps can consume results deterministically.
+
+Expected behavior and boundaries:
+
+- Agents should use research only when repository/local context is insufficient
+- Queries should stay narrow and task-scoped; avoid open-ended exploration
+- If research is disabled or provider setup is incomplete, tools return actionable `setup` responses instead of crashing
+- Durable conclusions should be persisted with `fn_task_document_write` (for example, `key="research"`)
+
 ## Built-In Agent Prompt Templates
 
 Fusion includes built-in templates for role prompts:

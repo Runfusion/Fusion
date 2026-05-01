@@ -45,6 +45,7 @@ import {
   createMemoryTools,
   createReadMessagesTool,
   createReflectOnPerformanceTool,
+  createResearchTools,
   createSendMessageTool,
   createTaskCreateTool as sharedCreateTaskCreateTool,
   createTaskDocumentReadTool as sharedCreateTaskDocumentReadTool,
@@ -356,6 +357,12 @@ You can save and retrieve named documents for this task. Use these to store plan
 - **List all documents:** \`fn_task_document_read()\` (no key)
 
 Documents are versioned — each write creates a new revision. Use meaningful keys like "plan", "notes", "research", "architecture".
+
+## Research tools
+When implementation needs external context, you may use research tools (
+\`fn_research_run\`, \`fn_research_list\`, \`fn_research_get\`, \`fn_research_cancel\`) to run bounded research.
+Keep runs focused and short, and persist durable conclusions into task documents (for example key="research").
+If research is disabled or providers are not configured, use the actionable tool response and continue with available local context.
 
 **IMPORTANT — Save your deliverables as documents:** When your task produces written output (documentation, specifications, reports, API references, README updates, guides, or any other content), you MUST save that content as a task document using \`fn_task_document_write\`. Use a key that describes the deliverable (e.g., key="readme", key="api-docs", key="changelog"). Do this in addition to writing the file to disk — the document persists in the task for review even after the worktree is cleaned up.
 
@@ -2333,6 +2340,11 @@ export class TaskExecutor {
         this.createSpawnAgentTool(task.id, worktreePath, settings),
         this.createTaskDocumentWriteTool(task.id),
         this.createTaskDocumentReadTool(task.id),
+        ...createResearchTools({
+          store: this.store,
+          rootDir: this.rootDir,
+          getSettings: async () => this.store.getSettings(),
+        }),
         ...createMemoryTools(this.rootDir, settings, assignedAgent ? {
           agentMemory: {
             agentId: assignedAgent.id,

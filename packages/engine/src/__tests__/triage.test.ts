@@ -523,6 +523,11 @@ describe("buildSpecificationPrompt", () => {
 });
 
 describe("TRIAGE_SYSTEM_PROMPT", () => {
+  it("includes bounded research guidance", () => {
+    expect(TRIAGE_SYSTEM_PROMPT).toContain("fn_research_run");
+    expect(TRIAGE_SYSTEM_PROMPT).toContain("Keep research bounded");
+  });
+
   it("requires specs to keep lint, tests, build, and typecheck green even outside initial file scope", () => {
     expect(TRIAGE_SYSTEM_PROMPT).toContain("If keeping lint/tests/build/typecheck green requires edits outside the initial File Scope");
     expect(TRIAGE_SYSTEM_PROMPT).toContain("Run lint check");
@@ -694,6 +699,10 @@ describe("fast-mode triage", () => {
 
       const { promptWithFallback } = await import("../pi.js");
       (promptWithFallback as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+        expect(capturedTools.some((tool: any) => tool.name === "fn_research_run")).toBe(true);
+        expect(capturedTools.some((tool: any) => tool.name === "fn_research_list")).toBe(true);
+        expect(capturedTools.some((tool: any) => tool.name === "fn_research_get")).toBe(true);
+        expect(capturedTools.some((tool: any) => tool.name === "fn_research_cancel")).toBe(true);
         await writeFile(promptPath, "# Task: FN-FAST-004 - Fast\n\n## Mission\n\nShip it.");
         const reviewTool = capturedTools.find((tool) => tool.name === "fn_review_spec");
         expect(reviewTool).toBeDefined();

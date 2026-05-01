@@ -11,6 +11,9 @@ import {
   type InsightStatus,
   type InsightRunStatus,
   type InsightRunTrigger,
+  type ResearchRun,
+  type ResearchRunStatus,
+  resolveResearchSettings,
 } from "@fusion/core";
 import {
   getGhErrorMessage,
@@ -126,6 +129,45 @@ function formatTaskLine(t: Task): string {
   const deps = t.dependencies.length ? ` [deps: ${t.dependencies.join(", ")}]` : "";
   const paused = t.paused ? " (paused)" : "";
   return `${t.id}  ${label}${deps}${paused}`;
+}
+
+async function getResearchAvailability(store: TaskStore): Promise<{ ok: boolean; code?: string; message?: string }> {
+  const settings = await store.getSettings();
+  const resolved = resolveResearchSettings(settings);
+  if (!resolved.enabled) {
+    return { ok: false, code: "feature-disabled", message: "Research is disabled in settings." };
+  }
+
+  const backend = (resolved.searchProvider as string | undefined) ?? settings.researchWebSearchProvider;
+  const configured = backend === "searxng"
+    ? Boolean(settings.researchSearxngUrl)
+    : backend === "brave"
+      ? Boolean(settings.researchBraveApiKey)
+      : backend === "google"
+        ? Boolean(settings.researchGoogleSearchApiKey && settings.researchGoogleSearchCx)
+        : backend === "tavily"
+          ? Boolean(settings.researchTavilyApiKey)
+          : false;
+
+  if (!configured && !resolved.searchProvider) {
+    return { ok: false, code: "provider-unavailable", message: "Research provider is not configured. Set research provider credentials in Settings." };
+  }
+
+  return { ok: true };
+}
+
+function toResearchRunDetails(run: ResearchRun) {
+  return {
+    runId: run.id,
+    status: run.status,
+    query: run.query,
+    summary: run.results?.summary ?? null,
+    findings: run.results?.findings ?? [],
+    citations: run.results?.citations ?? [],
+    sourceCount: Array.isArray(run.sources) ? run.sources.length : 0,
+    error: run.error ?? null,
+    setup: null,
+  };
 }
 
 interface GitHubIssueApiResult {
@@ -1178,6 +1220,97 @@ export default function kbExtension(pi: ExtensionAPI) {
           },
         ],
         details: { taskId, logs },
+      };
+    },
+  });
+
+  // ── Research Tools ──────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "fn_research_run",
+    label: "fn: Run Research",
+    description: "Start a bounded research run and optionally wait for findings.",
+    parameters: Type.Object({
+      query: Type.String({ description: "Research query or question" }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const availability = await getResearchAvailability(store);
+      if (!availability.ok) {
+        return {
+          content: [{ type: "text", text: availability.message! }],
+          details: { runId: null, status: "unavailable", summary: null, findings: [], citations: [], error: availability.message, setup: { code: availability.code, message: availability.message } },
+        };
+      }
+
+      const run = store.getResearchStore().createRun({
+        query: params.query,
+        topic: params.query,
+        providerConfig: {},
+      });
+
+      return {
+        content: [{ type: "text", text: `Created research run ${run.id}. Start the project engine to process pending runs, then use fn_research_get.` }],
+        details: toResearchRunDetails(run),
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "fn_research_list",
+    label: "fn: List Research Runs",
+    description: "List recent research runs.",
+    parameters: Type.Object({
+      status: Type.Optional(StringEnum(["pending", "running", "completed", "failed", "cancelled"]) as unknown as TSchema),
+      limit: Type.Optional(Type.Number({ description: "Max runs to return (default: 10)" })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const runs = store.getResearchStore().listRuns({ status: params.status as ResearchRunStatus | undefined, limit: params.limit ?? 10 });
+      const text = runs.length ? runs.map((run) => `- ${run.id} [${run.status}] ${run.query}`).join("\n") : "No research runs found.";
+      return { content: [{ type: "text", text }], details: { runs: runs.map(toResearchRunDetails) } };
+    },
+  });
+
+  pi.registerTool({
+    name: "fn_research_get",
+    label: "fn: Get Research Run",
+    description: "Get one research run and structured findings.",
+    parameters: Type.Object({ id: Type.String({ description: "Research run ID" }) }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const run = store.getResearchStore().getRun(params.id);
+      if (!run) {
+        return {
+          content: [{ type: "text", text: `Research run ${params.id} not found.` }],
+          details: { runId: params.id, status: "missing", summary: null, findings: [], citations: [], error: "not found", setup: null },
+        };
+      }
+      return { content: [{ type: "text", text: `Research run ${run.id} is ${run.status}.` }], details: toResearchRunDetails(run) };
+    },
+  });
+
+  pi.registerTool({
+    name: "fn_research_cancel",
+    label: "fn: Cancel Research Run",
+    description: "Cancel a research run.",
+    parameters: Type.Object({ id: Type.String({ description: "Research run ID" }) }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const researchStore = store.getResearchStore();
+      const run = researchStore.getRun(params.id);
+      if (!run) {
+        return {
+          content: [{ type: "text", text: `Research run ${params.id} not found.` }],
+          details: { runId: params.id, status: "missing", summary: null, findings: [], citations: [], error: "not found", setup: null },
+        };
+      }
+
+      researchStore.updateStatus(params.id, "cancelled", { cancelledAt: new Date().toISOString(), error: "Cancelled via extension" });
+      const updated = researchStore.getRun(params.id)!;
+      return {
+        content: [{ type: "text", text: `Marked research run ${params.id} as cancelled.` }],
+        details: toResearchRunDetails(updated),
       };
     },
   });

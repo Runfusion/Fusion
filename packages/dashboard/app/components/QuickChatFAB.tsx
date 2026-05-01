@@ -901,43 +901,50 @@ export function QuickChatFAB({
   // iOS keeps the keyboard up across that transfer.
   const stealthInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Lock body scroll while the panel is open on mobile. Otherwise iOS
-  // can leave the document scrolled (e.g. after the keyboard was opened
-  // and dismissed once), and on the next open the position:fixed panel
-  // anchors to layout top:0 which is *above* the visible viewport — only
-  // the bottom of the panel (the input bar) pokes into view at the top of
-  // the screen. Locking the body keeps layout-top and visual-top aligned.
+  // Pin the document at the top while the panel is open on mobile.
+  // Otherwise iOS can leave window.scrollY > 0 (e.g. after the keyboard
+  // was opened and dismissed once), and on the next open the
+  // position:fixed panel anchors to layout top:0 which is *above* the
+  // visible viewport — only the bottom of the panel (the input bar)
+  // pokes into view at the top of the screen.
+  //
+  // We deliberately do NOT use `body { position: fixed }` to lock scroll:
+  // that would make the body the containing block for the panel's
+  // position:fixed and reintroduce the same translation bug. Instead we
+  // scroll to 0 and lock overflow on <html> and <body>; the panel's
+  // viewport anchor stays correct.
   useEffect(() => {
     if (!isOpen) return;
     if (typeof window === "undefined" || typeof document === "undefined") return;
     if (window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT) return;
 
     const scrollY = window.scrollY;
+    const html = document.documentElement;
     const body = document.body;
     const prev = {
-      position: body.style.position,
-      top: body.style.top,
-      width: body.style.width,
-      overflow: body.style.overflow,
+      htmlOverflow: html.style.overflow,
+      bodyOverflow: body.style.overflow,
     };
 
-    body.style.position = "fixed";
-    body.style.top = `-${scrollY}px`;
-    body.style.width = "100%";
+    window.scrollTo(0, 0);
+    html.style.overflow = "hidden";
     body.style.overflow = "hidden";
 
     return () => {
-      body.style.position = prev.position;
-      body.style.top = prev.top;
-      body.style.width = prev.width;
-      body.style.overflow = prev.overflow;
+      html.style.overflow = prev.htmlOverflow;
+      body.style.overflow = prev.bodyOverflow;
       window.scrollTo(0, scrollY);
     };
   }, [isOpen]);
 
-  // Mirror visualViewport.height onto the panel as --vv-height directly,
-  // bypassing React state. The panel just shrinks when the iOS keyboard
-  // opens — top stays at 0 so the header remains visible.
+  // Mirror visualViewport metrics onto the panel as CSS variables
+  // directly, bypassing React state. --vv-height shrinks the panel to
+  // the visible area; --vv-offset-top translates it back into view when
+  // iOS shifts the visual viewport on input focus (which would otherwise
+  // slide the position:fixed panel off-screen, especially on the second
+  // focus after the keyboard has been dismissed once). Going through
+  // setState here introduced per-event React reconciliation lag that
+  // showed up as visible jank during the keyboard animation.
   useLayoutEffect(() => {
     if (!isOpen) return;
     if (typeof window === "undefined" || !window.visualViewport) return;

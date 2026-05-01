@@ -637,18 +637,21 @@
 /* === Quick Chat Mobile (FN: full-screen) =================================== */
 @media (max-width: 768px) {
   .quick-chat-panel {
-    /* Full-screen sheet that ignores drag position on mobile. The
-       JSX-level style only emits right/bottom on desktop now, but we
-       still pin every edge with !important here so any stray inline
-       value (or a future regression) cannot pull the panel off-screen.
-       `top: 0` is intentional — when the iOS keyboard opens we just
-       shrink height (via --vv-height), the panel does not translate
-       so the header stays in place. */
+    /* Full-screen sheet that ignores drag position on mobile. `top`
+       follows visualViewport.offsetTop because on the *second* input
+       focus iOS Safari shifts the visual viewport (offsetTop > 0)
+       instead of repositioning the keyboard, so a fixed panel pinned
+       at layout top:0 ends up rendering at visual -offsetTop and slides
+       off-screen. Translating the panel by offsetTop puts the header
+       back at visual y=0 — i.e. the user still sees the top of the
+       chat box. The CSS variable is written directly to the DOM via
+       a layout effect, so it tracks the keyboard 1:1 with no React
+       state lag. */
     position: fixed !important;
     inset: 0 !important;
     left: 0 !important;
     right: 0 !important;
-    top: 0 !important;
+    top: var(--vv-offset-top, 0px) !important;
     bottom: 0 !important;
     width: 100vw !important;
     height: 100vh !important;

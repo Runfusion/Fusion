@@ -29,6 +29,10 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 | `fn_task_import_github_issue` | Import a specific GitHub issue as a Fusion task. Fetches the issue by number and creates a single task in the planning column with the issue title and body. |
 | `fn_task_browse_github_issues` | List open GitHub issues from a repository to browse before importing. Returns issue numbers, titles, and URLs for selection. Use with fn_task_import_github_issue to import specific issues by number. |
 | `fn_task_plan` | Create a task via AI-guided planning mode — interactive conversation to refine your idea into a well-specified task. |
+| `fn_research_run` | Start a bounded research run and optionally wait for findings. |
+| `fn_research_list` | List recent research runs. |
+| `fn_research_get` | Get one research run and structured findings. |
+| `fn_research_cancel` | Cancel a research run. |
 | `fn_insight_list` | List persisted project insights with optional category/status filters. |
 | `fn_insight_show` | Show a single persisted insight by ID. |
 | `fn_insight_run_list` | List recent insight-generation runs with optional status/trigger filters. |

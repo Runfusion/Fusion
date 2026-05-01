@@ -12,6 +12,7 @@ import {
   createTaskLogToolWithContext,
   createSendMessageTool,
   createReadMessagesTool,
+  createResearchTools,
   qmdAgentMemoryCollectionName,
   sendMessageParams,
   readMessagesParams,
@@ -607,6 +608,114 @@ describe("createSendMessageTool", () => {
     expect(messageStore.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ content: "test" })
     );
+  });
+});
+
+describe("createResearchTools", () => {
+  const baseSettings = {
+    researchGlobalEnabled: true,
+    researchGlobalMaxConcurrentRuns: 2,
+    researchGlobalDefaultTimeout: 30_000,
+    researchGlobalMaxSynthesisRounds: 2,
+    researchWebSearchProvider: "none",
+    researchSettings: { enabled: true },
+  };
+
+  function createStoreMock(overrides: Record<string, unknown> = {}) {
+    const runs = new Map<string, any>();
+    const researchStore = {
+      createRun: vi.fn().mockImplementation((input: any) => {
+        const run = {
+          id: "RES-001",
+          query: input.query,
+          status: "pending",
+          providerConfig: input.providerConfig,
+          sources: [],
+          events: [],
+          tags: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        runs.set(run.id, run);
+        return run;
+      }),
+      getRun: vi.fn((id: string) => runs.get(id) ?? null),
+      listRuns: vi.fn(() => [...runs.values()]),
+      updateRun: vi.fn((id: string, updates: any) => {
+        const existing = runs.get(id);
+        if (!existing) return null;
+        const next = { ...existing, ...updates, updatedAt: new Date().toISOString() };
+        runs.set(id, next);
+        return next;
+      }),
+      updateStatus: vi.fn((id: string, status: string) => {
+        const existing = runs.get(id);
+        if (!existing) return null;
+        const next = { ...existing, status, updatedAt: new Date().toISOString() };
+        runs.set(id, next);
+        return next;
+      }),
+      addEvent: vi.fn(),
+      addSource: vi.fn(),
+      updateSource: vi.fn(),
+      setResults: vi.fn(),
+    };
+    return {
+      runs,
+      store: {
+        getResearchStore: vi.fn(() => researchStore),
+        ...overrides,
+      },
+      researchStore,
+    };
+  }
+
+  it("returns actionable disabled response when research is off", async () => {
+    const { store } = createStoreMock();
+    const tools = createResearchTools({
+      store: store as any,
+      rootDir: process.cwd(),
+      getSettings: async () => ({ ...baseSettings, researchSettings: { enabled: false } } as any),
+    });
+
+    const runTool = tools.find((tool) => tool.name === "fn_research_run")!;
+    const result = await (runTool as any).execute("call-1", { query: "fusion" }, undefined, undefined, undefined);
+
+    expect(result.details.setup.code).toBe("feature-disabled");
+    expect(result.content[0].text).toContain("Research is disabled");
+  });
+
+  it("starts research and returns structured run details", async () => {
+    const { store, researchStore, runs } = createStoreMock();
+    const tools = createResearchTools({
+      store: store as any,
+      rootDir: process.cwd(),
+      getSettings: async () => ({ ...baseSettings, researchTavilyApiKey: "key", researchWebSearchProvider: "tavily" } as any),
+    });
+
+    const runTool = tools.find((tool) => tool.name === "fn_research_run")!;
+    const result = await (runTool as any).execute("call-1", { query: "fusion roadmap" }, undefined, undefined, undefined);
+
+    expect(researchStore.createRun).toHaveBeenCalled();
+    expect(result.details).toMatchObject({ runId: "RES-001", status: "pending", findings: [], citations: [] });
+    runs.set("RES-001", { ...runs.get("RES-001"), status: "completed", results: { summary: "Done", findings: [], citations: [] } });
+
+    const getTool = tools.find((tool) => tool.name === "fn_research_get")!;
+    const getResult = await (getTool as any).execute("call-2", { id: "RES-001" }, undefined, undefined, undefined);
+    expect(getResult.details.summary).toBe("Done");
+  });
+
+  it("returns not-found metadata for missing runs", async () => {
+    const { store } = createStoreMock();
+    const tools = createResearchTools({
+      store: store as any,
+      rootDir: process.cwd(),
+      getSettings: async () => ({ ...baseSettings } as any),
+    });
+
+    const getTool = tools.find((tool) => tool.name === "fn_research_get")!;
+    const result = await (getTool as any).execute("call-1", { id: "RES-404" }, undefined, undefined, undefined);
+    expect(result.details.status).toBe("missing");
   });
 });
 

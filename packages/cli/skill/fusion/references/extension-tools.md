@@ -324,6 +324,41 @@ Show a single insight-generation run by ID.
 |-----------|------|----------|-------------|
 | `id` | string | ✓ | Insight run ID (e.g. INSR-XXXXX) |
 
+## Other Tools
+
+### fn_research_run
+
+Start a bounded research run and optionally wait for findings.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | ✓ | Research query or question |
+
+### fn_research_list
+
+List recent research runs.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `status` | string(enum) | — |  |
+| `limit` | number | — | Max runs to return (default: 10) |
+
+### fn_research_get
+
+Get one research run and structured findings.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | ✓ | Research run ID |
+
+### fn_research_cancel
+
+Cancel a research run.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | ✓ | Research run ID |
+
 <!-- END: extension-tools -->
 ## Dashboard Command
 
