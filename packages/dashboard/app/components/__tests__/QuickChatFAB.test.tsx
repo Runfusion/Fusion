@@ -24,6 +24,8 @@ const mockFetchChatSessions = vi.mocked(apiModule.fetchChatSessions);
 const mockCreateChatSession = vi.mocked(apiModule.createChatSession);
 const mockFetchChatMessages = vi.mocked(apiModule.fetchChatMessages);
 const mockFetchModels = vi.mocked(apiModule.fetchModels);
+const mockStreamChatResponse = vi.mocked(apiModule.streamChatResponse);
+const mockCancelChatResponse = vi.mocked(apiModule.cancelChatResponse);
 const mockUseAgents = vi.mocked(useAgents);
 
 const agents: Agent[] = [
@@ -63,6 +65,11 @@ describe("QuickChatFAB session-first UX", () => {
     mockFetchChatMessages.mockResolvedValue({ messages: [] });
     mockFetchChatSessions.mockResolvedValue({ sessions: [modelSession, agentSession] });
     mockCreateChatSession.mockResolvedValue({ session: { ...modelSession, id: "session-new" } });
+    mockCancelChatResponse.mockResolvedValue({ success: true });
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      handlers.onDone?.({ messageId: "msg-stream" });
+      return { close: vi.fn(), isConnected: () => true };
+    });
     mockFetchModels.mockResolvedValue({
       models: [{ provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: true, contextWindow: 128000 }],
       favoriteProviders: [],
@@ -122,6 +129,44 @@ describe("QuickChatFAB session-first UX", () => {
 
     await waitFor(() => {
       expect(mockCreateChatSession).toHaveBeenCalledWith({ agentId: "agent-002" }, "proj-1");
+    });
+  });
+
+  it("intercepts exact /clear and starts a fresh session for the active target", async () => {
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const input = await screen.findByTestId("quick-chat-input");
+    await waitFor(() => expect(input).not.toBeDisabled());
+    fireEvent.change(input, { target: { value: " /clear " } });
+    fireEvent.click(screen.getByTestId("quick-chat-send"));
+
+    await waitFor(() => {
+      expect(mockCreateChatSession).toHaveBeenCalledWith(
+        { agentId: "__fn_agent__", modelProvider: "openai", modelId: "gpt-4o" },
+        "proj-1",
+      );
+    });
+    expect(mockStreamChatResponse).not.toHaveBeenCalled();
+  });
+
+  it("does not intercept non-exact /clear prompts", async () => {
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const input = await screen.findByTestId("quick-chat-input");
+    await waitFor(() => expect(input).not.toBeDisabled());
+    fireEvent.change(input, { target: { value: "/clear now" } });
+    fireEvent.click(screen.getByTestId("quick-chat-send"));
+
+    await waitFor(() => {
+      expect(mockStreamChatResponse).toHaveBeenCalledWith(
+        "session-model",
+        "/clear now",
+        expect.any(Object),
+        [],
+        "proj-1",
+      );
     });
   });
 

@@ -1429,6 +1429,35 @@ export function QuickChatFAB({
     setMentionFilter("");
     setMentionStartPos(-1);
 
+    if (trimmed === "/clear") {
+      stopStreaming();
+      clearPendingMessage();
+      attachmentsToSend.forEach((attachment) => {
+        if (attachment.previewUrl) {
+          URL.revokeObjectURL(attachment.previewUrl);
+        }
+      });
+      setPendingAttachments((previous) => previous.filter((attachment) => !attachmentsToSend.includes(attachment)));
+
+      try {
+        if (chatMode === "model") {
+          const parsed = parseModelSelection(resolvedModelSelection);
+          if (!parsed) {
+            return;
+          }
+          await startFreshSession(FN_AGENT_ID, parsed.modelProvider, parsed.modelId);
+        } else if (selectedAgentId) {
+          await startFreshSession(selectedAgentId);
+        }
+      } catch {
+        addToast("Failed to clear conversation", "error");
+      } finally {
+        focusComposerInput();
+        preserveComposerFocusRef.current = false;
+      }
+      return;
+    }
+
     try {
       await sendMessage(trimmed, attachmentsToSend.map((attachment) => attachment.file));
       attachmentsToSend.forEach((attachment) => {
@@ -1443,7 +1472,19 @@ export function QuickChatFAB({
       focusComposerInput();
       preserveComposerFocusRef.current = false;
     }
-  }, [sendMessage, inputDisabled, messageInput, focusComposerInput]);
+  }, [
+    addToast,
+    chatMode,
+    clearPendingMessage,
+    focusComposerInput,
+    inputDisabled,
+    messageInput,
+    resolvedModelSelection,
+    selectedAgentId,
+    sendMessage,
+    startFreshSession,
+    stopStreaming,
+  ]);
 
   const handleAttachmentDragEnter = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();

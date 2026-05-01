@@ -286,6 +286,17 @@ export function useChat(projectId?: string): UseChatReturn {
     [projectId],
   );
 
+  const resetTransientComposerState = useCallback(() => {
+    cancelStreamingFlushesRef.current?.();
+    cancelStreamingFlushesRef.current = null;
+    pendingMessageRef.current = "";
+    setPendingMessage("");
+    setStreamingText("");
+    setStreamingThinking("");
+    setStreamingToolCalls([]);
+    setIsStreaming(false);
+  }, []);
+
   // Select a session
   const selectSession = useCallback(
     (id: string, sessionOverride?: ChatSessionInfo) => {
@@ -299,11 +310,8 @@ export function useChat(projectId?: string): UseChatReturn {
       const session = sessionOverride ?? sessions.find((s) => s.id === id);
       setActiveSession(session || null);
 
-      // Reset streaming state
-      setStreamingText("");
-      setStreamingThinking("");
-      setStreamingToolCalls([]);
-      setIsStreaming(false);
+      // Reset transient state
+      resetTransientComposerState();
       setHasMoreMessages(true);
 
       // Load messages for this session
@@ -320,7 +328,7 @@ export function useChat(projectId?: string): UseChatReturn {
         removeScopedItem(ACTIVE_SESSION_STORAGE_KEY, projectId);
       }
     },
-    [sessions, loadMessages, projectId],
+    [sessions, loadMessages, projectId, resetTransientComposerState],
   );
 
   // Update the ref to point to the actual selectSession function
@@ -352,12 +360,13 @@ export function useChat(projectId?: string): UseChatReturn {
         return [newSession, ...prev];
       });
 
+      resetTransientComposerState();
       selectSession(newSession.id, newSession);
       setMessages([]);
 
       return newSession;
     },
-    [projectId, selectSession],
+    [projectId, resetTransientComposerState, selectSession],
   );
 
   // Archive a session

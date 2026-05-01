@@ -357,6 +357,47 @@ describe("useQuickChat", () => {
     });
   });
 
+  it("startFreshSession clears queued pending message state", async () => {
+    const existingSession = makeSession({ id: "session-existing", agentId: "agent-001" });
+    const freshSession = makeSession({ id: "session-fresh", agentId: "agent-001" });
+
+    mockFetchResumeChatSession.mockResolvedValueOnce({ session: existingSession });
+    mockCreateChatSession.mockResolvedValueOnce({ session: freshSession });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+    const { result } = renderHook(() => useQuickChat("proj-123"));
+
+    await act(async () => {
+      await result.current.switchSession("agent-001");
+    });
+
+    act(() => {
+      result.current.sendMessage("Hello");
+    });
+
+    await waitFor(() => {
+      expect(result.current.isStreaming).toBe(true);
+    });
+
+    act(() => {
+      result.current.sendMessage("Queued follow-up");
+    });
+
+    await waitFor(() => {
+      expect(result.current.pendingMessage).toBe("Queued follow-up");
+    });
+
+    await act(async () => {
+      await result.current.startFreshSession();
+    });
+
+    await waitFor(() => {
+      expect(result.current.pendingMessage).toBe("");
+      expect(result.current.isStreaming).toBe(false);
+      expect(result.current.activeSession?.id).toBe("session-fresh");
+    });
+  });
+
   it("stopStreaming aborts stream and resets streaming state", async () => {
     const existingSession = makeSession({ id: "session-existing", agentId: "agent-001" });
     const closeFn = vi.fn();

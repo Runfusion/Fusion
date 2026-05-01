@@ -287,6 +287,17 @@ export function useQuickChat(
     }
   }, [activeSession, projectId]);
 
+  const resetTransientComposerState = useCallback(() => {
+    cancelStreamingFlushesRef.current?.();
+    cancelStreamingFlushesRef.current = null;
+    pendingMessageRef.current = "";
+    setPendingMessage("");
+    setStreamingText("");
+    setStreamingThinking("");
+    setStreamingToolCalls([]);
+    setIsStreaming(false);
+  }, []);
+
   // Switch to a different chat target session
   const switchSession = useCallback(
     async (agentId: string, modelProvider?: string, modelId?: string) => {
@@ -305,11 +316,8 @@ export function useQuickChat(
           streamRef.current = null;
         }
 
-        // Reset streaming state
-        setStreamingText("");
-        setStreamingThinking("");
-        setStreamingToolCalls([]);
-        setIsStreaming(false);
+        // Reset transient state
+        resetTransientComposerState();
       }
 
       if (isSameSession) {
@@ -327,7 +335,7 @@ export function useQuickChat(
       currentSessionKeyRef.current = targetSessionKey;
       await initializeSession(target.agentId, target.modelProvider, target.modelId);
     },
-    [initializeSession, reloadMessages, activeSession],
+    [activeSession, initializeSession, reloadMessages, resetTransientComposerState],
   );
 
   const selectSession = useCallback(async (session: ChatSession) => {
@@ -342,12 +350,9 @@ export function useQuickChat(
       streamRef.current = null;
     }
 
-    setStreamingText("");
-    setStreamingThinking("");
-    setStreamingToolCalls([]);
-    setIsStreaming(false);
+    resetTransientComposerState();
     setActiveSession(session);
-  }, []);
+  }, [resetTransientComposerState]);
 
   const startModelChat = useCallback(
     async (modelProvider: string, modelId: string) => {
@@ -372,10 +377,7 @@ export function useQuickChat(
       streamRef.current = null;
     }
 
-    setStreamingText("");
-    setStreamingThinking("");
-    setStreamingToolCalls([]);
-    setIsStreaming(false);
+    resetTransientComposerState();
     setMessages([]);
     setActiveSession(null);
 
@@ -393,7 +395,7 @@ export function useQuickChat(
     } finally {
       setSessionsLoading(false);
     }
-  }, [addToast, createSessionForTarget, projectId]);
+  }, [addToast, createSessionForTarget, projectId, resetTransientComposerState]);
 
   const stopStreaming = useCallback(() => {
     if (!activeSession) return;

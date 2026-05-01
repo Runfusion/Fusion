@@ -979,18 +979,13 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     [createSession, addToast, isMobile],
   );
 
-  // Handle send message including pending attachment uploads.
-  const handleSend = useCallback(() => {
-    const trimmed = messageInput.trim();
-    const files = pendingAttachments.map((attachment) => attachment.file);
-    if ((!trimmed && files.length === 0) || !activeSession) return;
+  const clearComposerState = useCallback(() => {
     setMessageInput("");
     setShowSkillMenu(false);
     setSkillFilter("");
     setMentionPopupVisible(false);
     setMentionFilter("");
     setMentionStartPos(-1);
-    sendMessage(trimmed, files);
     setPendingAttachments((prev) => {
       for (const attachment of prev) {
         if (attachment.previewUrl) {
@@ -999,7 +994,41 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
       }
       return [];
     });
-  }, [messageInput, pendingAttachments, activeSession, sendMessage]);
+  }, []);
+
+  // Handle send message including pending attachment uploads.
+  const handleSend = useCallback(() => {
+    const trimmed = messageInput.trim();
+    const files = pendingAttachments.map((attachment) => attachment.file);
+    if ((!trimmed && files.length === 0) || !activeSession) return;
+
+    if (trimmed === "/clear") {
+      clearComposerState();
+      stopStreaming();
+      clearPendingMessage();
+      void createSession({
+        agentId: activeSession.agentId,
+        modelProvider: activeSession.modelProvider ?? undefined,
+        modelId: activeSession.modelId ?? undefined,
+      }).catch(() => {
+        addToast("Failed to clear conversation", "error");
+      });
+      return;
+    }
+
+    clearComposerState();
+    sendMessage(trimmed, files);
+  }, [
+    messageInput,
+    pendingAttachments,
+    activeSession,
+    clearComposerState,
+    stopStreaming,
+    clearPendingMessage,
+    createSession,
+    addToast,
+    sendMessage,
+  ]);
 
   const focusComposerInput = useCallback(() => {
     if (typeof window === "undefined") return;
