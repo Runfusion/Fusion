@@ -3188,6 +3188,40 @@ describe("PATCH /tasks/:id", () => {
     expect(res.body.dependencies).toEqual(["FN-002"]);
   });
 
+  it("forwards priority to store.updateTask", async () => {
+    const updatedTask = { ...FAKE_TASK_DETAIL, priority: "high" as const };
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({ priority: "high" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { priority: "high" });
+    expect(res.body.priority).toBe("high");
+  });
+
+  it("forwards priority=null to store.updateTask (resets to default)", async () => {
+    const updatedTask = { ...FAKE_TASK_DETAIL, priority: "normal" as const };
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({ priority: null }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", { priority: null });
+  });
+
+  it("rejects unknown priority values with 400", async () => {
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({ priority: "medium" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
   it("returns 409 when changing nodeId on an in-progress task", async () => {
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...FAKE_TASK_DETAIL,

@@ -2,7 +2,9 @@ import { createReadStream } from "node:fs";
 import type { TaskStore, Task, TaskDetail, Column } from "@fusion/core";
 import {
   COLUMNS,
+  TASK_PRIORITIES,
   VALID_TRANSITIONS,
+  isTaskPriority,
   resolveTitleSummarizerSettingsModel,
   validateNodeOverrideChange,
 } from "@fusion/core";
@@ -1319,7 +1321,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   router.patch("/tasks/:id", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const { title, description, prompt, dependencies, enabledWorkflowSteps, modelProvider, modelId, validatorModelProvider, validatorModelId, planningModelProvider, planningModelId, thinkingLevel, assigneeUserId, reviewLevel, executionMode, sourceIssue, nodeId } = req.body;
+      const { title, description, prompt, priority, dependencies, enabledWorkflowSteps, modelProvider, modelId, validatorModelProvider, validatorModelId, planningModelProvider, planningModelId, thinkingLevel, assigneeUserId, reviewLevel, executionMode, sourceIssue, nodeId } = req.body;
       const hasBodyField = (field: string) => Object.prototype.hasOwnProperty.call(req.body, field);
 
       // Validate model fields are strings or undefined/null
@@ -1357,6 +1359,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const validExecutionModes = ["standard", "fast"];
       if (executionMode !== undefined && executionMode !== null && !validExecutionModes.includes(executionMode)) {
         throw new Error(`executionMode must be one of: ${validExecutionModes.join(", ")}`);
+      }
+
+      // Validate priority if provided. `null` resets to the default (`normal`)
+      // via store.updateTask's null-handling.
+      if (priority !== undefined && priority !== null && !isTaskPriority(priority)) {
+        throw new Error(`priority must be one of: ${TASK_PRIORITIES.join(", ")}`);
       }
 
       if (enabledWorkflowSteps !== undefined) {
@@ -1429,6 +1437,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (title !== undefined) updates.title = title;
       if (description !== undefined) updates.description = description;
       if (prompt !== undefined) updates.prompt = prompt;
+      if (hasBodyField("priority")) updates.priority = priority;
       if (dependencies !== undefined) updates.dependencies = dependencies;
       if (enabledWorkflowSteps !== undefined) updates.enabledWorkflowSteps = enabledWorkflowSteps;
       if (hasBodyField("modelProvider")) updates.modelProvider = validatedModelProvider;
@@ -1461,7 +1470,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (err instanceof ApiError) {
         throw err;
       }
-      const status = (err instanceof Error ? err.message : String(err)).includes("must be a string") || (err instanceof Error ? err.message : String(err)).includes("must be a non-empty string") || (err instanceof Error ? err.message : String(err)).includes("must be a string or null") || (err instanceof Error ? err.message : String(err)).includes("must be an array of strings") || (err instanceof Error ? err.message : String(err)).includes("thinkingLevel must be one of") || (err instanceof Error ? err.message : String(err)).includes("reviewLevel must be an integer") || (err instanceof Error ? err.message : String(err)).includes("executionMode must be one of") || (err instanceof Error ? err.message : String(err)).includes("sourceIssue") ? 400 : 500;
+      const status = (err instanceof Error ? err.message : String(err)).includes("must be a string") || (err instanceof Error ? err.message : String(err)).includes("must be a non-empty string") || (err instanceof Error ? err.message : String(err)).includes("must be a string or null") || (err instanceof Error ? err.message : String(err)).includes("must be an array of strings") || (err instanceof Error ? err.message : String(err)).includes("thinkingLevel must be one of") || (err instanceof Error ? err.message : String(err)).includes("reviewLevel must be an integer") || (err instanceof Error ? err.message : String(err)).includes("executionMode must be one of") || (err instanceof Error ? err.message : String(err)).includes("priority must be one of") || (err instanceof Error ? err.message : String(err)).includes("sourceIssue") ? 400 : 500;
       throw new ApiError(status, err instanceof Error ? err.message : String(err));
     }
   });
