@@ -6089,4 +6089,43 @@ describe("HeartbeatMonitor observability — prompt persistence + run-scoped log
     expect(toolResult.details.memoryPresent).toBe(true);
     expect(toolResult.details.soulPreview).toContain("I am a senior executor.");
   });
+
+  it("inlines the Identity Snapshot block into the execution prompt for runtime-agnostic delivery", async () => {
+    const store = createStoreWithAgent({
+      taskId: undefined,
+      soul: "I keep momentum across stalled tasks.",
+      memory: "Always log blockers with concrete next steps.",
+    });
+    const mockSession = createMockAgentSession();
+    mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
+
+    const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+    await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+    const saveRunCalls = (store.saveRun as ReturnType<typeof vi.fn>).mock.calls;
+    const promptRunCall = saveRunCalls.find(
+      (args: unknown[]) => typeof (args[0] as AgentHeartbeatRun).executionPrompt === "string"
+        && ((args[0] as AgentHeartbeatRun).executionPrompt?.length ?? 0) > 0
+    );
+    expect(promptRunCall).toBeDefined();
+    const savedRun = promptRunCall![0] as AgentHeartbeatRun;
+    const exec = savedRun.executionPrompt!;
+
+    // Snapshot header + identity fields appear in the execution prompt body itself,
+    // so non-pi runtimes (openclaw/hermes/paperclip) that may not propagate
+    // customTools still see the agent's identity every tick.
+    expect(exec).toContain("## Identity Snapshot");
+    expect(exec).toContain("- agentId: agent-001");
+    expect(exec).toContain("- soul: loaded");
+    expect(exec).toContain("- memory: loaded");
+    expect(exec).toContain("I keep momentum across stalled tasks.");
+
+    // Snapshot must precede the Wake Delta and the Heartbeat Procedure
+    const snapIdx = exec.indexOf("## Identity Snapshot");
+    const wakeIdx = exec.indexOf("## Wake Delta");
+    const procIdx = exec.indexOf("Heartbeat Procedure");
+    expect(snapIdx).toBeGreaterThanOrEqual(0);
+    expect(snapIdx).toBeLessThan(wakeIdx);
+    expect(wakeIdx).toBeLessThan(procIdx);
+  });
 });

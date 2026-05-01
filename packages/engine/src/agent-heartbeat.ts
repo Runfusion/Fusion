@@ -292,9 +292,12 @@ export const HEARTBEAT_SYSTEM_PROMPT_NO_TASK = HEARTBEAT_NO_TASK_SYSTEM_PROMPT;
  */
 export const HEARTBEAT_PROCEDURE = `## Heartbeat Procedure (run every tick, in order)
 
-1. **Identity & context** — call fn_identity FIRST to confirm which soul,
-   instructions, and memory loaded for this tick. Echo your role and any
-   anomalies in your first text output before doing anything else.
+1. **Identity & context** — review the **Identity Snapshot** at the top of
+   this prompt. Confirm your role, soul, instructions, and memory match what
+   you expect, and surface any anomalies in your first text output before
+   doing anything else. (If fn_identity is available in your runtime you may
+   also call it for full structured detail; the snapshot above is the
+   authoritative source.)
 2. **Inbox** — when fn_read_messages is available, call it. Process any pending
    messages first; reply with reply_to_message_id when answering.
 3. **Wake delta** — read the Wake Delta block above. The wake reason is the
@@ -328,6 +331,59 @@ const heartbeatDoneParams = Type.Object({
 function truncatePrompt(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
   return `${text.slice(0, maxChars)}\n\n... (truncated, ${text.length} chars)`;
+}
+
+/**
+ * Build the per-tick **Identity Snapshot** block injected into every
+ * heartbeat execution prompt.
+ *
+ * Why inline (not just a tool): plugin runtimes (openclaw, hermes, paperclip)
+ * wrap external CLIs and may not propagate JS `customTools` callbacks to the
+ * underlying agent. Embedding the snapshot in the prompt body guarantees the
+ * agent always sees its identity regardless of runtime tool support.
+ * `fn_identity` remains available as a richer optional read for runtimes
+ * that DO support custom tools.
+ */
+function buildIdentitySnapshot(args: {
+  agent: Agent;
+  resolvedInstructions: string;
+}): string {
+  const { agent, resolvedInstructions } = args;
+  const SOUL_PREVIEW = 500;
+  const INSTR_PREVIEW = 1000;
+  const MEM_PREVIEW = 1000;
+
+  const soulPresent = typeof agent.soul === "string" && agent.soul.trim().length > 0;
+  const instrPresent = resolvedInstructions.trim().length > 0;
+  const memPresent = typeof agent.memory === "string" && agent.memory.trim().length > 0;
+
+  const lines: string[] = [
+    "## Identity Snapshot",
+    "",
+    "Verify these match what you expect. Surface any anomalies in your first text output before acting.",
+    "",
+    `- agentId: ${agent.id}`,
+    `- name: ${agent.name}`,
+    `- role: ${agent.role}`,
+    `- soul: ${soulPresent ? "loaded" : "absent"}`,
+    `- instructions: ${instrPresent ? "loaded" : "absent"}`,
+    `- memory: ${memPresent ? "loaded" : "absent"}`,
+  ];
+
+  if (soulPresent) {
+    const preview = (agent.soul as string).trim().slice(0, SOUL_PREVIEW);
+    lines.push("", `### Soul (first ${SOUL_PREVIEW} chars)`, preview);
+  }
+  if (instrPresent) {
+    const preview = resolvedInstructions.trim().slice(0, INSTR_PREVIEW);
+    lines.push("", `### Instructions (first ${INSTR_PREVIEW} chars)`, preview);
+  }
+  if (memPresent) {
+    const preview = (agent.memory as string).trim().slice(0, MEM_PREVIEW);
+    lines.push("", `### Memory (first ${MEM_PREVIEW} chars)`, preview);
+  }
+
+  return lines.join("\n");
 }
 
 async function getHeartbeatMemorySettings(taskStore: TaskStore): Promise<Settings | undefined> {
@@ -1442,6 +1498,8 @@ export class HeartbeatMonitor {
               `Heartbeat execution for agent "${agent.name}" (ID: ${agent.id})`,
               `Source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
               "",
+              buildIdentitySnapshot({ agent, resolvedInstructions: resolvedInstructionsForIdentity }),
+              "",
               "## Wake Delta",
               `- source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
               `- wake reason: ${wakeReason}`,
@@ -1451,8 +1509,6 @@ export class HeartbeatMonitor {
               "Treat this wake delta as the highest-priority change for this heartbeat.",
               "Run the Heartbeat Procedure (below) before doing anything else — even a",
               "timer-only wake should re-check messages, memory, and project state.",
-              "",
-              "You MUST call fn_identity as your first tool action this tick before reading any task content or calling any other tool.",
               "",
               heartbeatProcedureText,
               "",
@@ -1542,6 +1598,8 @@ export class HeartbeatMonitor {
               `Source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
               `Assigned task: ${taskId} — ${taskTitle}`,
               "",
+              buildIdentitySnapshot({ agent, resolvedInstructions: resolvedInstructionsForIdentity }),
+              "",
               "## Wake Delta",
               `- source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
               `- wake reason: ${wakeReason}`,
@@ -1553,8 +1611,6 @@ export class HeartbeatMonitor {
               "Before resuming prior task work, run the Heartbeat Procedure (below) and",
               "decide what action this delta requires. Your assigned task is one input",
               "to the procedure — not the only thing to consider.",
-              "",
-              "You MUST call fn_identity as your first tool action this tick before reading any task content or calling any other tool.",
               "",
               heartbeatProcedureText,
               "",
