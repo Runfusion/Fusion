@@ -13,6 +13,7 @@ import {
   summarizeMergeCommit,
   summarizeCommitBody,
   sanitizeCommitSubject,
+  sanitizeTitle,
   MAX_COMMIT_SUBJECT_LENGTH,
   checkRateLimit,
   getRateLimitResetTime,
@@ -180,6 +181,136 @@ describe("ai-summarize", () => {
       await expect(
         summarizeTitle(longDesc, "/tmp", "anthropic", "claude-sonnet-4-5")
       ).rejects.toThrow(AiServiceError);
+    });
+
+    it("returns sanitized title when AI responds cleanly", async () => {
+      const prompt = vi.fn().mockResolvedValue(undefined);
+      getFnAgentMock.mockResolvedValue(() =>
+        Promise.resolve({
+          session: {
+            prompt,
+            dispose: vi.fn(),
+            state: {
+              messages: [
+                { role: "assistant", content: "Add quick chat session dropdown" },
+              ],
+            },
+          },
+        })
+      );
+      const title = await summarizeTitle("a".repeat(201), "/tmp");
+      expect(title).toBe("Add quick chat session dropdown");
+      // Verify wrapped prompt was sent (prompt-injection mitigation)
+      expect(prompt).toHaveBeenCalledTimes(1);
+      expect(prompt.mock.calls[0][0]).toContain("<description>");
+      expect(prompt.mock.calls[0][0]).toContain("Do not call any tools");
+    });
+
+    it("strips chatty preamble + markdown from AI response (FN-3057 regression)", async () => {
+      // Reproduces the FN-3057 incident: model wrote a chat-style reply
+      // ("Created **FN-3058** with the full spec…") that was sliced mid-word
+      // and stored as the title. Sanitizer should keep first line only and
+      // strip the markdown bold.
+      getFnAgentMock.mockResolvedValue(() =>
+        Promise.resolve({
+          session: {
+            prompt: vi.fn().mockResolvedValue(undefined),
+            dispose: vi.fn(),
+            state: {
+              messages: [
+                {
+                  role: "assistant",
+                  content:
+                    "Add quick chat session dropdown\n\nCreated **FN-3058** with the full spec. Let me know if you want changes.",
+                },
+              ],
+            },
+          },
+        })
+      );
+      const title = await summarizeTitle("a".repeat(201), "/tmp");
+      expect(title).toBe("Add quick chat session dropdown");
+    });
+
+    it("handles array content blocks and ignores non-text blocks", async () => {
+      getFnAgentMock.mockResolvedValue(() =>
+        Promise.resolve({
+          session: {
+            prompt: vi.fn().mockResolvedValue(undefined),
+            dispose: vi.fn(),
+            state: {
+              messages: [
+                {
+                  role: "assistant",
+                  content: [
+                    { type: "tool_use", text: "" },
+                    { type: "text", text: "Refactor merger title fallback" },
+                  ],
+                },
+              ],
+            },
+          },
+        })
+      );
+      const title = await summarizeTitle("a".repeat(201), "/tmp");
+      expect(title).toBe("Refactor merger title fallback");
+    });
+  });
+
+  describe("sanitizeTitle", () => {
+    it("returns null for empty input", () => {
+      expect(sanitizeTitle("")).toBeNull();
+      expect(sanitizeTitle(null)).toBeNull();
+      expect(sanitizeTitle(undefined)).toBeNull();
+      expect(sanitizeTitle("   \n  \n")).toBeNull();
+    });
+
+    it("keeps first non-empty line only", () => {
+      expect(sanitizeTitle("first line\nsecond line\nthird")).toBe("first line");
+      expect(sanitizeTitle("\n\n  hello world  \nignored")).toBe("hello world");
+    });
+
+    it("strips chatty markdown reply (FN-3057 incident shape)", () => {
+      const raw =
+        "Created **FN-3058** with the full spec. Let me know if you want changes.";
+      // First line is the whole thing — sanitizer should strip the markdown bold
+      // and trailing period; truncation happens at MAX_TITLE_LENGTH (60).
+      const out = sanitizeTitle(raw)!;
+      expect(out).not.toContain("**");
+      expect(out.length).toBeLessThanOrEqual(60);
+      expect(out.startsWith("Created FN-3058")).toBe(true);
+    });
+
+    it("strips quotes, backticks, leading bullets", () => {
+      expect(sanitizeTitle('"My title"')).toBe("My title");
+      expect(sanitizeTitle("`code title`")).toBe("code title");
+      expect(sanitizeTitle("- bullet title")).toBe("bullet title");
+      expect(sanitizeTitle("* star bullet title")).toBe("star bullet title");
+    });
+
+    it("strips Title:/Subject:/Here is the title preambles", () => {
+      expect(sanitizeTitle("Title: Add session dropdown")).toBe("Add session dropdown");
+      expect(sanitizeTitle("Subject: Fix merger crash")).toBe("Fix merger crash");
+      expect(sanitizeTitle("Here is the title: Refactor")).toBe("Refactor");
+      expect(sanitizeTitle("Generated title: X")).toBe("X");
+    });
+
+    it("strips markdown emphasis markers but keeps inner text", () => {
+      expect(sanitizeTitle("**bold title**")).toBe("bold title");
+      expect(sanitizeTitle("__also bold__")).toBe("also bold");
+      expect(sanitizeTitle("*italic* mixed **bold**")).toBe("italic mixed bold");
+    });
+
+    it("drops trailing punctuation", () => {
+      expect(sanitizeTitle("Add feature.")).toBe("Add feature");
+      expect(sanitizeTitle("Done!")).toBe("Done");
+      expect(sanitizeTitle("Why?")).toBe("Why");
+    });
+
+    it("hard-caps at MAX_TITLE_LENGTH", () => {
+      const long = "x".repeat(100);
+      const out = sanitizeTitle(long)!;
+      expect(out.length).toBe(MAX_TITLE_LENGTH);
     });
   });
 

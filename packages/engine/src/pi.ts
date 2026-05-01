@@ -1114,16 +1114,25 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     });
   }
 
+  // `tools: "readonly"` MUST mean a hermetically sealed read-only session — no
+  // way for the model to mutate state. Host extensions (`@runfusion/fusion`)
+  // register write tools like `fn_task_create`, so they are deliberately
+  // EXCLUDED in readonly mode. Caller-supplied `customTools` are also dropped
+  // for the same reason. Without this, summarizer/compaction sessions could
+  // call write tools and mutate the task board (see FN-3057/FN-3058 incident).
+  const isReadonly = options.tools === "readonly";
+  const effectiveExtensionPaths = isReadonly ? [] : hostExtensionPaths;
+  if (isReadonly && hostExtensionPaths.length > 0) {
+    piLog.log(`readonly session — host extensions (${hostExtensionPaths.length}) skipped`);
+  }
+
   const resourceLoader = new DefaultResourceLoader({
     cwd: options.cwd,
     agentDir: getFusionAgentDir(),
     settingsManager,
     systemPromptOverride: () => options.systemPrompt,
     appendSystemPromptOverride: () => [],
-    // Inject host-supplied extension paths (e.g. cli's own `@runfusion/fusion`
-    // extension that registers `fn_*` tools) so they're loaded inside every
-    // agent session, including chat sessions that don't pass `customTools`.
-    ...(hostExtensionPaths.length > 0 ? { additionalExtensionPaths: [...hostExtensionPaths] } : {}),
+    ...(effectiveExtensionPaths.length > 0 ? { additionalExtensionPaths: [...effectiveExtensionPaths] } : {}),
     ...(skillsOverrideFn ? { skillsOverride: skillsOverrideFn } : {}),
   });
   await resourceLoader.reload();
@@ -1137,10 +1146,15 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     // suppress the defaults with `noTools: "builtin"` and register our wrapped
     // tools through `customTools` instead. The wrapped tools preserve the same
     // names (`read`, `bash`, ...) as the built-ins they replace.
+    // Readonly sessions drop caller-supplied customTools — see comment above
+    // about hermetic isolation. Only the wrapped read-only built-ins survive.
     const customToolList: ToolDefinition[] = [
       ...(wrappedTools as ToolDefinition[]),
-      ...(options.customTools ?? []),
+      ...(isReadonly ? [] : (options.customTools ?? [])),
     ];
+    if (isReadonly && (options.customTools?.length ?? 0) > 0) {
+      piLog.log(`readonly session — customTools (${options.customTools!.length}) skipped`);
+    }
     // Last-chance abort hook. Fires *here* — after every awaited setup step
     // in createFnAgent (provider registration, worktree validation, resource
     // loader reload) and immediately before the actual LLM session spawn.
