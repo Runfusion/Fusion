@@ -16,6 +16,7 @@ import { useMemoryBackendStatus } from "../hooks/useMemoryBackendStatus";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import type { ToastType } from "../hooks/useToast";
 import { ThemeSelector } from "./ThemeSelector";
+import { useSessionBannersHidden, setSessionBannersHidden } from "../hooks/useSessionBannerPref";
 import "./SettingsModal.css";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { FileEditor } from "./FileEditor";
@@ -332,6 +333,7 @@ export function SettingsModal({
   const modalRef = useRef<HTMLDivElement>(null);
   const settingsContentRef = useRef<HTMLDivElement>(null);
   useModalResizePersist(modalRef, true, "fusion:settings-modal-size");
+  const sessionBannersHidden = useSessionBannersHidden();
   const [form, setForm] = useState<SettingsFormState>({
     maxConcurrent: 2,
     maxTriageConcurrent: 2,
@@ -2627,6 +2629,19 @@ export function SettingsModal({
                 onDashboardFontScaleChange?.(scalePct);
               }}
             />
+            <div className="form-group">
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={sessionBannersHidden}
+                  onChange={(e) => setSessionBannersHidden(e.target.checked)}
+                />
+                <span>Hide AI session notification banners</span>
+              </label>
+              <small className="form-text text-muted">
+                Suppress the &ldquo;needs your input&rdquo; banner that appears when AI sessions are awaiting input or have failed.
+              </small>
+            </div>
           </>
         );
       case "scheduling":

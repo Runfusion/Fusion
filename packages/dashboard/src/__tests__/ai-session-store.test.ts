@@ -52,6 +52,8 @@ describe("AiSessionStore", () => {
       projectId,
       createdAt: now,
       updatedAt: now,
+      lockedByTab: null,
+      lockedAt: null,
     };
   }
 

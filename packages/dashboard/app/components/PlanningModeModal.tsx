@@ -335,7 +335,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             needsInput: false,
             owningTabId: sessionTabId,
             type: "planning",
-            title: initialPlan.trim() || "Planning session",
+            title: initialPlan.trim() || undefined,
             projectId: projectId ?? null,
           });
         },
@@ -356,7 +356,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             needsInput: true,
             owningTabId: sessionTabId,
             type: "planning",
-            title: initialPlan.trim() || "Planning session",
+            title: initialPlan.trim() || undefined,
             projectId: projectId ?? null,
           });
         },
@@ -379,7 +379,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             needsInput: false,
             owningTabId: sessionTabId,
             type: "planning",
-            title: initialPlan.trim() || "Planning session",
+            title: initialPlan.trim() || undefined,
             projectId: projectId ?? null,
           });
         },
@@ -428,7 +428,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
               needsInput: false,
               owningTabId: sessionTabId,
               type: "planning",
-              title: initialPlan.trim() || "Planning session",
+              title: initialPlan.trim() || undefined,
               projectId: projectId ?? null,
             });
             broadcastCompleted({ sessionId, status: "error" });
@@ -611,17 +611,16 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     void loadSession(resumeSessionId);
   }, [isOpen, resumeSessionId]);
 
-  // Re-sync the selected session whenever the modal is reopened. Without this,
-  // a session that progressed (or completed) on the server while the modal was
-  // closed — or whose terminal SSE event we missed because the stream had been
-  // torn down on close — keeps showing its stale view (e.g. stuck on "loading"
-  // even though `awaiting_input` is already persisted). Hard reload used to be
-  // the only fix; this effect makes close+reopen equivalent.
+  // Re-sync the selected session whenever the planning screen is shown.
+  // loadSession tears down any existing stream and reconnects, so the right
+  // view always reflects the freshest server state for whatever row is
+  // selected in the sidebar — no stale "loading" frames after a missed
+  // terminal SSE event, no divergence from server progress while the modal
+  // was closed.
   useEffect(() => {
     if (!isOpen) return;
     if (!selectedSessionId) return;
     if (resumeSessionId && resumeSessionId === selectedSessionId) return; // resume effect handles this case
-    if (streamConnectionRef.current?.isConnected()) return;
     void loadSession(selectedSessionId);
     // We intentionally do not depend on selectedSessionId or loadSession here:
     // handleSelectSession already drives loadSession when the user picks a

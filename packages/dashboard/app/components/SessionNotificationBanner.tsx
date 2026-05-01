@@ -26,7 +26,36 @@ const TYPE_LABELS = {
   slice_interview: "Slice Interview",
 } as const;
 
-export const dismissedIds = new Set<string>();
+const STORAGE_KEY = "fusion:session-banner-dismissed";
+
+function loadDismissedFromStorage(): Map<string, string> {
+  if (typeof window === "undefined") return new Map();
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return new Map();
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    return new Map(Object.entries(parsed));
+  } catch {
+    return new Map();
+  }
+}
+
+function persistDismissed(map: Map<string, string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    const obj: Record<string, string> = {};
+    for (const [k, v] of map) obj[k] = v;
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+  } catch {
+    // ignore quota / disabled storage
+  }
+}
+
+// Map of sessionId → the updatedAt at which it was dismissed. The banner
+// re-shows the session when its updatedAt advances past the recorded value
+// (i.e. a new request/question arrived). Persisted to localStorage so
+// dismissals survive page refresh.
+export const dismissedIds = loadDismissedFromStorage();
 
 export function SessionNotificationBanner({
   sessions,
@@ -34,20 +63,31 @@ export function SessionNotificationBanner({
   onDismissSession,
   onDismissAll,
 }: SessionNotificationBannerProps) {
-  // Bump counter to trigger useMemo recomputation when dismissedIds mutates
   const [dismissRevision, setDismissRevision] = useState(0);
-  const bump = () => setDismissRevision((n) => n + 1);
+  const bump = () => {
+    persistDismissed(dismissedIds);
+    setDismissRevision((n) => n + 1);
+  };
 
-  // Prune dismissed IDs for sessions that are no longer awaiting_input/error
+  // Prune stored dismissals when sessions advance past the dismissed
+  // updatedAt (new question arrived) or are no longer in a notify-worthy
+  // state. This keeps localStorage from accumulating stale entries.
   useEffect(() => {
     if (dismissedIds.size === 0) return;
 
     const sessionById = new Map(sessions.map((session) => [session.id, session]));
     let pruned = false;
 
-    for (const id of dismissedIds) {
+    for (const [id, dismissedAt] of dismissedIds) {
       const session = sessionById.get(id);
-      if (session && session.status !== "awaiting_input" && session.status !== "error") {
+      if (!session) continue;
+      const stillNotifying = session.status === "awaiting_input" || session.status === "error";
+      if (!stillNotifying) {
+        dismissedIds.delete(id);
+        pruned = true;
+        continue;
+      }
+      if (session.updatedAt && session.updatedAt !== dismissedAt) {
         dismissedIds.delete(id);
         pruned = true;
       }
@@ -58,12 +98,12 @@ export function SessionNotificationBanner({
 
   const sessionsNeedingInput = useMemo(
     () =>
-      sessions.filter(
-        (session) =>
-          (session.status === "awaiting_input" || session.status === "error") &&
-          !dismissedIds.has(session.id),
-      ),
-    // dismissRevision is a stable counter that bumps whenever dismissedIds changes
+      sessions.filter((session) => {
+        if (session.status !== "awaiting_input" && session.status !== "error") return false;
+        const dismissedAt = dismissedIds.get(session.id);
+        if (dismissedAt === undefined) return true;
+        return session.updatedAt !== dismissedAt;
+      }),
     [sessions, dismissRevision],
   );
 
@@ -83,8 +123,8 @@ export function SessionNotificationBanner({
     headerText = `${errorCount} AI session${errorCount === 1 ? "" : "s"} failed`;
   }
 
-  const dismissLocally = (id: string) => {
-    dismissedIds.add(id);
+  const dismissLocally = (session: AiSessionSummary) => {
+    dismissedIds.set(session.id, session.updatedAt ?? "");
     bump();
   };
 
@@ -96,7 +136,7 @@ export function SessionNotificationBanner({
 
   const handleDismissAll = () => {
     for (const session of sessionsNeedingInput) {
-      dismissedIds.add(session.id);
+      dismissedIds.set(session.id, session.updatedAt ?? "");
     }
     bump();
     onDismissAll();
@@ -148,7 +188,7 @@ export function SessionNotificationBanner({
                 <button
                   className="session-notification-banner__dismiss"
                   onClick={() => {
-                    dismissLocally(session.id);
+                    dismissLocally(session);
                     onDismissSession(session.id);
                   }}
                   aria-label={`Dismiss ${session.title}`}

@@ -26,6 +26,7 @@ import { MobileNavBar } from "./components/MobileNavBar";
 import { QuickChatFAB } from "./components/QuickChatFAB";
 import { ToastContainer } from "./components/ToastContainer";
 import { useBackgroundSessions } from "./hooks/useBackgroundSessions";
+import { useSessionBannersHidden } from "./hooks/useSessionBannerPref";
 import { useTasks } from "./hooks/useTasks";
 import { useProjects } from "./hooks/useProjects";
 import { useNodes } from "./hooks/useNodes";
@@ -179,6 +180,7 @@ function AppInner() {
   const sessionsNeedingInput = bgSessions.filter(
     (session) => session.status === "awaiting_input" || session.status === "error"
   );
+  const sessionBannersHidden = useSessionBannersHidden();
 
   // Modal state/handlers - required before useViewState
   const modalManager = useModalManager({
@@ -933,7 +935,7 @@ function AppInner() {
           researchView: researchEnabled,
         }}
       />
-      {viewMode === "project" && currentProject && !nodesOpen && taskView !== "missions" && !modalManager.isPlanningOpen && (
+      {viewMode === "project" && currentProject && !nodesOpen && taskView !== "missions" && !modalManager.isPlanningOpen && !sessionBannersHidden && (
         <SessionNotificationBanner
           sessions={sessionsNeedingInput}
           onResumeSession={handleOpenBackgroundSession}
