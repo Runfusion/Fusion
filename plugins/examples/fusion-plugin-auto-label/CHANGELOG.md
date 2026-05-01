@@ -1,5 +1,11 @@
 # @fusion-plugin-examples/auto-label
 
+## 0.2.16
+
+### Patch Changes
+
+- @fusion/plugin-sdk@0.14.0
+
 ## 0.2.15
 
 ### Patch Changes

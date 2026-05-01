@@ -1,6 +1,6 @@
 {
   "name": "@fusion-plugin-examples/auto-label",
-  "version": "0.2.15",
+  "version": "0.2.16",
   "type": "module",
   "description": "Automatically labels tasks based on description content",
   "keywords": [
