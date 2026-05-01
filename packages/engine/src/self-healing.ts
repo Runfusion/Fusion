@@ -84,6 +84,7 @@ const NON_TERMINAL_STEP_STATUSES = new Set(["pending", "in-progress"]);
 /** Statuses that represent an explicit human-handoff or active merge —
  *  the ghost-review fallback must not disturb tasks parked in these states. */
 const GHOST_REVIEW_PRESERVED_STATUSES = new Set([
+  "failed",
   "awaiting-user-review",
   "awaiting-approval",
   "merging",
@@ -103,6 +104,7 @@ const ORPHANED_WITH_WORKTREE_GRACE_MS = 300_000;
  * forever; when exhausted the task stays in `in-review` for human inspection.
  */
 const MAX_TASK_DONE_RETRIES = 3;
+const MAX_AUTO_MERGE_RETRIES = 3;
 
 interface LandedTaskCommit {
   sha: string;
@@ -803,6 +805,11 @@ export class SelfHealingManager {
         !t.paused &&
         Boolean(t.worktree) &&
         t.mergeDetails?.mergeConfirmed !== true &&
+        // Mirror ProjectEngine.canMergeTask retry gate. If retries are already
+        // exhausted, re-enqueueing here is a no-op and each recovery log write
+        // refreshes updatedAt, preventing cooldown-based retries from ever
+        // becoming eligible.
+        (t.mergeRetries ?? 0) < MAX_AUTO_MERGE_RETRIES &&
         getTaskMergeBlocker(t) === undefined,
       );
 

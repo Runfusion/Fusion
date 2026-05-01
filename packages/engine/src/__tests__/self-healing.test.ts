@@ -1694,6 +1694,46 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    it("does not re-enqueue retry-exhausted review tasks", async () => {
+      const enqueueMerge = vi.fn();
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        enqueueMerge,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        globalPause: false,
+        enginePaused: false,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-2997",
+          column: "in-review",
+          paused: false,
+          status: null,
+          error: null,
+          mergeRetries: 3,
+          worktree: "/tmp/test-project/.worktrees/fn-2997",
+          steps: [{ name: "Ship it", status: "done" }],
+          workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
+          mergeDetails: undefined,
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverMergeableReviewTasks();
+
+      expect(result).toBe(0);
+      expect(enqueueMerge).not.toHaveBeenCalled();
+      expect(store.logEntry).not.toHaveBeenCalledWith(
+        "FN-2997",
+        expect.stringContaining("re-enqueued for merge"),
+      );
+
+      managerWithRecovery.stop();
+    });
+
     it("moves stale in-review tasks with incomplete steps back to todo for retry", async () => {
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
@@ -2051,7 +2091,7 @@ describe("SelfHealingManager", () => {
   });
 
   describe("recoverGhostReviewTasks", () => {
-    it("kicks idle in-review tasks back to todo regardless of status or worktree", async () => {
+    it("preserves failed in-review tasks so actionable merge failures are not ghost-retried", async () => {
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
       });
@@ -2075,13 +2115,9 @@ describe("SelfHealingManager", () => {
 
       const result = await managerWithRecovery.recoverGhostReviewTasks();
 
-      expect(result).toBe(1);
-      expect(store.updateTask).toHaveBeenCalledWith("FN-9001", { status: null, error: null });
-      expect(store.moveTask).toHaveBeenCalledWith("FN-9001", "todo");
-      expect(store.logEntry).toHaveBeenCalledWith(
-        "FN-9001",
-        expect.stringContaining("idle past stuck-task timeout"),
-      );
+      expect(result).toBe(0);
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(store.moveTask).not.toHaveBeenCalled();
 
       managerWithRecovery.stop();
     });

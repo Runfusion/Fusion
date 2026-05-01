@@ -59,6 +59,7 @@ Fusion task columns:
 2. **todo** — ready for scheduling
 3. **in-progress** — executor active in isolated worktree
 4. **in-review** — implementation complete; awaiting finalization
+   - If merge/finalization hits a terminal error, tasks can remain in `in-review` with `status: "failed"` for explicit follow-up. This state is intentionally preserved by recovery (not auto-bounced to `todo`).
 5. **done** — merged/finalized
 6. **archived** — preserved history, optionally cleaned from filesystem
 

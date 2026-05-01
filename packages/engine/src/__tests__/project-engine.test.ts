@@ -1205,6 +1205,35 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     await engine.stop();
   });
 
+  it("periodic merge sweep does not re-enqueue failed in-review tasks", async () => {
+    vi.useFakeTimers();
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true, pollIntervalMs: 15_000 });
+    mocks.currentStore = mockStore.store;
+    const engine = createEngine();
+    const privateEngine = engine as unknown as { internalEnqueueMerge: (taskId: string) => void };
+    const enqueueSpy = vi.spyOn(privateEngine, "internalEnqueueMerge");
+
+    await engine.start();
+    enqueueSpy.mockClear();
+
+    mockStore.store.listTasks.mockResolvedValueOnce([
+      // Retry exhausted + failed (FN-2997 observed state after merge error)
+      { id: "FN-failed", column: "in-review", paused: false, mergeRetries: 3, status: "failed", updatedAt: new Date(Date.now() - 60 * 60_000).toISOString() },
+      // Failed status must block even when retries are below the cap.
+      { id: "FN-failed-low-retries", column: "in-review", paused: false, mergeRetries: 0, status: "failed", updatedAt: new Date().toISOString() },
+      { id: "FN-ready", column: "in-review", paused: false, mergeRetries: 0, status: null, updatedAt: new Date().toISOString() },
+    ]);
+
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(enqueueSpy).toHaveBeenCalledWith("FN-ready");
+    expect(enqueueSpy).not.toHaveBeenCalledWith("FN-failed");
+    expect(enqueueSpy).not.toHaveBeenCalledWith("FN-failed-low-retries");
+
+    await engine.stop();
+    vi.useRealTimers();
+  });
+
   it("engine unpause sweep does not enqueue paused in-review tasks", async () => {
     const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
     mocks.currentStore = mockStore.store;

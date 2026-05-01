@@ -329,6 +329,8 @@ See [Memory Plugin Contract](./memory-plugin-contract.md) for the full plan.
 - `GridlockDetector` (`gridlock-detector.ts`) — detects all-blocked todo pipelines and emits notification events (plus explicit clear signals when gridlock resolves)
 - `TransientErrorDetector` (`transient-error-detector.ts`) — retriable error classification
 - `SelfHealingManager` (`self-healing.ts`) — auto-unpause/maintenance recovery actions
+  - `recoverGhostReviewTasks()` is a fallback only for idle, non-terminal `in-review` states. Terminal/actionable states (notably `status: "failed"`) are preserved and **not** auto-kicked back to `todo`.
+  - `recoverMergeableReviewTasks()` only re-enqueues truly eligible tasks; retry-exhausted review tasks are skipped to avoid re-enqueue/no-op loops that keep refreshing `updatedAt`.
 - `UsageLimitPauser` (`usage-limit-detector.ts`) and `withRateLimitRetry` (`rate-limit-retry.ts`)
 
 ### Worktree and naming helpers
