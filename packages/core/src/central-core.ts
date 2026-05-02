@@ -52,6 +52,11 @@ import type {
   DiscoveredNode,
   NodeVersionInfo,
   NodeVersionInfoInput,
+  DockerNodeStatus,
+  DockerHostConfig,
+  ManagedDockerNode,
+  ManagedDockerNodeInput,
+  ManagedDockerNodeUpdate,
   PluginSyncResult,
   VersionCompatibilityResult,
   SettingsSyncPayload,
@@ -824,6 +829,212 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     this.db!.bumpLastModified();
     this.emit("node:updated", updated);
     return updated;
+  }
+
+  /**
+   * Create a managed Docker node record.
+   */
+  async createManagedDockerNode(input: ManagedDockerNodeInput): Promise<ManagedDockerNode> {
+    this.ensureInitialized();
+
+    const name = input.name.trim();
+    if (!name || name.length > 64) {
+      throw new Error("Managed Docker node name must be between 1 and 64 characters");
+    }
+
+    const existingByName = await this.getManagedDockerNodeByName(name);
+    if (existingByName) {
+      throw new Error(`Managed Docker node already exists with name: ${name}`);
+    }
+
+    const now = new Date().toISOString();
+    const node: ManagedDockerNode = {
+      id: `dn_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
+      nodeId: input.nodeId ?? null,
+      name,
+      imageName: input.imageName,
+      imageTag: input.imageTag,
+      containerId: null,
+      status: "creating",
+      hostConfig: input.hostConfig,
+      envVars: input.envVars,
+      volumeMounts: input.volumeMounts,
+      resourceSizing: input.resourceSizing,
+      extraClis: input.extraClis,
+      persistentStorage: input.persistentStorage,
+      reachableUrl: input.reachableUrl ?? null,
+      apiKey: input.apiKey ?? null,
+      errorMessage: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.db!.prepare(
+      `INSERT INTO managedDockerNodes (
+        id, nodeId, name, imageName, imageTag, containerId, status,
+        hostConfig, envVars, volumeMounts, resourceSizing, extraClis,
+        persistentStorage, reachableUrl, apiKey, errorMessage, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      node.id,
+      node.nodeId,
+      node.name,
+      node.imageName,
+      node.imageTag,
+      node.containerId,
+      node.status,
+      toJson(node.hostConfig),
+      toJson(node.envVars),
+      toJson(node.volumeMounts),
+      toJson(node.resourceSizing),
+      toJson(node.extraClis),
+      node.persistentStorage ? 1 : 0,
+      node.reachableUrl,
+      node.apiKey,
+      node.errorMessage,
+      node.createdAt,
+      node.updatedAt,
+    );
+
+    this.db!.bumpLastModified();
+    return node;
+  }
+
+  /**
+   * Get a managed Docker node by ID.
+   */
+  async getManagedDockerNode(id: string): Promise<ManagedDockerNode | undefined> {
+    this.ensureInitialized();
+
+    const row = this.db!.prepare("SELECT * FROM managedDockerNodes WHERE id = ?").get(id) as
+      | Parameters<CentralCore["rowToManagedDockerNode"]>[0]
+      | undefined;
+
+    return row ? this.rowToManagedDockerNode(row) : undefined;
+  }
+
+  /**
+   * Get a managed Docker node by unique name.
+   */
+  async getManagedDockerNodeByName(name: string): Promise<ManagedDockerNode | undefined> {
+    this.ensureInitialized();
+
+    const row = this.db!.prepare("SELECT * FROM managedDockerNodes WHERE name = ?").get(name) as
+      | Parameters<CentralCore["rowToManagedDockerNode"]>[0]
+      | undefined;
+
+    return row ? this.rowToManagedDockerNode(row) : undefined;
+  }
+
+  /**
+   * List managed Docker nodes ordered by name.
+   */
+  async listManagedDockerNodes(): Promise<ManagedDockerNode[]> {
+    this.ensureInitialized();
+
+    const rows = this.db!.prepare("SELECT * FROM managedDockerNodes ORDER BY name").all() as Array<
+      Parameters<CentralCore["rowToManagedDockerNode"]>[0]
+    >;
+
+    return rows.map((row) => this.rowToManagedDockerNode(row));
+  }
+
+  /**
+   * Update a managed Docker node.
+   */
+  async updateManagedDockerNode(id: string, updates: ManagedDockerNodeUpdate): Promise<ManagedDockerNode> {
+    this.ensureInitialized();
+
+    const existing = await this.getManagedDockerNode(id);
+    if (!existing) {
+      throw new Error(`Managed Docker node not found: ${id}`);
+    }
+
+    const now = new Date().toISOString();
+    const updated: ManagedDockerNode = {
+      ...existing,
+      ...updates,
+      id: existing.id,
+      createdAt: existing.createdAt,
+      updatedAt: now,
+      name: updates.name ? updates.name.trim() : existing.name,
+    };
+
+    if (!updated.name || updated.name.length > 64) {
+      throw new Error("Managed Docker node name must be between 1 and 64 characters");
+    }
+
+    if (updated.name !== existing.name) {
+      const existingByName = await this.getManagedDockerNodeByName(updated.name);
+      if (existingByName && existingByName.id !== id) {
+        throw new Error(`Managed Docker node already exists with name: ${updated.name}`);
+      }
+    }
+
+    this.db!.prepare(
+      `UPDATE managedDockerNodes SET
+        nodeId = ?,
+        name = ?,
+        imageName = ?,
+        imageTag = ?,
+        containerId = ?,
+        status = ?,
+        hostConfig = ?,
+        envVars = ?,
+        volumeMounts = ?,
+        resourceSizing = ?,
+        extraClis = ?,
+        persistentStorage = ?,
+        reachableUrl = ?,
+        apiKey = ?,
+        errorMessage = ?,
+        updatedAt = ?
+       WHERE id = ?`
+    ).run(
+      updated.nodeId,
+      updated.name,
+      updated.imageName,
+      updated.imageTag,
+      updated.containerId,
+      updated.status,
+      toJson(updated.hostConfig),
+      toJson(updated.envVars),
+      toJson(updated.volumeMounts),
+      toJson(updated.resourceSizing),
+      toJson(updated.extraClis),
+      updated.persistentStorage ? 1 : 0,
+      updated.reachableUrl,
+      updated.apiKey,
+      updated.errorMessage,
+      updated.updatedAt,
+      id,
+    );
+
+    this.db!.bumpLastModified();
+    return updated;
+  }
+
+  /**
+   * Delete a managed Docker node record by ID.
+   */
+  async deleteManagedDockerNode(id: string): Promise<void> {
+    this.ensureInitialized();
+    this.db!.prepare("DELETE FROM managedDockerNodes WHERE id = ?").run(id);
+    this.db!.bumpLastModified();
+  }
+
+  /**
+   * Link an existing managed Docker node record to a registered mesh node.
+   */
+  async linkManagedDockerNodeToNode(managedDockerNodeId: string, nodeId: string): Promise<ManagedDockerNode> {
+    this.ensureInitialized();
+
+    const node = await this.getNode(nodeId);
+    if (!node) {
+      throw new Error(`Node not found: ${nodeId}`);
+    }
+
+    return this.updateManagedDockerNode(managedDockerNodeId, { nodeId });
   }
 
   /**
@@ -2018,6 +2229,48 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       versionInfo: fromJson<NodeVersionInfo>(row.versionInfo),
       pluginVersions: fromJson<Record<string, string>>(row.pluginVersions),
       maxConcurrent: row.maxConcurrent,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  private rowToManagedDockerNode(row: {
+    id: string;
+    nodeId: string | null;
+    name: string;
+    imageName: string;
+    imageTag: string;
+    containerId: string | null;
+    status: string;
+    hostConfig: string;
+    envVars: string;
+    volumeMounts: string;
+    resourceSizing: string;
+    extraClis: string;
+    persistentStorage: number;
+    reachableUrl: string | null;
+    apiKey: string | null;
+    errorMessage: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }): ManagedDockerNode {
+    return {
+      id: row.id,
+      nodeId: row.nodeId,
+      name: row.name,
+      imageName: row.imageName,
+      imageTag: row.imageTag,
+      containerId: row.containerId,
+      status: row.status as DockerNodeStatus,
+      hostConfig: fromJson<DockerHostConfig>(row.hostConfig) ?? {},
+      envVars: fromJson<Record<string, string>>(row.envVars) ?? {},
+      volumeMounts: fromJson<ManagedDockerNode["volumeMounts"]>(row.volumeMounts) ?? [],
+      resourceSizing: fromJson<ManagedDockerNode["resourceSizing"]>(row.resourceSizing) ?? {},
+      extraClis: fromJson<ManagedDockerNode["extraClis"]>(row.extraClis) ?? [],
+      persistentStorage: row.persistentStorage === 1,
+      reachableUrl: row.reachableUrl,
+      apiKey: row.apiKey,
+      errorMessage: row.errorMessage,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };

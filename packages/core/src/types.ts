@@ -2467,6 +2467,99 @@ export type NodeVersionInfoInput = Omit<NodeVersionInfo, "appVersion"> & {
   appVersion?: string;
 };
 
+/** Lifecycle status of a managed Docker node. */
+export type DockerNodeStatus = "creating" | "running" | "stopped" | "error" | "recreating" | "deleting";
+
+/** Docker daemon connection settings for provisioning a managed node container. */
+export interface DockerHostConfig {
+  /** Docker host URI (for example: tcp://192.168.1.50:2376 or unix:///var/run/docker.sock). */
+  host?: string;
+  /** Named Docker context to target. */
+  context?: string;
+  /** Whether to verify Docker daemon TLS certificates. */
+  tlsVerify?: boolean;
+  /** Path to Docker daemon CA certificate. */
+  tlsCaPath?: string;
+  /** Path to Docker client certificate. */
+  tlsCertPath?: string;
+  /** Path to Docker client private key. */
+  tlsKeyPath?: string;
+}
+
+/** Container CPU and memory limit settings for managed Docker nodes. */
+export interface DockerResourceSizing {
+  /** Memory limit in MB (for example: 4096). */
+  memoryMB?: number;
+  /** CPU limit (for example: 2.0). */
+  cpus?: number;
+  /** Swap limit in MB (0 = unlimited swap, Docker default behavior). */
+  memorySwapMB?: number;
+}
+
+/** A single bind mount definition for a managed Docker node container. */
+export interface DockerVolumeMount {
+  /** Absolute path on the host machine. */
+  hostPath: string;
+  /** Path inside the container. */
+  containerPath: string;
+  /** Mount mode. Defaults to read/write when omitted. */
+  mode?: "ro" | "rw";
+}
+
+/** Optional additional CLI tools installed in the managed Docker node image. */
+export type DockerExtraCli = "claude-cli" | "droid-cli";
+
+/** Persisted definition and lifecycle metadata for a managed Docker node. */
+export interface ManagedDockerNode {
+  /** Unique managed Docker node ID (for example: dn_abc123). */
+  id: string;
+  /** Linked mesh node ID after registration, or null while provisioning. */
+  nodeId: string | null;
+  /** Display name (unique across managed Docker nodes). */
+  name: string;
+  /** Docker image repository/name (for example: runfusion/fusion). */
+  imageName: string;
+  /** Docker image tag (for example: latest or 0.2.0). */
+  imageTag: string;
+  /** Provisioned container ID, or null before container creation. */
+  containerId: string | null;
+  /** Current managed Docker lifecycle status. */
+  status: DockerNodeStatus;
+  /** Docker daemon host/context configuration used for operations. */
+  hostConfig: DockerHostConfig;
+  /** Environment variables injected into the container. */
+  envVars: Record<string, string>;
+  /** Bind mounts configured for this container. */
+  volumeMounts: DockerVolumeMount[];
+  /** Resource limits for this container. */
+  resourceSizing: DockerResourceSizing;
+  /** Optional extra CLI tools included in provisioning. */
+  extraClis: DockerExtraCli[];
+  /** Whether storage volumes persist across container recreation. */
+  persistentStorage: boolean;
+  /** Reachable URL for mesh/node registration once running. */
+  reachableUrl: string | null;
+  /** API key for the managed node, auto-generated or user-provided. */
+  apiKey: string | null;
+  /** Last provisioning/runtime error message when status is error. */
+  errorMessage: string | null;
+  /** ISO-8601 creation timestamp. */
+  createdAt: string;
+  /** ISO-8601 last update timestamp. */
+  updatedAt: string;
+}
+
+/** Input for creating a managed Docker node record. */
+export type ManagedDockerNodeInput = Omit<
+  ManagedDockerNode,
+  "id" | "containerId" | "status" | "createdAt" | "updatedAt" | "errorMessage"
+>;
+
+/** Partial update payload for managed Docker nodes. */
+export type ManagedDockerNodeUpdate = Partial<
+  Omit<ManagedDockerNode, "id" | "createdAt">
+>;
+
 /** A single plugin's version information for sync comparison */
 export interface PluginVersionEntry {
   /** Plugin ID (matches PluginManifest.id) */

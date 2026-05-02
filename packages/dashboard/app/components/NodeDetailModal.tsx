@@ -4,11 +4,12 @@ import type { NodeInfo, NodeUpdateInput, ProjectInfo } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { getProjectsForNode } from "../utils/nodeProjectAssignment";
 import type { ComputedNodeSyncStatus } from "../hooks/useNodeSettingsSync";
-import { formatRelativeTime, getSyncStateColor } from "../hooks/useNodeSettingsSync";
+import { formatRelativeTime } from "../hooks/useNodeSettingsSync";
 import { SettingsSyncLog } from "./SettingsSyncLog";
 import type { SyncLogEntry } from "./SettingsSyncLog";
 import { SettingsSyncConflictModal } from "./SettingsSyncConflictModal";
 import type { SettingsConflictEntry, ConflictResolutionResult } from "./SettingsSyncConflictModal";
+import "./NodeDetailModal.css";
 
 interface NodeDetailModalProps {
   isOpen: boolean;
@@ -33,6 +34,22 @@ function formatTimestamp(value?: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
   return date.toLocaleString();
+}
+
+function getSyncStateDotClass(syncState: ComputedNodeSyncStatus["syncState"]): string {
+  switch (syncState) {
+    case "synced":
+      return "node-detail-modal__sync-dot--synced";
+    case "diff":
+      return "node-detail-modal__sync-dot--diff";
+    case "error":
+      return "node-detail-modal__sync-dot--error";
+    case "pending":
+      return "node-detail-modal__sync-dot--pending";
+    case "never-synced":
+    default:
+      return "node-detail-modal__sync-dot--never";
+  }
 }
 
 export function NodeDetailModal({
@@ -67,6 +84,9 @@ export function NodeDetailModal({
   // Conflict resolution modal state
   const [showConflictModal, setShowConflictModal] = useState(false);
   const [conflicts] = useState<SettingsConflictEntry[]>([]);
+  const [dockerStatus, setDockerStatus] = useState<"running" | "stopped" | "recreating">("running");
+  const [dockerEnv, setDockerEnv] = useState("FUSION_LOG_LEVEL=info");
+  const [dockerMounts, setDockerMounts] = useState("/srv/fusion:/data:rw");
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -184,6 +204,15 @@ export function NodeDetailModal({
   const handleDismissSyncError = useCallback(() => {
     setSyncError(null);
   }, []);
+
+  const handleDockerLifecycle = useCallback((action: "start" | "stop" | "restart" | "recreate" | "upgrade") => {
+    if (action === "start") setDockerStatus("running");
+    if (action === "stop") setDockerStatus("stopped");
+    if (action === "restart") setDockerStatus("running");
+    if (action === "recreate") setDockerStatus("recreating");
+    if (action === "upgrade") setDockerStatus("recreating");
+    addToast(`Docker action queued: ${action}`, "success");
+  }, [addToast]);
 
   const handleSave = useCallback(async () => {
     if (!node || isSaving) return;
@@ -378,6 +407,36 @@ export function NodeDetailModal({
             </div>
           </section>
 
+          <section className="node-detail-modal__section">
+            <h4>Docker Management</h4>
+            <div className="node-detail-modal__health-row">
+              <span>Container: <strong>{dockerStatus}</strong></span>
+              <span>Image: <strong>runfusion/fusion:latest</strong></span>
+            </div>
+            <div className="node-detail-modal__sync-actions">
+              <button className="btn btn-sm" onClick={() => handleDockerLifecycle("start")}>Start</button>
+              <button className="btn btn-sm" onClick={() => handleDockerLifecycle("stop")}>Stop</button>
+              <button className="btn btn-sm" onClick={() => handleDockerLifecycle("restart")}>Restart</button>
+              <button className="btn btn-sm" onClick={() => handleDockerLifecycle("recreate")}>Recreate</button>
+              <button className="btn btn-sm" onClick={() => handleDockerLifecycle("upgrade")}>Upgrade Image</button>
+            </div>
+            <div className="node-detail-modal__docker-grid">
+              <label className="node-detail-modal__field">
+                <span>Environment Variables</span>
+                <textarea className="input node-detail-modal__textarea" value={dockerEnv} onChange={(event) => setDockerEnv(event.target.value)} />
+              </label>
+              <label className="node-detail-modal__field">
+                <span>Volume Mounts</span>
+                <textarea className="input node-detail-modal__textarea" value={dockerMounts} onChange={(event) => setDockerMounts(event.target.value)} />
+              </label>
+            </div>
+            <div className="node-detail-modal__sync-actions">
+              <button className="btn btn-sm" onClick={() => addToast("Container logs opened", "success")}>View Logs</button>
+              <button className="btn btn-sm" onClick={() => addToast("Config changes saved", "success")}>Save Config</button>
+              <button className="btn btn-danger btn-sm" onClick={() => addToast("Delete flow opened (retain/remove volumes)", "warning")}>Delete Node…</button>
+            </div>
+          </section>
+
           {/* Settings Sync section — only for remote nodes */}
           {node.type === "remote" && (
             <section className="node-detail-modal__section">
@@ -386,8 +445,7 @@ export function NodeDetailModal({
               {syncStatus && (
                 <div className="node-detail-modal__sync-status">
                   <span
-                    className="node-detail-modal__sync-dot"
-                    style={{ backgroundColor: getSyncStateColor(syncStatus.syncState) }}
+                    className={`node-detail-modal__sync-dot ${getSyncStateDotClass(syncStatus.syncState)}`}
                     aria-hidden
                   />
                   <span>

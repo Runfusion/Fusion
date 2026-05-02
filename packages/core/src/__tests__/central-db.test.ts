@@ -39,7 +39,7 @@ describe("CentralDatabase", () => {
 
     it("should initialize schema version", () => {
       db.init();
-      expect(db.getSchemaVersion()).toBe(5);
+      expect(db.getSchemaVersion()).toBe(6);
     });
 
     it("should seed lastModified on init", () => {
@@ -213,7 +213,7 @@ describe("CentralDatabase", () => {
 
       db.init();
 
-      expect(db.getSchemaVersion()).toBe(5);
+      expect(db.getSchemaVersion()).toBe(6);
 
       const nodeColumns = db.prepare("PRAGMA table_info(nodes)").all() as Array<{ name: string }>;
       const nodeColumnNames = nodeColumns.map((column) => column.name);
@@ -278,7 +278,7 @@ describe("CentralDatabase", () => {
 
       db.init();
 
-      expect(db.getSchemaVersion()).toBe(5);
+      expect(db.getSchemaVersion()).toBe(6);
 
       const nodeColumns = db.prepare("PRAGMA table_info(nodes)").all() as Array<{ name: string }>;
       const nodeColumnNames = nodeColumns.map((column) => column.name);
@@ -293,6 +293,137 @@ describe("CentralDatabase", () => {
       expect(row).toBeDefined();
       expect(row?.versionInfo).toBeNull();
       expect(row?.pluginVersions).toBeNull();
+    });
+
+    it("should migrate from v5 to v6 with managed Docker node schema", () => {
+      const now = new Date().toISOString();
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS projects (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          path TEXT NOT NULL UNIQUE,
+          status TEXT NOT NULL DEFAULT 'active',
+          isolationMode TEXT NOT NULL DEFAULT 'in-process',
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT NOT NULL,
+          lastActivityAt TEXT,
+          nodeId TEXT,
+          settings TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS nodes (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          type TEXT NOT NULL CHECK (type IN ('local', 'remote')),
+          url TEXT,
+          apiKey TEXT,
+          status TEXT NOT NULL DEFAULT 'offline',
+          capabilities TEXT,
+          systemMetrics TEXT,
+          knownPeers TEXT,
+          versionInfo TEXT,
+          pluginVersions TEXT,
+          maxConcurrent INTEGER NOT NULL DEFAULT 2,
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS peerNodes (
+          id TEXT PRIMARY KEY,
+          nodeId TEXT NOT NULL,
+          peerNodeId TEXT NOT NULL,
+          name TEXT NOT NULL,
+          url TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'unknown',
+          lastSeen TEXT NOT NULL,
+          connectedAt TEXT NOT NULL,
+          UNIQUE(nodeId, peerNodeId),
+          FOREIGN KEY (nodeId) REFERENCES nodes(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS settingsSyncState (
+          nodeId TEXT NOT NULL,
+          remoteNodeId TEXT NOT NULL,
+          lastSyncedAt TEXT,
+          localChecksum TEXT,
+          remoteChecksum TEXT,
+          syncCount INTEGER NOT NULL DEFAULT 0,
+          createdAt TEXT NOT NULL,
+          updatedAt TEXT NOT NULL,
+          PRIMARY KEY (nodeId, remoteNodeId),
+          FOREIGN KEY (nodeId) REFERENCES nodes(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS __meta (
+          key TEXT PRIMARY KEY,
+          value TEXT
+        );
+      `);
+
+      db.prepare("INSERT INTO __meta (key, value) VALUES ('schemaVersion', '5')").run();
+      db.prepare("INSERT INTO __meta (key, value) VALUES ('lastModified', ?)").run(String(Date.now()));
+
+      db.init();
+
+      expect(db.getSchemaVersion()).toBe(6);
+
+      const columns = db.prepare("PRAGMA table_info(managedDockerNodes)").all() as Array<{ name: string }>;
+      const columnNames = columns.map((column) => column.name);
+      expect(columnNames).toEqual(
+        expect.arrayContaining([
+          "id",
+          "nodeId",
+          "name",
+          "imageName",
+          "imageTag",
+          "containerId",
+          "status",
+          "hostConfig",
+          "envVars",
+          "volumeMounts",
+          "resourceSizing",
+          "extraClis",
+          "persistentStorage",
+          "reachableUrl",
+          "apiKey",
+          "errorMessage",
+          "createdAt",
+          "updatedAt",
+        ]),
+      );
+
+      const indexes = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='managedDockerNodes'")
+        .all() as Array<{ name: string }>;
+      const indexNames = indexes.map((index) => index.name);
+      expect(indexNames).toContain("idxManagedDockerNodesStatus");
+      expect(indexNames).toContain("idxManagedDockerNodesNodeId");
+
+      db.prepare(
+        "INSERT INTO managedDockerNodes (id, name, imageName, imageTag, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run("dn_test_defaults", "docker-defaults", "runfusion/fusion", "latest", now, now);
+
+      const row = db.prepare(
+        "SELECT status, hostConfig, envVars, volumeMounts, resourceSizing, extraClis FROM managedDockerNodes WHERE id = ?",
+      ).get("dn_test_defaults") as
+        | {
+            status: string;
+            hostConfig: string;
+            envVars: string;
+            volumeMounts: string;
+            resourceSizing: string;
+            extraClis: string;
+          }
+        | undefined;
+
+      expect(row).toBeDefined();
+      expect(row?.status).toBe("creating");
+      expect(fromJson(row?.hostConfig, {})).toEqual({});
+      expect(fromJson(row?.envVars, {})).toEqual({});
+      expect(fromJson(row?.volumeMounts, [])).toEqual([]);
+      expect(fromJson(row?.resourceSizing, {})).toEqual({});
+      expect(fromJson(row?.extraClis, [])).toEqual([]);
     });
   });
 

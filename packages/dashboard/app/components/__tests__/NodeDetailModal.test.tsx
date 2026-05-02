@@ -13,6 +13,9 @@ vi.mock("lucide-react", () => ({
   Upload: () => <span data-testid="upload-icon">upload</span>,
   X: () => <span data-testid="x-icon">x</span>,
   ChevronDown: () => <span data-testid="chevron-down">chevron</span>,
+  Play: () => <span data-testid="play-icon">play</span>,
+  Square: () => <span data-testid="square-icon">square</span>,
+  RotateCw: () => <span data-testid="rotate-icon">rotate</span>,
 }));
 
 vi.mock("../../hooks/useNodeSettingsSync", () => ({
@@ -100,11 +103,12 @@ describe("NodeDetailModal", () => {
       expect(screen.getByRole("dialog", { name: "Node details for Custom Node Name" })).toBeInTheDocument();
     });
 
-    it("renders Overview, Projects, Health, and Settings Sync sections for remote nodes", () => {
+    it("renders Overview, Projects, Health, Docker Management, and Settings Sync sections for remote nodes", () => {
       render(<NodeDetailModal {...defaultProps} />);
       expect(screen.getByText("Overview")).toBeInTheDocument();
       expect(screen.getByText(/^Assigned Projects \(\d+\)$/)).toBeInTheDocument();
       expect(screen.getByText("Health")).toBeInTheDocument();
+      expect(screen.getByText("Docker Management")).toBeInTheDocument();
       expect(screen.getByText("Settings Sync")).toBeInTheDocument();
     });
 

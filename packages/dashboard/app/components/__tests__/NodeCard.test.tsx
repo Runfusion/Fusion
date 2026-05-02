@@ -10,6 +10,9 @@ vi.mock("lucide-react", () => ({
   Server: () => <span data-testid="server-icon">server</span>,
   Settings: () => <span data-testid="settings-icon">settings</span>,
   Shield: () => <span data-testid="shield-icon">shield</span>,
+  Play: () => <span data-testid="play-icon">play</span>,
+  Square: () => <span data-testid="square-icon">square</span>,
+  RotateCw: () => <span data-testid="rotate-icon">rotate</span>,
   Trash2: () => <span data-testid="trash-icon">trash</span>,
 }));
 
