@@ -2,11 +2,11 @@ import "./QuickEntryBox.css";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import type { ToastType } from "../hooks/useToast";
-import type { Task, TaskCreateInput, Settings } from "@fusion/core";
-import { getErrorMessage } from "@fusion/core";
+import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, getErrorMessage } from "@fusion/core";
+import type { Task, TaskCreateInput, Settings, TaskPriority } from "@fusion/core";
 import type { ModelInfo, RefinementType, Agent } from "../api";
 import { fetchModels, fetchSettings, refineText, getRefineErrorMessage, updateGlobalSettings, fetchAgents, uploadAttachment } from "../api";
-import { Link, Paperclip, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Server } from "lucide-react";
+import { Link, Paperclip, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Server, Flag } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { useNodes } from "../hooks/useNodes";
@@ -120,6 +120,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [agentsProjectId, setAgentsProjectId] = useState<string | undefined>(undefined);
   const [showAgentPicker, setShowAgentPicker] = useState(false);
   const [showNodePicker, setShowNodePicker] = useState(false);
+  const [showPriorityPicker, setShowPriorityPicker] = useState(false);
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [activeModelSubmenu, setActiveModelSubmenu] = useState<"plan" | "executor" | "validator" | null>(null);
@@ -135,8 +136,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const agentPickerPortalRef = useRef<HTMLDivElement>(null);
   const nodePickerRef = useRef<HTMLDivElement>(null);
   const nodePickerPortalRef = useRef<HTMLDivElement>(null);
+  const priorityPickerRef = useRef<HTMLDivElement>(null);
+  const priorityPickerPortalRef = useRef<HTMLDivElement>(null);
   const [agentPickerPosition, setAgentPickerPosition] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
   const [nodePickerPosition, setNodePickerPosition] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
+  const [priorityPickerPosition, setPriorityPickerPosition] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
   const [modelMenuPosition, setModelMenuPosition] = useState<{ top: number; left: number; width: number; maxHeight?: number } | null>(null);
   // Dependency dropdown portal refs and state
   const depTriggerRef = useRef<HTMLButtonElement>(null);
@@ -153,6 +157,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [settings, setSettings] = useState<Settings | null>(null);
   const [selectedPresetId, setSelectedPresetId] = useState<string | undefined>(undefined);
   const [isFastMode, setIsFastMode] = useState(false);
+  const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
   const [nodeId, setNodeId] = useState<string | undefined>(undefined);
   const { nodes } = useNodes();
 
@@ -391,6 +396,21 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showAgentPicker]);
 
+  useEffect(() => {
+    if (!showPriorityPicker) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (priorityPickerRef.current?.contains(target)) return;
+      if (priorityPickerPortalRef.current?.contains(target)) return;
+      setShowPriorityPicker(false);
+      setPriorityPickerPosition(null);
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showPriorityPicker]);
+
   const resetForm = useCallback(() => {
     pendingImages.forEach((img) => URL.revokeObjectURL(img.previewUrl));
     setPendingImages([]);
@@ -405,6 +425,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setAgentPickerPosition(null);
     setShowNodePicker(false);
     setNodePickerPosition(null);
+    setShowPriorityPicker(false);
+    setPriorityPickerPosition(null);
     setExecutorProvider(undefined);
     setExecutorModelId(undefined);
     setValidatorProvider(undefined);
@@ -413,6 +435,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setPlanningModelId(undefined);
     setSelectedPresetId(undefined);
     setIsFastMode(false);
+    setPriority(DEFAULT_TASK_PRIORITY);
     setNodeId(undefined);
     setShowDeps(false);
     setIsModelMenuOpen(false);
@@ -485,6 +508,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         planningModelProvider: hasPlanningOverride ? planningProvider : undefined,
         planningModelId: hasPlanningOverride ? planningModelId : undefined,
         ...(isFastMode ? { executionMode: "fast" } : {}),
+        priority,
         nodeId,
       });
       if (createdTask && pendingImages.length > 0) {
@@ -531,6 +555,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     addToast,
     resetForm,
     isFastMode,
+    priority,
     nodeId,
   ]);
 
@@ -571,6 +596,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
           setNodePickerPosition(null);
           return;
         }
+        if (showPriorityPicker) {
+          setShowPriorityPicker(false);
+          setPriorityPickerPosition(null);
+          return;
+        }
         if (showAgentPicker) {
           setShowAgentPicker(false);
           setAgentPickerPosition(null);
@@ -604,6 +634,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       isModelMenuOpen,
       activeModelSubmenu,
       isRefineMenuOpen,
+      showPriorityPicker,
       projectId,
       setIsDisclosureExpanded,
     ],
@@ -925,6 +956,55 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     });
   }, [getEffectiveViewport]);
 
+  const updatePriorityPickerPosition = useCallback(() => {
+    const trigger = priorityPickerRef.current?.querySelector("button") as HTMLButtonElement | null;
+    if (!trigger) return;
+
+    const rect = trigger.getBoundingClientRect();
+    const { width: viewportWidth, height: viewportHeight, offsetTop, offsetLeft } = getEffectiveViewport();
+    const horizontalPadding = 16;
+    const verticalPadding = 16;
+    const gap = 4;
+    const preferredHeight = 220;
+    const width = Math.min(
+      Math.max(rect.width, 200),
+      Math.max(viewportWidth - horizontalPadding * 2, 200),
+    );
+
+    const triggerTop = rect.top - offsetTop;
+    const triggerBottom = rect.bottom - offsetTop;
+    const triggerLeft = rect.left - offsetLeft;
+
+    const spaceBelow = viewportHeight - triggerBottom;
+    const spaceAbove = triggerTop;
+    const availableBelow = Math.max(spaceBelow - verticalPadding - gap, 160);
+    const availableAbove = Math.max(spaceAbove - verticalPadding - gap, 160);
+    const openUpward = spaceBelow < preferredHeight && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(
+      Math.min(openUpward ? availableAbove : availableBelow, preferredHeight),
+      160,
+    );
+
+    const left = Math.min(
+      Math.max(triggerLeft, horizontalPadding),
+      viewportWidth - horizontalPadding - width,
+    ) + offsetLeft;
+
+    const top = openUpward
+      ? Math.max(verticalPadding + offsetTop, triggerTop - maxHeight - gap + offsetTop)
+      : Math.min(
+          triggerBottom + gap + offsetTop,
+          viewportHeight + offsetTop - verticalPadding - maxHeight,
+        );
+
+    setPriorityPickerPosition({
+      top,
+      left,
+      width,
+      maxHeight,
+    });
+  }, [getEffectiveViewport]);
+
   // Keep model menu portal anchored during scroll/resize
   useEffect(() => {
     if (!isModelMenuOpen) return;
@@ -1049,6 +1129,31 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       }
     };
   }, [showNodePicker, updateNodePickerPosition]);
+
+  // Keep priority picker portal anchored during scroll/resize
+  useEffect(() => {
+    if (!showPriorityPicker) return;
+
+    const handleReposition = () => updatePriorityPickerPosition();
+
+    window.addEventListener("resize", handleReposition);
+    window.addEventListener("scroll", handleReposition, true);
+
+    const vv = window.visualViewport;
+    if (vv) {
+      vv.addEventListener("resize", handleReposition);
+      vv.addEventListener("scroll", handleReposition);
+    }
+
+    return () => {
+      window.removeEventListener("resize", handleReposition);
+      window.removeEventListener("scroll", handleReposition, true);
+      if (vv) {
+        vv.removeEventListener("resize", handleReposition);
+        vv.removeEventListener("scroll", handleReposition);
+      }
+    };
+  }, [showPriorityPicker, updatePriorityPickerPosition]);
 
   const handlePlanningModelChange = useCallback((value: string) => {
     const next = parseModelSelection(value);
@@ -1388,6 +1493,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                       setAgentPickerPosition(null);
                       setShowNodePicker(false);
                       setNodePickerPosition(null);
+                      setShowPriorityPicker(false);
+                      setPriorityPickerPosition(null);
                       // Position the dropdown before rendering
                       updateDepDropdownPosition();
                     } else {
@@ -1481,6 +1588,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                 setAgentPickerPosition(null);
                 setShowNodePicker(false);
                 setNodePickerPosition(null);
+                setShowPriorityPicker(false);
+                setPriorityPickerPosition(null);
                 setActiveModelSubmenu(null);
                 setIsModelMenuOpen(true);
                 updateModelMenuPosition();
@@ -1502,6 +1611,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                   setIsModelMenuOpen(false);
                   setModelMenuPosition(null);
                   setActiveModelSubmenu(null);
+                  setShowPriorityPicker(false);
+                  setPriorityPickerPosition(null);
                   setShowNodePicker((prev) => {
                     const next = !prev;
                     if (next) {
@@ -1582,6 +1693,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                   } else {
                     setShowNodePicker(false);
                     setNodePickerPosition(null);
+                    setShowPriorityPicker(false);
+                    setPriorityPickerPosition(null);
                     void loadAgents();
                   }
                 }}
@@ -1639,6 +1752,73 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                     <span className="dep-dropdown-title">Clear selection</span>
                   </div>
                 )}
+              </div>,
+              portalRoot,
+            )}
+
+            <div className="priority-trigger-wrap" ref={priorityPickerRef}>
+              <button
+                type="button"
+                className="btn btn-sm dep-trigger"
+                data-testid="quick-entry-priority-button"
+                onClick={() => {
+                  setShowDeps(false);
+                  setShowAgentPicker(false);
+                  setAgentPickerPosition(null);
+                  setShowNodePicker(false);
+                  setNodePickerPosition(null);
+                  setIsModelMenuOpen(false);
+                  setModelMenuPosition(null);
+                  setActiveModelSubmenu(null);
+                  setShowPriorityPicker((prev) => {
+                    const next = !prev;
+                    if (next) {
+                      updatePriorityPickerPosition();
+                    } else {
+                      setPriorityPickerPosition(null);
+                    }
+                    return next;
+                  });
+                }}
+              >
+                <Flag size={12} style={{ verticalAlign: "middle" }} />
+                {` ${priority[0].toUpperCase()}${priority.slice(1)}`}
+              </button>
+            </div>
+
+            {showPriorityPicker && portalRoot && priorityPickerPosition && createPortal(
+              <div
+                ref={priorityPickerPortalRef}
+                className="dep-dropdown priority-picker-dropdown priority-picker-dropdown--portal"
+                onMouseDown={(e) => e.preventDefault()}
+                style={{
+                  position: "fixed",
+                  top: `${priorityPickerPosition.top}px`,
+                  left: `${priorityPickerPosition.left}px`,
+                  width: `${priorityPickerPosition.width}px`,
+                  maxHeight: priorityPickerPosition.maxHeight ? `${priorityPickerPosition.maxHeight}px` : undefined,
+                  overflowY: priorityPickerPosition.maxHeight ? "auto" : undefined,
+                }}
+              >
+                <div className="dep-dropdown-search-header">Select priority</div>
+                {TASK_PRIORITIES.map((taskPriority) => {
+                  const label = `${taskPriority[0].toUpperCase()}${taskPriority.slice(1)}`;
+                  return (
+                    <div
+                      key={taskPriority}
+                      className={`dep-dropdown-item${priority === taskPriority ? " selected" : ""}`}
+                      data-testid={`quick-entry-priority-option-${taskPriority}`}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setPriority(taskPriority);
+                        setShowPriorityPicker(false);
+                        setPriorityPickerPosition(null);
+                      }}
+                    >
+                      <span className="dep-dropdown-title">{label}</span>
+                    </div>
+                  );
+                })}
               </div>,
               portalRoot,
             )}

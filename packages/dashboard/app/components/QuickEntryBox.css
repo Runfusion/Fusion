@@ -117,9 +117,22 @@
   position: relative;
 }
 
-.node-trigger-wrap {
+.node-trigger-wrap,
+.priority-trigger-wrap {
   position: relative;
   display: inline-flex;
+}
+
+.priority-picker-dropdown {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  background: var(--surface);
+  z-index: 1000;
+}
+
+.priority-picker-dropdown--portal {
+  position: fixed;
 }
 
 .node-picker-dropdown {

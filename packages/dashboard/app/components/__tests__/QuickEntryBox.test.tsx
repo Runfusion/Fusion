@@ -133,6 +133,7 @@ vi.mock("lucide-react", () => ({
   ChevronRight: () => null,
   Bot: () => null,
   Server: () => null,
+  Flag: () => null,
   Maximize2: () => null,
   Minimize2: () => null,
 }));
@@ -214,6 +215,10 @@ function openModelMenu() {
 
 function clickSave() {
   fireEvent.click(screen.getByTestId("quick-entry-save"));
+}
+
+function openPriorityMenu() {
+  fireEvent.click(screen.getByTestId("quick-entry-priority-button"));
 }
 
 function mockDesktopViewport() {
@@ -690,6 +695,35 @@ describe("QuickEntryBox", () => {
       expect(fastToggle.getAttribute("aria-pressed")).toBe("false");
     });
 
+    it("shows Priority selector in expanded controls", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      const priorityButton = screen.getByTestId("quick-entry-priority-button");
+      expect(priorityButton).toBeTruthy();
+      expect(priorityButton.textContent).toContain("Normal");
+    });
+
+    it("submits selected priority through onCreate payload", async () => {
+      const { props } = renderQuickEntryBox({});
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.change(textarea, { target: { value: "Priority payload task" } });
+      openPriorityMenu();
+      fireEvent.click(screen.getByTestId("quick-entry-priority-option-urgent"));
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            description: "Priority payload task",
+            priority: "urgent",
+          }),
+        );
+      });
+    });
+
     it("toggles Fast pressed state", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
@@ -796,6 +830,47 @@ describe("QuickEntryBox", () => {
 
       expandQuickEntry();
       expect(screen.getByTestId("quick-entry-fast-toggle").getAttribute("aria-pressed")).toBe("false");
+    });
+
+    it("resets priority to normal after successful task creation", async () => {
+      const { props } = renderQuickEntryBox({});
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.change(textarea, { target: { value: "Priority reset after save" } });
+      openPriorityMenu();
+      fireEvent.click(screen.getByTestId("quick-entry-priority-option-high"));
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalledTimes(1);
+      });
+
+      expandQuickEntry();
+      expect(screen.getByTestId("quick-entry-priority-button").textContent).toContain("Normal");
+    });
+
+    it.each([
+      { label: "Plan", buttonId: "plan-button" },
+      { label: "Subtask", buttonId: "subtask-button" },
+    ])("resets priority to normal after %s flow", async ({ buttonId }) => {
+      const onPlanningMode = vi.fn();
+      const onSubtaskBreakdown = vi.fn();
+      renderQuickEntryBox({ onPlanningMode, onSubtaskBreakdown });
+
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+      fireEvent.change(textarea, { target: { value: `${buttonId} reset` } });
+      openPriorityMenu();
+      fireEvent.click(screen.getByTestId("quick-entry-priority-option-urgent"));
+      fireEvent.click(screen.getByTestId(buttonId));
+
+      await waitFor(() => {
+        expect(buttonId === "plan-button" ? onPlanningMode : onSubtaskBreakdown).toHaveBeenCalled();
+      });
+
+      expandQuickEntry();
+      expect(screen.getByTestId("quick-entry-priority-button").textContent).toContain("Normal");
     });
 
     it("opens dependency dropdown when clicking deps button", () => {

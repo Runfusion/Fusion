@@ -50,6 +50,7 @@ Expand the creation panel (▼) to access additional controls:
 - **Deps** (🔗) — Link existing tasks as dependencies
 - **Attach** — Add image attachments
 - **Models** (🧠) — Set per-task model overrides (executor, validator, planning)
+- **Priority** (🚩) — Set task priority (`low`, `normal`, `high`, `urgent`) before creation
 - **Agent** — Assign an agent to the task
 - **Review** — Set review rigor level (None, Plan Only, Plan and Code, Full)
 - **Browser Verify** — Enable browser verification workflow step
