@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { AgentsView } from "../AgentsView";
 import * as apiModule from "../../api";
 import type { Agent, AgentState, AgentCapability, OrgTreeNode } from "../../api";
@@ -31,7 +31,16 @@ vi.mock("../../api", async (importOriginal) => {
 });
 
 vi.mock("../AgentDetailView", () => ({
-  AgentDetailView: ({ agentId }: { agentId: string }) => <div data-testid="agent-detail-view">Agent detail: {agentId}</div>,
+  AgentDetailView: ({ agentId, inline }: { agentId: string; inline?: boolean }) => (
+    <div data-testid="agent-detail-view" data-inline={inline ? "true" : "false"}>Agent detail: {agentId}</div>
+  ),
+  relativeTime: () => "just now",
+}));
+
+const mockViewportMode = vi.fn<() => "mobile" | "tablet" | "desktop">(() => "desktop");
+
+vi.mock("../../hooks/useViewportMode", () => ({
+  useViewportMode: () => mockViewportMode(),
 }));
 
 const mockConfirm = vi.fn();
@@ -105,6 +114,7 @@ describe("AgentsView", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockViewportMode.mockReturnValue("desktop");
     mockConfirm.mockReset();
     mockConfirm.mockResolvedValue(true);
     localStorage.clear();
@@ -149,6 +159,131 @@ describe("AgentsView", () => {
         // Active agents may appear in both ActiveAgentsPanel and main list
         expect(screen.getAllByText("Test Agent 1").length).toBeGreaterThanOrEqual(1);
         expect(screen.getAllByText("Test Agent 2").length).toBeGreaterThanOrEqual(1);
+      });
+    });
+
+    it("renders split layout with sidebar and detail pane", async () => {
+      const { container } = render(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(container.querySelector(".agents-split-layout")).toBeTruthy();
+      });
+
+      expect(container.querySelector(".agents-split-sidebar")).toBeTruthy();
+      expect(container.querySelector(".agents-split-detail")).toBeTruthy();
+      expect(screen.getByText("Select an agent")).toBeInTheDocument();
+      expect(screen.getByText("Choose an agent from the sidebar to view details")).toBeInTheDocument();
+    });
+
+    it("opens inline detail pane and marks selected card", async () => {
+      const { container } = render(<AgentsView addToast={mockAddToast} />);
+
+      const detailButton = await screen.findByRole("button", { name: "View details for Test Agent 1" });
+      fireEvent.click(detailButton);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("agent-detail-view")).toHaveAttribute("data-inline", "true");
+      });
+
+      expect(container.querySelector(".agent-card--selected")).toBeTruthy();
+    });
+
+    it("renders desktop quick controls and run now starts heartbeat", async () => {
+      render(<AgentsView addToast={mockAddToast} />);
+
+      const detailButton = await screen.findByRole("button", { name: "View details for Test Agent 2" });
+      fireEvent.click(detailButton);
+
+      const runNowButtons = await screen.findAllByRole("button", { name: /Run Now/i });
+      fireEvent.click(runNowButtons[0]);
+
+      await waitFor(() => {
+        expect(mockStartAgentRun).toHaveBeenCalled();
+      });
+    });
+
+    it.each([
+      { state: "idle", expected: ["Start"], unexpected: ["Run Now", "Pause", "Resume", "Retry", "Delete"] },
+      { state: "active", expected: ["Run Now", "Pause"], unexpected: ["Resume", "Retry", "Delete"] },
+      { state: "paused", expected: ["Resume"], unexpected: ["Run Now", "Pause", "Retry", "Delete"] },
+      { state: "running", expected: ["Pause"], unexpected: ["Run Now", "Resume", "Retry", "Delete"] },
+      { state: "error", expected: ["Retry"], unexpected: ["Run Now", "Pause", "Resume", "Delete"] },
+      { state: "terminated", expected: ["Start", "Delete"], unexpected: ["Run Now", "Pause", "Resume", "Retry"] },
+    ] as const)("shows correct quick-control buttons for $state state", async ({ state, expected, unexpected }) => {
+      const stateAgent = {
+        ...mockAgents[0],
+        id: "state-agent",
+        name: `State ${state}`,
+        state,
+      } as Agent;
+      mockFetchAgents.mockResolvedValueOnce([stateAgent]);
+      mockFetchAgentStats.mockResolvedValueOnce({ total: 1, byState: {}, byRole: {} });
+
+      render(<AgentsView addToast={mockAddToast} />);
+
+      const detailButton = await screen.findByRole("button", { name: `View details for State ${state}` });
+      fireEvent.click(detailButton);
+
+      const quickControls = await screen.findByText(`State ${state}`, { selector: ".agents-sidebar-quick-controls strong" });
+      const quickControlsPanel = quickControls.closest(".agents-sidebar-quick-controls");
+      expect(quickControlsPanel).toBeTruthy();
+
+      for (const label of expected) {
+        expect(within(quickControlsPanel as HTMLElement).getByRole("button", { name: new RegExp(label, "i") })).toBeTruthy();
+      }
+      for (const label of unexpected) {
+        expect(within(quickControlsPanel as HTMLElement).queryByRole("button", { name: new RegExp(label, "i") })).toBeNull();
+      }
+    });
+
+    it("quick control start button triggers state update", async () => {
+      const idleAgent = { ...mockAgents[0], id: "idle-agent", name: "Idle Agent", state: "idle" as AgentState };
+      mockFetchAgents.mockResolvedValueOnce([idleAgent]);
+      mockFetchAgentStats.mockResolvedValueOnce({ total: 1, byState: {}, byRole: {} });
+
+      render(<AgentsView addToast={mockAddToast} />);
+      fireEvent.click(await screen.findByRole("button", { name: "View details for Idle Agent" }));
+      const quickControlsPanel = await screen.findByText("Idle Agent", { selector: ".agents-sidebar-quick-controls strong" });
+      fireEvent.click(within(quickControlsPanel.closest(".agents-sidebar-quick-controls") as HTMLElement).getByRole("button", { name: /Start/i }));
+
+      await waitFor(() => {
+        expect(mockUpdateAgentState).toHaveBeenCalledWith("idle-agent", "active", undefined);
+      });
+    });
+
+    it("quick control delete button deletes terminated agent", async () => {
+      const terminatedAgent = { ...mockAgents[0], id: "terminated-agent", name: "Terminated Agent", state: "terminated" as AgentState };
+      mockFetchAgents.mockResolvedValueOnce([terminatedAgent]);
+      mockFetchAgentStats.mockResolvedValueOnce({ total: 1, byState: {}, byRole: {} });
+
+      render(<AgentsView addToast={mockAddToast} />);
+      fireEvent.click(await screen.findByRole("button", { name: "View details for Terminated Agent" }));
+      const quickControlsPanel = await screen.findByText("Terminated Agent", { selector: ".agents-sidebar-quick-controls strong" });
+      fireEvent.click(within(quickControlsPanel.closest(".agents-sidebar-quick-controls") as HTMLElement).getByRole("button", { name: /Delete/i }));
+
+      await waitFor(() => {
+        expect(mockDeleteAgent).toHaveBeenCalledWith("terminated-agent", undefined);
+      });
+    });
+
+    it("supports mobile drill-in detail with back navigation", async () => {
+      mockViewportMode.mockReturnValue("mobile");
+      const { container } = render(<AgentsView addToast={mockAddToast} />);
+
+      expect(container.querySelector(".agents-split-sidebar")).toBeTruthy();
+      expect(container.querySelector(".agents-split-detail--hidden-mobile")).toBeTruthy();
+
+      fireEvent.click(await screen.findByRole("button", { name: "View details for Test Agent 1" }));
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Agents" })).toBeTruthy();
+      });
+
+      expect(container.querySelector(".agents-split-sidebar--hidden-mobile")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Agents" }));
+
+      await waitFor(() => {
+        expect(screen.getByText("Select an agent")).toBeInTheDocument();
       });
     });
 

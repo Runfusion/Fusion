@@ -34,7 +34,7 @@ function cn(...classes: (string | boolean | undefined | null)[]): string {
 /**
  * Format an ISO timestamp to a relative time string.
  */
-function relativeTime(iso: string): string {
+export function relativeTime(iso: string): string {
   const now = Date.now();
   const then = new Date(iso).getTime();
   const diffMs = now - then;
@@ -61,6 +61,7 @@ interface AgentDetailViewProps {
   onClose: () => void;
   addToast: (message: string, type?: "success" | "error") => void;
   onChildClick?: (childId: string) => void;
+  inline?: boolean;
 }
 
 type TabId = "dashboard" | "logs" | "config" | "runs" | "tasks" | "employees" | "soul" | "instructions" | "memory" | "reflections";
@@ -88,10 +89,10 @@ const STATE_COLORS: Record<AgentState, { bg: string; text: string; border: strin
 };
 
 const RUN_STATUS_ICONS: Record<string, { icon: typeof CheckCircle; color: string }> = {
-  completed: { icon: CheckCircle, color: "var(--color-success, #3fb950)" },
-  failed: { icon: XCircle, color: "var(--color-error, #f85149)" },
-  active: { icon: Loader2, color: "var(--in-progress, #bc8cff)" },
-  terminated: { icon: Square, color: "var(--text-muted, #8b949e)" },
+  completed: { icon: CheckCircle, color: "var(--color-success)" },
+  failed: { icon: XCircle, color: "var(--color-error)" },
+  active: { icon: Loader2, color: "var(--in-progress)" },
+  terminated: { icon: Square, color: "var(--text-muted)" },
 };
 
 const MEMORY_LAYER_NAMES: Record<MemoryFileInfo["layer"], string> = {
@@ -118,7 +119,7 @@ function pickDefaultAgentMemoryPath(files: MemoryFileInfo[], currentPath: string
     ?? "";
 }
 
-export function AgentDetailView({ agentId, projectId, onClose, addToast, onChildClick }: AgentDetailViewProps) {
+export function AgentDetailView({ agentId, projectId, onClose, addToast, onChildClick, inline = false }: AgentDetailViewProps) {
   const [agent, setAgent] = useState<AgentDetail | null>(null);
   const { confirm } = useConfirm();
   const [logs, setLogs] = useState<AgentLogEntry[]>([]);
@@ -130,7 +131,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
   const logContainerRef = useRef<HTMLDivElement>(null);
   const agentDetailModalRef = useRef<HTMLDivElement>(null);
   const overlayMouseDownRef = useRef(false);
-  useModalResizePersist(agentDetailModalRef, true, "fusion:agent-detail-modal-size");
+  useModalResizePersist(agentDetailModalRef, !inline, "fusion:agent-detail-modal-size");
   const onCloseRef = useRef(onClose);
   const addToastRef = useRef(addToast);
   const agentRef = useRef<AgentDetail | null>(null);
@@ -426,7 +427,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
       return {
         label: "Unknown",
         icon: <Bot size={14} />,
-        color: "var(--text-muted, #8b949e)",
+        color: "var(--text-muted)",
         stateDerived: false,
       };
     }
@@ -442,6 +443,17 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
   };
 
   if (isLoading) {
+    if (inline) {
+      return (
+        <div className="agent-detail-inline-loading" role="region" aria-label="Agent detail loading">
+          <div className="agent-detail-loading">
+            <Loader2 className="animate-spin" size={24} />
+            <span>Loading agent...</span>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div
         className="agent-detail-overlay"
@@ -469,10 +481,17 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
 
   const stateStyle = STATE_COLORS[agent.state];
   const health = getHealthStatus();
+  const detailShellClassName = inline ? "agent-detail-inline" : "agent-detail-modal";
 
   return (
-    <div className="agent-detail-overlay" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-modal="true">
-      <div className="agent-detail-modal">
+    <div
+      className={inline ? "agent-detail-inline-shell" : "agent-detail-overlay"}
+      onClick={(e) => !inline && e.target === e.currentTarget && onClose()}
+      role={inline ? "region" : "dialog"}
+      aria-label={inline ? "Agent detail" : undefined}
+      aria-modal={inline ? undefined : "true"}
+    >
+      <div className={detailShellClassName} ref={agentDetailModalRef}>
         {/* Header */}
         <div className="agent-detail-header">
           {/* Identity area: icon + name + badges */}
@@ -567,9 +586,11 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
             <button className="btn-icon" onClick={() => void loadAgent()} title="Refresh">
               <RefreshCw size={16} />
             </button>
-            <button className="btn-icon" onClick={onClose} aria-label="Close" title="Close">
-              <X size={20} />
-            </button>
+            {!inline && (
+              <button className="btn-icon" onClick={onClose} aria-label="Close" title="Close">
+                <X size={20} />
+              </button>
+            )}
           </div>
         </div>
 
@@ -682,24 +703,26 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
         </div>
 
         {/* Footer with agent ID */}
-        <div className="agent-detail-footer">
-          <button className="btn-icon" onClick={copyAgentId} title="Copy Agent ID">
-            <Copy />
-          </button>
-          <span className="agent-detail-id" onClick={copyAgentId}>
-            {agent.id}
-          </span>
-          {agent.taskId && (
-            <>
-              <span className="divider">|</span>
-              <span className="text-muted">Working on:</span>
-              <a href={`/tasks/${agent.taskId}`} className="link">
-                {agent.taskId}
-                <ExternalLink size={12} />
-              </a>
-            </>
-          )}
-        </div>
+        {!inline && (
+          <div className="agent-detail-footer">
+            <button className="btn-icon" onClick={copyAgentId} title="Copy Agent ID">
+              <Copy />
+            </button>
+            <span className="agent-detail-id" onClick={copyAgentId}>
+              {agent.id}
+            </span>
+            {agent.taskId && (
+              <>
+                <span className="divider">|</span>
+                <span className="text-muted">Working on:</span>
+                <a href={`/tasks/${agent.taskId}`} className="link">
+                  {agent.taskId}
+                  <ExternalLink size={12} />
+                </a>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -808,138 +831,113 @@ function DashboardTab({
     };
   }, [agent]);
 
+  const recentRuns = (agent.completedRuns || []).slice(0, 5);
+  const isTicking = agent.state === "active" || agent.state === "running";
+  const heartbeatIntervalMs = resolveHeartbeatIntervalMs(agent.runtimeConfig?.heartbeatIntervalMs);
+  const nextHeartbeatAt = isTicking && agent.lastHeartbeatAt
+    ? new Date(new Date(agent.lastHeartbeatAt).getTime() + heartbeatIntervalMs).toISOString()
+    : null;
+
   return (
-    <div className="dashboard-tab">
-      {/* Budget Exhausted Warning */}
+    <div className="dashboard-tab dashboard-summary-layout">
       {budgetStatus?.isOverBudget && (
         <div className="budget-warning-banner" role="alert">
           <span>⚠️</span>
-          <span><strong>Budget Exhausted:</strong> This agent has exceeded its token budget and may be operating with limited functionality.</span>
+          <span><strong>Budget Exhausted:</strong> This agent has exceeded its token budget and may operate with limited functionality.</span>
         </div>
       )}
 
-      {/* Agent Info Card */}
-      <div className="dashboard-section">
-        <h3>Agent Information</h3>
-        <div className="info-grid">
-          <div className="info-item">
-            <span className="info-label">Name</span>
-            <span className="info-value">{agent.name}</span>
-          </div>
-          <div className="info-item">
-            <span className="info-label">Role</span>
-            <span className="info-value">{agent.role}</span>
-          </div>
-          <div className="info-item">
-            <span className="info-label">Skills</span>
-            <span className="info-value">
-              {Array.isArray(agent.metadata?.skills) && (agent.metadata.skills as string[]).length > 0 ? (
-                <div className="skill-badge-row">
-                  {(agent.metadata.skills as string[]).map((skillId: string) => (
-                    <span key={skillId} className="skill-badge">{skillId}</span>
-                  ))}
-                </div>
-              ) : (
-                "—"
-              )}
-            </span>
-          </div>
-          <div className="info-item">
-            <span className="info-label">State</span>
-            <span className="info-value">
-              <span 
-                className="inline-badge"
-                style={{ background: stateStyle.bg, color: stateStyle.text }}
-              >
-                {agent.state}
-              </span>
-            </span>
-          </div>
-          <div className="info-item">
-            <span className="info-label">Health</span>
-            <span className="info-value" style={{ color: health.color }} title={health.label}>
-              {!health.stateDerived ? health.label : health.icon}
-            </span>
-          </div>
-          {modelDisplay && (
-            <div className="info-item">
-              <span className="info-label">{runtimeHint ? "Runtime" : "Model"}</span>
-              <span className="info-value">{modelDisplay}</span>
-            </div>
-          )}
-          {budgetStatus?.budgetLimit != null && (
-            <div className="info-item">
-              <span className="info-label">Budget</span>
-              <span className="info-value">
-                <span
-                  className="budget-badge"
-                  style={{
-                    background: budgetStatus.isOverBudget
-                      ? "var(--state-error-bg, rgba(248,81,73,0.15))"
-                      : budgetStatus.isOverThreshold
-                        ? "var(--state-paused-bg, rgba(227,181,65,0.15))"
-                        : "var(--state-active-bg, rgba(63,185,80,0.15))",
-                    color: budgetStatus.isOverBudget
-                      ? "var(--state-error-text, #f85149)"
-                      : budgetStatus.isOverThreshold
-                        ? "var(--state-paused-text, #e3b541)"
-                        : "var(--state-active-text, #3fb950)",
-                    border: `1px solid ${budgetStatus.isOverBudget ? "var(--state-error-border, #f85149)" : budgetStatus.isOverThreshold ? "var(--state-paused-border, #e3b541)" : "var(--state-active-border, #3fb950)"}`,
-                  }}
-                >
-                  {budgetStatus.isOverBudget
-                    ? "⚠ Budget Exhausted"
-                    : `${Math.round(budgetStatus.usagePercent ?? 0)}% used`}
-                </span>
-              </span>
-            </div>
-          )}
-          <div className="info-item">
-            <span className="info-label">Created</span>
-            <span className="info-value">{new Date(agent.createdAt).toLocaleDateString()}</span>
-          </div>
-          <div className="info-item">
-            <span className="info-label">Last Heartbeat</span>
-            <span className="info-value">
-              {agent.lastHeartbeatAt
-                ? relativeTime(agent.lastHeartbeatAt)
-                : "Never"
-              }
-            </span>
-          </div>
-          {(() => {
-            // Next heartbeat is only meaningful while the agent is in a ticking
-            // state — paused/terminated/error agents have no scheduled next tick.
-            const isTicking = agent.state === "active" || agent.state === "running";
-            if (!isTicking || !agent.lastHeartbeatAt) return null;
-            const intervalMs = resolveHeartbeatIntervalMs(
-              agent.runtimeConfig?.heartbeatIntervalMs,
-            );
-            const nextAt = new Date(
-              new Date(agent.lastHeartbeatAt).getTime() + intervalMs,
-            );
-            return (
-              <div className="info-item">
-                <span className="info-label">Next Heartbeat</span>
-                <span className="info-value" title={nextAt.toLocaleString()}>
-                  {relativeTime(nextAt.toISOString())}
-                </span>
-              </div>
-            );
-          })()}
+      <section className="dashboard-summary-card dashboard-summary-hero">
+        <div className="dashboard-summary-hero__heading">
+          <Bot />
+          <h3>Overview</h3>
+          <strong>{agent.name}</strong>
+          <span className="inline-badge" style={{ background: stateStyle.bg, color: stateStyle.text }}>{agent.state}</span>
         </div>
-      </div>
+        <div className="dashboard-summary-hero__meta">
+          <span className="dashboard-summary-hero__health" title={health.label}>{health.icon} {health.label}</span>
+          <span>Role: {agent.role}</span>
+          <span>
+            <span className="dashboard-summary-label">{runtimeHint ? "Runtime" : "Model"}</span>
+            <span> {modelDisplay ?? "Auto"}</span>
+          </span>
+          {Array.isArray(agent.metadata?.skills) && (agent.metadata.skills as string[]).length > 0 ? (
+            <span>Skills: {(agent.metadata.skills as string[]).join(", ")}</span>
+          ) : (
+            <span>Skills: —</span>
+          )}
+        </div>
+      </section>
 
-      <div className="dashboard-section">
-        <h3>
-          <GitBranch size={16} style={{ marginRight: "6px", verticalAlign: "-2px" }} />
-          Chain of Command
-        </h3>
-        {isLoadingChainOfCommand ? (
-          <div className="chain-of-command-loading" role="status" aria-live="polite">
-            <Loader2 size={14} className="animate-spin" />
-            <span>Loading reporting chain...</span>
+      <section className="dashboard-summary-card">
+        <h3>Heartbeat &amp; Health</h3>
+        <div className="dashboard-summary-grid">
+          <div>
+            <p className="dashboard-summary-label">Last heartbeat</p>
+            <p>{agent.lastHeartbeatAt ? relativeTime(agent.lastHeartbeatAt) : "Never"}</p>
           </div>
+          <div>
+            <p className="dashboard-summary-label">Next expected</p>
+            <p>{nextHeartbeatAt ? relativeTime(nextHeartbeatAt) : "Not scheduled"}</p>
+          </div>
+          <div>
+            <p className="dashboard-summary-label">Interval</p>
+            <p>{formatHeartbeatInterval(heartbeatIntervalMs)}</p>
+          </div>
+          <div>
+            <p className="dashboard-summary-label">Status</p>
+            <p className="dashboard-summary-health-row"><span className={cn("status-dot", agent.state === "running" && "status-dot--running")} />{health.label}</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="dashboard-summary-card">
+        <h3>Current Work</h3>
+        {agent.taskId ? (
+          <div className="current-task">
+            <a href={`/tasks/${agent.taskId}`} className="task-badge">{agent.taskId}</a>
+            <a href={`/tasks/${agent.taskId}`} className="btn btn-sm">View Task <ExternalLink size={14} /></a>
+          </div>
+        ) : (
+          <p className="text-muted">No active assignment</p>
+        )}
+      </section>
+
+      <section className="dashboard-summary-card">
+        <h3>Recent Runs</h3>
+        <p className="dashboard-summary-label">{stats.successfulRuns}/{stats.totalRuns} successful ({stats.successRate}%)</p>
+        {recentRuns.length === 0 ? (
+          <p className="text-muted">No runs yet</p>
+        ) : (
+          <div className="runs-list">
+            {recentRuns.map((run) => {
+              const statusSpec = RUN_STATUS_ICONS[run.status] || RUN_STATUS_ICONS.terminated;
+              const StatusIcon = statusSpec.icon;
+              return (
+                <div key={run.id} className="run-item">
+                  <StatusIcon size={14} style={{ color: statusSpec.color }} />
+                  <span>{relativeTime(run.startedAt)}</span>
+                  <span className="text-muted">{Math.max(0, Math.round((new Date(run.completedAt || run.startedAt).getTime() - new Date(run.startedAt).getTime()) / 1000))}s</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="dashboard-summary-card">
+        <h3>Throughput</h3>
+        <div className="stats-grid">
+          <div className="stat-card"><div className="stat-value">{stats.totalRuns}</div><div className="stat-label">Total Runs</div></div>
+          <div className="stat-card"><div className="stat-value">{stats.todayRuns}</div><div className="stat-label">Runs Today</div></div>
+          <div className="stat-card"><div className="stat-value">{stats.successRate}%</div><div className="stat-label">Success Rate</div></div>
+        </div>
+      </section>
+
+      <section className="dashboard-summary-card">
+        <h3>Chain of Command</h3>
+        {isLoadingChainOfCommand ? (
+          <div className="chain-of-command-loading" role="status" aria-live="polite"><Loader2 size={14} className="animate-spin" /><span>Loading reporting chain...</span></div>
         ) : chainOfCommand.length <= 1 ? (
           <p className="text-muted">No reporting chain</p>
         ) : (
@@ -949,66 +947,16 @@ function DashboardTab({
               const isAncestor = !isCurrent;
               return (
                 <div key={chainAgent.id} className="chain-of-command-item">
-                  <button
-                    type="button"
-                    className={`chain-of-command-node${isCurrent ? " chain-of-command-node--current" : ""}`}
-                    onClick={() => isAncestor && onChildClick?.(chainAgent.id)}
-                    disabled={!isAncestor || !onChildClick}
-                    title={isCurrent ? "Current agent" : `View ${chainAgent.name}`}
-                  >
+                  <button type="button" className={`chain-of-command-node${isCurrent ? " chain-of-command-node--current" : ""}`} onClick={() => isAncestor && onChildClick?.(chainAgent.id)} disabled={!isAncestor || !onChildClick} title={isCurrent ? "Current agent" : `View ${chainAgent.name}`}>
                     {chainAgent.name}
                   </button>
-                  {!isCurrent && (
-                    <span className="chain-of-command-separator" aria-hidden="true">→</span>
-                  )}
+                  {!isCurrent && <span className="chain-of-command-separator" aria-hidden="true">→</span>}
                 </div>
               );
             })}
           </div>
         )}
-      </div>
-
-      {/* Stats Cards */}
-      <div className="dashboard-section">
-        <h3>Statistics</h3>
-        <div className="stats-grid">
-          <div className="stat-card">
-            <div className="stat-value">{stats.totalRuns}</div>
-            <div className="stat-label">Total Runs</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{stats.todayRuns}</div>
-            <div className="stat-label">Runs Today</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{stats.successRate}%</div>
-            <div className="stat-label">Success Rate</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Current Task */}
-      {agent.taskId && (
-        <div className="dashboard-section">
-          <h3>Current Task</h3>
-          <div className="current-task">
-            <span className="task-badge">{agent.taskId}</span>
-            <a href={`/tasks/${agent.taskId}`} className="btn btn--sm">
-              View Task <ExternalLink size={14} />
-            </a>
-          </div>
-        </div>
-      )}
-
-      {/* Metadata */}
-      {agent.metadata && Object.keys(agent.metadata).length > 0 && (
-        <div className="dashboard-section">
-          <h3>Metadata</h3>
-          <pre className="metadata-json">
-            {JSON.stringify(agent.metadata, null, 2)}
-          </pre>
-        </div>
-      )}
+      </section>
     </div>
   );
 }
@@ -1047,7 +995,7 @@ function LogsTab({
       <div className="logs-header">
         <span className="logs-count">{logs.length} entries</span>
         {fallbackLabel && (
-          <span className="text-muted" style={{ fontSize: "12px" }}>{fallbackLabel}</span>
+          <span className="text-muted logs-fallback-label">{fallbackLabel}</span>
         )}
         {isStreaming && (
           <span className="streaming-indicator">
@@ -1109,7 +1057,7 @@ function LogEntry({ entry, showTimestamp }: { entry: AgentLogEntry; showTimestam
         };
       default:
         return {
-          color: "var(--text-primary)",
+          color: "var(--text)",
         };
     }
   };
@@ -1282,7 +1230,7 @@ function RunsTab({
   if (isLoadingRuns && runs.length === 0) {
     return (
       <div className="runs-tab">
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "24px", justifyContent: "center" }}>
+        <div className="runs-loading-row">
           <Loader2 size={16} className="animate-spin" />
           <span className="text-muted">Loading runs...</span>
         </div>
@@ -1294,7 +1242,7 @@ function RunsTab({
     return (
       <div className="runs-tab">
         {canRunHeartbeat && (
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-color)" }}>
+          <div className="runs-toolbar">
             <button
               className="btn btn--sm btn-task-create"
               onClick={() => void handleRunHeartbeat()}
@@ -1323,7 +1271,7 @@ function RunsTab({
   const renderUsage = (usage: { inputTokens: number; outputTokens: number; cachedTokens: number } | undefined) => {
     if (!usage) return null;
     return (
-      <div style={{ fontSize: "12px", color: "var(--text-secondary)", display: "flex", gap: "12px", flexWrap: "wrap" }}>
+      <div className="run-usage">
         <span>Input: {usage.inputTokens.toLocaleString()}</span>
         <span>Output: {usage.outputTokens.toLocaleString()}</span>
         {usage.cachedTokens > 0 && <span>Cached: {usage.cachedTokens.toLocaleString()}</span>}
@@ -1342,9 +1290,8 @@ function RunsTab({
     return (
       <div key={run.id}>
         <div 
-          className={cn("run-card", isActive && "run-card--active", isSelected && "run-card--selected")}
+          className={cn("run-card", isActive && "run-card--active", isSelected && "run-card--selected", "run-card--clickable")}
           onClick={() => void handleRunClick(run.id)}
-          style={{ cursor: "pointer" }}
           role="button"
           tabIndex={0}
           aria-expanded={isSelected}
@@ -1357,7 +1304,7 @@ function RunsTab({
           }}
         >
           <div className="run-header">
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <div className="run-header-group">
               {isSelected ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               {isActive ? (
                 <span className="run-live-indicator">
@@ -1368,9 +1315,9 @@ function RunsTab({
                 <span className="run-id">#{index + 1} {run.id.slice(0, 8)}</span>
               )}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <div className="run-header-group">
               {run.invocationSource && (
-                <span className="badge" style={{ fontSize: "10px", padding: "1px 6px" }}>
+                <span className="badge run-badge--compact">
                   {run.invocationSource}
                 </span>
               )}
@@ -1388,11 +1335,11 @@ function RunsTab({
                 </button>
               )}
               <span className={cn("run-status", run.status)}>
-                <StatusIcon size={14} className={statusInfo.color} style={run.status === "active" ? { color: statusInfo.color } : undefined} />
+                <StatusIcon size={14} className={statusInfo.color} />
                 {run.status}
               </span>
               {run.heartbeatProcedureSource === "custom" && (
-                <span className="badge" style={{ fontSize: "10px", padding: "1px 6px" }}>
+                <span className="badge run-badge--compact">
                   Heartbeat: custom
                 </span>
               )}
@@ -1423,7 +1370,7 @@ function RunsTab({
                 {/* System Prompt */}
                 <div className="run-output-section">
                   <details>
-                    <summary className="run-output-label" style={{ cursor: "pointer", userSelect: "none" }}>System Prompt</summary>
+                    <summary className="run-output-label run-output-summary">System Prompt</summary>
                     {detailRun.systemPrompt ? (
                       <pre className="run-output-panel">{detailRun.systemPrompt}</pre>
                     ) : (
@@ -1435,7 +1382,7 @@ function RunsTab({
                 {/* Execution Prompt */}
                 <div className="run-output-section">
                   <details>
-                    <summary className="run-output-label" style={{ cursor: "pointer", userSelect: "none" }}>Execution Prompt</summary>
+                    <summary className="run-output-label run-output-summary">Execution Prompt</summary>
                     {detailRun.executionPrompt ? (
                       <pre className="run-output-panel">{detailRun.executionPrompt}</pre>
                     ) : (
@@ -1525,12 +1472,12 @@ function RunsTab({
   return (
     <div className="runs-tab">
       {canRunHeartbeat && (
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+        <div className="runs-toolbar runs-toolbar--between">
+          <span className="runs-toolbar-meta">
             {runs.length} run{runs.length !== 1 ? "s" : ""}
-            {hasActiveRun && <span className="run-live-indicator" style={{ marginLeft: "8px" }}><span className="live-dot" />Live</span>}
+            {hasActiveRun && <span className="run-live-indicator run-live-indicator--with-margin"><span className="live-dot" />Live</span>}
           </span>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <div className="run-header-group">
             {hasActiveRun && (
               <button
                 className="btn btn--sm btn--danger"
@@ -1848,7 +1795,7 @@ function SoulTab({
             ) : (
               <textarea
                 id="agent-soul"
-                className="input"
+                className="input config-textarea-mono"
                 rows={12}
                 placeholder="Describe this agent's personality, tone, and behavioral traits..."
                 value={soul}
@@ -1856,7 +1803,6 @@ function SoulTab({
                   setSoul(e.target.value);
                   setJustSaved(false);
                 }}
-                style={{ fontFamily: "monospace", fontSize: "0.875rem", resize: "vertical" }}
               />
             )}
             {!showPreview && (
@@ -2066,7 +2012,7 @@ function MemoryTab({
           Store context that belongs to this agent only. Workspace memory, daily notes, dreams, and qmd search live in project settings under Project Memory.
         </p>
         {isReadOnly && (
-          <p className="config-hint" style={{ marginBottom: 12 }}>
+          <p className="config-hint config-hint--block-spacing">
             Read-only while this agent is running.
           </p>
         )}
@@ -2074,7 +2020,7 @@ function MemoryTab({
         <div className="config-fields">
           <div className="config-field">
             <label htmlFor="agent-memory">Inline Memory</label>
-            <span className="config-hint" style={{ display: "block", marginBottom: 8 }}>
+            <span className="config-hint config-hint--block">
               Short-form memory stored directly on the agent record and injected into prompts.
             </span>
             <div className="agent-content-toolbar">
@@ -2117,7 +2063,7 @@ function MemoryTab({
               <textarea
                 id="agent-memory"
                 aria-label="Agent Memory"
-                className="input"
+                className="input config-textarea-mono"
                 rows={10}
                 placeholder="Durable preferences, operating habits, and context this agent should carry across tasks..."
                 value={memory}
@@ -2126,7 +2072,6 @@ function MemoryTab({
                   setMemory(e.target.value);
                   setJustSaved(false);
                 }}
-                style={{ fontFamily: "monospace", fontSize: "0.875rem", resize: "vertical" }}
               />
             )}
             {!showPreview && (
@@ -2136,7 +2081,7 @@ function MemoryTab({
 
           <div className="config-field">
             <label htmlFor="agent-memory-file-select">Memory Files</label>
-            <span className="config-hint" style={{ display: "block", marginBottom: 8 }}>
+            <span className="config-hint config-hint--block">
               Full OpenClaw memory files at <code>.fusion/agent-memory/{agent.id}/</code> (MEMORY.md, DREAMS.md, and daily notes).
             </span>
 
@@ -2161,14 +2106,14 @@ function MemoryTab({
             </select>
 
             {memoryFilesLoading && (
-              <span className="config-hint" style={{ display: "inline-flex", gap: 6, marginTop: 8 }}>
+              <span className="config-hint config-hint--inline-loader">
                 <Loader2 size={14} className="animate-spin" />
                 Loading memory files…
               </span>
             )}
 
             {selectedMemoryFile && (
-              <div className="config-hint" style={{ marginTop: 8 }}>
+              <div className="config-hint config-hint--top-spacing">
                 <strong>{MEMORY_LAYER_NAMES[selectedMemoryFile.layer]}</strong> · {selectedLayerDescription}
                 <br />
                 {selectedMemoryFile.size.toLocaleString()} bytes · Updated {relativeTime(selectedMemoryFile.updatedAt)}
@@ -2176,7 +2121,7 @@ function MemoryTab({
             )}
 
             <textarea
-              className="input"
+              className="input config-textarea-mono config-textarea-top-spacing"
               rows={14}
               placeholder="Select a memory file to view and edit its content..."
               value={selectedFileContent}
@@ -2187,18 +2132,17 @@ function MemoryTab({
                 setSelectedFileJustSaved(false);
                 setFileSwitchHint("");
               }}
-              style={{ fontFamily: "monospace", fontSize: "0.875rem", resize: "vertical", marginTop: 8 }}
             />
 
             {selectedFileLoading && (
-              <span className="config-hint" style={{ display: "inline-flex", gap: 6, marginTop: 8 }}>
+              <span className="config-hint config-hint--inline-loader">
                 <Loader2 size={14} className="animate-spin" />
                 Loading file content…
               </span>
             )}
 
             {fileSwitchHint && (
-              <span className="config-hint" style={{ display: "block", marginTop: 8 }}>
+              <span className="config-hint config-hint--top-spacing config-hint--block">
                 {fileSwitchHint}
               </span>
             )}
@@ -2457,7 +2401,6 @@ function InstructionsTab({
                   setInstructionsText(e.target.value);
                   setJustSaved(false);
                 }}
-                style={{ fontFamily: "monospace", fontSize: "0.875rem", resize: "vertical" }}
               />
             )}
             {!showPreview && (
@@ -2520,23 +2463,23 @@ function InstructionsTab({
 
           <div className="config-fields">
             <div className="config-field">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+              <div className="config-inline-header">
                 <label htmlFor="instructions-file-content">File Content</label>
                 {isLoadingFile && (
-                  <span className="config-hint" style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                  <span className="config-hint config-hint--inline-tight">
                     <Loader2 size={12} className="animate-spin" />
                     Loading...
                   </span>
                 )}
                 {fileContentDirty && !isLoadingFile && (
-                  <span className="config-hint" style={{ color: "var(--color-warning, #e3b541)" }}>
+                  <span className="config-hint config-hint--warning">
                     Unsaved changes
                   </span>
                 )}
               </div>
               <textarea
                 id="instructions-file-content"
-                className="input"
+                className="input config-textarea-mono"
                 rows={20}
                 placeholder="File content will appear here when loaded..."
                 value={fileContent}
@@ -2546,7 +2489,6 @@ function InstructionsTab({
                   setFileContentDirty(true);
                   setJustSavedFile(false);
                 }}
-                style={{ fontFamily: "monospace", fontSize: "0.875rem", resize: "vertical" }}
               />
               <span className="config-hint">Edit the markdown file content directly. Save separately using the button below.</span>
             </div>
@@ -4073,9 +4015,9 @@ function EmployeesTab({
         <div className="detail-section-header">
           <h3>Employees</h3>
         </div>
-        <div className="detail-section-body" style={{ display: "flex", alignItems: "center", gap: 8, padding: 16 }}>
+        <div className="detail-section-body detail-section-body--loading">
           <Loader2 size={16} className="spin" />
-          <span className="text-secondary">Loading employees...</span>
+          <span className="text-muted">Loading employees...</span>
         </div>
       </div>
     );
@@ -4085,14 +4027,14 @@ function EmployeesTab({
     <div className="detail-section">
       <div className="detail-section-header">
         <h3>Employees</h3>
-        <span className="text-secondary">({children.length})</span>
+        <span className="text-muted">({children.length})</span>
       </div>
       <div className="detail-section-body">
         {children.length === 0 ? (
-          <div className="agent-empty" style={{ padding: 24 }}>
+          <div className="agent-empty agent-empty--padded">
             <GitBranch size={32} opacity={0.3} />
             <p>No employees</p>
-            <p className="text-secondary">This agent has no employees</p>
+            <p className="text-muted">This agent has no employees</p>
           </div>
         ) : (
           <div className="agent-tree__children">
@@ -4105,7 +4047,14 @@ function EmployeesTab({
                   onClick={() => onChildClick?.(child.id)}
                   role="button"
                   tabIndex={0}
-                  onKeyDown={(e) => e.key === "Enter" && onChildClick?.(child.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      if (e.key === " ") {
+                        e.preventDefault();
+                      }
+                      onChildClick?.(child.id);
+                    }
+                  }}
                   style={{ cursor: onChildClick ? "pointer" : "default" }}
                 >
                   <span className="agent-tree__icon">{child.icon ?? "🤖"}</span>

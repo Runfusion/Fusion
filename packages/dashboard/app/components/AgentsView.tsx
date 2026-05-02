@@ -1,6 +1,6 @@
 import "./AgentsView.css";
 import { useState, useEffect, useCallback, useRef, useMemo, useId, lazy, Suspense } from "react";
-import { Plus, Play, Pause, Activity, Trash2, RefreshCw, Bot, List, ChevronRight, Filter, Upload, Network, SlidersHorizontal } from "lucide-react";
+import { Plus, Play, Pause, Activity, Trash2, RefreshCw, Bot, List, ChevronRight, ChevronLeft, Filter, Upload, Network, SlidersHorizontal } from "lucide-react";
 import type { Agent, AgentCapability, AgentOnboardingSummary, AgentState, OrgTreeNode } from "../api";
 import { updateAgent, updateAgentState, deleteAgent, startAgentRun, fetchOrgTree, fetchSettings, updateSettings } from "../api";
 
@@ -15,6 +15,7 @@ import { NewAgentDialog } from "./NewAgentDialog";
 import { ExperimentalAgentOnboardingModal } from "./ExperimentalAgentOnboardingModal";
 import { AgentImportModal } from "./AgentImportModal";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
+import { useViewportMode } from "../hooks/useViewportMode";
 import { getAgentHealthStatus } from "../utils/agentHealth";
 import type { AgentHealthStatus } from "../utils/agentHealth";
 import {
@@ -25,6 +26,7 @@ import {
   HEARTBEAT_INTERVAL_PRESETS,
 } from "../utils/heartbeatIntervals";
 import { isEphemeralAgent, getErrorMessage } from "@fusion/core";
+import { relativeTime } from "./AgentDetailView";
 
 export interface AgentsViewProps {
   addToast: (message: string, type?: "success" | "error") => void;
@@ -91,12 +93,14 @@ function OrgChartNode({
   getHealthStatus,
   getRoleIcon,
   getSkillBadges,
+  selectedAgentId,
 }: {
   node: OrgTreeNode;
   onSelect: (id: string) => void;
   getHealthStatus: (agent: Agent) => AgentHealthStatus;
   getRoleIcon: (role: AgentCapability) => string;
   getSkillBadges: (agent: Agent) => string[];
+  selectedAgentId: string | null;
 }) {
   const { agent, children } = node;
   const health = getHealthStatus(agent);
@@ -106,11 +110,18 @@ function OrgChartNode({
   return (
     <div className={`org-chart-node${children.length > 0 ? " org-chart-node--has-children" : ""}`}>
       <div
-        className={stateNodeClass}
+        className={`${stateNodeClass}${selectedAgentId === agent.id ? " agent-card--selected" : ""}`}
         onClick={() => onSelect(agent.id)}
         role="button"
         tabIndex={0}
-        onKeyDown={(e) => e.key === "Enter" && onSelect(agent.id)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            if (e.key === " ") {
+              e.preventDefault();
+            }
+            onSelect(agent.id);
+          }
+        }}
       >
         <div className="org-chart-node__header">
           <span className="org-chart-node__icon">{getRoleIcon(agent.role)}</span>
@@ -153,6 +164,7 @@ function OrgChartNode({
               getHealthStatus={getHealthStatus}
               getRoleIcon={getRoleIcon}
               getSkillBadges={getSkillBadges}
+              selectedAgentId={selectedAgentId}
             />
           ))}
         </div>
@@ -163,6 +175,8 @@ function OrgChartNode({
 
 export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardingEnabled = false }: AgentsViewProps) {
   const [showSystemAgents, setShowSystemAgents] = useState(false);
+  const viewportMode = useViewportMode();
+  const isMobileViewport = viewportMode === "mobile";
   const [filterState, setFilterState] = useState<AgentState | "all">("all");
   const { agents, stats, isLoading, loadAgents } = useAgents(projectId, {
     filterState,
@@ -173,6 +187,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   const [onboardingDraft, setOnboardingDraft] = useState<AgentOnboardingSummary | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const isMobileDetailOpen = isMobileViewport && !!selectedAgentId;
   const [agentView, setAgentView] = useState<"list" | "board" | "org">(() => {
     if (typeof window === "undefined") return "list";
     const saved = getScopedItem("fn-agent-view", projectId);
@@ -603,6 +618,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
 
   const getRoleLabel = (role: AgentCapability) => AGENT_ROLES.find(r => r.value === role)?.label ?? role;
   const getRoleIcon = (role: AgentCapability) => AGENT_ROLES.find(r => r.value === role)?.icon ?? "◆";
+  const selectedAgent = selectedAgentId ? displayAgents.find((agent) => agent.id === selectedAgentId) ?? null : null;
 
   /** Get skill badges from agent metadata */
   const getSkillBadges = (agent: Agent): string[] => {
@@ -805,8 +821,9 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
         </div>
       )}
 
-      <div className="agents-view-content">
-
+      <div className="agents-split-layout">
+        <div className={`agents-split-sidebar${isMobileDetailOpen ? " agents-split-sidebar--hidden-mobile" : ""}`}>
+          <div className="agents-view-content">
         <AgentMetricsBar stats={stats} />
 
         <ActiveAgentsPanel agents={displayActiveAgents} projectId={projectId} onAgentSelect={setSelectedAgentId} onOpenTaskLogs={onOpenTaskLogs} />
@@ -865,6 +882,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                   getHealthStatus={getHealthStatus}
                   getRoleIcon={getRoleIcon}
                   getSkillBadges={getSkillBadges}
+                  selectedAgentId={selectedAgentId}
                 />
               ))
             )}
@@ -879,13 +897,20 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                 const stateBadgeClass = getStateBadgeClass(agent.state);
                 const stateCardClass = getStateCardClass("agent-board-card", agent.state);
                 return (
-                  <div key={agent.id} className={`agent-board-card ${stateCardClass}`}>
+                  <div key={agent.id} className={`agent-board-card ${stateCardClass}${selectedAgentId === agent.id ? " agent-card--selected" : ""}`}>
                     <div
                       className="agent-board-clickable"
                       onClick={() => setSelectedAgentId(agent.id)}
                       role="button"
                       tabIndex={0}
-                      onKeyDown={(e) => e.key === "Enter" && setSelectedAgentId(agent.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          if (e.key === " ") {
+                            e.preventDefault();
+                          }
+                          setSelectedAgentId(agent.id);
+                        }
+                      }}
                     >
                       <div className="agent-board-header">
                         <span className="agent-board-icon">{getRoleIcon(agent.role)}</span>
@@ -917,14 +942,21 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
               const heartbeatOptions = getHeartbeatIntervalOptions(configuredIntervalMs);
               const isUpdatingHeartbeat = updatingHeartbeatAgentId === agent.id;
               return (
-                <div key={agent.id} className={`agent-card ${stateCardClass}`}>
+                <div key={agent.id} className={`agent-card ${stateCardClass}${selectedAgentId === agent.id ? " agent-card--selected" : ""}`}>
                   <div className="agent-card-header">
                     <div
                       className="agent-info agent-info--clickable"
                       onClick={() => setSelectedAgentId(agent.id)}
                       role="button"
                       tabIndex={0}
-                      onKeyDown={(e) => e.key === "Enter" && setSelectedAgentId(agent.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          if (e.key === " ") {
+                            e.preventDefault();
+                          }
+                          setSelectedAgentId(agent.id);
+                        }
+                      }}
                     >
                       {editingRoleForAgent === agent.id ? (
                         <select
@@ -1214,22 +1246,93 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
           )}
         </div>
         )}
+          </div>
+
+          {!isMobileViewport && selectedAgent && (
+            <div className="agents-sidebar-quick-controls">
+              <div className="agents-sidebar-quick-controls__header">
+                <strong>{selectedAgent.name}</strong>
+                <span className={`badge ${getStateBadgeClass(selectedAgent.state)}`}>{selectedAgent.state}</span>
+              </div>
+              <div className="agents-sidebar-quick-controls__meta">
+                <span>{formatHeartbeatInterval(resolveHeartbeatIntervalMs(selectedAgent.runtimeConfig?.heartbeatIntervalMs))}</span>
+                {selectedAgent.lastHeartbeatAt && <span>Last {relativeTime(selectedAgent.lastHeartbeatAt)}</span>}
+              </div>
+              <div className="agents-sidebar-quick-controls__actions">
+                {selectedAgent.state === "idle" && (
+                  <button className="btn btn-sm" onClick={() => void handleStateChange(selectedAgent.id, "active")}>
+                    <Play size={14} /> Start
+                  </button>
+                )}
+                {selectedAgent.state === "active" && (
+                  <>
+                    <button className="btn btn-sm" onClick={() => void handleRunHeartbeat(selectedAgent.id, selectedAgent.name)}>
+                      <Activity size={14} /> Run Now
+                    </button>
+                    <button className="btn btn-sm" onClick={() => void handleStateChange(selectedAgent.id, "paused")}>
+                      <Pause size={14} /> Pause
+                    </button>
+                  </>
+                )}
+                {selectedAgent.state === "running" && (
+                  <button className="btn btn-sm" onClick={() => void handleStateChange(selectedAgent.id, "paused")}>
+                    <Pause size={14} /> Pause
+                  </button>
+                )}
+                {selectedAgent.state === "paused" && (
+                  <button className="btn btn-sm" onClick={() => void handleStateChange(selectedAgent.id, "active")}>
+                    <Play size={14} /> Resume
+                  </button>
+                )}
+                {selectedAgent.state === "error" && (
+                  <button className="btn btn-sm" onClick={() => void handleStateChange(selectedAgent.id, "active")}>
+                    <Play size={14} /> Retry
+                  </button>
+                )}
+                {selectedAgent.state === "terminated" && (
+                  <>
+                    <button className="btn btn-sm" onClick={() => void handleStateChange(selectedAgent.id, "active")}>
+                      <Play size={14} /> Start
+                    </button>
+                    <button className="btn btn-danger btn-sm" onClick={() => void handleDelete(selectedAgent.id, selectedAgent.name)}>
+                      <Trash2 size={14} /> Delete
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className={`agents-split-detail${isMobileViewport && !selectedAgentId ? " agents-split-detail--hidden-mobile" : ""}`}>
+          {isMobileDetailOpen && (
+            <div className="agents-mobile-back-row">
+              <button className="btn agents-mobile-back-btn" onClick={handleCloseDetail}>
+                <ChevronLeft size={16} />
+                Agents
+              </button>
+            </div>
+          )}
+          {selectedAgentId ? (
+            <Suspense fallback={null}>
+              <AgentDetailView
+                inline
+                agentId={selectedAgentId}
+                projectId={projectId}
+                onClose={handleCloseDetail}
+                addToast={addToast}
+                onChildClick={handleChildClick}
+              />
+            </Suspense>
+          ) : (
+            <div className="agents-detail-empty-state">
+              <Bot size={48} />
+              <h3>Select an agent</h3>
+              <p>Choose an agent from the sidebar to view details</p>
+            </div>
+          )}
+        </div>
       </div>
-
-      {/* Agent Detail Modal */}
-      {selectedAgentId && (
-        <Suspense fallback={null}>
-          <AgentDetailView
-            agentId={selectedAgentId}
-            projectId={projectId}
-            onClose={handleCloseDetail}
-            addToast={addToast}
-            onChildClick={handleChildClick}
-          />
-        </Suspense>
-      )}
-
-
     </div>
   );
 }

@@ -34,7 +34,7 @@
 }
 
 .agent-metric-value {
-  font-size: 18px;
+  font-size: calc(var(--space-lg) + var(--space-xs) * 0.5);
   font-weight: 700;
   font-family: var(--font-mono);
   line-height: 1.2;
@@ -60,7 +60,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-lg) 20px;
+  padding: var(--space-lg);
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
@@ -72,7 +72,7 @@
 }
 
 .agents-view-title h2 {
-  font-size: 18px;
+  font-size: calc(var(--space-lg) + var(--space-xs) * 0.5);
   font-weight: 600;
   margin: 0;
 }
@@ -133,10 +133,88 @@
   padding: var(--space-md);
 }
 
+.agents-split-layout {
+  display: grid;
+  grid-template-columns: minmax(calc(var(--space-xl) * 11 + var(--space-xs)), calc(var(--space-xl) * 13 + var(--space-lg))) minmax(0, 1fr);
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+}
+
+.agents-split-sidebar {
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+
+.agents-split-detail {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+}
+
 .agents-view-content {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 20px;
+  padding: calc(var(--space-lg) + var(--space-xs));
+}
+
+.agents-detail-empty-state {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  color: var(--text-muted);
+  text-align: center;
+  padding: var(--space-xl);
+}
+
+.agents-detail-empty-state h3,
+.agents-detail-empty-state p {
+  margin: 0;
+}
+
+.agents-detail-empty-state svg {
+  opacity: 0.3;
+}
+
+.agents-sidebar-quick-controls {
+  border-top: 1px solid var(--border);
+  padding: var(--space-md);
+  background: var(--surface);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.agents-sidebar-quick-controls__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.agents-sidebar-quick-controls__meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  color: var(--text-muted);
+}
+
+.agents-sidebar-quick-controls__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
 }
 
 .agents-view-loading {
@@ -195,15 +273,15 @@
   background: transparent;
   border: none;
   color: var(--text);
-  font-size: 13px;
+  font-size: calc(var(--space-sm) + var(--space-xs) + var(--space-xs) * 0.25);
   font-family: var(--font-primary);
   cursor: pointer;
   outline: none;
-  padding-right: 4px;
+  padding-right: var(--space-xs);
 }
 
 .agent-system-filter {
-  font-size: 13px;
+  font-size: calc(var(--space-sm) + var(--space-xs) + var(--space-xs) * 0.25);
   color: var(--text-muted);
   cursor: pointer;
   display: flex;
@@ -220,8 +298,8 @@
 }
 
 .agent-system-filter input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
+  width: calc(var(--space-sm) + var(--space-xs) * 2);
+  height: calc(var(--space-sm) + var(--space-xs) * 2);
   accent-color: var(--todo);
   cursor: pointer;
 }
@@ -247,13 +325,13 @@
 }
 
 .agent-tree__icon {
-  font-size: 16px;
+  font-size: calc(var(--space-md) + var(--space-xs));
   line-height: 1;
   flex-shrink: 0;
 }
 
 .agent-tree__name {
-  font-size: 13px;
+  font-size: calc(var(--space-sm) + var(--space-xs) + var(--space-xs) * 0.25);
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -261,10 +339,10 @@
 }
 
 .agent-tree__badge {
-  font-size: 10px;
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
   font-weight: 600;
   text-transform: uppercase;
-  padding: 2px 6px;
+  padding: calc(var(--space-xs) * 0.5) calc(var(--space-xs) + var(--space-sm) * 0.25);
   border-radius: var(--radius-sm);
   flex-shrink: 0;
 }
@@ -296,7 +374,7 @@
 
 .agent-board {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--space-xl) * 8 + var(--space-sm)), 1fr));
   gap: var(--space-lg);
 }
 
@@ -329,15 +407,15 @@
 }
 
 .agent-board-icon {
-  font-size: 20px;
+  font-size: calc(var(--space-lg) + var(--space-xs));
   line-height: 1;
 }
 
 .agent-board-badge {
-  font-size: 10px;
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
   font-weight: 600;
   text-transform: uppercase;
-  padding: 2px 6px;
+  padding: calc(var(--space-xs) * 0.5) calc(var(--space-sm) - var(--space-xs) * 0.25);
   border-radius: var(--radius-sm);
   margin-left: auto;
 }
@@ -349,14 +427,14 @@
 
 .agent-board-name {
   font-weight: 600;
-  font-size: 14px;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .agent-board-id {
-  font-size: 11px;
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
   font-family: var(--font-mono);
   color: var(--text-muted);
 }
@@ -366,6 +444,17 @@
 }
 
 .agent-board-clickable:hover .agent-board-name {
+  color: var(--todo);
+}
+
+.agent-board-clickable:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring-strong);
+  background: color-mix(in srgb, var(--todo) 8%, transparent);
+}
+
+.agent-board-clickable:focus-visible .agent-board-name {
   color: var(--todo);
 }
 
@@ -396,6 +485,11 @@
   background: var(--surface);
 }
 
+.agent-card--selected {
+  border-left-color: var(--todo) !important;
+  background: color-mix(in srgb, var(--todo) 8%, transparent);
+}
+
 .agent-card-header {
   display: flex;
   justify-content: space-between;
@@ -415,8 +509,8 @@
   align-items: center;
   gap: var(--space-md);
   cursor: pointer;
-  padding: 4px;
-  margin: -4px;
+  padding: var(--space-xs);
+  margin: calc(var(--space-xs) * -1);
   border-radius: var(--radius-sm);
   transition: background var(--transition-fast);
 }
@@ -425,12 +519,19 @@
   background: var(--card-hover);
 }
 
-.agent-info--clickable:hover .agent-name {
+.agent-info--clickable:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  background: color-mix(in srgb, var(--todo) 8%, transparent);
+}
+
+.agent-info--clickable:hover .agent-name,
+.agent-info--clickable:focus-visible .agent-name {
   color: var(--todo);
 }
 
 .agent-icon {
-  font-size: 24px;
+  font-size: calc(var(--space-xl) + var(--space-xs));
 }
 
 .agent-icon--clickable {
@@ -444,16 +545,16 @@
   transform: scale(1.1);
 }
 
-.agent-icon--clickable:focus {
-  outline: 2px solid var(--todo);
-  outline-offset: 2px;
+.agent-icon--clickable:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
   border-radius: var(--radius-sm);
 }
 
 .agent-role-select {
-  font-size: 14px;
-  padding: 4px var(--space-sm);
-  min-width: 120px;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+  padding: var(--space-xs) var(--space-sm);
+  min-width: calc(var(--space-2xl) * 3 + var(--space-lg));
   width: auto;
   cursor: pointer;
 }
@@ -465,11 +566,11 @@
 
 .agent-name {
   font-weight: 600;
-  font-size: 16px;
+  font-size: var(--space-lg);
 }
 
 .agent-id {
-  font-size: 12px;
+  font-size: var(--space-md);
   font-family: var(--font-mono);
 }
 
@@ -493,12 +594,12 @@
 .agent-card-body {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-xs);
   margin-bottom: var(--space-md);
   padding: var(--space-sm);
   background: var(--bg-secondary);
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
 }
 
 .agent-task,
@@ -666,10 +767,14 @@
 
 .org-chart-node-card:hover,
 .org-chart-node-card:focus-visible {
-  border-color: var(--accent);
+  border-color: var(--todo);
   background: var(--card-hover);
   transform: translateY(calc(var(--space-xs) * -0.25));
   outline: none;
+}
+
+.org-chart-node-card:focus-visible {
+  box-shadow: var(--focus-ring-strong);
 }
 
 .org-chart-node-card--active,
@@ -788,6 +893,13 @@
   color: var(--text);
 }
 
+.chain-of-command-node:focus-visible {
+  outline: none;
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
+  color: var(--text);
+}
+
 .chain-of-command-node:disabled {
   cursor: default;
   opacity: 0.9;
@@ -820,7 +932,7 @@
   }
 
   .agent-metric-value {
-    font-size: 16px;
+    font-size: var(--space-lg);
   }
 
   .agent-metric-label {
@@ -876,7 +988,7 @@
   }
 
   .agents-view-title h2 {
-    font-size: 16px;
+    font-size: var(--space-lg);
     white-space: nowrap;
   }
 
@@ -914,9 +1026,10 @@
   /* Controls button: icon-only on mobile, sized to match view-toggle buttons */
   .agent-controls-trigger {
     padding: 0;
-    width: 28px;
-    height: 28px;
-    min-width: 28px;
+    width: calc(var(--space-lg) * 2 + var(--space-xs));
+    height: calc(var(--space-lg) * 2 + var(--space-xs));
+    min-width: calc(var(--space-lg) * 2 + var(--space-xs));
+    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
     font-size: 0;
     display: inline-flex;
     align-items: center;
@@ -926,9 +1039,10 @@
   /* New Agent: icon-only on mobile, sized to match view-toggle buttons.
      Text is visually hidden via font-size: 0 (the SVG icon keeps its size). */
   .agents-view-primary-actions .btn-task-create {
-    width: 28px;
-    height: 28px;
-    min-width: 28px;
+    width: calc(var(--space-lg) * 2 + var(--space-xs));
+    height: calc(var(--space-lg) * 2 + var(--space-xs));
+    min-width: calc(var(--space-lg) * 2 + var(--space-xs));
+    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
     padding: 0;
     font-size: 0;
     gap: 0;
@@ -939,16 +1053,59 @@
   }
 
   .agents-view-primary-actions .btn-icon {
-    width: 28px;
-    height: 28px;
-    min-width: 28px;
+    width: calc(var(--space-lg) * 2 + var(--space-xs));
+    height: calc(var(--space-lg) * 2 + var(--space-xs));
+    min-width: calc(var(--space-lg) * 2 + var(--space-xs));
+    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
   }
 
   /* Title row: keep Bot icon + "Agents" text on a single line so the
      view-toggle and primary actions get pushed to the right edge. */
   .agents-view-title {
-    height: 32px;
+    height: calc(var(--space-lg) * 2);
     align-items: center;
   }
 
+  .agents-split-layout {
+    display: block;
+    height: auto;
+  }
+
+  .agents-split-sidebar {
+    border-right: 0;
+    width: 100%;
+  }
+
+  .agents-split-sidebar--hidden-mobile {
+    display: none;
+  }
+
+  .agents-split-detail {
+    width: 100%;
+    height: 100%;
+  }
+
+  .agents-split-detail--hidden-mobile {
+    display: none;
+  }
+
+  .agents-sidebar-quick-controls {
+    display: none;
+  }
+
+  .agents-mobile-back-row {
+    padding: var(--space-md);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .agents-mobile-back-btn {
+    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  .agents-split-layout {
+    grid-template-columns: minmax(calc(var(--space-xl) * 10), calc(var(--space-xl) * 11 + var(--space-md))) minmax(0, 1fr);
+  }
 }

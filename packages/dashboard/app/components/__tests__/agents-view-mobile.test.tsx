@@ -213,10 +213,10 @@ describe("agents-view mobile CSS", () => {
     expect(block).toMatch(/padding:\s*var\(--space-sm\)\s+var\(--space-md\)/);
   });
 
-  it("defines .agents-view-title h2 with 16px font on mobile", () => {
+  it("defines .agents-view-title h2 with token font size on mobile", () => {
     expect(mobileMediaBlock).toContain(".agents-view-title h2");
     const block = extractRuleBlock(mobileMediaBlock, ".agents-view-title h2");
-    expect(block).toContain("font-size: 16px");
+    expect(block).toContain("font-size: var(--space-lg)");
   });
 
   it("defines .agents-view-controls with flex-wrap on mobile", () => {

@@ -244,6 +244,42 @@ describe("AgentDetailView", () => {
     expect(screen.getByText(/Loading agent/i)).toBeInTheDocument();
   });
 
+  it("renders inline mode as a region without overlay or close button", async () => {
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+        inline
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("region", { name: "Agent detail" })).toBeInTheDocument();
+    });
+
+    expect(document.querySelector(".agent-detail-overlay")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Test Agent" })).toBeInTheDocument();
+  });
+
+  it("keeps modal mode as dialog with close button", async () => {
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+
+    expect(document.querySelector(".agent-detail-overlay")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+  });
+
   it("defines CSS variables for agent state tokens in the global stylesheet", async () => {
     render(
       <AgentDetailView
@@ -484,7 +520,7 @@ describe("AgentDetailView", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("executor")).toBeInTheDocument();
+      expect(screen.getByText("Role: executor")).toBeInTheDocument();
     });
   });
 
@@ -522,6 +558,25 @@ describe("AgentDetailView", () => {
       expect(screen.getByText("Instructions")).toBeInTheDocument();
       expect(screen.getByText("Agent Memory")).toBeInTheDocument();
       expect(screen.getByText("Settings")).toBeInTheDocument();
+    });
+  });
+
+  it("renders redesigned dashboard summary sections", async () => {
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Overview")).toBeInTheDocument();
+      expect(screen.getByText("Heartbeat & Health")).toBeInTheDocument();
+      expect(screen.getByText("Current Work")).toBeInTheDocument();
+      expect(screen.getByText("Recent Runs")).toBeInTheDocument();
+      expect(screen.getByText("Throughput")).toBeInTheDocument();
+      expect(screen.getByText("Chain of Command")).toBeInTheDocument();
     });
   });
 
@@ -3833,8 +3888,7 @@ describe("AgentDetailView", () => {
       );
 
       await waitFor(() => {
-        expect(screen.getAllByText("skill-1")).toBeTruthy();
-        expect(screen.getAllByText("skill-2")).toBeTruthy();
+        expect(screen.getByText("Skills: skill-1, skill-2")).toBeInTheDocument();
       });
     });
 
@@ -3853,11 +3907,7 @@ describe("AgentDetailView", () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText("Skills")).toBeInTheDocument();
-        // Should show dash when no skills
-        const skillsLabel = screen.getByText("Skills");
-        const parent = skillsLabel.closest(".info-item");
-        expect(parent?.textContent).toContain("—");
+        expect(screen.getByText("Skills: —")).toBeInTheDocument();
       });
     });
 
