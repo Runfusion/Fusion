@@ -11,6 +11,9 @@ import { NodeHealthDot } from "./NodeHealthDot";
 import { PluginSlot } from "./PluginSlot";
 import { useViewportMode, type ViewportMode } from "../hooks/useViewportMode";
 import { getTrailingPath } from "../utils/pathDisplay";
+import type { TaskView } from "../hooks/useViewState";
+import type { PluginDashboardViewEntry } from "../api";
+import { buildPluginTaskViewId } from "../plugins/pluginViewRegistry";
 
 export { useViewportMode };
 
@@ -193,8 +196,8 @@ export interface HeaderProps {
   enginePaused?: boolean;
   onToggleGlobalPause?: () => void;
   onToggleEnginePause?: () => void;
-  view?: "board" | "list" | "agents" | "missions" | "chat" | "documents" | "research" | "roadmaps" | "skills" | "mailbox" | "insights" | "memory" | "devserver" | "dev-server" | "todos";
-  onChangeView?: (view: "board" | "list" | "agents" | "missions" | "chat" | "documents" | "research" | "roadmaps" | "skills" | "mailbox" | "insights" | "memory" | "devserver" | "dev-server" | "todos") => void;
+  view?: TaskView;
+  onChangeView?: (view: TaskView) => void;
   /** Whether to show the skills tab in the view toggle */
   showSkillsTab?: boolean;
   /** When true, shows the Agents view tab button. Hidden by default (experimental feature). */
@@ -220,6 +223,7 @@ export interface HeaderProps {
   isRemote?: boolean;
   /** Experimental feature flags controlling visibility of nav items. */
   experimentalFeatures?: { insights?: boolean; roadmap?: boolean; memoryView?: boolean; devServer?: boolean; devServerView?: boolean; todoView?: boolean; researchView?: boolean };
+  pluginDashboardViews?: PluginDashboardViewEntry[];
 }
 
 export function Header({
@@ -265,6 +269,7 @@ export function Header({
   onSelectNode,
   isRemote = false,
   experimentalFeatures,
+  pluginDashboardViews = [],
 }: HeaderProps) {
   const mode: ViewportMode = useViewportMode();
   const isMobile = mode === "mobile";
@@ -335,9 +340,10 @@ export function Header({
       showSkillsTab ||
       experimentalFeatures?.memoryView ||
       experimentalFeatures?.devServerView ||
-      !hideFullNav
+      !hideFullNav ||
+      pluginDashboardViews.some((entry) => entry.view.placement !== "primary")
     );
-  }, [experimentalFeatures, showSkillsTab, hideFullNav]);
+  }, [experimentalFeatures, showSkillsTab, hideFullNav, pluginDashboardViews]);
 
   const getEffectiveViewport = useCallback(() => {
     const vv = window.visualViewport;
@@ -1111,7 +1117,7 @@ export function Header({
               <>
                 <button
                   ref={viewOverflowTriggerRef}
-                  className={`view-toggle-btn${["research", "skills", "roadmaps", "insights", "memory", "dev-server", "devserver"].includes(view) || (experimentalFeatures?.todoView && view === "todos") ? " active" : ""}`}
+                  className={`view-toggle-btn${["research", "skills", "roadmaps", "insights", "memory", "dev-server", "devserver"].includes(view) || (experimentalFeatures?.todoView && view === "todos") || view.startsWith("plugin:") ? " active" : ""}`}
                   onClick={() => setIsViewOverflowOpen((prev) => !prev)}
                   title="More views"
                   aria-label="More views"
@@ -1227,6 +1233,27 @@ export function Header({
                         <span>Todos</span>
                       </button>
                     )}
+                    {pluginDashboardViews
+                      .filter((entry) => entry.view.placement !== "primary")
+                      .sort((a, b) => (a.view.order ?? Number.MAX_SAFE_INTEGER) - (b.view.order ?? Number.MAX_SAFE_INTEGER))
+                      .map((entry) => {
+                        const pluginTaskView = buildPluginTaskViewId(entry.pluginId, entry.view.viewId);
+                        return (
+                          <button
+                            key={`${entry.pluginId}:${entry.view.viewId}`}
+                            className={`view-toggle-overflow-item${view === pluginTaskView ? " active" : ""}`}
+                            onClick={() => {
+                              onChangeView(pluginTaskView);
+                              setIsViewOverflowOpen(false);
+                            }}
+                            role="menuitem"
+                            data-testid={`view-overflow-plugin-${entry.pluginId}-${entry.view.viewId}`}
+                          >
+                            <Grid3X3 size={14} />
+                            <span>{entry.view.label}</span>
+                          </button>
+                        );
+                      })}
                   </div>
                 )}
               </>

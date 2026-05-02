@@ -172,6 +172,9 @@ importers:
       '@codemirror/view':
         specifier: ^6.36.4
         version: 6.40.0
+      '@fusion-plugin-examples/dependency-graph':
+        specifier: workspace:*
+        version: link:../../plugins/fusion-plugin-dependency-graph
       '@fusion-plugin-examples/hermes-runtime':
         specifier: workspace:*
         version: link:../../plugins/fusion-plugin-hermes-runtime
@@ -540,6 +543,31 @@ importers:
       '@types/node':
         specifier: ^25.5.2
         version: 25.5.2
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/debug@4.1.13)(@types/node@25.5.2)(jiti@2.6.1)(jsdom@29.0.1)(tsx@4.21.0)(yaml@2.8.3)
+
+  plugins/fusion-plugin-dependency-graph:
+    dependencies:
+      '@fusion/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@fusion/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+    devDependencies:
+      '@types/node':
+        specifier: ^25.5.2
+        version: 25.5.2
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.14
+      react:
+        specifier: ^19.0.0
+        version: 19.2.4
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

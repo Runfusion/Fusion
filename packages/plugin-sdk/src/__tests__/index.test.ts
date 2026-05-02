@@ -240,6 +240,22 @@ describe("Plugin SDK", () => {
     });
   });
 
+
+
+    it("PluginDashboardViewDefinition can be used in FusionPlugin", () => {
+      const plugin: FusionPlugin = {
+        manifest: { id: "test", name: "Test", version: "1.0.0" },
+        state: "installed",
+        hooks: {},
+        tools: [],
+        routes: [],
+        dashboardViews: [
+          { viewId: "graph", label: "Graph", componentPath: "./views/Graph.js", placement: "more" },
+        ],
+      };
+      expect(plugin.dashboardViews).toHaveLength(1);
+      expect(plugin.dashboardViews?.[0].viewId).toBe("graph");
+    });
   // ── validatePluginManifest ───────────────────────────────────────────
 
   describe("validatePluginManifest", () => {

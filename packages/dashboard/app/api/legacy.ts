@@ -19,6 +19,7 @@ import type {
   WorkflowStepResult,
   PluginInstallation,
   PluginUiSlotDefinition,
+  PluginDashboardViewDefinition,
   TaskDocument,
   TaskDocumentRevision,
   TaskDocumentWithTask,
@@ -7478,6 +7479,12 @@ export interface PluginUiSlotEntry {
   slot: PluginUiSlotDefinition;
 }
 
+/** A dashboard view entry returned by GET /api/plugins/dashboard-views */
+export interface PluginDashboardViewEntry {
+  pluginId: string;
+  view: PluginDashboardViewDefinition;
+}
+
 /** Plugin runtime metadata returned by GET /api/plugins/runtimes */
 export interface PluginRuntimeInfo {
   pluginId: string;
@@ -7490,6 +7497,12 @@ export interface PluginRuntimeInfo {
 /** Fetch all UI slot definitions from active plugins */
 export async function fetchPluginUiSlots(projectId?: string): Promise<PluginUiSlotEntry[]> {
   return api<PluginUiSlotEntry[]>(withProjectId("/plugins/ui-slots", projectId));
+}
+
+
+/** Fetch all top-level dashboard view definitions from active plugins */
+export async function fetchPluginDashboardViews(projectId?: string): Promise<PluginDashboardViewEntry[]> {
+  return api<PluginDashboardViewEntry[]>(withProjectId("/plugins/dashboard-views", projectId));
 }
 
 /** Fetch all plugin runtime metadata from active plugins */

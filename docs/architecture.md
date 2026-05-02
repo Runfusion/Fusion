@@ -163,6 +163,10 @@ Concrete references:
 
 - `PluginStore` (`plugin-store.ts`) stores plugin installation state and settings (`plugins` table)
 - `PluginLoader` (`plugin-loader.ts`) loads/unloads plugin modules and emits lifecycle events
+- Plugin contributions now include both embedded `uiSlots` and top-level `dashboardViews`
+- Discovery endpoints:
+  - `GET /api/plugins/ui-slots`
+  - `GET /api/plugins/dashboard-views`
 - Dashboard management routes are implemented in `packages/dashboard/src/plugin-routes.ts`
 
 ### Prompt Overrides

@@ -275,6 +275,28 @@ describe("useViewState", () => {
     });
   });
 
+  it("restores and persists plugin task views using the canonical composite key", async () => {
+    localStorage.setItem("kb:proj_123:kb-dashboard-task-view", "plugin:fusion-plugin-dependency-graph:graph");
+
+    const { result } = renderHook(() =>
+      useViewState(
+        createOptions({
+          currentProject: PROJECT,
+        }),
+      ),
+    );
+
+    await waitFor(() => {
+      expect(result.current.taskView).toBe("plugin:fusion-plugin-dependency-graph:graph");
+    });
+
+    await act(async () => {
+      result.current.setTaskView("plugin:fusion-plugin-dependency-graph:graph");
+    });
+
+    expect(localStorage.getItem("kb:proj_123:kb-dashboard-task-view")).toBe("plugin:fusion-plugin-dependency-graph:graph");
+  });
+
   it("restores legacy views (board/list/agents/missions/chat) from scoped storage", async () => {
     const legacyViews = ["board", "list", "agents", "missions", "chat"] as const;
 

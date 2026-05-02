@@ -486,7 +486,39 @@ export default function CiBadge() {
 
 ---
 
-## 8. Registering Agent Runtimes
+## 8. Registering Top-Level Dashboard Views
+
+Top-level views are a **sibling contribution type** to `uiSlots`.
+
+- `uiSlots` are embedded surfaces (task detail tab, header action, etc.)
+- `dashboardViews` are full-screen destinations in dashboard navigation
+
+Register `dashboardViews` on the plugin definition:
+
+```ts
+import type { PluginDashboardViewDefinition } from "@fusion/plugin-sdk";
+
+const dashboardViews: PluginDashboardViewDefinition[] = [
+  {
+    viewId: "graph",
+    label: "Graph",
+    componentPath: "./src/DependencyGraphView.tsx",
+    icon: "Network",
+    order: 40,
+    placement: "more",
+  },
+];
+```
+
+Current host constraints:
+- Discovery API: `GET /api/plugins/dashboard-views`
+- The dashboard **does not eval or filesystem-load plugin code in-browser**
+- `componentPath` is stored for authoring symmetry/future expansion, but render resolution is currently done through a host-side static registry (`pluginId + viewId`)
+- Use stable IDs; runtime view key format is `plugin:${pluginId}:${viewId}`
+
+---
+
+## 9. Registering Agent Runtimes
 
 Plugins can provide custom agent runtime implementations that extend the Fusion engine's ability to execute agent sessions. Runtimes are discovered through the plugin discovery pipeline and can be used by the engine to route agent session creation.
 

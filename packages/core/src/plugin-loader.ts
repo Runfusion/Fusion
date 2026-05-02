@@ -22,6 +22,7 @@ import type {
   PluginToolDefinition,
   PluginRouteDefinition,
   PluginUiSlotDefinition,
+  PluginDashboardViewDefinition,
   PluginRuntimeRegistration,
   PluginInstallation,
   PluginSkillContribution,
@@ -773,6 +774,22 @@ export class PluginLoader extends EventEmitter<{
       }
     }
     return slots;
+  }
+
+
+  /**
+   * Get all top-level dashboard view definitions from loaded plugins.
+   */
+  getPluginDashboardViews(): Array<{ pluginId: string; view: PluginDashboardViewDefinition }> {
+    const views: Array<{ pluginId: string; view: PluginDashboardViewDefinition }> = [];
+    for (const [pluginId, plugin] of this.plugins) {
+      if (plugin.dashboardViews) {
+        for (const view of plugin.dashboardViews) {
+          views.push({ pluginId, view });
+        }
+      }
+    }
+    return views;
   }
 
   /**

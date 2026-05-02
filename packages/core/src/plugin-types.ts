@@ -179,6 +179,28 @@ export interface PluginUiSlotDefinition {
   componentPath: string;
 }
 
+/**
+ * Top-level dashboard view definition for plugin-provided navigation destinations.
+ * This is separate from embedded uiSlots and is rendered via host-managed registry.
+ */
+export interface PluginDashboardViewDefinition {
+  /** Unique view identifier within a plugin namespace. */
+  viewId: string;
+  /** Human-readable label shown in dashboard navigation. */
+  label: string;
+  /**
+   * Path to module exporting the dashboard view component.
+   * Stored for authoring symmetry/future expansion; host currently resolves via static registry.
+   */
+  componentPath: string;
+  /** Optional icon name (lucide-react icon name or custom icon identifier). */
+  icon?: string;
+  /** Optional sort order for nav presentation. Lower numbers appear first. */
+  order?: number;
+  /** Preferred navigation placement for this top-level view. */
+  placement?: "primary" | "more";
+}
+
 // ── Plugin Runtimes ─────────────────────────────────────────────────
 
 /**
@@ -356,6 +378,8 @@ export interface FusionPlugin {
   tools?: PluginToolDefinition[];
   routes?: PluginRouteDefinition[];
   uiSlots?: PluginUiSlotDefinition[];
+  /** Plugin-contributed top-level dashboard views. */
+  dashboardViews?: PluginDashboardViewDefinition[];
   /** Agent runtime registration for providing custom runtime implementations */
   runtime?: PluginRuntimeRegistration;
   /** Plugin-contributed skills surfaced by the skill resolver. */

@@ -30,13 +30,16 @@ import {
   Zap,
 } from "lucide-react";
 import { fetchScripts } from "../api";
+import type { PluginDashboardViewEntry } from "../api";
 import { useViewportMode } from "./Header";
+import type { TaskView } from "../hooks/useViewState";
+import { buildPluginTaskViewId } from "../plugins/pluginViewRegistry";
 
 export interface MobileNavBarProps {
   /** Current task view mode */
-  view: "board" | "list" | "agents" | "missions" | "chat" | "documents" | "research" | "roadmaps" | "skills" | "mailbox" | "insights" | "memory" | "devserver" | "dev-server" | "todos";
+  view: TaskView;
   /** Change task view handler */
-  onChangeView: (view: "board" | "list" | "agents" | "missions" | "chat" | "documents" | "research" | "roadmaps" | "skills" | "mailbox" | "insights" | "memory" | "devserver" | "dev-server" | "todos") => void;
+  onChangeView: (view: TaskView) => void;
   /** Whether the ExecutorStatusBar footer is visible */
   footerVisible: boolean;
   /** Whether any full-screen modal is currently open (hides the tab bar) */
@@ -67,6 +70,7 @@ export interface MobileNavBarProps {
   showSkillsTab?: boolean;
   /** Experimental feature flags controlling visibility of nav items. */
   experimentalFeatures?: { insights?: boolean; roadmap?: boolean; memoryView?: boolean; devServer?: boolean; devServerView?: boolean; todoView?: boolean; researchView?: boolean };
+  pluginDashboardViews?: PluginDashboardViewEntry[];
 }
 
 function GitHubLogo({ size = 20 }: { size?: number }) {
@@ -114,6 +118,7 @@ export function MobileNavBar({
   onViewAllProjects,
   showSkillsTab,
   experimentalFeatures,
+  pluginDashboardViews = [],
 }: MobileNavBarProps) {
   const mode = useViewportMode();
   const [isMoreOpen, setIsMoreOpen] = useState(false);
@@ -197,7 +202,8 @@ export function MobileNavBar({
     || view === "dev-server"
     || (view === "todos" && todoViewEnabled)
     || (view === "roadmaps" && !showRoadmapsTopLevel)
-    || (view === "skills" && !showSkillsTopLevel);
+    || (view === "skills" && !showSkillsTopLevel)
+    || view.startsWith("plugin:");
 
   return (
     <>
@@ -625,6 +631,25 @@ export function MobileNavBar({
                 <span>Todos</span>
               </button>
             )}
+
+            {pluginDashboardViews
+              .filter((entry) => entry.view.placement !== "primary")
+              .sort((a, b) => (a.view.order ?? Number.MAX_SAFE_INTEGER) - (b.view.order ?? Number.MAX_SAFE_INTEGER))
+              .map((entry) => {
+                const pluginTaskView = buildPluginTaskViewId(entry.pluginId, entry.view.viewId);
+                return (
+                  <button
+                    key={`${entry.pluginId}:${entry.view.viewId}`}
+                    type="button"
+                    className="mobile-more-item"
+                    data-testid={`mobile-more-item-plugin-${entry.pluginId}-${entry.view.viewId}`}
+                    onClick={() => handleMoreAction(() => onChangeView(pluginTaskView))}
+                  >
+                    <Grid3X3 />
+                    <span>{entry.view.label}</span>
+                  </button>
+                );
+              })}
 
             <div className="mobile-more-separator" />
 

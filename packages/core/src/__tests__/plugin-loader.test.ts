@@ -1288,6 +1288,42 @@ describe("PluginLoader", () => {
     });
   });
 
+
+
+  describe("getPluginDashboardViews", () => {
+    it("returns empty array when no plugins loaded", async () => {
+      await pluginStore.init();
+      const loader = new PluginLoader({ pluginStore, taskStore: mockTaskStore });
+      expect(loader.getPluginDashboardViews()).toEqual([]);
+    });
+
+    it("aggregates dashboard views from multiple plugins and keeps uiSlots separate", async () => {
+      await pluginStore.init();
+      const loader = new PluginLoader({ pluginStore, taskStore: mockTaskStore });
+      (loader as any).plugins.set("views-a", {
+        manifest: makeManifest({ id: "views-a" }),
+        state: "started",
+        hooks: {},
+        uiSlots: [{ slotId: "task-detail-tab", label: "Tab", componentPath: "./tab.js" }],
+        dashboardViews: [{ viewId: "graph", label: "Graph", componentPath: "./graph.js", placement: "more" }],
+      } as FusionPlugin);
+      (loader as any).plugins.set("views-b", {
+        manifest: makeManifest({ id: "views-b" }),
+        state: "started",
+        hooks: {},
+        dashboardViews: [{ viewId: "timeline", label: "Timeline", componentPath: "./timeline.js" }],
+      } as FusionPlugin);
+
+      const views = loader.getPluginDashboardViews();
+      expect(views).toHaveLength(2);
+      expect(views.map((entry) => entry.pluginId + ":" + entry.view.viewId)).toEqual([
+        "views-a:graph",
+        "views-b:timeline",
+      ]);
+      expect(loader.getPluginUiSlots()).toHaveLength(1);
+    });
+  });
+
   // ── getPluginRuntimes ─────────────────────────────────────────────
 
   describe("getPluginRuntimes", () => {

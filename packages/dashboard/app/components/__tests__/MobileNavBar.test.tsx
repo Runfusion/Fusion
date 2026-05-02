@@ -104,6 +104,26 @@ describe("MobileNavBar", () => {
     expect(screen.queryByTestId("mobile-nav-tab-skills")).toBeNull();
   });
 
+  it("renders plugin dashboard views in More sheet and not top-level tabs", () => {
+    const props = createDefaultProps();
+    render(
+      <MobileNavBar
+        {...props}
+        pluginDashboardViews={[
+          {
+            pluginId: "fusion-plugin-dependency-graph",
+            view: { viewId: "graph", label: "Graph", componentPath: "./GraphView" },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.queryByTestId("mobile-nav-tab-graph")).toBeNull();
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-plugin-fusion-plugin-dependency-graph-graph"));
+    expect(props.onChangeView).toHaveBeenCalledWith("plugin:fusion-plugin-dependency-graph:graph");
+  });
+
   it("active tab is highlighted for mailbox", () => {
     render(<MobileNavBar {...createDefaultProps()} view="mailbox" />);
     expect(screen.getByTestId("mobile-nav-tab-mailbox").className).toContain("mobile-nav-tab--active");

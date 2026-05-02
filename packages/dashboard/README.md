@@ -68,6 +68,19 @@ The dashboard header adapts across three responsive tiers to remain usable witho
 - **Desktop (>1024px)**: Full header with all controls and the project selector inline. No overflow menu.
 - **Keyboard Accessible**: All controls across tiers expose proper ARIA attributes (aria-expanded, aria-haspopup, aria-label) and support keyboard navigation.
 
+### Plugin Top-Level Views (Graph)
+
+The dashboard now supports plugin-registered top-level views discovered from:
+- `GET /api/plugins/dashboard-views`
+
+View identity is persisted as `plugin:${pluginId}:${viewId}` in scoped project storage (`kb:${projectId}:kb-dashboard-task-view`).
+
+Navigation placement in this iteration:
+- **Desktop:** Header view overflow menu ("More views")
+- **Mobile:** `MobileNavBar` More sheet
+
+`fusion-plugin-dependency-graph` registers `graph` and is host-resolved through an explicit static registry (`app/plugins/pluginViewRegistry.tsx`) for bundle-safe rendering.
+
 ### Mobile Bottom Navigation
 The dashboard now includes a dedicated bottom tab navigation pattern for mobile viewports (`≤768px`) via `MobileNavBar` (`app/components/MobileNavBar.tsx`). This pattern is designed for narrow screens and Capacitor-wrapped app usage where bottom-tab navigation is the primary interaction model.
 

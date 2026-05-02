@@ -1,7 +1,8 @@
 import { useState, useCallback, useEffect, useMemo, useRef, lazy, Suspense } from "react";
-import type { Task, TaskDetail } from "@fusion/core";
+import type { Task, TaskDetail, WorkflowStep } from "@fusion/core";
 import { Header, useViewportMode } from "./components/Header";
 import { Board } from "./components/Board";
+import { TaskCard } from "./components/TaskCard";
 import { ListView } from "./components/ListView";
 import { ProjectOverview } from "./components/ProjectOverview";
 import { MissionManager } from "./components/MissionManager";
@@ -44,13 +45,15 @@ import { useMobileKeyboard } from "./hooks/useMobileKeyboard";
 import { useSetupReadiness } from "./hooks/useSetupReadiness";
 import { useUpdateCheck } from "./hooks/useUpdateCheck";
 import { useViewState, type TaskView } from "./hooks/useViewState";
+import { usePluginDashboardViews } from "./hooks/usePluginDashboardViews";
+import { PluginDashboardViewHost } from "./plugins/PluginDashboardViewHost";
 import { useProjectActions } from "./hooks/useProjectActions";
 import { useTaskHandlers } from "./hooks/useTaskHandlers";
 import { useRemoteNodeData } from "./hooks/useRemoteNodeData";
 import { useRemoteNodeEvents } from "./hooks/useRemoteNodeEvents";
 import { NodeProvider, useNodeContext } from "./context/NodeContext";
 import type { AiSessionSummary } from "./api";
-import { fetchUnreadCount, reportDashboardPerf, fetchTaskDetail } from "./api";
+import { fetchUnreadCount, reportDashboardPerf, fetchTaskDetail, fetchWorkflowSteps } from "./api";
 import { getScopedItem, setScopedItem } from "./utils/projectStorage";
 import { subscribeSse } from "./sse-bus";
 import { AUTH_TOKEN_RECOVERY_REQUIRED_EVENT } from "./auth";
@@ -201,6 +204,8 @@ function AppInner() {
     themeMode,
     setThemeMode,
   });
+
+  const { views: pluginDashboardViews } = usePluginDashboardViews(currentProject?.id);
 
   const handleTaskViewChange = useCallback((newView: TaskView) => {
     if (newView === "missions") {
@@ -502,6 +507,33 @@ function AppInner() {
     }
   }, [modalManager, currentProject?.id, addToast]);
 
+  const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchWorkflowSteps(currentProject?.id)
+      .then((steps) => {
+        if (!cancelled) {
+          setWorkflowSteps(steps);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setWorkflowSteps([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentProject?.id]);
+
+  const workflowStepNameLookup = useMemo(
+    () => new Map(workflowSteps.map((step) => [step.id, step.name] as const)),
+    [workflowSteps],
+  );
+
   const handleOpenNodes = useCallback(() => {
     if (!nodesEnabled) return;
     setNodesOpen((prev) => !prev);
@@ -608,6 +640,31 @@ function AppInner() {
     }
 
     // Project view
+    if (taskView.startsWith("plugin:")) {
+      return (
+        <PageErrorBoundary>
+          <PluginDashboardViewHost
+            taskView={taskView as `plugin:${string}:${string}`}
+            context={{
+              projectId: currentProject?.id,
+              tasks: isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks,
+              workflowSteps,
+              openTaskDetail: (task, initialTab) => modalManager.openDetailTask(task, initialTab),
+              renderTaskCard: (task) => (
+                <TaskCard
+                  task={task}
+                  projectId={currentProject?.id}
+                  onOpenDetail={(value) => modalManager.openDetailTask(value)}
+                  addToast={addToast}
+                  workflowStepNameLookup={workflowStepNameLookup}
+                />
+              ),
+            }}
+          />
+        </PageErrorBoundary>
+      );
+    }
+
     if (taskView === "skills") {
       if (!settingsLoaded || !skillsEnabled) {
         return null;
@@ -940,6 +997,7 @@ function AppInner() {
           todoView: todosEnabled,
           researchView: researchEnabled,
         }}
+        pluginDashboardViews={pluginDashboardViews}
       />
       {viewMode === "project" && currentProject && !nodesOpen && taskView !== "missions" && !modalManager.isPlanningOpen && !sessionBannersHidden && (
         <SessionNotificationBanner
@@ -1032,8 +1090,9 @@ function AppInner() {
           todoView: todosEnabled,
           researchView: researchEnabled,
         }}
+        pluginDashboardViews={pluginDashboardViews}
       />
-      {viewMode === "project" && currentProject && taskView !== "chat" && taskView !== "mailbox" && taskView !== "insights" && taskView !== "devserver" && taskView !== "dev-server" && (
+      {viewMode === "project" && currentProject && taskView !== "chat" && taskView !== "mailbox" && taskView !== "insights" && taskView !== "devserver" && taskView !== "dev-server" && !taskView.startsWith("plugin:") && (
         <QuickChatFAB
           projectId={currentProject.id}
           addToast={addToast}

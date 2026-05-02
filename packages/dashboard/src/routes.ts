@@ -3031,6 +3031,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     res.json(slots);
   });
 
+
+  /**
+   * GET /api/plugins/dashboard-views
+   * Get all plugin top-level dashboard view definitions from active plugins.
+   * Returns aggregated array of { pluginId, view } objects.
+   */
+  router.get("/plugins/dashboard-views", async (_req: Request, res: Response) => {
+    const views = options?.pluginLoader?.getPluginDashboardViews() ?? [];
+    res.json(views);
+  });
+
   /**
    * GET /api/plugins/runtimes
    * Get all plugin runtime metadata from active plugins.

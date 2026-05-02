@@ -4,9 +4,11 @@ import type { ProjectInfo } from "../api";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
 
 export type ViewMode = "overview" | "project";
-export type TaskView = "board" | "list" | "agents" | "missions" | "chat" | "documents" | "research" | "roadmaps" | "skills" | "mailbox" | "insights" | "memory" | "devserver" | "dev-server" | "todos";
+export type BuiltInTaskView = "board" | "list" | "agents" | "missions" | "chat" | "documents" | "research" | "roadmaps" | "skills" | "mailbox" | "insights" | "memory" | "devserver" | "dev-server" | "todos";
+export type PluginTaskView = `plugin:${string}:${string}`;
+export type TaskView = BuiltInTaskView | PluginTaskView;
 
-const TASK_VIEWS: readonly TaskView[] = [
+const BUILT_IN_TASK_VIEWS: readonly BuiltInTaskView[] = [
   "board",
   "list",
   "agents",
@@ -24,8 +26,16 @@ const TASK_VIEWS: readonly TaskView[] = [
   "todos",
 ];
 
+function isBuiltInTaskView(value: string | null): value is BuiltInTaskView {
+  return value !== null && BUILT_IN_TASK_VIEWS.includes(value as BuiltInTaskView);
+}
+
+function isPluginTaskView(value: string | null): value is PluginTaskView {
+  return value !== null && /^plugin:[^:]+:.+$/u.test(value);
+}
+
 function isTaskView(value: string | null): value is TaskView {
-  return value !== null && TASK_VIEWS.includes(value as TaskView);
+  return isBuiltInTaskView(value) || isPluginTaskView(value);
 }
 
 function normalizeTaskView(value: TaskView): TaskView {

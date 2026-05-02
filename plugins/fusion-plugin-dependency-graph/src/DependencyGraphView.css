@@ -1,0 +1,101 @@
+.dependency-graph-view {
+  --dependency-graph-canvas-min-height: calc(var(--space-2xl) * 10);
+  --dependency-graph-canvas-min-height-mobile: calc(var(--space-2xl) * 8);
+  --dependency-graph-edge-width: var(--btn-border-width);
+  --dependency-graph-node-max-width-mobile: calc(var(--space-2xl) * 10);
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+}
+
+.dependency-graph-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.dependency-graph-canvas {
+  overflow: auto;
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  min-height: var(--dependency-graph-canvas-min-height);
+  cursor: grab;
+}
+
+.dependency-graph-canvas:active {
+  cursor: grabbing;
+}
+
+.dependency-graph-scene {
+  position: relative;
+  transition: transform var(--transition-fast);
+}
+
+.dependency-graph-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.dependency-graph-edge {
+  stroke: var(--border);
+  stroke-width: var(--dependency-graph-edge-width);
+  transition: stroke var(--transition-fast), opacity var(--transition-fast);
+}
+
+.dependency-graph-edge.is-related {
+  stroke: var(--todo);
+}
+
+.dependency-graph-edge.is-dimmed {
+  opacity: 0.4;
+}
+
+.dependency-graph-node {
+  position: absolute;
+  top: 0;
+  left: 0;
+  cursor: grab;
+  transition: opacity var(--transition-fast), filter var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.dependency-graph-node:active {
+  cursor: grabbing;
+}
+
+.dependency-graph-node .card {
+  height: 100%;
+}
+
+.dependency-graph-node.is-selected .card {
+  box-shadow: var(--focus-ring-strong);
+  border-color: var(--todo);
+}
+
+.dependency-graph-node.is-related:not(.is-selected) .card {
+  border-color: var(--in-progress);
+}
+
+.dependency-graph-node.is-dimmed {
+  opacity: 0.5;
+  filter: saturate(0.8);
+}
+
+@media (max-width: 768px) {
+  .dependency-graph-view {
+    padding: var(--space-md);
+  }
+
+  .dependency-graph-canvas {
+    min-height: var(--dependency-graph-canvas-min-height-mobile);
+  }
+
+  .dependency-graph-node {
+    width: min(100%, var(--dependency-graph-node-max-width-mobile)) !important;
+  }
+}

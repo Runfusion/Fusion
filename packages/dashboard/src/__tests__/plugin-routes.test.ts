@@ -92,6 +92,7 @@ function createMockPluginLoader(overrides: Partial<PluginLoader> = {}): PluginLo
     getPluginTools: vi.fn().mockReturnValue([]),
     getPluginRoutes: vi.fn().mockReturnValue([]),
     getPluginUiSlots: vi.fn().mockReturnValue([]),
+    getPluginDashboardViews: vi.fn().mockReturnValue([]),
     loadAllPlugins: vi.fn().mockResolvedValue({ loaded: 0, errors: 0 }),
     stopAllPlugins: vi.fn().mockResolvedValue(undefined),
     invokeHook: vi.fn().mockResolvedValue(undefined),
@@ -678,6 +679,58 @@ describe("POST /api/plugins mode:install — dist-folder parent resolution", () 
 });
 
 // ══════════════════════════════════════════════════════════════════
+
+
+describe("GET /api/plugins/dashboard-views", () => {
+  let pluginStore: PluginStore;
+  let pluginLoader: PluginLoader;
+  let store: TaskStore;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    pluginStore = createMockPluginStore();
+    pluginLoader = createMockPluginLoader();
+    store = createMockTaskStore({
+      getPluginStore: vi.fn().mockReturnValue(pluginStore),
+    });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { pluginStore, pluginLoader }));
+    return app;
+  }
+
+  it("returns 200 with empty array when no plugins have dashboard views", async () => {
+    (pluginLoader.getPluginDashboardViews as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    const res = await performGet(buildApp(), "/api/plugins/dashboard-views");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("returns aggregated dashboard views with pluginId and view", async () => {
+    const mockViews = [
+      {
+        pluginId: "dep-graph",
+        view: {
+          viewId: "graph",
+          label: "Graph",
+          componentPath: "./views/Graph.js",
+          icon: "Network",
+          placement: "more",
+        },
+      },
+    ];
+    (pluginLoader.getPluginDashboardViews as ReturnType<typeof vi.fn>).mockReturnValue(mockViews);
+
+    const res = await performGet(buildApp(), "/api/plugins/dashboard-views");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(mockViews);
+  });
+});
+
 describe("GET /api/plugins/ui-slots", () => {
   let pluginStore: PluginStore;
   let pluginLoader: PluginLoader;

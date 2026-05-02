@@ -157,6 +157,25 @@ describe("Header", () => {
       expect(screen.getByTestId("view-overflow-todos")).toBeInTheDocument();
     });
 
+    it("renders plugin dashboard views in desktop view overflow only", () => {
+      const onChangeView = vi.fn();
+      renderHeader({
+        onChangeView,
+        pluginDashboardViews: [
+          {
+            pluginId: "fusion-plugin-dependency-graph",
+            view: { viewId: "graph", label: "Graph", componentPath: "./GraphView" },
+          },
+        ],
+      });
+
+      fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
+      const graphItem = screen.getByTestId("view-overflow-plugin-fusion-plugin-dependency-graph-graph");
+      expect(graphItem).toBeInTheDocument();
+      fireEvent.click(graphItem);
+      expect(onChangeView).toHaveBeenCalledWith("plugin:fusion-plugin-dependency-graph:graph");
+    });
+
     it("renders view overflow trigger when an experimental overflow feature is enabled", () => {
       renderHeader({ onChangeView: noop, experimentalFeatures: { insights: true } });
       expect(screen.getByTestId("view-toggle-overflow-trigger")).toBeDefined();
