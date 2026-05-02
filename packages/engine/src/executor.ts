@@ -563,6 +563,8 @@ export class TaskExecutor {
   }>();
   /** Active step-session executors per task (mutually exclusive with activeSessions). */
   private activeStepExecutors = new Map<string, StepSessionExecutor>();
+  /** Active pre-merge workflow step sessions per task. */
+  private activeWorkflowStepSessions = new Map<string, AgentSession>();
   /**
    * Reviewer subagent sessions per task. Reviewers (`reviewer.ts`) create their
    * own AgentSessions that aren't part of `activeSessions`/`activeStepExecutors`,
@@ -611,6 +613,84 @@ export class TaskExecutor {
     );
     await this.store.mergeTask(taskId);
     return "merged";
+  }
+
+  private async getExecutionPauseLabel(): Promise<"global pause" | "engine pause" | null> {
+    const settings = await this.store.getSettings();
+    if (settings.globalPause) return "global pause";
+    if (settings.enginePaused) return "engine pause";
+    return null;
+  }
+
+  private async shouldDeferCompletionForGlobalPause(
+    taskId: string,
+    context: string,
+  ): Promise<boolean> {
+    const settings = await this.store.getSettings();
+    if (!settings.globalPause) {
+      return false;
+    }
+
+    this.clearCompletedTaskWatchdog(taskId);
+    executorLog.log(`${taskId}: completion handoff deferred — global pause active (${context})`);
+    await this.store.logEntry(
+      taskId,
+      `Completion handoff deferred — global pause active (${context})`,
+      undefined,
+      this.currentRunContext,
+    ).catch(() => undefined);
+    return true;
+  }
+
+  private async shouldDeferWorkflowStepCompletion(
+    taskId: string,
+    context: string,
+  ): Promise<boolean> {
+    let latestTask: Task | null = null;
+    try {
+      latestTask = await this.store.getTask(taskId);
+    } catch {
+      latestTask = null;
+    }
+
+    if (latestTask?.paused || this.pausedAborted.has(taskId)) {
+      this.clearCompletedTaskWatchdog(taskId);
+      executorLog.log(`${taskId}: completion handoff deferred — task paused (${context})`);
+      await this.store.logEntry(
+        taskId,
+        `Completion handoff deferred — task paused (${context})`,
+        undefined,
+        this.currentRunContext,
+      ).catch(() => undefined);
+      return true;
+    }
+
+    return this.shouldDeferCompletionForGlobalPause(taskId, context);
+  }
+
+  private async parkTaskAfterWorkflowStepPause(taskId: string): Promise<boolean> {
+    let latestTask: Task | null = null;
+    try {
+      latestTask = await this.store.getTask(taskId);
+    } catch {
+      latestTask = null;
+    }
+
+    if (!latestTask?.paused) {
+      return false;
+    }
+
+    executorLog.log(`${taskId}: workflow step interrupted by task pause — moving to todo`);
+    await this.store.logEntry(
+      taskId,
+      "Execution paused during pre-merge workflow step — moved to todo",
+      undefined,
+      this.currentRunContext,
+    ).catch(() => undefined);
+    if (latestTask.column === "in-progress") {
+      await this.store.moveTask(taskId, "todo", { preserveResumeState: true });
+    }
+    return true;
   }
   /** Child agent sessions keyed by agent ID. Used for termination. */
   private childSessions = new Map<string, AgentSession>();
@@ -768,6 +848,20 @@ export class TaskExecutor {
           );
           this.activeStepExecutors.delete(task.id);
         }
+        if (this.activeWorkflowStepSessions.has(task.id)) {
+          executorLog.log(`${task.id} moved from in-progress to ${to} — terminating workflow step session`);
+          this.pausedAborted.add(task.id);
+          this.options.stuckTaskDetector?.untrackTask(task.id);
+          const workflowSession = this.activeWorkflowStepSessions.get(task.id)!;
+          const sessionWithAbort = workflowSession as AgentSession & { abort?: () => Promise<void> };
+          if (typeof sessionWithAbort.abort === "function") {
+            void sessionWithAbort.abort().catch((err) => {
+              executorLog.warn(`Failed to abort workflow step session for ${task.id}: ${err}`);
+            });
+          }
+          workflowSession.dispose();
+          this.activeWorkflowStepSessions.delete(task.id);
+        }
         // Reviewer subagents run in their own sessions outside `activeSessions`
         // and `activeStepExecutors`, so the loops above don't reach them.
         // Without this, a reviewer keeps running (and emitting verdicts that
@@ -823,6 +917,25 @@ export class TaskExecutor {
           this.disposeSubagentsForTask(task.id, "task paused");
           return;
         }
+        if (task.paused && this.activeWorkflowStepSessions.has(task.id)) {
+          executorLog.log(`Pausing ${task.id} — terminating workflow step session`);
+          this.pausedAborted.add(task.id);
+          this.options.stuckTaskDetector?.untrackTask(task.id);
+          const workflowSession = this.activeWorkflowStepSessions.get(task.id)!;
+          const sessionWithAbort = workflowSession as AgentSession & { abort?: () => Promise<void> };
+          if (typeof sessionWithAbort.abort === "function") {
+            await sessionWithAbort.abort().catch((err) =>
+              executorLog.warn(`Failed to abort workflow step session for pause ${task.id}: ${err}`),
+            );
+          }
+          workflowSession.dispose();
+          this.activeWorkflowStepSessions.delete(task.id);
+          this.loopRecoveryState.delete(task.id);
+          this.spawnedAgents.delete(task.id);
+          this.stuckAborted.delete(task.id);
+          this.disposeSubagentsForTask(task.id, "task paused");
+          return;
+        }
 
         // Handle unpause of an in-progress task with no active session.
         // This covers orphaned states (e.g., engine restarted while task was
@@ -833,12 +946,32 @@ export class TaskExecutor {
           && task.column === "in-progress"
           && !this.activeSessions.has(task.id)
           && !this.activeStepExecutors.has(task.id)
+          && !this.activeWorkflowStepSessions.has(task.id)
         ) {
           if (
             !this.executing.has(task.id)
             && !this.resumingUnpaused.has(task.id)
             && !this.recoveringCompleted.has(task.id)
           ) {
+            const pauseLabel = await this.getExecutionPauseLabel();
+            if (pauseLabel) {
+              executorLog.log(`Skipping unpause resume for ${task.id} — ${pauseLabel} active`);
+              return;
+            }
+
+            if (this.isTaskWorkComplete(task) && !task.mergeDetails) {
+              this.recoveringCompleted.add(task.id);
+              executorLog.log(`${task.id} unpaused with completed work and no session — recovering directly to in-review`);
+              void this.recoverCompletedTask(task)
+                .catch((err) =>
+                  executorLog.error(`Failed to recover completed unpaused task ${task.id}:`, err),
+                )
+                .finally(() => {
+                  this.recoveringCompleted.delete(task.id);
+                });
+              return;
+            }
+
             this.resumingUnpaused.add(task.id);
             executorLog.log(`Unpaused ${task.id} in-progress with no session — resuming execution`);
             try {
@@ -994,6 +1127,22 @@ export class TaskExecutor {
           this.spawnedAgents.delete(taskId);
           this.stuckAborted.delete(taskId);
         }
+        for (const [taskId, workflowSession] of this.activeWorkflowStepSessions) {
+          executorLog.log(`Global pause — terminating workflow step session for ${taskId}`);
+          this.pausedAborted.add(taskId);
+          this.options.stuckTaskDetector?.untrackTask(taskId);
+          const sessionWithAbort = workflowSession as AgentSession & { abort?: () => Promise<void> };
+          if (typeof sessionWithAbort.abort === "function") {
+            void sessionWithAbort.abort().catch((err) => {
+              executorLog.warn(`Failed to abort workflow step session for ${taskId}: ${err}`);
+            });
+          }
+          workflowSession.dispose();
+          this.activeWorkflowStepSessions.delete(taskId);
+          this.loopRecoveryState.delete(taskId);
+          this.spawnedAgents.delete(taskId);
+          this.stuckAborted.delete(taskId);
+        }
       }
     });
 
@@ -1131,6 +1280,7 @@ export class TaskExecutor {
         || this.executing.has(taskId)
         || this.activeSessions.has(taskId)
         || this.activeStepExecutors.has(taskId)
+        || this.activeWorkflowStepSessions.has(taskId)
         || this.resumingUnpaused.has(taskId)
       ) {
         return;
@@ -1138,6 +1288,11 @@ export class TaskExecutor {
       this.recoveringCompleted.add(taskId);
 
       try {
+        const pauseLabel = await this.getExecutionPauseLabel();
+        if (pauseLabel) {
+          return;
+        }
+
         let currentTask: Task | null = null;
         try {
           currentTask = await this.store.getTask(taskId);
@@ -1192,7 +1347,13 @@ export class TaskExecutor {
     taskId: string,
     worktreePath: string,
     preserveResumeState: boolean = true,
-  ): Promise<"bounced" | "skipped-pending"> {
+  ): Promise<"bounced" | "skipped-pending" | "deferred-paused"> {
+    const pauseLabel = await this.getExecutionPauseLabel();
+    if (pauseLabel) {
+      executorLog.log(`${taskId}: workflow rerun deferred — ${pauseLabel} active`);
+      return "deferred-paused";
+    }
+
     // Re-entry guard: if a previous bounce for the same task is still
     // mid-flight (e.g., the watchdog fired before the original sequence
     // completed), skip rather than racing two concurrent moveTask sequences.
@@ -1208,6 +1369,10 @@ export class TaskExecutor {
       const latestTask = await this.store.getTask(taskId);
       if (!latestTask) {
         throw new Error("task missing during workflow rerun bounce");
+      }
+      if (latestTask.paused) {
+        executorLog.log(`${taskId}: workflow rerun deferred — task is paused`);
+        return "deferred-paused";
       }
 
       if (latestTask.column === "in-progress") {
@@ -1225,12 +1390,22 @@ export class TaskExecutor {
           worktree: worktreePath,
           executionStartedAt: originalExecutionStartedAt ?? null,
         });
+        const pauseLabelAfterTodo = await this.getExecutionPauseLabel();
+        if (pauseLabelAfterTodo) {
+          executorLog.log(`${taskId}: workflow rerun parked in todo — ${pauseLabelAfterTodo} became active during bounce`);
+          return "deferred-paused";
+        }
         await this.store.moveTask(taskId, "in-progress");
         return "bounced";
       }
 
       if (latestTask.column === "todo") {
         await this.store.updateTask(taskId, { worktree: worktreePath });
+        const pauseLabelBeforeResume = await this.getExecutionPauseLabel();
+        if (pauseLabelBeforeResume) {
+          executorLog.log(`${taskId}: workflow rerun parked in todo — ${pauseLabelBeforeResume} became active before resume`);
+          return "deferred-paused";
+        }
         await this.store.moveTask(taskId, "in-progress");
         return "bounced";
       }
@@ -1254,8 +1429,10 @@ export class TaskExecutor {
         const outcome = await this.performWorkflowRerunBounce(taskId, worktreePath, preserveResumeState);
         if (outcome === "bounced") {
           executorLog.log(successMessage);
-        } else {
+        } else if (outcome === "skipped-pending") {
           executorLog.warn(`${taskId}: rerun bounce skipped — another bounce already in flight`);
+        } else {
+          executorLog.log(`${taskId}: rerun bounce deferred while pause is active`);
         }
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
@@ -1265,6 +1442,12 @@ export class TaskExecutor {
 
     const watchdog = setTimeout(async () => {
       this.workflowRerunWatchdogs.delete(taskId);
+
+      const pauseLabel = await this.getExecutionPauseLabel();
+      if (pauseLabel) {
+        executorLog.log(`${taskId}: workflow rerun watchdog skipped — ${pauseLabel} active`);
+        return;
+      }
 
       let currentTask: Task | null = null;
       try {
@@ -1293,7 +1476,7 @@ export class TaskExecutor {
         const outcome = await this.performWorkflowRerunBounce(taskId, worktreePath, preserveResumeState);
         if (outcome === "bounced") {
           executorLog.warn(`${taskId}: workflow rerun watchdog retry succeeded`);
-        } else {
+        } else if (outcome === "skipped-pending") {
           // The original bounce is still mid-flight, which means *it* is the
           // one that's hung — not us. Log honestly so operators don't see a
           // false "succeeded" message while the task is actually stranded.
@@ -1304,6 +1487,8 @@ export class TaskExecutor {
             taskId,
             `Workflow rerun watchdog retry skipped — original bounce still in flight after ${WORKFLOW_RERUN_WATCHDOG_MS / 1000}s; task may be stuck`,
           ).catch(() => undefined);
+        } else {
+          executorLog.log(`${taskId}: workflow rerun watchdog retry deferred while pause is active`);
         }
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
@@ -1499,12 +1684,21 @@ export class TaskExecutor {
         this.executing.has(task.id)
         || this.activeSessions.has(task.id)
         || this.activeStepExecutors.has(task.id)
+        || this.activeWorkflowStepSessions.has(task.id)
         || this.resumingUnpaused.has(task.id)
       ) {
         executorLog.log(`${task.id}: skipping recoverCompletedTask — task has active execution in flight`);
         return false;
       }
       const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) {
+        executorLog.log(
+          `${task.id}: skipping recoverCompletedTask — ${
+            settings.globalPause ? "global pause" : "engine pause"
+          } active`,
+        );
+        return false;
+      }
 
       // Capture modified files if the worktree still exists
       if (task.worktree && existsSync(task.worktree)) {
@@ -1516,7 +1710,16 @@ export class TaskExecutor {
 
         // Run workflow steps before transitioning — skip in fast mode
         if (task.executionMode !== "fast") {
+          if (await this.shouldDeferCompletionForGlobalPause(task.id, "before workflow steps during completed-task recovery")) {
+            return false;
+          }
           const workflowResult = await this.runWorkflowSteps(task, task.worktree, settings);
+          if (workflowResult === "deferred-paused") {
+            if (this.pausedAborted.has(task.id)) {
+              this.pausedAborted.delete(task.id);
+            }
+            return false;
+          }
           if (!workflowResult.allPassed) {
             // For recovery path, treat any failure (including revision) as hard failure
             // Send back to in-progress so executor can attempt to fix the issues
@@ -1528,6 +1731,9 @@ export class TaskExecutor {
         }
       }
 
+      if (await this.shouldDeferCompletionForGlobalPause(task.id, "before in-review transition during completed-task recovery")) {
+        return false;
+      }
       await this.persistTokenUsage(task.id);
       await this.store.moveTask(task.id, "in-review");
       this.clearCompletedTaskWatchdog(task.id);
@@ -1599,6 +1805,16 @@ export class TaskExecutor {
    * directly to in-review without spawning a new agent session.
    */
   async resumeOrphaned(): Promise<void> {
+    const settings = await this.store.getSettings();
+    if (settings.globalPause || settings.enginePaused) {
+      executorLog.log(
+        `resumeOrphaned skipped — ${
+          settings.globalPause ? "global pause" : "engine pause"
+        } is active`,
+      );
+      return;
+    }
+
     const tasks = await this.store.listTasks({ slim: true, column: "in-progress" });
     const inProgress = tasks.filter(
       (t) => t.column === "in-progress" && !this.executing.has(t.id) && !t.paused,
@@ -2180,10 +2396,23 @@ export class TaskExecutor {
             }
 
             this.scheduleCompletedTaskWatchdog(task.id, "step-session completion");
+            if (await this.shouldDeferCompletionForGlobalPause(task.id, "before workflow steps after step-session completion")) {
+              return;
+            }
 
             // Run workflow steps before moving to in-review — skip in fast mode
             if (executionMode !== "fast") {
               const workflowResult = await this.runWorkflowSteps(task, worktreePath, settings);
+              if (workflowResult === "deferred-paused") {
+                if (await this.parkTaskAfterWorkflowStepPause(task.id)) {
+                  this.pausedAborted.delete(task.id);
+                  return;
+                }
+                if (this.pausedAborted.has(task.id)) {
+                  this.pausedAborted.delete(task.id);
+                }
+                return;
+              }
               if (!workflowResult.allPassed) {
                 // Check if revision was requested
                 if (workflowResult.revisionRequested) {
@@ -2206,6 +2435,9 @@ export class TaskExecutor {
 
             // Reset retry counters on success
             await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null });
+            if (await this.shouldDeferCompletionForGlobalPause(task.id, "before in-review transition after step-session completion")) {
+              return;
+            }
 
             await this.store.moveTask(task.id, "in-review");
             this.clearCompletedTaskWatchdog(task.id);
@@ -2649,6 +2881,9 @@ export class TaskExecutor {
             this.pausedAborted.delete(task.id);
             wasPaused = true;
             if (await this.shouldFinalizeCompletedTask(task.id, taskDone)) {
+              if (await this.shouldDeferCompletionForGlobalPause(task.id, "paused after completion")) {
+                return;
+              }
               executorLog.log(`${task.id} paused after completion (graceful session exit) — finalizing to in-review`);
               await this.store.logEntry(task.id, "Execution paused after completion — finalizing to in-review");
               await this.persistTokenUsage(task.id);
@@ -2698,10 +2933,25 @@ export class TaskExecutor {
             }
 
             this.scheduleCompletedTaskWatchdog(task.id, "task completion");
+            if (await this.shouldDeferCompletionForGlobalPause(task.id, "before workflow steps after task completion")) {
+              return;
+            }
 
             // Run workflow steps before moving to in-review — skip in fast mode
             if (executionMode !== "fast") {
               const workflowResult = await this.runWorkflowSteps(task, worktreePath, settings);
+              if (workflowResult === "deferred-paused") {
+                if (await this.parkTaskAfterWorkflowStepPause(task.id)) {
+                  this.pausedAborted.delete(task.id);
+                  wasPaused = true;
+                  return;
+                }
+                if (this.pausedAborted.has(task.id)) {
+                  this.pausedAborted.delete(task.id);
+                  wasPaused = true;
+                }
+                return;
+              }
               if (!workflowResult.allPassed) {
                 // Check if revision was requested
                 if (workflowResult.revisionRequested) {
@@ -2724,6 +2974,9 @@ export class TaskExecutor {
 
             // Reset retry counters on success
             await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null });
+            if (await this.shouldDeferCompletionForGlobalPause(task.id, "before in-review transition after task completion")) {
+              return;
+            }
 
             await this.persistTokenUsage(task.id);
             await this.store.moveTask(task.id, "in-review");
@@ -2863,10 +3116,25 @@ export class TaskExecutor {
               }
 
               this.scheduleCompletedTaskWatchdog(task.id, "task completion retry");
+              if (await this.shouldDeferCompletionForGlobalPause(task.id, "before workflow steps after task completion retry")) {
+                return;
+              }
 
               // Run workflow steps before moving to in-review — skip in fast mode
               if (executionMode !== "fast") {
                 const workflowResult = await this.runWorkflowSteps(task, worktreePath, settings);
+                if (workflowResult === "deferred-paused") {
+                  if (await this.parkTaskAfterWorkflowStepPause(task.id)) {
+                    this.pausedAborted.delete(task.id);
+                    wasPaused = true;
+                    return;
+                  }
+                  if (this.pausedAborted.has(task.id)) {
+                    this.pausedAborted.delete(task.id);
+                    wasPaused = true;
+                  }
+                  return;
+                }
                 if (!workflowResult.allPassed) {
                   if (workflowResult.revisionRequested) {
                     await this.handleWorkflowRevisionRequest(task, worktreePath, workflowResult.feedback, workflowResult.stepName);
@@ -2881,6 +3149,9 @@ export class TaskExecutor {
               }
 
               await this.store.updateTask(task.id, { workflowStepRetries: undefined, taskDoneRetryCount: null });
+              if (await this.shouldDeferCompletionForGlobalPause(task.id, "before in-review transition after task completion retry")) {
+                return;
+              }
 
               await this.persistTokenUsage(task.id);
               await this.store.moveTask(task.id, "in-review");
@@ -2989,6 +3260,9 @@ export class TaskExecutor {
         // Task was paused mid-execution — clean up worktree and move to todo
         this.pausedAborted.delete(task.id);
         if (await this.shouldFinalizeCompletedTask(task.id, taskDone)) {
+          if (await this.shouldDeferCompletionForGlobalPause(task.id, "paused after completion")) {
+            return;
+          }
           executorLog.log(`${task.id} paused after completion — finalizing to in-review`);
           await this.store.logEntry(task.id, "Execution paused after completion — finalizing to in-review", undefined, this.currentRunContext);
           await this.persistTokenUsage(task.id);
@@ -3494,7 +3768,13 @@ export class TaskExecutor {
         if (params.summary) {
           await store.updateTask(taskId, { summary: params.summary });
         }
-        await store.updateTask(taskId, { paused: false, status: null });
+        const settings = await store.getSettings();
+        const hardPauseActive = Boolean(task.paused || settings.globalPause);
+        if (hardPauseActive) {
+          await store.updateTask(taskId, { status: null });
+        } else {
+          await store.updateTask(taskId, { paused: false, status: null });
+        }
         await store.logEntry(taskId, "Task marked done by agent");
 
         const latestTask = await store.getTask(taskId);
@@ -3502,17 +3782,21 @@ export class TaskExecutor {
         if (latestColumn === "todo") {
           await store.logEntry(
             taskId,
-            "fn_task_done called while task was in todo — promoting to in-progress before completion handoff",
+            hardPauseActive
+              ? "fn_task_done called while task was in todo during pause — promoting to in-progress for deferred completion handoff"
+              : "fn_task_done called while task was in todo — promoting to in-progress before completion handoff",
           );
           await store.moveTask(taskId, "in-progress");
           latestColumn = "in-progress";
         }
 
-        if (latestColumn === "in-progress") {
+        if (latestColumn === "in-progress" && !hardPauseActive) {
           this.scheduleCompletedTaskWatchdog(taskId, "fn_task_done");
         }
 
-        const successMessage = params.summary
+        const successMessage = hardPauseActive
+          ? "Task marked complete. Completion handoff deferred until pause is cleared."
+          : params.summary
           ? "Task marked complete with summary. All steps done. Moving to in-review."
           : "Task marked complete. All steps done. Moving to in-review.";
         return {
@@ -4183,7 +4467,7 @@ ${failureFeedback}
     task: Task,
     worktreePath: string,
     settings: Settings,
-  ): Promise<WorkflowStepResult> {
+  ): Promise<WorkflowStepResult | "deferred-paused"> {
     // Check if task has enabled workflow steps
     const currentTask = await this.store.getTask(task.id);
     if (!currentTask.enabledWorkflowSteps?.length) return { allPassed: true };
@@ -4243,6 +4527,10 @@ ${failureFeedback}
         continue;
       }
 
+      if (await this.shouldDeferWorkflowStepCompletion(task.id, `before workflow step '${ws.name}'`)) {
+        return "deferred-paused";
+      }
+
       await this.store.logEntry(task.id, `[pre-merge] Starting workflow step: ${ws.name} (${stepMode} mode)`);
       executorLog.log(`${task.id} — [pre-merge] running workflow step: ${ws.name} (${stepMode} mode)`);
 
@@ -4263,6 +4551,9 @@ ${failureFeedback}
         const result: WorkflowStepOutcome = stepMode === "script"
           ? await this.executeScriptWorkflowStep(task, ws, worktreePath, settings)
           : await this.executeWorkflowStep(task, ws, worktreePath, settings);
+        if (await this.shouldDeferWorkflowStepCompletion(task.id, `workflow step '${ws.name}'`)) {
+          return "deferred-paused";
+        }
         const completedAt = new Date().toISOString();
 
         if (result.success) {
@@ -4334,6 +4625,9 @@ ${failureFeedback}
           };
         }
       } catch (err: unknown) {
+        if (await this.shouldDeferWorkflowStepCompletion(task.id, `workflow step '${ws.name}'`)) {
+          return "deferred-paused";
+        }
         const { message: errorMessage, detail: errorDetail, stack: errorStack } = formatError(err);
         const completedAt = new Date().toISOString();
         await this.store.logEntry(
@@ -4539,6 +4833,7 @@ and show an appropriate message to the user.\`
         task.id,
         `Workflow step '${workflowStep.name}' using model: ${describeModel(session)}${useOverride && attemptLabel === "primary" ? " (workflow step override)" : ""}${attemptLabel === "fallback" ? " (fallback after timeout)" : ""}`,
       );
+      this.activeWorkflowStepSessions.set(task.id, session);
 
       let output = "";
       session.subscribe((event) => {
@@ -4612,6 +4907,10 @@ and show an appropriate message to the user.\`
         return { success: false, error: errorMessage };
       } finally {
         if (timeoutHandle) clearTimeout(timeoutHandle);
+        const activeWorkflowStepSession = this.activeWorkflowStepSessions.get(task.id);
+        if (activeWorkflowStepSession === session) {
+          this.activeWorkflowStepSessions.delete(task.id);
+        }
         // Suppress unused-variable warning; `timedOut` documents intent.
         void timedOut;
       }

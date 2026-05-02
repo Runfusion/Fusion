@@ -428,6 +428,10 @@ describe("SelfHealingManager", () => {
     });
 
     it("runStartupRecovery invokes the startup recovery subset", async () => {
+      vi.mocked(store.getSettings).mockResolvedValue({
+        globalPause: false,
+        enginePaused: false,
+      } as unknown as Settings);
       const recoverNoProgressNoTaskDoneFailures = vi.spyOn(manager, "recoverNoProgressNoTaskDoneFailures").mockResolvedValue(1);
       const recoverCompletedTasks = vi.spyOn(manager, "recoverCompletedTasks").mockResolvedValue(1);
       const recoverMisclassifiedFailures = vi.spyOn(manager, "recoverMisclassifiedFailures").mockResolvedValue(1);
@@ -443,6 +447,18 @@ describe("SelfHealingManager", () => {
       expect(recoverPartialProgressNoTaskDoneFailures).toHaveBeenCalledTimes(1);
       expect(recoverOrphanedExecutions).toHaveBeenCalledTimes(1);
       expect(recoverApprovedTriageTasks).toHaveBeenCalledTimes(1);
+    });
+
+    it("runStartupRecovery skips while enginePaused is active", async () => {
+      vi.mocked(store.getSettings).mockResolvedValue({
+        globalPause: false,
+        enginePaused: true,
+      } as unknown as Settings);
+      const recoverCompletedTasks = vi.spyOn(manager, "recoverCompletedTasks").mockResolvedValue(1);
+
+      await manager.runStartupRecovery();
+
+      expect(recoverCompletedTasks).not.toHaveBeenCalled();
     });
   });
 

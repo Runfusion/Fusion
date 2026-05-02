@@ -757,6 +757,16 @@ export class Scheduler {
           continue;
         }
 
+        const latestSettings = await this.store.getSettings();
+        if (latestSettings.globalPause) {
+          schedulerLog.log(`Task ${task.id} dispatch aborted — globalPause became active mid-pass`);
+          continue;
+        }
+        if (latestSettings.enginePaused) {
+          schedulerLog.log(`Task ${task.id} dispatch aborted — enginePaused became active mid-pass`);
+          continue;
+        }
+
         // Resolve effective node for routing
         let effectiveNode = resolveEffectiveNode(freshTask, settings);
         schedulerLog.log(`Task ${task.id} routed to node=${effectiveNode.nodeId ?? "local"} (source=${effectiveNode.source})`);

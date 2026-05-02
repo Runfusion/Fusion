@@ -173,6 +173,16 @@ export class SelfHealingManager {
    * stale in-progress/planning tasks that no longer have a live worker.
    */
   async runStartupRecovery(): Promise<void> {
+    const settings = await this.store.getSettings();
+    if (settings.globalPause || settings.enginePaused) {
+      log.log(
+        `Startup recovery skipped — ${
+          settings.globalPause ? "global pause" : "engine pause"
+        } is active`,
+      );
+      return;
+    }
+
     // Each recovery step is isolated — one failure doesn't prevent subsequent steps.
     const steps: Array<{ name: string; fn: () => Promise<unknown> }> = [
       { name: "no-progress-no-task-done", fn: () => this.recoverNoProgressNoTaskDoneFailures().then(() => undefined) },
@@ -616,28 +626,37 @@ export class SelfHealingManager {
         }
       }
 
-      // Batch 2 — Task recovery (operations are independent of each other)
-      const batch2Fns: Array<{ name: string; fn: () => Promise<unknown> }> = [
-        { name: "recover-completed-tasks", fn: () => this.recoverCompletedTasks() },
-        { name: "recover-stale-incomplete-review", fn: () => this.recoverStaleIncompleteReviewTasks() },
-        { name: "recover-failed-pre-merge-steps", fn: () => this.recoverReviewTasksWithFailedPreMergeSteps() },
-        { name: "recover-interrupted-merging", fn: () => this.recoverInterruptedMergingTasks() },
-        { name: "recover-mergeable-review", fn: () => this.recoverMergeableReviewTasks() },
-        { name: "recover-merged-review", fn: () => this.recoverMergedReviewTasks() },
-        { name: "recover-misclassified-failures", fn: () => this.recoverMisclassifiedFailures() },
-        { name: "recover-no-progress-no-task-done", fn: () => this.recoverNoProgressNoTaskDoneFailures() },
-        { name: "recover-partial-progress-no-task-done", fn: () => this.recoverPartialProgressNoTaskDoneFailures() },
-        { name: "recover-orphaned-executions", fn: () => this.recoverOrphanedExecutions() },
-        { name: "recover-approved-triage", fn: () => this.recoverApprovedTriageTasks() },
-        { name: "recover-orphaned-planning", fn: () => this.recoverOrphanedPlanningTasks() },
-        { name: "recover-ghost-review", fn: () => this.recoverGhostReviewTasks() },
-      ];
-      for (const fn of batch2Fns) {
-        try {
-          await fn.fn();
-          log.log(`Maintenance batch 2 step "${fn.name}" succeeded`);
-        } catch (stepErr) {
-          log.error(`Maintenance batch 2 step "${fn.name}" failed: ${stepErr instanceof Error ? stepErr.message : String(stepErr)}`);
+      const recoverySettings = await this.store.getSettings();
+      if (recoverySettings.globalPause || recoverySettings.enginePaused) {
+        log.log(
+          `Maintenance batch 2 skipped — ${
+            recoverySettings.globalPause ? "global pause" : "engine pause"
+          } is active`,
+        );
+      } else {
+        // Batch 2 — Task recovery (operations are independent of each other)
+        const batch2Fns: Array<{ name: string; fn: () => Promise<unknown> }> = [
+          { name: "recover-completed-tasks", fn: () => this.recoverCompletedTasks() },
+          { name: "recover-stale-incomplete-review", fn: () => this.recoverStaleIncompleteReviewTasks() },
+          { name: "recover-failed-pre-merge-steps", fn: () => this.recoverReviewTasksWithFailedPreMergeSteps() },
+          { name: "recover-interrupted-merging", fn: () => this.recoverInterruptedMergingTasks() },
+          { name: "recover-mergeable-review", fn: () => this.recoverMergeableReviewTasks() },
+          { name: "recover-merged-review", fn: () => this.recoverMergedReviewTasks() },
+          { name: "recover-misclassified-failures", fn: () => this.recoverMisclassifiedFailures() },
+          { name: "recover-no-progress-no-task-done", fn: () => this.recoverNoProgressNoTaskDoneFailures() },
+          { name: "recover-partial-progress-no-task-done", fn: () => this.recoverPartialProgressNoTaskDoneFailures() },
+          { name: "recover-orphaned-executions", fn: () => this.recoverOrphanedExecutions() },
+          { name: "recover-approved-triage", fn: () => this.recoverApprovedTriageTasks() },
+          { name: "recover-orphaned-planning", fn: () => this.recoverOrphanedPlanningTasks() },
+          { name: "recover-ghost-review", fn: () => this.recoverGhostReviewTasks() },
+        ];
+        for (const fn of batch2Fns) {
+          try {
+            await fn.fn();
+            log.log(`Maintenance batch 2 step "${fn.name}" succeeded`);
+          } catch (stepErr) {
+            log.error(`Maintenance batch 2 step "${fn.name}" failed: ${stepErr instanceof Error ? stepErr.message : String(stepErr)}`);
+          }
         }
       }
 

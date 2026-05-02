@@ -15,6 +15,8 @@ const {
   mockRecoverNoProgressNoTaskDoneFailures,
   mockRunStartupRecovery,
   mockExecutorCtor,
+  mockResumeOrphaned,
+  mockTaskStoreSettings,
   mockMessageStoreSetHook,
 } = vi.hoisted(() => ({
   mockSelfHealingStart: vi.fn(),
@@ -23,6 +25,8 @@ const {
   mockRecoverNoProgressNoTaskDoneFailures: vi.fn().mockResolvedValue(0),
   mockRunStartupRecovery: vi.fn().mockResolvedValue(undefined),
   mockExecutorCtor: vi.fn(),
+  mockResumeOrphaned: vi.fn().mockResolvedValue(undefined),
+  mockTaskStoreSettings: {} as Record<string, unknown>,
   mockMessageStoreSetHook: vi.fn(),
 }));
 
@@ -46,7 +50,7 @@ vi.mock("@fusion/core", async () => {
       self.getDatabase = vi.fn().mockReturnValue(mockDatabase);
       self.init = vi.fn().mockResolvedValue(undefined);
       self.listTasks = vi.fn().mockResolvedValue([]);
-      self.getSettings = vi.fn().mockResolvedValue({});
+      self.getSettings = vi.fn().mockImplementation(async () => structuredClone(mockTaskStoreSettings));
       self.getMissionStore = vi.fn().mockReturnValue({
         getMissionWithHierarchy: vi.fn().mockReturnValue(null),
         findNextPendingSlice: vi.fn().mockReturnValue(null),
@@ -141,7 +145,7 @@ vi.mock("../../executor.js", async () => {
     TaskExecutor: vi.fn().mockImplementation((_store, _rootDir, options) => {
       mockExecutorCtor(options);
       const self = {} as Record<string, unknown>;
-      self.resumeOrphaned = vi.fn().mockResolvedValue(undefined);
+      self.resumeOrphaned = mockResumeOrphaned;
       self.recoverCompletedTask = vi.fn().mockResolvedValue(true);
       self.getExecutingTaskIds = vi.fn().mockReturnValue(new Set());
       self.handleLoopDetected = vi.fn().mockResolvedValue(false);
@@ -184,6 +188,9 @@ describe("InProcessRuntime", () => {
   }
 
   beforeEach(() => {
+    for (const key of Object.keys(mockTaskStoreSettings)) {
+      delete mockTaskStoreSettings[key];
+    }
     // Create a unique temp directory for this test run
     testDir = mkdtempSync(join(tmpdir(), `fn-test-${randomUUID().slice(0, 8)}-`));
 
@@ -243,6 +250,55 @@ describe("InProcessRuntime", () => {
       await runtime.start();
 
       expect(mockRecoverNoProgressNoTaskDoneFailures).toHaveBeenCalledTimes(1);
+      expect(mockResumeOrphaned).toHaveBeenCalledTimes(1);
+      expect(mockRunStartupRecovery).toHaveBeenCalledTimes(1);
+    }, 30000);
+
+    it("defers startup recovery while enginePaused is active", async () => {
+      mockTaskStoreSettings.enginePaused = true;
+
+      await runtime.start();
+
+      expect(mockRecoverNoProgressNoTaskDoneFailures).not.toHaveBeenCalled();
+      expect(mockResumeOrphaned).not.toHaveBeenCalled();
+      expect(mockRunStartupRecovery).not.toHaveBeenCalled();
+    }, 30000);
+
+    it("resumes deferred startup recovery after engine pause is cleared in startup order", async () => {
+      mockTaskStoreSettings.enginePaused = true;
+
+      await runtime.start();
+      mockRecoverNoProgressNoTaskDoneFailures.mockClear();
+      mockResumeOrphaned.mockClear();
+      mockRunStartupRecovery.mockClear();
+
+      mockTaskStoreSettings.enginePaused = false;
+      await runtime.resumeAfterUnpause();
+
+      expect(mockRecoverNoProgressNoTaskDoneFailures).toHaveBeenCalledTimes(1);
+      expect(mockResumeOrphaned).toHaveBeenCalledTimes(1);
+      expect(mockRunStartupRecovery).toHaveBeenCalledTimes(1);
+      expect(mockRecoverNoProgressNoTaskDoneFailures.mock.invocationCallOrder[0]).toBeLessThan(
+        mockResumeOrphaned.mock.invocationCallOrder[0],
+      );
+      expect(mockResumeOrphaned.mock.invocationCallOrder[0]).toBeLessThan(
+        mockRunStartupRecovery.mock.invocationCallOrder[0],
+      );
+    }, 30000);
+
+    it("coalesces concurrent unpause recovery dispatches", async () => {
+      mockTaskStoreSettings.enginePaused = true;
+
+      await runtime.start();
+      mockRecoverNoProgressNoTaskDoneFailures.mockClear();
+      mockResumeOrphaned.mockClear();
+      mockRunStartupRecovery.mockClear();
+
+      mockTaskStoreSettings.enginePaused = false;
+      await Promise.all([runtime.resumeAfterUnpause(), runtime.resumeAfterUnpause()]);
+
+      expect(mockRecoverNoProgressNoTaskDoneFailures).toHaveBeenCalledTimes(1);
+      expect(mockResumeOrphaned).toHaveBeenCalledTimes(1);
       expect(mockRunStartupRecovery).toHaveBeenCalledTimes(1);
     }, 30000);
 

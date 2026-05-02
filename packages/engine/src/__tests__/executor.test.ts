@@ -3099,6 +3099,24 @@ describe("TaskExecutor pause behavior", () => {
     expect(store.logEntry).not.toHaveBeenCalledWith("FN-001", expect.anything());
   });
 
+  it("skips resumeOrphaned entirely while enginePaused is active", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      autoMerge: false,
+      enginePaused: true,
+      globalPause: false,
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.resumeOrphaned();
+
+    expect(store.listTasks).not.toHaveBeenCalled();
+    expect(store.logEntry).not.toHaveBeenCalled();
+  });
+
   it("resumes unpaused in-progress task with no active session", async () => {
     const store = createMockStore();
     const disposeFn = vi.fn();
@@ -3135,6 +3153,47 @@ describe("TaskExecutor pause behavior", () => {
     // (async worktree validation may allow additional retry cycles within the timeout)
     expect(mockedCreateFnAgent.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Resuming execution after unpause", undefined, undefined);
+  });
+
+  it("does not resume unpaused in-progress task while global pause is active", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      autoMerge: false,
+      globalPause: true,
+      enginePaused: false,
+    });
+
+    mockedCreateFnAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    }) as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    store._trigger("task:updated", {
+      id: "FN-001",
+      paused: undefined,
+      column: "in-progress",
+      description: "Test task",
+      title: "Paused runtime task",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(executor).toBeTruthy();
+    expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+    expect(store.logEntry).not.toHaveBeenCalledWith("FN-001", "Resuming execution after unpause", undefined, undefined);
   });
 
   it("does not recursively resume when resume logging emits task updated", async () => {
@@ -4134,8 +4193,17 @@ describe("TaskExecutor global pause behavior", () => {
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
   });
 
-  it("finalizes to in-review when global pause hits after fn_task_done", async () => {
+  it("defers completion handoff when global pause hits after fn_task_done", async () => {
     const store = createMockStore();
+    let globalPause = false;
+    store.getSettings.mockImplementation(async () => ({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      autoMerge: false,
+      globalPause,
+      enginePaused: false,
+    }));
 
     mockedCreateFnAgent.mockImplementation(async (opts: any) => {
       const customTools = opts.customTools || [];
@@ -4146,6 +4214,7 @@ describe("TaskExecutor global pause behavior", () => {
             if (taskDoneTool) {
               await taskDoneTool.execute("tool-1", {});
             }
+            globalPause = true;
             store._trigger("settings:updated", {
               settings: { globalPause: true },
               previous: { globalPause: false },
@@ -4168,11 +4237,17 @@ describe("TaskExecutor global pause behavior", () => {
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
 
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review");
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
+    expect(
+      store.logEntry.mock.calls.some(
+        ([id, action]: [string, string]) =>
+          id === "FN-001" && action.includes("Completion handoff deferred — global pause active"),
+      ),
+    ).toBe(true);
   });
 
-  it("promotes todo tasks to in-progress when fn_task_done is called while paused", async () => {
+  it("parks todo tasks in in-progress when fn_task_done is called during global pause", async () => {
     const store = createMockStore();
     let capturedCustomTools: any[] = [];
 
@@ -4192,6 +4267,14 @@ describe("TaskExecutor global pause behavior", () => {
     };
 
     store.getTask.mockResolvedValue(todoTask);
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      autoMerge: false,
+      globalPause: true,
+      enginePaused: false,
+    });
     store.moveTask.mockImplementation(async (_id: string, to: string) => ({ ...todoTask, column: to, paused: undefined }));
 
     mockedCreateFnAgent.mockImplementation((async (opts: any) => {
@@ -4212,13 +4295,20 @@ describe("TaskExecutor global pause behavior", () => {
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute(todoTask as any);
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { paused: false, status: null });
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { paused: false, status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null });
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
-      expect.stringContaining("fn_task_done called while task was in todo"),
+      expect.stringContaining("fn_task_done called while task was in todo during pause"),
     );
+    expect(
+      store.logEntry.mock.calls.some(
+        ([id, action]: [string, string]) =>
+          id === "FN-001" && action.includes("Completion handoff deferred — global pause active"),
+      ),
+    ).toBe(true);
   });
 
   it("takes no action when globalPause remains false", async () => {
@@ -4337,6 +4427,62 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { status: "failed" });
+  });
+
+  it("keeps fn_task_done on the normal completion path when enginePaused becomes true", async () => {
+    const store = createMockStore();
+    const mutableSettings = {
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      autoMerge: false,
+      globalPause: false,
+      enginePaused: false,
+    };
+    let capturedCustomTools: any[] = [];
+    let taskDoneResult: any;
+
+    store.getSettings.mockImplementation(async () => ({ ...mutableSettings }));
+
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      capturedCustomTools = opts.customTools || [];
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            mutableSettings.enginePaused = true;
+            store._trigger("settings:updated", {
+              settings: { enginePaused: true },
+              previous: { enginePaused: false },
+            });
+            const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "fn_task_done");
+            if (taskDoneTool) {
+              taskDoneResult = await taskDoneTool.execute("call-1", { summary: "done" });
+            }
+          }),
+          dispose: vi.fn(),
+          subscribe: vi.fn(),
+          on: vi.fn(),
+          sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+          state: {},
+        },
+      };
+    }) as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const watchdogSpy = vi.spyOn(executor as any, "scheduleCompletedTaskWatchdog");
+
+    await executor.execute({
+      id: "FN-001", title: "Test", description: "T", column: "in-progress",
+      dependencies: [], steps: [], currentStep: 0, log: [],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    expect(taskDoneResult.content[0].text).toBe(
+      "Task marked complete with summary. All steps done. Moving to in-review.",
+    );
+    expect(watchdogSpy).toHaveBeenCalledWith("FN-001", "fn_task_done");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { paused: false, status: null });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
   });
 
   it("does NOT move tasks to todo when enginePaused transitions false→true", async () => {
@@ -8120,7 +8266,7 @@ describe("Workflow Steps Execution", () => {
       dependencies: [] as string[],
       steps: [{ name: "Preflight", status: "pending" as const }],
       currentStep: 0,
-      log: [] as string[],
+      log: [] as any[],
       enabledWorkflowSteps: ["WS-001"],
       workflowStepRetries: 3, // Exhaust retries so task fails immediately
       prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
@@ -8264,7 +8410,7 @@ describe("Workflow Steps Execution", () => {
       dependencies: [] as string[],
       steps: [{ name: "Preflight", status: "pending" as const }],
       currentStep: 0,
-      log: [] as string[],
+      log: [] as any[],
       enabledWorkflowSteps: ["WS-001"],
       workflowStepRetries: 3, // Exhaust retries so task fails immediately
       prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
@@ -9154,6 +9300,100 @@ describe("Workflow Steps Execution", () => {
     // onComplete should be called
     expect(onComplete).toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("parks a task pause during a prompt-mode workflow step instead of routing through failure recovery", async () => {
+    const store = createMockStore();
+    const mutableTask = {
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress" as const,
+      paused: false,
+      dependencies: [] as string[],
+      steps: [{ name: "Preflight", status: "pending" as const }],
+      currentStep: 0,
+      log: [] as any[],
+      enabledWorkflowSteps: ["WS-001"],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    store.getTask.mockImplementation(async () => mutableTask as any);
+    store.updateTask.mockImplementation(async (_taskId: string, patch: Record<string, unknown>) => {
+      Object.assign(mutableTask, patch);
+      return { ...mutableTask };
+    });
+    store.moveTask.mockImplementation(async (_taskId: string, column: string) => {
+      mutableTask.column = column as typeof mutableTask.column;
+      return { ...mutableTask };
+    });
+
+    store.getWorkflowStep.mockResolvedValue({
+      id: "WS-001",
+      name: "QA Check",
+      description: "Run tests",
+      mode: "prompt",
+      prompt: "Run the test suite.",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const workflowAbort = vi.fn().mockResolvedValue(undefined);
+    const workflowDispose = vi.fn();
+    let callIdx = 0;
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      callIdx++;
+      if (callIdx === 1) {
+        const customTools = opts.customTools || [];
+        return {
+          session: {
+            prompt: vi.fn().mockImplementation(async () => {
+              const taskDoneTool = customTools.find((tool: any) => tool.name === "fn_task_done");
+              if (taskDoneTool) {
+                await taskDoneTool.execute("tool-1", {});
+              }
+            }),
+            dispose: vi.fn(),
+            subscribe: vi.fn(),
+            on: vi.fn(),
+            sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+            state: {},
+          },
+        };
+      }
+
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            mutableTask.paused = true;
+            store._trigger("task:updated", { ...mutableTask });
+            throw new Error("workflow step aborted by pause");
+          }),
+          abort: workflowAbort,
+          dispose: workflowDispose,
+          subscribe: vi.fn(),
+          on: vi.fn(),
+          state: {},
+        },
+      };
+    }) as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    await executor.execute({ ...mutableTask });
+
+    expect(workflowDispose).toHaveBeenCalled();
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveResumeState: true });
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review");
+    expect(store.addTaskComment).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-001",
+      "Execution paused during pre-merge workflow step — moved to todo",
+      undefined,
+      expect.objectContaining({ agentId: "executor" }),
+    );
   });
 });
 
@@ -11274,6 +11514,25 @@ describe("TaskExecutor watchdogs", () => {
       "FN-WD-3",
       expect.stringContaining("Watchdog: workflow rerun handoff stalled for 15s"),
     );
+  });
+
+  it("defers workflow rerun bounce while global pause is active", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      autoMerge: false,
+      globalPause: true,
+      enginePaused: false,
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const outcome = await (executor as any).performWorkflowRerunBounce("FN-WD-PAUSE", "/tmp/fn-wd-pause");
+
+    expect(outcome).toBe("deferred-paused");
+    expect(store.getTask).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
   });
 
   it("preserves the original executionStartedAt during a workflow rerun bounce", async () => {

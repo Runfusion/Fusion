@@ -1824,14 +1824,13 @@ export class ProjectEngine {
         runtimeLog.log("Global unpause — resuming agentic activity");
 
         try {
-
-          const executor = (this.runtime as any).executor;
-          executor?.resumeOrphaned?.().catch((err: Error) =>
-            runtimeLog.error("Failed to resume orphaned tasks on unpause:", err),
+          const runtime = this.runtime as any;
+          runtime.resumeAfterUnpause?.().catch((err: Error) =>
+            runtimeLog.error("Failed to resume agentic activity on unpause:", err),
           );
         } catch (err: unknown) {
           runtimeLog.warn(
-            `Global unpause: failed to dispatch resumeOrphaned: ${err instanceof Error ? err.message : String(err)}`,
+            `Global unpause: failed to dispatch resumeAfterUnpause: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
 
@@ -1862,14 +1861,13 @@ export class ProjectEngine {
         runtimeLog.log("Engine unpaused — resuming agentic activity");
 
         try {
-
-          const executor = (this.runtime as any).executor;
-          executor?.resumeOrphaned?.().catch((err: Error) =>
-            runtimeLog.error("Failed to resume orphaned tasks on engine unpause:", err),
+          const runtime = this.runtime as any;
+          runtime.resumeAfterUnpause?.().catch((err: Error) =>
+            runtimeLog.error("Failed to resume agentic activity on engine unpause:", err),
           );
         } catch (err: unknown) {
           runtimeLog.warn(
-            `Engine unpause: failed to dispatch resumeOrphaned: ${err instanceof Error ? err.message : String(err)}`,
+            `Engine unpause: failed to dispatch resumeAfterUnpause: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
 

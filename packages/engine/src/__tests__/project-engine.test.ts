@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   cronRunnerStop: vi.fn(),
   runtimeStart: vi.fn(async () => undefined),
   runtimeStop: vi.fn(async () => undefined),
+  runtimeResumeAfterUnpause: vi.fn(async () => undefined),
   aiMergeTask: vi.fn(),
   execFile: vi.fn(),
   currentStore: null as Record<string, unknown> | null,
@@ -92,6 +93,7 @@ vi.mock("../runtimes/in-process-runtime.js", () => ({
   InProcessRuntime: vi.fn().mockImplementation(() => ({
     start: mocks.runtimeStart,
     stop: mocks.runtimeStop,
+    resumeAfterUnpause: mocks.runtimeResumeAfterUnpause,
     getTaskStore: () => mocks.currentStore,
     getAgentStore: vi.fn(),
     getMessageStore: vi.fn(),
@@ -230,6 +232,7 @@ function createEngine(options?: ConstructorParameters<typeof ProjectEngine>[2]) 
 }
 
 beforeEach(() => {
+  mocks.runtimeResumeAfterUnpause.mockClear();
   mocks.notifierStart.mockClear();
   mocks.notifierStop.mockClear();
   mocks.notifierNotifyGridlock.mockClear();
@@ -1500,6 +1503,24 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
 
     await engine.stop();
   });
+
+  it("resumes deferred startup recovery on engine unpause", async () => {
+    const mockStore = createMockStore(baseSettings);
+    mocks.currentStore = mockStore.store;
+    const engine = createEngine();
+
+    await engine.start();
+    mocks.runtimeResumeAfterUnpause.mockClear();
+
+    await mockStore.emitSettingsUpdated(
+      { ...baseSettings, enginePaused: false },
+      { ...baseSettings, enginePaused: true },
+    );
+
+    expect(mocks.runtimeResumeAfterUnpause).toHaveBeenCalledTimes(1);
+
+    await engine.stop();
+  });
 });
 
 describe("ProjectEngine swallowed error hardening", () => {
@@ -1602,7 +1623,7 @@ describe("ProjectEngine swallowed error hardening", () => {
     await engine.stop();
   });
 
-  it("warns when resumeOrphaned dispatch fails during global unpause", async () => {
+  it("warns when resumeAfterUnpause dispatch fails during global unpause", async () => {
     const mockStore = createMockStore(baseSettings);
     mocks.currentStore = mockStore.store;
     const engine = createEngine();
@@ -1610,9 +1631,9 @@ describe("ProjectEngine swallowed error hardening", () => {
     warnSpy.mockClear();
 
     const runtime = engine.getRuntime() as unknown as object;
-    Object.defineProperty(runtime, "executor", {
+    Object.defineProperty(runtime, "resumeAfterUnpause", {
       get() {
-        throw new Error("executor broken");
+        throw new Error("resume hook broken");
       },
       configurable: true,
     });
@@ -1623,7 +1644,7 @@ describe("ProjectEngine swallowed error hardening", () => {
     );
 
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Global unpause: failed to dispatch resumeOrphaned"),
+      expect.stringContaining("Global unpause: failed to dispatch resumeAfterUnpause"),
     );
 
     await engine.stop();
@@ -1650,7 +1671,7 @@ describe("ProjectEngine swallowed error hardening", () => {
     await engine.stop();
   });
 
-  it("warns when resumeOrphaned dispatch fails during engine unpause", async () => {
+  it("warns when resumeAfterUnpause dispatch fails during engine unpause", async () => {
     const mockStore = createMockStore(baseSettings);
     mocks.currentStore = mockStore.store;
     const engine = createEngine();
@@ -1658,9 +1679,9 @@ describe("ProjectEngine swallowed error hardening", () => {
     warnSpy.mockClear();
 
     const runtime = engine.getRuntime() as unknown as object;
-    Object.defineProperty(runtime, "executor", {
+    Object.defineProperty(runtime, "resumeAfterUnpause", {
       get() {
-        throw new Error("executor broken");
+        throw new Error("resume hook broken");
       },
       configurable: true,
     });
@@ -1671,7 +1692,7 @@ describe("ProjectEngine swallowed error hardening", () => {
     );
 
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Engine unpause: failed to dispatch resumeOrphaned"),
+      expect.stringContaining("Engine unpause: failed to dispatch resumeAfterUnpause"),
     );
 
     await engine.stop();

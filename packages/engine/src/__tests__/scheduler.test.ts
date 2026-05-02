@@ -917,6 +917,38 @@ describe("Scheduler", () => {
 
       expect(store.moveTask).not.toHaveBeenCalled();
     });
+
+    it("aborts dispatch when globalPause becomes active mid-pass", async () => {
+      const todoTask = createMockTask({ id: "FN-002", column: "todo" });
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+      const getSettings = vi.fn()
+        .mockResolvedValueOnce({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          globalPause: false,
+          enginePaused: false,
+        })
+        .mockResolvedValue({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          globalPause: true,
+          enginePaused: false,
+        });
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([todoTask]),
+        getTask: vi.fn().mockResolvedValue(todoTask),
+        getSettings,
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect(store.getTask).toHaveBeenCalledWith("FN-002");
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(store.moveTask).not.toHaveBeenCalled();
+    });
   });
 
   describe("engine pause", () => {

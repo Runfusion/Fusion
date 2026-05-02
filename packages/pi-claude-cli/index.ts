@@ -126,8 +126,8 @@ function ensureMcpConfig(
     const configPath = writeMcpConfig(toolDefs, hash);
     cachedMcpConfig = { hash, configPath };
     const toolNames = toolDefs.map((t) => t.name).join(", ");
-    console.error(
-      `[pi-claude-cli] MCP config refreshed with ${toolDefs.length} custom tool(s) [${toolNames}] (hash=${hash})`,
+    debugMcp(
+      `MCP config refreshed with ${toolDefs.length} custom tool(s) [${toolNames}] (hash=${hash})`,
     );
     return configPath;
   } catch (err) {

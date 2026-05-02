@@ -116,6 +116,10 @@ export class InProcessRuntime
    * before `start()` via `setMergeEnqueuer`.
    */
   private mergeEnqueuer?: (taskId: string) => void;
+  /** Tracks whether startup recovery was intentionally deferred due to pause state. */
+  private startupRecoveryDeferred = false;
+  /** Prevent duplicate unpause recovery dispatches from racing each other. */
+  private resumeAfterUnpauseRunning = false;
 
   /**
    * @param config - Runtime configuration
@@ -669,20 +673,19 @@ export class InProcessRuntime
       // 8. Set up event forwarding from TaskStore
       this.setupEventForwarding();
 
-      // 9. Requeue no-progress no-task_done failures before resumeOrphaned
-      // can restart them.
-      await this.selfHealingManager.recoverNoProgressNoTaskDoneFailures();
+      const startupSettings = await this.taskStore.getSettings();
+      if (startupSettings.globalPause || startupSettings.enginePaused) {
+        this.startupRecoveryDeferred = true;
+        runtimeLog.log(
+          `Startup recovery deferred — ${
+            startupSettings.globalPause ? "global pause" : "engine pause"
+          } is active`,
+        );
+      } else {
+        this.startupRecoveryDeferred = false;
 
-      // 10. Resume orphaned in-progress tasks
-      await this.executor.resumeOrphaned();
-
-      // Some "stuck" tasks are already orphaned by the time the runtime boots:
-      // they no longer have a tracked session/worktree, so the stuck detector
-      // cannot recover them. Delegate the startup recovery pass to
-      // SelfHealingManager so the policy lives in one place.
-      void this.selfHealingManager.runStartupRecovery().catch((err) => {
-        runtimeLog.error("Self-healing startup recovery failed:", err);
-      });
+        await this.resumeStartupRecoverySequence();
+      }
 
       // 11. Start scheduler and triage processor
       this.scheduler.start();
@@ -905,6 +908,62 @@ export class InProcessRuntime
    */
   setMergeEnqueuer(enqueueMerge: (taskId: string) => void): void {
     this.mergeEnqueuer = enqueueMerge;
+  }
+
+  /**
+   * Resume executor/self-healing activity after an unpause transition.
+   *
+   * When startup recovery had been deferred, this replays the original startup
+   * ordering so orphan resume and self-healing cannot race each other.
+   */
+  async resumeAfterUnpause(): Promise<void> {
+    if (!this.taskStore || !this.executor || !this.selfHealingManager) {
+      return;
+    }
+    if (this.resumeAfterUnpauseRunning) {
+      return;
+    }
+
+    this.resumeAfterUnpauseRunning = true;
+    try {
+      const settings = await this.taskStore.getSettings();
+      if (settings.globalPause || settings.enginePaused) {
+        runtimeLog.log(
+          `Unpause recovery still blocked — ${
+            settings.globalPause ? "global pause" : "engine pause"
+          } remains active`,
+        );
+        return;
+      }
+
+      if (this.startupRecoveryDeferred) {
+        await this.resumeStartupRecoverySequence();
+        this.startupRecoveryDeferred = false;
+        return;
+      }
+
+      await this.executor.resumeOrphaned();
+    } finally {
+      this.resumeAfterUnpauseRunning = false;
+    }
+  }
+
+  private async resumeStartupRecoverySequence(): Promise<void> {
+    // Requeue no-progress no-task_done failures before resumeOrphaned can
+    // restart other orphaned executions.
+    await this.selfHealingManager!.recoverNoProgressNoTaskDoneFailures();
+
+    // Resume orphaned in-progress tasks before the broader self-healing scan
+    // so the executor can claim or fast-path eligible tasks first.
+    await this.executor!.resumeOrphaned();
+
+    // Some "stuck" tasks are already orphaned by the time the runtime boots:
+    // they no longer have a tracked session/worktree, so the stuck detector
+    // cannot recover them. Delegate the startup recovery pass to
+    // SelfHealingManager so the policy lives in one place.
+    void this.selfHealingManager!.runStartupRecovery().catch((err) => {
+      runtimeLog.error("Self-healing startup recovery failed:", err);
+    });
   }
 
   /**
