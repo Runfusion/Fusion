@@ -5140,6 +5140,48 @@ describe("TaskDetailModal", () => {
       expect(descTextarea.value).toBe("My Description");
     });
 
+    it("propagates auto-saved description updates via onTaskUpdated", async () => {
+      const { updateTask } = await import("../../api");
+      const mockUpdateTask = vi.mocked(updateTask);
+      const onTaskUpdated = vi.fn();
+
+      const initialTask = makeTask({
+        id: "FN-001",
+        column: "todo",
+        title: "My Task",
+        description: "Old Description",
+      });
+      const updatedTask = {
+        ...initialTask,
+        description: "New Description",
+      };
+
+      mockUpdateTask.mockResolvedValueOnce(updatedTask);
+
+      const { container } = render(
+        <TaskDetailModal
+          task={initialTask}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          onTaskUpdated={onTaskUpdated}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+
+      const descTextarea = container.querySelector("#task-form-description") as HTMLTextAreaElement;
+      fireEvent.change(descTextarea, { target: { value: "New Description" } });
+
+      await waitFor(() => {
+        expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", { description: "New Description" }, undefined);
+        expect(onTaskUpdated).toHaveBeenCalledWith(updatedTask);
+      }, { timeout: 3500 });
+    });
+
     it("uses updated model values in edit mode after saving from the Model tab", async () => {
       const { fetchModels, updateTask } = await import("../../api");
       const mockFetchModels = vi.mocked(fetchModels);

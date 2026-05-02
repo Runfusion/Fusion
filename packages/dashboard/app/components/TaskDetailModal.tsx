@@ -854,12 +854,13 @@ export function TaskDetailModal({
 
   const handleAutoSaveDescription = useCallback(async (description: string) => {
     try {
-      await updateTask(task.id, { description }, projectId);
+      const updatedTask = await updateTask(task.id, { description }, projectId);
+      onTaskUpdated?.(updatedTask);
       addToast("Description saved", "success");
     } catch (err) {
       addToast(`Failed to save: ${getErrorMessage(err)}`, "error");
     }
-  }, [task.id, addToast, projectId]);
+  }, [task.id, addToast, projectId, onTaskUpdated]);
 
   // Handle keyboard shortcuts for edit mode
   const handleEditKeyDown = useCallback((e: KeyboardEvent) => {
