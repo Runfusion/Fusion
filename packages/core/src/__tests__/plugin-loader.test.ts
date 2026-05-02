@@ -5,7 +5,8 @@ import { mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { PluginLoader } from "../plugin-loader.js";
 import { PluginStore } from "../plugin-store.js";
-import type { FusionPlugin, PluginManifest } from "../plugin-types.js";
+import { setCreateAiSessionFactory } from "../ai-engine-loader.js";
+import type { CreateAiSessionOptions, FusionPlugin, PluginManifest } from "../plugin-types.js";
 
 // Test plugin manifest
 function makeManifest(overrides: Partial<PluginManifest> = {}): PluginManifest {
@@ -147,11 +148,13 @@ describe("PluginLoader", () => {
   beforeEach(() => {
     rootDir = makeTmpDir();
     pluginStore = new PluginStore(rootDir, { inMemoryDb: true });
+    setCreateAiSessionFactory(undefined);
   });
 
   afterEach(async () => {
     const { rm } = await import("node:fs/promises");
     await rm(rootDir, { recursive: true, force: true });
+    setCreateAiSessionFactory(undefined);
     vi.clearAllMocks();
   });
 
@@ -987,6 +990,85 @@ describe("PluginLoader", () => {
         `[plugin:${pluginId}] Custom event: custom-event`,
         { payload: "ok" },
       );
+    });
+  });
+
+  describe("createAiSession plugin context injection", () => {
+    it("createContext includes createAiSession when factory is registered", async () => {
+      const loader = new PluginLoader({ pluginStore, taskStore: mockTaskStore });
+      const factory = vi.fn(async () => ({
+        session: { prompt: async () => {}, state: { messages: [] } },
+      }));
+      setCreateAiSessionFactory(factory);
+
+      const context = await (loader as any).createContext(makePlugin(makeManifest({ id: "ctx-ai" })));
+
+      expect(context.createAiSession).toBe(factory);
+    });
+
+    it("createContext sets createAiSession to undefined when no factory is registered", async () => {
+      const loader = new PluginLoader({ pluginStore, taskStore: mockTaskStore });
+
+      const context = await (loader as any).createContext(makePlugin(makeManifest({ id: "ctx-no-ai" })));
+
+      expect(context).toHaveProperty("createAiSession");
+      expect(context.createAiSession).toBeUndefined();
+    });
+
+    it("createAiSession calls through to underlying factory with provided options", async () => {
+      const loader = new PluginLoader({ pluginStore, taskStore: mockTaskStore });
+      const factory = vi.fn(async () => ({
+        session: { prompt: async () => {}, state: { messages: [] } },
+      }));
+      setCreateAiSessionFactory(factory);
+
+      const context = await (loader as any).createContext(makePlugin(makeManifest({ id: "ctx-call-through" })));
+      const options: CreateAiSessionOptions = {
+        cwd: rootDir,
+        systemPrompt: "You are a plugin test agent",
+        tools: "readonly",
+        defaultProvider: "anthropic",
+        defaultModelId: "claude-sonnet",
+      };
+
+      await context.createAiSession?.(options);
+
+      expect(factory).toHaveBeenCalledWith(options);
+      expect(factory).toHaveBeenCalledTimes(1);
+    });
+
+    it("allows plugin onLoad to call ctx.createAiSession and receive a result", async () => {
+      await pluginStore.init();
+
+      const pluginId = "onload-create-ai-session";
+      const pluginDir = join(rootDir, "plugins");
+      const pluginPath = await writePluginWithHooks(
+        pluginDir,
+        "onload-create-ai-session.js",
+        {
+          onLoad:
+            "(async (ctx) => { const result = await ctx.createAiSession({ cwd: process.cwd(), systemPrompt: 'test prompt' }); if (!result?.session?.state?.messages) throw new Error('missing session result'); })",
+        },
+        makeManifest({ id: pluginId }),
+      );
+
+      await pluginStore.registerPlugin({
+        manifest: makeManifest({ id: pluginId }),
+        path: pluginPath,
+      });
+
+      setCreateAiSessionFactory(async () => ({
+        session: {
+          prompt: async () => {},
+          state: { messages: [{ role: "assistant", content: "ok" }] },
+        },
+        sessionFile: join(rootDir, "session.json"),
+      }));
+
+      const loader = new PluginLoader({ pluginStore, taskStore: mockTaskStore });
+      const plugin = await loader.loadPlugin(pluginId);
+
+      expect(plugin.state).toBe("started");
     });
   });
 

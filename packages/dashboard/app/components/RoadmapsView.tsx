@@ -107,50 +107,50 @@ function HandoffModal({
           </button>
         </div>
         <div className="modal-body">
-          <p className="text-muted" style={{ marginBottom: "var(--space-lg)" }}>
+          <p className="text-muted roadmaps-view__handoff-intro">
             Export roadmap data for use in mission and task planning flows.
             This is a read-only export — no missions or tasks will be created.
           </p>
           
           {error && (
-            <div className="form-error" style={{ marginBottom: "var(--space-lg)" }}>
+            <div className="form-error roadmaps-view__handoff-error">
               Error loading handoff data: {error.message}
             </div>
           )}
 
           {!handoffPayload && !isLoading && (
-            <div style={{ textAlign: "center", padding: "var(--space-xl)" }}>
+            <div className="roadmaps-view__handoff-empty-state">
               <button className="btn btn-primary" onClick={onFetchHandoff}>
-                <Download size={16} style={{ marginRight: "var(--space-sm)" }} />
+                <Download size={16} className="roadmaps-view__handoff-button-icon" />
                 Load Handoff Data
               </button>
             </div>
           )}
 
           {isLoading && (
-            <div style={{ textAlign: "center", padding: "var(--space-xl)" }}>
+            <div className="roadmaps-view__handoff-loading-state">
               <Loader size={24} className="spin" />
-              <p style={{ marginTop: "var(--space-md)" }}>Loading handoff data...</p>
+              <p className="roadmaps-view__handoff-loading-text">Loading handoff data...</p>
             </div>
           )}
 
           {handoffPayload && (
             <>
-              <div style={{ marginBottom: "var(--space-lg)" }}>
-                <h3 style={{ marginBottom: "var(--space-sm)" }}>Mission Planning Handoff</h3>
-                <div className="card" style={{ padding: "var(--space-md)" }}>
-                  <pre style={{ whiteSpace: "pre-wrap", fontSize: "12px", maxHeight: "200px", overflow: "auto" }}>
+              <div className="roadmaps-view__handoff-section">
+                <h3 className="roadmaps-view__handoff-section-title">Mission Planning Handoff</h3>
+                <div className="card roadmaps-view__handoff-card">
+                  <pre className="roadmaps-view__handoff-pre roadmaps-view__handoff-pre--mission">
                     {JSON.stringify(handoffPayload.mission, null, 2)}
                   </pre>
                 </div>
               </div>
 
-              <div style={{ marginBottom: "var(--space-lg)" }}>
-                <h3 style={{ marginBottom: "var(--space-sm)" }}>
+              <div className="roadmaps-view__handoff-section">
+                <h3 className="roadmaps-view__handoff-section-title">
                   Feature Task Planning Handoffs ({handoffPayload.features.length})
                 </h3>
-                <div className="card" style={{ padding: "var(--space-md)" }}>
-                  <pre style={{ whiteSpace: "pre-wrap", fontSize: "12px", maxHeight: "300px", overflow: "auto" }}>
+                <div className="card roadmaps-view__handoff-card">
+                  <pre className="roadmaps-view__handoff-pre roadmaps-view__handoff-pre--features">
                     {JSON.stringify(handoffPayload.features, null, 2)}
                   </pre>
                 </div>
@@ -162,7 +162,7 @@ function HandoffModal({
           <div className="modal-actions-left">
             {handoffPayload && (
               <button className="btn btn-sm" onClick={onCopyToClipboard}>
-                <Copy size={14} style={{ marginRight: "var(--space-xs)" }} />
+                <Copy size={14} className="roadmaps-view__handoff-copy-icon" />
                 Copy to Clipboard
               </button>
             )}
@@ -231,39 +231,36 @@ function RoadmapItem({
         )}
       </div>
       <div className="roadmaps-view__sidebar-item-actions" onClick={handleEditClick} role="presentation">
-        <span
+        <button
           className="roadmaps-view__icon-btn"
           onClick={handleExportClick}
-          role="button"
           title="Export roadmap"
           aria-label="Export roadmap"
           data-testid={`roadmap-export-${roadmap.id}`}
-          tabIndex={0}
+          type="button"
         >
           <Download size={14} />
-        </span>
-        <span
+        </button>
+        <button
           className="roadmaps-view__icon-btn"
           onClick={handleEditClick}
-          role="button"
           title="Edit roadmap"
           aria-label="Edit roadmap"
           data-testid={`roadmap-edit-${roadmap.id}`}
-          tabIndex={0}
+          type="button"
         >
           <Pencil size={14} />
-        </span>
-        <span
+        </button>
+        <button
           className="roadmaps-view__icon-btn roadmaps-view__icon-btn--danger"
           onClick={handleDeleteClick}
-          role="button"
           title="Delete roadmap"
           aria-label="Delete roadmap"
           data-testid={`roadmap-delete-${roadmap.id}`}
-          tabIndex={0}
+          type="button"
         >
           <Trash2 size={14} />
-        </span>
+        </button>
       </div>
     </div>
   );
@@ -464,10 +461,12 @@ function MilestoneCard({
   onEditFeature,
   onDeleteFeature,
   milestoneEdit,
-  onStartMilestoneEdit,
+  onMilestoneEditChange,
+  onMilestoneEditFieldChange,
   onCancelMilestoneEdit,
   onSaveMilestoneEdit,
   featureEdit,
+  onFeatureEditChange,
   onStartFeatureEdit: _onStartFeatureEdit,
   onCancelFeatureEdit,
   onSaveFeatureEdit,
@@ -509,10 +508,12 @@ function MilestoneCard({
   onEditFeature: (featureId: string) => void;
   onDeleteFeature: (featureId: string) => void;
   milestoneEdit: MilestoneInlineEditState | null;
-  onStartMilestoneEdit: () => void;
+  onMilestoneEditChange: (value: string) => void;
+  onMilestoneEditFieldChange: (field: "title" | "description") => void;
   onCancelMilestoneEdit: () => void;
   onSaveMilestoneEdit: (updates: RoadmapMilestoneUpdateInput) => void;
   featureEdit: FeatureInlineEditState | null;
+  onFeatureEditChange: (value: string) => void;
   onStartFeatureEdit: (featureId: string, currentTitle: string, currentDescription?: string) => void;
   onCancelFeatureEdit: () => void;
   onSaveFeatureEdit: (updates: RoadmapFeatureUpdateInput) => void;
@@ -633,9 +634,10 @@ function MilestoneCard({
                 type="text"
                 className="roadmaps-view__inline-input"
                 value={milestoneEdit.value}
-                onChange={() =>
-                  onStartMilestoneEdit()
-                }
+                onChange={(e) => {
+                  onMilestoneEditFieldChange("title");
+                  onMilestoneEditChange(e.target.value);
+                }}
                 onKeyDown={handleMilestoneTitleKeyDown}
                 placeholder="Milestone title"
                 autoFocus
@@ -661,8 +663,9 @@ function MilestoneCard({
             <textarea
               className="roadmaps-view__inline-textarea"
               value={milestoneEdit.field === "description" ? milestoneEdit.value : milestone.description || ""}
-              onChange={() => {
-                // Update the edit state with description
+              onChange={(e) => {
+                onMilestoneEditFieldChange("description");
+                onMilestoneEditChange(e.target.value);
               }}
               onKeyDown={handleMilestoneDescKeyDown}
               placeholder="Milestone description (optional)"
@@ -845,7 +848,7 @@ function MilestoneCard({
                         type="text"
                         className="roadmaps-view__inline-input"
                         value={featureEdit.value}
-                        onChange={() => {}}
+                        onChange={(e) => onFeatureEditChange(e.target.value)}
                         onKeyDown={handleFeatureTitleKeyDown}
                         placeholder="Feature title"
                         autoFocus
@@ -1861,6 +1864,14 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
     });
   }, []);
 
+  const handleMilestoneEditChange = useCallback((value: string) => {
+    setMilestoneEdit((previous) => ({ ...previous, value }));
+  }, []);
+
+  const handleMilestoneEditFieldChange = useCallback((field: "title" | "description") => {
+    setMilestoneEdit((previous) => ({ ...previous, field }));
+  }, []);
+
   const handleCancelMilestoneEdit = useCallback(() => {
     setMilestoneEdit({ milestoneId: null, field: null, value: "" });
   }, []);
@@ -1926,6 +1937,10 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
     },
     []
   );
+
+  const handleFeatureEditChange = useCallback((value: string) => {
+    setFeatureEdit((previous) => ({ ...previous, value }));
+  }, []);
 
   const handleCancelFeatureEdit = useCallback(() => {
     setFeatureEdit({ featureId: null, field: null, value: "" });
@@ -2470,10 +2485,12 @@ export function RoadmapsView({ projectId, addToast }: RoadmapsViewProps) {
                       }}
                       onDeleteFeature={handleDeleteFeature}
                       milestoneEdit={milestoneEdit}
-                      onStartMilestoneEdit={() => handleStartMilestoneEdit(milestone)}
+                      onMilestoneEditChange={handleMilestoneEditChange}
+                      onMilestoneEditFieldChange={handleMilestoneEditFieldChange}
                       onCancelMilestoneEdit={handleCancelMilestoneEdit}
                       onSaveMilestoneEdit={handleSaveMilestoneEdit}
                       featureEdit={featureEdit}
+                      onFeatureEditChange={handleFeatureEditChange}
                       onStartFeatureEdit={handleStartFeatureEdit}
                       onCancelFeatureEdit={handleCancelFeatureEdit}
                       onSaveFeatureEdit={handleSaveFeatureEdit}

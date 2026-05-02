@@ -674,7 +674,9 @@ describe("PlanningModeModal", () => {
         expect(mockStopPlanningGeneration).toHaveBeenCalledWith("session-123", undefined, expect.any(String));
       });
       expect(closeSpy).toHaveBeenCalled();
-      expect(screen.getByText("Generation stopped by user. You can retry or start a new session.")).toBeDefined();
+      await waitFor(() => {
+        expect(screen.getByText("Generation stopped by user. You can retry or start a new session.")).toBeDefined();
+      });
       expect(screen.getByRole("button", { name: "Retry" })).toBeDefined();
 
       // avoid dangling handlers reference lint

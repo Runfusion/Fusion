@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Server, Workflow, Bot, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare, ChevronDown, Check, Map, Zap, Sparkles, FileText, Brain, CheckSquare } from "lucide-react";
+import { Settings, Pause, Play, Square, LayoutGrid, List, Terminal, Lightbulb, Search, X, Activity, MoreHorizontal, Clock, Folder, History, GitBranch, Monitor, Server, Workflow, Bot, Target, ChevronRight, FileCode, Loader2, Grid3X3, Mail, MessageSquare, ChevronDown, Check, Zap, Sparkles, FileText, Brain, CheckSquare } from "lucide-react";
 import "./Header.css";
 // Header renders an inline ProjectSelector dropdown using project-selector-* classes.
 import "./ProjectSelector.css";
@@ -338,19 +338,24 @@ export function Header({
     return Object.entries(overflowScripts).sort(([a], [b]) => a.localeCompare(b));
   }, [overflowScripts]);
 
+  const hasRoadmapsPluginView = useMemo(
+    () => pluginDashboardViews.some((entry) => entry.pluginId === "fusion-plugin-roadmap"),
+    [pluginDashboardViews],
+  );
+
   const hasViewOverflowItems = useMemo(() => {
     return !!(
       experimentalFeatures?.researchView ||
       todosEnabled ||
       experimentalFeatures?.insights ||
-      experimentalFeatures?.roadmap ||
+      (experimentalFeatures?.roadmap && !hasRoadmapsPluginView) ||
       showSkillsTab ||
       experimentalFeatures?.memoryView ||
       experimentalFeatures?.devServerView ||
       !hideFullNav ||
       pluginDashboardViews.some((entry) => entry.view.placement !== "primary")
     );
-  }, [experimentalFeatures, todosEnabled, showSkillsTab, hideFullNav, pluginDashboardViews]);
+  }, [experimentalFeatures, todosEnabled, showSkillsTab, hideFullNav, pluginDashboardViews, hasRoadmapsPluginView]);
 
   const getEffectiveViewport = useCallback(() => {
     const vv = window.visualViewport;
@@ -1189,7 +1194,7 @@ export function Header({
                         <span>Insights</span>
                       </button>
                     )}
-                    {experimentalFeatures?.roadmap && (
+                    {experimentalFeatures?.roadmap && !hasRoadmapsPluginView && (
                       <button
                         className={`view-toggle-overflow-item${view === "roadmaps" ? " active" : ""}`}
                         onClick={() => {
@@ -1199,7 +1204,6 @@ export function Header({
                         role="menuitem"
                         data-testid="view-overflow-roadmaps"
                       >
-                        <Map size={14} />
                         <span>Roadmaps</span>
                       </button>
                     )}

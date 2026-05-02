@@ -717,6 +717,7 @@ interface PluginContext {
   settings: Record<string, unknown>;
   logger: PluginLogger;
   emitEvent: (event: string, data: unknown) => void;
+  createAiSession?: CreateAiSessionFactory;
 }
 ```
 
@@ -729,6 +730,7 @@ interface PluginContext {
 | `settings` | `Record<string, unknown>` | User configuration (merged with defaults) |
 | `logger` | `PluginLogger` | Structured logging |
 | `emitEvent` | `(event, data) => void` | Emit custom events |
+| `createAiSession` | `CreateAiSessionFactory \| undefined` | Engine-injected AI session factory (undefined when engine isn't loaded) |
 
 ### Logger Methods
 
@@ -739,6 +741,55 @@ interface PluginLogger {
   error(message: string, ...args: unknown[]): void;
   debug(message: string, ...args: unknown[]): void;
 }
+```
+
+### `createAiSession` API
+
+```typescript
+interface CreateAiSessionOptions {
+  cwd: string;
+  systemPrompt: string;
+  tools?: "coding" | "readonly";
+  defaultProvider?: string;
+  defaultModelId?: string;
+}
+
+interface AiSessionResult {
+  session: {
+    prompt(text: string): Promise<void>;
+    state: { messages: Array<{ role: string; content?: unknown }> };
+  };
+  sessionFile?: string;
+}
+
+type CreateAiSessionFactory = (
+  options: CreateAiSessionOptions,
+) => Promise<AiSessionResult>;
+```
+
+The factory is dependency-injected by the engine at runtime. In test-only or core-only environments where the engine module is not loaded, `ctx.createAiSession` is `undefined`, so guard before calling it.
+
+### Example: Using `ctx.createAiSession()`
+
+```typescript
+hooks: {
+  onLoad: async (ctx) => {
+    if (!ctx.createAiSession) {
+      ctx.logger.warn("AI session factory unavailable; engine not loaded");
+      return;
+    }
+
+    const { session } = await ctx.createAiSession({
+      cwd: process.cwd(),
+      systemPrompt: "You are a release assistant for this plugin.",
+      tools: "readonly",
+    });
+
+    await session.prompt("Summarize what this plugin contributes.");
+    const latest = session.state.messages.at(-1);
+    ctx.logger.info("AI summary generated", latest);
+  },
+},
 ```
 
 ### Example: Using the Context

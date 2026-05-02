@@ -35,6 +35,7 @@ import type {
 } from "./plugin-types.js";
 import { validatePluginManifest } from "./plugin-types.js";
 import { createLogger } from "./logger.js";
+import { getCreateAiSessionFactory } from "./ai-engine-loader.js";
 
 // Minimum Fusion version for plugin compatibility checks (can be expanded later)
 const MINIMUM_FUSION_VERSION = "0.1.0";
@@ -108,11 +109,21 @@ export class PluginLoader extends EventEmitter<{
   // ── Context Creation ───────────────────────────────────────────────
 
   private async createContext(plugin: FusionPlugin): Promise<PluginContext> {
+    const createAiSession = await getCreateAiSessionFactory();
+    if (process.env.DEBUG?.includes("plugins")) {
+      log.log(
+        createAiSession
+          ? `[plugin:${plugin.manifest.id}] createAiSession available`
+          : `[plugin:${plugin.manifest.id}] createAiSession unavailable`,
+      );
+    }
+
     return {
       pluginId: plugin.manifest.id,
       taskStore: this.options.taskStore,
       settings: await this.getPluginSettings(plugin.manifest.id),
       logger: this.createLogger(plugin.manifest.id),
+      createAiSession,
       emitEvent: (event: string, data: unknown) => {
         this.emit("plugin:error", { pluginId: plugin.manifest.id, error: new Error(`Custom event: ${event}`) });
         // Custom events are logged but not surfaced as errors

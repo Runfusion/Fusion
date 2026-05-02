@@ -285,6 +285,25 @@ describe("MobileNavBar", () => {
     expect(screen.getByTestId("mobile-more-item-roadmaps")).toBeDefined();
   });
 
+  it("suppresses legacy roadmaps entries when roadmap plugin view is registered", () => {
+    render(
+      <MobileNavBar
+        {...createDefaultProps()}
+        experimentalFeatures={{ roadmap: true }}
+        pluginDashboardViews={[
+          {
+            pluginId: "fusion-plugin-roadmap",
+            view: { viewId: "roadmaps", label: "Roadmaps", componentPath: "./RoadmapsView", icon: "Map", placement: "primary" },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.queryByTestId("mobile-nav-tab-roadmaps")).toBeNull();
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.queryByTestId("mobile-more-item-roadmaps")).toBeNull();
+  });
+
   it("shows insights in more sheet when experimentalFeatures.insights is true", () => {
     render(<MobileNavBar {...createDefaultProps()} experimentalFeatures={{ insights: true }} />);
     fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));

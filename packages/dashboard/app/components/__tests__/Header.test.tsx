@@ -185,6 +185,22 @@ describe("Header", () => {
       expect(onChangeView).toHaveBeenCalledWith("plugin:fusion-plugin-dependency-graph:queue");
     });
 
+    it("hides legacy roadmaps overflow item when roadmap plugin view is present", () => {
+      renderHeader({
+        onChangeView: noop,
+        experimentalFeatures: { roadmap: true },
+        pluginDashboardViews: [
+          {
+            pluginId: "fusion-plugin-roadmap",
+            view: { viewId: "roadmaps", label: "Roadmaps", componentPath: "./RoadmapsView", icon: "Map", placement: "primary" },
+          },
+        ],
+      });
+
+      fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
+      expect(screen.queryByTestId("view-overflow-roadmaps")).toBeNull();
+    });
+
     it("renders view overflow trigger when an experimental overflow feature is enabled", () => {
       renderHeader({ onChangeView: noop, experimentalFeatures: { insights: true } });
       expect(screen.getByTestId("view-toggle-overflow-trigger")).toBeDefined();

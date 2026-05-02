@@ -10,12 +10,15 @@
  * returns `undefined` and callers degrade gracefully.
  */
 
+import type { CreateAiSessionFactory } from "./plugin-types.js";
+
 // Engine exports a function type we intentionally don't pull in here — importing
 // the type would reintroduce the cycle this module is designed to avoid.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type CreateFnAgent = any;
 
 let createFnAgent: CreateFnAgent | undefined;
+let createAiSessionFactory: CreateAiSessionFactory | undefined;
 
 /** Shape of a message in an agent session's state. */
 export interface AgentMessage {
@@ -37,4 +40,20 @@ export function setCreateFnAgent(fn: CreateFnAgent | undefined): void {
  */
 export async function getFnAgent(): Promise<CreateFnAgent> {
   return createFnAgent;
+}
+
+/**
+ * Wire engine's plugin-facing AI session factory into core.
+ * Called by `@fusion/engine` at module load; tests may register stubs.
+ */
+export function setCreateAiSessionFactory(fn: CreateAiSessionFactory | undefined): void {
+  createAiSessionFactory = fn;
+}
+
+/**
+ * Returns engine-registered plugin AI session factory, or `undefined` when
+ * engine hasn't registered it (common in isolated core tests).
+ */
+export async function getCreateAiSessionFactory(): Promise<CreateAiSessionFactory | undefined> {
+  return createAiSessionFactory;
 }

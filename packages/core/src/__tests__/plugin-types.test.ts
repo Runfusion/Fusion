@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { PluginLoader } from "../plugin-loader.js";
+import { PluginStore } from "../plugin-store.js";
 import type {
+  CreateAiSessionFactory,
+  CreateAiSessionOptions,
   FusionPlugin,
   PluginPromptContribution,
   PluginPromptContributions,
@@ -1239,5 +1246,52 @@ describe("validatePluginManifest contribution metadata", () => {
     expect(result.valid).toBe(false);
     expect(result.errors).toContain("setup.binaryName is required and must be a non-empty string");
     expect(result.errors).toContain("setup.description is required and must be a non-empty string");
+  });
+});
+
+describe("CreateAiSession types", () => {
+  it("supports CreateAiSessionOptions with required cwd and systemPrompt", () => {
+    const options: CreateAiSessionOptions = {
+      cwd: "/tmp/project",
+      systemPrompt: "You are a plugin helper",
+    };
+
+    expect(options.cwd).toBe("/tmp/project");
+    expect(options.systemPrompt).toContain("plugin");
+  });
+
+  it("supports CreateAiSessionFactory and AiSessionResult structural shape", async () => {
+    const factory: CreateAiSessionFactory = async (options) => ({
+      session: {
+        prompt: async () => {
+          void options.systemPrompt;
+        },
+        state: { messages: [{ role: "assistant", content: "hello" }] },
+      },
+      sessionFile: join(options.cwd, "session.json"),
+    });
+
+    const result = await factory({ cwd: "/tmp/project", systemPrompt: "prompt" });
+    expect(result.session.state.messages[0]?.role).toBe("assistant");
+    expect(result.sessionFile).toContain("session.json");
+  });
+
+  it("createContext runtime includes createAiSession field", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "kb-plugin-types-test-"));
+    const pluginStore = new PluginStore(rootDir, { inMemoryDb: true });
+    const loader = new PluginLoader({
+      pluginStore,
+      taskStore: { getRootDir: () => rootDir } as any,
+    });
+
+    const context = await (loader as any).createContext({
+      manifest: { id: "runtime-field-test", name: "Runtime", version: "1.0.0" },
+      state: "installed",
+      hooks: {},
+      tools: [],
+      routes: [],
+    } as FusionPlugin);
+
+    expect(context).toHaveProperty("createAiSession");
   });
 });

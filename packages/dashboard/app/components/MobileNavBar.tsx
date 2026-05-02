@@ -188,7 +188,8 @@ export function MobileNavBar({
 
   const planningHandler = activePlanningSessionCount > 0 && onResumePlanning ? onResumePlanning : onOpenPlanning;
 
-  const roadmapEnabled = Boolean(experimentalFeatures?.roadmap);
+  const hasRoadmapsPluginView = pluginDashboardViews.some((entry) => entry.pluginId === "fusion-plugin-roadmap");
+  const roadmapEnabled = Boolean(experimentalFeatures?.roadmap) && !hasRoadmapsPluginView;
   const skillsEnabled = Boolean(showSkillsTab);
   const todoViewEnabled = Boolean(experimentalFeatures?.todoView);
 

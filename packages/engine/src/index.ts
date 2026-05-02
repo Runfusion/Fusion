@@ -22,11 +22,26 @@ export { createFnAgent, promptWithFallback, describeModel, setHostExtensionPaths
 // Register createFnAgent into core's loader so consumers in @fusion/core
 // (e.g. ai-summarize, memory-compaction) can resolve it without a circular
 // static import. Runs once at engine module load.
+import type { AiSessionResult, CreateAiSessionFactory, CreateAiSessionOptions } from "@fusion/core";
 import { createFnAgent as _createFnAgentForCore } from "./pi.js";
+
+const _createAiSessionAdapter: CreateAiSessionFactory = async (options: CreateAiSessionOptions): Promise<AiSessionResult> => {
+  return _createFnAgentForCore({
+    cwd: options.cwd,
+    systemPrompt: options.systemPrompt,
+    tools: options.tools,
+    defaultProvider: options.defaultProvider,
+    defaultModelId: options.defaultModelId,
+  });
+};
+
 void import("@fusion/core")
   .then((core) => {
     if ("setCreateFnAgent" in core && typeof core.setCreateFnAgent === "function") {
       core.setCreateFnAgent(_createFnAgentForCore);
+    }
+    if ("setCreateAiSessionFactory" in core && typeof core.setCreateAiSessionFactory === "function") {
+      core.setCreateAiSessionFactory(_createAiSessionAdapter);
     }
   })
   .catch(() => {

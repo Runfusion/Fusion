@@ -23,6 +23,52 @@
   margin-top: 4px;
 }
 
+.roadmaps-view__handoff-intro,
+.roadmaps-view__handoff-error,
+.roadmaps-view__handoff-section {
+  margin-bottom: var(--space-lg);
+}
+
+.roadmaps-view__handoff-empty-state,
+.roadmaps-view__handoff-loading-state {
+  text-align: center;
+  padding: var(--space-xl);
+}
+
+.roadmaps-view__handoff-button-icon {
+  margin-right: var(--space-sm);
+}
+
+.roadmaps-view__handoff-loading-text {
+  margin-top: var(--space-md);
+}
+
+.roadmaps-view__handoff-section-title {
+  margin-bottom: var(--space-sm);
+}
+
+.roadmaps-view__handoff-card {
+  padding: var(--space-md);
+}
+
+.roadmaps-view__handoff-pre {
+  white-space: pre-wrap;
+  font-size: 0.75rem;
+  overflow: auto;
+}
+
+.roadmaps-view__handoff-pre--mission {
+  max-height: 200px;
+}
+
+.roadmaps-view__handoff-pre--features {
+  max-height: 300px;
+}
+
+.roadmaps-view__handoff-copy-icon {
+  margin-right: var(--space-xs);
+}
+
 /* Sidebar */
 .roadmaps-view__sidebar {
   width: 280px;
@@ -56,9 +102,9 @@
   border: none;
   border-radius: var(--radius-sm);
   background: var(--accent);
-  color: white;
+  color: var(--cta-text);
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity var(--transition-fast);
 }
 
 .roadmaps-view__add-btn:hover {
@@ -85,7 +131,7 @@
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--transition-fast);
   gap: var(--space-sm);
 }
 
@@ -124,15 +170,15 @@
   display: flex;
   gap: 2px;
   opacity: 0;
-  transition: opacity 0.15s;
+  transition: opacity var(--transition-fast);
 }
 
 .roadmaps-view__sidebar-item:hover .roadmaps-view__sidebar-item-actions {
   opacity: 1;
 }
 
-/* Icon button as span for nested element avoidance */
-.roadmaps-view__icon-btn[role="button"] {
+/* Icon buttons */
+.roadmaps-view__icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -143,52 +189,22 @@
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.roadmaps-view__icon-btn[role="button"]:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-}
-
-.roadmaps-view__icon-btn--danger[role="button"]:hover {
-  background: rgba(248, 81, 73, 0.1);
-  color: var(--color-error);
-}
-
-.roadmaps-view__icon-btn--success[role="button"]:hover {
-  background: rgba(63, 185, 80, 0.1);
-  color: var(--success);
-}
-
-/* Icon buttons */
-.roadmaps-view__icon-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .roadmaps-view__icon-btn:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
+  background: var(--surface-hover, color-mix(in srgb, var(--text) 6%, transparent));
+  color: var(--text);
 }
 
 .roadmaps-view__icon-btn--danger:hover {
-  background: rgba(248, 81, 73, 0.1);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
   color: var(--color-error);
 }
 
 .roadmaps-view__icon-btn--success:hover {
-  background: rgba(63, 185, 80, 0.1);
-  color: var(--success);
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+  color: var(--color-success);
 }
 
 .roadmaps-view__icon-btn:disabled {
@@ -263,8 +279,8 @@
   background: var(--surface-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-  transition: opacity 0.15s, border-color 0.15s, box-shadow 0.15s;
+  box-shadow: var(--shadow-sm);
+  transition: opacity var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
   cursor: grab;
 }
 
@@ -296,7 +312,7 @@
   cursor: grab;
   padding: 2px;
   border-radius: var(--radius-sm);
-  transition: color 0.15s, background 0.15s;
+  transition: color var(--transition-fast), background var(--transition-fast);
 }
 
 .roadmaps-view__drag-handle:hover {
@@ -350,7 +366,7 @@
   color: var(--text-muted);
   font-size: 0.8rem;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
 
 .roadmaps-view__add-feature-btn:hover {
@@ -365,9 +381,9 @@
   align-items: center;
   gap: var(--space-xs);
   padding: var(--space-xs) var(--space-sm);
-  background: var(--accent, #58a6ff);
-  color: #fff;
-  border: 1px solid var(--accent, #58a6ff);
+  background: var(--accent);
+  color: var(--cta-text);
+  border: 1px solid var(--accent);
   border-radius: var(--radius-md);
   font-size: 0.75rem;
   cursor: pointer;
@@ -375,8 +391,8 @@
 }
 
 .roadmaps-view__suggest-btn:hover {
-  background: var(--accent-hover, #4c94e6);
-  border-color: var(--accent-hover, #4c94e6);
+  background: color-mix(in srgb, var(--accent) 88%, var(--bg) 12%);
+  border-color: color-mix(in srgb, var(--accent) 88%, var(--bg) 12%);
 }
 
 .roadmaps-view__suggest-btn:active {
@@ -393,11 +409,11 @@
   flex: 1;
   overflow-y: auto;
   padding: var(--space-sm);
-  transition: background 0.15s;
+  transition: background var(--transition-fast);
 }
 
 .roadmaps-view__feature-list--drop-target {
-  background: rgba(63, 131, 245, 0.05);
+  background: color-mix(in srgb, var(--color-info) 5%, transparent);
 }
 
 .roadmaps-view__empty-features {
@@ -414,7 +430,7 @@
   padding: var(--space-sm);
   border-bottom: 1px solid var(--border);
   gap: var(--space-sm);
-  transition: opacity 0.15s, border-color 0.15s;
+  transition: opacity var(--transition-fast), border-color var(--transition-fast);
   cursor: grab;
 }
 
@@ -463,7 +479,7 @@
   display: flex;
   gap: 2px;
   opacity: 0;
-  transition: opacity 0.15s;
+  transition: opacity var(--transition-fast);
 }
 
 .roadmaps-view__feature-item:hover .roadmaps-view__feature-actions {
@@ -543,7 +559,7 @@
   color: var(--text-primary);
   font-size: 0.85rem;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--transition-fast);
 }
 
 .roadmaps-view__btn:hover {
@@ -553,7 +569,7 @@
 .roadmaps-view__btn--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: white;
+  color: var(--cta-text);
 }
 
 .roadmaps-view__btn--primary:hover {
@@ -589,7 +605,7 @@
   color: var(--text-muted);
   font-size: 0.9rem;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
 
 .roadmaps-view__add-milestone-fab {
@@ -680,7 +696,7 @@
   font-family: inherit;
   resize: vertical;
   min-height: 60px;
-  transition: border-color 0.15s;
+  transition: border-color var(--transition-fast);
 }
 
 .roadmap-suggestion-input:focus {
@@ -707,13 +723,13 @@
 .roadmap-suggestion-generate-btn {
   padding: var(--space-sm) var(--space-lg);
   background: var(--accent);
-  color: white;
+  color: var(--cta-text);
   border: none;
   border-radius: var(--radius-sm);
   font-size: 0.9rem;
   font-weight: 500;
   cursor: pointer;
-  transition: opacity 0.15s, transform 0.1s;
+  transition: opacity var(--transition-fast), transform var(--transition-instant);
 }
 
 .roadmap-suggestion-generate-btn:hover:not(:disabled) {
@@ -732,13 +748,13 @@
 .roadmap-suggestion-accept-all-btn {
   padding: var(--space-sm) var(--space-md);
   background: var(--color-success);
-  color: white;
+  color: var(--cta-text);
   border: none;
   border-radius: var(--radius-sm);
   font-size: 0.85rem;
   font-weight: 500;
   cursor: pointer;
-  transition: opacity 0.15s, transform 0.1s;
+  transition: opacity var(--transition-fast), transform var(--transition-instant);
 }
 
 .roadmap-suggestion-accept-all-btn:hover {
@@ -761,7 +777,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
 }
 
 .roadmap-suggestion-clear-btn:hover {
@@ -784,7 +800,7 @@
   background: var(--surface-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .roadmap-suggestion-card:hover {
@@ -826,11 +842,11 @@
   height: 28px;
   padding: 0;
   background: var(--color-success);
-  color: white;
+  color: var(--cta-text);
   border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: opacity 0.15s, transform 0.1s;
+  transition: opacity var(--transition-fast), transform var(--transition-instant);
 }
 
 .roadmap-suggestion-accept-btn:hover {
@@ -858,7 +874,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background-color 0.15s, color 0.15s;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
 .roadmap-suggestion-edit-btn:hover {
@@ -889,7 +905,7 @@
   font-size: 0.9rem;
   font-family: inherit;
   resize: vertical;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .roadmap-suggestion-textarea:focus {
@@ -915,11 +931,11 @@
   height: 28px;
   padding: 0;
   background: var(--color-success);
-  color: white;
+  color: var(--cta-text);
   border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity var(--transition-fast);
 }
 
 .roadmap-suggestion-save-btn:hover:not(:disabled) {
@@ -943,7 +959,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background-color 0.15s, color 0.15s;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
 .roadmap-suggestion-cancel-btn:hover {
@@ -1054,7 +1070,7 @@
     border: none;
     border-radius: var(--radius-md);
     background: var(--accent);
-    color: white;
+    color: var(--cta-text);
     cursor: pointer;
     transition: opacity var(--transition-fast);
   }
@@ -1272,11 +1288,6 @@
 
   /* Bump icon button touch targets to 36px on mobile */
   .roadmaps-view__icon-btn {
-    width: 36px;
-    height: 36px;
-  }
-
-  .roadmaps-view__icon-btn[role="button"] {
     width: 36px;
     height: 36px;
   }

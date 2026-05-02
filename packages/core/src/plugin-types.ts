@@ -80,6 +80,46 @@ export interface PluginSettingSchema {
 // ── Plugin Hooks ─────────────────────────────────────────────────────
 
 /**
+ * Options for creating an AI session from plugin runtime context.
+ * This is a focused subset of engine agent options exposed to plugin authors.
+ */
+export interface CreateAiSessionOptions {
+  /** Working directory for the agent session */
+  cwd: string;
+  /** System prompt for the agent */
+  systemPrompt: string;
+  /** Tool mode: "coding" for full tools, "readonly" for read-only */
+  tools?: "coding" | "readonly";
+  /** Default model provider (e.g., "anthropic") */
+  defaultProvider?: string;
+  /** Default model ID within the provider */
+  defaultModelId?: string;
+}
+
+/**
+ * Result returned from creating an AI session through PluginContext.
+ */
+export interface AiSessionResult {
+  /** The underlying agent session — plugins call .prompt() on it */
+  session: {
+    prompt(text: string): Promise<void>;
+    state: {
+      messages: Array<{
+        role: string;
+        content?: unknown;
+      }>;
+    };
+  };
+  /** Path to persisted session file, if any */
+  sessionFile?: string;
+}
+
+/**
+ * Engine-injected factory for plugin AI sessions.
+ */
+export type CreateAiSessionFactory = (options: CreateAiSessionOptions) => Promise<AiSessionResult>;
+
+/**
  * Context object passed to plugins at runtime.
  * Contains task store access, settings, logging, and event emission.
  */
@@ -93,6 +133,8 @@ export interface PluginContext {
   logger: PluginLogger;
   /** Emit custom events */
   emitEvent: (event: string, data: unknown) => void;
+  /** Engine-injected AI session factory (undefined when engine is not loaded) */
+  createAiSession?: CreateAiSessionFactory;
 }
 
 /**
