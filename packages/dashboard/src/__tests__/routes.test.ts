@@ -10131,6 +10131,38 @@ describe("Planning Mode Routes", () => {
     });
 
     describe("POST /planning/start-streaming", () => {
+      it("rejects invalid planning depth", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({
+            initialPlan: "Build a user auth system",
+            planningDepth: "extra-large",
+          }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("planningDepth");
+      });
+
+      it("rejects out-of-range custom question count", async () => {
+        const res = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start-streaming",
+          JSON.stringify({
+            initialPlan: "Build a user auth system",
+            customQuestionCount: 21,
+          }),
+          { "Content-Type": "application/json" },
+        );
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toContain("customQuestionCount");
+      });
+
       it("accepts optional model params in request body", async () => {
         const messages: Array<{ role: string; content: string }> = [];
         const mockAgent = {

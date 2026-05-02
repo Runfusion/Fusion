@@ -138,6 +138,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   } = useAiSessionSync();
   const [planningModelProvider, setPlanningModelProvider] = useState<string | undefined>(undefined);
   const [planningModelId, setPlanningModelId] = useState<string | undefined>(undefined);
+  const [planningDepth, setPlanningDepth] = useState<"small" | "medium" | "large">("medium");
+  const [customQuestionCount, setCustomQuestionCount] = useState("");
   const [loadedModels, setLoadedModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
@@ -253,6 +255,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setIsRetrying(false);
     setPlanningModelProvider(undefined);
     setPlanningModelId(undefined);
+    setPlanningDepth("medium");
+    setCustomQuestionCount("");
     currentSessionIdRef.current = null;
     setLockSessionId(null);
   }, []);
@@ -469,7 +473,21 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
           ? { planningModelProvider, planningModelId }
           : undefined;
 
-      const { sessionId } = await startPlanningStreaming(plan.trim(), projectId, modelOverride);
+      const parsedCustomQuestionCount = customQuestionCount.trim()
+        ? Number.parseInt(customQuestionCount, 10)
+        : undefined;
+
+      const { sessionId } = await startPlanningStreaming(
+        plan.trim(),
+        projectId,
+        modelOverride,
+        {
+          planningDepth,
+          customQuestionCount: Number.isInteger(parsedCustomQuestionCount)
+            ? parsedCustomQuestionCount
+            : undefined,
+        },
+      );
       currentSessionIdRef.current = sessionId;
       setLockSessionId(sessionId);
       setSelectedSessionId(sessionId);
@@ -483,7 +501,15 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       currentSessionIdRef.current = null;
       setLockSessionId(null);
     }
-  }, [connectToPlanningStream, initialPlan, planningModelId, planningModelProvider, projectId]);
+  }, [
+    connectToPlanningStream,
+    customQuestionCount,
+    initialPlan,
+    planningDepth,
+    planningModelId,
+    planningModelProvider,
+    projectId,
+  ]);
 
   // Focus textarea when opening
   useEffect(() => {
@@ -1149,6 +1175,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
       setStreamingOutput("");
       setPlanningModelProvider(undefined);
       setPlanningModelId(undefined);
+      setPlanningDepth("medium");
+      setCustomQuestionCount("");
       currentSessionIdRef.current = null;
       setLockSessionId(null);
       setSelectedSessionId(null);
@@ -1348,6 +1376,40 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                     </span>
                   </div>
                 </div>
+              </div>
+
+              <div className="planning-depth-selector">
+                <div className="planning-depth-chip-group" role="group" aria-label="Planning depth">
+                  {([
+                    { value: "small", label: "Small" },
+                    { value: "medium", label: "Medium" },
+                    { value: "large", label: "Large" },
+                  ] as const).map((depthOption) => (
+                    <button
+                      key={depthOption.value}
+                      type="button"
+                      className={`planning-depth-chip btn ${planningDepth === depthOption.value ? "btn-primary planning-depth-chip-active" : ""}`}
+                      onClick={() => setPlanningDepth(depthOption.value)}
+                      aria-pressed={planningDepth === depthOption.value}
+                    >
+                      {depthOption.label}
+                    </button>
+                  ))}
+                </div>
+
+                <label className="planning-depth-question-count" htmlFor="planning-depth-questions">
+                  <span>Questions</span>
+                  <input
+                    id="planning-depth-questions"
+                    className="input planning-depth-question-input"
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={customQuestionCount}
+                    onChange={(e) => setCustomQuestionCount(e.target.value)}
+                    placeholder="Auto"
+                  />
+                </label>
               </div>
 
               <div className="planning-view-footer">

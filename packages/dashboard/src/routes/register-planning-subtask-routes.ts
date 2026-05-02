@@ -393,10 +393,26 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
    */
   router.post("/planning/start", async (req, res) => {
     try {
-      const { initialPlan } = req.body;
+      const { initialPlan, planningDepth, customQuestionCount } = req.body;
 
       if (!initialPlan || typeof initialPlan !== "string") {
         throw badRequest("initialPlan is required and must be a string");
+      }
+
+      if (
+        planningDepth !== undefined
+        && planningDepth !== "small"
+        && planningDepth !== "medium"
+        && planningDepth !== "large"
+      ) {
+        throw badRequest('planningDepth must be one of "small", "medium", or "large" when provided');
+      }
+
+      if (
+        customQuestionCount !== undefined
+        && (!Number.isInteger(customQuestionCount) || customQuestionCount < 1 || customQuestionCount > 20)
+      ) {
+        throw badRequest("customQuestionCount must be an integer between 1 and 20 when provided");
       }
 
       const { store: scopedStore } = await getProjectContext(req);
@@ -411,6 +427,8 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         scopedStore,
         rootDir,
         settings.promptOverrides,
+        planningDepth,
+        customQuestionCount,
       );
       res.status(201).json(result);
     } catch (err: unknown) {
@@ -438,7 +456,13 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
    */
   router.post("/planning/start-streaming", async (req, res) => {
     try {
-      const { initialPlan, planningModelProvider, planningModelId } = req.body;
+      const {
+        initialPlan,
+        planningModelProvider,
+        planningModelId,
+        planningDepth,
+        customQuestionCount,
+      } = req.body;
 
       if (!initialPlan || typeof initialPlan !== "string") {
         throw badRequest("initialPlan is required and must be a string");
@@ -450,6 +474,22 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
 
       if (planningModelId !== undefined && typeof planningModelId !== "string") {
         throw badRequest("planningModelId must be a string when provided");
+      }
+
+      if (
+        planningDepth !== undefined
+        && planningDepth !== "small"
+        && planningDepth !== "medium"
+        && planningDepth !== "large"
+      ) {
+        throw badRequest('planningDepth must be one of "small", "medium", or "large" when provided');
+      }
+
+      if (
+        customQuestionCount !== undefined
+        && (!Number.isInteger(customQuestionCount) || customQuestionCount < 1 || customQuestionCount > 20)
+      ) {
+        throw badRequest("customQuestionCount must be an integer between 1 and 20 when provided");
       }
 
       const { store: scopedStore, projectId } = await getProjectContext(req);
@@ -487,6 +527,8 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
             dashboardHost: settings.ntfyDashboardHost,
             events: settings.ntfyEvents,
           },
+          planningDepth,
+          customQuestionCount,
         },
       );
       res.status(201).json({ sessionId });

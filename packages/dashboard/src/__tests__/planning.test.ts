@@ -30,6 +30,7 @@ import {
   SessionNotFoundError,
   InvalidSessionStateError,
   parseAgentResponse,
+  buildDepthPromptSuffix,
   generateSubtasksFromPlanning,
   formatInterviewQA,
   SESSION_TTL_MS,
@@ -1444,6 +1445,28 @@ describe("planning module", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe("buildDepthPromptSuffix", () => {
+    it("returns small depth guidance", () => {
+      expect(buildDepthPromptSuffix("small")).toContain("Ask exactly 1-2 focused questions");
+    });
+
+    it("returns large depth guidance", () => {
+      expect(buildDepthPromptSuffix("large")).toContain("Ask 5-8 thorough questions");
+    });
+
+    it("returns custom count guidance", () => {
+      expect(buildDepthPromptSuffix(undefined, 5)).toBe(
+        "Ask exactly 5 questions. Adjust depth and breadth to fit within that count.",
+      );
+    });
+
+    it("prioritizes custom count over depth guidance", () => {
+      expect(buildDepthPromptSuffix("medium", 7)).toBe(
+        "Ask exactly 7 questions. Adjust depth and breadth to fit within that count.",
+      );
     });
   });
 

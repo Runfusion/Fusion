@@ -381,6 +381,52 @@ describe("PlanningModeModal", () => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, {
           planningModelProvider: "anthropic",
           planningModelId: "claude-sonnet-4-5",
+        }, {
+          planningDepth: "medium",
+          customQuestionCount: undefined,
+        });
+      });
+    });
+
+    it("renders planning depth controls with medium selected by default", () => {
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />
+      );
+
+      expect(screen.getByRole("button", { name: "Small" })).toBeDefined();
+      expect(screen.getByRole("button", { name: "Medium" }).getAttribute("aria-pressed")).toBe("true");
+      expect(screen.getByRole("button", { name: "Large" })).toBeDefined();
+      expect(screen.getByLabelText("Questions")).toBeDefined();
+    });
+
+    it("updates selected depth and sends custom question count", async () => {
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Large" }));
+      fireEvent.change(screen.getByLabelText("Questions"), { target: { value: "7" } });
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Build auth system" },
+      });
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      await waitFor(() => {
+        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined, {
+          planningDepth: "large",
+          customQuestionCount: 7,
         });
       });
     });
@@ -401,7 +447,10 @@ describe("PlanningModeModal", () => {
       fireEvent.click(screen.getByText("Start Planning"));
 
       await waitFor(() => {
-        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined);
+        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined, {
+          planningDepth: "medium",
+          customQuestionCount: undefined,
+        });
       });
     });
 
@@ -419,7 +468,10 @@ describe("PlanningModeModal", () => {
 
       // Wait for startPlanningStreaming to be called (allow time for setTimeout in useEffect)
       await waitFor(() => {
-        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build a login system from new task dialog", undefined, undefined);
+        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build a login system from new task dialog", undefined, undefined, {
+          planningDepth: "medium",
+          customQuestionCount: undefined,
+        });
       }, { timeout: 2000 });
 
       // Should transition to question view
@@ -442,7 +494,10 @@ describe("PlanningModeModal", () => {
 
       // The auto-start should happen with the initial plan (allow time for setTimeout in useEffect)
       await waitFor(() => {
-        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Pre-filled plan from new task", undefined, undefined);
+        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Pre-filled plan from new task", undefined, undefined, {
+          planningDepth: "medium",
+          customQuestionCount: undefined,
+        });
       }, { timeout: 2000 });
     });
   });
@@ -496,7 +551,10 @@ describe("PlanningModeModal", () => {
 
       // Wait for streaming to be called
       await waitFor(() => {
-        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined);
+        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined, {
+          planningDepth: "medium",
+          customQuestionCount: undefined,
+        });
       });
 
       // Should transition to question view via streaming

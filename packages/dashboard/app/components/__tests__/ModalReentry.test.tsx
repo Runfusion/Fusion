@@ -186,7 +186,10 @@ describe("ModalReentry", () => {
 
       // Wait for auto-start (which reads the prop)
       await waitFor(() => {
-        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("From prop", undefined, undefined);
+        expect(mockStartPlanningStreaming).toHaveBeenCalledWith("From prop", undefined, undefined, {
+          planningDepth: "medium",
+          customQuestionCount: undefined,
+        });
       });
 
       // localStorage should NOT be read since prop was provided

@@ -221,6 +221,32 @@ const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 /** Generation timeout in milliseconds (120 seconds). */
 export const GENERATION_TIMEOUT_MS = 120_000;
 
+export type PlanningDepth = "small" | "medium" | "large";
+
+const PLANNING_DEPTH_PROMPT_SUFFIX: Record<PlanningDepth, string> = {
+  small:
+    "Ask exactly 1-2 focused questions. Prioritize speed and getting to a summary quickly. Skip optional clarification.",
+  medium:
+    "Ask 3-5 well-rounded questions. Balance breadth and depth. This is the default behavior.",
+  large:
+    "Ask 5-8 thorough questions. Deeply explore scope, edge cases, dependencies, and implementation details. Be comprehensive.",
+};
+
+export function buildDepthPromptSuffix(
+  depth?: PlanningDepth,
+  customQuestionCount?: number,
+): string {
+  if (Number.isInteger(customQuestionCount) && (customQuestionCount ?? 0) > 0) {
+    return `Ask exactly ${customQuestionCount} questions. Adjust depth and breadth to fit within that count.`;
+  }
+
+  if (!depth) {
+    return "";
+  }
+
+  return PLANNING_DEPTH_PROMPT_SUFFIX[depth];
+}
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 /** SSE event types for planning session streaming */
@@ -673,6 +699,8 @@ export async function createSession(
   _store?: TaskStore,
   rootDir?: string,
   promptOverrides?: PromptOverrideMap,
+  planningDepth?: PlanningDepth,
+  customQuestionCount?: number,
 ): Promise<{ sessionId: string; firstQuestion: PlanningQuestion }> {
   // Check rate limit
   if (!checkRateLimit(ip)) {
@@ -704,7 +732,9 @@ export async function createSession(
   persistSession(session, "generating");
 
   // Resolve the effective system prompt (override or default)
-  const systemPrompt = resolvePrompt("planning-system", promptOverrides) || PLANNING_SYSTEM_PROMPT;
+  const baseSystemPrompt = resolvePrompt("planning-system", promptOverrides) || PLANNING_SYSTEM_PROMPT;
+  const depthPromptSuffix = buildDepthPromptSuffix(planningDepth, customQuestionCount);
+  const systemPrompt = depthPromptSuffix ? `${baseSystemPrompt}\n\n${depthPromptSuffix}` : baseSystemPrompt;
 
   // Create AI agent and get the first question
   // Only await engineReady if createFnAgent hasn't been set externally (e.g., via __setCreateFnAgent)
@@ -859,7 +889,12 @@ export async function createSessionWithAgent(
   modelProvider?: string,
   modelId?: string,
   promptOverrides?: PromptOverrideMap,
-  options?: { projectId?: string; ntfyConfig?: PlanningNtfyConfig },
+  options?: {
+    projectId?: string;
+    ntfyConfig?: PlanningNtfyConfig;
+    planningDepth?: PlanningDepth;
+    customQuestionCount?: number;
+  },
 ): Promise<string> {
   // Check rate limit
   if (!checkRateLimit(ip)) {
@@ -897,7 +932,15 @@ export async function createSessionWithAgent(
   persistSession(session, "generating");
 
   // Initialize AI agent in background - it will stream via planningStreamManager
-  initializeAgent(session, rootDir, modelProvider, modelId, promptOverrides).catch((err) => {
+  initializeAgent(
+    session,
+    rootDir,
+    modelProvider,
+    modelId,
+    promptOverrides,
+    options?.planningDepth,
+    options?.customQuestionCount,
+  ).catch((err) => {
     diagnostics.errorFromException("Failed to initialize agent for session", err, { sessionId, operation: "initialize-agent" });
     persistSession(session, "error", err.message || "Failed to initialize AI agent");
     planningStreamManager.broadcast(sessionId, {
@@ -918,9 +961,19 @@ async function initializeAgent(
   modelProvider?: string,
   modelId?: string,
   promptOverrides?: PromptOverrideMap,
+  planningDepth?: PlanningDepth,
+  customQuestionCount?: number,
 ): Promise<void> {
   try {
-    session.agent = await createPlanningAgent(session, rootDir, modelProvider, modelId, promptOverrides);
+    session.agent = await createPlanningAgent(
+      session,
+      rootDir,
+      modelProvider,
+      modelId,
+      promptOverrides,
+      planningDepth,
+      customQuestionCount,
+    );
     session.updatedAt = new Date();
 
     // Send initial message to get first question
@@ -944,12 +997,16 @@ async function createPlanningAgent(
   modelProvider?: string,
   modelId?: string,
   promptOverrides?: PromptOverrideMap,
+  planningDepth?: PlanningDepth,
+  customQuestionCount?: number,
 ): Promise<AgentResult> {
   // Ensure engine is loaded before using createFnAgent
   await ensureEngineReady();
 
   // Resolve the effective system prompt (override or default)
-  const systemPrompt = resolvePrompt("planning-system", promptOverrides) || PLANNING_SYSTEM_PROMPT;
+  const baseSystemPrompt = resolvePrompt("planning-system", promptOverrides) || PLANNING_SYSTEM_PROMPT;
+  const depthPromptSuffix = buildDepthPromptSuffix(planningDepth, customQuestionCount);
+  const systemPrompt = depthPromptSuffix ? `${baseSystemPrompt}\n\n${depthPromptSuffix}` : baseSystemPrompt;
 
   return createFnAgent({
     cwd: rootDir,

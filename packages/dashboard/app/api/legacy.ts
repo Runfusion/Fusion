@@ -2578,10 +2578,18 @@ export type AgentOnboardingStreamEvent =
   | { type: "complete"; data: Record<string, never> };
 
 /** Start a new planning session with an initial plan */
-export function startPlanning(initialPlan: string, projectId?: string): Promise<PlanningSession> {
+export function startPlanning(
+  initialPlan: string,
+  projectId?: string,
+  planningOptions?: { planningDepth?: "small" | "medium" | "large"; customQuestionCount?: number },
+): Promise<PlanningSession> {
   return api<PlanningSession>(withProjectId("/planning/start", projectId), {
     method: "POST",
-    body: JSON.stringify({ initialPlan }),
+    body: JSON.stringify({
+      initialPlan,
+      planningDepth: planningOptions?.planningDepth,
+      customQuestionCount: planningOptions?.customQuestionCount,
+    }),
   });
 }
 
@@ -2589,7 +2597,8 @@ export function startPlanning(initialPlan: string, projectId?: string): Promise<
 export function startPlanningStreaming(
   initialPlan: string,
   projectId?: string,
-  modelOverride?: { planningModelProvider?: string; planningModelId?: string }
+  modelOverride?: { planningModelProvider?: string; planningModelId?: string },
+  planningOptions?: { planningDepth?: "small" | "medium" | "large"; customQuestionCount?: number },
 ): Promise<{ sessionId: string }> {
   return api<{ sessionId: string }>(withProjectId("/planning/start-streaming", projectId), {
     method: "POST",
@@ -2597,6 +2606,8 @@ export function startPlanningStreaming(
       initialPlan,
       planningModelProvider: modelOverride?.planningModelProvider,
       planningModelId: modelOverride?.planningModelId,
+      planningDepth: planningOptions?.planningDepth,
+      customQuestionCount: planningOptions?.customQuestionCount,
     }),
   });
 }
