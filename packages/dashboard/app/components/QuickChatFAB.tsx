@@ -1291,13 +1291,30 @@ export function QuickChatFAB({
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }, [messages, streamingText, streamingThinking, isStreaming, isOpen]);
 
-  const sessionOptions = useMemo(
-    () => sessions.map((session, index) => ({
-      id: session.id,
-      label: session.title?.trim() || `Session ${index + 1}`,
-    })),
-    [sessions],
-  );
+  const sessionOptions = useMemo(() => {
+    const agentNameById = new Map(agents.map((agent) => [agent.id, agent.name?.trim() || agent.id]));
+    const modelNameByKey = new Map(
+      models.map((model) => [`${model.provider}/${model.id}`, model.name?.trim() || ""]),
+    );
+
+    return sessions.map((session, index) => {
+      const baseLabel = session.title?.trim() || `Session ${index + 1}`;
+
+      let descriptor: string | null = null;
+      if (session.agentId && session.agentId !== FN_AGENT_ID) {
+        descriptor = agentNameById.get(session.agentId) || session.agentId;
+      } else if (session.modelProvider && session.modelId) {
+        const modelKey = `${session.modelProvider}/${session.modelId}`;
+        const modelName = modelNameByKey.get(modelKey);
+        descriptor = modelName ? `${modelName} [${modelKey}]` : modelKey;
+      }
+
+      return {
+        id: session.id,
+        label: descriptor ? `${baseLabel} — ${descriptor}` : baseLabel,
+      };
+    });
+  }, [agents, models, sessions]);
 
   const inputPlaceholder = useMemo(() => {
     if (chatMode === "agent") {

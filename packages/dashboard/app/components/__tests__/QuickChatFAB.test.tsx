@@ -95,8 +95,8 @@ describe("QuickChatFAB session-first UX", () => {
 
     expect(await screen.findByTestId("quick-chat-session-dropdown")).toBeInTheDocument();
     expect(screen.queryByTestId("quick-chat-mode-toggle")).toBeNull();
-    expect(screen.getByRole("option", { name: "Model thread" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Session 2" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Model thread — GPT-4o [openai/gpt-4o]" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Session 2 — Agent One" })).toBeInTheDocument();
   });
 
   it("opens inline chooser from new button defaulting to model", async () => {
@@ -142,6 +142,38 @@ describe("QuickChatFAB session-first UX", () => {
     });
   });
 
+  it("shows distinguishable labels for sessions from multiple models", async () => {
+    mockFetchChatSessions.mockResolvedValueOnce({
+      sessions: [
+        { ...modelSession, id: "session-openai", title: null },
+        { ...modelSession, id: "session-anthropic", modelProvider: "anthropic", modelId: "claude-3-7-sonnet", title: null },
+      ],
+    });
+    mockFetchModels.mockResolvedValueOnce({
+      models: [
+        { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: true, contextWindow: 128000 },
+        { provider: "anthropic", id: "claude-3-7-sonnet", name: "Claude 3.7 Sonnet", reasoning: true, contextWindow: 200000 },
+      ],
+      favoriteProviders: [],
+      favoriteModels: [],
+      defaultProvider: "openai",
+      defaultModelId: "gpt-4o",
+    });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    expect(await screen.findByRole("option", { name: "Session 1 — GPT-4o [openai/gpt-4o]" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Session 2 — Claude 3.7 Sonnet [anthropic/claude-3-7-sonnet]" })).toBeInTheDocument();
+  });
+
+  it("includes both title and model descriptor in session label", async () => {
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    expect(await screen.findByRole("option", { name: "Model thread — GPT-4o [openai/gpt-4o]" })).toBeInTheDocument();
+  });
+
   it("intercepts exact /clear and starts a fresh session for the active target", async () => {
     render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
     fireEvent.click(screen.getByTestId("quick-chat-fab"));
@@ -185,7 +217,7 @@ describe("QuickChatFAB session-first UX", () => {
     fireEvent.click(screen.getByTestId("quick-chat-fab"));
 
     const select = await screen.findByTestId("quick-chat-session-dropdown");
-    await screen.findByRole("option", { name: "Session 2" });
+    await screen.findByRole("option", { name: "Session 2 — Agent One" });
     fireEvent.change(select, { target: { value: "session-agent" } });
 
     await waitFor(() => {
