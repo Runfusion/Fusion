@@ -222,7 +222,7 @@ describe("createDevServerRouter", () => {
       app,
       "POST",
       "/api/dev-server/start",
-      JSON.stringify({ command: "node -e \"setInterval(() => {}, 1000)\"" }),
+      JSON.stringify({ command: "node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"" }),
       { "Content-Type": "application/json" },
     );
 
@@ -238,7 +238,7 @@ describe("createDevServerRouter", () => {
       app,
       "POST",
       "/api/dev-server/start",
-      JSON.stringify({ command: "node -e \"setInterval(() => {}, 1000)\"", cwd: root }),
+      JSON.stringify({ command: "node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", cwd: root }),
       { "Content-Type": "application/json" },
     );
 
@@ -258,7 +258,7 @@ describe("createDevServerRouter", () => {
       app,
       "POST",
       "/api/dev-server/start",
-      JSON.stringify({ command: "node -e \"setInterval(() => {}, 1000)\"", cwd: root }),
+      JSON.stringify({ command: "node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", cwd: root }),
       { "Content-Type": "application/json" },
     );
 
@@ -266,7 +266,7 @@ describe("createDevServerRouter", () => {
       app,
       "POST",
       "/api/dev-server/start",
-      JSON.stringify({ command: "node -e \"setInterval(() => {}, 1000)\"", cwd: root }),
+      JSON.stringify({ command: "node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", cwd: root }),
       { "Content-Type": "application/json" },
     );
 
@@ -282,7 +282,7 @@ describe("createDevServerRouter", () => {
       app,
       "POST",
       "/api/dev-server/start",
-      JSON.stringify({ command: "node -e \"setInterval(() => {}, 1000)\"", cwd: root }),
+      JSON.stringify({ command: "node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", cwd: root }),
       { "Content-Type": "application/json" },
     );
 
@@ -311,7 +311,7 @@ describe("createDevServerRouter", () => {
       app,
       "POST",
       "/api/dev-server/start",
-      JSON.stringify({ command: "node -e \"setInterval(() => {}, 1000)\"", cwd: root, scriptId: "dev" }),
+      JSON.stringify({ command: "node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", cwd: root, scriptId: "dev" }),
       { "Content-Type": "application/json" },
     );
 
@@ -319,7 +319,7 @@ describe("createDevServerRouter", () => {
     expect(restartRes.status).toBe(200);
     expect(restartRes.body).toMatchObject({
       status: "running",
-      command: "node -e \"setInterval(() => {}, 1000)\"",
+      command: "node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
       scriptId: "dev",
     });
   });

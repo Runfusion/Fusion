@@ -60,7 +60,7 @@ describe("DevServerManager", () => {
     });
 
     await manager.start({
-      command: "node -e \"console.log('preview at http://localhost:5173/'); setInterval(() => {}, 1000)\"",
+      command: "node -e \"console.log('preview at http://localhost:5173/');process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
       scriptName: "dev",
     });
 
@@ -82,7 +82,7 @@ describe("DevServerManager", () => {
     await store.updateState({ manualUrl: "https://localhost:9999" });
 
     await manager.start({
-      command: "node -e \"console.log('ready at http://localhost:4321/'); setInterval(() => {}, 1000)\"",
+      command: "node -e \"console.log('ready at http://localhost:4321/');process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
       scriptName: "dev",
     });
 
@@ -106,7 +106,7 @@ describe("DevServerManager", () => {
     managers.push(manager);
 
     await manager.start({
-      command: "node -e \"setInterval(() => {}, 1000)\"",
+      command: "node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
       scriptName: "dev",
     });
 
@@ -125,7 +125,7 @@ describe("DevServerManager", () => {
     managers.push(manager);
 
     await manager.start({
-      command: "node -e \"setInterval(() => {}, 1000)\"",
+      command: "node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
       scriptName: "dev",
     });
 
@@ -141,7 +141,7 @@ describe("DevServerManager", () => {
     managers.push(manager);
 
     await manager.start({
-      command: "node -e \"setInterval(() => {}, 1000)\"",
+      command: "node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
       scriptName: "dev",
     });
 
@@ -160,7 +160,7 @@ describe("DevServerManager", () => {
     managers.push(manager);
 
     await manager.start({
-      command: "node -e \"setInterval(() => {}, 1000)\"",
+      command: "node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
       scriptName: "dev",
     });
 

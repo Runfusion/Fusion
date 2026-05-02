@@ -60,7 +60,7 @@ describe("DevServerProcessManager", () => {
 
   it("start() spawns child process and updates state to running", async () => {
     const { root, manager } = await createManager();
-    const state = await manager.start("node -e \"setInterval(() => {}, 1000)\"", root);
+    const state = await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root);
 
     expect(state.status).toBe("running");
     expect(typeof state.pid).toBe("number");
@@ -73,14 +73,14 @@ describe("DevServerProcessManager", () => {
       manager.once("started", () => resolve());
     });
 
-    await manager.start("node -e \"setInterval(() => {}, 1000)\"", root);
+    await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root);
     await startedEvent;
   });
 
   it("start() captures stdout into log buffer", async () => {
     const { root, store, manager } = await createManager();
 
-    await manager.start("node -e \"console.log('hello from stdout'); setInterval(() => {}, 1000)\"", root);
+    await manager.start("node -e \"console.log('hello from stdout');process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root);
 
     await waitFor(() => store.getState().logHistory.some((line) => line.includes("hello from stdout")));
 
@@ -90,8 +90,8 @@ describe("DevServerProcessManager", () => {
   it("start() throws if already running", async () => {
     const { root, manager } = await createManager();
 
-    await manager.start("node -e \"setInterval(() => {}, 1000)\"", root);
-    await expect(manager.start("node -e \"setInterval(() => {}, 1000)\"", root)).rejects.toThrow("already running");
+    await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root);
+    await expect(manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root)).rejects.toThrow("already running");
   });
 
   it("start() throws if command is empty", async () => {
@@ -102,7 +102,7 @@ describe("DevServerProcessManager", () => {
   it("stop() sends SIGTERM and waits for exit", async () => {
     const { root, store, manager } = await createManager();
 
-    await manager.start("node -e \"setInterval(() => {}, 1000)\"", root);
+    await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root);
     const state = await manager.stop();
 
     expect(state.status).toBe("stopped");
@@ -119,7 +119,7 @@ describe("DevServerProcessManager", () => {
     const childPidFile = join(root, "managed-child.pid");
 
     await manager.start(
-      `node -e "require('node:fs').writeFileSync('${childPidFile}', String(process.pid)); setInterval(() => {}, 1000)"`,
+      `node -e "require('node:fs').writeFileSync('${childPidFile}', String(process.pid));process.stdin.resume();process.stdin.on('end',()=>process.exit(0))"`,
       root,
     );
 
@@ -143,7 +143,7 @@ describe("DevServerProcessManager", () => {
     const { root, store, manager } = await createManager({ stopTimeoutMs: 150 });
 
     await manager.start(
-      "node -e \"process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)\"",
+      "node -e \"process.on('SIGTERM', () => {});process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
       root,
     );
 
@@ -162,7 +162,7 @@ describe("DevServerProcessManager", () => {
   it("restart() stops then starts with same command", async () => {
     const { root, store, manager } = await createManager();
 
-    await manager.start("node -e \"setInterval(() => {}, 1000)\"", root, { scriptId: "dev" });
+    await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root, { scriptId: "dev" });
     const firstPid = store.getState().pid;
 
     const state = await manager.restart();
@@ -176,7 +176,7 @@ describe("DevServerProcessManager", () => {
     const { root, store, manager } = await createManager();
 
     await manager.start(
-      "node -e \"console.log('Server ready at http://localhost:3000'); setInterval(() => {}, 1000)\"",
+      "node -e \"console.log('Server ready at http://localhost:3000');process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
       root,
     );
 
@@ -188,7 +188,7 @@ describe("DevServerProcessManager", () => {
     const { root, store, manager } = await createManager();
 
     await manager.start(
-      "node -e \"console.log('ready at http://127.0.0.1:4173'); setInterval(() => {}, 1000)\"",
+      "node -e \"console.log('ready at http://127.0.0.1:4173');process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
       root,
     );
 
@@ -200,7 +200,7 @@ describe("DevServerProcessManager", () => {
     const { root, store, manager } = await createManager();
 
     await manager.start(
-      "node -e \"console.log('Listening on port 5173'); setInterval(() => {}, 1000)\"",
+      "node -e \"console.log('Listening on port 5173');process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
       root,
     );
 
@@ -211,7 +211,7 @@ describe("DevServerProcessManager", () => {
   it("schedules fallback probing after startup when no URL is announced", async () => {
     const { root, manager } = await createManager({ probeDelayMs: 25, probeTimeoutMs: 5 });
 
-    await manager.start("node -e \"setInterval(() => {}, 1000)\"", root);
+    await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root);
 
     expect(manager.hasPendingProbeTimer()).toBe(true);
     await waitFor(() => manager.hasPendingProbeTimer() === false, 3_000);
@@ -221,7 +221,7 @@ describe("DevServerProcessManager", () => {
     const { root, store, manager } = await createManager({ probeDelayMs: 2_000, probeTimeoutMs: 5 });
 
     await manager.start(
-      "node -e \"console.log('ready at http://localhost:4321'); setInterval(() => {}, 1000)\"",
+      "node -e \"console.log('ready at http://localhost:4321');process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"",
       root,
     );
 
@@ -232,7 +232,7 @@ describe("DevServerProcessManager", () => {
   it("clears fallback probe timer on stop", async () => {
     const { root, manager } = await createManager({ probeDelayMs: 2_000, probeTimeoutMs: 5 });
 
-    await manager.start("node -e \"setInterval(() => {}, 1000)\"", root);
+    await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root);
     expect(manager.hasPendingProbeTimer()).toBe(true);
 
     await manager.stop();
@@ -254,7 +254,7 @@ describe("DevServerProcessManager", () => {
   it("restarts with a fresh fallback probe timer", async () => {
     const { root, manager } = await createManager({ probeDelayMs: 2_000, probeTimeoutMs: 5 });
 
-    await manager.start("node -e \"setInterval(() => {}, 1000)\"", root, { scriptId: "dev" });
+    await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root, { scriptId: "dev" });
     expect(manager.hasPendingProbeTimer()).toBe(true);
 
     await manager.restart();
@@ -265,7 +265,7 @@ describe("DevServerProcessManager", () => {
   it("cleanup() kills process and clears listeners", async () => {
     const { root, manager } = await createManager();
 
-    await manager.start("node -e \"setInterval(() => {}, 1000)\"", root);
+    await manager.start("node -e \"process.stdin.resume();process.stdin.on('end',()=>process.exit(0))\"", root);
     manager.on("output", () => undefined);
     expect(manager.listenerCount("output")).toBeGreaterThan(0);
 

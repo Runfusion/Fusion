@@ -30,7 +30,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 4_000): Promise<voi
 }
 
 function longRunningCommand(previewUrl = "http://127.0.0.1:4173/preview"): DevServerStartOptions {
-  const script = `console.log('ready ${previewUrl}'); setInterval(() => {}, 1000);`;
+  const script = `console.log('ready ${previewUrl}');process.stdin.resume();process.stdin.on('end',()=>process.exit(0));`;
   return {
     command: `node -e \"${script}\"`,
     scriptName: "dev",
