@@ -30,7 +30,8 @@ type SortField = "id" | "title" | "status" | "column";
 type SortDirection = "asc" | "desc";
 
 // Column visibility types
-const ALL_LIST_COLUMNS = ["id", "title", "status", "column", "dependencies", "progress"] as const;
+const ALL_LIST_COLUMNS = ["title", "status", "column", "dependencies", "progress"] as const;
+const DEFAULT_LIST_COLUMNS = ["title", "status", "column"] as const;
 type ListColumn = typeof ALL_LIST_COLUMNS[number];
 
 function getNodeStatusLabel(status: NodeInfo["status"]): string {
@@ -63,7 +64,7 @@ function readVisibleColumns(projectId?: string): Set<ListColumn> {
     // Invalid localStorage data - fall through to default
   }
 
-  return new Set(ALL_LIST_COLUMNS);
+  return new Set(DEFAULT_LIST_COLUMNS);
 }
 
 function readHideDoneTasks(projectId?: string): boolean {
@@ -241,7 +242,7 @@ export function ListView({
   const isMobile = viewportMode === "mobile";
   const { confirm } = useConfirm();
 
-  // Column visibility state - initialize from localStorage or default to all columns
+  // Column visibility state - initialize from localStorage or reduced default columns
   const [visibleColumns, setVisibleColumns] = useState<Set<ListColumn>>(() => readVisibleColumns(projectId));
 
   // Hide done tasks state - initialize from localStorage
@@ -278,6 +279,7 @@ export function ListView({
   const columnDropdownRef = useRef<HTMLDivElement>(null);
 
   // Selection state - initialize from localStorage
+  const [bulkEditEnabled, setBulkEditEnabled] = useState(false);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(() => readSelectedTaskIds(projectId));
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(() => readSelectedTaskId(projectId));
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => readSidebarWidth(projectId));
@@ -366,6 +368,15 @@ export function ListView({
     };
   }, [isMobile, projectId]);
 
+  const toggleBulkEdit = useCallback(() => {
+    setBulkEditEnabled((prev) => {
+      if (prev) {
+        setSelectedTaskIds(new Set());
+      }
+      return !prev;
+    });
+  }, []);
+
   // Toggle task selection
   const toggleTaskSelection = useCallback((taskId: string) => {
     setSelectedTaskIds((prev) => {
@@ -427,7 +438,6 @@ export function ListView({
 
   // Column display labels
   const COLUMN_LABELS_MAP: Record<ListColumn, string> = {
-    id: "ID",
     title: "Title",
     status: "Status",
     column: "Column",
@@ -930,7 +940,10 @@ export function ListView({
             </button>
           )}
         </div>
-        {selectedTaskIds.size > 0 && (
+        <button className="btn btn-sm" onClick={toggleBulkEdit} aria-pressed={bulkEditEnabled}>
+          {bulkEditEnabled ? "Done Editing" : "Bulk Edit"}
+        </button>
+        {bulkEditEnabled && selectedTaskIds.size > 0 && (
           <div className="list-selection-stats">
             <span className="selection-count">{selectedTaskIds.size} selected</span>
             <button className="btn btn-sm btn-link" onClick={clearSelection}>
@@ -939,7 +952,7 @@ export function ListView({
           </div>
         )}
         {/* Bulk Edit Toolbar */}
-        {selectedTaskIds.size > 0 && availableModels && availableModels.length > 0 && (
+        {bulkEditEnabled && selectedTaskIds.size > 0 && availableModels && availableModels.length > 0 && (
           <div className="bulk-edit-toolbar">
             <span className="bulk-edit-label">Bulk Edit Models &amp; Node:</span>
             <div className="bulk-edit-dropdown">
@@ -1114,7 +1127,7 @@ export function ListView({
                           const hasDependencies = Boolean(task.dependencies && task.dependencies.length > 0);
                           const taskProgress = getTaskProgress(task);
                           const hasProgress = taskProgress.hasProgress;
-                          const isSelectionMode = selectedTaskIds.size > 0;
+                          const isSelectionMode = bulkEditEnabled;
 
                           return (
                             <div
@@ -1202,20 +1215,17 @@ export function ListView({
           <table className="list-table">
             <thead>
               <tr>
-                <th className="list-header-cell list-header-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={isSelectAll}
-                    ref={(el) => {
-                      if (el) el.indeterminate = isSelectIndeterminate;
-                    }}
-                    onChange={toggleSelectAll}
-                    aria-label="Select all visible tasks"
-                  />
-                </th>
-                {visibleColumns.has("id") && (
-                  <th className="list-header-cell" onClick={() => handleSort("id")}>
-                    ID {getSortIcon("id")}
+                {bulkEditEnabled && (
+                  <th className="list-header-cell list-header-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={isSelectAll}
+                      ref={(el) => {
+                        if (el) el.indeterminate = isSelectIndeterminate;
+                      }}
+                      onChange={toggleSelectAll}
+                      aria-label="Select all visible tasks"
+                    />
                   </th>
                 )}
                 {visibleColumns.has("title") && (
@@ -1265,7 +1275,7 @@ export function ListView({
                       onClick={() => toggleSection(column)}
                       aria-expanded={!isCollapsed}
                     >
-                      <th colSpan={visibleColumns.size + 1} className="list-section-cell">
+                      <th colSpan={visibleColumns.size + (bulkEditEnabled ? 1 : 0)} className="list-section-cell">
                         <ChevronRight
                           size={14}
                           className={`list-section-chevron${!isCollapsed ? " list-section-chevron--expanded" : ""}`}
@@ -1281,7 +1291,7 @@ export function ListView({
                       <>
                         {isEmpty ? (
                           <tr className="list-section-empty">
-                            <td colSpan={visibleColumns.size + 1} className="list-empty-cell">
+                            <td colSpan={visibleColumns.size + (bulkEditEnabled ? 1 : 0)} className="list-empty-cell">
                               No tasks
                             </td>
                           </tr>
@@ -1312,36 +1322,38 @@ export function ListView({
                                 onDragEnd={handleDragEnd}
                                 data-id={task.id}
                               >
-                                <td className="list-cell list-cell-checkbox">
-                                  <input
-                                    type="checkbox"
-                                    checked={selectedTaskIds.has(task.id)}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      toggleTaskSelection(task.id);
-                                    }}
-                                    onClick={(e) => e.stopPropagation()}
-                                    disabled={task.column === "archived"}
-                                    aria-label={`Select ${task.id}`}
-                                  />
-                                </td>
-                                {visibleColumns.has("id") && (
-                                  <td className="list-cell list-cell-id">{task.id}</td>
+                                {bulkEditEnabled && (
+                                  <td className="list-cell list-cell-checkbox">
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedTaskIds.has(task.id)}
+                                      onChange={(e) => {
+                                        e.stopPropagation();
+                                        toggleTaskSelection(task.id);
+                                      }}
+                                      onClick={(e) => e.stopPropagation()}
+                                      disabled={task.column === "archived"}
+                                      aria-label={`Select ${task.id}`}
+                                    />
+                                  </td>
                                 )}
                                 {visibleColumns.has("title") && (
                                   <td className="list-cell list-cell-title">
                                     <div className="list-title-content">
-                                      {task.executionMode === "fast" && (
-                                        <span
-                                          className="list-execution-mode-badge list-execution-mode-badge--fast"
-                                          title="Fast mode"
-                                          aria-label="Fast mode"
-                                        >
-                                          <Zap aria-hidden="true" />
-                                          <span className="visually-hidden">Fast mode</span>
-                                        </span>
-                                      )}
-                                      <span className="list-title-text">{task.title || task.description}</span>
+                                      <span className="list-title-id">{task.id}</span>
+                                      <div className="list-title-row">
+                                        {task.executionMode === "fast" && (
+                                          <span
+                                            className="list-execution-mode-badge list-execution-mode-badge--fast"
+                                            title="Fast mode"
+                                            aria-label="Fast mode"
+                                          >
+                                            <Zap aria-hidden="true" />
+                                            <span className="visually-hidden">Fast mode</span>
+                                          </span>
+                                        )}
+                                        <span className="list-title-text">{task.title || task.description}</span>
+                                      </div>
                                     </div>
                                   </td>
                                 )}
