@@ -1402,8 +1402,8 @@ input[type="range"]:focus-visible {
 .settings-section-heading {
   font-size: 14px;
   font-weight: 600;
-  padding: var(--space-lg) var(--space-xl) var(--space-md);
-  margin: 0 var(--space-xl) 0;
+  padding: var(--space-lg) 0 var(--space-md);
+  margin: 0;
   color: var(--text);
   border-bottom: 1px solid var(--border);
   margin-bottom: var(--space-xs);
@@ -3160,8 +3160,8 @@ input[type="range"]:focus-visible {
   }
 
   .settings-section-heading {
-    padding: var(--space-lg) var(--space-lg) var(--space-md);
-    margin: 0 var(--space-lg) 0;
+    padding: var(--space-lg) 0 var(--space-md);
+    margin: 0;
   }
 
   .form-group {

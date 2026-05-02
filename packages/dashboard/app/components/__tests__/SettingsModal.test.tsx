@@ -191,6 +191,20 @@ const MODEL_FIXTURE = [
 ];
 
 describe("SettingsModal", () => {
+  it("renders section headings with the shared settings-section-heading class", async () => {
+    const { container } = renderModal();
+    await waitForSettingsModalReady();
+
+    const authenticationHeading = screen.getByRole("heading", { name: "Authentication" });
+    expect(authenticationHeading).toHaveClass("settings-section-heading");
+
+    await userEvent.click(screen.getAllByRole("button", { name: /^General$/ })[0]);
+
+    const generalHeading = screen.getByRole("heading", { name: "General" });
+    expect(generalHeading).toHaveClass("settings-section-heading");
+    expect(container.querySelectorAll(".settings-section-heading").length).toBeGreaterThan(0);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     Object.defineProperty(window, "matchMedia", {

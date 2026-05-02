@@ -310,6 +310,8 @@ describe("SettingsModal mobile adaptations", () => {
     expectMobileRule(css, ".settings-nav-item", "justify-content: center;");
     expectMobileRule(css, ".settings-nav-item", "gap: 4px;");
     expectMobileRule(css, ".settings-content textarea", "font-size: 16px;");
+    expectMobileRule(css, ".settings-section-heading", "padding: var(--space-lg) 0 var(--space-md);");
+    expectMobileRule(css, ".settings-section-heading", "margin: 0;");
     expectMobileRule(css, ".settings-scope-icon", "margin-right: 0;");
     expectMobileRule(css, ".settings-scope-banner", "padding: var(--space-sm) var(--space-lg);");
     expectMobileRule(css, ".settings-empty-state", "padding: 12px 14px;");
@@ -340,5 +342,9 @@ describe("SettingsModal mobile adaptations", () => {
     expectBaseRule(css, ".settings-content::-webkit-scrollbar", "width: 6px;");
     expectBaseRule(css, ".settings-content::-webkit-scrollbar-thumb", "background: var(--border);");
     expectBaseRule(css, ".settings-content::-webkit-scrollbar-thumb:hover", "background: var(--text-muted);");
+
+    expectBaseRule(css, ".settings-section-heading", "padding: var(--space-lg) 0 var(--space-md);");
+    expectBaseRule(css, ".settings-section-heading", "margin: 0;");
+    expectBaseRule(css, ".settings-section-heading", "border-bottom: 1px solid var(--border);");
   });
 });
