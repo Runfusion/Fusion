@@ -465,6 +465,23 @@
 }
 
 .list-title-content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.list-title-id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+
+.list-title-row {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);

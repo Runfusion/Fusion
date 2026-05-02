@@ -64,6 +64,17 @@ const renderListView = (props: Partial<React.ComponentProps<typeof ListView>> = 
   return render(<ListView {...defaultProps} {...props} />);
 };
 
+const enterBulkEditMode = () => {
+  fireEvent.click(screen.getByRole("button", { name: "Bulk Edit" }));
+};
+
+const showAllColumnsByDefault = () => {
+  localStorage.setItem(
+    scopedStorageKey("kb-dashboard-list-columns"),
+    JSON.stringify(["title", "status", "column", "dependencies", "progress"]),
+  );
+};
+
 function ensureMatchMedia() {
   if (!window.matchMedia) {
     Object.defineProperty(window, "matchMedia", {
@@ -270,6 +281,7 @@ describe("ListView", () => {
     renderListView({ tasks });
 
     const row = screen.getByText("FN-001").closest("tr")!;
+    enterBulkEditMode();
     const checkbox = within(row).getByRole("checkbox", { name: "Select FN-001" });
 
     fireEvent.click(checkbox);
@@ -380,8 +392,8 @@ describe("ListView", () => {
     renderListView({ tasks });
 
     // First click - ascending
-    const idHeader = screen.getByText("ID");
-    fireEvent.click(idHeader);
+    const titleHeader = screen.getByText("Title");
+    fireEvent.click(titleHeader);
 
     // Get all data rows (excluding section headers by using data-id attribute)
     const rows = screen.getAllByRole("row").filter(r => r.getAttribute("data-id"));
@@ -390,7 +402,7 @@ describe("ListView", () => {
     expect(rows[2].textContent).toContain("FN-003");
 
     // Second click - descending
-    fireEvent.click(idHeader);
+    fireEvent.click(titleHeader);
 
     const rowsDesc = screen.getAllByRole("row").filter(r => r.getAttribute("data-id"));
     expect(rowsDesc[0].textContent).toContain("FN-003");
@@ -592,6 +604,7 @@ describe("ListView", () => {
       }),
     ];
 
+    showAllColumnsByDefault();
     renderListView({ tasks });
 
     expect(screen.getByText("3/5")).toBeDefined();
@@ -615,6 +628,7 @@ describe("ListView", () => {
       }),
     ];
 
+    showAllColumnsByDefault();
     renderListView({ tasks });
 
     const row = screen.getByText("FN-001").closest("tr")!;
@@ -625,6 +639,7 @@ describe("ListView", () => {
   it("shows - for tasks with no steps", () => {
     const tasks = [createMockTask({ id: "FN-001", steps: [] })];
 
+    showAllColumnsByDefault();
     renderListView({ tasks });
 
     // Find the task row and check its progress cell
@@ -643,6 +658,7 @@ describe("ListView", () => {
       }),
     ];
 
+    showAllColumnsByDefault();
     renderListView({ tasks });
 
     const row = screen.getByText("FN-002").closest("tr")!;
@@ -658,6 +674,7 @@ describe("ListView", () => {
       }),
     ];
 
+    showAllColumnsByDefault();
     renderListView({ tasks });
 
     expect(screen.getByText("2")).toBeDefined();
@@ -666,12 +683,12 @@ describe("ListView", () => {
   it("shows - for tasks with no dependencies", () => {
     const tasks = [createMockTask({ id: "FN-001", dependencies: [] })];
 
+    showAllColumnsByDefault();
     renderListView({ tasks });
 
-    const depCells = screen.getAllByRole("cell");
-    // Find the cell that should contain deps (6th column, index 5 - after checkbox column)
-    const depCell = depCells[5];
-    expect(depCell.textContent).toBe("-");
+    const row = screen.getByText("FN-001").closest("tr")!;
+    const depCell = row.querySelector(".list-cell-deps");
+    expect(depCell?.textContent).toBe("-");
   });
 
   it("displays correct task count in stats", () => {
@@ -881,8 +898,8 @@ describe("ListView", () => {
 
     // The full 100-character description should be visible
     const titleCell = screen.getByText(longDescription).closest("td")!;
-    expect(titleCell.textContent).toBe(longDescription);
-    expect(titleCell.textContent?.length).toBe(100);
+    expect(titleCell.textContent).toContain(longDescription);
+    expect(titleCell.textContent?.length).toBeGreaterThanOrEqual(100);
   });
 
   // Grouped view tests
@@ -941,23 +958,24 @@ describe("ListView", () => {
     ];
 
     renderListView({ tasks });
+    enterBulkEditMode();
 
     // Find section header rows
     const sectionHeaders = screen.getAllByRole("row").filter(r => r.className.includes("list-section-header"));
 
     // Verify each section header has colSpan that includes the checkbox column
-    // Default visible columns: id, title, status, column, dependencies, progress (6 columns)
-    // Plus checkbox column = 7 total
+    // Default visible columns: title, status, column (3 columns)
+    // Plus checkbox column = 4 total
     for (const header of sectionHeaders) {
       const th = header.querySelector("th.list-section-cell");
       expect(th).not.toBeNull();
-      expect(th!.getAttribute("colSpan")).toBe("7"); // visibleColumns.size (6) + 1 for checkbox
+      expect(th!.getAttribute("colSpan")).toBe("4"); // visibleColumns.size (3) + 1 for checkbox
     }
 
     // Also verify empty section cells span full width
     const emptyCells = screen.getAllByRole("cell").filter(c => c.className.includes("list-empty-cell"));
     for (const cell of emptyCells) {
-      expect(cell.getAttribute("colSpan")).toBe("7");
+      expect(cell.getAttribute("colSpan")).toBe("4");
     }
   });
 
@@ -1196,7 +1214,7 @@ describe("ListView Column Visibility", () => {
     fireEvent.click(columnsButton);
 
     // Dropdown should be visible with checkboxes for each column
-    expect(screen.getByText("ID")).toBeDefined();
+    expect(screen.queryByText("ID")).toBeNull();
     expect(screen.getByText("Title")).toBeDefined();
     expect(screen.getByText("Status")).toBeDefined();
     expect(screen.getByText("Column")).toBeDefined();
@@ -1275,16 +1293,14 @@ describe("ListView Column Visibility", () => {
   });
 
   it("initializes column visibility from localStorage", () => {
-    // Set up localStorage with only ID and Status visible
-    localStorage.setItem(scopedStorageKey("kb-dashboard-list-columns"), JSON.stringify(["id", "status"]));
+    // Set up localStorage with only Status visible
+    localStorage.setItem(scopedStorageKey("kb-dashboard-list-columns"), JSON.stringify(["status"]));
 
     const tasks = [createMockTask({ id: "FN-001", title: "Test Task", status: "pending" })];
     renderListView({ tasks });
 
-    // ID should be visible
-    expect(screen.getByText("FN-001")).toBeDefined();
-
     // Title should NOT be visible (hidden by localStorage)
+    expect(screen.queryByText("FN-001")).toBeNull();
     const table = document.querySelector(".list-table");
     expect(table?.textContent).not.toContain("Test Task");
   });
@@ -1315,9 +1331,9 @@ describe("ListView Column Visibility", () => {
 
   it("sorting still works when some columns are hidden", () => {
     const tasks = [
-      createMockTask({ id: "FN-003", column: "triage" }),
-      createMockTask({ id: "FN-001", column: "triage" }),
-      createMockTask({ id: "FN-002", column: "triage" }),
+      createMockTask({ id: "FN-003", title: "Charlie", column: "triage" }),
+      createMockTask({ id: "FN-001", title: "Alpha", column: "triage" }),
+      createMockTask({ id: "FN-002", title: "Bravo", column: "triage" }),
     ];
     renderListView({ tasks });
 
@@ -1325,17 +1341,15 @@ describe("ListView Column Visibility", () => {
     const columnsButton = screen.getByRole("button", { name: /columns/i });
     fireEvent.click(columnsButton);
     const checkboxes = screen.getAllByRole("checkbox");
-    const titleCheckbox = checkboxes.find(
-      cb => cb.parentElement?.textContent?.includes("Title")
+    const columnCheckbox = checkboxes.find(
+      cb => cb.parentElement?.textContent?.includes("Column")
     );
-    expect(titleCheckbox).toBeDefined();
-    fireEvent.click(titleCheckbox!);
+    expect(columnCheckbox).toBeDefined();
+    fireEvent.click(columnCheckbox!);
 
-    // Find and click ID header to sort (use getAllByText and find the header cell)
-    const idHeaders = screen.getAllByText("ID");
-    const idHeader = idHeaders.find(el => el.tagName === "TH" || el.closest("th"));
-    expect(idHeader).toBeDefined();
-    fireEvent.click(idHeader!);
+    // Find and click Title header to sort
+    const titleHeader = screen.getByRole("columnheader", { name: /title/i });
+    fireEvent.click(titleHeader);
 
     // Get sorted rows and verify sorting still works
     const rows = screen.getAllByRole("row").filter(r => r.getAttribute("data-id"));
@@ -1344,19 +1358,22 @@ describe("ListView Column Visibility", () => {
     expect(rows[2].textContent).toContain("FN-003");
   });
 
-  it("all columns visible by default when no localStorage", () => {
+  it("shows reduced default columns when no localStorage", () => {
     const tasks = [
       createMockTask({ id: "FN-001", title: "Test Task", status: "pending", column: "triage" }),
     ];
     renderListView({ tasks });
 
-    // All columns should be visible by default
+    // Reduced default columns should be visible
     expect(screen.getByText("FN-001")).toBeDefined();
     expect(screen.getByText("Test Task")).toBeDefined();
     expect(screen.getByText("pending")).toBeDefined();
-    // Check for column badge specifically using the class
     const columnBadge = document.querySelector(".list-column-badge");
     expect(columnBadge?.textContent).toContain("Planning");
+
+    // Optional columns should be hidden by default
+    expect(document.querySelector(".list-cell-deps")).toBeNull();
+    expect(document.querySelector(".list-cell-progress")).toBeNull();
   });
 });
 
@@ -2104,6 +2121,7 @@ describe("ListView - Bulk Selection", () => {
   it("shows selection checkbox in header", () => {
     const tasks = [createMockTask({ id: "FN-001" })];
     render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} projectId={TEST_PROJECT_ID} />);
+    enterBulkEditMode();
 
     const headerCheckbox = screen.getByLabelText("Select all visible tasks");
     expect(headerCheckbox).toBeDefined();
@@ -2115,6 +2133,7 @@ describe("ListView - Bulk Selection", () => {
       createMockTask({ id: "FN-002" }),
     ];
     render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} projectId={TEST_PROJECT_ID} />);
+    enterBulkEditMode();
 
     const checkboxes = screen.getAllByLabelText(/Select FN-/);
     expect(checkboxes).toHaveLength(2);
@@ -2125,6 +2144,7 @@ describe("ListView - Bulk Selection", () => {
       createMockTask({ id: "FN-001", column: "archived" }),
     ];
     render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} projectId={TEST_PROJECT_ID} />);
+    enterBulkEditMode();
 
     const checkbox = screen.getByLabelText("Select FN-001");
     expect(checkbox).toBeDisabled();
@@ -2136,6 +2156,7 @@ describe("ListView - Bulk Selection", () => {
       createMockTask({ id: "FN-002" }),
     ];
     render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} projectId={TEST_PROJECT_ID} />);
+    enterBulkEditMode();
 
     const checkbox = screen.getByLabelText("Select FN-001");
     fireEvent.click(checkbox);
@@ -2148,6 +2169,7 @@ describe("ListView - Bulk Selection", () => {
       createMockTask({ id: "FN-001" }),
     ];
     render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} projectId={TEST_PROJECT_ID} />);
+    enterBulkEditMode();
 
     const checkbox = screen.getByLabelText("Select FN-001");
     fireEvent.click(checkbox);
@@ -2165,6 +2187,7 @@ describe("ListView - Bulk Selection", () => {
       createMockTask({ id: "FN-002" }),
     ];
     render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} projectId={TEST_PROJECT_ID} />);
+    enterBulkEditMode();
 
     const selectAllCheckbox = screen.getByLabelText("Select all visible tasks");
     fireEvent.click(selectAllCheckbox);
@@ -2193,6 +2216,7 @@ describe("ListView - Bulk Selection", () => {
         onToggleModelFavorite={onToggleModelFavorite}
       />
     );
+    enterBulkEditMode();
 
     // Select a task to show bulk edit toolbar with dropdowns
     const checkbox = screen.getByLabelText("Select FN-001");
@@ -2216,6 +2240,7 @@ describe("ListView - Bulk Selection", () => {
         availableModels={availableModels}
       />
     );
+    enterBulkEditMode();
 
     const checkbox = screen.getByLabelText("Select FN-001");
     fireEvent.click(checkbox);
@@ -2238,6 +2263,7 @@ describe("ListView - Bulk Selection", () => {
         availableModels={availableModels}
       />
     );
+    enterBulkEditMode();
 
     const checkbox = screen.getByLabelText("Select FN-001");
     fireEvent.click(checkbox);
@@ -2249,6 +2275,7 @@ describe("ListView - Bulk Selection", () => {
   it("persists selection to localStorage", () => {
     const tasks = [createMockTask({ id: "FN-001" })];
     render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} projectId={TEST_PROJECT_ID} />);
+    enterBulkEditMode();
 
     const checkbox = screen.getByLabelText("Select FN-001");
     fireEvent.click(checkbox);
@@ -2262,6 +2289,7 @@ describe("ListView - Bulk Selection", () => {
       createMockTask({ id: "FN-002" }),
     ];
     render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} projectId={TEST_PROJECT_ID} />);
+    enterBulkEditMode();
 
     const checkboxes = screen.getAllByLabelText(/Select FN-/);
     // Select only first task
@@ -2301,6 +2329,7 @@ describe("ListView - Bulk Selection", () => {
         availableModels={availableModels}
       />
     );
+    enterBulkEditMode();
 
     await user.click(screen.getByLabelText("Select FN-001"));
 
@@ -2370,6 +2399,7 @@ describe("ListView - Bulk Selection", () => {
       vi.mocked(fetchNodes).mockResolvedValue([{ id: "node-1", name: "Node One", status: "online" } as never]);
 
       render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} projectId={TEST_PROJECT_ID} availableModels={availableModels} />);
+      enterBulkEditMode();
       fireEvent.click(screen.getByLabelText("Select FN-001"));
 
       expect(await screen.findByLabelText("Node Override")).toBeInTheDocument();
@@ -2381,6 +2411,7 @@ describe("ListView - Bulk Selection", () => {
       vi.mocked(fetchNodes).mockResolvedValue([{ id: "node-2", name: "Node Two", status: "offline" } as never]);
 
       render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} projectId={TEST_PROJECT_ID} availableModels={availableModels} />);
+      enterBulkEditMode();
       fireEvent.click(screen.getByLabelText("Select FN-001"));
 
       expect(await screen.findByRole("option", { name: "○ Node Two (Offline)" })).toBeInTheDocument();
@@ -2392,6 +2423,7 @@ describe("ListView - Bulk Selection", () => {
       vi.mocked(fetchNodes).mockResolvedValue([{ id: "node-abc", name: "Node ABC", status: "online" } as never]);
 
       render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} projectId={TEST_PROJECT_ID} availableModels={availableModels} />);
+      enterBulkEditMode();
       await user.click(screen.getByLabelText("Select FN-001"));
 
       const nodeSelect = await screen.findByLabelText("Node Override");
@@ -2408,6 +2440,7 @@ describe("ListView - Bulk Selection", () => {
       vi.mocked(batchUpdateTaskModels).mockResolvedValue({ updated: tasks, count: 1 });
 
       render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} projectId={TEST_PROJECT_ID} availableModels={availableModels} />);
+      enterBulkEditMode();
       await user.click(screen.getByLabelText("Select FN-001"));
 
       const nodeSelect = await screen.findByLabelText("Node Override");
@@ -2427,6 +2460,7 @@ describe("ListView - Bulk Selection", () => {
       vi.mocked(batchUpdateTaskModels).mockResolvedValue({ updated: tasks, count: 1 });
 
       render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} projectId={TEST_PROJECT_ID} availableModels={availableModels} />);
+      enterBulkEditMode();
       await user.click(screen.getByLabelText("Select FN-001"));
       await user.selectOptions(await screen.findByLabelText("Node Override"), "");
       await user.click(screen.getByRole("button", { name: "Apply" }));
@@ -2442,6 +2476,7 @@ describe("ListView - Bulk Selection", () => {
       vi.mocked(fetchNodes).mockResolvedValue([{ id: "node-abc", name: "Node ABC", status: "online" } as never]);
 
       render(<ListView tasks={tasks} onMoveTask={vi.fn()} onOpenDetail={vi.fn()} addToast={mockAddToast} projectId={TEST_PROJECT_ID} availableModels={availableModels} />);
+      enterBulkEditMode();
       fireEvent.click(screen.getByLabelText("Select FN-001"));
 
       expect(await screen.findByRole("button", { name: "Apply" })).toBeDisabled();
@@ -2667,6 +2702,7 @@ describe("ListView - Bulk Selection", () => {
         ],
       });
 
+      enterBulkEditMode();
       fireEvent.click(screen.getByLabelText("Select FN-002"));
 
       expect(screen.getByText("2 selected")).toBeInTheDocument();
