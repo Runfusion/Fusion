@@ -1790,6 +1790,39 @@ export class ProjectEngine {
 
   // ── Settings event listeners ──
 
+  private async resumeAfterUnpauseAndSweepInReview(
+    store: TaskStore,
+    settings: Settings,
+    source: "Global unpause" | "Engine unpause",
+  ): Promise<void> {
+    try {
+      const runtime = this.runtime as any;
+      runtime.resumeAfterUnpause?.().catch((err: Error) =>
+        runtimeLog.error(
+          `Failed to resume agentic activity on ${source.toLowerCase()}:`,
+          err,
+        ),
+      );
+    } catch (err: unknown) {
+      runtimeLog.warn(
+        `${source}: failed to dispatch resumeAfterUnpause: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    if (settings.globalPause || settings.enginePaused || !settings.autoMerge) {
+      return;
+    }
+
+    try {
+      const tasks = await store.listTasks({ column: "in-review" });
+      this.enqueueEligibleInReviewTasks(tasks as Task[]);
+    } catch (err: unknown) {
+      runtimeLog.warn(
+        `${source}: failed to scan in-review tasks for auto-merge: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   private wireSettingsListeners(store: TaskStore): void {
     // 1. Global pause — terminate active merge session AND abort any running
     // deterministic verification (pnpm test/build). The abort controller gates
@@ -1822,28 +1855,7 @@ export class ProjectEngine {
     }) => {
       if (prev.globalPause && !s.globalPause) {
         runtimeLog.log("Global unpause — resuming agentic activity");
-
-        try {
-          const runtime = this.runtime as any;
-          runtime.resumeAfterUnpause?.().catch((err: Error) =>
-            runtimeLog.error("Failed to resume agentic activity on unpause:", err),
-          );
-        } catch (err: unknown) {
-          runtimeLog.warn(
-            `Global unpause: failed to dispatch resumeAfterUnpause: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-
-        if (s.autoMerge) {
-          try {
-            const tasks = await store.listTasks({ column: "in-review" });
-            this.enqueueEligibleInReviewTasks(tasks as Task[]);
-          } catch (err: unknown) {
-            runtimeLog.warn(
-              `Global unpause: failed to scan in-review tasks for auto-merge: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          }
-        }
+        await this.resumeAfterUnpauseAndSweepInReview(store, s, "Global unpause");
       }
     };
     store.on("settings:updated", onGlobalUnpause);
@@ -1859,28 +1871,7 @@ export class ProjectEngine {
     }) => {
       if (prev.enginePaused && !s.enginePaused) {
         runtimeLog.log("Engine unpaused — resuming agentic activity");
-
-        try {
-          const runtime = this.runtime as any;
-          runtime.resumeAfterUnpause?.().catch((err: Error) =>
-            runtimeLog.error("Failed to resume agentic activity on engine unpause:", err),
-          );
-        } catch (err: unknown) {
-          runtimeLog.warn(
-            `Engine unpause: failed to dispatch resumeAfterUnpause: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-
-        if (s.autoMerge) {
-          try {
-            const tasks = await store.listTasks({ column: "in-review" });
-            this.enqueueEligibleInReviewTasks(tasks as Task[]);
-          } catch (err: unknown) {
-            runtimeLog.warn(
-              `Engine unpause: failed to scan in-review tasks for auto-merge: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          }
-        }
+        await this.resumeAfterUnpauseAndSweepInReview(store, s, "Engine unpause");
       }
     };
     store.on("settings:updated", onEngineUnpause);

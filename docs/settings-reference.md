@@ -141,7 +141,7 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 |---|---|---:|---|
 | `globalPause` | `boolean` | `false` | Hard stop: terminate active engine sessions and pause scheduling immediately. |
 | `globalPauseReason` | `string` | `undefined` | Optional reason for `globalPause` (`"rate-limit"` for automatic pauses, `"manual"` for user-triggered pauses). Cleared on unpause. |
-| `enginePaused` | `boolean` | `false` | Soft pause: stop dispatching new work while letting active sessions finish. |
+| `enginePaused` | `boolean` | `false` | Soft pause: stop dispatching new work while letting active sessions finish. Clearing `enginePaused` resumes runtime scheduling and, when `autoMerge` is enabled, immediately re-sweeps eligible `in-review` tasks back into the auto-merge queue (paused/blocked/failed review tasks remain skipped). |
 | `maxConcurrent` | `number` | `2` | Max concurrent task-lane AI agents (planning, executor, merge). |
 | `maxTriageConcurrent` | `number` | `2` | Max concurrent planning agents. |
 | `globalMaxConcurrent` | `number` | `4` | System-wide max concurrent agents across all projects. |

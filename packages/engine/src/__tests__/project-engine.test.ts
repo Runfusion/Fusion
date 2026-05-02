@@ -1479,10 +1479,12 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     vi.useRealTimers();
   });
 
-  it("engine unpause sweep does not enqueue paused in-review tasks", async () => {
+  it("engine unpause sweep re-enqueues only merge-eligible in-review tasks", async () => {
     const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
     mocks.currentStore = mockStore.store;
-    const engine = createEngine();
+    const engine = createEngine({
+      getTaskMergeBlocker: (task) => (task.id === "FN-blocked" ? "blocked" : null),
+    });
     const privateEngine = engine as unknown as { internalEnqueueMerge: (taskId: string) => void };
     const enqueueSpy = vi.spyOn(privateEngine, "internalEnqueueMerge");
 
@@ -1490,6 +1492,8 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     enqueueSpy.mockClear();
     mockStore.store.listTasks.mockResolvedValueOnce([
       { id: "FN-paused", column: "in-review", paused: true, mergeRetries: 0, status: null },
+      { id: "FN-failed", column: "in-review", paused: false, mergeRetries: 0, status: "failed" },
+      { id: "FN-blocked", column: "in-review", paused: false, mergeRetries: 0, status: null },
       { id: "FN-ready", column: "in-review", paused: false, mergeRetries: 0, status: null },
     ]);
 
@@ -1500,6 +1504,8 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
 
     expect(enqueueSpy).toHaveBeenCalledWith("FN-ready");
     expect(enqueueSpy).not.toHaveBeenCalledWith("FN-paused");
+    expect(enqueueSpy).not.toHaveBeenCalledWith("FN-failed");
+    expect(enqueueSpy).not.toHaveBeenCalledWith("FN-blocked");
 
     await engine.stop();
   });
