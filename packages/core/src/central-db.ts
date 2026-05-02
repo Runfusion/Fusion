@@ -23,7 +23,7 @@ export { toJson, toJsonNullable, fromJson };
 
 // ── Schema Definition ───────────────────────────────────────────────────
 
-const CENTRAL_SCHEMA_VERSION = 5;
+const CENTRAL_SCHEMA_VERSION = 6;
 
 const CENTRAL_SCHEMA_SQL = `
 -- Projects table (project registry)
@@ -137,6 +137,31 @@ CREATE TABLE IF NOT EXISTS settingsSyncState (
 );
 CREATE INDEX IF NOT EXISTS idxSettingsSyncNode ON settingsSyncState(nodeId);
 
+-- Managed Docker nodes table (Docker-provisioned mesh nodes)
+CREATE TABLE IF NOT EXISTS managedDockerNodes (
+  id TEXT PRIMARY KEY,
+  nodeId TEXT,
+  name TEXT NOT NULL UNIQUE,
+  imageName TEXT NOT NULL,
+  imageTag TEXT NOT NULL,
+  containerId TEXT,
+  status TEXT NOT NULL DEFAULT 'creating',
+  hostConfig TEXT NOT NULL DEFAULT '{}',
+  envVars TEXT NOT NULL DEFAULT '{}',
+  volumeMounts TEXT NOT NULL DEFAULT '[]',
+  resourceSizing TEXT NOT NULL DEFAULT '{}',
+  extraClis TEXT NOT NULL DEFAULT '[]',
+  persistentStorage INTEGER NOT NULL DEFAULT 1,
+  reachableUrl TEXT,
+  apiKey TEXT,
+  errorMessage TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (nodeId) REFERENCES nodes(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idxManagedDockerNodesStatus ON managedDockerNodes(status);
+CREATE INDEX IF NOT EXISTS idxManagedDockerNodesNodeId ON managedDockerNodes(nodeId);
+
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS __meta (
   key TEXT PRIMARY KEY,
@@ -200,6 +225,32 @@ CREATE TABLE IF NOT EXISTS settingsSyncState (
   FOREIGN KEY (nodeId) REFERENCES nodes(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idxSettingsSyncNode ON settingsSyncState(nodeId);
+`;
+
+const CENTRAL_SCHEMA_V6_MIGRATION_SQL = `
+CREATE TABLE IF NOT EXISTS managedDockerNodes (
+  id TEXT PRIMARY KEY,
+  nodeId TEXT,
+  name TEXT NOT NULL UNIQUE,
+  imageName TEXT NOT NULL,
+  imageTag TEXT NOT NULL,
+  containerId TEXT,
+  status TEXT NOT NULL DEFAULT 'creating',
+  hostConfig TEXT NOT NULL DEFAULT '{}',
+  envVars TEXT NOT NULL DEFAULT '{}',
+  volumeMounts TEXT NOT NULL DEFAULT '[]',
+  resourceSizing TEXT NOT NULL DEFAULT '{}',
+  extraClis TEXT NOT NULL DEFAULT '[]',
+  persistentStorage INTEGER NOT NULL DEFAULT 1,
+  reachableUrl TEXT,
+  apiKey TEXT,
+  errorMessage TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  FOREIGN KEY (nodeId) REFERENCES nodes(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idxManagedDockerNodesStatus ON managedDockerNodes(status);
+CREATE INDEX IF NOT EXISTS idxManagedDockerNodesNodeId ON managedDockerNodes(nodeId);
 `;
 
 // ── Central Database Class ────────────────────────────────────────────────
@@ -276,6 +327,11 @@ export class CentralDatabase {
 
     if (currentVersion < 5) {
       this.db.exec(CENTRAL_SCHEMA_V5_MIGRATION_SQL);
+      migrated = true;
+    }
+
+    if (currentVersion < 6) {
+      this.db.exec(CENTRAL_SCHEMA_V6_MIGRATION_SQL);
       migrated = true;
     }
 

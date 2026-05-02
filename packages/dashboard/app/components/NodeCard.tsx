@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useState } from "react";
-import { Activity, Server, Settings, Shield, Trash2 } from "lucide-react";
+import { Activity, Play, RotateCw, Server, Settings, Shield, Square, Trash2 } from "lucide-react";
 import type { NodeInfo, ProjectInfo } from "../api";
 import { getProjectCountForNode } from "../utils/nodeProjectAssignment";
 import type { ComputedNodeSyncStatus } from "../hooks/useNodeSettingsSync";
@@ -254,6 +254,42 @@ function NodeCardInner({
         >
           <Settings size={14} />
           <span>Edit</span>
+        </button>
+
+        <button
+          className="btn btn-sm node-card__action"
+          type="button"
+          onClick={handleEdit}
+          disabled={isLoading}
+          aria-label="Start node container"
+          title="Start Container"
+        >
+          <Play size={14} />
+          <span>Start</span>
+        </button>
+
+        <button
+          className="btn btn-sm node-card__action"
+          type="button"
+          onClick={handleEdit}
+          disabled={isLoading}
+          aria-label="Stop node container"
+          title="Stop Container"
+        >
+          <Square size={14} />
+          <span>Stop</span>
+        </button>
+
+        <button
+          className="btn btn-sm node-card__action"
+          type="button"
+          onClick={handleEdit}
+          disabled={isLoading}
+          aria-label="Restart node container"
+          title="Restart Container"
+        >
+          <RotateCw size={14} />
+          <span>Restart</span>
         </button>
 
         <button

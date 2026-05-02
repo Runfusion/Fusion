@@ -64,8 +64,7 @@ describe("AddNodeModal", () => {
       target: { value: "Test Node" },
     });
 
-    // Get the number input (type="number" with min/max)
-    const maxConcurrentInput = screen.getByRole("spinbutton");
+    const maxConcurrentInput = screen.getAllByRole("spinbutton")[0];
     fireEvent.change(maxConcurrentInput, {
       target: { value: "15" },
     });
@@ -87,13 +86,13 @@ describe("AddNodeModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add Node" }));
 
     await waitFor(() => {
-      expect(defaultProps.onSubmit).toHaveBeenCalledWith({
+      expect(defaultProps.onSubmit).toHaveBeenCalledWith(expect.objectContaining({
         name: "Test Node",
         type: "local",
         url: undefined,
         apiKey: undefined,
         maxConcurrent: 2,
-      });
+      }));
       expect(defaultProps.addToast).toHaveBeenCalledWith('Node "Test Node" registered', "success");
       expect(defaultProps.onClose).toHaveBeenCalled();
     });
@@ -145,9 +144,8 @@ describe("AddNodeModal", () => {
     expect(localBtn).toHaveAttribute("aria-pressed", "true");
     expect(remoteBtn).toHaveAttribute("aria-pressed", "false");
 
-    // Remote fields container should be hidden
-    const remoteFieldsContainer = screen.getByTestId("remote-fields-container");
-    expect(remoteFieldsContainer).toHaveAttribute("data-visible", "false");
+    // Remote fields container should not be rendered
+    expect(screen.queryByTestId("remote-fields-container")).not.toBeInTheDocument();
 
     // Switch to remote
     fireEvent.click(remoteBtn);
@@ -156,7 +154,8 @@ describe("AddNodeModal", () => {
     expect(remoteBtn).toHaveAttribute("aria-pressed", "true");
 
     // Remote fields container should be visible
-    expect(remoteFieldsContainer).toHaveAttribute("data-visible", "true");
+    const remoteFieldsContainer = screen.getByTestId("remote-fields-container");
+    expect(remoteFieldsContainer).toBeInTheDocument();
 
     // URL and API Key fields should be visible
     expect(screen.getByPlaceholderText("https://node.example.com")).toBeInTheDocument();
@@ -167,8 +166,8 @@ describe("AddNodeModal", () => {
     expect(localBtn).toHaveAttribute("aria-pressed", "true");
     expect(remoteBtn).toHaveAttribute("aria-pressed", "false");
 
-    // Remote fields container should be hidden again
-    expect(remoteFieldsContainer).toHaveAttribute("data-visible", "false");
+    // Remote fields container should be removed again
+    expect(screen.queryByTestId("remote-fields-container")).not.toBeInTheDocument();
   });
 
   it("submit button is disabled while submitting", async () => {
@@ -215,7 +214,7 @@ describe("AddNodeModal", () => {
     render(<AddNodeModal {...defaultProps} />);
 
     expect(
-      screen.getByText("Register a node to distribute task execution across machines.")
+      screen.getByText("Provision a managed Docker node with guided defaults, then expand Advanced for host/TLS/env/mount overrides.")
     ).toBeInTheDocument();
   });
 
@@ -234,20 +233,23 @@ describe("AddNodeModal", () => {
     fireEvent.change(screen.getByPlaceholderText("https://node.example.com"), {
       target: { value: "https://node.example.com" },
     });
-    fireEvent.change(screen.getByPlaceholderText("Optional"), {
+    fireEvent.change(screen.getByLabelText("API Key Mode"), {
+      target: { value: "provide" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Enter node API key"), {
       target: { value: "secret-key" },
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Add Node" }));
 
     await waitFor(() => {
-      expect(defaultProps.onSubmit).toHaveBeenCalledWith({
+      expect(defaultProps.onSubmit).toHaveBeenCalledWith(expect.objectContaining({
         name: "Remote Node",
         type: "remote",
         url: "https://node.example.com",
         apiKey: "secret-key",
         maxConcurrent: 2,
-      });
+      }));
     });
   });
 });
