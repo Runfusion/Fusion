@@ -190,9 +190,12 @@ const MIN_MAX_SESSIONS = 1;
 const MAX_MAX_SESSIONS = 100;
 const DEFAULT_MAX_SESSIONS = 10;
 
-// Throttle output to prevent overwhelming WebSocket under heavy load
-const OUTPUT_THROTTLE_MS = 4; // ~250fps max update rate for responsive input
-const OUTPUT_BATCH_SIZE = 4096; // Smaller batches for lower latency
+// Throttle output to prevent overwhelming WebSocket under heavy load.
+// 16ms = 60fps, plenty for terminal redraw while leaving event-loop budget
+// for the rest of the dashboard. Larger flush cap keeps `pnpm test`-class
+// floods from generating thousands of timer-driven micro-flushes.
+const OUTPUT_THROTTLE_MS = 16;
+const OUTPUT_BATCH_SIZE = 64 * 1024; // 64KB per WebSocket frame
 
 // Stale session threshold: sessions inactive for more than 5 minutes are eligible for eviction
 export const STALE_SESSION_THRESHOLD_MS = 300_000; // 5 minutes
@@ -230,7 +233,14 @@ export interface TerminalSession {
   lastActivityAt: Date;
   shell: string;
   scrollbackBuffer: string;
-  outputBuffer: string;
+  /**
+   * Pending output chunks awaiting flush to clients. Stored as an array
+   * (not a single concatenated string) so heavy bursts — e.g. a `pnpm test`
+   * run inside an embedded terminal — don't trigger O(N²) string copies on
+   * every flush tick, which previously caused multi-second event-loop stalls.
+   */
+  outputChunks: string[];
+  outputBytes: number;
   flushTimeout: NodeJS.Timeout | null;
   resizeInProgress: boolean;
   resizeDebounceTimeout: NodeJS.Timeout | null;
@@ -241,7 +251,7 @@ export interface TerminalSession {
    * This prevents the initial shell prompt (and other output) from being lost
    * when it falls inside the 150 ms resize-suppression window.
    */
-  resizeSuppressedBuffer: string;
+  resizeSuppressedChunks: string[];
   /** Internal flush callback set by createSession; used by resize debounce */
   _flushOutput: (() => void) | null;
 }
@@ -659,17 +669,21 @@ export class TerminalService extends EventEmitter {
       lastActivityAt: new Date(),
       shell,
       scrollbackBuffer: "",
-      outputBuffer: "",
+      outputChunks: [],
+      outputBytes: 0,
       flushTimeout: null,
       resizeInProgress: false,
       resizeDebounceTimeout: null,
-      resizeSuppressedBuffer: "",
+      resizeSuppressedChunks: [],
       _flushOutput: null,
     };
 
     this.sessions.set(id, session);
 
-    // Flush buffered output to clients (throttled)
+    // Flush buffered output to clients (throttled).
+    // Drains chunks from the front of the queue up to OUTPUT_BATCH_SIZE bytes
+    // per frame. Using an array avoids the O(N) string-slice that the previous
+    // implementation paid on every tick under heavy load.
     const flushOutput = () => {
       // Guard against firing after session was killed
       if (!this.sessions.has(id)) {
@@ -677,21 +691,29 @@ export class TerminalService extends EventEmitter {
         return;
       }
 
-      if (session.outputBuffer.length === 0) {
+      if (session.outputChunks.length === 0) {
+        session.outputBytes = 0;
         session.flushTimeout = null;
         return;
       }
 
-      let dataToSend = session.outputBuffer;
-      if (dataToSend.length > OUTPUT_BATCH_SIZE) {
-        dataToSend = session.outputBuffer.slice(0, OUTPUT_BATCH_SIZE);
-        session.outputBuffer = session.outputBuffer.slice(OUTPUT_BATCH_SIZE);
+      const drained: string[] = [];
+      let drainedBytes = 0;
+      while (session.outputChunks.length > 0 && drainedBytes < OUTPUT_BATCH_SIZE) {
+        const next = session.outputChunks.shift() as string;
+        drained.push(next);
+        drainedBytes += next.length;
+      }
+      session.outputBytes = Math.max(0, session.outputBytes - drainedBytes);
+
+      if (session.outputChunks.length > 0) {
+        // More to send — schedule another flush after the throttle window.
         session.flushTimeout = setTimeout(flushOutput, OUTPUT_THROTTLE_MS);
       } else {
-        session.outputBuffer = "";
         session.flushTimeout = null;
       }
 
+      const dataToSend = drained.length === 1 ? drained[0] : drained.join("");
       this.dataCallbacks.forEach((cb) => cb(id, dataToSend));
       this.emit("data", id, dataToSend);
     };
@@ -712,12 +734,13 @@ export class TerminalService extends EventEmitter {
       // to avoid rendering artifacts, but queue the data so it is flushed to
       // clients once the resize debounce completes (no data loss).
       if (session.resizeInProgress) {
-        session.resizeSuppressedBuffer += data;
+        session.resizeSuppressedChunks.push(data);
         return;
       }
 
       // Buffer output for throttled delivery
-      session.outputBuffer += data;
+      session.outputChunks.push(data);
+      session.outputBytes += data.length;
 
       if (!session.flushTimeout) {
         session.flushTimeout = setTimeout(flushOutput, OUTPUT_THROTTLE_MS);
@@ -737,7 +760,9 @@ export class TerminalService extends EventEmitter {
         session.resizeDebounceTimeout = null;
       }
       session._flushOutput = null;
-      session.resizeSuppressedBuffer = "";
+      session.resizeSuppressedChunks.length = 0;
+      session.outputChunks.length = 0;
+      session.outputBytes = 0;
       this.sessions.delete(id);
       this.exitCallbacks.forEach((cb) => cb(id, exitCode ?? 0));
       this.emit("exit", id, exitCode ?? 0);
@@ -812,9 +837,12 @@ export class TerminalService extends EventEmitter {
           // This ensures the initial shell prompt (and any other output that
           // landed inside the suppression window) is delivered to clients
           // rather than being silently dropped.
-          if (session.resizeSuppressedBuffer.length > 0) {
-            session.outputBuffer += session.resizeSuppressedBuffer;
-            session.resizeSuppressedBuffer = "";
+          if (session.resizeSuppressedChunks.length > 0) {
+            for (const chunk of session.resizeSuppressedChunks) {
+              session.outputChunks.push(chunk);
+              session.outputBytes += chunk.length;
+            }
+            session.resizeSuppressedChunks.length = 0;
             if (!session.flushTimeout && session._flushOutput) {
               session.flushTimeout = setTimeout(session._flushOutput, OUTPUT_THROTTLE_MS);
             }
@@ -920,7 +948,8 @@ export class TerminalService extends EventEmitter {
     const session = this.sessions.get(sessionId);
     if (!session) return null;
 
-    session.outputBuffer = "";
+    session.outputChunks.length = 0;
+    session.outputBytes = 0;
     if (session.flushTimeout) {
       clearTimeout(session.flushTimeout);
       session.flushTimeout = null;

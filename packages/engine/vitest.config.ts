@@ -2,7 +2,8 @@ import { defineConfig } from "vitest/config";
 import { resolve } from "node:path";
 import { cpus } from "node:os";
 
-const defaultMaxWorkers = Math.max(1, cpus().length - 1);
+// Cap fan-out to 4 to avoid saturating high-core machines under workspace concurrency.
+const defaultMaxWorkers = Math.min(4, Math.max(1, cpus().length - 1));
 const requestedMaxWorkers = Number.parseInt(process.env.VITEST_MAX_WORKERS ?? String(defaultMaxWorkers), 10);
 const maxWorkers = Math.max(1, Number.isFinite(requestedMaxWorkers) ? requestedMaxWorkers : defaultMaxWorkers);
 process.env.VITEST_MAX_WORKERS = String(maxWorkers);
@@ -23,10 +24,10 @@ export default defineConfig({
       resolve(__dirname, "../core/src/__test-utils__/vitest-setup.ts"),
     ],
     globalSetup: [resolve(__dirname, "../core/src/__test-utils__/vitest-teardown.ts")],
-    maxWorkers,
-    poolOptions: { threads: { minThreads: 1, maxThreads: maxWorkers }, forks: { minForks: 1, maxForks: maxWorkers } },
-    fileParallelism: true,
     pool: "threads",
+    maxWorkers,
+    poolOptions: { threads: { minThreads: 1, maxThreads: maxWorkers } },
+    fileParallelism: true,
     // Enable isolate to allow parallel execution of tests with conflicting mocks
     isolate: true,
     coverage: {

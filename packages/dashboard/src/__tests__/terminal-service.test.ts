@@ -569,9 +569,9 @@ describe("TerminalService", () => {
       // Advance exactly to the resize debounce boundary
       vi.advanceTimersByTime(150);
 
-      // The resize debounce should have moved suppressed data to outputBuffer
-      // and scheduled a flush. Advance past the flush throttle.
-      vi.advanceTimersByTime(10);
+      // The resize debounce should have moved suppressed data to the output
+      // queue and scheduled a flush. Advance past the flush throttle window.
+      vi.advanceTimersByTime(20);
 
       expect(dataListener).toHaveBeenCalledWith(session.id, "shell prompt> ");
 

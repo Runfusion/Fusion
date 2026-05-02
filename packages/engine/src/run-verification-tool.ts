@@ -91,36 +91,60 @@ export interface VerificationResult {
 
 // ---------------------------------------------------------------------------
 // Output buffer helper — keeps head + tail within the byte cap
+//
+// Stores head/tail as chunk arrays rather than concatenated strings.
+// The previous implementation re-encoded the entire ~100 KB tail through
+// `Buffer.from(...).subarray(...).toString()` on *every* appended line once
+// output crossed MAX_OUTPUT_BYTES — for a `pnpm test` run dumping 50k lines
+// that produced gigabytes of GC churn and stalled the dashboard event loop.
+// Now we just push chunks and only compact the tail when its byte size grows
+// past 2× the cap, making the amortized cost per append O(1).
 // ---------------------------------------------------------------------------
 
-function appendToBuffer(
-  buf: { head: string; tail: string; totalBytes: number },
-  chunk: string,
-): void {
+interface OutputBuffer {
+  headChunks: string[];
+  headBytes: number;
+  tailChunks: string[];
+  tailBytes: number;
+  totalBytes: number;
+}
+
+function createBuffer(): OutputBuffer {
+  return { headChunks: [], headBytes: 0, tailChunks: [], tailBytes: 0, totalBytes: 0 };
+}
+
+function appendToBuffer(buf: OutputBuffer, chunk: string): void {
   const chunkBytes = Buffer.byteLength(chunk, "utf8");
   buf.totalBytes += chunkBytes;
 
-  if (buf.totalBytes <= MAX_OUTPUT_BYTES) {
-    buf.head += chunk;
+  if (buf.headBytes + chunkBytes <= MAX_OUTPUT_BYTES) {
+    buf.headChunks.push(chunk);
+    buf.headBytes += chunkBytes;
     return;
   }
 
-  // Overflow: funnel excess into tail (keep at most half the cap in tail)
+  // Overflow: funnel into tail. Keep at most half the cap in tail, but only
+  // compact when we're well over so per-line cost stays amortized O(1).
   const tailCap = MAX_OUTPUT_BYTES / 2;
-  buf.tail += chunk;
-  if (Buffer.byteLength(buf.tail, "utf8") > tailCap) {
-    // Truncate tail from the front — keep newest content
-    const bytes = Buffer.from(buf.tail, "utf8");
-    buf.tail = bytes.subarray(bytes.length - tailCap).toString("utf8");
+  buf.tailChunks.push(chunk);
+  buf.tailBytes += chunkBytes;
+  if (buf.tailBytes > tailCap * 2) {
+    // Drop oldest chunks until under the cap.
+    while (buf.tailChunks.length > 1 && buf.tailBytes - Buffer.byteLength(buf.tailChunks[0], "utf8") >= tailCap) {
+      const dropped = buf.tailChunks.shift() as string;
+      buf.tailBytes -= Buffer.byteLength(dropped, "utf8");
+    }
   }
 }
 
-function flattenBuffer(buf: { head: string; tail: string; totalBytes: number }): string {
-  if (buf.tail.length === 0) return buf.head;
+function flattenBuffer(buf: OutputBuffer): string {
+  const head = buf.headChunks.join("");
+  if (buf.tailChunks.length === 0) return head;
+  const tail = buf.tailChunks.join("");
   return (
-    buf.head +
+    head +
     `\n\n[... output truncated — ${buf.totalBytes} bytes total, showing head + tail ...]\n\n` +
-    buf.tail
+    tail
   );
 }
 
@@ -150,8 +174,8 @@ export async function runVerificationCommand(
   const startMs = Date.now();
   const warnings: string[] = [];
 
-  const stdoutBuf = { head: "", tail: "", totalBytes: 0 };
-  const stderrBuf = { head: "", tail: "", totalBytes: 0 };
+  const stdoutBuf = createBuffer();
+  const stderrBuf = createBuffer();
 
   return new Promise<VerificationResult>((resolve) => {
     // Use shell: true so Node picks the platform default — /bin/sh on POSIX,

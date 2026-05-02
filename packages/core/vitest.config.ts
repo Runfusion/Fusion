@@ -23,8 +23,9 @@ export default defineConfig({
       "./src/__test-utils__/vitest-setup.ts",
     ],
     globalSetup: ["./src/__test-utils__/vitest-teardown.ts"],
+    pool: "forks",
     maxWorkers,
-    poolOptions: { threads: { minThreads: 1, maxThreads: maxWorkers }, forks: { minForks: 1, maxForks: maxWorkers } },
+    poolOptions: { forks: { minForks: 1, maxForks: maxWorkers } },
     fileParallelism: true,
     // Core runs a large SQLite-heavy suite while other workspace packages test concurrently.
     // Use a slightly higher timeout to reduce nondeterministic slow-machine flakes.
