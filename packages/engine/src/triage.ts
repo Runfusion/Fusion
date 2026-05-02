@@ -1967,6 +1967,11 @@ export class TriageProcessor {
       taskUpdates.reviewLevel = parseInt(reviewMatch[1], 10);
     }
 
+    const promptDeclaredTitle = extractPromptDeclaredTitle(written, task.id);
+    if (promptDeclaredTitle) {
+      taskUpdates.title = promptDeclaredTitle;
+    }
+
     await this.store.updateTask(task.id, taskUpdates);
 
     if (settings.requirePlanApproval) {
@@ -1994,6 +1999,23 @@ export class TriageProcessor {
       planLog.log(`✓ ${task.id} specified and moved to todo`);
     }
   }
+}
+
+function extractPromptDeclaredTitle(prompt: string, taskId: string): string | null {
+  const headingMatch = prompt.match(/^#\s+Task:\s+([A-Z]+-\d+)\s+-\s+(.+)$/m);
+  if (!headingMatch) return null;
+  const [, headingTaskId, rawTitle] = headingMatch;
+  if (headingTaskId !== taskId) return null;
+
+  const title = rawTitle.trim().replace(/[\s.!?,;:]+$/g, "");
+  if (!title) return null;
+
+  // Conservative guard: do not overwrite metadata with confirmation prose.
+  if (/^created\s+(?:task\s+)?(?:fn-\d+\b|\*\*\s*fn-\d+\s*\*\*)/i.test(title)) {
+    return null;
+  }
+
+  return title;
 }
 
 function hasLatestSpecReviewApproval(task: Task): boolean {

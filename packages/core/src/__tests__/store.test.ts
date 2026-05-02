@@ -9075,6 +9075,24 @@ Task with acceptance criteria
       expect(updatedTask.title).toBe("AI Title");
     });
 
+    it("should ignore malformed confirmation-prose generated titles", async () => {
+      const mockOnSummarize = vi
+        .fn()
+        .mockResolvedValue("Created task **FN-9999** in the triage column. Here's a summary.");
+
+      const task = await store.createTask(
+        { description: "a".repeat(201) },
+        { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
+      );
+
+      expect(task.title).toBeUndefined();
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const updatedTask = await store.getTask(task.id);
+      expect(updatedTask.title).toBeUndefined();
+    });
+
     it("should handle onSummarize returning null", async () => {
       const mockOnSummarize = vi.fn().mockResolvedValue(null);
 

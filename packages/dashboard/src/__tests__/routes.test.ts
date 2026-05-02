@@ -1281,6 +1281,52 @@ describe("POST /tasks", () => {
     expect(store.createTask).not.toHaveBeenCalled();
   });
 
+  it("forwards priority when provided", async () => {
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+      priority: "high" as const,
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Priority task",
+        priority: "high",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: "Priority task",
+        priority: "high",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("returns 400 for invalid priority value", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Bad priority",
+        priority: "medium",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("priority must be one of");
+    expect(store.createTask).not.toHaveBeenCalled();
+  });
+
   it("forwards executionMode when provided with 'fast'", async () => {
     const createdTask = {
       ...FAKE_TASK_DETAIL,

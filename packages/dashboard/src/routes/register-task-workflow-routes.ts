@@ -92,6 +92,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         thinkingLevel,
         reviewLevel,
         executionMode,
+        priority,
         source,
       } = req.body;
       if (!description || typeof description !== "string") {
@@ -125,6 +126,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const validExecutionModes = ["standard", "fast"];
       if (executionMode !== undefined && executionMode !== null && !validExecutionModes.includes(executionMode)) {
         throw badRequest(`executionMode must be one of: ${validExecutionModes.join(", ")}`);
+      }
+
+      // Validate priority if provided.
+      if (priority !== undefined && priority !== null && !isTaskPriority(priority)) {
+        throw badRequest(`priority must be one of: ${TASK_PRIORITIES.join(", ")}`);
       }
 
       const executorModel = normalizeModelSelectionPair(validatedModelProvider, validatedModelId);
@@ -196,6 +202,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           summarize,
           reviewLevel: reviewLevel ?? undefined,
           executionMode: executionMode || undefined,
+          priority: priority ?? undefined,
           source: normalizedSource,
         },
         { onSummarize, settings: { autoSummarizeTitles: settings.autoSummarizeTitles } }

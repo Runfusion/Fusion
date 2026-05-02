@@ -859,6 +859,12 @@ export function sanitizeTitle(raw: string | undefined | null): string | null {
     .replace(/(?<![*\w])\*([^*]+)\*(?![*\w])/g, "$1")
     .replace(/(?<![_\w])_([^_]+)_(?![_\w])/g, "$1");
 
+  // Reject tool/assistant confirmation prose so we never persist
+  // "Created task FN-1234 ..." as a user-visible task title.
+  if (/^created\s+(?:task\s+)?(?:fn-\d+\b|\*\*\s*fn-\d+\s*\*\*)/i.test(title)) {
+    return null;
+  }
+
   // Drop trailing punctuation that summary-like sentences leave behind.
   title = title.replace(/[.!?,;:]+$/, "").trim();
   if (!title) return null;

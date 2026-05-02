@@ -270,15 +270,13 @@ describe("ai-summarize", () => {
       expect(sanitizeTitle("\n\n  hello world  \nignored")).toBe("hello world");
     });
 
-    it("strips chatty markdown reply (FN-3057 incident shape)", () => {
-      const raw =
-        "Created **FN-3058** with the full spec. Let me know if you want changes.";
-      // First line is the whole thing — sanitizer should strip the markdown bold
-      // and trailing period; truncation happens at MAX_TITLE_LENGTH (60).
-      const out = sanitizeTitle(raw)!;
-      expect(out).not.toContain("**");
-      expect(out.length).toBeLessThanOrEqual(60);
-      expect(out.startsWith("Created FN-3058")).toBe(true);
+    it("rejects task-creation confirmation prose (FN-3056 regression)", () => {
+      expect(
+        sanitizeTitle("Created task **FN-3058** in the triage column. Here's a summary."),
+      ).toBeNull();
+      expect(
+        sanitizeTitle("Created **FN-3058** with the full spec"),
+      ).toBeNull();
     });
 
     it("strips quotes, backticks, leading bullets", () => {

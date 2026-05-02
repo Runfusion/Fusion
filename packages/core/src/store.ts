@@ -23,6 +23,7 @@ import { ensureMemoryFileWithBackend } from "./project-memory.js";
 import { runCommandAsync } from "./run-command.js";
 import { createLogger } from "./logger.js";
 import { validateNodeOverrideChange } from "./node-override-guard.js";
+import { sanitizeTitle } from "./ai-summarize.js";
 
 /** Database row shape for the tasks table (all columns). */
 interface TaskRow {
@@ -2083,7 +2084,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       Promise.resolve().then(async () => {
         try {
           const generatedTitle = await options.onSummarize!(input.description);
-          const normalizedTitle = generatedTitle?.trim();
+          const normalizedTitle = sanitizeTitle(generatedTitle);
           if (normalizedTitle) {
             // Guard against races: read directly from SQLite to avoid extra
             // prompt/step file I/O in this background path.

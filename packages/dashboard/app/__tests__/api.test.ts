@@ -540,6 +540,19 @@ describe("createTask", () => {
     expect(body.source).toEqual({ sourceType: "dashboard_ui" });
   });
 
+  it("serializes priority in createTask payload when provided", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { ...FAKE_CREATED_TASK, priority: "urgent" }));
+
+    await createTask({
+      description: "Priority task",
+      priority: "urgent",
+    });
+
+    const call = vi.mocked(globalThis.fetch).mock.calls[0];
+    const body = JSON.parse((call[1] as RequestInit).body as string);
+    expect(body.priority).toBe("urgent");
+  });
+
   it("sends POST with multiple fields including executionMode", async () => {
     globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, {
       ...FAKE_CREATED_TASK,
