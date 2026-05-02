@@ -17,7 +17,7 @@ import { createSessionDiagnostics } from "./ai-session-diagnostics.js";
 // ── Types ───────────────────────────────────────────────────────────────
 
 export type AiSessionType = "planning" | "subtask" | "mission_interview" | "milestone_interview" | "slice_interview";
-export type AiSessionStatus = "generating" | "awaiting_input" | "complete" | "error";
+export type AiSessionStatus = "generating" | "awaiting_input" | "complete" | "error" | "draft";
 
 export interface AiSessionRow {
   id: string;
@@ -182,6 +182,29 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
          WHERE id = ?`,
       )
       .run(status, error ?? null, now, id) as { changes?: number };
+
+    const changed = Number(result.changes ?? 0) > 0;
+    if (!changed) {
+      return false;
+    }
+
+    const row = this.get(id);
+    if (row) {
+      this.emit("ai_session:updated", toSummary(row, row.updatedAt));
+    }
+
+    return true;
+  }
+
+  updateTitle(id: string, title: string): boolean {
+    const now = new Date().toISOString();
+    const result = this.db
+      .prepare(
+        `UPDATE ai_sessions
+         SET title = ?, updatedAt = ?
+         WHERE id = ?`,
+      )
+      .run(title, now, id) as { changes?: number };
 
     const changed = Number(result.changes ?? 0) > 0;
     if (!changed) {

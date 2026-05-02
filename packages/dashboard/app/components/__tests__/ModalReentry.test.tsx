@@ -189,7 +189,7 @@ describe("ModalReentry", () => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("From prop", undefined, undefined, {
           planningDepth: "medium",
           customQuestionCount: undefined,
-        });
+        }, undefined);
       });
 
       // localStorage should NOT be read since prop was provided

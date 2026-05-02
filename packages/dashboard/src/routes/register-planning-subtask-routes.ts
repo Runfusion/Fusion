@@ -443,6 +443,58 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
     }
   });
 
+  router.post("/planning/create-draft", async (req, res) => {
+    try {
+      const { initialPlan, planningModelProvider, planningModelId } = req.body;
+
+      if (!initialPlan || typeof initialPlan !== "string" || initialPlan.trim().length === 0) {
+        throw badRequest("initialPlan is required and must be a string");
+      }
+
+      if (planningModelProvider !== undefined && typeof planningModelProvider !== "string") {
+        throw badRequest("planningModelProvider must be a string when provided");
+      }
+
+      if (planningModelId !== undefined && typeof planningModelId !== "string") {
+        throw badRequest("planningModelId must be a string when provided");
+      }
+
+      const { store: scopedStore, projectId } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      const rootDir = scopedStore.getRootDir();
+
+      const resolvedPlanningSettings = resolvePlanningSettingsModel(settings);
+      const resolvedPlanningProvider =
+        (planningModelProvider && planningModelId ? planningModelProvider : undefined) ||
+        resolvedPlanningSettings.provider;
+
+      const resolvedPlanningModelId =
+        (planningModelProvider && planningModelId ? planningModelId : undefined) ||
+        resolvedPlanningSettings.modelId;
+
+      const { createDraftSession } = await import("../planning.js");
+      const draft = await createDraftSession(
+        ip,
+        initialPlan,
+        rootDir,
+        resolvedPlanningProvider,
+        resolvedPlanningModelId,
+        settings.promptOverrides,
+        { projectId },
+      );
+      res.status(201).json(draft);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof Error && err.name === "RateLimitError") {
+        throw rateLimited(err.message);
+      }
+      rethrowAsApiError(err, "Failed to create planning draft");
+    }
+  });
+
   /**
    * POST /api/planning/start-streaming
    * Start a new planning session with AI agent streaming.
@@ -462,6 +514,7 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         planningModelId,
         planningDepth,
         customQuestionCount,
+        existingSessionId,
       } = req.body;
 
       if (!initialPlan || typeof initialPlan !== "string") {
@@ -492,6 +545,10 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         throw badRequest("customQuestionCount must be an integer between 1 and 20 when provided");
       }
 
+      if (existingSessionId !== undefined && typeof existingSessionId !== "string") {
+        throw badRequest("existingSessionId must be a string when provided");
+      }
+
       const { store: scopedStore, projectId } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       const ip = req.ip || req.socket.remoteAddress || "unknown";
@@ -510,6 +567,19 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       const resolvedPlanningModelId =
         (planningModelProvider && planningModelId ? planningModelId : undefined) ||
         resolvedPlanningSettings.modelId;
+
+      if (existingSessionId) {
+        const { startExistingSession } = await import("../planning.js");
+        await startExistingSession(
+          existingSessionId,
+          rootDir,
+          resolvedPlanningProvider,
+          resolvedPlanningModelId,
+          settings.promptOverrides,
+        );
+        res.status(201).json({ sessionId: existingSessionId });
+        return;
+      }
 
       const { createSessionWithAgent, RateLimitError: _RateLimitError2 } = await import("../planning.js");
       const sessionId = await createSessionWithAgent(

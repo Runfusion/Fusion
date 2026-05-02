@@ -10,6 +10,7 @@ import type { Task, TaskDetail, PlanningQuestion, PlanningSummary, MergeResult }
 // Mock the API functions
 const mockStartPlanning = vi.fn();
 const mockStartPlanningStreaming = vi.fn();
+const mockCreatePlanningDraft = vi.fn();
 const mockConnectPlanningStream = vi.fn();
 const mockRespondToPlanning = vi.fn();
 const mockRetryPlanningSession = vi.fn();
@@ -38,6 +39,7 @@ const mockRefineTask = vi.fn();
 vi.mock("../../api", () => ({
   startPlanning: (...args: any[]) => mockStartPlanning(...args),
   startPlanningStreaming: (...args: any[]) => mockStartPlanningStreaming(...args),
+  createPlanningDraft: (...args: any[]) => mockCreatePlanningDraft(...args),
   connectPlanningStream: (...args: any[]) => mockConnectPlanningStream(...args),
   respondToPlanning: (...args: any[]) => mockRespondToPlanning(...args),
   retryPlanningSession: (...args: any[]) => mockRetryPlanningSession(...args),
@@ -197,6 +199,7 @@ describe("PlanningModeModal", () => {
     
     // Default mock for streaming
     mockStartPlanningStreaming.mockResolvedValue({ sessionId: "session-123" });
+    mockCreatePlanningDraft.mockResolvedValue({ sessionId: "draft-123", title: "Test Plan" });
     mockRetryPlanningSession.mockResolvedValue({ success: true, sessionId: "session-123" });
     mockStartPlanningBreakdown.mockResolvedValue({ sessionId: "session-123", subtasks: [] });
     mockFetchAiSession.mockResolvedValue(null);
@@ -384,7 +387,7 @@ describe("PlanningModeModal", () => {
         }, {
           planningDepth: "medium",
           customQuestionCount: undefined,
-        });
+        }, undefined);
       });
     });
 
@@ -427,7 +430,7 @@ describe("PlanningModeModal", () => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined, {
           planningDepth: "large",
           customQuestionCount: 7,
-        });
+        }, undefined);
       });
     });
 
@@ -450,7 +453,51 @@ describe("PlanningModeModal", () => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined, {
           planningDepth: "medium",
           customQuestionCount: undefined,
-        });
+        }, undefined);
+      });
+    });
+
+    it("auto-creates a draft after typing and reuses it when starting", async () => {
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
+      fireEvent.change(textarea, { target: { value: "Build a detailed auth system plan" } });
+
+      await waitFor(() => {
+        expect(mockCreatePlanningDraft).toHaveBeenCalledTimes(1);
+      });
+      expect(mockCreatePlanningDraft).toHaveBeenCalledWith(
+        "Build a detailed auth system plan",
+        undefined,
+        undefined,
+      );
+
+      expect(screen.getByText("Test Plan")).toBeDefined();
+
+      fireEvent.change(textarea, { target: { value: "Build a detailed auth system plan with extras" } });
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      expect(mockCreatePlanningDraft).toHaveBeenCalledTimes(1);
+
+      fireEvent.click(screen.getByText("Start Planning"));
+      await waitFor(() => {
+        expect(mockStartPlanningStreaming).toHaveBeenCalledWith(
+          "Build a detailed auth system plan with extras",
+          undefined,
+          undefined,
+          {
+            planningDepth: "medium",
+            customQuestionCount: undefined,
+          },
+          "draft-123",
+        );
       });
     });
 
@@ -471,7 +518,7 @@ describe("PlanningModeModal", () => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build a login system from new task dialog", undefined, undefined, {
           planningDepth: "medium",
           customQuestionCount: undefined,
-        });
+        }, undefined);
       }, { timeout: 2000 });
 
       // Should transition to question view
@@ -497,7 +544,7 @@ describe("PlanningModeModal", () => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Pre-filled plan from new task", undefined, undefined, {
           planningDepth: "medium",
           customQuestionCount: undefined,
-        });
+        }, undefined);
       }, { timeout: 2000 });
     });
   });
@@ -554,7 +601,7 @@ describe("PlanningModeModal", () => {
         expect(mockStartPlanningStreaming).toHaveBeenCalledWith("Build auth system", undefined, undefined, {
           planningDepth: "medium",
           customQuestionCount: undefined,
-        });
+        }, undefined);
       });
 
       // Should transition to question view via streaming

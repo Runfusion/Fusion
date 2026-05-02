@@ -2593,12 +2593,28 @@ export function startPlanning(
   });
 }
 
+export function createPlanningDraft(
+  initialPlan: string,
+  projectId?: string,
+  modelOverride?: { planningModelProvider?: string; planningModelId?: string },
+): Promise<{ sessionId: string; title: string }> {
+  return api<{ sessionId: string; title: string }>(withProjectId("/planning/create-draft", projectId), {
+    method: "POST",
+    body: JSON.stringify({
+      initialPlan,
+      planningModelProvider: modelOverride?.planningModelProvider,
+      planningModelId: modelOverride?.planningModelId,
+    }),
+  });
+}
+
 /** Start a new planning session with AI streaming support */
 export function startPlanningStreaming(
   initialPlan: string,
   projectId?: string,
   modelOverride?: { planningModelProvider?: string; planningModelId?: string },
   planningOptions?: { planningDepth?: "small" | "medium" | "large"; customQuestionCount?: number },
+  existingSessionId?: string,
 ): Promise<{ sessionId: string }> {
   return api<{ sessionId: string }>(withProjectId("/planning/start-streaming", projectId), {
     method: "POST",
@@ -2608,6 +2624,7 @@ export function startPlanningStreaming(
       planningModelId: modelOverride?.planningModelId,
       planningDepth: planningOptions?.planningDepth,
       customQuestionCount: planningOptions?.customQuestionCount,
+      ...(existingSessionId ? { existingSessionId } : {}),
     }),
   });
 }
@@ -7100,7 +7117,7 @@ export function reorderTodoItems(listId: string, itemIds: string[], projectId?: 
 export interface AiSessionSummary {
   id: string;
   type: "planning" | "subtask" | "mission_interview" | "milestone_interview" | "slice_interview";
-  status: "generating" | "awaiting_input" | "complete" | "error";
+  status: "draft" | "generating" | "awaiting_input" | "complete" | "error";
   title: string;
   projectId: string | null;
   lockedByTab: string | null;

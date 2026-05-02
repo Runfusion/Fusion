@@ -9,6 +9,8 @@ import { Database, TaskStore } from "@fusion/core";
 import {
   createSession,
   createSessionWithAgent,
+  createDraftSession,
+  startExistingSession,
   submitResponse,
   retrySession,
   cancelSession,
@@ -757,6 +759,41 @@ describe("planning module", () => {
 
       await flushAsyncWork();
       expect(sendNtfyNotification).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("draft session helpers", () => {
+    it("creates a draft session with draft status", async () => {
+      const session = await createDraftSession(
+        getUniqueIp(),
+        "Draft plan text for the planning modal",
+        TEST_ROOT_DIR,
+      );
+
+      expect(session.sessionId).toBeDefined();
+      expect(session.title).toBe("Draft plan text for the planning modal");
+      expect(getSession(session.sessionId)?.id).toBe(session.sessionId);
+    });
+
+    it("starts an existing draft session and moves it into active flow", async () => {
+      setupMockStreamingAgent({ responses: STANDARD_QUESTION_RESPONSES });
+      const draft = await createDraftSession(
+        getUniqueIp(),
+        "Draft plan reused by start",
+        TEST_ROOT_DIR,
+      );
+
+      await startExistingSession(draft.sessionId, TEST_ROOT_DIR);
+
+      await vi.waitFor(() => {
+        expect(getSession(draft.sessionId)?.currentQuestion?.id).toBe("q-scope");
+      });
+    });
+
+    it("throws when starting a missing draft session", async () => {
+      await expect(startExistingSession("missing-session", TEST_ROOT_DIR)).rejects.toThrow(
+        SessionNotFoundError,
+      );
     });
   });
 
@@ -2386,6 +2423,113 @@ describe("planning routes lock enforcement", () => {
       error: "Session locked by another tab",
       lockedByTab: "tab-a",
     });
+  });
+
+  it("creates a draft planning session via route and persists draft status", async () => {
+    const response = await request(
+      app,
+      "POST",
+      "/api/planning/create-draft",
+      JSON.stringify({ initialPlan: "Build a dashboard settings wizard with guided onboarding steps" }),
+      { "content-type": "application/json" },
+    );
+
+    expect(response.status).toBe(201);
+    expect(response.body).toMatchObject({
+      sessionId: expect.any(String),
+      title: "Build a dashboard settings wizard with guided onboarding steps",
+    });
+    expect(response.body.sessionId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+
+    const persisted = aiSessionStore.get(response.body.sessionId as string);
+    expect(persisted?.status).toBe("draft");
+  });
+
+  it("returns 400 for draft creation without non-empty initialPlan", async () => {
+    const missing = await request(
+      app,
+      "POST",
+      "/api/planning/create-draft",
+      JSON.stringify({}),
+      { "content-type": "application/json" },
+    );
+    expect(missing.status).toBe(400);
+
+    const empty = await request(
+      app,
+      "POST",
+      "/api/planning/create-draft",
+      JSON.stringify({ initialPlan: "" }),
+      { "content-type": "application/json" },
+    );
+    expect(empty.status).toBe(400);
+  });
+
+  it("returns 429 when draft creation rate limit is exceeded", async () => {
+    for (let i = 0; i < 1000; i++) {
+      const created = await request(
+        app,
+        "POST",
+        "/api/planning/create-draft",
+        JSON.stringify({ initialPlan: `Rate-limited draft ${i}` }),
+        { "content-type": "application/json" },
+      );
+      expect(created.status).toBe(201);
+    }
+
+    const rateLimited = await request(
+      app,
+      "POST",
+      "/api/planning/create-draft",
+      JSON.stringify({ initialPlan: "This draft should hit the rate limit" }),
+      { "content-type": "application/json" },
+    );
+
+    expect(rateLimited.status).toBe(429);
+    expect(String(rateLimited.body?.error ?? "")).toContain("Rate limit exceeded");
+  });
+
+  it("reuses existing draft session when starting streaming", async () => {
+    const draft = await request(
+      app,
+      "POST",
+      "/api/planning/create-draft",
+      JSON.stringify({ initialPlan: "Plan draft to be reused by start-streaming" }),
+      { "content-type": "application/json" },
+    );
+    expect(draft.status).toBe(201);
+    const draftSessionId = draft.body.sessionId as string;
+
+    const startExisting = await request(
+      app,
+      "POST",
+      "/api/planning/start-streaming",
+      JSON.stringify({
+        initialPlan: "Plan draft to be reused by start-streaming",
+        existingSessionId: draftSessionId,
+      }),
+      { "content-type": "application/json" },
+    );
+
+    expect(startExisting.status).toBe(201);
+    expect(startExisting.body).toEqual({ sessionId: draftSessionId });
+    expect(aiSessionStore.get(draftSessionId)?.status).toBe("awaiting_input");
+
+    const startNew = await request(
+      app,
+      "POST",
+      "/api/planning/start-streaming",
+      JSON.stringify({ initialPlan: "Plan without existing draft" }),
+      { "content-type": "application/json" },
+    );
+
+    expect(startNew.status).toBe(201);
+    expect(startNew.body.sessionId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(startNew.body.sessionId).not.toBe(draftSessionId);
   });
 
   it("keeps planning SSE stream read-only and unaffected by locks", async () => {

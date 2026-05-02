@@ -19,7 +19,7 @@ import type {
   TaskStore,
   NtfyNotificationEvent,
 } from "@fusion/core";
-import { resolvePrompt, type PromptOverrideMap } from "@fusion/core";
+import { resolvePrompt, summarizeTitle, type PromptOverrideMap } from "@fusion/core";
 import type { SubtaskItem } from "./subtask-breakdown.js";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -270,6 +270,7 @@ interface Session {
   id: string;
   ip: string;
   initialPlan: string;
+  title: string;
   projectId?: string;
   ntfyConfig?: PlanningNtfyConfig;
   /** Last planning question notified via ntfy, keyed as `${sessionId}:${questionId}` for dedupe across reconnect/replay. */
@@ -373,13 +374,13 @@ function cleanupInMemorySession(sessionId: string): boolean {
 }
 
 /** Persist the current session state to SQLite (no-op if store not wired). */
-function persistSession(session: Session, status: "generating" | "awaiting_input" | "complete" | "error", error?: string): void {
+function persistSession(session: Session, status: "generating" | "awaiting_input" | "complete" | "error" | "draft", error?: string): void {
   if (!_aiSessionStore) return;
   const row: AiSessionRow = {
     id: session.id,
     type: "planning",
     status,
-    title: session.initialPlan.slice(0, 120),
+    title: session.title || session.initialPlan.slice(0, 120),
     inputPayload: JSON.stringify({ ip: session.ip, initialPlan: session.initialPlan }),
     conversationHistory: JSON.stringify(session.history),
     currentQuestion: session.currentQuestion ? JSON.stringify(session.currentQuestion) : null,
@@ -432,6 +433,7 @@ function buildSessionFromRow(row: AiSessionRow): Session {
     id: row.id,
     ip: payload.ip ?? "",
     initialPlan: payload.initialPlan ?? row.title,
+    title: row.title,
     projectId: row.projectId ?? undefined,
     history: safeParseJson<PlanningHistoryEntry[]>(
       row.conversationHistory,
@@ -721,6 +723,7 @@ export async function createSession(
     id: sessionId,
     ip,
     initialPlan,
+    title: initialPlan.slice(0, 120),
     history: [],
     thinkingOutput: "",
     lastGeneratedThinking: "",
@@ -870,6 +873,75 @@ async function getFirstQuestionFromAgent(
   return parsed.data;
 }
 
+export async function createDraftSession(
+  ip: string,
+  initialPlan: string,
+  rootDir: string,
+  modelProvider?: string,
+  modelId?: string,
+  _promptOverrides?: PromptOverrideMap,
+  options?: { projectId?: string },
+): Promise<{ sessionId: string; title: string }> {
+  if (!checkRateLimit(ip)) {
+    const resetTime = getRateLimitResetTime(ip);
+    throw new RateLimitError(
+      `Rate limit exceeded. Maximum ${MAX_SESSIONS_PER_IP_PER_HOUR} planning sessions per hour. ` +
+        `Reset at ${resetTime?.toISOString() || "unknown"}`,
+    );
+  }
+
+  const sessionId = randomUUID();
+  const title = initialPlan.slice(0, 120);
+
+  const session: Session = {
+    id: sessionId,
+    ip,
+    initialPlan,
+    title,
+    projectId: options?.projectId,
+    history: [],
+    thinkingOutput: "",
+    lastGeneratedThinking: "",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  sessions.set(sessionId, session);
+  persistSession(session, "draft");
+
+  void (async () => {
+    try {
+      const generated = await summarizeTitle(initialPlan.trim(), rootDir, modelProvider, modelId);
+      const finalTitle = generated ?? initialPlan.trim().slice(0, 60).trim();
+      if (!finalTitle) {
+        return;
+      }
+      session.title = finalTitle;
+      _aiSessionStore?.updateTitle(sessionId, finalTitle);
+    } catch {
+      // Keep fallback title
+    }
+  })();
+
+  return { sessionId, title };
+}
+
+export async function startExistingSession(
+  sessionId: string,
+  rootDir: string,
+  modelProvider?: string,
+  modelId?: string,
+  promptOverrides?: PromptOverrideMap,
+): Promise<void> {
+  const session = sessions.get(sessionId);
+  if (!session) {
+    throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
+  }
+
+  persistSession(session, "generating");
+  await initializeAgent(session, rootDir, modelProvider, modelId, promptOverrides);
+}
+
 /**
  * Create a new planning session with AI agent streaming.
  * This initializes an AI agent that will stream thinking output via SSE.
@@ -911,6 +983,7 @@ export async function createSessionWithAgent(
     id: sessionId,
     ip,
     initialPlan,
+    title: initialPlan.slice(0, 120),
     projectId: options?.projectId,
     ntfyConfig: options?.ntfyConfig
       ? {

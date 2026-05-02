@@ -91,6 +91,25 @@ describe("AiSessionStore", () => {
     return entries;
   }
 
+  it("updateTitle updates title and emits ai_session:updated", () => {
+    const row = makeRow("S-title", "draft");
+    store.upsert(row);
+
+    const onUpdated = vi.fn();
+    store.on("ai_session:updated", onUpdated);
+
+    const updated = store.updateTitle("S-title", "New Draft Title");
+
+    expect(updated).toBe(true);
+    expect(store.get("S-title")?.title).toBe("New Draft Title");
+    expect(onUpdated).toHaveBeenCalled();
+    expect(onUpdated.mock.calls.at(-1)?.[0]).toMatchObject({
+      id: "S-title",
+      title: "New Draft Title",
+      status: "draft",
+    });
+  });
+
   it("cleanupOld removes only stale terminal sessions and emits deleted events", () => {
     const deletedIds: string[] = [];
     store.on("ai_session:deleted", (id) => deletedIds.push(id));

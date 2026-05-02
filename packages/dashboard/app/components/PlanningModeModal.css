@@ -93,25 +93,26 @@
 }
 
 .planning-sidebar-header {
-  padding: 12px;
+  padding: var(--space-md);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .planning-sidebar-footer {
-  padding: 6px 12px 10px;
+  padding: var(--space-sm) var(--space-md) var(--space-md);
   text-align: center;
 }
 
 .planning-sidebar-toggle-archived-link {
-  font-size: 11px;
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
   color: var(--text-muted);
   text-decoration: none;
   cursor: pointer;
-  transition: color var(--transition-fast);
+  transition: color var(--transition-fast), box-shadow var(--transition-fast);
+  border-radius: var(--radius-sm);
 }
 
 .planning-sidebar-toggle-archived-link:hover {
@@ -119,21 +120,26 @@
   text-decoration: underline;
 }
 
+.planning-sidebar-toggle-archived-link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
 .planning-sidebar-new {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-sm);
   width: 100%;
-  padding: 10px 12px;
+  padding: var(--space-sm) var(--space-md);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   color: var(--text);
-  font-size: 13px;
+  font-size: calc(var(--space-sm) + var(--space-xs) * 1.25);
   font-weight: 500;
   cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
+  transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .planning-sidebar-new:hover {
@@ -147,14 +153,19 @@
   color: var(--todo);
 }
 
+.planning-sidebar-new:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
 .planning-sidebar-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 6px;
+  padding: var(--space-sm);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-xs);
 }
 
 .planning-sidebar-empty {
@@ -181,7 +192,7 @@
 }
 
 .planning-sidebar-item.pending-delete {
-  background: color-mix(in srgb, var(--danger, #f85149) 15%, transparent);
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
 }
 
 .planning-sidebar-item-button {
@@ -189,14 +200,20 @@
   min-width: 0;
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 10px 8px 10px 10px;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-sm) var(--space-sm) var(--space-md);
   background: none;
   border: none;
   color: inherit;
   text-align: left;
   cursor: pointer;
   font: inherit;
+  border-radius: var(--radius-md);
+}
+
+.planning-sidebar-item-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
 }
 
 .planning-sidebar-item-body {
@@ -234,8 +251,8 @@
 
 .planning-sidebar-status-generating { color: var(--todo); }
 .planning-sidebar-status-awaiting { color: var(--triage); }
-.planning-sidebar-status-complete { color: var(--success, #3fb950); }
-.planning-sidebar-status-error { color: var(--danger, #f85149); }
+.planning-sidebar-status-complete { color: var(--color-success); }
+.planning-sidebar-status-error { color: var(--color-error); }
 
 .planning-sidebar-item-actions {
   display: flex;
@@ -245,7 +262,10 @@
 .planning-sidebar-item-delete,
 .planning-sidebar-item-archive {
   flex-shrink: 0;
-  width: 32px;
+  width: calc(var(--space-lg) + var(--space-xl));
+  min-width: calc(var(--space-lg) + var(--space-xl));
+  height: calc(var(--space-lg) + var(--space-xl));
+  min-height: calc(var(--space-lg) + var(--space-xl));
   display: none;
   align-items: center;
   justify-content: center;
@@ -254,6 +274,7 @@
   color: var(--text-muted);
   cursor: pointer;
   border-radius: var(--radius-sm);
+  transition: color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .planning-sidebar-item:hover .planning-sidebar-item-delete,
@@ -264,13 +285,19 @@
 }
 
 .planning-sidebar-item-delete:hover {
-  color: var(--danger, #f85149);
-  background: color-mix(in srgb, var(--danger, #f85149) 15%, transparent);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
 }
 
 .planning-sidebar-item-archive:hover {
   color: var(--todo);
   background: color-mix(in srgb, var(--todo) 15%, transparent);
+}
+
+.planning-sidebar-item-delete:focus-visible,
+.planning-sidebar-item-archive:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
 }
 
 .planning-sidebar-item.archived .planning-sidebar-item-button {
@@ -293,12 +320,18 @@
   border: none;
   color: var(--text);
   cursor: pointer;
-  padding: 4px;
+  padding: var(--space-xs);
   border-radius: var(--radius-sm);
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .planning-mobile-back:hover {
   background: var(--card-hover);
+}
+
+.planning-mobile-back:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
 }
 
 /* Mobile: stack — only one pane visible at a time */
@@ -442,7 +475,7 @@
 .session-lock-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -459,7 +492,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-md);
 }
 
 .session-lock-take-control {
@@ -589,7 +622,7 @@
   padding: 8px 14px;
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 12px;
   line-height: 1.4;
   color: var(--text-muted);
@@ -649,7 +682,7 @@
 
 .planning-progress-step {
   height: 4px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--border);
   transition: background-color var(--transition-fast);
 }
@@ -946,7 +979,7 @@
   padding: var(--space-sm) var(--space-md);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 12px;
   cursor: pointer;
   transition:
@@ -1052,7 +1085,10 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
 }
 
 .planning-thinking-toggle:hover {
@@ -1123,7 +1159,7 @@
 }
 
 .subtask-item-drop-target {
-  background: rgba(88, 166, 255, 0.08);
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
   border-color: var(--todo);
 }
 
