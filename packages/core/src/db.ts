@@ -925,14 +925,14 @@ export class Database {
     const integrity = this.integrityCheck();
     if (!integrity.ok) {
       this.corruptionDetected = true;
-      console.warn("[fusion:db] Database integrity check FAILED — corruption detected");
+      console.warn(`[fusion:db] Database integrity check FAILED for ${this.dbPath} — corruption detected`);
       // Attempt WAL checkpoint recovery
       try {
         this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
         const recheck = this.integrityCheck();
         if (recheck.ok) {
           this.corruptionDetected = false;
-          console.warn("[fusion:db] Database recovered via WAL checkpoint.");
+          console.warn(`[fusion:db] Database recovered via WAL checkpoint: ${this.dbPath}`);
         } else {
           console.error(
             `[fusion:db] Database is corrupted and could not be auto-recovered. ` +
@@ -941,7 +941,7 @@ export class Database {
         }
       } catch {
         console.error(
-          "[fusion:db] Database corruption detected and checkpoint recovery failed. " +
+          `[fusion:db] Database corruption detected for ${this.dbPath} and checkpoint recovery failed. ` +
           "Manual recovery required.",
         );
       }
