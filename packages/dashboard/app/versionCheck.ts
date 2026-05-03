@@ -59,10 +59,20 @@ async function fetchRemoteVersion(): Promise<string | null> {
   }
 }
 
+export const MIN_CHECK_INTERVAL_MS = 60_000; // 1 minute
+let lastCheckTime = 0;
 let checkInFlight = false;
 
-async function checkVersion(): Promise<void> {
+/** Exported for testing — resets internal cooldown state */
+export function _resetCheckState(): void {
+  lastCheckTime = 0;
+  checkInFlight = false;
+}
+
+export async function checkVersion(): Promise<void> {
   if (checkInFlight || document.visibilityState !== "visible") return;
+  if (Date.now() - lastCheckTime < MIN_CHECK_INTERVAL_MS) return;
+  lastCheckTime = Date.now();
   checkInFlight = true;
   try {
     const remote = await fetchRemoteVersion();
