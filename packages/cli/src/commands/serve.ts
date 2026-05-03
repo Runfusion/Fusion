@@ -223,7 +223,16 @@ export async function runServe(
   serveStartTime = Date.now();
   ensureProcessDiagnostics();
 
+  // Port resolution priority: CLI --port arg > process.env.PORT > default (4040)
+  // The env var fallback is critical for Docker containers where the mesh config
+  // injects PORT as an environment variable to control the container's listen port.
   let selectedPort = port;
+  if (!opts.interactive && (port === 4040 || port === 0) && process.env.PORT) {
+    const envPort = Number(process.env.PORT);
+    if (Number.isFinite(envPort) && envPort > 0) {
+      selectedPort = envPort;
+    }
+  }
   if (opts.interactive) {
     try {
       selectedPort = await promptForPort(port);

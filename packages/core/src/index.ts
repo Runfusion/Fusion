@@ -392,6 +392,7 @@ export { NodeDiscovery } from "./node-discovery.js";
 export { collectSystemMetrics } from "./system-metrics.js";
 export { getAppVersion, parseSemver } from "./app-version.js";
 export { DockerClientService } from "./docker-client.js";
+export { MeshConfigGenerator } from "./mesh-config-generator.js";
 export { DockerProvisioningService } from "./docker-provisioning.js";
 export type {
   ConnectionErrorType,
@@ -426,6 +427,10 @@ export type {
   ManagedDockerNode,
   ManagedDockerNodeInput,
   ManagedDockerNodeUpdate,
+  MeshConfigGeneratorInput,
+  FullProvisioningInput,
+  MeshConnectionConfig,
+  MeshConfigResult,
   NodeDiscoveryEvent,
   DiscoveryConfig,
   DiscoveredNode,

@@ -7,6 +7,7 @@ import type {
   DockerContainerInspectResult,
   DockerContextInfo,
   DockerHostConfig,
+  DockerVolumeMount,
 } from "./types.js";
 
 const EXEC_OPTIONS = {
@@ -196,6 +197,77 @@ export class DockerClientService {
       this.dockerInstance = await this.createDockerInstance(this.defaultHostConfig);
     }
     return this.dockerInstance;
+  }
+
+  /**
+   * Recreate a container with updated environment variables.
+   *
+   * Docker environment variables are baked in at container creation time and
+   * cannot be changed without recreating the container. This method:
+   * 1. Inspects the old container to capture its configuration
+   * 2. Stops and removes the old container
+   * 3. Creates a new container with the same image and volumes but updated env vars
+   * 4. Starts the new container
+   * 5. Returns the new container ID
+   *
+   * Volume mounts are preserved across recreation. If persistentStorage is false,
+   * volumes are not included in the new container.
+   */
+  async recreateContainer(
+    containerId: string,
+    options: {
+      envVars: Record<string, string>;
+      imageName: string;
+      volumeMounts: DockerVolumeMount[];
+      hostConfig?: DockerHostConfig;
+    },
+  ): Promise<string> {
+    const docker = await this.getDockerInstance(options.hostConfig);
+    const container = docker.getContainer(containerId);
+
+    // Inspect the old container to capture its config
+    const inspect = await container.inspect();
+    const oldName = (inspect.Name ?? "").replace(/^\//, "");
+
+    // Build environment variable array from the provided map
+    const envArray = Object.entries(options.envVars).map(
+      ([key, value]) => `${key}=${value}`,
+    );
+
+    // Build binds for volume mounts
+    const binds = options.volumeMounts.map(
+      (mount) => `${mount.hostPath}:${mount.containerPath}:${mount.mode}`,
+    );
+
+    // Stop and remove the old container
+    try {
+      await container.stop({ t: 5 });
+    } catch (error) {
+      // Container may already be stopped
+      const message = toErrorMessage(error);
+      if (!message.includes("is not running") && !message.includes("already stopped")) {
+        throw error;
+      }
+    }
+    await container.remove({ force: true });
+
+    // Create the new container with updated env vars
+    const newContainer = await docker.createContainer({
+      name: oldName || undefined,
+      Image: options.imageName,
+      Env: envArray,
+      HostConfig: {
+        Binds: binds.length > 0 ? binds : undefined,
+        RestartPolicy: {
+          Name: "unless-stopped",
+        },
+      },
+    });
+
+    // Start the new container
+    await newContainer.start();
+
+    return newContainer.id;
   }
 
   dispose(): void {

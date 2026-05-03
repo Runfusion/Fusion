@@ -2581,6 +2581,64 @@ export type ManagedDockerNodeUpdate = Partial<
   Omit<ManagedDockerNode, "id" | "createdAt">
 >;
 
+/** Input to the mesh configuration generation process. */
+export interface MeshConfigGeneratorInput {
+  /** The managed Docker node record (from FN-3107). */
+  managedNode: ManagedDockerNode;
+  /** The orchestrating node's URL (e.g., "http://192.168.1.10:4040"). */
+  orchestratorUrl: string;
+  /** The orchestrating node's API key for authentication. */
+  orchestratorApiKey: string;
+  /** Optional user-provided API key. If omitted, one is auto-generated. */
+  nodeApiKey?: string;
+  /** Optional container port override. If omitted, defaults to 4041. */
+  containerPort?: number;
+}
+
+/** Input to the end-to-end provision-and-register flow. */
+export interface FullProvisioningInput {
+  /** The managed Docker node to configure and register. */
+  managedNode: ManagedDockerNode;
+  /** The orchestrating node's URL. */
+  orchestratorUrl: string;
+  /** The orchestrating node's API key. */
+  orchestratorApiKey: string;
+  /** Optional user-provided API key for the new node. */
+  nodeApiKey?: string;
+  /** Optional container port override. */
+  containerPort?: number;
+}
+
+/** Configuration bundle needed for a new node to join the mesh. */
+export interface MeshConnectionConfig {
+  /** API key for authenticating to this node. Auto-generated if not provided by user. */
+  nodeApiKey: string;
+  /** The URL the orchestrating node uses to reach the new container. */
+  reachableUrl: string;
+  /** Orchestrating node's URL, pushed to the container so it knows its mesh parent. */
+  orchestratorUrl: string;
+  /** Orchestrating node's API key for inbound settings sync authentication. */
+  orchestratorApiKey: string;
+  /** Port the container's Fusion server will listen on. */
+  containerPort: number;
+  /** Environment variables assembled from the above for injection into the container. */
+  envVars: Record<string, string>;
+}
+
+/** Result of applying mesh config to a provisioned node. */
+export interface MeshConfigResult {
+  /** The generated/applied connection config. */
+  config: MeshConnectionConfig;
+  /** The registered NodeConfig in the mesh. */
+  node: NodeConfig;
+  /** Whether the node health check passed after registration. */
+  isHealthy: boolean;
+  /** Latency of the health check in ms, if successful. */
+  healthCheckLatencyMs?: number;
+  /** Error if health check or registration failed. */
+  error?: string;
+}
+
 /** Information about a discovered Docker context */
 export interface DockerContextInfo {
   /** Context name (e.g., "default", "my-remote") */

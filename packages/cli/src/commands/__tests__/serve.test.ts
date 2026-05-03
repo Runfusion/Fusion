@@ -809,6 +809,46 @@ describe("runServe", () => {
     });
     await triggerSignal("SIGINT");
   });
+
+  it("uses process.env.PORT as fallback when no explicit CLI port is given", async () => {
+    const originalPort = process.env.PORT;
+    process.env.PORT = "4041";
+
+    try {
+      await runServe(4040, {});
+      expect(mocks.listenCalls[0]).toMatchObject({
+        port: 4041,
+        host: "127.0.0.1",
+      });
+      await triggerSignal("SIGINT");
+    } finally {
+      if (originalPort !== undefined) {
+        process.env.PORT = originalPort;
+      } else {
+        delete process.env.PORT;
+      }
+    }
+  });
+
+  it("ignores process.env.PORT when explicit CLI port is not the default", async () => {
+    const originalPort = process.env.PORT;
+    process.env.PORT = "4041";
+
+    try {
+      await runServe(3000, {});
+      expect(mocks.listenCalls[0]).toMatchObject({
+        port: 3000,
+        host: "127.0.0.1",
+      });
+      await triggerSignal("SIGINT");
+    } finally {
+      if (originalPort !== undefined) {
+        process.env.PORT = originalPort;
+      } else {
+        delete process.env.PORT;
+      }
+    }
+  });
 });
 
 describe("runServe — Plugin wiring", () => {

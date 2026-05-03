@@ -1,4 +1,5 @@
-import type { DockerExtraCli, DockerHostConfig, DockerVolumeMount, ManagedDockerNodeInput } from "@fusion/core";
+import type { DockerExtraCli, DockerHostConfig, DockerVolumeMount, ManagedDockerNodeInput, FullProvisioningInput } from "@fusion/core";
+import { randomUUID } from "node:crypto";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import type { ApiRouteRegistrar } from "./types.js";
 
@@ -193,6 +194,179 @@ export const registerDockerNodeRoutes: ApiRouteRegistrar = (ctx) => {
       if (error instanceof ApiError) {
         throw error;
       }
+      rethrowAsApiError(error);
+    }
+  });
+
+  // ── Mesh Configuration Routes ────────────────────────────────────────
+
+  /**
+   * POST /api/docker/nodes/:managedId/apply-mesh-config
+   * Generate and apply mesh config to a provisioned Docker node.
+   */
+  router.post("/docker/nodes/:managedId/apply-mesh-config", async (req, res) => {
+    try {
+      const { managedId } = req.params;
+      const body = (req.body ?? {}) as {
+        orchestratorUrl?: string;
+        orchestratorApiKey?: string;
+        containerPort?: number;
+      };
+
+      const { CentralCore, DockerClientService, MeshConfigGenerator } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+
+      try {
+        const managedNode = await central.getManagedDockerNode(managedId);
+        if (!managedNode) {
+          throw notFound("Managed Docker node not found");
+        }
+
+        // Validate status — only "creating" or "stopped" can receive mesh config
+        if (managedNode.status === "running") {
+          throw badRequest("Node is already running with mesh config applied. Use regenerate-api-key to update credentials.");
+        }
+        if (managedNode.status === "error") {
+          throw badRequest("Node is in error state. Resolve the error before applying mesh config.");
+        }
+
+        // Resolve orchestrator URL and API key
+        let orchestratorUrl = body.orchestratorUrl?.trim();
+        let orchestratorApiKey = body.orchestratorApiKey?.trim();
+
+        // Fall back to local node lookup if not explicitly provided
+        if (!orchestratorUrl || !orchestratorApiKey) {
+          const nodes = await central.listNodes();
+          const localNode = nodes.find((n) => n.type === "local");
+
+          if (localNode?.apiKey) {
+            orchestratorApiKey = orchestratorApiKey || localNode.apiKey;
+          }
+
+          // Construct URL from request hostname if not available
+          if (!orchestratorUrl) {
+            const host = req.hostname || req.get("host") || "localhost";
+            // Strip port from host header if present (we'll add the actual port)
+            const hostname = host.split(":")[0];
+            // Use the request's port or default to the server's port
+            const reqPort = req.socket?.localPort;
+            orchestratorUrl = `http://${hostname}${reqPort && reqPort !== 80 ? `:${reqPort}` : ""}`;
+          }
+        }
+
+        if (!orchestratorUrl || !orchestratorApiKey) {
+          throw badRequest(
+            "Cannot determine orchestrator URL/API key. " +
+            "Either provide orchestratorUrl and orchestratorApiKey in the request body, " +
+            "or configure the local node with an API key.",
+          );
+        }
+
+        const dockerClient = new DockerClientService(managedNode.hostConfig);
+        const generator = new MeshConfigGenerator({ central, dockerClient });
+
+        const input: FullProvisioningInput = {
+          managedNode,
+          orchestratorUrl,
+          orchestratorApiKey,
+          containerPort: body.containerPort,
+        };
+
+        const result = await generator.provisionAndRegister(input);
+        res.status(201).json(result);
+      } finally {
+        await central.close();
+      }
+    } catch (error: unknown) {
+      if (error instanceof ApiError) throw error;
+      rethrowAsApiError(error);
+    }
+  });
+
+  /**
+   * POST /api/docker/nodes/:managedId/regenerate-api-key
+   * Generate a new API key for an existing managed Docker node.
+   */
+  router.post("/docker/nodes/:managedId/regenerate-api-key", async (req, res) => {
+    try {
+      const { managedId } = req.params;
+
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+
+      try {
+        const managedNode = await central.getManagedDockerNode(managedId);
+        if (!managedNode) {
+          throw notFound("Managed Docker node not found");
+        }
+
+        const newKey = randomUUID().replace(/-/g, "");
+
+        // Update the managed Docker node record
+        await central.updateManagedDockerNode(managedId, { apiKey: newKey });
+
+        // If linked to a NodeConfig, update that too
+        if (managedNode.nodeId) {
+          await central.updateNode(managedNode.nodeId, { apiKey: newKey });
+        }
+
+        res.json({ apiKey: newKey });
+      } finally {
+        await central.close();
+      }
+    } catch (error: unknown) {
+      if (error instanceof ApiError) throw error;
+      rethrowAsApiError(error);
+    }
+  });
+
+  /**
+   * GET /api/docker/nodes/:managedId/mesh-status
+   * Check mesh connectivity status for a managed Docker node.
+   */
+  router.get("/docker/nodes/:managedId/mesh-status", async (req, res) => {
+    try {
+      const { managedId } = req.params;
+
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+
+      try {
+        const managedNode = await central.getManagedDockerNode(managedId);
+        if (!managedNode) {
+          throw notFound("Managed Docker node not found");
+        }
+
+        // If not linked to a mesh node yet
+        if (!managedNode.nodeId) {
+          res.json({
+            registered: false,
+            status: "offline",
+            lastCheckedAt: new Date().toISOString(),
+          });
+          return;
+        }
+
+        // Check health of the linked node
+        const node = await central.getNode(managedNode.nodeId);
+        await central.checkNodeHealth(managedNode.nodeId);
+        // Re-fetch to get updated status after health check
+        const updatedNode = await central.getNode(managedNode.nodeId);
+
+        res.json({
+          registered: true,
+          status: updatedNode?.status ?? node?.status ?? "offline",
+          reachableUrl: managedNode.reachableUrl,
+          lastCheckedAt: new Date().toISOString(),
+        });
+      } finally {
+        await central.close();
+      }
+    } catch (error: unknown) {
+      if (error instanceof ApiError) throw error;
       rethrowAsApiError(error);
     }
   });
