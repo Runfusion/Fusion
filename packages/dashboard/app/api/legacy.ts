@@ -7838,7 +7838,7 @@ export function streamChatResponse(
   let closedByUser = false;
 
   const dispatchEvent = (eventName: string, rawData: string): void => {
-    if (!eventName || !rawData) {
+    if (!eventName) {
       return;
     }
 
