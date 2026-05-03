@@ -58,6 +58,7 @@ import { resolveSelfExtension } from "./self-extension.js";
 import { createReadOnlyAuthFileStorage, mergeAuthStorageReads, wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 import { getFusionAuthPath, getLegacyAuthPaths, getModelRegistryModelsPath, getPackageManagerAgentDir } from "./auth-paths.js";
 import { resolveProject } from "../project-context.js";
+import { ensureBundledDependencyGraphPluginInstalled } from "../plugins/bundled-plugin-install.js";
 
 const DIAGNOSTIC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 let daemonStartTime = 0;
@@ -373,6 +374,17 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     pluginStore,
     taskStore: store,
   });
+
+  try {
+    const installStatus = await ensureBundledDependencyGraphPluginInstalled(pluginStore, pluginLoader);
+    if (installStatus === "installed") {
+      console.log("[plugins] Installed bundled Dependency Graph plugin");
+    } else if (installStatus === "missing-bundle") {
+      console.warn("[plugins] Bundled Dependency Graph plugin was not found in this build");
+    }
+  } catch (err) {
+    console.warn(`[plugins] Failed to auto-install bundled Dependency Graph plugin: ${err instanceof Error ? err.message : err}`);
+  }
 
   // Auto-load all enabled plugins so runtime UI (NewAgentDialog, AgentDetailView)
   // can discover installed runtimes like Hermes and OpenClaw.

@@ -35,6 +35,7 @@
     "dist/client/**",
     "dist/pi-claude-cli/**",
     "dist/droid-cli/**",
+    "dist/plugins/**",
     "skill/**",
     "README.md"
   ],

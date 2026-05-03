@@ -59,6 +59,7 @@ import {
 } from "./droid-cli-extension.js";
 import { resolveSelfExtension } from "./self-extension.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
+import { ensureBundledDependencyGraphPluginInstalled } from "../plugins/bundled-plugin-install.js";
 
 const DIAGNOSTIC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 let diagnosticIntervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -427,6 +428,17 @@ export async function runServe(
     pluginStore,
     taskStore: store,
   });
+
+  try {
+    const installStatus = await ensureBundledDependencyGraphPluginInstalled(pluginStore, pluginLoader);
+    if (installStatus === "installed") {
+      console.log("[plugins] Installed bundled Dependency Graph plugin");
+    } else if (installStatus === "missing-bundle") {
+      console.warn("[plugins] Bundled Dependency Graph plugin was not found in this build");
+    }
+  } catch (err) {
+    console.warn(`[plugins] Failed to auto-install bundled Dependency Graph plugin: ${err instanceof Error ? err.message : err}`);
+  }
 
   // Auto-load all enabled plugins so runtime UI (NewAgentDialog, AgentDetailView)
   // can discover installed runtimes like Hermes and OpenClaw.
