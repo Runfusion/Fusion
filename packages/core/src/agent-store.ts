@@ -2383,8 +2383,22 @@ export class AgentStore extends EventEmitter {
    * Close the underlying SQLite connection and release resources.
    */
   close(): void {
-    if (this._db) {
+    if (!this._db) {
+      return;
+    }
+
+    if (!this.inMemoryDb && agentStoreDbCache.get(this.rootDir) === this._db) {
+      agentStoreDbCache.delete(this.rootDir);
+    }
+
+    try {
       this._db.close();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes("database is not open")) {
+        throw error;
+      }
+    } finally {
       this._db = null;
     }
   }
