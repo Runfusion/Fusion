@@ -8,7 +8,7 @@
  * - Converting insights to tasks
  */
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import type { Insight, InsightCategory, InsightStatus, InsightRun } from "@fusion/core";
 import {
   fetchInsights,
@@ -299,10 +299,9 @@ export function useInsights(projectId?: string): UseInsightsResult {
   }, [sections]);
 
   // Initial load - intentionally runs once on mount
-   
-  useMemo(() => {
+  useEffect(() => {
     void refresh();
-  }, []);
+  }, [refresh]);
 
   return {
     sections,

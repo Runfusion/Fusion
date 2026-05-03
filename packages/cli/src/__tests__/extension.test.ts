@@ -1195,3 +1195,71 @@ describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("fn pi extension", () => {
     });
   });
 });
+
+describe("fn pi extension (runnable structured-output regression slice)", () => {
+  let tmpDir: string;
+  let api: ReturnType<typeof createMockAPI>;
+
+  beforeEach(async () => {
+    vi.mocked(isGhAvailable).mockReturnValue(true);
+    vi.mocked(isGhAuthenticated).mockReturnValue(true);
+    vi.mocked(runGhJsonAsync).mockReset();
+    vi.mocked(runTaskPlan).mockReset();
+
+    tmpDir = await mkdtemp(join(tmpdir(), "kb-ext-fast-"));
+    await mkdir(join(tmpDir, ".fusion"), { recursive: true });
+    api = createMockAPI();
+    kbExtension(api);
+  });
+
+  afterEach(async () => {
+    await removeDirWithRetries(tmpDir);
+  });
+
+  it("returns machine-consumable task metadata without assuming FN-* prefixes", async () => {
+    const createTool = api.tools.get("fn_task_create")!;
+    const parent = await createTool.execute("create-1", { description: "parent" }, undefined, undefined, makeCtx(tmpDir));
+
+    const result = await createTool.execute(
+      "create-2",
+      { description: "child", depends: [parent.details.taskId] },
+      undefined,
+      undefined,
+      makeCtx(tmpDir),
+    );
+
+    expect(result.details.taskId).toMatch(/^[A-Z]+-\d+$/);
+    expect(result.details.dependencies).toEqual([parent.details.taskId]);
+    expect(result.content[0].text).toContain(result.details.taskId);
+  });
+
+  it("returns structured details for invalid task assignment", async () => {
+    const createTool = api.tools.get("fn_task_create")!;
+    const result = await createTool.execute(
+      "create-bad-agent",
+      { description: "bad assignment", agentId: "agent-does-not-exist" },
+      undefined,
+      undefined,
+      makeCtx(tmpDir),
+    );
+
+    expect(result.details.error).toContain("not found");
+    expect(result.content[0].text).toContain("not found");
+  });
+
+  it("returns structured details when assignment targets ephemeral agents", async () => {
+    const ephemeralId = await seedAgent(tmpDir, { ephemeral: true, name: "temp-worker" });
+    const createTool = api.tools.get("fn_task_create")!;
+
+    const result = await createTool.execute(
+      "create-ephemeral",
+      { description: "ephemeral assignment", agentId: ephemeralId },
+      undefined,
+      undefined,
+      makeCtx(tmpDir),
+    );
+
+    expect(result.details.error).toContain("ephemeral/runtime agent");
+    expect(result.content[0].text).toContain(ephemeralId);
+  });
+});

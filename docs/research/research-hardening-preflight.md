@@ -252,3 +252,30 @@ Bounded fix included by test guidance:
 - Existing research subsystem is landed and test-covered (`research-routes.test.ts`, CLI research tests).
 - Hardening tasks should target **current concrete files above**, not speculative `register-research-routes.ts` or hypothetical merged insight/research modules.
 - Architecture docs were updated in this task to add a dedicated `Research Runs` section and explicit research-vs-insights boundary note (`docs/architecture.md`).
+
+---
+
+## 8) FN-3017 final contract-coverage summary (insights-backed + extension outputs)
+
+FN-3017 added/validated regression coverage for the shipped insights-backed contract and extension structured outputs:
+
+- Dashboard insights route coverage: `packages/dashboard/src/__tests__/insights-routes.test.ts`
+  - Added explicit not-found contract assertion for `GET /api/insights/runs/:id` (stable JSON error payload).
+  - Existing coverage retained for run trigger/list/show filters, failed runs, and create-task suggestion payload (`POST /api/insights/:id/create-task`).
+- Dashboard hook coverage: `packages/dashboard/app/hooks/__tests__/useInsights.test.ts`
+  - Added assertion that refresh uses latest run from `fetchInsightRuns` response ordering.
+  - Existing coverage retained for failed run error propagation and create-task suggestion mapping.
+- Dashboard component coverage: `packages/dashboard/app/components/__tests__/InsightsView.test.tsx`
+  - Added run-level failed-state rendering assertion (`runError` alert path) tied to hook state.
+- CLI extension structured-output coverage: `packages/cli/src/__tests__/extension.test.ts`
+  - Added runnable, CI-safe regression slice (outside env-gated integration block) asserting machine-consumable `details` fields for task creation/dependencies and assignment validation failures.
+  - Assertions avoid hardcoded `FN-*` IDs and rely on returned structured metadata.
+
+Bounded production fix landed during this hardening:
+- `packages/dashboard/app/hooks/useInsights.ts` now uses `useEffect` for initial refresh side effect (replacing side-effect-in-`useMemo` misuse) to keep hook behavior React-compliant and deterministic.
+
+Final workspace verification on integrated surface completed in FN-3017:
+- `pnpm lint`
+- `pnpm test`
+- `pnpm typecheck`
+- `pnpm build`
