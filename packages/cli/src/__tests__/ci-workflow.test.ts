@@ -24,6 +24,7 @@ describe("CI workflow (.github/workflows/ci.yml)", () => {
   let content: string;
   let ciSteps: any[];
   let contributingContent: string;
+  let readmeContent: string;
   let cliPackageJsonContent: string;
   let extensionSuiteContent: string;
   let agentExportSuiteContent: string;
@@ -35,6 +36,7 @@ describe("CI workflow (.github/workflows/ci.yml)", () => {
     content = result.content;
     ciSteps = workflow.jobs?.ci?.steps ?? [];
     contributingContent = readFileSync(join(workspaceRoot, "docs", "contributing.md"), "utf-8");
+    readmeContent = readFileSync(join(workspaceRoot, "README.md"), "utf-8");
     cliPackageJsonContent = readFileSync(join(workspaceRoot, "packages", "cli", "package.json"), "utf-8");
     extensionSuiteContent = readFileSync(
       join(workspaceRoot, "packages", "cli", "src", "__tests__", "extension.test.ts"),
@@ -110,6 +112,14 @@ describe("CI workflow (.github/workflows/ci.yml)", () => {
     expect(contributingContent).toContain("pnpm test:slow-cli");
     expect(contributingContent).toContain("test:pre-release");
     expect(contributingContent).toContain("test:extension-integration");
+  });
+
+  it("keeps docs aligned with default and explicit build commands", () => {
+    expect(readmeContent).toContain("pnpm build                    # Build default workspace packages (excludes desktop/mobile)");
+    expect(readmeContent).toContain("pnpm build:all                # Build all packages (including desktop/mobile)");
+
+    expect(contributingContent).toContain("pnpm build      # default build (excludes desktop/mobile)");
+    expect(contributingContent).toContain("pnpm build:all  # full recursive build including desktop/mobile");
   });
 
   it("includes binary build step", () => {

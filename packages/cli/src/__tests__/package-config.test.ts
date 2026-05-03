@@ -133,6 +133,22 @@ describe("Workspace bootstrap script contract", () => {
     expect(testIdx).toBeGreaterThan(lintIdx);
     expect(buildIdx).toBeGreaterThan(testIdx);
   });
+
+  it("keeps default build CLI-first by excluding desktop/mobile", () => {
+    expect(rootPkg.scripts?.build).toBe(
+      "pnpm -r --filter=!@fusion/desktop --filter=!@fusion/mobile build",
+    );
+  });
+
+  it("keeps explicit opt-in scripts for full, desktop, and mobile builds", () => {
+    expect(rootPkg.scripts?.["build:all"]).toBe("pnpm -r build");
+    expect(rootPkg.scripts?.["build:desktop"]).toBe(
+      "pnpm --filter @fusion/desktop build",
+    );
+    expect(rootPkg.scripts?.["mobile:build"]).toBe(
+      "pnpm --filter @fusion/dashboard build && pnpm --filter @fusion/mobile cap sync",
+    );
+  });
 });
 
 describe("Workflow YAML validity", () => {
