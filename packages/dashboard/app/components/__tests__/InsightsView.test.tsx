@@ -68,22 +68,15 @@ vi.mock("lucide-react", () => ({
   ),
 }));
 
-// Mock the createTask API
-vi.mock("../../api", () => ({
-  createTask: vi.fn(),
-}));
-
 import { useInsights } from "../../hooks/useInsights";
-import { createTask } from "../../api";
 
 const mockUseInsights = vi.mocked(useInsights);
-const mockCreateTask = vi.mocked(createTask);
 
 describe("InsightsView", () => {
   const defaultProps = {
     addToast: vi.fn(),
     onClose: vi.fn(),
-    onCreateTask: vi.fn(),
+    onCreateTask: vi.fn().mockResolvedValue(undefined),
   };
 
   const mockSections = [
@@ -722,6 +715,7 @@ describe("InsightsView", () => {
 
     it("should trigger create task on insight action click", async () => {
       const createTaskFn = vi.fn().mockResolvedValue({ title: "New Task", description: "Task description" });
+      const onCreateTask = vi.fn().mockResolvedValue(undefined);
       const sectionsWithInsight = [
         {
           category: "features" as const,
@@ -764,7 +758,7 @@ describe("InsightsView", () => {
         dismissedCount: 0,
       });
 
-      render(<InsightsView {...defaultProps} />);
+      render(<InsightsView {...defaultProps} onCreateTask={onCreateTask} />);
 
       const createButton = screen.getByTestId("create-task-INS-1");
       await act(async () => {
@@ -772,7 +766,71 @@ describe("InsightsView", () => {
       });
 
       expect(createTaskFn).toHaveBeenCalledWith("INS-1");
-      expect(defaultProps.onCreateTask).toHaveBeenCalledWith("New Task", "Task description");
+      expect(onCreateTask).toHaveBeenCalledWith({
+        insightId: "INS-1",
+        title: "New Task",
+        description: "Task description",
+      });
+      await waitFor(() => {
+        expect(defaultProps.addToast).toHaveBeenCalledWith("Task created: New Task", "success");
+      });
+    });
+
+    it("shows error and skips success toast when app-level task creation fails", async () => {
+      const createTaskFn = vi.fn().mockResolvedValue({ title: "New Task", description: "Task description" });
+      const onCreateTask = vi.fn().mockRejectedValue(new Error("Task creation is unavailable in this view"));
+      const sectionsWithInsight = [
+        {
+          category: "features" as const,
+          label: "Features",
+          items: [
+            {
+              id: "INS-1",
+              projectId: "test",
+              title: "Test Insight",
+              content: "Content",
+              category: "features" as const,
+              status: "generated" as const,
+              fingerprint: "fp1",
+              provenance: { trigger: "manual" as const },
+              lastRunId: null,
+              createdAt: "2024-01-01T00:00:00Z",
+              updatedAt: "2024-01-01T00:00:00Z",
+            },
+          ],
+          isLoading: false,
+          error: null,
+        },
+        ...mockSections.slice(1),
+      ];
+
+      mockUseInsights.mockReturnValue({
+        sections: sectionsWithInsight,
+        loading: false,
+        error: null,
+        latestRun: null,
+        isRunInFlight: false,
+        runError: null,
+        refresh: vi.fn(),
+        runInsights: vi.fn(),
+        dismiss: vi.fn(),
+        createTask: createTaskFn,
+        dismissStates: new Map(),
+        createTaskStates: new Map(),
+        totalCount: 1,
+        dismissedCount: 0,
+      });
+
+      render(<InsightsView {...defaultProps} onCreateTask={onCreateTask} />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("create-task-INS-1"));
+      });
+
+      await waitFor(() => {
+        expect(defaultProps.addToast).toHaveBeenCalledWith("Task creation is unavailable in this view", "error");
+      });
+      expect(defaultProps.addToast).not.toHaveBeenCalledWith("Task created: New Task", "success");
     });
 
     it("should show toast on run success", async () => {

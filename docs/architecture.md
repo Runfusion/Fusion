@@ -164,6 +164,7 @@ Concrete references:
   - persisted failure classification (`cancelled`, `timed_out`, `retryable_transient`, `non_retryable`) and retry lineage metadata
   - append-only durable event trail in `project_insight_run_events`
 - Dashboard routes (`insights-routes.ts`) consume the core executor/store APIs for run start, cancel, retry, and event inspection (`/api/insights/runs/:id/events`)
+- `POST /api/insights/:id/create-task` remains a draft-payload endpoint (returns `suggestedTitle`/`suggestedDescription`); the dashboard `InsightsView` now uses that payload to create a real task through the normal app task-creation path (`column: triage`, `sourceType: dashboard_ui`, source metadata indicating insights origin)
 - Backed by `project_insights`, `project_insight_runs`, and `project_insight_run_events`
 
 ### Research Runs

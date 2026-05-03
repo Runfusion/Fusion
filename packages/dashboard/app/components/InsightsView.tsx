@@ -30,7 +30,7 @@ interface InsightsViewProps {
   projectId?: string;
   addToast: (message: string, type?: ToastType) => void;
   onClose?: () => void;
-  onCreateTask?: (title: string, description: string) => void;
+  onCreateTask?: (payload: { insightId: string; title: string; description: string }) => Promise<void>;
 }
 
 const CATEGORY_ICONS: Record<InsightCategory, React.ComponentType<{ size?: number; className?: string }>> = {
@@ -142,13 +142,25 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
       try {
         setStatusMessage(`Creating task from "${title}"...`);
         setStatusType("info");
-        const taskData = await createTaskFromInsight(id);
-        if (taskData && onCreateTask) {
-          onCreateTask(taskData.title, taskData.description);
+
+        if (!onCreateTask) {
+          throw new Error("Task creation is unavailable in this view");
         }
+
+        const taskData = await createTaskFromInsight(id);
+        if (!taskData) {
+          throw new Error("Failed to prepare task payload from insight");
+        }
+
+        await onCreateTask({
+          insightId: id,
+          title: taskData.title,
+          description: taskData.description,
+        });
+
         setStatusMessage(`Task created from "${title}"`);
         setStatusType("success");
-        addToast(`Task created: ${taskData?.title ?? title}`, "success");
+        addToast(`Task created: ${taskData.title}`, "success");
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to create task";
         setStatusMessage(message);

@@ -63,9 +63,11 @@ vi.mock("../../api", async (importOriginal) => {
   });
 });
 
+const mockCreateTask = vi.fn();
+
 const mockUseTasks = vi.fn(() => ({
   tasks: [],
-  createTask: vi.fn(),
+  createTask: mockCreateTask,
   moveTask: vi.fn(),
   deleteTask: vi.fn(),
   mergeTask: vi.fn(),
@@ -83,6 +85,27 @@ vi.mock("../../hooks/useTasks", () => ({
 }));
 
 // Mock useRemoteNodeData
+const mockUseInsights = vi.fn(() => ({
+  sections: [],
+  loading: false,
+  error: null,
+  latestRun: null,
+  isRunInFlight: false,
+  runError: null,
+  refresh: vi.fn(),
+  runInsights: vi.fn(),
+  dismiss: vi.fn(),
+  createTask: vi.fn(),
+  dismissStates: new Map(),
+  createTaskStates: new Map(),
+  totalCount: 0,
+  dismissedCount: 0,
+}));
+
+vi.mock("../../hooks/useInsights", () => ({
+  useInsights: (..._args: unknown[]) => mockUseInsights(),
+}));
+
 vi.mock("../../hooks/useRemoteNodeData", () => ({
   useRemoteNodeData: vi.fn(() => ({
     projects: [],
@@ -464,10 +487,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockSubscribeSse.mockReset();
   mockSubscribeSse.mockReturnValue(vi.fn());
+  mockCreateTask.mockReset();
   mockUseTasks.mockReset();
   mockUseTasks.mockImplementation(() => ({
     tasks: [],
-    createTask: vi.fn(),
+    createTask: mockCreateTask,
     moveTask: vi.fn(),
     deleteTask: vi.fn(),
     mergeTask: vi.fn(),
@@ -516,6 +540,23 @@ beforeEach(() => {
   mockGetSkippedSteps.mockReturnValue([]);
   mockGetStepData.mockReset();
   mockGetStepData.mockReturnValue(null);
+  mockUseInsights.mockReset();
+  mockUseInsights.mockImplementation(() => ({
+    sections: [],
+    loading: false,
+    error: null,
+    latestRun: null,
+    isRunInFlight: false,
+    runError: null,
+    refresh: vi.fn(),
+    runInsights: vi.fn(),
+    dismiss: vi.fn(),
+    createTask: vi.fn(),
+    dismissStates: new Map(),
+    createTaskStates: new Map(),
+    totalCount: 0,
+    dismissedCount: 0,
+  }));
 });
 
 describe("App backend-unreachable first-run flow", () => {
@@ -1705,6 +1746,80 @@ describe("App view switching", () => {
     expect(document.querySelector(".board")).toBeNull();
     expect(document.querySelector(".list-view")).toBeNull();
     expect(document.querySelector(".agents-view")).toBeNull();
+  });
+
+  it("creates a real triage task from insights using dashboard task creation flow", async () => {
+    mockUseInsights.mockImplementation(() => ({
+      sections: [
+        {
+          category: "features",
+          label: "Features",
+          items: [
+            {
+              id: "INS-1",
+              projectId: DEFAULT_PROJECT_ID,
+              title: "Insight title",
+              content: "Insight content",
+              category: "features",
+              status: "generated",
+              fingerprint: "fp-ins-1",
+              provenance: { trigger: "manual" },
+              lastRunId: null,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+          isLoading: false,
+          error: null,
+        },
+      ],
+      loading: false,
+      error: null,
+      latestRun: null,
+      isRunInFlight: false,
+      runError: null,
+      refresh: vi.fn(),
+      runInsights: vi.fn(),
+      dismiss: vi.fn(),
+      createTask: vi.fn().mockResolvedValue({
+        title: "Task from insight",
+        description: "Use this insight as a task description",
+      }),
+      dismissStates: new Map(),
+      createTaskStates: new Map(),
+      totalCount: 1,
+      dismissedCount: 0,
+    }));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("view-toggle-overflow-trigger")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
+    fireEvent.click(screen.getByTestId("view-overflow-insights"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("create-task-INS-1")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByTestId("create-task-INS-1"));
+
+    await waitFor(() => {
+      expect(mockCreateTask).toHaveBeenCalledWith({
+        title: "Task from insight",
+        description: "Use this insight as a task description",
+        column: "triage",
+        source: {
+          sourceType: "dashboard_ui",
+          sourceMetadata: {
+            origin: "insights",
+            insightId: "INS-1",
+          },
+        },
+      });
+    });
   });
 
   it("persists insights view preference to localStorage", async () => {

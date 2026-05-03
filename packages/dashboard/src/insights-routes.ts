@@ -2,12 +2,12 @@
  * Insights REST API Routes
  *
  * Provides CRUD endpoints for project insights and insight generation runs.
- * Also includes action endpoints for running insight generation and creating tasks from insights.
+ * Also includes action endpoints for running insight generation and preparing task payload drafts from insights.
  *
  * Endpoints:
  * - Insights: GET /, GET /:id, PATCH /:id, DELETE /:id
  * - Runs: GET /runs, POST /runs, GET /runs/:id
- * - Actions: POST /run (trigger manual run), POST /:id/dismiss, POST /:id/create-task
+ * - Actions: POST /run (trigger manual run), POST /:id/dismiss, POST /:id/create-task (returns suggested task title/description draft)
  */
 
 import { Router } from "express";

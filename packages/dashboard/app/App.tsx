@@ -470,6 +470,24 @@ function AppInner() {
     closeTaskDetail: modalManager.closeDetailTask,
   });
 
+  const handleInsightTaskCreate = useCallback(
+    async ({ insightId, title, description }: { insightId: string; title: string; description: string }) => {
+      await createTask({
+        title,
+        description,
+        column: "triage",
+        source: {
+          sourceType: "dashboard_ui",
+          sourceMetadata: {
+            origin: "insights",
+            insightId,
+          },
+        },
+      });
+    },
+    [createTask],
+  );
+
   // Task handlers
   const {
     handleBoardQuickCreate,
@@ -782,6 +800,7 @@ function AppInner() {
               projectId={currentProject?.id}
               addToast={addToast}
               onClose={() => handleChangeTaskView("board")}
+              onCreateTask={handleInsightTaskCreate}
             />
           </Suspense>
         </PageErrorBoundary>
