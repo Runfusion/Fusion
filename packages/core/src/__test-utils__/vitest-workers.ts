@@ -4,6 +4,12 @@ interface ComputeMaxWorkersOptions {
   defaultCap?: number;
 }
 
+function parsePositiveInt(value: string | undefined): number | undefined {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
 // Shared worker-budget computation for every package's vitest.config.
 //
 // Resolution order:
@@ -19,21 +25,21 @@ export function computeMaxWorkers(options: ComputeMaxWorkersOptions = {}): numbe
 
   const cpuCap = Math.max(1, cpus().length - 1);
 
-  const explicit = Number.parseInt(process.env.VITEST_MAX_WORKERS ?? "", 10);
-  if (Number.isFinite(explicit) && explicit > 0) {
-    const clamped = Math.min(Math.max(1, explicit), cpuCap);
-    process.env.VITEST_MAX_WORKERS = String(clamped);
-    return clamped;
-  }
-
-  const totalBudget = Number.parseInt(process.env.FUSION_TEST_TOTAL_WORKERS ?? "", 10);
-  const concurrency = Math.max(
-    1,
-    Number.parseInt(process.env.FUSION_TEST_CONCURRENCY ?? "1", 10) || 1,
-  );
+  const explicit = parsePositiveInt(process.env.VITEST_MAX_WORKERS);
+  const totalBudget = parsePositiveInt(process.env.FUSION_TEST_TOTAL_WORKERS);
+  const concurrency = Math.max(1, parsePositiveInt(process.env.FUSION_TEST_CONCURRENCY) ?? 1);
 
   let workers: number;
-  if (Number.isFinite(totalBudget) && totalBudget > 0) {
+  if (explicit !== undefined) {
+    // In recursive workspace runs we provide a global worker budget via
+    // FUSION_TEST_TOTAL_WORKERS/FUSION_TEST_CONCURRENCY. Clamp explicit
+    // VITEST_MAX_WORKERS to that per-package share so `VITEST_MAX_WORKERS=4`
+    // at the workspace root doesn't fan out to 4 workers in every package.
+    const workspaceBudget = totalBudget !== undefined
+      ? Math.max(1, Math.floor(totalBudget / concurrency))
+      : undefined;
+    workers = workspaceBudget !== undefined ? Math.min(explicit, workspaceBudget) : explicit;
+  } else if (totalBudget !== undefined) {
     workers = Math.max(1, Math.floor(totalBudget / concurrency));
   } else {
     workers = defaultCap;
