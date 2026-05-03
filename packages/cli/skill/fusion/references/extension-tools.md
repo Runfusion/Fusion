@@ -1,6 +1,6 @@
-# Fusion Pi Extension Tools
+# Fusion Extension Tools
 
-All tools are registered via the pi extension. They are available in any pi agent session when the Fusion extension is installed.
+All tools are registered via the Fusion extension. They are available in any agent session when Fusion is configured.
 
 > Naming contract: all externally exposed Fusion extension tools are `fn_*` (for example `fn_task_create`). Engine runtime sessions also inject additional `fn_*` tools (for example `fn_review_step`, `fn_spawn_agent`, `fn_task_document_write`) that are separate from this extension surface and documented in `engine-tools.md`.
 
@@ -364,7 +364,7 @@ Cancel a research run.
 
 ### /fn
 
-Start or stop the Fusion dashboard from within a pi session.
+Start or stop the Fusion dashboard from within an agent session.
 
 | Command | Description |
 |---------|-------------|

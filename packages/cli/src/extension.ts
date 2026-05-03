@@ -708,7 +708,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       await store.moveTask(params.id, 'todo');
       
       // Log the retry action
-      await store.logEntry(params.id, "Retry requested via Pi extension", "Task reset to todo for retry");
+      await store.logEntry(params.id, "Retry requested via Fusion extension", "Task reset to todo for retry");
       
       return {
         content: [{ type: "text", text: `Retried ${params.id} → todo (failure state cleared)` }],

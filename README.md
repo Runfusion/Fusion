@@ -37,7 +37,7 @@ Describe a task in plain language. A planning agent reads your project, understa
 
 One board. Controlled from anywhere. Laptop, Mac mini, Linux server, cloud VM, phone — all connected.
 
-> Like Trello, but your tasks get specified, executed, and delivered by AI — powered by [pi](https://github.com/badlogic/pi-mono). Built on the great work of [dustinbyrne/kb](https://github.com/dustinbyrne/kb).
+> Like Trello, but your tasks get specified, executed, and delivered by AI. Built on the great work of [dustinbyrne/kb](https://github.com/dustinbyrne/kb).
 
 ---
 
@@ -71,7 +71,7 @@ Every task shows its plan, its reviews, its diffs, and its file changes in real 
 | 🌳 **Worktree isolation** | Each task runs in its own branch and worktree (`fusion/{task-id}`). Parallel tasks. Zero conflicts. |
 | ⚡ **Smart merge** | Passing every gate? Fusion squash-merges and moves on. Opt into manual approval anywhere. |
 | 🛰️ **Multi-node mesh** | Laptop, Mac mini, Linux server, cloud VM, phone — all synced. Desktop, mobile, web. |
-| 🧩 **Any model** | Anthropic, OpenAI, Ollama — or anything pi-compatible. Local and cloud coexist. |
+| 🧩 **Any model** | Anthropic, OpenAI, Ollama, and more. Local and cloud coexist. |
 | 🏢 **Agent companies** | Import pre-built teams — 440+ agents across 16 companies — and run them autonomously for weeks. |
 | 📬 **Inter-agent messaging** | Built-in mailbox between agents. Delegate, clarify, coordinate. |
 | 🗺️ **Missions** | Hierarchical planning (Mission → Milestone → Slice → Feature → Task) with autopilot and validation contracts. |
@@ -142,7 +142,7 @@ Laptop, Mac mini, Linux server, cloud VM, phone — every node is a peer. Your t
 - 🖥️ **Desktop app** — Electron for **macOS** (Intel + Apple Silicon), **Windows** 10/11, and **Linux**
 - 📱 **Mobile app** — Capacitor for **iOS/iPadOS** and **Android** ([MOBILE.md](./MOBILE.md))
 - 🌐 **Web dashboard** — any modern browser, served from the `fn dashboard` daemon
-- 🔌 **CLI** — `fn` binary + pi extension for terminal-first workflows
+- 🔌 **CLI** — `fn` binary + extension for terminal-first workflows
 
 Start the daemon on any node, connect your other devices, and the board follows you everywhere.
 
@@ -164,27 +164,9 @@ npx companies.sh add paperclipai/companies/gstack
 
 ---
 
-## Built on Pi. Compatible with the tools you already use.
+## Compatible with the tools you already use.
 
-Fusion stands on open tools we love. Every **Pi** extension works out of the box. **Hermes**, **Paperclip**, and **OpenClaw** all ship as first-class plugins — route any workspace to whichever runtime fits the task. And any Paperclip agent-company imports with a single command.
-
-<div align="center">
-  <img src="./demo/assets/pi-logo.svg" alt="Pi" height="56" />
-</div>
-
-### [Pi](https://pi.dev) — the runtime
-
-<sub>pi.dev</sub>
-
-Fusion is built on top of **Pi** — the minimal, extensible coding-agent CLI. Every [Pi extension](https://github.com/badlogic/pi-mono#extensions) works inside of Fusion. Install Fusion as a Pi extension to get native tools (`fn_task_create`, `fn_task_list`, `fn_task_show`, …) and a `/fn` command to manage Fusion from any Pi session.
-
-```bash
-pi install npm:@runfusion/fusion
-```
-
-> This installs the **Pi extension** — it provides Fusion tools and `/fn` inside pi sessions only. To get the `fn` CLI in your terminal, install globally: `npm install -g @runfusion/fusion`.
-
-<br />
+Fusion integrates with the tools you love. **Hermes**, **Paperclip**, and **OpenClaw** all ship as first-class plugins — route any workspace to whichever runtime fits the task. And any Paperclip agent-company imports with a single command.
 
 <div align="center">
   <img src="./demo/assets/hermes-logo.svg" alt="Hermes" height="56" />
@@ -220,7 +202,7 @@ npx companies.sh add paperclipai/companies/gstack
 
 <br />
 
-> **Hermes**, **Paperclip**, and **OpenClaw** are **experimental** runtime plugins — APIs and wire formats may shift between minor releases. **Pi** is Fusion's stable runtime dependency.
+> **Hermes**, **Paperclip**, and **OpenClaw** are **experimental** runtime plugins — APIs and wire formats may shift between minor releases.
 
 ---
 
@@ -257,8 +239,6 @@ Or as a one-liner (auto-taps): `brew install runfusion/fusion/fusion`.
 npm install -g @runfusion/fusion
 fn dashboard                # or: fusion dashboard
 ```
-
-> **Pi extension (optional):** To use Fusion tools inside Pi chat sessions, also run `pi install npm:@runfusion/fusion`. This adds a `/fn` command and Fusion tools within pi — but does not install the `fn` CLI globally.
 
 **From a clone** (for development):
 
@@ -328,7 +308,7 @@ Fusion supports OAuth-based authentication for AI providers configured via **Set
 - **OpenAI Codex** — Authenticates via Settings OAuth flow with secure state validation
 - **Factory AI — via Droid CLI** *(optional)* — requires local `droid` install + `droid auth login`, then enable the provider in **Settings → Authentication** and restart Fusion
 - **Other providers** — Authenticate via API key entry in Settings (including Google/Gemini API key, Google Generative AI, Vertex, and Cloud Code aliases)
-- **pi authentication** — Handled separately via the `pi` CLI (`/login`) or `ANTHROPIC_API_KEY` environment variable
+- **Anthropic** — Authenticate via `ANTHROPIC_API_KEY` environment variable
 
 ### Model system
 
@@ -438,7 +418,7 @@ fn skills install firebase/agent-skills               # Install agent skills
 | `@fusion/core` | Domain model — tasks, board columns, SQLite store |
 | `@fusion/dashboard` | Web UI — Express server + kanban board with SSE |
 | `@fusion/engine` | AI engine — planning, execution, scheduling, workflow steps |
-| `@runfusion/fusion` | CLI + pi extension — published to npm |
+| `@runfusion/fusion` | CLI + extension — published to npm |
 
 ---
 

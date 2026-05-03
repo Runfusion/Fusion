@@ -1,10 +1,10 @@
 # Engine Session-Scoped Tools
 
-These tools are **not** part of the pi extension's user-invokable `extension.ts` surface. They are injected by the engine at runtime for specific agent session types.
+These tools are **not** part of the user-invokable extension surface. They are injected by the engine at runtime for specific agent session types.
 
 - Source files: `packages/engine/src/agent-tools.ts`, `triage.ts`, `executor.ts`, `merger.ts`, `agent-heartbeat.ts`
 - Availability: only when the engine creates a session for the matching agent role
-- Important: do not tell users to call these directly from the generic pi extension tool list
+- Important: do not tell users to call these directly from the generic extension tool list
 
 ## Shared runtime tools (`agent-tools.ts`)
 

@@ -3,14 +3,14 @@
 </required_reading>
 
 <objective>
-Guide the agent through using the Fusion dashboard and CLI for operations not available via pi extension tools.
+Guide the agent through using the Fusion dashboard and CLI for operations not available via extension tools.
 </objective>
 
 <process>
 
 **Starting the dashboard:**
 
-Use the `/fn` command (registered by the pi extension):
+Use the `/fn` command (registered by the Fusion extension):
 - `/fn` or `/fn 4040` — Start dashboard + AI engine on specified port (default 4040)
 - `/fn stop` — Stop the dashboard
 - `/fn status` — Check if dashboard is running
@@ -28,7 +28,7 @@ The dashboard provides:
 
 **Operations that require CLI or dashboard:**
 
-These cannot be done with pi extension tools:
+These cannot be done with extension tools:
 
 | Operation | CLI Command | Dashboard |
 |-----------|-------------|-----------|

@@ -5,7 +5,7 @@
 Fusion is an AI-orchestrated task board. Tasks flow through columns:
 Triage → Todo → In Progress → In Review → Done → Archived
 
-## Pi Extension Tools (Available to Agents)
+## Extension Tools (Available to Agents)
 
 All skill/extension tool invocations in this catalog use the public `fn_*` namespace. Engine runtime sessions also have additional runtime-only `fn_*` tools that are intentionally not listed here (see `references/engine-tools.md`).
 

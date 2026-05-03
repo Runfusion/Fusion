@@ -54,8 +54,6 @@ fn --help
 fusion --help
 ```
 
-> **Optional — Pi extension:** To use Fusion tools inside [Pi](https://pi.dev) chat sessions, run `pi install npm:@runfusion/fusion`. This adds a `/fn` command and Fusion tools within pi. You do **not** need this to use Fusion — the global CLI and dashboard work standalone.
-
 ## Initialize a Project
 
 In each repository you want Fusion to manage, run:

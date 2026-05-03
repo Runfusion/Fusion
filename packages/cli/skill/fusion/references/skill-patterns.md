@@ -30,7 +30,7 @@
 ## Key Takeaways for Fusion Skill
 
 1. **Use router pattern** — Fusion has multiple distinct workflows (task management, lifecycle, specs, dashboard/CLI)
-2. **No `allowed-tools` needed** — Fusion tools are registered via pi extension, not Bash CLI
+2. **No `allowed-tools` needed** — Fusion tools are registered via the extension, not Bash CLI
 3. **Inline essential concepts** — Task columns, workflow overview in SKILL.md
 4. **Progressive disclosure** — SKILL.md routes to workflows, workflows reference detailed docs
 5. **Pure XML structure** — No markdown headings (#, ##, ###) in body

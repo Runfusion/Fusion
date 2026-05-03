@@ -50,23 +50,7 @@ npm install -g @runfusion/fusion
 fn dashboard              # or: fusion dashboard
 ```
 
-As a [pi](https://github.com/badlogic/pi-mono) extension (bundled skill + `/fn` command):
-
-```bash
-pi install npm:@runfusion/fusion
-```
-
-If your local Pi install gets stale or broken, open Fusion dashboard **Settings → Pi Extensions** and use **Reinstall Fusion skill** to reinstall `npm:@runfusion/fusion` and refresh discovered extensions.
-
 ## Launch the dashboard
-
-Inside a pi session:
-
-```
-/fn              # start on default port 4040
-/fn stop         # stop it
-/fn 8080         # run on a custom port
-```
 
 From a shell:
 
@@ -145,7 +129,7 @@ This execution model is heavily based on [Taskplane](https://www.npmjs.com/packa
 | 🌳 **Worktree isolation** | Each task runs in its own branch and worktree. Parallel tasks. Zero conflicts. |
 | ⚡ **Smart merge** | Passing every gate? Fusion squash-merges and moves on. |
 | 🛰️ **Multi-node mesh** | Laptop, server, cloud, phone — all synced. Desktop, mobile, web. |
-| 🧩 **Any model** | Anthropic, OpenAI, Ollama — or anything pi-compatible. |
+| 🧩 **Any model** | Anthropic, OpenAI, Ollama, and more. |
 | 🏢 **Agent companies** | Import pre-built teams — 440+ agents across 16 companies. |
 | 📬 **Inter-agent messaging** | Built-in mailbox between agents. Delegate, clarify, coordinate. |
 | 🗺️ **Missions** | Hierarchical planning with autopilot and validation contracts. |
@@ -169,13 +153,13 @@ Manage tasks without leaving the conversation:
 
 > "Pause FN-012 — I want to add more context first"
 
-The pi extension exposes tools to create tasks, check progress, attach files, and pause or resume automation.
+The Fusion extension exposes tools to create tasks, check progress, attach files, and pause or resume automation.
 
 ---
 
 ## Standalone CLI
 
-Fusion also works as a standalone CLI outside of pi. See [STANDALONE.md](./STANDALONE.md) for installation and usage without the pi extension.
+See [STANDALONE.md](./STANDALONE.md) for additional installation and usage options.
 
 ## Optional provider: Factory AI via Droid CLI
 
