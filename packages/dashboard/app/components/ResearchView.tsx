@@ -108,7 +108,7 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
 
   const statusDotClass = useMemo(() => {
     if (!selectedRun) return "status-dot";
-    if (selectedRun.status === "pending") return "status-dot status-dot--pending";
+    if (selectedRun.status === "queued" || selectedRun.status === "retry_waiting") return "status-dot status-dot--pending";
     if (selectedRun.status === "running") return "status-dot status-dot--connecting";
     if (selectedRun.status === "completed") return "status-dot status-dot--online";
     if (selectedRun.status === "failed" || selectedRun.status === "cancelled") return "status-dot status-dot--error";

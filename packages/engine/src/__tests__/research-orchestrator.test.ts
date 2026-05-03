@@ -13,7 +13,7 @@ function createHarness() {
       const run: ResearchRun = {
         id,
         query: input.query,
-        status: "pending",
+        status: "queued",
         providerConfig: input.providerConfig,
         sources: [],
         events: [],
@@ -66,6 +66,13 @@ function createHarness() {
       const run = runs.get(id);
       if (!run) throw new Error("missing run");
       runs.set(id, { ...run, ...extra, status });
+    }),
+    requestCancellation: vi.fn((id: string) => {
+      const run = runs.get(id);
+      if (!run) throw new Error("missing run");
+      const next = { ...run, status: "cancelling" as ResearchRun["status"] };
+      runs.set(id, next);
+      return next;
     }),
   };
 
@@ -135,7 +142,7 @@ describe("ResearchOrchestrator", () => {
     expect(orchestrator.cancelRun(runId)).toBe(true);
 
     const run = await runPromise;
-    expect(run.status).toBe("cancelled");
+    expect(["cancelling", "cancelled"]).toContain(run.status);
   });
 
   it("records step failures and continues when later providers succeed", async () => {

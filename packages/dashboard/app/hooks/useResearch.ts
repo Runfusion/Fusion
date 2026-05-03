@@ -163,7 +163,17 @@ export function useResearch(options?: { projectId?: string }) {
         acc[run.status] += 1;
         return acc;
       },
-      { pending: 0, running: 0, completed: 0, failed: 0, cancelled: 0 },
+      {
+        queued: 0,
+        running: 0,
+        cancelling: 0,
+        retry_waiting: 0,
+        completed: 0,
+        failed: 0,
+        cancelled: 0,
+        timed_out: 0,
+        retry_exhausted: 0,
+      },
     ),
   };
 }

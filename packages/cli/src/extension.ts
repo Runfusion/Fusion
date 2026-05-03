@@ -1306,10 +1306,9 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
 
-      researchStore.updateStatus(params.id, "cancelled", { cancelledAt: new Date().toISOString(), error: "Cancelled via extension" });
-      const updated = researchStore.getRun(params.id)!;
+      const updated = researchStore.requestCancellation(params.id);
       return {
-        content: [{ type: "text", text: `Marked research run ${params.id} as cancelled.` }],
+        content: [{ type: "text", text: `Requested cancellation for research run ${params.id} (status: ${updated.status}).` }],
         details: toResearchRunDetails(updated),
       };
     },

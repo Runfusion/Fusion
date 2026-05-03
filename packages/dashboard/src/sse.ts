@@ -327,6 +327,7 @@ export function createSSE(
     const connectionId = nextConnectionId++;
     const clientId = normalizeSSEClientId(_req.query?.clientId);
     const socket = res.socket ?? _req.socket;
+    const researchStore = store.getResearchStore();
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -378,6 +379,25 @@ export function createSSE(
     };
     const onMerged = (result: unknown) => {
       send(`event: task:merged\ndata: ${JSON.stringify(stripTaskEventHeavyFields(result))}\n\n`);
+    };
+
+    const onResearchRunCreated = (run: unknown) => {
+      send(`event: research:run:created\ndata: ${JSON.stringify(run)}\n\n`);
+    };
+    const onResearchRunUpdated = (run: unknown) => {
+      send(`event: research:run:updated\ndata: ${JSON.stringify(run)}\n\n`);
+    };
+    const onResearchRunCompleted = (run: unknown) => {
+      send(`event: research:run:completed\ndata: ${JSON.stringify(run)}\n\n`);
+    };
+    const onResearchRunFailed = (run: unknown) => {
+      send(`event: research:run:failed\ndata: ${JSON.stringify(run)}\n\n`);
+    };
+    const onResearchRunCancelled = (run: unknown) => {
+      send(`event: research:run:cancelled\ndata: ${JSON.stringify(run)}\n\n`);
+    };
+    const onResearchRunTimedOut = (run: unknown) => {
+      send(`event: research:run:timed_out\ndata: ${JSON.stringify(run)}\n\n`);
     };
 
     const onMissionCreated = (data: unknown) => {
@@ -661,6 +681,12 @@ export function createSSE(
         automationStore.off("schedule:deleted", onScheduleDeleted);
         automationStore.off("schedule:run", onScheduleRun);
       }
+      researchStore.off("run:created", onResearchRunCreated);
+      researchStore.off("run:updated", onResearchRunUpdated);
+      researchStore.off("run:completed", onResearchRunCompleted);
+      researchStore.off("run:failed", onResearchRunFailed);
+      researchStore.off("run:cancelled", onResearchRunCancelled);
+      researchStore.off("run:timed_out", onResearchRunTimedOut);
     }
 
     function closeConnection(reason: SSECloseReason): void {
@@ -758,6 +784,13 @@ export function createSSE(
       automationStore.on("schedule:deleted", onScheduleDeleted);
       automationStore.on("schedule:run", onScheduleRun);
     }
+
+    researchStore.on("run:created", onResearchRunCreated);
+    researchStore.on("run:updated", onResearchRunUpdated);
+    researchStore.on("run:completed", onResearchRunCompleted);
+    researchStore.on("run:failed", onResearchRunFailed);
+    researchStore.on("run:cancelled", onResearchRunCancelled);
+    researchStore.on("run:timed_out", onResearchRunTimedOut);
 
     // Heartbeat every 30s to keep connection alive.
     // Sent as a named event so the client's EventSource can detect it

@@ -10,6 +10,7 @@ import type {
   ResearchRun,
   ResearchRunCreateInput,
   ResearchRunEvent,
+  ResearchErrorCode,
   ResearchRunFailureClass,
   ResearchRunListOptions,
   ResearchRunStatus,
@@ -47,14 +48,35 @@ function mergeRecord(
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
-const TERMINAL_STATUSES = new Set<ResearchRunStatus>(["completed", "failed", "cancelled"]);
+const TERMINAL_STATUSES = new Set<ResearchRunStatus>([
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out",
+  "retry_exhausted",
+]);
 const VALID_STATUS_TRANSITIONS: Record<ResearchRunStatus, ResearchRunStatus[]> = {
-  pending: ["running", "cancelled", "failed"],
-  running: ["completed", "failed", "cancelled"],
+  queued: ["running", "cancelling", "cancelled", "failed", "retry_waiting", "timed_out"],
+  running: ["completed", "failed", "cancelling", "cancelled", "retry_waiting", "timed_out"],
+  cancelling: ["cancelled", "failed", "timed_out"],
+  retry_waiting: ["queued", "running", "cancelled", "retry_exhausted", "failed"],
   completed: [],
-  failed: [],
+  failed: ["retry_exhausted"],
   cancelled: [],
+  timed_out: ["retry_exhausted"],
+  retry_exhausted: [],
 };
+
+function normalizeStatus(status: ResearchRunStatus | "pending"): ResearchRunStatus {
+  return status === "pending" ? "queued" : status;
+}
+
+function defaultErrorCodeForFailureClass(failureClass?: ResearchRunFailureClass): ResearchErrorCode {
+  if (failureClass === "timed_out") return "PROVIDER_TIMEOUT";
+  if (failureClass === "cancelled") return "RUN_CANCELLED";
+  if (failureClass === "non_retryable") return "NON_RETRYABLE_PROVIDER_ERROR";
+  return "INTERNAL_ERROR";
+}
 
 export class ResearchStore extends EventEmitter<ResearchStoreEvents> {
   constructor(private readonly db: Database) {
@@ -68,7 +90,7 @@ export class ResearchStore extends EventEmitter<ResearchStoreEvents> {
       id: generateRunId(),
       query: input.query,
       topic: input.topic,
-      status: "pending",
+      status: "queued",
       projectId: input.projectId,
       trigger: input.trigger,
       providerConfig: input.providerConfig,
@@ -79,7 +101,7 @@ export class ResearchStore extends EventEmitter<ResearchStoreEvents> {
       metadata: input.metadata,
       lifecycle: {
         attempt: input.lifecycle?.attempt ?? 1,
-        maxAttempts: input.lifecycle?.maxAttempts ?? 1,
+        maxAttempts: input.lifecycle?.maxAttempts ?? 3,
         rootRunId: input.lifecycle?.rootRunId,
         retryOfRunId: input.lifecycle?.retryOfRunId,
         ...input.lifecycle,
@@ -130,15 +152,25 @@ export class ResearchStore extends EventEmitter<ResearchStoreEvents> {
     const existing = this.getRun(id);
     if (!existing) return undefined;
 
-    if (TERMINAL_STATUSES.has(existing.status) && Object.keys(input).some((key) => key !== "events" && key !== "metadata")) {
+    const normalizedExistingStatus = normalizeStatus(existing.status as ResearchRunStatus | "pending");
+    const normalizedInputStatus = input.status
+      ? normalizeStatus(input.status as ResearchRunStatus | "pending")
+      : undefined;
+
+    const nonMutableKeys = Object.keys(input).filter((key) => key !== "events" && key !== "metadata");
+    if (
+      TERMINAL_STATUSES.has(normalizedExistingStatus)
+      && nonMutableKeys.length > 0
+      && !(nonMutableKeys.length === 1 && nonMutableKeys[0] === "status")
+    ) {
       throw new ResearchLifecycleError(`Run ${id} is terminal and immutable`, "terminal_immutable");
     }
 
-    if (input.status && input.status !== existing.status) {
-      const allowed = VALID_STATUS_TRANSITIONS[existing.status];
-      if (!allowed.includes(input.status)) {
+    if (normalizedInputStatus && normalizedInputStatus !== normalizedExistingStatus) {
+      const allowed = VALID_STATUS_TRANSITIONS[normalizedExistingStatus];
+      if (!allowed.includes(normalizedInputStatus)) {
         throw new ResearchLifecycleError(
-          `Invalid run status transition: ${existing.status} -> ${input.status}`,
+          `Invalid run status transition: ${normalizedExistingStatus} -> ${normalizedInputStatus}`,
           "invalid_transition",
         );
       }
@@ -152,6 +184,7 @@ export class ResearchStore extends EventEmitter<ResearchStoreEvents> {
     const updated: ResearchRun = {
       ...existing,
       ...input,
+      status: normalizedInputStatus ?? normalizedExistingStatus,
       providerConfig: mergedProviderConfig,
       metadata: mergedMetadata,
       lifecycle: Object.keys(mergedLifecycle).length > 0 ? mergedLifecycle : undefined,
@@ -346,31 +379,55 @@ export class ResearchStore extends EventEmitter<ResearchStoreEvents> {
     const run = this.getRun(runId);
     if (!run) throw new Error(`Research run not found: ${runId}`);
 
+    const normalizedStatus = normalizeStatus(status as ResearchRunStatus | "pending");
     const now = new Date().toISOString();
     const patch: ResearchRunUpdateInput = {
       ...(extra ?? {}),
-      status,
+      status: normalizedStatus,
       lifecycle: {
         ...(run.lifecycle ?? {}),
       },
     };
 
-    if (status === "running" && !run.startedAt) {
-      patch.startedAt = now;
-    }
-    if ((status === "completed" || status === "failed") && !run.completedAt) {
-      patch.completedAt = now;
-    }
-    if (status === "cancelled" && !run.cancelledAt) {
-      patch.cancelledAt = now;
-    }
+    if (normalizedStatus === "running" && !run.startedAt) patch.startedAt = now;
+    if (TERMINAL_STATUSES.has(normalizedStatus) && !run.completedAt) patch.completedAt = now;
+    if (normalizedStatus === "cancelled" && !run.cancelledAt) patch.cancelledAt = now;
 
-    if (status === "completed") {
-      patch.lifecycle = { ...(patch.lifecycle ?? {}), terminalReason: "completed", retryable: false };
-    } else if (status === "failed") {
-      patch.lifecycle = { ...(patch.lifecycle ?? {}), terminalReason: "failed", retryable: patch.lifecycle?.failureClass === "retryable_transient" };
-    } else if (status === "cancelled") {
-      patch.lifecycle = { ...(patch.lifecycle ?? {}), terminalReason: "cancelled", retryable: false, failureClass: "cancelled" };
+    if (normalizedStatus === "completed") {
+      patch.lifecycle = { ...(patch.lifecycle ?? {}), terminalReason: "completed", retryable: false, errorCode: undefined };
+    } else if (normalizedStatus === "failed") {
+      const failureClass = patch.lifecycle?.failureClass;
+      patch.lifecycle = {
+        ...(patch.lifecycle ?? {}),
+        terminalReason: "failed",
+        retryable: failureClass === "retryable_transient",
+        errorCode: patch.lifecycle?.errorCode ?? defaultErrorCodeForFailureClass(failureClass),
+      };
+    } else if (normalizedStatus === "cancelled") {
+      patch.lifecycle = {
+        ...(patch.lifecycle ?? {}),
+        terminalReason: "cancelled",
+        retryable: false,
+        failureClass: "cancelled",
+        errorCode: patch.lifecycle?.errorCode ?? "RUN_CANCELLED",
+      };
+    } else if (normalizedStatus === "timed_out") {
+      patch.lifecycle = {
+        ...(patch.lifecycle ?? {}),
+        terminalReason: "timed_out",
+        retryable: true,
+        failureClass: "timed_out",
+        errorCode: patch.lifecycle?.errorCode ?? "PROVIDER_TIMEOUT",
+        timeoutAt: patch.lifecycle?.timeoutAt ?? now,
+      };
+    } else if (normalizedStatus === "retry_exhausted") {
+      patch.lifecycle = {
+        ...(patch.lifecycle ?? {}),
+        terminalReason: "retry_exhausted",
+        retryable: false,
+        failureClass: patch.lifecycle?.failureClass ?? "non_retryable",
+        errorCode: "RETRY_EXHAUSTED",
+      };
     }
 
     const updated = this.updateRun(runId, patch);
@@ -378,15 +435,16 @@ export class ResearchStore extends EventEmitter<ResearchStoreEvents> {
 
     this.appendLifecycleEvent(runId, {
       type: "status_changed",
-      message: `Status changed to ${status}`,
-      status,
+      message: `Status changed to ${normalizedStatus}`,
+      status: normalizedStatus,
       classification: updated.lifecycle?.failureClass,
     });
 
     this.emit("run:status_changed", updated);
-    if (status === "completed") this.emit("run:completed", updated);
-    if (status === "failed") this.emit("run:failed", updated);
-    if (status === "cancelled") this.emit("run:cancelled", updated);
+    if (normalizedStatus === "completed") this.emit("run:completed", updated);
+    if (normalizedStatus === "failed") this.emit("run:failed", updated);
+    if (normalizedStatus === "cancelled") this.emit("run:cancelled", updated);
+    if (normalizedStatus === "timed_out") this.emit("run:timed_out", updated);
   }
 
   createExport(runId: string, format: ResearchExportFormat, content: string): ResearchExport {
@@ -444,11 +502,15 @@ export class ResearchStore extends EventEmitter<ResearchStoreEvents> {
     `).all() as Array<{ status: ResearchRunStatus; count: number }>;
 
     const byStatus: Record<ResearchRunStatus, number> = {
-      pending: 0,
+      queued: 0,
       running: 0,
+      cancelling: 0,
+      retry_waiting: 0,
       completed: 0,
       failed: 0,
       cancelled: 0,
+      timed_out: 0,
+      retry_exhausted: 0,
     };
 
     for (const row of rows) {
@@ -462,7 +524,7 @@ export class ResearchStore extends EventEmitter<ResearchStoreEvents> {
   getActiveRun(projectId: string, trigger: string): ResearchRun | undefined {
     const row = this.db.prepare(`
       SELECT * FROM research_runs
-      WHERE projectId = ? AND trigger = ? AND status IN ('pending', 'running')
+      WHERE projectId = ? AND trigger = ? AND status IN ('queued', 'running', 'cancelling', 'retry_waiting')
       ORDER BY createdAt DESC
       LIMIT 1
     `).get(projectId, trigger) as Record<string, unknown> | undefined;
@@ -483,38 +545,46 @@ export class ResearchStore extends EventEmitter<ResearchStoreEvents> {
     const run = this.getRun(runId);
     if (!run) throw new Error(`Research run not found: ${runId}`);
     if (TERMINAL_STATUSES.has(run.status)) {
-      throw new ResearchLifecycleError(`Run ${runId} is already terminal`, "invalid_transition");
+      return run;
     }
 
     const now = new Date().toISOString();
+    const alreadyCancelling = run.status === "cancelling";
     const updated = this.updateRun(runId, {
-      status: "cancelled",
-      cancelledAt: run.cancelledAt ?? now,
+      status: "cancelling",
       lifecycle: {
         ...(run.lifecycle ?? {}),
-        cancellationRequestedAt: now,
-        terminalReason: "cancelled",
+        cancellationRequestedAt: run.lifecycle?.cancellationRequestedAt ?? now,
         terminalCause: reason,
-        failureClass: "cancelled",
+        errorCode: "RUN_CANCELLED",
         retryable: false,
       },
     });
     if (!updated) throw new Error(`Research run not found: ${runId}`);
-    this.appendLifecycleEvent(runId, { type: "cancel_requested", message: reason, status: "cancelled", classification: "cancelled" });
+    if (!alreadyCancelling) {
+      this.appendLifecycleEvent(runId, { type: "cancel_requested", message: reason, status: "cancelling", classification: "cancelled" });
+    }
     return updated;
   }
 
   createRetryRun(runId: string, maxAttempts?: number): ResearchRun {
     const run = this.getRun(runId);
     if (!run) throw new Error(`Research run not found: ${runId}`);
-    if (run.status !== "failed") {
-      throw new ResearchLifecycleError(`Run ${runId} is not failed`, "invalid_transition");
+    if (run.status !== "failed" && run.status !== "timed_out") {
+      throw new ResearchLifecycleError(`Run ${runId} is not retryable from status ${run.status}`, "invalid_transition");
     }
+    const currentAttempt = run.lifecycle?.attempt ?? 1;
+    const configuredMaxAttempts = maxAttempts ?? run.lifecycle?.maxAttempts ?? 3;
+    const nextAttempt = currentAttempt + 1;
+    if (nextAttempt > configuredMaxAttempts) {
+      this.updateRun(runId, { status: "retry_exhausted" });
+      throw new ResearchLifecycleError(`Run ${runId} exhausted retries`, "not_retryable");
+    }
+
     if (!run.lifecycle?.retryable) {
       throw new ResearchLifecycleError(`Run ${runId} is non-retryable`, "not_retryable");
     }
 
-    const nextAttempt = (run.lifecycle?.attempt ?? 1) + 1;
     const rootRunId = run.lifecycle?.rootRunId ?? run.id;
     const retryRun = this.createRun({
       query: run.query,
@@ -526,9 +596,15 @@ export class ResearchStore extends EventEmitter<ResearchStoreEvents> {
       metadata: run.metadata,
       lifecycle: {
         attempt: nextAttempt,
-        maxAttempts: maxAttempts ?? run.lifecycle?.maxAttempts ?? nextAttempt,
+        maxAttempts: configuredMaxAttempts,
         retryOfRunId: run.id,
         rootRunId,
+      },
+    });
+    this.updateStatus(retryRun.id, "retry_waiting", {
+      lifecycle: {
+        ...(retryRun.lifecycle ?? {}),
+        retryable: true,
       },
     });
     this.appendLifecycleEvent(retryRun.id, {
@@ -581,7 +657,7 @@ export class ResearchStore extends EventEmitter<ResearchStoreEvents> {
       id: row.id as string,
       query: row.query as string,
       topic: (row.topic as string | null) ?? undefined,
-      status: row.status as ResearchRunStatus,
+      status: normalizeStatus((row.status as ResearchRunStatus | "pending") ?? "queued"),
       projectId: (row.projectId as string | null) ?? undefined,
       trigger: (row.trigger as string | null) ?? undefined,
       providerConfig: fromJson<Record<string, unknown>>(row.providerConfig as string | null),

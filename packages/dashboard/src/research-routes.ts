@@ -7,6 +7,7 @@ import {
   RESEARCH_SOURCE_TYPES,
   RESEARCH_SOURCE_STATUSES,
   RESEARCH_EVENT_TYPES,
+  ResearchLifecycleError,
   buildResearchDocumentKey,
   type ResearchRunListOptions,
   type ResearchRunStatus,
@@ -21,6 +22,10 @@ const DEFAULT_AVAILABILITY = {
 
 function rethrowAsApiError(error: unknown, fallback = "Internal server error"): never {
   if (error instanceof ApiError) throw error;
+  if (error instanceof ResearchLifecycleError) {
+    const status = error.code === "invalid_transition" || error.code === "active_run_conflict" ? 409 : 400;
+    throw new ApiError(status, error.message, { code: error.code.toUpperCase() });
+  }
   if (error instanceof Error) throw new ApiError(500, error.message);
   throw new ApiError(500, fallback);
 }
@@ -202,9 +207,7 @@ export function createResearchRouter(store: TaskStore): Router {
 
   router.post("/runs/:id/cancel", (req, res) => {
     try {
-      getStore().updateStatus(req.params.id, "cancelled");
-      const run = getStore().getRun(req.params.id);
-      if (!run) throw notFound(`Run not found: ${req.params.id}`);
+      const run = getStore().requestCancellation(req.params.id);
       res.json({ run: toRunDetail(run) });
     } catch (error) {
       rethrowAsApiError(error, "Failed to cancel research run");
@@ -213,11 +216,8 @@ export function createResearchRouter(store: TaskStore): Router {
 
   router.post("/runs/:id/retry", (req, res) => {
     try {
-      getStore().updateRun(req.params.id, { error: null });
-      getStore().updateStatus(req.params.id, "pending");
-      const run = getStore().getRun(req.params.id);
-      if (!run) throw notFound(`Run not found: ${req.params.id}`);
-      res.json({ run: toRunDetail(run) });
+      const retryRun = getStore().createRetryRun(req.params.id);
+      res.json({ run: toRunDetail(retryRun) });
     } catch (error) {
       rethrowAsApiError(error, "Failed to retry research run");
     }

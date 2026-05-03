@@ -24,7 +24,7 @@ describe("ResearchStore", () => {
     const updated = store.updateRun(run.id, { topic: "new topic", error: "oops" });
     expect(updated?.topic).toBe("new topic");
 
-    const listed = store.listRuns({ status: "pending" });
+    const listed = store.listRuns({ status: "queued" });
     expect(listed.map((r) => r.id)).toContain(run.id);
 
     expect(store.deleteRun(run.id)).toBe(true);
@@ -58,8 +58,8 @@ describe("ResearchStore", () => {
 
     expect(() => store.updateRun(run.id, { topic: "changed" })).toThrow(ResearchLifecycleError);
 
-    const pending = store.createRun({ query: "pending" });
-    expect(() => store.updateStatus(pending.id, "completed")).toThrow(/Invalid run status transition/i);
+    const queued = store.createRun({ query: "queued" });
+    expect(() => store.updateStatus(queued.id, "completed")).toThrow(/Invalid run status transition/i);
   });
 
   it("persists lifecycle events to research_run_events", () => {
@@ -129,6 +129,32 @@ describe("ResearchStore", () => {
 
     store.deleteRun(r1.id);
     expect(store.getExports(r1.id)).toHaveLength(0);
+  });
+
+  it("supports idempotent cancellation request transition", () => {
+    const run = store.createRun({ query: "cancel me" });
+    const first = store.requestCancellation(run.id);
+    expect(first.status).toBe("cancelling");
+    const second = store.requestCancellation(run.id);
+    expect(second.status).toBe("cancelling");
+
+    store.updateStatus(run.id, "cancelled");
+    const terminal = store.requestCancellation(run.id);
+    expect(terminal.status).toBe("cancelled");
+  });
+
+  it("marks retry exhaustion when max attempts reached", () => {
+    const run = store.createRun({ query: "retry", lifecycle: { attempt: 3, maxAttempts: 3 } });
+    store.updateStatus(run.id, "failed", {
+      lifecycle: {
+        ...(run.lifecycle ?? {}),
+        retryable: true,
+        failureClass: "retryable_transient",
+      },
+    });
+
+    expect(() => store.createRetryRun(run.id)).toThrow(/non-retryable|exhausted retries/i);
+    expect(store.getRun(run.id)?.status).toBe("retry_exhausted");
   });
 
   it("emits status events and throws for missing run mutations", () => {

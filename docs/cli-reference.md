@@ -65,15 +65,17 @@ fn research retry RR-001 --json
 | Subcommand | Description |
 |---|---|
 | `fn research create --query <text> [--wait] [--max-wait-ms <ms>] [--json]` | Create a run and optionally wait for completion. |
-| `fn research list \| ls [--status <status>] [--limit <n>] [--json]` | List recent runs (statuses: `pending`, `running`, `completed`, `failed`, `cancelled`). |
+| `fn research list \| ls [--status <status>] [--limit <n>] [--json]` | List recent runs (statuses: `queued`, `running`, `cancelling`, `retry_waiting`, `completed`, `failed`, `cancelled`, `timed_out`, `retry_exhausted`). |
 | `fn research show <run-id> [--json]` | Show one run with timestamps, summary, and error details. |
 | `fn research export <run-id> [--format <json\|markdown\|pdf>] [--output <path>] [--json]` | Export run results and persist an export record. |
 | `fn research cancel <run-id> [--json]` | Request cancellation for an active run. |
 | `fn research retry <run-id> [--json]` | Create a new retry run from a failed/cancelled run. |
 
 Disabled/setup behavior mirrors dashboard and agent surfaces:
-- Feature disabled → `feature-disabled` error (enable research in settings)
-- Provider unconfigured → `provider-unavailable` error (configure credentials/provider)
+- Feature disabled → `FEATURE_DISABLED` (enable project/global research settings)
+- Missing credentials → `MISSING_CREDENTIALS` (configure provider auth)
+- Provider unavailable or cooldown/rate limit → `PROVIDER_UNAVAILABLE` / `RATE_LIMITED` with retry metadata
+- Non-retryable failures and invalid state transitions are surfaced as structured errors instead of generic failures
 
 ---
 

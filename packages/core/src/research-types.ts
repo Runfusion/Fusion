@@ -5,11 +5,15 @@
  */
 
 export const RESEARCH_RUN_STATUSES = [
-  "pending",
+  "queued",
   "running",
+  "cancelling",
+  "retry_waiting",
   "completed",
   "failed",
   "cancelled",
+  "timed_out",
+  "retry_exhausted",
 ] as const;
 
 export type ResearchRunStatus = typeof RESEARCH_RUN_STATUSES[number];
@@ -53,13 +57,30 @@ export const RESEARCH_RUN_FAILURE_CLASSES = [
   "non_retryable",
 ] as const;
 
+export const RESEARCH_ERROR_CODES = [
+  "FEATURE_DISABLED",
+  "MISSING_CREDENTIALS",
+  "PROVIDER_UNAVAILABLE",
+  "RATE_LIMITED",
+  "PROVIDER_TIMEOUT",
+  "RUN_CANCELLED",
+  "RETRY_EXHAUSTED",
+  "INVALID_TRANSITION",
+  "NON_RETRYABLE_PROVIDER_ERROR",
+  "INTERNAL_ERROR",
+] as const;
+
+export type ResearchErrorCode = typeof RESEARCH_ERROR_CODES[number];
+
 export type ResearchRunFailureClass = typeof RESEARCH_RUN_FAILURE_CLASSES[number];
 
 export interface ResearchRunLifecycle {
-  terminalReason?: "completed" | "cancelled" | "failed" | "timed_out";
+  terminalReason?: "completed" | "cancelled" | "failed" | "timed_out" | "retry_exhausted";
   terminalCause?: string;
   failureClass?: ResearchRunFailureClass;
+  errorCode?: ResearchErrorCode;
   retryable?: boolean;
+  retryAfterMs?: number;
   cancellationRequestedAt?: string;
   timeoutAt?: string;
   retryOfRunId?: string;
@@ -206,6 +227,7 @@ export interface ResearchStoreEvents {
   "run:completed": [ResearchRun];
   "run:failed": [ResearchRun];
   "run:cancelled": [ResearchRun];
+  "run:timed_out": [ResearchRun];
   "event:added": [{ runId: string; event: ResearchEvent }];
   "source:added": [{ runId: string; source: ResearchSource }];
 }

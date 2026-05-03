@@ -17,7 +17,7 @@ function createMockStore(options?: {
     id: options?.runId ?? "RR-1",
     query: "test",
     topic: "test",
-    status: "pending",
+    status: "queued",
     sources: [],
     events: [],
     tags: [],
@@ -46,6 +46,8 @@ function createMockStore(options?: {
     getRun: vi.fn(() => (options?.missingRun ? null : run)),
     updateStatus: vi.fn(),
     updateRun: vi.fn(),
+    requestCancellation: vi.fn(() => ({ ...run, status: "cancelling" })),
+    createRetryRun: vi.fn(() => ({ ...run, id: "RR-2", status: "retry_waiting" })),
     appendEvent: vi.fn(),
     addSource: vi.fn(),
     searchRuns: vi.fn(() => []),
@@ -99,11 +101,11 @@ describe("research-routes", () => {
 
     const cancel = await performRequest(app, "POST", "/runs/RR-1/cancel");
     expect(cancel.status).toBe(200);
-    expect(cancel.body.run.status).toBe("pending");
+    expect(cancel.body.run.status).toBe("cancelling");
 
     const retry = await performRequest(app, "POST", "/runs/RR-1/retry");
     expect(retry.status).toBe(200);
-    expect(retry.body.run.status).toBe("pending");
+    expect(retry.body.run.status).toBe("retry_waiting");
 
     const markdownExport = await performGet(app, "/runs/RR-1/export?format=markdown");
     expect(markdownExport.status).toBe(200);
@@ -117,8 +119,8 @@ describe("research-routes", () => {
     expect(htmlExport.status).toBe(200);
     expect(htmlExport.body.format).toBe("html");
 
-    expect(store.getResearchStore().updateStatus).toHaveBeenCalledWith("RR-1", "cancelled");
-    expect(store.getResearchStore().updateStatus).toHaveBeenCalledWith("RR-1", "pending");
+    expect(store.getResearchStore().requestCancellation).toHaveBeenCalledWith("RR-1");
+    expect(store.getResearchStore().createRetryRun).toHaveBeenCalledWith("RR-1");
   });
   it("creates task from finding with research provenance", async () => {
     const store = createMockStore();

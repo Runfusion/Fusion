@@ -40,7 +40,10 @@ interface ActiveRunState {
   stepIndex: number;
   totalSteps: number;
   config: ResearchOrchestrationConfig;
+  cancellationTimer?: NodeJS.Timeout;
 }
+
+const CANCELLATION_GRACE_MS = 2_000;
 
 export class ResearchOrchestrator {
   private readonly store: ResearchStore;
@@ -89,8 +92,14 @@ export class ResearchOrchestrator {
       config,
     });
 
+    const queued = this.store.getRun(runId);
+    if (queued?.status === "retry_waiting") {
+      this.store.updateStatus(runId, "queued");
+    }
+
     await this.semaphore.run(async () => {
-      this.store.updateRun(runId, { query, status: "running", startedAt: new Date().toISOString(), error: null });
+      this.store.updateRun(runId, { query, startedAt: new Date().toISOString(), error: null });
+      this.store.updateStatus(runId, "running");
       await this.runPhases(runId, query, config, controller.signal);
     });
 
@@ -101,7 +110,16 @@ export class ResearchOrchestrator {
 
   cancelRun(runId: string): boolean {
     const active = this.activeRuns.get(runId);
-    if (!active) return false;
+    const run = this.store.getRun(runId);
+    if (!run) return false;
+    this.store.requestCancellation(runId);
+
+    if (!active) {
+      this.store.updateStatus(runId, "cancelled", { error: "Cancelled by user" });
+      return true;
+    }
+
+    if (active.cancellationTimer) return true;
 
     const state: ResearchCancellationState = {
       runId,
@@ -112,6 +130,9 @@ export class ResearchOrchestrator {
     };
     this.cancellation.set(runId, state);
     active.controller.abort(new Error("Research run cancelled"));
+    active.cancellationTimer = setTimeout(() => {
+      this.onCancelled(runId);
+    }, CANCELLATION_GRACE_MS);
     return true;
   }
 
@@ -190,6 +211,10 @@ export class ResearchOrchestrator {
         this.transitionPhase(runId, "failed", "Research run failed", { error: message });
       }
     } finally {
+      const active = this.activeRuns.get(runId);
+      if (active?.cancellationTimer) {
+        clearTimeout(active.cancellationTimer);
+      }
       this.activeRuns.delete(runId);
       this.cancellation.delete(runId);
     }
@@ -357,6 +382,7 @@ export class ResearchOrchestrator {
   ): Promise<void> {
     this.throwIfAborted(signal);
     this.transitionPhase(runId, "finalizing", "Finalizing research results");
+    if (!this.canWriteRunData(runId)) return;
     this.store.setResults(runId, {
       summary: output,
       findings: [
@@ -373,6 +399,8 @@ export class ResearchOrchestrator {
   }
 
   private onCancelled(runId: string): void {
+    const run = this.store.getRun(runId);
+    if (!run || run.status === "cancelled") return;
     const cancellation = this.cancellation.get(runId);
     this.store.addEvent(runId, {
       type: "warning",
@@ -395,6 +423,7 @@ export class ResearchOrchestrator {
     message: string,
     metadata?: Record<string, unknown>,
   ): void {
+    if (!this.canWriteRunData(runId) && phase !== "cancelled" && phase !== "completed" && phase !== "failed") return;
     const active = this.activeRuns.get(runId);
     if (active) {
       active.phase = phase;
@@ -421,6 +450,7 @@ export class ResearchOrchestrator {
   }
 
   private stepStarted(runId: string, step: ResearchOrchestrationStep): void {
+    if (!this.canWriteRunData(runId)) return;
     this.bumpStep(runId, step.order);
     this.store.addEvent(runId, {
       type: "progress",
@@ -433,6 +463,7 @@ export class ResearchOrchestrator {
   }
 
   private stepCompleted(runId: string, stepId: string, output?: Record<string, unknown>): void {
+    if (!this.canWriteRunData(runId)) return;
     this.store.addEvent(runId, {
       type: "progress",
       message: `${stepId} completed`,
@@ -450,6 +481,7 @@ export class ResearchOrchestrator {
     errorMessage: string,
     errorMeta?: Record<string, unknown>,
   ): void {
+    if (!this.canWriteRunData(runId)) return;
     this.store.addEvent(runId, {
       type: "error",
       message: `${stepId} failed: ${errorMessage}`,
@@ -504,8 +536,8 @@ export class ResearchOrchestrator {
 
   private statusToPhase(status: ResearchRun["status"]): ResearchOrchestrationPhase {
     if (status === "completed") return "completed";
-    if (status === "failed") return "failed";
-    if (status === "cancelled") return "cancelled";
+    if (status === "failed" || status === "timed_out" || status === "retry_exhausted") return "failed";
+    if (status === "cancelled" || status === "cancelling") return "cancelled";
     return "planning";
   }
 
@@ -513,5 +545,11 @@ export class ResearchOrchestrator {
     if (signal.aborted) {
       throw signal.reason ?? new Error("Research run aborted");
     }
+  }
+
+  private canWriteRunData(runId: string): boolean {
+    const run = this.store.getRun(runId);
+    if (!run) return false;
+    return !["cancelled", "completed", "failed", "timed_out", "retry_exhausted"].includes(run.status);
   }
 }

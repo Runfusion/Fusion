@@ -90,6 +90,6 @@ describe("research extension tools", () => {
 
     const cancelTool = api.tools.get("fn_research_cancel")!;
     const cancelResult = await cancelTool.execute("call-4", { id: runResult.details.runId }, undefined, undefined, makeCtx(tmpDir));
-    expect(cancelResult.details.status).toBe("cancelled");
+    expect(["cancelling", "cancelled"]).toContain(cancelResult.details.status);
   });
 });

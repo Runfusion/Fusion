@@ -36,9 +36,14 @@ class MockResponse extends EventEmitter {
 }
 
 function createMockStore(): TaskStore {
+  const researchStore = {
+    on: vi.fn(),
+    off: vi.fn(),
+  };
   return {
     on: vi.fn(),
     off: vi.fn(),
+    getResearchStore: vi.fn(() => researchStore),
   } as unknown as TaskStore;
 }
 
@@ -284,6 +289,7 @@ describe("createSSE client cleanup", () => {
         if (event === "task:created") onCreated = handler;
       }),
       off: vi.fn(),
+      getResearchStore: vi.fn(() => ({ on: vi.fn(), off: vi.fn() })),
     } as unknown as TaskStore;
 
     const baseline = getActiveSSEConnections();
