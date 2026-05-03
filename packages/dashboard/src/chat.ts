@@ -922,6 +922,21 @@ export class ChatManager {
 
     return true;
   }
+
+  /**
+   * Check whether a generation is currently in progress for the given session.
+   */
+  isGenerating(sessionId: string): boolean {
+    return this.activeGenerations.has(sessionId);
+  }
+
+  /**
+   * Return all session IDs that currently have an active generation.
+   * Useful for batch-enriching session lists without N+1 lookups.
+   */
+  getGeneratingSessionIds(): string[] {
+    return [...this.activeGenerations.keys()];
+  }
 }
 
 // ── Test Helpers ────────────────────────────────────────────────────────────

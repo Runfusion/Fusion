@@ -1256,3 +1256,132 @@ describe("ChatManager diagnostics", () => {
     });
   });
 });
+
+describe("ChatManager.isGenerating", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetChatState();
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: "agent-1",
+      status: "active",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    mockChatStore.addMessage.mockReturnValue({
+      id: "msg-1",
+      sessionId: "chat-001",
+      role: "user",
+      content: "Hello",
+      createdAt: new Date().toISOString(),
+    });
+    mockSummarizeTitle.mockResolvedValue("Test Title");
+  });
+
+  it("returns false when no generation is active", () => {
+    const chatManager = createChatManager();
+    expect(chatManager.isGenerating("chat-001")).toBe(false);
+  });
+
+  it("returns true during an active generation", async () => {
+    let resolvePrompt: () => void;
+    const promptPromise = new Promise<void>((resolve) => {
+      resolvePrompt = resolve;
+    });
+
+    __setCreateFnAgent(async () => {
+      await promptPromise;
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Done" }] },
+        },
+      };
+    });
+
+    const chatManager = createChatManager();
+
+    // Start the generation (don't await it — it blocks until resolvePrompt is called)
+    const sendPromise = chatManager.sendMessage("chat-001", "Hello");
+
+    // The generation should be active now
+    expect(chatManager.isGenerating("chat-001")).toBe(true);
+    expect(chatManager.isGenerating("chat-999")).toBe(false); // different session
+
+    // Complete the generation
+    resolvePrompt!();
+    await sendPromise;
+
+    // Generation should be cleared
+    expect(chatManager.isGenerating("chat-001")).toBe(false);
+  });
+});
+
+describe("ChatManager.getGeneratingSessionIds", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetChatState();
+    mockSummarizeTitle.mockResolvedValue("Test Title");
+  });
+
+  it("returns empty array when no generations are active", () => {
+    const chatManager = createChatManager();
+    expect(chatManager.getGeneratingSessionIds()).toEqual([]);
+  });
+
+  it("returns all session IDs with active generations", async () => {
+    let resolvePrompt1: () => void;
+    let resolvePrompt2: () => void;
+    const promptPromise1 = new Promise<void>((resolve) => { resolvePrompt1 = resolve; });
+    const promptPromise2 = new Promise<void>((resolve) => { resolvePrompt2 = resolve; });
+
+    let callCount = 0;
+    __setCreateFnAgent(async () => {
+      callCount++;
+      const promise = callCount === 1 ? promptPromise1 : promptPromise2;
+      await promise;
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "Done" }] },
+        },
+      };
+    });
+
+    mockChatStore.getSession.mockImplementation((id: string) => ({
+      id,
+      agentId: "agent-1",
+      status: "active",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }));
+    mockChatStore.addMessage.mockReturnValue({
+      id: "msg-1",
+      sessionId: "chat-001",
+      role: "user",
+      content: "Hello",
+      createdAt: new Date().toISOString(),
+    });
+
+    const chatManager = createChatManager();
+
+    // Start two generations
+    const send1 = chatManager.sendMessage("chat-001", "Hello");
+    const send2 = chatManager.sendMessage("chat-002", "World");
+
+    // Both should show as generating
+    const ids = chatManager.getGeneratingSessionIds();
+    expect(ids).toContain("chat-001");
+    expect(ids).toContain("chat-002");
+    expect(ids).toHaveLength(2);
+
+    // Complete both
+    resolvePrompt1!();
+    resolvePrompt2!();
+    await Promise.all([send1, send2]);
+
+    expect(chatManager.getGeneratingSessionIds()).toEqual([]);
+  });
+});

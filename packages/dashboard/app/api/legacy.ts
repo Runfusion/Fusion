@@ -39,7 +39,6 @@ import type {
   AgentRating,
   AgentRatingSummary,
   AgentRatingInput,
-  ChatSession,
   ChatMessage,
   EnrichedChatSession,
   Roadmap,
@@ -7673,7 +7672,7 @@ export interface ChatSessionListResponse {
 }
 
 export interface ChatSessionResponse {
-  session: ChatSession;
+  session: EnrichedChatSession;
 }
 
 export interface ChatMessageListResponse {

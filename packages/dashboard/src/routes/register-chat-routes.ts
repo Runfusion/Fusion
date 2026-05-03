@@ -120,16 +120,21 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         const sessionIds = sessions.map((s) => s.id);
         const lastMessages = chatStore.getLastMessageForSessions(sessionIds);
 
+        // Batch-gather generating session IDs to avoid N+1 calls
+        const generatingIds = options?.chatManager?.getGeneratingSessionIds?.() ?? [];
+        const generatingSet = new Set(generatingIds);
+
         for (const session of sessions) {
           const lastMessage = lastMessages.get(session.id);
+          const enriched: EnrichedChatSession = session;
           if (lastMessage) {
             // Truncate content to 100 chars for preview
             const content = lastMessage.content || "";
-            const enriched: EnrichedChatSession = session;
             enriched.lastMessagePreview =
               content.length > 100 ? content.slice(0, 100) + "…" : content;
             enriched.lastMessageAt = lastMessage.createdAt;
           }
+          enriched.isGenerating = generatingSet.has(session.id);
         }
       }
 
@@ -239,7 +244,10 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         throw notFound(`Chat session ${sessionId} not found`);
       }
 
-      res.json({ session });
+      const enriched: EnrichedChatSession = session;
+      enriched.isGenerating = options?.chatManager?.isGenerating?.(sessionId) ?? false;
+
+      res.json({ session: enriched });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

@@ -1410,4 +1410,95 @@ describe("useChat", () => {
       });
     });
   });
+
+  describe("FN-3336: streaming state recovery on reload", () => {
+    it("sets isStreaming=true when selecting a session with isGenerating=true", async () => {
+      const session = { ...makeSession({ id: "session-001", agentId: "agent-001" }), isGenerating: true };
+      mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+
+      act(() => {
+        result.current.selectSession("session-001");
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+        expect(result.current.streamingText).toBe("");
+      });
+    });
+
+    it("does not set isStreaming when isGenerating is false", async () => {
+      const session = { ...makeSession({ id: "session-001", agentId: "agent-001" }), isGenerating: false };
+      mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+
+      act(() => {
+        result.current.selectSession("session-001");
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(false);
+      });
+    });
+
+    it("clears recovery streaming state when SSE delivers assistant message", async () => {
+      let subscribeHandler: Record<string, (event: MessageEvent) => void> = {};
+      mockSubscribeSse.mockImplementation((_url, options) => {
+        if (options?.events) {
+          subscribeHandler = options.events as typeof subscribeHandler;
+        }
+        return () => {};
+      });
+
+      const session = { ...makeSession({ id: "session-001", agentId: "agent-001" }), isGenerating: true };
+      mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+
+      act(() => {
+        result.current.selectSession("session-001");
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+      });
+
+      // Simulate SSE delivering the completed assistant message
+      const assistantMessage = makeMessage({
+        id: "msg-assistant-001",
+        sessionId: "session-001",
+        role: "assistant",
+        content: "Generated response",
+      });
+
+      act(() => {
+        subscribeHandler["chat:message:added"](
+          new MessageEvent("chat:message:added", { data: JSON.stringify(assistantMessage) }),
+        );
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(false);
+        expect(result.current.streamingText).toBe("");
+        expect(result.current.messages.some((m) => m.id === "msg-assistant-001")).toBe(true);
+      });
+    });
+  });
 });

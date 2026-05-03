@@ -3,6 +3,7 @@ import type { ChatMessage, ChatSession } from "@fusion/core";
 import {
   fetchResumeChatSession,
   fetchChatSessions,
+  fetchChatSession,
   createChatSession,
   fetchChatMessages,
   streamChatResponse,
@@ -173,6 +174,8 @@ export function useQuickChat(
   const cancelledByUserRef = useRef(false);
   const cancelStreamingFlushesRef = useRef<(() => void) | null>(null);
   const pendingMessageRef = useRef("");
+  const isStreamingRef = useRef(isStreaming);
+  isStreamingRef.current = isStreaming;
   const sendCompletionRef = useRef<{ resolve: () => void; reject: (error?: unknown) => void } | null>(null);
 
   // Track the current selected chat target for session management
@@ -234,6 +237,14 @@ export function useQuickChat(
         if (existingSession) {
           setActiveSession(existingSession);
           currentSessionKeyRef.current = sessionKey;
+
+          // Recover streaming state if server is still generating for this session.
+          // After a reload/HMR, the server keeps generating but the UI loses
+          // all streaming state. Show the "Connecting…" indicator immediately.
+          if (existingSession.isGenerating) {
+            setIsStreaming(true);
+            setStreamingText("");
+          }
         } else {
           const newSession = await createSessionForTarget(target);
           setActiveSession(newSession);
@@ -272,6 +283,41 @@ export function useQuickChat(
       setMessages([]);
     }
   }, [activeSession, loadMessages]);
+
+  // Poll for generation completion during recovery mode.
+  // Recovery mode: isStreaming=true but streamRef.current is null (no local stream).
+  // This happens after a reload/HMR when the server is still generating.
+  // Poll every 3s until the server reports isGenerating=false, then reload messages
+  // and clear streaming state.
+  useEffect(() => {
+    if (!isStreaming || streamRef.current || !activeSession) return;
+
+    const interval = setInterval(async () => {
+      // Re-check conditions inside the callback (state may have changed)
+      if (!isStreamingRef.current || streamRef.current || !activeSession) {
+        clearInterval(interval);
+        return;
+      }
+
+      try {
+        const data = await fetchChatSession(activeSession.id, projectId);
+        if (!data.session.isGenerating) {
+          clearInterval(interval);
+          // Reload messages to pick up the completed assistant message
+          const msgData = await fetchChatMessages(activeSession.id, { limit: 50 }, projectId);
+          setMessages(msgData.messages.map(mapChatMessageToInfo));
+          setStreamingText("");
+          setStreamingThinking("");
+          setStreamingToolCalls([]);
+          setIsStreaming(false);
+        }
+      } catch {
+        // Silently fail - will retry on next interval
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [isStreaming, activeSession, projectId]);
 
   // Reload messages from server (for same-session revisit)
   const reloadMessages = useCallback(async () => {

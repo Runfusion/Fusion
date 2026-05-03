@@ -27,6 +27,7 @@ export interface ChatSessionInfo {
   updatedAt: string;
   lastMessagePreview?: string;
   lastMessageAt?: string;
+  isGenerating?: boolean;
 }
 
 export interface ToolCallInfo {
@@ -319,6 +320,15 @@ export function useChat(projectId?: string): UseChatReturn {
         loadMessages(id);
       } else {
         setMessages([]);
+      }
+
+      // Recover streaming state if the server reports an active generation.
+      // After a reload/HMR, the server keeps generating but the UI loses
+      // all streaming state. Showing "Connecting…" immediately tells the
+      // user the AI is still working.
+      if (session?.isGenerating) {
+        setIsStreaming(true);
+        setStreamingText("");
       }
 
       // Persist active session to localStorage
@@ -682,6 +692,26 @@ export function useChat(projectId?: string): UseChatReturn {
       // Skip if this message was already added via streaming completion
       // (SSE event may arrive before streaming state clears)
       if (streamingMessageIdsRef.current.has(message.id)) {
+        return;
+      }
+
+      // Recovery mode: isStreaming is true but there's no active stream (streamRef is null).
+      // This happens after a page reload/HMR when the server is still generating.
+      // When the assistant message arrives via SSE, add it and clear the recovery state.
+      if (
+        activeSessionRef.current?.id === message.sessionId &&
+        isStreamingRef.current &&
+        !streamRef.current &&
+        message.role === "assistant"
+      ) {
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === message.id)) return prev;
+          return [...prev, message];
+        });
+        setStreamingText("");
+        setStreamingThinking("");
+        setStreamingToolCalls([]);
+        setIsStreaming(false);
         return;
       }
 

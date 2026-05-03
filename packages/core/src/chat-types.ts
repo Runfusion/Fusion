@@ -63,6 +63,8 @@ export type EnrichedChatSession = ChatSession & {
   lastMessagePreview?: string;
   /** Timestamp of the last message in the session */
   lastMessageAt?: string;
+  /** Whether a generation is currently in progress for this session */
+  isGenerating?: boolean;
 };
 
 /** A parsed @ mention of an agent in a chat message */

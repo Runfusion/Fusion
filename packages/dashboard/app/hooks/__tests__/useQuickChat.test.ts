@@ -7,6 +7,7 @@ import { FN_AGENT_ID, useQuickChat } from "../useQuickChat";
 vi.mock("../../api", () => ({
   fetchResumeChatSession: vi.fn(),
   fetchChatSessions: vi.fn(),
+  fetchChatSession: vi.fn(),
   createChatSession: vi.fn(),
   fetchChatMessages: vi.fn(),
   streamChatResponse: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock("../../api", () => ({
 
 const mockFetchResumeChatSession = vi.mocked(apiModule.fetchResumeChatSession);
 const mockFetchChatSessions = vi.mocked(apiModule.fetchChatSessions);
+const mockFetchChatSession = vi.mocked(apiModule.fetchChatSession);
 const mockCreateChatSession = vi.mocked(apiModule.createChatSession);
 const mockFetchChatMessages = vi.mocked(apiModule.fetchChatMessages);
 const mockStreamChatResponse = vi.mocked(apiModule.streamChatResponse);
@@ -43,6 +45,9 @@ describe("useQuickChat", () => {
       session: makeSession({ id: "session-001", agentId: "agent-001" }),
     });
     mockFetchChatMessages.mockResolvedValue({ messages: [] });
+    mockFetchChatSession.mockResolvedValue({
+      session: { ...makeSession({ id: "session-001", agentId: "agent-001" }), isGenerating: false },
+    });
     mockStreamChatResponse.mockReturnValue({ close: vi.fn(), isConnected: () => true });
     mockCancelChatResponse.mockResolvedValue({ success: true });
   });
@@ -701,6 +706,82 @@ describe("useQuickChat", () => {
 
     await waitFor(() => {
       expect(addToast).toHaveBeenCalledWith("Failed to get response", "error");
+    });
+  });
+
+  describe("FN-3336: streaming state recovery on reload", () => {
+    it("sets isStreaming=true when initializing a session with isGenerating=true", async () => {
+      const session = { ...makeSession({ id: "session-001", agentId: "agent-001" }), isGenerating: true };
+      mockFetchResumeChatSession.mockResolvedValue({ session });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+      const { result } = renderHook(() => useQuickChat("proj-123"));
+
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+        expect(result.current.streamingText).toBe("");
+      });
+    });
+
+    it("does not set isStreaming when isGenerating is false", async () => {
+      const session = { ...makeSession({ id: "session-001", agentId: "agent-001" }), isGenerating: false };
+      mockFetchResumeChatSession.mockResolvedValue({ session });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+      const { result } = renderHook(() => useQuickChat("proj-123"));
+
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(false);
+      });
+    });
+
+    it("clears recovery streaming state when polling detects generation complete", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      const session = { ...makeSession({ id: "session-001", agentId: "agent-001" }), isGenerating: true };
+      mockFetchResumeChatSession.mockResolvedValue({ session });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+      // After first poll, server reports generation is done and has a new assistant message
+      mockFetchChatSession.mockResolvedValue({
+        session: { ...makeSession({ id: "session-001", agentId: "agent-001" }), isGenerating: false },
+      });
+      mockFetchChatMessages.mockResolvedValue({
+        messages: [
+          { id: "msg-1", sessionId: "session-001", role: "assistant", content: "Done", thinkingOutput: null, metadata: null, createdAt: new Date().toISOString() },
+        ],
+      });
+
+      const { result } = renderHook(() => useQuickChat("proj-123"));
+
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+      });
+
+      // Advance time to trigger the polling interval (3s)
+      await act(async () => {
+        vi.advanceTimersByTime(3500);
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(false);
+        expect(result.current.streamingText).toBe("");
+        expect(result.current.messages.some((m) => m.id === "msg-1")).toBe(true);
+      });
+
+      vi.useRealTimers();
     });
   });
 });
