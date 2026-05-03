@@ -657,7 +657,7 @@ describe("HeartbeatMonitor", () => {
       // Wait for async checkMissedHeartbeats
       await vi.advanceTimersByTimeAsync(100);
 
-      expect(onMissed).toHaveBeenCalledWith("agent-001");
+      expect(onMissed).toHaveBeenCalledWith("agent-001", expect.any(String));
 
       customMonitor.stop();
       vi.useRealTimers();
@@ -711,7 +711,7 @@ describe("HeartbeatMonitor", () => {
 
       expect(session.dispose).toHaveBeenCalled();
       expect(store.updateAgentState).toHaveBeenCalledWith("agent-001", "terminated");
-      expect(onTerminated).toHaveBeenCalledWith("agent-001");
+      expect(onTerminated).toHaveBeenCalledWith("agent-001", expect.any(String));
 
       customMonitor.stop();
       vi.useRealTimers();
@@ -769,7 +769,7 @@ describe("HeartbeatMonitor", () => {
       const warnMessages = warnSpy.mock.calls.map(([message]) => String(message));
       expect(warnMessages.some((message) => message.includes("Error disposing session for agent-001") && message.includes("dispose exploded"))).toBe(true);
       expect(updateAgentState).toHaveBeenCalledWith("agent-001", "terminated");
-      expect(onTerminated).toHaveBeenCalledWith("agent-001");
+      expect(onTerminated).toHaveBeenCalledWith("agent-001", expect.any(String));
       expect(customMonitor.getTrackedAgents()).toHaveLength(0);
 
       customMonitor.stop();
@@ -800,7 +800,7 @@ describe("HeartbeatMonitor", () => {
 
       const warnMessages = warnSpy.mock.calls.map(([message]) => String(message));
       expect(warnMessages.some((message) => message.includes("Error terminating agent agent-001") && message.includes("db connection lost"))).toBe(true);
-      expect(onTerminated).toHaveBeenCalledWith("agent-001");
+      expect(onTerminated).toHaveBeenCalledWith("agent-001", expect.any(String));
       expect(customMonitor.getTrackedAgents()).toHaveLength(0);
 
       customMonitor.stop();
@@ -834,10 +834,11 @@ describe("HeartbeatMonitor", () => {
       await vi.advanceTimersByTimeAsync(100);
 
       const warnMessages = warnSpy.mock.calls.map(([message]) => String(message));
-      expect(warnMessages).toHaveLength(2);
+      expect(warnMessages).toHaveLength(3);
+      expect(warnMessages.some((message) => message.includes("Terminating unresponsive agent agent-001"))).toBe(true);
       expect(warnMessages.some((message) => message.includes("Error disposing session for agent-001") && message.includes("dispose exploded"))).toBe(true);
       expect(warnMessages.some((message) => message.includes("Error terminating agent agent-001") && message.includes("db connection lost"))).toBe(true);
-      expect(onTerminated).toHaveBeenCalledWith("agent-001");
+      expect(onTerminated).toHaveBeenCalledWith("agent-001", expect.any(String));
       expect(customMonitor.getTrackedAgents()).toHaveLength(0);
 
       customMonitor.stop();
@@ -1137,7 +1138,7 @@ describe("HeartbeatMonitor", () => {
         vi.advanceTimersByTime(5000);
         await vi.advanceTimersByTimeAsync(100);
 
-        expect(onMissed).toHaveBeenCalledWith("agent-001");
+        expect(onMissed).toHaveBeenCalledWith("agent-001", expect.any(String));
 
         monitor.stop();
         vi.useRealTimers();
@@ -1167,7 +1168,7 @@ describe("HeartbeatMonitor", () => {
         await vi.advanceTimersByTimeAsync(100);
 
         expect(session.dispose).toHaveBeenCalled();
-        expect(onTerminated).toHaveBeenCalledWith("agent-001");
+        expect(onTerminated).toHaveBeenCalledWith("agent-001", expect.any(String));
 
         monitor.stop();
         vi.useRealTimers();

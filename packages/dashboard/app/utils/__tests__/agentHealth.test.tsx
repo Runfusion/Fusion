@@ -522,3 +522,60 @@ describe("getAgentHealthColorVar", () => {
     expect(getAgentHealthColorVar(agent)).toBe(status.color.replace(/var\((--[^)]+)\)/, "$1"));
   });
 });
+
+describe("AgentHealthStatus reason field", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("includes reason on Unresponsive status", () => {
+    const agent = makeAgent({
+      state: "active",
+      lastHeartbeatAt: new Date(FIXED_NOW - 25 * 60 * 1000).toISOString(), // 25 minutes ago
+      runtimeConfig: { heartbeatIntervalMs: 6 * 60 * 1000 }, // 6 minute interval
+    });
+    const status = getAgentHealthStatus(agent);
+    expect(status.label).toBe("Unresponsive");
+    expect(status.reason).toBeDefined();
+    expect(status.reason).toContain("No heartbeat for");
+    expect(status.reason).toContain("threshold:");
+  });
+
+  it("formats reason with elapsed time and threshold", () => {
+    const agent = makeAgent({
+      state: "active",
+      lastHeartbeatAt: new Date(FIXED_NOW - 90 * 60 * 1000).toISOString(), // 1h 30m ago
+      runtimeConfig: { heartbeatIntervalMs: 15 * 60 * 1000 }, // 15m interval → threshold = 60m
+    });
+    const status = getAgentHealthStatus(agent);
+    expect(status.reason).toBe("No heartbeat for 1h 30m (threshold: 1h)");
+  });
+
+  it.each([
+    { name: "terminated", agent: makeAgent({ state: "terminated" }) },
+    { name: "error", agent: makeAgent({ state: "error" }) },
+    { name: "paused", agent: makeAgent({ state: "paused" }) },
+    { name: "running", agent: makeAgent({ state: "running" }) },
+    { name: "idle", agent: makeAgent({ state: "idle" }) },
+    {
+      name: "healthy",
+      agent: makeAgent({ state: "active", lastHeartbeatAt: new Date(FIXED_NOW - 30_000).toISOString() }),
+    },
+    {
+      name: "starting",
+      agent: makeAgent({ state: "active" }),
+    },
+    {
+      name: "heartbeat disabled",
+      agent: makeAgent({ state: "active", runtimeConfig: { enabled: false } }),
+    },
+  ])("has no reason on $name status", ({ agent }) => {
+    const status = getAgentHealthStatus(agent);
+    expect(status.reason).toBeUndefined();
+  });
+});

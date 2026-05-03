@@ -147,7 +147,7 @@ function OrgChartNode({
           >
             {agent.state}
           </span>
-          <span className="org-chart-node__health" style={{ color: health.color }} title={health.label}>
+          <span className="org-chart-node__health" style={{ color: health.color }} title={health.reason ?? health.label}>
             {health.icon}
             {!health.stateDerived && <span className="text-secondary">{health.label}</span>}
           </span>
@@ -960,7 +960,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                       </div>
                       <div className="agent-board-name">{agent.name}</div>
                       <div className="agent-board-id">{agent.id}</div>
-                      <div className="agent-board-health" style={{ color: health.color }} title={health.label}>
+                      <div className="agent-board-health" style={{ color: health.color }} title={health.reason ?? health.label}>
                         {health.icon}{!health.stateDerived && ` ${health.label}`}
                       </div>
                     </div>
@@ -1047,7 +1047,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                       >
                         {agent.state}
                       </span>
-                      <span className="badge" style={{ color: health.color }} title={health.label}>
+                      <span className="badge" style={{ color: health.color }} title={health.reason ?? health.label}>
                         {health.icon}{!health.stateDerived && ` ${health.label}`}
                       </span>
                       <span className="badge text-secondary">

@@ -511,7 +511,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
                 >
                   {agent.state}
                 </span>
-                <span className="badge" style={{ color: health.color }} title={health.label}>
+                <span className="badge" style={{ color: health.color }} title={health.reason ?? health.label}>
                   {health.icon}
                   {!health.stateDerived && health.label}
                 </span>
@@ -862,7 +862,7 @@ function DashboardTab({
           <span className="inline-badge" style={{ background: stateStyle.bg, color: stateStyle.text }}>{agent.state}</span>
         </div>
         <div className="dashboard-summary-hero__meta">
-          <span className="dashboard-summary-hero__health" title={health.label}>{health.icon} {health.label}</span>
+          <span className="dashboard-summary-hero__health" title={health.reason ?? health.label}>{health.icon} {health.label}</span>
           <span>Role: {agent.role}</span>
           <span>
             <span className="dashboard-summary-label">{runtimeHint ? "Runtime" : "Model"}</span>
@@ -893,7 +893,7 @@ function DashboardTab({
           </div>
           <div>
             <p className="dashboard-summary-label">Status</p>
-            <p className="dashboard-summary-health-row"><span className={cn("status-dot", agent.state === "running" && "status-dot--running")} />{health.label}</p>
+            <p className="dashboard-summary-health-row"><span className={cn("status-dot", agent.state === "running" && "status-dot--running")} />{health.label}{health.reason && <span className="text-secondary" style={{ marginLeft: 'var(--space-xs)', fontSize: '12px' }} title={health.reason}>({health.reason})</span>}</p>
           </div>
         </div>
       </section>

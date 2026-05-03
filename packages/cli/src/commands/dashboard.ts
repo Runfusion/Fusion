@@ -1695,11 +1695,11 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         agentStore,
         taskStore: store,
         rootDir: cwd,
-        onMissed: (agentId) => {
-          logSink.log(`Agent ${agentId} missed heartbeat`, "engine");
+        onMissed: (agentId, reason) => {
+          logSink.warn(`Agent ${agentId} missed heartbeat: ${reason}`, "engine");
         },
-        onTerminated: (agentId) => {
-          logSink.log(`Agent ${agentId} terminated (unresponsive)`, "engine");
+        onTerminated: (agentId, reason) => {
+          logSink.warn(`Agent ${agentId} terminated (unresponsive): ${reason}`, "engine");
         },
       });
       heartbeatMonitorImpl.start();

@@ -478,11 +478,11 @@ export class InProcessRuntime
           rootDir: this.config.workingDirectory,
           messageStore: this.messageStore,
           pluginRunner: this.pluginRunner,
-          onMissed: (agentId) => {
-            runtimeLog.warn(`Agent ${agentId} missed heartbeat`);
+          onMissed: (agentId, reason) => {
+            runtimeLog.warn(`Agent ${agentId} missed heartbeat: ${reason}`);
           },
-          onTerminated: (agentId) => {
-            runtimeLog.warn(`Agent ${agentId} terminated (unresponsive)`);
+          onTerminated: (agentId, reason) => {
+            runtimeLog.warn(`Agent ${agentId} terminated (unresponsive): ${reason}`);
           },
         });
         this.heartbeatMonitor.start();

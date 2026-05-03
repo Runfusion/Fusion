@@ -31,6 +31,8 @@ export interface AgentHealthStatus {
   color: string;
   /** True when label only mirrors agent.state and adds no extra context */
   stateDerived: boolean;
+  /** Human-readable reason for the current status (e.g. "No heartbeat for 45m (threshold: 20m)") */
+  reason?: string;
 }
 
 type AgentHealthInput = Pick<
@@ -59,6 +61,17 @@ type AgentHealthInput = Pick<
 function getStalenessThresholdMs(runtimeConfig?: Record<string, unknown>): number {
   const intervalMs = resolveHeartbeatIntervalMs(runtimeConfig?.heartbeatIntervalMs);
   return Math.max(intervalMs * HEARTBEAT_GRACE_MULTIPLIER, MIN_HEARTBEAT_STALENESS_MS);
+}
+
+/** Format milliseconds into a human-readable duration string (e.g. "5m", "1h 20m", "2h"). */
+function formatDuration(ms: number): string {
+  const totalMinutes = Math.floor(ms / 60_000);
+  if (totalMinutes < 1) return "<1m";
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours > 0 && minutes > 0) return `${hours}h ${minutes}m`;
+  if (hours > 0) return `${hours}h`;
+  return `${minutes}m`;
 }
 
 function isTaskWorkerAgent(agent: AgentHealthInput): boolean {
@@ -165,11 +178,13 @@ export function getAgentHealthStatus(agent: AgentHealthInput): AgentHealthStatus
   const stalenessThresholdMs = getStalenessThresholdMs(runtimeConfig);
 
   if (elapsed > stalenessThresholdMs) {
+    const reason = `No heartbeat for ${formatDuration(elapsed)} (threshold: ${formatDuration(stalenessThresholdMs)})`;
     return {
       label: "Unresponsive",
       icon: <Activity size={14} />,
       color: "var(--state-error-text)",
       stateDerived: false,
+      reason,
     };
   }
 

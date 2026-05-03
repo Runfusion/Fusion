@@ -349,7 +349,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                       >
                         {agent.state}
                       </span>
-                      <span className="agent-board-health" data-health={healthTone} title={health.label}>
+                      <span className="agent-board-health" data-health={healthTone} title={health.reason ?? health.label}>
                         {health.icon}
                       </span>
                     </div>
@@ -523,7 +523,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                         >
                           {agent.state}
                         </span>
-                        <span className="badge agent-list-health-badge" data-health={healthTone} title={health.label}>
+                        <span className="badge agent-list-health-badge" data-health={healthTone} title={health.reason ?? health.label}>
                           {health.icon}{!health.stateDerived && ` ${health.label}`}
                         </span>
                         <span className="badge text-secondary">
