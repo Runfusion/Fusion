@@ -206,6 +206,22 @@ For questions:
 For completion:
 {\n  "type": "complete",\n  "data": {\n    "title": "Task title",\n    "description": "Detailed description",\n    "suggestedSize": "S|M|L",\n    "suggestedDependencies": [],\n    "keyDeliverables": ["Item 1", "Item 2"]\n  }\n}`;
 
+/** Placeholder title for draft sessions before the user starts planning. */
+export const DRAFT_PLACEHOLDER_TITLE = "New planning session";
+
+/**
+ * Shape of the JSON blob persisted in `ai_sessions.inputPayload` for draft
+ * planning sessions. Carries the in-progress plan text plus an optional
+ * model override so reopening a draft restores the model selection the user
+ * picked at create time, and so summarizeDraftTitle calls hit that same
+ * model rather than silently falling back to project defaults.
+ */
+export interface DraftInputPayload {
+  initialPlan?: string;
+  modelProvider?: string;
+  modelId?: string;
+}
+
 /** Session TTL in milliseconds (7 days) */
 export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -272,6 +288,9 @@ interface Session {
   initialPlan: string;
   title: string;
   projectId?: string;
+  /** Model override the user picked at draft-create time. Persisted in inputPayload so reopen restores it. */
+  draftModelProvider?: string;
+  draftModelId?: string;
   ntfyConfig?: PlanningNtfyConfig;
   /** Last planning question notified via ntfy, keyed as `${sessionId}:${questionId}` for dedupe across reconnect/replay. */
   lastNotifiedQuestionKey?: string;
@@ -381,7 +400,12 @@ function persistSession(session: Session, status: "generating" | "awaiting_input
     type: "planning",
     status,
     title: session.title || session.initialPlan.slice(0, 120),
-    inputPayload: JSON.stringify({ ip: session.ip, initialPlan: session.initialPlan }),
+    inputPayload: JSON.stringify({
+      ip: session.ip,
+      initialPlan: session.initialPlan,
+      ...(session.draftModelProvider ? { modelProvider: session.draftModelProvider } : {}),
+      ...(session.draftModelId ? { modelId: session.draftModelId } : {}),
+    }),
     conversationHistory: JSON.stringify(session.history),
     currentQuestion: session.currentQuestion ? JSON.stringify(session.currentQuestion) : null,
     result: session.summary ? JSON.stringify(session.summary) : null,
@@ -409,7 +433,7 @@ function unpersistSession(sessionId: string): void {
 }
 
 function buildSessionFromRow(row: AiSessionRow): Session {
-  const payload = safeParseJson<{ ip?: string; initialPlan?: string }>(
+  const payload = safeParseJson<DraftInputPayload & { ip?: string }>(
     row.inputPayload,
     {},
     { throwOnError: true, fieldName: "inputPayload" },
@@ -435,6 +459,8 @@ function buildSessionFromRow(row: AiSessionRow): Session {
     initialPlan: payload.initialPlan ?? row.title,
     title: row.title,
     projectId: row.projectId ?? undefined,
+    draftModelProvider: payload.modelProvider,
+    draftModelId: payload.modelId,
     history: safeParseJson<PlanningHistoryEntry[]>(
       row.conversationHistory,
       [],
@@ -876,7 +902,7 @@ async function getFirstQuestionFromAgent(
 export async function createDraftSession(
   ip: string,
   initialPlan: string,
-  rootDir: string,
+  _rootDir: string,
   modelProvider?: string,
   modelId?: string,
   _promptOverrides?: PromptOverrideMap,
@@ -891,7 +917,12 @@ export async function createDraftSession(
   }
 
   const sessionId = randomUUID();
-  const title = initialPlan.slice(0, 120);
+  const title = DRAFT_PLACEHOLDER_TITLE;
+
+  // Pair modelProvider+modelId — the runtime treats half-set overrides as
+  // invalid (resolveTaskPlanningModel etc.), so persist nothing rather than
+  // a half-configured override that would mislead reopen.
+  const hasModelOverride = Boolean(modelProvider && modelId);
 
   const session: Session = {
     id: sessionId,
@@ -899,6 +930,8 @@ export async function createDraftSession(
     initialPlan,
     title,
     projectId: options?.projectId,
+    draftModelProvider: hasModelOverride ? modelProvider : undefined,
+    draftModelId: hasModelOverride ? modelId : undefined,
     history: [],
     thinkingOutput: "",
     lastGeneratedThinking: "",
@@ -909,21 +942,75 @@ export async function createDraftSession(
   sessions.set(sessionId, session);
   persistSession(session, "draft");
 
-  void (async () => {
-    try {
-      const generated = await summarizeTitle(initialPlan.trim(), rootDir, modelProvider, modelId);
-      const finalTitle = generated ?? initialPlan.trim().slice(0, 60).trim();
-      if (!finalTitle) {
-        return;
-      }
-      session.title = finalTitle;
-      _aiSessionStore?.updateTitle(sessionId, finalTitle);
-    } catch {
-      // Keep fallback title
-    }
-  })();
-
   return { sessionId, title };
+}
+
+/**
+ * Replace a draft session's placeholder sidebar title with an AI-summarized
+ * one derived from the latest persisted initialPlan. Bounded by status, not
+ * by title content, so a user who blurs once then keeps editing still gets
+ * the title refreshed on subsequent blurs/close (otherwise the title would
+ * lock to the first summary and silently diverge from what they typed).
+ *  - Only runs against rows still in `draft` status — once a session has been
+ *    started, its title is owned by the start path / final summary and must
+ *    not be overwritten by a stale draft summarize call that arrives late.
+ *  - Reads the current initialPlan and any persisted model override from
+ *    SQLite so the summary reflects whatever the latest debounced PATCH
+ *    /draft persisted, and uses the model the draft was created under.
+ *  - Re-checks status (not title) after the model call to detect a
+ *    concurrent start and avoid clobbering the generating/awaiting_input
+ *    title with a stale draft summary.
+ *
+ * Returns the resolved title (existing or freshly generated) or null if the
+ * session was not eligible for summarization.
+ */
+export async function summarizeDraftTitle(
+  sessionId: string,
+  rootDir: string,
+  modelProvider?: string,
+  modelId?: string,
+): Promise<string | null> {
+  if (!_aiSessionStore) return null;
+
+  const row = _aiSessionStore.get(sessionId);
+  if (!row || row.type !== "planning" || row.status !== "draft") {
+    return null;
+  }
+
+  const payload = safeParseJson<DraftInputPayload>(row.inputPayload, {});
+  const trimmed = (payload.initialPlan ?? "").trim();
+  if (!trimmed) return null;
+
+  // Prefer the model the draft was created under; fall back to the caller-
+  // supplied override (e.g. project/global planning settings).
+  const effectiveProvider = payload.modelProvider ?? modelProvider;
+  const effectiveModelId = payload.modelId ?? modelId;
+
+  let finalTitle = trimmed.slice(0, 60).trim();
+  try {
+    const generated = await summarizeTitle(trimmed, rootDir, effectiveProvider, effectiveModelId);
+    finalTitle = generated?.trim() || finalTitle;
+  } catch (error) {
+    diagnostics.errorFromException(
+      "summarizeDraftTitle: model call failed, falling back to truncated text",
+      error,
+      { sessionId, operation: "summarize-draft-title" },
+    );
+  }
+
+  if (!finalTitle) return null;
+
+  // Re-check status (not title) so a concurrent Start Planning or a later
+  // edit-then-blur cycle doesn't overwrite a real generating/complete title.
+  const latest = _aiSessionStore.get(sessionId);
+  if (!latest || latest.status !== "draft") {
+    return latest?.title ?? null;
+  }
+
+  _aiSessionStore.updateTitle(sessionId, finalTitle);
+  const session = sessions.get(sessionId);
+  if (session) session.title = finalTitle;
+  return finalTitle;
 }
 
 export async function startExistingSession(
@@ -933,9 +1020,75 @@ export async function startExistingSession(
   modelId?: string,
   promptOverrides?: PromptOverrideMap,
 ): Promise<void> {
-  const session = sessions.get(sessionId);
+  let session = sessions.get(sessionId);
+
+  // Draft sessions aren't included in rehydrateFromStore (which only loads
+  // recoverable in-flight sessions), and a backend restart drops the in-memory
+  // map entirely. Rebuild lazily from SQLite so persisted drafts can still be
+  // started after a restart, and so updateDraft-only state survives.
+  if (!session && _aiSessionStore) {
+    const row = _aiSessionStore.get(sessionId);
+    if (row && row.type === "planning") {
+      try {
+        session = buildSessionFromRow(row);
+        sessions.set(sessionId, session);
+      } catch (error) {
+        diagnostics.errorFromException(
+          "Failed to rebuild planning session from store",
+          error,
+          { sessionId, operation: "start-existing-rebuild" },
+        );
+      }
+    }
+  }
+
   if (!session) {
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
+  }
+
+  // Drafts are sync'd via aiSessionStore.updateDraft, which only writes
+  // SQLite. Pull the latest initialPlan + persisted model override from the
+  // row so the agent receives everything the user typed, and so the title
+  // summary uses the model the draft was originally created under (rather
+  // than silently switching to whatever the project default happens to be).
+  let persistedProvider: string | undefined;
+  let persistedModelId: string | undefined;
+  let cameFromDraft = false;
+  if (_aiSessionStore) {
+    const row = _aiSessionStore.get(sessionId);
+    if (row) {
+      cameFromDraft = row.status === "draft";
+      const payload = safeParseJson<DraftInputPayload>(row.inputPayload, {});
+      if (payload.initialPlan) {
+        session.initialPlan = payload.initialPlan;
+      }
+      persistedProvider = payload.modelProvider;
+      persistedModelId = payload.modelId;
+    }
+  }
+
+  // Always re-summarize when transitioning out of draft so the title reflects
+  // the FINAL text the user typed, even if a previous blur-fired summarize
+  // already replaced the placeholder against an older snapshot.
+  if (cameFromDraft) {
+    const trimmed = session.initialPlan.trim();
+    const fallback = trimmed.slice(0, 60).trim();
+    if (session.title === DRAFT_PLACEHOLDER_TITLE) {
+      session.title = fallback || DRAFT_PLACEHOLDER_TITLE;
+    }
+    const summarizeProvider = modelProvider ?? persistedProvider;
+    const summarizeModelId = modelId ?? persistedModelId;
+    void (async () => {
+      try {
+        const generated = await summarizeTitle(trimmed, rootDir, summarizeProvider, summarizeModelId);
+        const finalTitle = generated?.trim() || fallback;
+        if (!finalTitle) return;
+        session.title = finalTitle;
+        _aiSessionStore?.updateTitle(sessionId, finalTitle);
+      } catch {
+        // Keep fallback title
+      }
+    })();
   }
 
   persistSession(session, "generating");

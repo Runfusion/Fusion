@@ -3638,20 +3638,22 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       throw badRequest("Only planning sessions support draft updates");
     }
 
-    const rawTitle = typeof req.body?.title === "string" ? req.body.title : "";
     const rawInitialPlan = typeof req.body?.initialPlan === "string" ? req.body.initialPlan : "";
-    const title = rawTitle.trim();
     const initialPlan = rawInitialPlan.trim();
-
-    if (!title) {
-      throw badRequest("title is required");
-    }
 
     if (!initialPlan) {
       throw badRequest("initialPlan is required");
     }
 
-    const updated = aiSessionStore.updateDraft(id, { title, initialPlan });
+    // Optional model override — pair-validated. Either both fields are
+    // strings (kept) or any other shape is dropped silently so a partial
+    // payload doesn't end up half-set in the persisted draft.
+    const rawProvider = typeof req.body?.modelProvider === "string" ? req.body.modelProvider.trim() : "";
+    const rawModelId = typeof req.body?.modelId === "string" ? req.body.modelId.trim() : "";
+    const modelProvider = rawProvider && rawModelId ? rawProvider : undefined;
+    const modelId = rawProvider && rawModelId ? rawModelId : undefined;
+
+    const updated = aiSessionStore.updateDraft(id, { initialPlan, modelProvider, modelId });
     if (!updated) {
       throw notFound("Session not found");
     }

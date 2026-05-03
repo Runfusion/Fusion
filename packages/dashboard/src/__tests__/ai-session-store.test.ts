@@ -469,23 +469,23 @@ describe("AiSessionStore", () => {
     expect(store.updateStatus("S-missing", "error", "Nope")).toBe(false);
   });
 
-  it("updateDraft updates planning title + input payload and emits updated", () => {
+  it("updateDraft persists initialPlan, leaves title untouched, and emits updated", () => {
     seedSession({ id: "S-draft", status: "awaiting_input" });
+    const originalTitle = store.get("S-draft")?.title;
 
     const onUpdated = vi.fn();
     store.on("ai_session:updated", onUpdated);
 
     const updated = store.updateDraft("S-draft", {
-      title: "  Refined plan title  ",
       initialPlan: "  Refined draft body  ",
     });
 
     expect(updated).toBe(true);
     const session = store.get("S-draft");
-    expect(session?.title).toBe("Refined plan title");
+    expect(session?.title).toBe(originalTitle);
     expect(session?.inputPayload).toBe(JSON.stringify({ initialPlan: "Refined draft body" }));
     expect(onUpdated).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "S-draft", title: "Refined plan title" }),
+      expect.objectContaining({ id: "S-draft", title: originalTitle }),
     );
   });
 
@@ -493,12 +493,34 @@ describe("AiSessionStore", () => {
     seedSession({ id: "S-subtask", status: "awaiting_input" });
     db.prepare("UPDATE ai_sessions SET type = 'subtask' WHERE id = ?").run("S-subtask");
 
-    expect(
-      store.updateDraft("S-subtask", { title: "Nope", initialPlan: "Nope" }),
-    ).toBe(false);
-    expect(
-      store.updateDraft("S-missing", { title: "Missing", initialPlan: "Missing" }),
-    ).toBe(false);
+    expect(store.updateDraft("S-subtask", { initialPlan: "Nope" })).toBe(false);
+    expect(store.updateDraft("S-missing", { initialPlan: "Missing" })).toBe(false);
+  });
+
+  it("listAll surfaces a derived preview for draft planning sessions only", () => {
+    // Three planning rows in different states; only the draft should have a
+    // sidebar preview derived from inputPayload.initialPlan. The others (and
+    // any non-planning rows) must keep `preview` undefined so the sidebar
+    // falls back to the persisted title.
+    seedSession({ id: "S-draft-short", status: "draft" });
+    db.prepare("UPDATE ai_sessions SET inputPayload = ? WHERE id = ?")
+      .run(JSON.stringify({ initialPlan: "Short plan body" }), "S-draft-short");
+
+    seedSession({ id: "S-draft-long", status: "draft" });
+    const longPlan = "A".repeat(150);
+    db.prepare("UPDATE ai_sessions SET inputPayload = ? WHERE id = ?")
+      .run(JSON.stringify({ initialPlan: longPlan }), "S-draft-long");
+
+    seedSession({ id: "S-active", status: "awaiting_input" });
+
+    const all = store.listAll();
+    const byId = new Map(all.map((row) => [row.id, row]));
+
+    expect(byId.get("S-draft-short")?.preview).toBe("Short plan body");
+    const longPreview = byId.get("S-draft-long")?.preview ?? "";
+    expect(longPreview.length).toBeLessThanOrEqual(80);
+    expect(longPreview.endsWith("…")).toBe(true);
+    expect(byId.get("S-active")?.preview).toBeUndefined();
   });
 
   it("listRecoverable returns awaiting_input and generating sessions", () => {

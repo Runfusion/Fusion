@@ -569,6 +569,28 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
         resolvedPlanningSettings.modelId;
 
       if (existingSessionId) {
+        // Defeat the start-before-debounced-sync race: the textarea contents
+        // submitted with this request are authoritative — write them through
+        // to the draft row before startExistingSession reads back from SQLite.
+        // Otherwise a Start Planning click within the 500 ms debounce window
+        // would launch the session against stale text.
+        if (aiSessionStore) {
+          try {
+            aiSessionStore.updateDraft(existingSessionId, {
+              initialPlan,
+              // Persist the explicit body override (if both fields set) so a
+              // later summarizeDraftTitle picks the same model the user just
+              // chose; pass undefined to clear any half-set state otherwise.
+              modelProvider: planningModelProvider && planningModelId ? planningModelProvider : undefined,
+              modelId: planningModelProvider && planningModelId ? planningModelId : undefined,
+            });
+          } catch (error) {
+            planningLogger.warn(
+              "Failed to flush draft initialPlan before start",
+              { sessionId: existingSessionId, error: String(error) },
+            );
+          }
+        }
         const { startExistingSession } = await import("../planning.js");
         await startExistingSession(
           existingSessionId,
@@ -611,6 +633,43 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
       } else {
         rethrowAsApiError(err, "Failed to start planning session");
       }
+    }
+  });
+
+  /**
+   * POST /api/planning/:sessionId/summarize-draft-title
+   * Generate (or regenerate) the sidebar title for a draft session from its
+   * latest persisted initialPlan. Fired by the modal on textarea blur and on
+   * close so that drafts the user walks away from end up with a real title
+   * instead of "New planning session". Idempotent server-side: only acts on
+   * draft rows still holding the placeholder title.
+   *
+   * UTILITY PATH: This route is independent of task-lane saturation.
+   */
+  router.post("/planning/:sessionId/summarize-draft-title", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      if (!sessionId) {
+        throw badRequest("sessionId is required");
+      }
+
+      const { store: scopedStore } = await getProjectContext(req);
+      const settings = await scopedStore.getSettings();
+      const rootDir = scopedStore.getRootDir();
+      const resolvedPlanningSettings = resolvePlanningSettingsModel(settings);
+
+      const { summarizeDraftTitle } = await import("../planning.js");
+      const title = await summarizeDraftTitle(
+        sessionId,
+        rootDir,
+        resolvedPlanningSettings.provider,
+        resolvedPlanningSettings.modelId,
+      );
+
+      res.json({ title });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to summarize draft title");
     }
   });
 

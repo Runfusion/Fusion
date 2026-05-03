@@ -483,7 +483,12 @@ describe("PlanningModeModal", () => {
         undefined,
       );
 
-      expect(screen.getByText("Test Plan")).toBeDefined();
+      // Sidebar shows the inputPayload-derived preview for draft rows so
+      // multiple drafts are distinguishable, not the placeholder title that
+      // createDraftSession returns. The text also appears in the textarea
+      // value, so scope the query to the sidebar item title element.
+      const sidebarItem = document.querySelector(".planning-sidebar-item-title");
+      expect(sidebarItem?.textContent).toBe("Build a detailed auth system plan");
 
       fireEvent.change(textarea, { target: { value: "Build a detailed auth system plan with extras" } });
       await new Promise((resolve) => setTimeout(resolve, 350));
@@ -975,6 +980,102 @@ describe("PlanningModeModal", () => {
       expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("L");
       expect(screen.getByText("Deliverable A")).toBeDefined();
       expect(screen.getByText("Deliverable B")).toBeDefined();
+    });
+
+    it("restores the textarea and reattaches the draft id when reopening a persisted draft", async () => {
+      const draftPlan = "Persisted draft text the user typed before closing the modal";
+      mockFetchAiSession.mockResolvedValueOnce({
+        id: "session-draft-1",
+        type: "planning",
+        status: "draft",
+        title: "New planning session",
+        inputPayload: JSON.stringify({ initialPlan: draftPlan }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: null,
+        thinkingOutput: "",
+        error: null,
+        projectId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+          resumeSessionId="session-draft-1"
+        />,
+      );
+
+      await waitFor(() => {
+        expect(mockFetchAiSession).toHaveBeenCalledWith("session-draft-1");
+      });
+
+      // The draft is restored to the editor (initial view), not surfaced as a
+      // question or summary, and the textarea contains exactly the persisted
+      // initialPlan so the user can keep editing or click Start Planning.
+      const textarea = await screen.findByDisplayValue(draftPlan);
+      expect((textarea as HTMLTextAreaElement).tagName).toBe("TEXTAREA");
+      expect(screen.getByText("Start Planning")).toBeDefined();
+    });
+
+    it("restores the persisted model override when reopening a draft so Start Planning uses it", async () => {
+      // The draft was created under an explicit anthropic/claude-opus model.
+      // Reopening must restore that selection into the modal's local state
+      // so a subsequent Start Planning click uses it instead of silently
+      // falling back to whatever the dropdown currently defaults to. The
+      // server-side round-trip is covered separately in planning.test.ts;
+      // this test pins the React-state restoration.
+      mockFetchAiSession.mockResolvedValueOnce({
+        id: "session-draft-with-model",
+        type: "planning",
+        status: "draft",
+        title: "New planning session",
+        inputPayload: JSON.stringify({
+          initialPlan: "Plan that needs a specific model",
+          modelProvider: "anthropic",
+          modelId: "claude-sonnet-4-5",
+        }),
+        conversationHistory: "[]",
+        currentQuestion: null,
+        result: null,
+        thinkingOutput: "",
+        error: null,
+        projectId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+          resumeSessionId="session-draft-with-model"
+        />,
+      );
+
+      // Wait for the textarea to be populated from the draft — proves the
+      // reopen path ran and the modal is in the editable initial view.
+      await screen.findByDisplayValue("Plan that needs a specific model");
+
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      await waitFor(() => {
+        expect(mockStartPlanningStreaming).toHaveBeenCalledWith(
+          "Plan that needs a specific model",
+          undefined,
+          { planningModelProvider: "anthropic", planningModelId: "claude-sonnet-4-5" },
+          { planningDepth: "medium", customQuestionCount: undefined },
+          "session-draft-with-model",
+        );
+      });
     });
 
     it("shows retry panel when resuming an errored session", async () => {

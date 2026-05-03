@@ -771,7 +771,7 @@ describe("planning module", () => {
       );
 
       expect(session.sessionId).toBeDefined();
-      expect(session.title).toBe("Draft plan text for the planning modal");
+      expect(session.title).toBe("New planning session");
       expect(getSession(session.sessionId)?.id).toBe(session.sessionId);
     });
 
@@ -2437,7 +2437,7 @@ describe("planning routes lock enforcement", () => {
     expect(response.status).toBe(201);
     expect(response.body).toMatchObject({
       sessionId: expect.any(String),
-      title: "Build a dashboard settings wizard with guided onboarding steps",
+      title: "New planning session",
     });
     expect(response.body.sessionId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
@@ -2530,6 +2530,180 @@ describe("planning routes lock enforcement", () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
     expect(startNew.body.sessionId).not.toBe(draftSessionId);
+  });
+
+  it("uses the freshest initialPlan when start-streaming races a pending draft sync", async () => {
+    // Simulate the race: draft was created with stale text, the latest debounced
+    // PATCH /draft hasn't arrived yet, and the user clicks Start Planning whose
+    // request body carries the up-to-date textarea contents. The agent must
+    // receive the body's text, not whatever was last persisted to SQLite.
+    const draft = await request(
+      app,
+      "POST",
+      "/api/planning/create-draft",
+      JSON.stringify({ initialPlan: "Stale draft prefix from first keystroke" }),
+      { "content-type": "application/json" },
+    );
+    expect(draft.status).toBe(201);
+    const draftSessionId = draft.body.sessionId as string;
+
+    const freshPlan =
+      "Stale draft prefix from first keystroke followed by everything the user typed after the debounce window closed";
+
+    const start = await request(
+      app,
+      "POST",
+      "/api/planning/start-streaming",
+      JSON.stringify({ initialPlan: freshPlan, existingSessionId: draftSessionId }),
+      { "content-type": "application/json" },
+    );
+
+    expect(start.status).toBe(201);
+    const persisted = aiSessionStore.get(draftSessionId);
+    expect(persisted?.inputPayload).toBe(JSON.stringify({ initialPlan: freshPlan }));
+  });
+
+  it("re-summarizes the draft title on each call so blur-then-edit doesn't strand stale text", async () => {
+    // For short input (≤200 chars) summarizeTitle returns null, so
+    // summarizeDraftTitle uses its trimmed-text fallback. That's enough to
+    // exercise the regression: the helper used to bail once `title !==
+    // DRAFT_PLACEHOLDER_TITLE`, which would lock in the first fallback and
+    // ignore the user's subsequent edits even though they were persisted.
+    const draft = await request(
+      app,
+      "POST",
+      "/api/planning/create-draft",
+      JSON.stringify({ initialPlan: "Initial partial draft text" }),
+      { "content-type": "application/json" },
+    );
+    const draftSessionId = draft.body.sessionId as string;
+
+    const firstBlur = await request(
+      app,
+      "POST",
+      `/api/planning/${draftSessionId}/summarize-draft-title`,
+      JSON.stringify({}),
+      { "content-type": "application/json" },
+    );
+    expect(firstBlur.status).toBe(200);
+    expect(firstBlur.body).toEqual({ title: "Initial partial draft text" });
+    expect(aiSessionStore.get(draftSessionId)?.title).toBe("Initial partial draft text");
+
+    await request(
+      app,
+      "PATCH",
+      `/api/ai-sessions/${draftSessionId}/draft`,
+      JSON.stringify({ initialPlan: "Final draft text after the user kept typing" }),
+      { "content-type": "application/json" },
+    );
+
+    const secondBlur = await request(
+      app,
+      "POST",
+      `/api/planning/${draftSessionId}/summarize-draft-title`,
+      JSON.stringify({}),
+      { "content-type": "application/json" },
+    );
+    expect(secondBlur.status).toBe(200);
+    expect(secondBlur.body).toEqual({ title: "Final draft text after the user kept typing" });
+    expect(aiSessionStore.get(draftSessionId)?.title).toBe(
+      "Final draft text after the user kept typing",
+    );
+  });
+
+  it("persists the model override on draft create and round-trips it through inputPayload", async () => {
+    const draft = await request(
+      app,
+      "POST",
+      "/api/planning/create-draft",
+      JSON.stringify({
+        initialPlan: "Plan that needs a specific model",
+        planningModelProvider: "anthropic",
+        planningModelId: "claude-opus-4-7",
+      }),
+      { "content-type": "application/json" },
+    );
+    expect(draft.status).toBe(201);
+    const draftSessionId = draft.body.sessionId as string;
+
+    // The draft row's inputPayload must carry the model override so the
+    // frontend reopen path can restore it into modal state and so a later
+    // summarize call uses it instead of falling back to project defaults.
+    const persisted = aiSessionStore.get(draftSessionId);
+    const payload = JSON.parse(persisted?.inputPayload ?? "{}");
+    expect(payload.modelProvider).toBe("anthropic");
+    expect(payload.modelId).toBe("claude-opus-4-7");
+
+    // PATCH /draft can also update the override (user switched models mid-edit).
+    await request(
+      app,
+      "PATCH",
+      `/api/ai-sessions/${draftSessionId}/draft`,
+      JSON.stringify({
+        initialPlan: "Plan that needs a specific model",
+        modelProvider: "openai",
+        modelId: "gpt-5",
+      }),
+      { "content-type": "application/json" },
+    );
+    const updatedPayload = JSON.parse(aiSessionStore.get(draftSessionId)?.inputPayload ?? "{}");
+    expect(updatedPayload.modelProvider).toBe("openai");
+    expect(updatedPayload.modelId).toBe("gpt-5");
+
+    // A half-set override on PATCH clears the persisted override entirely
+    // rather than landing in a half-configured state the start path rejects.
+    await request(
+      app,
+      "PATCH",
+      `/api/ai-sessions/${draftSessionId}/draft`,
+      JSON.stringify({
+        initialPlan: "Plan that needs a specific model",
+        modelProvider: "openai",
+      }),
+      { "content-type": "application/json" },
+    );
+    const clearedPayload = JSON.parse(aiSessionStore.get(draftSessionId)?.inputPayload ?? "{}");
+    expect(clearedPayload.modelProvider).toBeUndefined();
+    expect(clearedPayload.modelId).toBeUndefined();
+  });
+
+  it("starts a draft that survived a backend restart by lazily rebuilding from SQLite", async () => {
+    // Recreate the post-restart state: draft persisted in SQLite but the
+    // in-memory sessions map is empty (rehydrateFromStore skips drafts since
+    // listRecoverable only returns generating/awaiting_input rows).
+    const draft = await request(
+      app,
+      "POST",
+      "/api/planning/create-draft",
+      JSON.stringify({ initialPlan: "Plan that should outlive a server restart" }),
+      { "content-type": "application/json" },
+    );
+    expect(draft.status).toBe(201);
+    const draftSessionId = draft.body.sessionId as string;
+
+    // Wipe in-memory state to simulate a backend restart, then re-wire the
+    // SQLite-backed store. The SQLite draft row survives; the in-memory
+    // sessions map is empty because rehydrateFromStore intentionally skips
+    // drafts (it only recovers in-flight generating/awaiting_input rows).
+    __resetPlanningState();
+    setAiSessionStore(aiSessionStore as any);
+    expect(aiSessionStore.get(draftSessionId)?.status).toBe("draft");
+
+    const start = await request(
+      app,
+      "POST",
+      "/api/planning/start-streaming",
+      JSON.stringify({
+        initialPlan: "Plan that should outlive a server restart",
+        existingSessionId: draftSessionId,
+      }),
+      { "content-type": "application/json" },
+    );
+
+    expect(start.status).toBe(201);
+    expect(start.body).toEqual({ sessionId: draftSessionId });
+    expect(getSession(draftSessionId)?.id).toBe(draftSessionId);
+    expect(aiSessionStore.get(draftSessionId)?.status).toBe("awaiting_input");
   });
 
   it("keeps planning SSE stream read-only and unaffected by locks", async () => {

@@ -21,6 +21,7 @@ import {
   cancelPlanning,
   stopPlanningGeneration,
   updatePlanningSessionDraft,
+  summarizePlanningDraftTitle,
   updateGlobalSettings,
   type PlanningSession,
   type SubtaskItem,
@@ -167,7 +168,12 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
   const overlayMouseDownOnSelfRef = useRef(false);
   const thinkingOutputRef = useRef<HTMLDivElement>(null);
   const draftSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSyncedDraftRef = useRef<{ sessionId: string; initialPlan: string } | null>(null);
+  const lastSyncedDraftRef = useRef<{
+    sessionId: string;
+    initialPlan: string;
+    modelProvider?: string;
+    modelId?: string;
+  } | null>(null);
 
   useModalResizePersist(modalRef, isOpen, "fusion:planning-modal-size");
 
@@ -602,7 +608,42 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
             ),
         );
 
-        if (session.status === "awaiting_input" && session.currentQuestion) {
+        if (session.status === "draft") {
+          // Draft hasn't been started yet — restore the user's saved text +
+          // model selection into the editor, reattach the draft id so a
+          // future Start Planning call reuses this row, and route them back
+          // to the initial editor. Restoring the model ensures the start
+          // request uses the selection the user made when creating the
+          // draft, not whatever the modal's local state currently holds.
+          let savedPlan = "";
+          let savedProvider: string | undefined;
+          let savedModelId: string | undefined;
+          try {
+            const payload = session.inputPayload ? JSON.parse(session.inputPayload) : null;
+            if (payload && typeof payload.initialPlan === "string") {
+              savedPlan = payload.initialPlan;
+            }
+            if (payload && typeof payload.modelProvider === "string" && typeof payload.modelId === "string") {
+              savedProvider = payload.modelProvider;
+              savedModelId = payload.modelId;
+            }
+          } catch {
+            // Fall through with empty text; the row will remain editable.
+          }
+          setInitialPlan(savedPlan);
+          setPlanningModelProvider(savedProvider);
+          setPlanningModelId(savedModelId);
+          draftSessionIdRef.current = sessionId;
+          lastSyncedDraftRef.current = savedPlan
+            ? {
+                sessionId,
+                initialPlan: savedPlan.trim(),
+                modelProvider: savedProvider,
+                modelId: savedModelId,
+              }
+            : null;
+          setView({ type: "initial" });
+        } else if (session.status === "awaiting_input" && session.currentQuestion) {
           clearPlanningDescription(projectId);
           const question = JSON.parse(session.currentQuestion);
           setView({ type: "question", session: { sessionId, currentQuestion: question, summary: null } });
@@ -771,9 +812,14 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         return;
       }
 
+      // Re-sync whenever the model selection changes, even if the plan text
+      // is unchanged — otherwise the persisted draft would silently keep the
+      // model the user picked at create time after they've switched.
       const alreadySynced =
         lastSyncedDraftRef.current?.sessionId === sessionId &&
-        lastSyncedDraftRef.current.initialPlan === trimmedPlan;
+        lastSyncedDraftRef.current.initialPlan === trimmedPlan &&
+        lastSyncedDraftRef.current.modelProvider === planningModelProvider &&
+        lastSyncedDraftRef.current.modelId === planningModelId;
       if (alreadySynced) {
         return;
       }
@@ -782,17 +828,23 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
         await updatePlanningSessionDraft(
           sessionId,
           {
-            title: trimmedPlan,
             initialPlan: trimmedPlan,
+            modelProvider: planningModelProvider && planningModelId ? planningModelProvider : undefined,
+            modelId: planningModelProvider && planningModelId ? planningModelId : undefined,
           },
           projectId,
         );
-        lastSyncedDraftRef.current = { sessionId, initialPlan: trimmedPlan };
+        lastSyncedDraftRef.current = {
+          sessionId,
+          initialPlan: trimmedPlan,
+          modelProvider: planningModelProvider,
+          modelId: planningModelId,
+        };
       } catch {
         // best-effort draft sync; avoid blocking typing UX on transient failures
       }
     },
-    [projectId],
+    [planningModelId, planningModelProvider, projectId],
   );
 
   useEffect(() => {
@@ -998,6 +1050,30 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [isOpen]);
 
+  // Flush any pending debounced draft sync, then ask the server to (re)derive
+  // the sidebar title from the persisted initialPlan. Fire-and-forget — the
+  // server is idempotent and a no-op once the session has started, so it's
+  // safe to invoke on textarea blur and on modal close. Awaiting the sync
+  // first guarantees the summary reflects the user's freshest text rather
+  // than whatever the last 500ms-debounced PATCH happened to persist.
+  const flushDraftAndSummarize = useCallback(
+    (sessionId: string, planText: string) => {
+      if (draftSyncTimerRef.current) {
+        clearTimeout(draftSyncTimerRef.current);
+        draftSyncTimerRef.current = null;
+      }
+      void (async () => {
+        try {
+          await syncPlanningDraft(sessionId, planText);
+          await summarizePlanningDraftTitle(sessionId, projectId);
+        } catch {
+          // best-effort title polish; don't surface to the user
+        }
+      })();
+    },
+    [projectId, syncPlanningDraft],
+  );
+
   // Close the modal without abandoning the active server session. Sessions
   // remain in the list and can be resumed later. Only an explicit Delete
   // (from the sidebar) cancels and removes a session.
@@ -1005,6 +1081,13 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     // Save the in-progress draft so the next open restores it.
     if (initialPlan && view.type === "initial") {
       savePlanningDescription(initialPlan, projectId);
+    }
+
+    // Capture before clearing — we want to fire summarize for this draft even
+    // though we're tearing down local state.
+    const draftSessionId = draftSessionIdRef.current;
+    if (draftSessionId && initialPlan.trim()) {
+      flushDraftAndSummarize(draftSessionId, initialPlan);
     }
 
     draftSessionIdRef.current = null;
@@ -1017,7 +1100,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     setIsReconnecting(false);
     setIsRetrying(false);
     onClose();
-  }, [initialPlan, onClose, projectId, view.type]);
+  }, [flushDraftAndSummarize, initialPlan, onClose, projectId, view.type]);
 
   // Handle escape key to close
   useEffect(() => {
@@ -1422,6 +1505,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                                 type: "planning",
                                 status: "draft",
                                 title: response.title,
+                                preview: content.length > 80 ? `${content.slice(0, 79).trimEnd()}…` : content,
                                 projectId: projectId ?? null,
                                 lockedByTab: null,
                                 updatedAt: new Date().toISOString(),
@@ -1442,6 +1526,16 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                       if (e.key === "Enter" && !e.shiftKey && initialPlan.trim()) {
                         e.preventDefault();
                         handleStartPlanning();
+                      }
+                    }}
+                    onBlur={() => {
+                      // User paused or moved focus away — good moment to
+                      // upgrade the sidebar from "New planning session" to a
+                      // model-summarized title. No-op if the draft hasn't
+                      // been persisted yet or if it's already been started.
+                      const draftSessionId = draftSessionIdRef.current;
+                      if (draftSessionId && initialPlan.trim()) {
+                        flushDraftAndSummarize(draftSessionId, initialPlan);
                       }
                     }}
                   />
@@ -2515,7 +2609,17 @@ function PlanningSessionList({
                 <PlanningSessionStatusIcon status={session.status} />
                 <span className="planning-sidebar-item-body">
                   <span className="planning-sidebar-item-title">
-                    {session.title || "Untitled session"}
+                    {/*
+                      For draft rows the persisted title is intentionally a
+                      generic placeholder so the sidebar doesn't leak raw
+                      keystrokes. Surface the inputPayload-derived preview
+                      instead so multiple drafts are distinguishable; once
+                      the user starts the session, summarizeTitle replaces
+                      `title` and `preview` is no longer present.
+                    */}
+                    {session.status === "draft" && session.preview
+                      ? session.preview
+                      : session.title || "Untitled session"}
                   </span>
                   <span className="planning-sidebar-item-meta">
                     <PlanningSessionStatusLabel status={session.status} />

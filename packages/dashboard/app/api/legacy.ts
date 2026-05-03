@@ -7161,6 +7161,8 @@ export interface AiSessionSummary {
   type: "planning" | "subtask" | "mission_interview" | "milestone_interview" | "slice_interview";
   status: "draft" | "generating" | "awaiting_input" | "complete" | "error";
   title: string;
+  /** Server-derived preview of the in-progress initialPlan; only set for draft planning sessions. */
+  preview?: string;
   projectId: string | null;
   lockedByTab: string | null;
   updatedAt: string;
@@ -7279,13 +7281,29 @@ export function pingSession(sessionId: string, projectId?: string): Promise<{ ok
 
 export function updatePlanningSessionDraft(
   sessionId: string,
-  draft: { title: string; initialPlan: string },
+  draft: { initialPlan: string; modelProvider?: string; modelId?: string },
   projectId?: string,
 ): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>(withProjectId(`/ai-sessions/${encodeURIComponent(sessionId)}/draft`, projectId), {
     method: "PATCH",
     body: JSON.stringify(draft),
   });
+}
+
+/**
+ * Ask the server to (re)generate the sidebar title for a draft planning
+ * session from its persisted initialPlan. Server-side is idempotent and
+ * a no-op once the session has been started, so callers can fire-and-
+ * forget on textarea blur and modal close.
+ */
+export function summarizePlanningDraftTitle(
+  sessionId: string,
+  projectId?: string,
+): Promise<{ title: string | null }> {
+  return api<{ title: string | null }>(
+    withProjectId(`/planning/${encodeURIComponent(sessionId)}/summarize-draft-title`, projectId),
+    { method: "POST" },
+  );
 }
 
 // ── Messages API ──────────────────────────────────────────────────────────

@@ -45,11 +45,22 @@ export interface AiSessionSummary {
   type: AiSessionType;
   status: AiSessionStatus;
   title: string;
+  /**
+   * For draft planning sessions only: a short, derived preview of the
+   * persisted initialPlan so the sidebar can distinguish multiple drafts
+   * before the user has started any of them. Computed at read time from
+   * inputPayload — never persisted as the title — so unfinished keystrokes
+   * don't end up baked into the row's permanent title.
+   */
+  preview?: string;
   projectId: string | null;
   lockedByTab: string | null;
   updatedAt: string;
   archived?: boolean;
 }
+
+/** Max characters of initialPlan surfaced as a sidebar preview for drafts. */
+const DRAFT_PREVIEW_MAX_CHARS = 80;
 
 export interface AiSessionStoreEvents {
   "ai_session:updated": [AiSessionSummary];
@@ -221,20 +232,34 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
 
   /**
    * Update persisted draft metadata for a planning session.
-   * Keeps sidebar title/input payload current while the user edits.
+   * Persists the in-progress initialPlan so it survives reload; the sidebar
+   * title is intentionally left alone (set once at creation, replaced when
+   * the user actually starts the session) to avoid leaking raw keystrokes
+   * into the sidebar and to keep the entry stable while editing.
+   *
+   * Also persists an optional model override paired together (provider+id);
+   * passing one without the other clears the persisted override so we never
+   * end up with a half-configured selection that the start path would
+   * silently reject.
    */
-  updateDraft(id: string, draft: { title: string; initialPlan: string }): boolean {
+  updateDraft(
+    id: string,
+    draft: { initialPlan: string; modelProvider?: string; modelId?: string },
+  ): boolean {
     const now = new Date().toISOString();
-    const trimmedTitle = draft.title.trim();
     const trimmedPlan = draft.initialPlan.trim();
-    const inputPayload = JSON.stringify({ initialPlan: trimmedPlan });
+    const hasModelOverride = Boolean(draft.modelProvider && draft.modelId);
+    const inputPayload = JSON.stringify({
+      initialPlan: trimmedPlan,
+      ...(hasModelOverride ? { modelProvider: draft.modelProvider, modelId: draft.modelId } : {}),
+    });
     const result = this.db
       .prepare(
         `UPDATE ai_sessions
-         SET title = ?, inputPayload = ?, updatedAt = ?
+         SET inputPayload = ?, updatedAt = ?
          WHERE id = ? AND type = 'planning'`,
       )
-      .run(trimmedTitle, inputPayload, now, id) as { changes?: number };
+      .run(inputPayload, now, id) as { changes?: number };
 
     const changed = Number(result.changes ?? 0) > 0;
     if (!changed) {
@@ -299,26 +324,31 @@ export class AiSessionStore extends EventEmitter<AiSessionStoreEvents> {
    * the configured TTL, so this list does not grow unbounded.
    */
   listAll(projectId?: string, options?: { includeArchived?: boolean }): AiSessionSummary[] {
+    // Pull `inputPayload` alongside the summary columns so we can derive the
+    // sidebar preview for draft rows. Non-draft rows ignore the payload —
+    // toSidebarSummary only inspects it when status === "draft".
     const archivedClause = options?.includeArchived ? "" : " WHERE COALESCE(archived, 0) = 0";
     if (projectId) {
       const where = options?.includeArchived
         ? "WHERE projectId = ?"
         : "WHERE projectId = ? AND COALESCE(archived, 0) = 0";
-      return this.db
+      const rows = this.db
         .prepare(
-          `SELECT id, type, status, title, projectId, lockedByTab, updatedAt, archived FROM ai_sessions
+          `SELECT id, type, status, title, inputPayload, projectId, lockedByTab, updatedAt, archived FROM ai_sessions
            ${where}
            ORDER BY updatedAt DESC`,
         )
-        .all(projectId) as unknown as AiSessionSummary[];
+        .all(projectId) as Array<Partial<AiSessionRow> & Pick<AiSessionRow, "id" | "type" | "status" | "title" | "inputPayload" | "updatedAt">>;
+      return rows.map(toSidebarSummary);
     }
-    return this.db
+    const rows = this.db
       .prepare(
-        `SELECT id, type, status, title, projectId, lockedByTab, updatedAt, archived FROM ai_sessions
+        `SELECT id, type, status, title, inputPayload, projectId, lockedByTab, updatedAt, archived FROM ai_sessions
          ${archivedClause}
          ORDER BY updatedAt DESC`,
       )
-      .all() as unknown as AiSessionSummary[];
+      .all() as Array<Partial<AiSessionRow> & Pick<AiSessionRow, "id" | "type" | "status" | "title" | "inputPayload" | "updatedAt">>;
+    return rows.map(toSidebarSummary);
   }
 
   /**
@@ -696,9 +726,66 @@ function toSummary(session: AiSessionRow, updatedAt: string): AiSessionSummary {
     type: session.type,
     status: session.status,
     title: session.title,
+    preview: extractDraftPreview(session),
     projectId: session.projectId,
     lockedByTab: session.lockedByTab ?? null,
     updatedAt,
     archived: Number(session.archived ?? 0) === 1,
   };
+}
+
+/**
+ * Lighter-weight summary builder for `listAll` rows that don't carry every
+ * column of `AiSessionRow`. Keeps the same preview-derivation behavior as
+ * `toSummary` (drafts only) without forcing the bulk-list query to SELECT
+ * conversationHistory / thinkingOutput / etc.
+ */
+function toSidebarSummary(
+  row: Partial<AiSessionRow> & Pick<AiSessionRow, "id" | "type" | "status" | "title" | "inputPayload" | "updatedAt">,
+): AiSessionSummary {
+  const previewSource: AiSessionRow = {
+    id: row.id,
+    type: row.type,
+    status: row.status,
+    title: row.title,
+    inputPayload: row.inputPayload,
+    conversationHistory: "",
+    currentQuestion: null,
+    result: null,
+    thinkingOutput: "",
+    error: null,
+    projectId: row.projectId ?? null,
+    createdAt: "",
+    updatedAt: row.updatedAt,
+    lockedByTab: row.lockedByTab ?? null,
+    lockedAt: row.lockedAt ?? null,
+    archived: row.archived,
+  };
+  return {
+    id: row.id,
+    type: row.type,
+    status: row.status,
+    title: row.title,
+    preview: extractDraftPreview(previewSource),
+    projectId: row.projectId ?? null,
+    lockedByTab: row.lockedByTab ?? null,
+    updatedAt: row.updatedAt,
+    archived: Number(row.archived ?? 0) === 1,
+  };
+}
+
+function extractDraftPreview(session: AiSessionRow): string | undefined {
+  if (session.type !== "planning" || session.status !== "draft") return undefined;
+  if (!session.inputPayload) return undefined;
+  try {
+    const payload = JSON.parse(session.inputPayload) as { initialPlan?: unknown };
+    const plan = typeof payload.initialPlan === "string" ? payload.initialPlan.trim() : "";
+    if (!plan) return undefined;
+    const collapsed = plan.replace(/\s+/g, " ");
+    return collapsed.length > DRAFT_PREVIEW_MAX_CHARS
+      ? `${collapsed.slice(0, DRAFT_PREVIEW_MAX_CHARS - 1).trimEnd()}…`
+      : collapsed;
+  } catch {
+    return undefined;
+  }
 }
