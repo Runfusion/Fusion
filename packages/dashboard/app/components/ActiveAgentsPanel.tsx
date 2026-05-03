@@ -104,7 +104,10 @@ function LiveAgentCard({ agent, projectId, onSelect, onOpenTaskLogs }: LiveAgent
     >
       <div className="live-agent-card-header">
         <div className="live-agent-card-name">
-          <span className="live-agent-pulse" />
+          <span
+            className={`status-dot ${agent.state === "running" ? "status-dot--pending" : "status-dot--online"}`}
+            aria-hidden="true"
+          />
           <span>{agent.name}</span>
         </div>
         {agent.taskId && (
@@ -189,9 +192,10 @@ interface ActiveAgentsPanelProps {
   projectId?: string;
   onAgentSelect?: (agentId: string) => void;
   onOpenTaskLogs?: (taskId: string) => void;
+  className?: string;
 }
 
-export function ActiveAgentsPanel({ agents, projectId, onAgentSelect, onOpenTaskLogs }: ActiveAgentsPanelProps) {
+export function ActiveAgentsPanel({ agents, projectId, onAgentSelect, onOpenTaskLogs, className = "" }: ActiveAgentsPanelProps) {
   // Dedupe by id defensively. The store should return unique agents but a race
   // between the initial fetch and an SSE refresh can briefly surface the same
   // agent twice — without this guard React floods the console with duplicate
@@ -201,7 +205,7 @@ export function ActiveAgentsPanel({ agents, projectId, onAgentSelect, onOpenTask
   if (uniqueAgents.length === 0) return null;
 
   return (
-    <div className="active-agents-panel">
+    <div className={`active-agents-panel ${className}`.trim()}>
       <div className="active-agents-panel-header">
         <Activity size={16} />
         <span>Active Agents ({uniqueAgents.length})</span>

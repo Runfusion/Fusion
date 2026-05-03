@@ -1,0 +1,71 @@
+.agents-overview-bar {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  padding: var(--space-md) var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.agents-overview-bar__toggle {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--text);
+  padding: var(--space-sm) var(--space-md);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.agents-overview-bar__toggle:hover {
+  background: var(--card-hover);
+}
+
+.agents-overview-bar__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.agents-overview-bar__title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.agents-overview-bar__title {
+  font-weight: 600;
+}
+
+.agents-overview-bar__meta {
+  font-size: calc(var(--space-sm) + var(--space-xs));
+}
+
+.agents-overview-bar__content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.agents-overview-bar__metrics {
+  margin-bottom: 0;
+}
+
+.agents-overview-bar__active-panel {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+@media (max-width: 768px) {
+  .agents-overview-bar {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .agents-overview-bar__toggle {
+    min-height: calc(var(--space-2xl) + var(--space-sm));
+  }
+}

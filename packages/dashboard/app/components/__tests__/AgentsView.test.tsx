@@ -147,6 +147,17 @@ describe("AgentsView", () => {
     return trigger;
   };
 
+  const openOverviewPanel = async () => {
+    const toggle = await screen.findByRole("button", { name: /Overview/i });
+    if (toggle.getAttribute("aria-expanded") !== "true") {
+      fireEvent.click(toggle);
+    }
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    });
+    return toggle;
+  };
+
   describe("rendering", () => {
     it("renders the agents view header", async () => {
       render(<AgentsView addToast={mockAddToast} />);
@@ -186,14 +197,20 @@ describe("AgentsView", () => {
       expect(screen.getByText("review")).toHaveAttribute("title", "auto::skills/../../.agents/skills/review/SKILL.md");
     });
 
-    it("renders split layout with sidebar and detail pane", async () => {
+    it("renders cross-pane overview above split layout", async () => {
       const { container } = render(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
+        expect(container.querySelector(".agents-overview-bar")).toBeTruthy();
         expect(container.querySelector(".agents-split-layout")).toBeTruthy();
       });
 
-      expect(container.querySelector(".agents-split-sidebar")).toBeTruthy();
+      const overview = container.querySelector(".agents-overview-bar");
+      const splitLayout = container.querySelector(".agents-split-layout");
+      expect(overview?.nextElementSibling).toBe(splitLayout);
+      const sidebar = container.querySelector(".agents-split-sidebar");
+      expect(sidebar).toBeTruthy();
+      expect(sidebar?.querySelector(".agents-overview-bar")).toBeNull();
       expect(container.querySelector(".agents-split-detail")).toBeTruthy();
       expect(screen.getByText("Select an agent")).toBeInTheDocument();
       expect(screen.getByText("Choose an agent from the sidebar to view details")).toBeInTheDocument();
@@ -422,24 +439,25 @@ describe("AgentsView", () => {
       });
     });
 
-    it("renders metrics, then active panel, then the main collection", async () => {
+    it("keeps metrics and active agents collapsed behind overview disclosure by default", async () => {
       const { container } = render(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(container.querySelector(".agent-list")).toBeTruthy();
+      });
+
+      const overviewToggle = screen.getByRole("button", { name: /Overview/i });
+      expect(overviewToggle.getAttribute("aria-expanded")).toBe("false");
+      expect(container.querySelector(".agent-metrics-bar")).toBeNull();
+      expect(container.querySelector(".active-agents-panel")).toBeNull();
+
+      fireEvent.click(overviewToggle);
+
+      await waitFor(() => {
+        expect(overviewToggle.getAttribute("aria-expanded")).toBe("true");
         expect(container.querySelector(".agent-metrics-bar")).toBeTruthy();
         expect(container.querySelector(".active-agents-panel")).toBeTruthy();
       });
-
-      const list = container.querySelector(".agent-list");
-      const metrics = container.querySelector(".agent-metrics-bar");
-      const activePanel = container.querySelector(".active-agents-panel");
-      expect(list && metrics && activePanel).toBeTruthy();
-      // Metrics bar sits at the very top of the view content.
-      expect(metrics!.compareDocumentPosition(activePanel!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      // Active agents panel sits between metrics and the main agent list,
-      // so live work is visible without scrolling past the full directory.
-      expect(activePanel!.compareDocumentPosition(list!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
     it("fetches agents only once on mount (regression: no duplicate initial load path)", async () => {
@@ -451,6 +469,7 @@ describe("AgentsView", () => {
       });
 
       // Ensure the single-load path still powers dependent UI sections.
+      await openOverviewPanel();
       expect(await screen.findByText("Active Agents (1)")).toBeTruthy();
     });
 
@@ -1833,6 +1852,7 @@ describe("AgentsView", () => {
     it("renders active agents panel when agents are active", async () => {
       // agent-002 is active with taskId FN-001
       render(<AgentsView addToast={mockAddToast} />);
+      await openOverviewPanel();
 
       await waitFor(() => {
         expect(screen.getByText("Active Agents (1)")).toBeTruthy();
@@ -1845,6 +1865,7 @@ describe("AgentsView", () => {
 
     it("opens AgentDetailView when clicking an active agent card", async () => {
       render(<AgentsView addToast={mockAddToast} />);
+      await openOverviewPanel();
 
       await waitFor(() => {
         expect(screen.getByText("Active Agents (1)")).toBeTruthy();
@@ -1864,6 +1885,7 @@ describe("AgentsView", () => {
 
     it("opens AgentDetailView when pressing Enter on an active agent card", async () => {
       render(<AgentsView addToast={mockAddToast} />);
+      await openOverviewPanel();
 
       await waitFor(() => {
         expect(screen.getByText("Active Agents (1)")).toBeTruthy();
@@ -1884,6 +1906,7 @@ describe("AgentsView", () => {
 
     it("opens AgentDetailView when pressing Space on an active agent card", async () => {
       render(<AgentsView addToast={mockAddToast} />);
+      await openOverviewPanel();
 
       await waitFor(() => {
         expect(screen.getByText("Active Agents (1)")).toBeTruthy();
@@ -1904,6 +1927,7 @@ describe("AgentsView", () => {
 
     it("live agent cards have proper accessibility attributes", async () => {
       render(<AgentsView addToast={mockAddToast} />);
+      await openOverviewPanel();
 
       await waitFor(() => {
         expect(screen.getByText("Active Agents (1)")).toBeTruthy();
@@ -1934,9 +1958,10 @@ describe("AgentsView", () => {
       mockFetchAgents.mockResolvedValue(inactiveAgents);
 
       render(<AgentsView addToast={mockAddToast} />);
+      await openOverviewPanel();
 
       await waitFor(() => {
-        expect(screen.queryByText("Active Agents")).toBeNull();
+        expect(screen.queryByText(/^Active Agents \(/)).toBeNull();
       });
     });
 
@@ -1959,6 +1984,7 @@ describe("AgentsView", () => {
       mockFetchAgents.mockResolvedValue(spawnedAgents);
 
       render(<AgentsView addToast={mockAddToast} />);
+      await openOverviewPanel();
 
       await waitFor(() => {
         expect(screen.getByText("Active Agents (2)")).toBeTruthy();

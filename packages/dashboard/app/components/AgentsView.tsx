@@ -5,9 +5,8 @@ import type { Agent, AgentCapability, AgentOnboardingSummary, AgentState, OrgTre
 import { updateAgent, updateAgentState, deleteAgent, startAgentRun, fetchOrgTree, fetchSettings, updateSettings } from "../api";
 
 const AgentDetailView = lazy(() => import("./AgentDetailView").then((m) => ({ default: m.AgentDetailView })));
-import { ActiveAgentsPanel } from "./ActiveAgentsPanel";
-import { AgentMetricsBar } from "./AgentMetricsBar";
 import { AgentTokenStatsPanel } from "./AgentTokenStatsPanel";
+import { AgentsOverviewBar } from "./AgentsOverviewBar";
 import { AgentEmptyState } from "./AgentEmptyState";
 import { useAgents } from "../hooks/useAgents";
 import { useConfirm } from "../hooks/useConfirm";
@@ -214,6 +213,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   const [orgTree, setOrgTree] = useState<OrgTreeNode[]>([]);
   const [isOrgTreeLoading, setIsOrgTreeLoading] = useState(false);
   const [isControlsPanelOpen, setIsControlsPanelOpen] = useState(false);
+  const [isOverviewOpen, setIsOverviewOpen] = useState(false);
   const controlsPanelRef = useRef<HTMLDivElement>(null);
   const { confirm } = useConfirm();
   const controlsTriggerRef = useRef<HTMLButtonElement>(null);
@@ -849,13 +849,19 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
         </div>
       )}
 
+      <AgentsOverviewBar
+        stats={stats}
+        activeAgents={displayActiveAgents}
+        projectId={projectId}
+        isOpen={isOverviewOpen}
+        onToggle={() => setIsOverviewOpen((open) => !open)}
+        onSelectAgent={setSelectedAgentId}
+        onOpenTaskLogs={onOpenTaskLogs}
+      />
+
       <div className="agents-split-layout">
         <div className={`agents-split-sidebar${isMobileDetailOpen ? " agents-split-sidebar--hidden-mobile" : ""}`}>
           <div className="agents-view-content">
-        <AgentMetricsBar stats={stats} />
-
-        <ActiveAgentsPanel agents={displayActiveAgents} projectId={projectId} onAgentSelect={setSelectedAgentId} onOpenTaskLogs={onOpenTaskLogs} />
-
         <NewAgentDialog
           isOpen={isCreating}
           onClose={() => {

@@ -137,7 +137,7 @@
   display: grid;
   grid-template-columns: minmax(calc(var(--space-xl) * 11 + var(--space-xs)), calc(var(--space-xl) * 13 + var(--space-lg))) minmax(0, 1fr);
   gap: 0;
-  height: 100%;
+  flex: 1;
   min-height: 0;
 }
 
@@ -163,6 +163,7 @@
   overflow-y: auto;
   padding: calc(var(--space-lg) + var(--space-xs));
 }
+
 
 .agents-detail-empty-state {
   display: flex;

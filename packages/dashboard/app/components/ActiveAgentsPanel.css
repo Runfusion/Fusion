@@ -57,14 +57,6 @@
   font-size: 13px;
 }
 
-.live-agent-pulse {
-  width: 8px;
-  height: 8px;
-  background: var(--color-success);
-  border-radius: 50%;
-  animation: pulse 1.5s infinite;
-}
-
 .live-agent-task {
   font-family: var(--font-mono);
 }

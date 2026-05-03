@@ -3,6 +3,7 @@ import type { AgentStats } from "../api";
 
 interface AgentMetricsBarProps {
   stats: AgentStats | null;
+  className?: string;
 }
 
 const METRIC_CARDS = [
@@ -12,11 +13,11 @@ const METRIC_CARDS = [
   { icon: Zap, label: "Total Runs", valueKey: "completedRuns", className: "agent-metric-card--runs" },
 ] as const;
 
-export function AgentMetricsBar({ stats }: AgentMetricsBarProps) {
+export function AgentMetricsBar({ stats, className = "" }: AgentMetricsBarProps) {
   if (!stats) return null;
 
   return (
-    <div className="agent-metrics-bar">
+    <div className={`agent-metrics-bar ${className}`.trim()}>
       {METRIC_CARDS.map((card) => {
         const value = card.valueKey === "successRate"
           ? `${Math.round(stats.successRate * 100)}%`

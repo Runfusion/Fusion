@@ -83,6 +83,9 @@ describe("Agent CSS classes", () => {
     expect(hasClass(".agents-view-controls")).toBe(true);
     expect(hasClass(".agents-view-primary-actions")).toBe(true);
     expect(hasClass(".agents-view-content")).toBe(true);
+    expect(hasClass(".agents-overview-bar")).toBe(true);
+    expect(hasClass(".agents-overview-bar__toggle")).toBe(true);
+    expect(hasClass(".agents-overview-bar__content")).toBe(true);
     expect(hasClass(".agent-controls-trigger")).toBe(true);
     expect(hasClass(".agent-controls-trigger--active")).toBe(true);
     expect(hasClass(".agent-controls-panel")).toBe(true);
@@ -140,6 +143,17 @@ describe("Agent CSS classes", () => {
     expect(hasClass(".agent-role-select")).toBe(true);
     expect(hasClass(".agent-empty")).toBe(true);
     expect(hasClass(".spin")).toBe(true);
+  });
+
+  it("keeps split layout as the scroll-constrained pane container", () => {
+    const splitLayout = extractRuleBlock(".agents-split-layout");
+    expect(splitLayout).toContain("flex: 1");
+    expect(splitLayout).toContain("min-height: 0");
+    expect(splitLayout).not.toContain("height: 100%");
+
+    const viewContent = extractRuleBlock(".agents-view-content");
+    expect(viewContent).toContain("overflow-y: auto");
+    expect(viewContent).toContain("min-height: 0");
   });
 
   it("should visually group the filter controls", () => {
@@ -310,7 +324,7 @@ describe("Agent CSS classes", () => {
     expect(hasClass(".live-agent-card")).toBe(true);
     expect(hasClass(".live-agent-card-header")).toBe(true);
     expect(hasClass(".live-agent-card-name")).toBe(true);
-    expect(hasClass(".live-agent-pulse")).toBe(true);
+    expect(hasClass(".status-dot")).toBe(true);
     expect(hasClass(".live-agent-task")).toBe(true);
     expect(hasClass(".live-agent-card-transcript")).toBe(true);
     expect(hasClass(".live-agent-card-empty")).toBe(true);
