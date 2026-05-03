@@ -250,6 +250,20 @@ describe("Insights routes", () => {
     expect((res.body as { error: string }).error).toContain("Invalid trigger");
   });
 
+  it("POST /api/insights/run returns 409 when an active run exists for trigger", async () => {
+    storeA.getInsightStore().createRun("", { trigger: "manual" });
+
+    const res = await request(
+      app,
+      "POST",
+      "/api/insights/run",
+      JSON.stringify({ trigger: "manual" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(409);
+  });
+
   it("POST /api/insights/run persists completed run metadata", async () => {
     const res = await request(
       app,
@@ -283,12 +297,83 @@ describe("Insights routes", () => {
       { "Content-Type": "application/json" },
     );
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(201);
+    expect((res.body as { status: string }).status).toBe("failed");
 
     const runs = storeA.getInsightStore().listRuns({});
     expect(runs[0].status).toBe("failed");
     expect(runs[0].error).toContain("AI blew up");
     expect(runs[0].completedAt).toBeTruthy();
+  });
+
+  it("GET /api/insights/runs/:id/events returns durable event trail", async () => {
+    const runRes = await request(
+      app,
+      "POST",
+      "/api/insights/run",
+      JSON.stringify({ trigger: "manual" }),
+      { "Content-Type": "application/json" },
+    );
+
+    const run = runRes.body as { id: string };
+    const eventsRes = await request(app, "GET", `/api/insights/runs/${run.id}/events`);
+
+    expect(eventsRes.status).toBe(200);
+    const events = (eventsRes.body as { events: Array<{ type: string }> }).events;
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.some((event) => event.type === "status_changed")).toBe(true);
+  });
+
+  it("POST /api/insights/runs/:id/cancel returns 409 for terminal run", async () => {
+    const runRes = await request(
+      app,
+      "POST",
+      "/api/insights/run",
+      JSON.stringify({ trigger: "manual" }),
+      { "Content-Type": "application/json" },
+    );
+
+    const run = runRes.body as { id: string };
+    const cancelRes = await request(app, "POST", `/api/insights/runs/${run.id}/cancel`, JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(cancelRes.status).toBe(409);
+  });
+
+  it("POST /api/insights/runs/:id/retry only allows retryable failures", async () => {
+    piMocks.promptWithFallback.mockRejectedValue(new Error("validation failed"));
+    const failedRes = await request(
+      app,
+      "POST",
+      "/api/insights/run",
+      JSON.stringify({ trigger: "manual" }),
+      { "Content-Type": "application/json" },
+    );
+    const failedRun = failedRes.body as { id: string };
+
+    const retryRes = await request(app, "POST", `/api/insights/runs/${failedRun.id}/retry`, JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+    expect(retryRes.status).toBe(409);
+
+    piMocks.promptWithFallback.mockRejectedValue(new Error("HTTP 503"));
+    const retryableRunRes = await request(
+      app,
+      "POST",
+      "/api/insights/run",
+      JSON.stringify({ trigger: "manual" }),
+      { "Content-Type": "application/json" },
+    );
+    const retryableRun = retryableRunRes.body as { id: string };
+
+    piMocks.promptWithFallback.mockResolvedValue(undefined);
+    const retriedRes = await request(app, "POST", `/api/insights/runs/${retryableRun.id}/retry`, JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+    expect(retriedRes.status).toBe(201);
+    const retried = retriedRes.body as { lifecycle: { retryOfRunId: string } };
+    expect(retried.lifecycle.retryOfRunId).toBe(retryableRun.id);
   });
 
   it("POST /api/insights/:id/create-task returns task-conversion payload", async () => {

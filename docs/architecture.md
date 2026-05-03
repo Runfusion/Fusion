@@ -158,7 +158,13 @@ Concrete references:
 
 - `InsightStore` (`insight-store.ts`, `insight-types.ts`) persists extracted project learnings
 - Uses fingerprint-based deduplication and run tracking
-- Backed by `project_insights` and `project_insight_runs`
+- Run lifecycle is hardened through `insight-run-executor.ts` + `InsightStore` transition guards:
+  - single active run per `projectId + trigger` (`pending|running` conflict)
+  - terminal-state immutability for run rows
+  - persisted failure classification (`cancelled`, `timed_out`, `retryable_transient`, `non_retryable`) and retry lineage metadata
+  - append-only durable event trail in `project_insight_run_events`
+- Dashboard routes (`insights-routes.ts`) consume the core executor/store APIs for run start, cancel, retry, and event inspection (`/api/insights/runs/:id/events`)
+- Backed by `project_insights`, `project_insight_runs`, and `project_insight_run_events`
 
 ### Research Runs
 

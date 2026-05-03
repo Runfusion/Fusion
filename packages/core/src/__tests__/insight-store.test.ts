@@ -749,16 +749,14 @@ describe("InsightStore Run CRUD", () => {
       expect(fromDb).toEqual(updated);
     });
 
-    it("preserves existing completedAt on later updates", () => {
+    it("rejects updates after terminal completion", () => {
       const run = store.createRun("proj", { trigger: "manual" });
       const completed = store.updateRun(run.id, { status: "failed", error: "boom" });
-      const firstCompletedAt = completed?.completedAt;
+      expect(completed?.completedAt).toBeTruthy();
 
-      const patched = store.updateRun(run.id, { summary: "postmortem" });
-
-      expect(firstCompletedAt).toBeTruthy();
-      expect(patched?.completedAt).toBe(firstCompletedAt);
-      expect(patched?.summary).toBe("postmortem");
+      expect(() => store.updateRun(run.id, { summary: "postmortem" })).toThrow(
+        /terminal and immutable/i,
+      );
     });
 
     it("does not override completedAt if already provided", () => {

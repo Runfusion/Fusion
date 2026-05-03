@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createDatabase, type Database } from "../db.js";
-import { ResearchStore } from "../research-store.js";
+import { ResearchLifecycleError, ResearchStore } from "../research-store.js";
 
 describe("ResearchStore", () => {
   let db: Database;
@@ -51,6 +51,36 @@ describe("ResearchStore", () => {
     expect(store.getRun(cancelled.id)?.cancelledAt).toBeTruthy();
   });
 
+  it("enforces terminal immutability and valid transitions", () => {
+    const run = store.createRun({ query: "guarded" });
+    store.updateStatus(run.id, "running");
+    store.updateStatus(run.id, "completed");
+
+    expect(() => store.updateRun(run.id, { topic: "changed" })).toThrow(ResearchLifecycleError);
+
+    const pending = store.createRun({ query: "pending" });
+    expect(() => store.updateStatus(pending.id, "completed")).toThrow(/Invalid run status transition/i);
+  });
+
+  it("persists lifecycle events to research_run_events", () => {
+    const run = store.createRun({ query: "events" });
+    store.updateStatus(run.id, "running");
+    store.appendLifecycleEvent(run.id, { type: "info", message: "custom event" });
+
+    const events = store.listRunEvents(run.id);
+    expect(events.length).toBeGreaterThanOrEqual(2);
+    expect(events.at(-1)?.message).toBe("custom event");
+  });
+
+  it("guards against duplicate active runs per project and trigger", () => {
+    const run = store.createRun({ query: "r1", projectId: "p1", trigger: "manual" });
+    expect(store.getActiveRun("p1", "manual")?.id).toBe(run.id);
+    expect(() => store.assertNoActiveRun("p1", "manual")).toThrow(ResearchLifecycleError);
+
+    store.updateStatus(run.id, "cancelled");
+    expect(() => store.assertNoActiveRun("p1", "manual")).not.toThrow();
+  });
+
   it("appends events, manages sources, and sets results", () => {
     const run = store.createRun({ query: "events" });
     const event = store.appendEvent(run.id, { type: "info", message: "started" });
@@ -91,6 +121,7 @@ describe("ResearchStore", () => {
     expect(store.getExport("REXP-missing")).toBeUndefined();
 
     store.updateStatus(r1.id, "running");
+    store.updateStatus(r2.id, "running");
     store.updateStatus(r2.id, "completed");
     const stats = store.getStats();
     expect(stats.total).toBeGreaterThanOrEqual(2);
@@ -107,6 +138,7 @@ describe("ResearchStore", () => {
     store.on("run:completed", onCompleted);
 
     const run = store.createRun({ query: "events" });
+    store.updateStatus(run.id, "running");
     store.updateStatus(run.id, "completed");
     expect(onStatus).toHaveBeenCalled();
     expect(onCompleted).toHaveBeenCalled();

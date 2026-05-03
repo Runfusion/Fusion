@@ -15,13 +15,15 @@ import type { Request, Response, NextFunction } from "express";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { TaskStore } from "@fusion/core";
 import {
+  InsightLifecycleError,
   InsightStore,
+  executeInsightRunLifecycle,
+  retryInsightRunLifecycle,
   type InsightCategory,
   type MemoryInsightCategory,
   type InsightStatus,
   type InsightListOptions,
   type InsightRunTrigger,
-  type InsightRunCreateInput,
   type InsightRunListOptions,
   type InsightRunStatus,
 } from "@fusion/core";
@@ -82,6 +84,108 @@ const INSIGHT_CATEGORY_BY_MEMORY_CATEGORY: Record<MemoryInsightCategory, Insight
   pitfall: "quality",
   context: "other",
 };
+
+const activeRunControllers = new Map<string, AbortController>();
+
+async function withAbort<T>(signal: AbortSignal, task: Promise<T>): Promise<T> {
+  if (signal.aborted) {
+    throw signal.reason ?? new DOMException("Aborted", "AbortError");
+  }
+  return await new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    task.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
+async function executeInsightAttempt(params: {
+  rootDir: string;
+  projectId: string;
+  runId: string;
+  signal: AbortSignal;
+  insightStore: InsightStore;
+}): Promise<{ summary: string; insightsCreated: number; insightsUpdated: number }> {
+  const {
+    readWorkingMemory,
+    readInsightsMemory,
+    writeInsightsMemory,
+    buildInsightExtractionPrompt,
+    parseInsightExtractionResponse,
+    mergeInsights,
+    computeInsightFingerprint,
+  } = await import("@fusion/core");
+
+  const workingMemory = await readWorkingMemory(params.rootDir);
+  if (!workingMemory.trim()) {
+    throw new Error("No working memory to analyze");
+  }
+
+  const existingInsights = await readInsightsMemory(params.rootDir);
+  let responseText = "";
+  const { session } = await createFnAgent({
+    cwd: params.rootDir,
+    systemPrompt: [
+      "You extract durable project insights from working memory notes.",
+      "Return only valid JSON that matches the requested schema.",
+      "Do not execute tools or make code changes.",
+    ].join("\n"),
+    tools: "readonly",
+    onText: (delta: string) => {
+      responseText += delta;
+    },
+  });
+
+  try {
+    const prompt = buildInsightExtractionPrompt(workingMemory, existingInsights);
+    await withAbort(params.signal, promptWithFallback(session, prompt));
+  } finally {
+    try {
+      session.dispose();
+    } catch {
+      // Best-effort disposal
+    }
+  }
+
+  const parsedResult = parseInsightExtractionResponse(responseText);
+  const mergedInsightsContent = mergeInsights(existingInsights ?? "", parsedResult.insights);
+  await writeInsightsMemory(params.rootDir, mergedInsightsContent);
+
+  let insightsCreated = 0;
+  let insightsUpdated = 0;
+
+  for (const insight of parsedResult.insights) {
+    const category = INSIGHT_CATEGORY_BY_MEMORY_CATEGORY[insight.category] ?? "other";
+    const title = toInsightTitle(insight.content);
+    const fingerprint = computeInsightFingerprint(title, category);
+
+    const upsertedInsight = params.insightStore.upsertInsight(params.projectId, {
+      title,
+      content: insight.content,
+      category,
+      fingerprint,
+      provenance: {
+        trigger: "manual",
+        description: "Manual insight generation",
+        metadata: {
+          runId: params.runId,
+          extractedAt: insight.extractedAt,
+        },
+      },
+    });
+
+    if (upsertedInsight.createdAt === upsertedInsight.updatedAt) {
+      insightsCreated += 1;
+    } else {
+      insightsUpdated += 1;
+    }
+  }
+
+  return {
+    summary: parsedResult.summary,
+    insightsCreated,
+    insightsUpdated,
+  };
+}
 
 function toInsightTitle(content: string): string {
   const trimmed = content.trim();
@@ -192,17 +296,6 @@ export function createInsightsRouter(store: TaskStore): Router {
 
   // ── Trigger Insight Run ───────────────────────────────────────────────
 
-  /**
-   * Execute a full manual insight-generation lifecycle for the current project.
-   *
-   * Lifecycle:
-   * 1. Create run (pending)
-   * 2. Mark run running
-   * 3. Read working-memory context
-   * 4. Execute AI extraction prompt
-   * 5. Parse + persist extracted insights
-   * 6. Mark run completed (or failed on error)
-   */
   router.post("/run", async (req: Request, res: Response) => {
     try {
       const projectId = getProjectId(req) ?? "";
@@ -213,124 +306,40 @@ export function createInsightsRouter(store: TaskStore): Router {
         throw badRequest(`Invalid trigger: ${trigger}`);
       }
 
-      const input: InsightRunCreateInput = {
-        trigger,
-        inputMetadata: req.body.inputMetadata,
-      };
+      const taskStore = requestContext.getStore();
+      if (!taskStore) throw new ApiError(500, "Store context not available");
+      const rootDir = taskStore.getRootDir();
+      const controller = new AbortController();
 
-      const run = insightStore.createRun(projectId, input);
-      insightStore.updateRun(run.id, {
-        status: "running",
-        startedAt: new Date().toISOString(),
+      const run = await executeInsightRunLifecycle({
+        store: insightStore,
+        projectId,
+        input: {
+          trigger,
+          inputMetadata: req.body.inputMetadata,
+        },
+        signal: controller.signal,
+        timeoutMs: typeof req.body.timeoutMs === "number" ? req.body.timeoutMs : 120_000,
+        maxAttempts: 2,
+        retryDelayMs: 250,
+        executeAttempt: async ({ run, signal }) => {
+          activeRunControllers.set(run.id, controller);
+          return executeInsightAttempt({
+            rootDir,
+            projectId,
+            runId: run.id,
+            signal,
+            insightStore,
+          });
+        },
       });
 
-      const taskStore = requestContext.getStore();
-      if (!taskStore) {
-        throw new ApiError(500, "Store context not available");
-      }
-      const rootDir = taskStore.getRootDir();
-
-      const {
-        readWorkingMemory,
-        readInsightsMemory,
-        writeInsightsMemory,
-        buildInsightExtractionPrompt,
-        parseInsightExtractionResponse,
-        mergeInsights,
-        computeInsightFingerprint,
-      } = await import("@fusion/core");
-
-      const workingMemory = await readWorkingMemory(rootDir);
-      if (!workingMemory.trim()) {
-        const failedRun = insightStore.updateRun(run.id, {
-          status: "failed",
-          error: "No working memory to analyze",
-          completedAt: new Date().toISOString(),
-        });
-        res.status(201).json(failedRun ?? run);
-        return;
-      }
-
-      const existingInsights = await readInsightsMemory(rootDir);
-
-      try {
-        let responseText = "";
-        const { session } = await createFnAgent({
-          cwd: rootDir,
-          systemPrompt: [
-            "You extract durable project insights from working memory notes.",
-            "Return only valid JSON that matches the requested schema.",
-            "Do not execute tools or make code changes.",
-          ].join("\n"),
-          tools: "readonly",
-          onText: (delta: string) => {
-            responseText += delta;
-          },
-        });
-
-        try {
-          const prompt = buildInsightExtractionPrompt(workingMemory, existingInsights);
-          await promptWithFallback(session, prompt);
-        } finally {
-          try {
-            session.dispose();
-          } catch {
-            // Best-effort disposal
-          }
-        }
-
-        const parsedResult = parseInsightExtractionResponse(responseText);
-        const mergedInsightsContent = mergeInsights(existingInsights ?? "", parsedResult.insights);
-        await writeInsightsMemory(rootDir, mergedInsightsContent);
-
-        let insightsCreated = 0;
-        let insightsUpdated = 0;
-
-        for (const insight of parsedResult.insights) {
-          const category = INSIGHT_CATEGORY_BY_MEMORY_CATEGORY[insight.category] ?? "other";
-          const title = toInsightTitle(insight.content);
-          const fingerprint = computeInsightFingerprint(title, category);
-
-          const upsertedInsight = insightStore.upsertInsight(projectId, {
-            title,
-            content: insight.content,
-            category,
-            fingerprint,
-            provenance: {
-              trigger: "manual",
-              description: "Manual insight generation",
-              metadata: {
-                runId: run.id,
-                extractedAt: insight.extractedAt,
-              },
-            },
-          });
-
-          if (upsertedInsight.createdAt === upsertedInsight.updatedAt) {
-            insightsCreated += 1;
-          } else {
-            insightsUpdated += 1;
-          }
-        }
-
-        const completedRun = insightStore.updateRun(run.id, {
-          status: "completed",
-          insightsCreated,
-          insightsUpdated,
-          completedAt: new Date().toISOString(),
-          summary: parsedResult.summary,
-        });
-
-        res.status(201).json(completedRun ?? run);
-      } catch (err) {
-        insightStore.updateRun(run.id, {
-          status: "failed",
-          error: err instanceof Error ? err.message : String(err),
-          completedAt: new Date().toISOString(),
-        });
-        throw err;
-      }
+      activeRunControllers.delete(run.id);
+      res.status(201).json(run);
     } catch (error) {
+      if (error instanceof InsightLifecycleError && error.code === "active_run_conflict") {
+        throw new ApiError(409, error.message);
+      }
       rethrowAsApiError(error, "Failed to create insight run");
     }
   });
@@ -394,6 +403,108 @@ export function createInsightsRouter(store: TaskStore): Router {
       res.json(run);
     } catch (error) {
       rethrowAsApiError(error, "Failed to get run");
+    }
+  });
+
+  router.get("/runs/:id/events", (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const store = getInsightStore();
+      const run = store.getRun(id);
+      if (!run) throw notFound(`Run not found: ${id}`);
+      res.json({ events: store.listRunEvents(id) });
+    } catch (error) {
+      rethrowAsApiError(error, "Failed to list run events");
+    }
+  });
+
+  router.post("/runs/:id/cancel", (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const store = getInsightStore();
+      const run = store.getRun(id);
+      if (!run) throw notFound(`Run not found: ${id}`);
+      if (!["pending", "running"].includes(run.status)) {
+        throw new ApiError(409, `Run ${id} is already terminal`);
+      }
+
+      const now = new Date().toISOString();
+      store.appendRunEvent(id, { type: "cancel_requested", status: run.status, message: "Cancellation requested" });
+      const updated = store.updateRun(id, {
+        lifecycle: { ...run.lifecycle, cancellationRequestedAt: now },
+      });
+
+      if (run.status === "pending") {
+        const cancelled = store.updateRun(id, {
+          status: "cancelled",
+          error: "Cancelled before execution started",
+          cancelledAt: now,
+          lifecycle: {
+            ...(updated?.lifecycle ?? run.lifecycle),
+            terminalReason: "cancelled",
+            terminalCause: "cancel_requested",
+            failureClass: "cancelled",
+            retryable: false,
+          },
+        });
+        res.json(cancelled ?? updated ?? run);
+        return;
+      }
+
+      activeRunControllers.get(id)?.abort(new DOMException("Run cancelled", "AbortError"));
+      res.json(updated ?? run);
+    } catch (error) {
+      rethrowAsApiError(error, "Failed to cancel run");
+    }
+  });
+
+  router.post("/runs/:id/retry", async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const store = getInsightStore();
+      const existing = store.getRun(id);
+      if (!existing) throw notFound(`Run not found: ${id}`);
+      if (existing.status !== "failed") {
+        throw new ApiError(409, `Run ${id} must be failed to retry`);
+      }
+      if (!existing.lifecycle.retryable || existing.lifecycle.failureClass !== "retryable_transient") {
+        throw new ApiError(409, `Run ${id} is non-retryable`);
+      }
+
+      const taskStore = requestContext.getStore();
+      if (!taskStore) throw new ApiError(500, "Store context not available");
+      const rootDir = taskStore.getRootDir();
+      const controller = new AbortController();
+
+      const { run } = await retryInsightRunLifecycle({
+        store,
+        runId: id,
+        timeoutMs: typeof req.body?.timeoutMs === "number" ? req.body.timeoutMs : 120_000,
+        maxAttempts: 2,
+        retryDelayMs: 250,
+        signal: controller.signal,
+        executeAttempt: async ({ run, signal }) => {
+          activeRunControllers.set(run.id, controller);
+          return executeInsightAttempt({
+            rootDir,
+            projectId: existing.projectId,
+            runId: run.id,
+            signal,
+            insightStore: store,
+          });
+        },
+      });
+
+      activeRunControllers.delete(run.id);
+      res.status(201).json(run);
+    } catch (error) {
+      if (error instanceof InsightLifecycleError && error.code === "not_retryable") {
+        throw new ApiError(409, error.message);
+      }
+      if (error instanceof InsightLifecycleError && error.code === "active_run_conflict") {
+        throw new ApiError(409, error.message);
+      }
+      rethrowAsApiError(error, "Failed to retry run");
     }
   });
 

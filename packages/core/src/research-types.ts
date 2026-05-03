@@ -38,9 +38,47 @@ export const RESEARCH_EVENT_TYPES = [
   "source_added",
   "result_updated",
   "progress",
+  "status_changed",
+  "retry_scheduled",
+  "cancel_requested",
+  "timeout",
 ] as const;
 
 export type ResearchEventType = typeof RESEARCH_EVENT_TYPES[number];
+
+export const RESEARCH_RUN_FAILURE_CLASSES = [
+  "cancelled",
+  "timed_out",
+  "retryable_transient",
+  "non_retryable",
+] as const;
+
+export type ResearchRunFailureClass = typeof RESEARCH_RUN_FAILURE_CLASSES[number];
+
+export interface ResearchRunLifecycle {
+  terminalReason?: "completed" | "cancelled" | "failed" | "timed_out";
+  terminalCause?: string;
+  failureClass?: ResearchRunFailureClass;
+  retryable?: boolean;
+  cancellationRequestedAt?: string;
+  timeoutAt?: string;
+  retryOfRunId?: string;
+  rootRunId?: string;
+  attempt?: number;
+  maxAttempts?: number;
+}
+
+export interface ResearchRunEvent {
+  id: string;
+  runId: string;
+  seq: number;
+  type: ResearchEventType;
+  message: string;
+  status?: ResearchRunStatus;
+  classification?: ResearchRunFailureClass;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
 
 export interface ResearchSource {
   id: string;
@@ -89,6 +127,8 @@ export interface ResearchRun {
   query: string;
   topic?: string;
   status: ResearchRunStatus;
+  projectId?: string;
+  trigger?: string;
   providerConfig?: Record<string, unknown>;
   sources: ResearchSource[];
   events: ResearchEvent[];
@@ -97,6 +137,7 @@ export interface ResearchRun {
   tokenUsage?: ResearchTokenUsage;
   tags: string[];
   metadata?: Record<string, unknown>;
+  lifecycle?: ResearchRunLifecycle;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
@@ -116,18 +157,23 @@ export interface ResearchExport {
 export interface ResearchRunCreateInput {
   query: string;
   topic?: string;
+  projectId?: string;
+  trigger?: string;
   providerConfig?: Record<string, unknown>;
   sources?: ResearchSource[];
   events?: ResearchEvent[];
   results?: ResearchResult;
   tags?: string[];
   metadata?: Record<string, unknown>;
+  lifecycle?: ResearchRunLifecycle;
 }
 
 export interface ResearchRunUpdateInput {
   query?: string;
   topic?: string;
   status?: ResearchRunStatus;
+  projectId?: string;
+  trigger?: string;
   providerConfig?: Record<string, unknown>;
   sources?: ResearchSource[];
   events?: ResearchEvent[];
@@ -136,6 +182,7 @@ export interface ResearchRunUpdateInput {
   tokenUsage?: ResearchTokenUsage;
   tags?: string[];
   metadata?: Record<string, unknown>;
+  lifecycle?: ResearchRunLifecycle;
   startedAt?: string | null;
   completedAt?: string | null;
   cancelledAt?: string | null;

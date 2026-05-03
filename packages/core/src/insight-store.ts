@@ -27,6 +27,7 @@
  */
 
 import { EventEmitter } from "node:events";
+import { randomUUID } from "node:crypto";
 import type { Database } from "./db.js";
 import { toJsonNullable, fromJson } from "./db.js";
 import type {
@@ -46,6 +47,10 @@ import type {
   InsightRunTrigger,
   InsightRunInputMetadata,
   InsightRunOutputMetadata,
+  InsightRunLifecycle,
+  InsightRunFailureClass,
+  InsightRunEvent,
+  InsightRunEventType,
 } from "./insight-types.js";
 import type { InsightStoreEvents } from "./insight-types.js";
 
@@ -61,6 +66,29 @@ function generateRunId(): string {
   const timestamp = Date.now().toString(36).toUpperCase();
   const random = Math.random().toString(36).substring(2, 6).toUpperCase();
   return `INSR-${timestamp}-${random}`;
+}
+
+function generateRunEventId(): string {
+  return `INSEVT-${randomUUID()}`;
+}
+
+const TERMINAL_RUN_STATUSES = new Set<InsightRunStatus>(["completed", "failed", "cancelled"]);
+const VALID_RUN_STATUS_TRANSITIONS: Record<InsightRunStatus, InsightRunStatus[]> = {
+  pending: ["running", "completed", "failed", "cancelled"],
+  running: ["completed", "failed", "cancelled"],
+  completed: [],
+  failed: [],
+  cancelled: [],
+};
+
+export class InsightLifecycleError extends Error {
+  constructor(
+    message: string,
+    readonly code: "invalid_transition" | "terminal_immutable" | "active_run_conflict" | "not_retryable",
+  ) {
+    super(message);
+    this.name = "InsightLifecycleError";
+  }
 }
 
 // ── Fingerprint Helper ────────────────────────────────────────────────
@@ -403,14 +431,21 @@ export class InsightStore extends EventEmitter<InsightStoreEvents> {
     const now = new Date().toISOString();
     const id = generateRunId();
     const inputMetadata = input.inputMetadata ?? {};
+    const lifecycle: InsightRunLifecycle = {
+      attempt: input.lifecycle?.attempt ?? 1,
+      maxAttempts: input.lifecycle?.maxAttempts ?? 1,
+      rootRunId: input.lifecycle?.rootRunId,
+      retryOfRunId: input.lifecycle?.retryOfRunId,
+      ...input.lifecycle,
+    };
 
     this.db.prepare(`
       INSERT INTO project_insight_runs (
         id, projectId, trigger, status, summary, error,
         insightsCreated, insightsUpdated,
-        inputMetadata, outputMetadata,
-        createdAt, startedAt, completedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        inputMetadata, outputMetadata, lifecycle,
+        createdAt, startedAt, completedAt, cancelledAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       projectId,
@@ -422,7 +457,9 @@ export class InsightStore extends EventEmitter<InsightStoreEvents> {
       0,
       toJsonNullable(inputMetadata) ?? null,
       null,
+      toJsonNullable(lifecycle),
       now,
+      null,
       null,
       null,
     );
@@ -443,6 +480,8 @@ export class InsightStore extends EventEmitter<InsightStoreEvents> {
       createdAt: now,
       startedAt: null,
       completedAt: null,
+      cancelledAt: null,
+      lifecycle,
     };
 
     this.emit("run:created", run);
@@ -499,9 +538,27 @@ export class InsightStore extends EventEmitter<InsightStoreEvents> {
     const existing = this.getRun(id);
     if (!existing) return undefined;
 
+    const mutatingKeys = Object.keys(input);
+    if (TERMINAL_RUN_STATUSES.has(existing.status) && mutatingKeys.length > 0) {
+      throw new InsightLifecycleError(`Run ${id} is terminal and immutable`, "terminal_immutable");
+    }
+
+    if (input.status && input.status !== existing.status) {
+      const allowed = VALID_RUN_STATUS_TRANSITIONS[existing.status];
+      if (!allowed.includes(input.status)) {
+        throw new InsightLifecycleError(
+          `Invalid run status transition: ${existing.status} -> ${input.status}`,
+          "invalid_transition",
+        );
+      }
+    }
+
     const now = new Date().toISOString();
-    const isTerminal = input.status !== undefined && ["completed", "failed", "cancelled"].includes(input.status);
-    const autoComplete = isTerminal && input.completedAt === undefined && existing.completedAt === null;
+    const nextStatus = input.status ?? existing.status;
+    const isTerminal = TERMINAL_RUN_STATUSES.has(nextStatus);
+    const lifecycle = { ...existing.lifecycle, ...(input.lifecycle ?? {}) };
+    const autoCompleteAt = isTerminal && input.completedAt === undefined && existing.completedAt === null ? now : undefined;
+    const autoCancelledAt = nextStatus === "cancelled" && input.cancelledAt === undefined && existing.cancelledAt === null ? now : undefined;
 
     const sets: string[] = [];
     const params: (string | number | null)[] = [];
@@ -530,6 +587,10 @@ export class InsightStore extends EventEmitter<InsightStoreEvents> {
       sets.push("outputMetadata = ?");
       params.push(toJsonNullable(input.outputMetadata));
     }
+    if (input.lifecycle !== undefined) {
+      sets.push("lifecycle = ?");
+      params.push(toJsonNullable(lifecycle));
+    }
     if (input.startedAt !== undefined) {
       sets.push("startedAt = ?");
       params.push(input.startedAt);
@@ -538,14 +599,21 @@ export class InsightStore extends EventEmitter<InsightStoreEvents> {
       sets.push("completedAt = ?");
       params.push(input.completedAt);
     }
+    if (input.cancelledAt !== undefined) {
+      sets.push("cancelledAt = ?");
+      params.push(input.cancelledAt);
+    }
+
+    if (autoCompleteAt !== undefined) {
+      sets.push("completedAt = ?");
+      params.push(autoCompleteAt);
+    }
+    if (autoCancelledAt !== undefined) {
+      sets.push("cancelledAt = ?");
+      params.push(autoCancelledAt);
+    }
 
     if (sets.length === 0) return existing;
-
-    // Auto-set completedAt for terminal transitions
-    if (autoComplete) {
-      sets.push("completedAt = ?");
-      params.push(now);
-    }
 
     params.push(id);
     this.db.prepare(`UPDATE project_insight_runs SET ${sets.join(", ")} WHERE id = ?`).run(...params);
@@ -553,7 +621,7 @@ export class InsightStore extends EventEmitter<InsightStoreEvents> {
 
     const updated = this.getRun(id)!;
 
-    if (isTerminal) {
+    if (isTerminal && updated.status !== existing.status) {
       this.emit("run:completed", updated);
     }
     this.emit("run:updated", updated);
@@ -573,19 +641,100 @@ export class InsightStore extends EventEmitter<InsightStoreEvents> {
    * @returns The created or existing run
    */
   upsertRun(projectId: string, trigger: InsightRunTrigger, input: InsightRunCreateInput): InsightRun {
-    // Find most recent pending/running run for this project + trigger
+    const existing = this.findActiveRun(projectId, trigger);
+    if (existing) {
+      return existing;
+    }
+    return this.createRun(projectId, input);
+  }
+
+  findActiveRun(projectId: string, trigger: InsightRunTrigger): InsightRun | undefined {
     const existingRow = this.db.prepare(`
-      SELECT * FROM project_insight_runs
+      SELECT id FROM project_insight_runs
       WHERE projectId = ? AND trigger = ? AND status IN ('pending', 'running')
       ORDER BY createdAt DESC, id DESC
       LIMIT 1
-    `).get(projectId, trigger) as Record<string, unknown> | undefined;
+    `).get(projectId, trigger) as { id: string } | undefined;
+    return existingRow ? this.getRun(existingRow.id) : undefined;
+  }
 
-    if (existingRow) {
-      return this.getRun(existingRow.id as string)!;
+  createRunOrThrowConflict(projectId: string, input: InsightRunCreateInput): InsightRun {
+    const existing = this.findActiveRun(projectId, input.trigger);
+    if (existing) {
+      throw new InsightLifecycleError(
+        `Active run already exists for project ${projectId} trigger ${input.trigger}: ${existing.id}`,
+        "active_run_conflict",
+      );
     }
-
     return this.createRun(projectId, input);
+  }
+
+  appendRunEvent(
+    runId: string,
+    event: {
+      type: InsightRunEventType;
+      message: string;
+      status?: InsightRunStatus;
+      classification?: InsightRunFailureClass;
+      metadata?: Record<string, unknown>;
+    },
+  ): InsightRunEvent {
+    const run = this.getRun(runId);
+    if (!run) {
+      throw new Error(`Insight run not found: ${runId}`);
+    }
+    const createdAt = new Date().toISOString();
+    const row = this.db.prepare("SELECT COALESCE(MAX(seq), 0) + 1 as nextSeq FROM project_insight_run_events WHERE runId = ?").get(runId) as { nextSeq: number };
+    const runEvent: InsightRunEvent = {
+      id: generateRunEventId(),
+      runId,
+      seq: Number(row?.nextSeq ?? 1),
+      type: event.type,
+      message: event.message,
+      status: event.status,
+      classification: event.classification,
+      metadata: event.metadata,
+      createdAt,
+    };
+
+    this.db.prepare(`
+      INSERT INTO project_insight_run_events (id, runId, seq, type, message, status, classification, metadata, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      runEvent.id,
+      runEvent.runId,
+      runEvent.seq,
+      runEvent.type,
+      runEvent.message,
+      runEvent.status ?? null,
+      runEvent.classification ?? null,
+      toJsonNullable(runEvent.metadata),
+      runEvent.createdAt,
+    );
+
+    this.db.bumpLastModified();
+    this.emit("run:event", { runId, event: runEvent });
+    return runEvent;
+  }
+
+  listRunEvents(runId: string): InsightRunEvent[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM project_insight_run_events
+      WHERE runId = ?
+      ORDER BY seq ASC
+    `).all(runId) as Record<string, unknown>[];
+
+    return rows.map((row) => ({
+      id: row.id as string,
+      runId: row.runId as string,
+      seq: Number(row.seq),
+      type: row.type as InsightRunEventType,
+      message: row.message as string,
+      status: (row.status as InsightRunStatus | null) ?? undefined,
+      classification: (row.classification as InsightRunFailureClass | null) ?? undefined,
+      metadata: fromJson<Record<string, unknown>>(row.metadata as string | null),
+      createdAt: row.createdAt as string,
+    }));
   }
 
   /**
@@ -642,6 +791,11 @@ export class InsightStore extends EventEmitter<InsightStoreEvents> {
       createdAt: row.createdAt as string,
       startedAt: row.startedAt as string | null,
       completedAt: row.completedAt as string | null,
+      cancelledAt: row.cancelledAt as string | null,
+      lifecycle: (() => {
+        const m = fromJson<InsightRunLifecycle>(row.lifecycle as string | null);
+        return m ?? {};
+      })(),
     };
   }
 }

@@ -275,6 +275,42 @@ export type InsightRunTrigger = "schedule" | "manual" | "task_completion" | "mer
  * Runs track the full lifecycle of an analysis pass — from scheduling
  * through input processing to output persistence.
  */
+export type InsightRunFailureClass = "cancelled" | "timed_out" | "retryable_transient" | "non_retryable";
+
+export interface InsightRunLifecycle {
+  terminalReason?: "completed" | "cancelled" | "failed" | "timed_out";
+  terminalCause?: string;
+  failureClass?: InsightRunFailureClass;
+  retryable?: boolean;
+  cancellationRequestedAt?: string;
+  timeoutAt?: string;
+  retryOfRunId?: string;
+  rootRunId?: string;
+  attempt?: number;
+  maxAttempts?: number;
+}
+
+export type InsightRunEventType =
+  | "status_changed"
+  | "retry_scheduled"
+  | "cancel_requested"
+  | "timeout"
+  | "info"
+  | "warning"
+  | "error";
+
+export interface InsightRunEvent {
+  id: string;
+  runId: string;
+  seq: number;
+  type: InsightRunEventType;
+  message: string;
+  status?: InsightRunStatus;
+  classification?: InsightRunFailureClass;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface InsightRun {
   /**
    * Unique identifier for this run (e.g., "INSR-xxx").
@@ -344,6 +380,13 @@ export interface InsightRun {
    * When the run reached a terminal state.
    */
   completedAt: string | null;
+
+  /**
+   * When cancellation was applied.
+   */
+  cancelledAt: string | null;
+
+  lifecycle: InsightRunLifecycle;
 }
 
 // ── Run Input / Output Metadata ──────────────────────────────────────
@@ -422,6 +465,7 @@ export interface InsightRunOutputMetadata {
 export interface InsightRunCreateInput {
   trigger: InsightRunTrigger;
   inputMetadata?: InsightRunInputMetadata;
+  lifecycle?: InsightRunLifecycle;
 }
 
 // ── Run Update Input ─────────────────────────────────────────────────
@@ -437,8 +481,10 @@ export interface InsightRunUpdateInput {
   insightsCreated?: number;
   insightsUpdated?: number;
   outputMetadata?: InsightRunOutputMetadata;
+  lifecycle?: InsightRunLifecycle;
   startedAt?: string | null;
   completedAt?: string | null;
+  cancelledAt?: string | null;
 }
 
 // ── Run List Options ─────────────────────────────────────────────────
@@ -478,4 +524,6 @@ export interface InsightStoreEvents {
   "run:updated": [InsightRun];
   /** Emitted when a run reaches a terminal state */
   "run:completed": [InsightRun];
+  /** Emitted when a durable run event is appended */
+  "run:event": [{ runId: string; event: InsightRunEvent }];
 }

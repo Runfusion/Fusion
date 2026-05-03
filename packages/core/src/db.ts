@@ -419,6 +419,8 @@ CREATE TABLE IF NOT EXISTS research_runs (
   query TEXT NOT NULL,
   topic TEXT,
   status TEXT NOT NULL,
+  projectId TEXT,
+  trigger TEXT,
   providerConfig TEXT,
   sources TEXT NOT NULL DEFAULT '[]',
   events TEXT NOT NULL DEFAULT '[]',
@@ -427,6 +429,7 @@ CREATE TABLE IF NOT EXISTS research_runs (
   tokenUsage TEXT,
   tags TEXT NOT NULL DEFAULT '[]',
   metadata TEXT,
+  lifecycle TEXT,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL,
   startedAt TEXT,
@@ -447,6 +450,20 @@ CREATE TABLE IF NOT EXISTS research_exports (
   FOREIGN KEY (runId) REFERENCES research_runs(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idxResearchExportsRunId ON research_exports(runId);
+
+CREATE TABLE IF NOT EXISTS research_run_events (
+  id TEXT PRIMARY KEY,
+  runId TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  message TEXT NOT NULL,
+  status TEXT,
+  classification TEXT,
+  metadata TEXT,
+  createdAt TEXT NOT NULL,
+  FOREIGN KEY (runId) REFERENCES research_runs(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idxResearchRunEventsRunIdSeq ON research_run_events(runId, seq);
 
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS __meta (
@@ -643,9 +660,11 @@ CREATE TABLE IF NOT EXISTS project_insight_runs (
   insightsUpdated INTEGER NOT NULL DEFAULT 0,
   inputMetadata TEXT,
   outputMetadata TEXT,
+  lifecycle TEXT,
   createdAt TEXT NOT NULL,
   startedAt TEXT,
-  completedAt TEXT
+  completedAt TEXT,
+  cancelledAt TEXT
 );
 
 -- Index for filtering insights by projectId
@@ -663,6 +682,23 @@ CREATE INDEX IF NOT EXISTS idxProjectInsightsCategory
 -- Index for filtering runs by projectId
 CREATE INDEX IF NOT EXISTS idxInsightRunsProjectId
   ON project_insight_runs(projectId);
+CREATE INDEX IF NOT EXISTS idxInsightRunsProjectTriggerStatus
+  ON project_insight_runs(projectId, trigger, status);
+
+CREATE TABLE IF NOT EXISTS project_insight_run_events (
+  id TEXT PRIMARY KEY,
+  runId TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  message TEXT NOT NULL,
+  status TEXT,
+  classification TEXT,
+  metadata TEXT,
+  createdAt TEXT NOT NULL,
+  FOREIGN KEY (runId) REFERENCES project_insight_runs(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idxInsightRunEventsRunIdSeq
+  ON project_insight_run_events(runId, seq);
 
 -- Todo list persistence tables (FN-2575)
 -- Project-scoped todo lists and ordered checklist items
@@ -1789,9 +1825,11 @@ export class Database {
             insightsUpdated INTEGER NOT NULL DEFAULT 0,
             inputMetadata TEXT,
             outputMetadata TEXT,
+            lifecycle TEXT,
             createdAt TEXT NOT NULL,
             startedAt TEXT,
-            completedAt TEXT
+            completedAt TEXT,
+            cancelledAt TEXT
           )
         `);
 
@@ -2155,6 +2193,8 @@ export class Database {
             query TEXT NOT NULL,
             topic TEXT,
             status TEXT NOT NULL,
+            projectId TEXT,
+            trigger TEXT,
             providerConfig TEXT,
             sources TEXT NOT NULL DEFAULT '[]',
             events TEXT NOT NULL DEFAULT '[]',
@@ -2163,6 +2203,7 @@ export class Database {
             tokenUsage TEXT,
             tags TEXT NOT NULL DEFAULT '[]',
             metadata TEXT,
+            lifecycle TEXT,
             createdAt TEXT NOT NULL,
             updatedAt TEXT NOT NULL,
             startedAt TEXT,
@@ -2174,6 +2215,7 @@ export class Database {
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxResearchRunsStatus ON research_runs(status)`);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxResearchRunsCreatedAt ON research_runs(createdAt)`);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxResearchRunsUpdatedAt ON research_runs(updatedAt)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxResearchRunsProjectTriggerStatus ON research_runs(projectId, trigger, status)`);
 
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS research_exports (
@@ -2254,6 +2296,57 @@ export class Database {
       this.applyMigration(59, () => {
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxTasksColumn ON tasks("column")`);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxTasksUpdatedAt ON tasks(updatedAt DESC)`);
+
+        if (this.hasTable("research_runs")) {
+          this.addColumnIfMissing("research_runs", "projectId", "TEXT");
+          this.addColumnIfMissing("research_runs", "trigger", "TEXT");
+          this.addColumnIfMissing("research_runs", "lifecycle", "TEXT");
+          this.db.exec(`CREATE INDEX IF NOT EXISTS idxResearchRunsProjectTriggerStatus ON research_runs(projectId, trigger, status)`);
+        }
+
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS research_run_events (
+            id TEXT PRIMARY KEY,
+            runId TEXT NOT NULL,
+            seq INTEGER NOT NULL,
+            type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            status TEXT,
+            classification TEXT,
+            metadata TEXT,
+            createdAt TEXT NOT NULL,
+            FOREIGN KEY (runId) REFERENCES research_runs(id) ON DELETE CASCADE
+          )
+        `);
+        if (this.hasTable("research_run_events")) {
+          this.addColumnIfMissing("research_run_events", "seq", "INTEGER NOT NULL DEFAULT 0");
+        }
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxResearchRunEventsRunIdSeq ON research_run_events(runId, seq)`);
+
+        if (this.hasTable("project_insight_runs")) {
+          this.addColumnIfMissing("project_insight_runs", "lifecycle", "TEXT");
+          this.addColumnIfMissing("project_insight_runs", "cancelledAt", "TEXT");
+          this.db.exec(`CREATE INDEX IF NOT EXISTS idxInsightRunsProjectTriggerStatus ON project_insight_runs(projectId, trigger, status)`);
+        }
+
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS project_insight_run_events (
+            id TEXT PRIMARY KEY,
+            runId TEXT NOT NULL,
+            seq INTEGER NOT NULL,
+            type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            status TEXT,
+            classification TEXT,
+            metadata TEXT,
+            createdAt TEXT NOT NULL,
+            FOREIGN KEY (runId) REFERENCES project_insight_runs(id) ON DELETE CASCADE
+          )
+        `);
+        if (this.hasTable("project_insight_run_events")) {
+          this.addColumnIfMissing("project_insight_run_events", "seq", "INTEGER NOT NULL DEFAULT 0");
+        }
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxInsightRunEventsRunIdSeq ON project_insight_run_events(runId, seq)`);
       });
     }
 
