@@ -1557,11 +1557,8 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                 </div>
 
                 <OnboardingDisclosure summary="Advanced planning settings" className="planning-advanced-disclosure" defaultOpen>
-                  <p className="planning-advanced-blurb">
-                    Choose the planning model and tune plan depth to control how detailed the AI interview should be.
-                  </p>
-
-                  <div className="planning-model-select-group">
+                  <div className="planning-advanced-content">
+                    <div className="planning-advanced-section planning-model-select-group">
                     <label htmlFor="planning-modal-model" className="form-label">
                       Planning Model
                       {modelsLoading && (
@@ -1570,6 +1567,9 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                         </span>
                       )}
                     </label>
+                    <p className="planning-advanced-blurb">
+                      Selects which model runs the planning interview and writes the final draft.
+                    </p>
                     <CustomModelDropdown
                       id="planning-modal-model"
                       label="Planning Model"
@@ -1613,38 +1613,44 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
                     </div>
                   </div>
 
-                  <div className="planning-depth-selector">
-                    <div className="planning-depth-chip-group" role="group" aria-label="Planning depth">
-                      {([
-                        { value: "small", label: "Small" },
-                        { value: "medium", label: "Medium" },
-                        { value: "large", label: "Large" },
-                      ] as const).map((depthOption) => (
-                        <button
-                          key={depthOption.value}
-                          type="button"
-                          className={`planning-depth-chip btn ${planningDepth === depthOption.value ? "btn-primary planning-depth-chip-active" : ""}`}
-                          onClick={() => setPlanningDepth(depthOption.value)}
-                          aria-pressed={planningDepth === depthOption.value}
-                        >
-                          {depthOption.label}
-                        </button>
-                      ))}
-                    </div>
+                    <div className="planning-advanced-section planning-depth-selector">
+                      <p className="planning-advanced-blurb">
+                        Plan size sets default interview depth. Questions lets you override with an exact count.
+                      </p>
+                      <div className="planning-depth-controls-row">
+                        <div className="planning-depth-chip-group" role="group" aria-label="Planning depth">
+                          {([
+                            { value: "small", label: "Small" },
+                            { value: "medium", label: "Medium" },
+                            { value: "large", label: "Large" },
+                          ] as const).map((depthOption) => (
+                            <button
+                              key={depthOption.value}
+                              type="button"
+                              className={`planning-depth-chip btn ${planningDepth === depthOption.value ? "btn-primary planning-depth-chip-active" : ""}`}
+                              onClick={() => setPlanningDepth(depthOption.value)}
+                              aria-pressed={planningDepth === depthOption.value}
+                            >
+                              {depthOption.label}
+                            </button>
+                          ))}
+                        </div>
 
-                    <label className="planning-depth-question-count" htmlFor="planning-depth-questions">
-                      <span>Questions</span>
-                      <input
-                        id="planning-depth-questions"
-                        className="input planning-depth-question-input"
-                        type="number"
-                        min={1}
-                        max={20}
-                        value={customQuestionCount}
-                        onChange={(e) => setCustomQuestionCount(e.target.value)}
-                        placeholder="Auto"
-                      />
-                    </label>
+                        <label className="planning-depth-question-count" htmlFor="planning-depth-questions">
+                          <span>Questions</span>
+                          <input
+                            id="planning-depth-questions"
+                            className="input planning-depth-question-input"
+                            type="number"
+                            min={1}
+                            max={20}
+                            value={customQuestionCount}
+                            onChange={(e) => setCustomQuestionCount(e.target.value)}
+                            placeholder="Auto"
+                          />
+                        </label>
+                      </div>
+                    </div>
                   </div>
                 </OnboardingDisclosure>
               </div>

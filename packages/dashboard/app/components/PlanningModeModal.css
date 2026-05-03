@@ -411,35 +411,55 @@
   margin: 0 auto;
 }
 
-.planning-advanced-blurb {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 12px;
+.planning-advanced-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  width: 100%;
 }
 
-.planning-model-select-group {
+.planning-advanced-section {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
-  max-width: 420px;
-  margin: 0 auto;
+  padding: var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.planning-advanced-blurb {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  line-height: 1.4;
+}
+
+.planning-model-select-group {
+  max-width: 100%;
+  margin: 0;
   width: 100%;
 }
 
 .planning-model-select-group .form-label {
-  font-size: 13px;
+  font-size: calc(var(--space-sm) + var(--space-xs) + var(--space-xs) * 0.25);
   color: var(--text-muted);
   text-align: left;
 }
 
 .planning-depth-selector {
+  align-items: stretch;
+  justify-content: flex-start;
+  max-width: 100%;
+  margin: 0;
+  width: 100%;
+}
+
+.planning-depth-controls-row {
   display: flex;
   align-items: flex-end;
-  justify-content: center;
   gap: var(--space-md);
-  max-width: 520px;
-  margin: 0 auto;
-  width: 100%;
+  flex-wrap: wrap;
 }
 
 .planning-depth-chip-group {
@@ -1324,9 +1344,12 @@
   }
 
   .planning-depth-selector {
+    gap: var(--space-sm);
+  }
+
+  .planning-depth-controls-row {
     flex-direction: column;
     align-items: stretch;
-    gap: var(--space-sm);
   }
 
   .planning-depth-chip-group {

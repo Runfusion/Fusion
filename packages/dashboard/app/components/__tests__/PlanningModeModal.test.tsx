@@ -399,7 +399,7 @@ describe("PlanningModeModal", () => {
       });
     });
 
-    it("renders planning depth controls with medium selected by default", () => {
+    it("renders advanced disclosure controls in the initial view", () => {
       render(
         <PlanningModeModal
           isOpen={true}
@@ -410,12 +410,21 @@ describe("PlanningModeModal", () => {
         />
       );
 
-      expect(screen.getByRole("button", { name: "Advanced planning settings" })).toBeDefined();
-      expect(screen.getByText(/Choose the planning model and tune plan depth/)).toBeDefined();
-      expect(screen.getByRole("button", { name: "Small" })).toBeDefined();
-      expect(screen.getByRole("button", { name: "Medium" }).getAttribute("aria-pressed")).toBe("true");
-      expect(screen.getByRole("button", { name: "Large" })).toBeDefined();
-      expect(screen.getByLabelText("Questions")).toBeDefined();
+      const disclosureButton = screen.getByRole("button", { name: "Advanced planning settings" });
+      expect(disclosureButton).toBeDefined();
+
+      const disclosure = disclosureButton.closest(".onboarding-disclosure");
+      expect(disclosure).not.toBeNull();
+      const disclosureScope = within(disclosure as HTMLElement);
+
+      expect(disclosureScope.getByRole("button", { name: "Planning Model" })).toBeDefined();
+      expect(disclosureScope.getByText("Using default")).toBeDefined();
+      expect(disclosureScope.getByText(/Selects which model runs the planning interview/)).toBeDefined();
+      expect(disclosureScope.getByText(/Plan size sets default interview depth/)).toBeDefined();
+      expect(disclosureScope.getByRole("button", { name: "Small" })).toBeDefined();
+      expect(disclosureScope.getByRole("button", { name: "Medium" }).getAttribute("aria-pressed")).toBe("true");
+      expect(disclosureScope.getByRole("button", { name: "Large" })).toBeDefined();
+      expect(disclosureScope.getByLabelText("Questions")).toBeDefined();
     });
 
     it("updates selected depth and sends custom question count", async () => {
