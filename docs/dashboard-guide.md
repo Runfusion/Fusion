@@ -37,6 +37,7 @@ Features:
 Chat view provides project-scoped conversations with agents.
 
 - Entering `/clear` (exact match after trimming) in the composer starts a fresh thread for the current chat target instead of sending the literal command to the model
+- Full Chat and Quick Chat both consume the same streamed `/api/chat/sessions/:id/messages` response contract, so assistant text/chunk/done events are restored consistently across both surfaces
 
 ![Chat view](./screenshots/chat-view.png)
 
