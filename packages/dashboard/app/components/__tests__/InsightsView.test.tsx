@@ -294,6 +294,44 @@ describe("InsightsView", () => {
       expect(screen.getByText("Failed to load insights")).toBeInTheDocument();
     });
 
+    it("should render run-level error state from failed insight runs", () => {
+      mockUseInsights.mockReturnValue({
+        sections: mockSections,
+        loading: false,
+        error: null,
+        latestRun: {
+          id: "INSR-10",
+          projectId: "test",
+          trigger: "manual",
+          status: "failed",
+          summary: null,
+          error: "No working memory to analyze",
+          insightsCreated: 0,
+          insightsUpdated: 0,
+          inputMetadata: {},
+          outputMetadata: {},
+          createdAt: "2024-01-01T00:00:00Z",
+          startedAt: "2024-01-01T00:00:01Z",
+          completedAt: "2024-01-01T00:00:10Z",
+        },
+        isRunInFlight: false,
+        runError: "No working memory to analyze",
+        refresh: vi.fn(),
+        runInsights: vi.fn(),
+        dismiss: vi.fn(),
+        createTask: vi.fn(),
+        dismissStates: new Map(),
+        createTaskStates: new Map(),
+        totalCount: 0,
+        dismissedCount: 0,
+      });
+
+      render(<InsightsView {...defaultProps} />);
+
+      expect(screen.getByTestId("run-error")).toBeInTheDocument();
+      expect(screen.getAllByText("No working memory to analyze").length).toBeGreaterThan(0);
+    });
+
     it("should render global empty state when all sections are empty", () => {
       mockUseInsights.mockReturnValue({
         sections: mockSections,

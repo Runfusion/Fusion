@@ -196,6 +196,53 @@ describe("useInsights", () => {
   });
 
   describe("runInsights", () => {
+    it("should set latestRun from the newest run returned by fetchInsightRuns during refresh", async () => {
+      mockFetchInsights.mockResolvedValue({ insights: [], count: 0 });
+      mockFetchInsightRuns.mockResolvedValue({
+        runs: [
+          {
+            id: "RUN-2",
+            projectId: "project-1",
+            trigger: "manual" as const,
+            status: "running" as const,
+            summary: null,
+            error: null,
+            insightsCreated: 0,
+            insightsUpdated: 0,
+            inputMetadata: {},
+            outputMetadata: {},
+            createdAt: "2024-01-01T00:00:00Z",
+            startedAt: "2024-01-01T00:00:05Z",
+            completedAt: null,
+          },
+          {
+            id: "RUN-1",
+            projectId: "project-1",
+            trigger: "manual" as const,
+            status: "completed" as const,
+            summary: "done",
+            error: null,
+            insightsCreated: 1,
+            insightsUpdated: 0,
+            inputMetadata: {},
+            outputMetadata: {},
+            createdAt: "2024-01-01T00:00:00Z",
+            startedAt: "2024-01-01T00:00:01Z",
+            completedAt: "2024-01-01T00:00:10Z",
+          },
+        ],
+      });
+
+      const { result } = renderHook(() => useInsights("project-1"));
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      expect(result.current.latestRun?.id).toBe("RUN-2");
+      expect(result.current.latestRun?.status).toBe("running");
+    });
+
     it("should trigger manual insight run and refresh when run completes", async () => {
       const completedRun = {
         id: "RUN-1",

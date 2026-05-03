@@ -146,6 +146,15 @@ describe("Insights routes", () => {
     expect((getRes.body as { id: string }).id).toBe(run.id);
   });
 
+  it("GET /api/insights/runs/:id returns not-found JSON payload for unknown ids", async () => {
+    const res = await request(app, "GET", "/api/insights/runs/INSR-missing");
+
+    expect(res.status).toBe(404);
+    expect(res.body).toMatchObject({
+      error: expect.stringContaining("Run not found"),
+    });
+  });
+
   it("GET /api/insights applies category/status/runId filters and pagination", async () => {
     const insightStore = storeA.getInsightStore();
     const runA = insightStore.createRun("", { trigger: "manual" });
