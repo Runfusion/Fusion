@@ -830,19 +830,6 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     };
   }, []);
 
-  const handleInitialPlanBlur = useCallback(() => {
-    if (draftSyncTimerRef.current) {
-      clearTimeout(draftSyncTimerRef.current);
-      draftSyncTimerRef.current = null;
-    }
-
-    if (!selectedSessionId || view.type !== "initial") {
-      return;
-    }
-
-    void syncPlanningDraft(selectedSessionId, initialPlan);
-  }, [initialPlan, selectedSessionId, syncPlanningDraft, view.type]);
-
   const handleDeleteSession = useCallback(
     async (sessionId: string) => {
       const isActiveServerSession = (status: AiSessionSummary["status"]) =>

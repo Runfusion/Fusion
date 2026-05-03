@@ -578,6 +578,15 @@
   display: flex;
   gap: var(--space-sm);
   flex-wrap: wrap;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+.agent-badges .badge-skill {
+  min-width: 0;
+  max-width: min(100%, calc(var(--space-2xl) * 6));
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .agent-card-chevron {

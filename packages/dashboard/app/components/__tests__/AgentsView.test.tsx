@@ -164,6 +164,28 @@ describe("AgentsView", () => {
       });
     });
 
+    it("formats skill badge labels from SKILL.md paths", async () => {
+      mockFetchAgents.mockResolvedValueOnce([
+        {
+          ...mockAgents[0],
+          id: "agent-skills",
+          name: "Skill Agent",
+          metadata: {
+            skills: ["auto::skills/../../.agents/skills/review/SKILL.md"],
+          },
+        },
+      ]);
+      mockFetchAgentStats.mockResolvedValueOnce({ total: 1, byState: {}, byRole: {} });
+
+      render(<AgentsView addToast={mockAddToast} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("review")).toBeInTheDocument();
+      });
+      expect(screen.queryByText("auto::skills/../../.agents/skills/review/SKILL.md")).toBeNull();
+      expect(screen.getByText("review")).toHaveAttribute("title", "auto::skills/../../.agents/skills/review/SKILL.md");
+    });
+
     it("renders split layout with sidebar and detail pane", async () => {
       const { container } = render(<AgentsView addToast={mockAddToast} />);
 

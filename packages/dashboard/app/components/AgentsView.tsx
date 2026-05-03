@@ -47,6 +47,21 @@ const AGENT_ROLES: { value: AgentCapability; label: string; icon: string }[] = [
 
 const HEARTBEAT_MULTIPLIER_PRESETS = [0.1, 0.25, 0.5, 1, 2, 3, 5, 10] as const;
 
+const SKILL_PATH_LABEL_PATTERN = /(?:^|\/)skills\/([^/]+)\/SKILL\.md$/i;
+
+export function formatAgentSkillBadgeLabel(skillId: string): string {
+  const trimmedSkillId = skillId.trim();
+  if (!trimmedSkillId) {
+    return skillId;
+  }
+
+  const match = trimmedSkillId.match(SKILL_PATH_LABEL_PATTERN);
+  if (match?.[1]) {
+    return match[1];
+  }
+
+  return trimmedSkillId;
+}
 
 function getStateBadgeClass(state: AgentState): string {
   switch (state) {
@@ -146,7 +161,7 @@ function OrgChartNode({
             return (
               <>
                 {displaySkills.map((skillId) => (
-                  <span key={skillId} className="org-chart-node__skill">{skillId}</span>
+                  <span key={skillId} className="org-chart-node__skill">{formatAgentSkillBadgeLabel(skillId)}</span>
                 ))}
                 {extraCount > 0 && <span className="org-chart-node__skill">+{extraCount}</span>}
               </>
@@ -1034,7 +1049,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                         return (
                           <>
                             {displaySkills.map((skillId) => (
-                              <span key={skillId} className="badge badge-skill">{skillId}</span>
+                              <span key={skillId} className="badge badge-skill" title={skillId}>{formatAgentSkillBadgeLabel(skillId)}</span>
                             ))}
                             {extraCount > 0 && <span className="badge badge-skill">+{extraCount}</span>}
                           </>
