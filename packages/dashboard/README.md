@@ -79,7 +79,7 @@ Navigation placement in this iteration:
 - **Desktop:** Header view overflow menu ("More views")
 - **Mobile:** `MobileNavBar` More sheet
 
-`fusion-plugin-dependency-graph` registers `graph` and is host-resolved through an explicit static registry (`app/plugins/pluginViewRegistry.tsx`) for bundle-safe rendering.
+`fusion-plugin-dependency-graph` registers `graph` and is host-resolved through an explicit static registry (`app/plugins/pluginViewRegistry.tsx`) for bundle-safe rendering. CLI dashboard/serve/daemon startup now auto-installs this bundled plugin when missing.
 
 ### Mobile Bottom Navigation
 The dashboard now includes a dedicated bottom tab navigation pattern for mobile viewports (`≤768px`) via `MobileNavBar` (`app/components/MobileNavBar.tsx`). This pattern is designed for narrow screens and Capacitor-wrapped app usage where bottom-tab navigation is the primary interaction model.

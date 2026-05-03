@@ -10,6 +10,8 @@ const piClaudeCliSrc = join(__dirname, "..", "pi-claude-cli");
 const piClaudeCliDest = join(__dirname, "dist", "pi-claude-cli");
 const droidCliSrc = join(__dirname, "..", "droid-cli");
 const droidCliDest = join(__dirname, "dist", "droid-cli");
+const dependencyGraphPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-dependency-graph");
+const dependencyGraphPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-dependency-graph");
 const dashboardClientStub = `<!doctype html>
 <html lang="en">
   <head>
@@ -85,6 +87,21 @@ export default defineConfig({
     } else {
       console.warn(
         `WARNING: droid-cli source not found at ${droidCliSrc}; useDroidCli will not work in the published package.`,
+      );
+    }
+
+    if (existsSync(dependencyGraphPluginDest)) {
+      rmSync(dependencyGraphPluginDest, { recursive: true, force: true });
+    }
+    if (existsSync(dependencyGraphPluginSrc)) {
+      mkdirSync(dependencyGraphPluginDest, { recursive: true });
+      cpSync(join(dependencyGraphPluginSrc, "manifest.json"), join(dependencyGraphPluginDest, "manifest.json"));
+      cpSync(join(dependencyGraphPluginSrc, "package.json"), join(dependencyGraphPluginDest, "package.json"));
+      cpSync(join(dependencyGraphPluginSrc, "src"), join(dependencyGraphPluginDest, "src"), { recursive: true });
+      console.log("Copied dependency graph plugin to dist/plugins/fusion-plugin-dependency-graph/");
+    } else {
+      console.warn(
+        `WARNING: Dependency graph plugin source not found at ${dependencyGraphPluginSrc}; bundled auto-install will be unavailable.`,
       );
     }
 

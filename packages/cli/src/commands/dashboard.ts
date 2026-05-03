@@ -54,6 +54,7 @@ import {
 } from "./droid-cli-extension.js";
 import { getCachedUpdateStatus, isUpdateCheckEnabled } from "../update-cache.js";
 import { resolveSelfExtension } from "./self-extension.js";
+import { ensureBundledDependencyGraphPluginInstalled } from "../plugins/bundled-plugin-install.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
 import { DashboardTUI, DashboardLogSink, isTTYAvailable, type SystemInfo, type GitStatus, type GitCommit, type GitCommitDetail, type GitBranch, type GitWorktree, type FileEntry, type FileReadResult, type TaskStep as TUITaskStep, type TaskLogEntry as TUITaskLogEntry, type TaskDetailData, type TaskEvent } from "./dashboard-tui/index.js";
 
@@ -1076,6 +1077,20 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     pluginStore,
     taskStore: store,
   });
+
+  try {
+    const installStatus = await ensureBundledDependencyGraphPluginInstalled(pluginStore, pluginLoader);
+    if (installStatus === "installed") {
+      logSink.log("Installed bundled Dependency Graph plugin", "plugins");
+    } else if (installStatus === "missing-bundle") {
+      logSink.log("Bundled Dependency Graph plugin was not found in this build", "plugins");
+    }
+  } catch (err) {
+    logSink.log(
+      `Failed to auto-install bundled Dependency Graph plugin: ${err instanceof Error ? err.message : err}`,
+      "plugins",
+    );
+  }
 
   // Auto-load all enabled plugins so runtime UI (NewAgentDialog, AgentDetailView)
   // can discover installed runtimes like Hermes and OpenClaw.
