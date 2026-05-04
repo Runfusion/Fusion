@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, lazy, Suspense, type MouseEvent } from "react";
+import { useState, useEffect, useCallback, useRef, lazy, Suspense, type CSSProperties, type MouseEvent } from "react";
 import { Globe, Folder, RefreshCw, Star, HelpCircle, Loader2, CheckCircle, AlertTriangle } from "lucide-react";
 import {
   THINKING_LEVELS,
@@ -40,8 +40,10 @@ import { CustomProvidersSection } from "./CustomProvidersSection";
 import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPresets";
 import { appendTokenQuery } from "../auth";
 import { useConfirm } from "../hooks/useConfirm";
+import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useNodes } from "../hooks/useNodes";
+import { useViewportMode } from "../hooks/useViewportMode";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { filterVisibleOnboardingAndSettingsProviders } from "./providerVisibility";
 
@@ -353,7 +355,18 @@ export function SettingsModal({
   onReopenOnboarding,
 }: SettingsModalProps) {
   const { confirm } = useConfirm();
+  const viewportMode = useViewportMode();
   useMobileScrollLock(true);
+  const { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen } = useMobileKeyboard({
+    enabled: viewportMode === "mobile",
+  });
+  const keyboardStyle: CSSProperties = keyboardOpen
+    ? ({
+        "--keyboard-overlap": `${keyboardOverlap}px`,
+        "--vv-offset-top": `${viewportOffsetTop}px`,
+        ...(viewportHeight !== null ? { "--vv-height": `${viewportHeight}px` } : {}),
+      } as CSSProperties)
+    : {};
   const modalRef = useRef<HTMLDivElement>(null);
   const settingsContentRef = useRef<HTMLDivElement>(null);
   useModalResizePersist(modalRef, true, "fusion:settings-modal-size");
@@ -5302,7 +5315,7 @@ export function SettingsModal({
 
   return (
     <div className="modal-overlay open" {...overlayDismissProps} role="dialog" aria-modal="true">
-      <div className="modal modal-lg settings-modal" ref={modalRef}>
+      <div className="modal modal-lg settings-modal" ref={modalRef} style={keyboardStyle}>
         <div className="modal-header">
           <div className="settings-modal-heading">
             <h3>Settings</h3>

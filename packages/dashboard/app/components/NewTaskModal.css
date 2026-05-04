@@ -345,6 +345,13 @@
     flex-direction: column;
   }
 
+  .modal.new-task-modal[style*="--keyboard-overlap"] {
+    height: var(--vv-height, 100dvh);
+    max-height: var(--vv-height, 100dvh);
+    transform: translateY(var(--vv-offset-top, 0px));
+    will-change: transform;
+  }
+
   .new-task-modal .modal-body {
     max-height: unset;
     overflow-y: auto;

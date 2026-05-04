@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type CSSProperties } from "react";
 import type { PlanningQuestion } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import {
@@ -29,7 +29,9 @@ import {
 import { ConversationHistory } from "./ConversationHistory";
 import { useSessionLock } from "../hooks/useSessionLock";
 import { useAiSessionSync } from "../hooks/useAiSessionSync";
+import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
+import { useViewportMode } from "../hooks/useViewportMode";
 import { getSessionTabId } from "../utils/getSessionTabId";
 
 interface MilestoneSliceInterviewModalProps {
@@ -74,7 +76,18 @@ export function MilestoneSliceInterviewModal({
   projectId,
   resumeSessionId,
 }: MilestoneSliceInterviewModalProps) {
+  const viewportMode = useViewportMode();
   useMobileScrollLock(isOpen);
+  const { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen } = useMobileKeyboard({
+    enabled: viewportMode === "mobile",
+  });
+  const keyboardStyle: CSSProperties = keyboardOpen
+    ? ({
+        "--keyboard-overlap": `${keyboardOverlap}px`,
+        "--vv-offset-top": `${viewportOffsetTop}px`,
+        ...(viewportHeight !== null ? { "--vv-height": `${viewportHeight}px` } : {}),
+      } as CSSProperties)
+    : {};
   const [view, setView] = useState<ViewState>({ type: "initial" });
   const [error, setError] = useState<string | null>(null);
   const [responseHistory, setResponseHistory] = useState<QuestionResponse[]>([]);
@@ -451,7 +464,7 @@ export function MilestoneSliceInterviewModal({
       aria-modal="true"
       data-testid="milestone-slice-interview-modal"
     >
-      <div className="modal modal-lg planning-modal">
+      <div className="modal modal-lg planning-modal" style={keyboardStyle}>
         <div className="modal-header">
           <div className="detail-title-row">
             <Sparkles size={20} className="icon-triage" />

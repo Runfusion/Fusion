@@ -41,6 +41,15 @@ vi.mock("../../hooks/useConfirm", () => ({
   useConfirm: () => ({ confirm: mockConfirm }),
 }));
 
+const mockUseMobileKeyboard = vi.fn();
+vi.mock("../../hooks/useMobileKeyboard", () => ({
+  useMobileKeyboard: (...args: unknown[]) => mockUseMobileKeyboard(...args),
+}));
+
+vi.mock("../../hooks/useViewportMode", () => ({
+  useViewportMode: () => "mobile",
+}));
+
 function makeTask(id: string): Task {
   return {
     id,
@@ -77,6 +86,37 @@ describe("NewTaskModal", () => {
     vi.clearAllMocks();
     mockConfirm.mockReset();
     mockConfirm.mockResolvedValue(true);
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOpen: false,
+      keyboardOverlap: 0,
+      viewportHeight: null,
+      viewportOffsetTop: 0,
+    });
+  });
+
+  it("applies keyboard CSS variables when mobile keyboard is open", () => {
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOpen: true,
+      keyboardOverlap: 250,
+      viewportHeight: 400,
+      viewportOffsetTop: 50,
+    });
+
+    const { container } = renderNewTaskModal();
+    const modal = container.querySelector(".new-task-modal");
+
+    expect(mockUseMobileKeyboard).toHaveBeenCalledWith({ enabled: true });
+    expect(modal?.getAttribute("style")).toContain("--keyboard-overlap: 250px");
+    expect(modal?.getAttribute("style")).toContain("--vv-height: 400px");
+    expect(modal?.getAttribute("style")).toContain("--vv-offset-top: 50px");
+  });
+
+  it("does not apply keyboard CSS variables when keyboard is closed", () => {
+    const { container } = renderNewTaskModal();
+    const modal = container.querySelector(".new-task-modal");
+
+    expect(mockUseMobileKeyboard).toHaveBeenCalledWith({ enabled: true });
+    expect(modal?.getAttribute("style") ?? "").not.toContain("--keyboard-overlap");
   });
 
   it("renders all form fields when open", async () => {

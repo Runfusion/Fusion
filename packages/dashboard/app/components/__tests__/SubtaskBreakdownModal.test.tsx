@@ -38,6 +38,15 @@ vi.mock("../../hooks/useConfirm", () => ({
   useConfirm: () => ({ confirm: mockConfirm }),
 }));
 
+const mockUseMobileKeyboard = vi.fn();
+vi.mock("../../hooks/useMobileKeyboard", () => ({
+  useMobileKeyboard: (...args: unknown[]) => mockUseMobileKeyboard(...args),
+}));
+
+vi.mock("../../hooks/useViewportMode", () => ({
+  useViewportMode: () => "mobile",
+}));
+
 const SAMPLE_SUBTASKS = [
   { id: "subtask-1", title: "First", description: "Do first", suggestedSize: "S" as const, dependsOn: [] },
   { id: "subtask-2", title: "Second", description: "Do second", suggestedSize: "M" as const, dependsOn: ["subtask-1"] },
@@ -80,6 +89,12 @@ describe("SubtaskBreakdownModal", () => {
     mockForceAcquireSessionLock.mockResolvedValue({ acquired: true, currentHolder: null });
     mockConfirm.mockReset();
     mockConfirm.mockResolvedValue(true);
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOpen: false,
+      keyboardOverlap: 0,
+      viewportHeight: null,
+      viewportOffsetTop: 0,
+    });
   });
 
   afterEach(() => {
@@ -96,6 +111,23 @@ describe("SubtaskBreakdownModal", () => {
       />,
     );
   }
+
+  it("applies keyboard CSS variables to planning modal when keyboard is open", async () => {
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOpen: true,
+      keyboardOverlap: 250,
+      viewportHeight: 400,
+      viewportOffsetTop: 50,
+    });
+
+    const { container } = renderModal();
+    await waitFor(() => expect(mockStartSubtaskBreakdown).toHaveBeenCalled());
+    const modal = container.querySelector(".planning-modal");
+
+    expect(mockUseMobileKeyboard).toHaveBeenCalledWith({ enabled: true });
+    expect(modal?.getAttribute("style")).toContain("--keyboard-overlap: 250px");
+    expect(modal?.getAttribute("style")).toContain("--vv-height: 400px");
+  });
 
   it("shows generating state after auto-start", async () => {
     renderModal();

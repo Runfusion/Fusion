@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { Task } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import {
@@ -22,7 +22,9 @@ import { ConversationHistory } from "./ConversationHistory";
 import { useSessionLock } from "../hooks/useSessionLock";
 import { useAiSessionSync } from "../hooks/useAiSessionSync";
 import { useConfirm } from "../hooks/useConfirm";
+import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
+import { useViewportMode } from "../hooks/useViewportMode";
 import { getSessionTabId } from "../utils/getSessionTabId";
 
 interface SubtaskBreakdownModalProps {
@@ -73,7 +75,18 @@ function hasDependencyCycle(subtasks: SubtaskItem[]): boolean {
 }
 
 export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onTasksCreated, parentTaskId, projectId, resumeSessionId }: SubtaskBreakdownModalProps) {
+  const viewportMode = useViewportMode();
   useMobileScrollLock(isOpen);
+  const { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen } = useMobileKeyboard({
+    enabled: viewportMode === "mobile",
+  });
+  const keyboardStyle: CSSProperties = keyboardOpen
+    ? ({
+        "--keyboard-overlap": `${keyboardOverlap}px`,
+        "--vv-offset-top": `${viewportOffsetTop}px`,
+        ...(viewportHeight !== null ? { "--vv-height": `${viewportHeight}px` } : {}),
+      } as CSSProperties)
+    : {};
   const [view, setView] = useState<ViewState>({ type: "initial" });
   const [subtasks, setSubtasks] = useState<SubtaskItem[]>([]);
   const [conversationHistory, setConversationHistory] = useState<ConversationHistoryEntry[]>([]);
@@ -571,7 +584,7 @@ export function SubtaskBreakdownModal({ isOpen, onClose, initialDescription, onT
 
   return (
     <div className="modal-overlay open" onClick={(event) => event.target === event.currentTarget && void handleClose()} role="dialog" aria-modal="true">
-      <div className="modal modal-lg planning-modal">
+      <div className="modal modal-lg planning-modal" style={keyboardStyle}>
         <div className="modal-header">
           <div className="detail-title-row">
             <ListTree size={20} className="icon-triage" />

@@ -59,6 +59,14 @@ vi.mock("../../utils/getSessionTabId", () => ({
   getSessionTabId: vi.fn(() => "test-tab-id"),
 }));
 
+const mockUseMobileKeyboard = vi.fn();
+vi.mock("../../hooks/useMobileKeyboard", () => ({
+  useMobileKeyboard: (...args: unknown[]) => mockUseMobileKeyboard(...args),
+}));
+
+vi.mock("../../hooks/useViewportMode", () => ({
+  useViewportMode: () => "mobile",
+}));
 vi.mock("lucide-react", () => ({
   X: () => <span data-testid="x-icon">X</span>,
   Loader2: ({ className }: any) => <span data-testid="loader-icon" className={className}>Loader</span>,
@@ -102,6 +110,12 @@ describe("MilestoneSliceInterviewModal", () => {
     mockFetchAiSession.mockReset();
     mockParseConversationHistory.mockReset();
     mockParseConversationHistory.mockReturnValue([]);
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOpen: false,
+      keyboardOverlap: 0,
+      viewportHeight: null,
+      viewportOffsetTop: 0,
+    });
 
     // Setup stream handlers capture
     mockConnectMilestoneInterviewStream.mockImplementation((sessionId, projectId, handlers) => {
@@ -235,7 +249,32 @@ describe("MilestoneSliceInterviewModal", () => {
       });
     });
 
-    it("shows loading state after clicking Start Interview", async () => {
+    it("applies keyboard CSS variables to planning modal when keyboard is open", () => {
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOpen: true,
+      keyboardOverlap: 250,
+      viewportHeight: 400,
+      viewportOffsetTop: 50,
+    });
+
+    const { container } = render(
+      <MilestoneSliceInterviewModal
+        isOpen={true}
+        onClose={vi.fn()}
+        onApplied={vi.fn()}
+        targetType="milestone"
+        targetId="milestone-1"
+        targetTitle="Milestone 1"
+      />,
+    );
+    const modal = container.querySelector(".planning-modal");
+
+    expect(mockUseMobileKeyboard).toHaveBeenCalledWith({ enabled: true });
+    expect(modal?.getAttribute("style")).toContain("--keyboard-overlap: 250px");
+    expect(modal?.getAttribute("style")).toContain("--vv-height: 400px");
+  });
+
+  it("shows loading state after clicking Start Interview", async () => {
       mockStartMilestoneInterview.mockResolvedValue({ sessionId: "session-123" });
       mockConnectMilestoneInterviewStream.mockReturnValue({
         close: vi.fn(),

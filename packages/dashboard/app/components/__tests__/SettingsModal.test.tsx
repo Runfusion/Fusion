@@ -107,6 +107,14 @@ vi.mock("../../hooks/useMemoryBackendStatus", () => ({
   useMemoryBackendStatus: (...args: unknown[]) => mockUseMemoryBackendStatus(...args),
 }));
 
+const mockUseMobileKeyboard = vi.fn();
+vi.mock("../../hooks/useMobileKeyboard", () => ({
+  useMobileKeyboard: (...args: unknown[]) => mockUseMobileKeyboard(...args),
+}));
+
+vi.mock("../../hooks/useViewportMode", () => ({
+  useViewportMode: () => "mobile",
+}));
 vi.mock("lucide-react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("lucide-react")>();
   return {
@@ -191,6 +199,23 @@ const MODEL_FIXTURE = [
 ];
 
 describe("SettingsModal", () => {
+  it("applies keyboard CSS variables when mobile keyboard is open", async () => {
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOpen: true,
+      keyboardOverlap: 250,
+      viewportHeight: 400,
+      viewportOffsetTop: 50,
+    });
+
+    const { container } = renderModal();
+    await waitForSettingsModalReady();
+    const modal = container.querySelector(".settings-modal");
+
+    expect(mockUseMobileKeyboard).toHaveBeenCalledWith({ enabled: true });
+    expect(modal?.getAttribute("style")).toContain("--keyboard-overlap: 250px");
+    expect(modal?.getAttribute("style")).toContain("--vv-height: 400px");
+  });
+
   it("renders section headings with the shared settings-section-heading class", async () => {
     const { container } = renderModal();
     await waitForSettingsModalReady();
@@ -207,6 +232,12 @@ describe("SettingsModal", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseMobileKeyboard.mockReturnValue({
+      keyboardOpen: false,
+      keyboardOverlap: 0,
+      viewportHeight: null,
+      viewportOffsetTop: 0,
+    });
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       value: vi.fn().mockImplementation((query: string) => ({

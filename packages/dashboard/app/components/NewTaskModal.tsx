@@ -10,8 +10,10 @@ import { useSetupReadiness } from "../hooks/useSetupReadiness";
 import { SetupWarningBanner } from "./SetupWarningBanner";
 import { TaskForm, type PendingImage } from "./TaskForm";
 import { useConfirm } from "../hooks/useConfirm";
+import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useNodes } from "../hooks/useNodes";
+import { useViewportMode } from "../hooks/useViewportMode";
 
 interface NewTaskModalProps {
   isOpen: boolean;
@@ -26,7 +28,18 @@ interface NewTaskModalProps {
 
 export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, addToast, onPlanningMode, onSubtaskBreakdown }: NewTaskModalProps) {
   const { confirm } = useConfirm();
+  const viewportMode = useViewportMode();
   useMobileScrollLock(isOpen);
+  const { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen } = useMobileKeyboard({
+    enabled: viewportMode === "mobile",
+  });
+  const keyboardStyle: React.CSSProperties = keyboardOpen
+    ? ({
+        "--keyboard-overlap": `${keyboardOverlap}px`,
+        "--vv-offset-top": `${viewportOffsetTop}px`,
+        ...(viewportHeight !== null ? { "--vv-height": `${viewportHeight}px` } : {}),
+      } as React.CSSProperties)
+    : {};
   const [description, setDescription] = useState("");
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
@@ -418,6 +431,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       <div
         className="modal modal-lg new-task-modal"
         onClick={(e) => e.stopPropagation()}
+        style={keyboardStyle}
       >
         <div className="modal-header">
           <h3>New Task</h3>
