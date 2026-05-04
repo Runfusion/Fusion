@@ -49,7 +49,7 @@
 
 .task-form-primary-section .description-with-refine textarea {
   min-height: 120px;
-  padding: 12px 70px 12px 12px;
+  padding: var(--space-md) calc(var(--space-2xl) * 2 + var(--space-sm) - var(--space-xs)) var(--space-md) var(--space-md);
   line-height: 1.5;
   background: var(--surface);
 }
@@ -113,6 +113,12 @@
   cursor: not-allowed;
 }
 
+.task-form-more-options-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-color: var(--todo);
+}
+
 .task-form-more-options-toggle svg {
   color: var(--text-dim);
 }
@@ -165,6 +171,90 @@
   margin-bottom: var(--space-sm);
 }
 
+.new-task-modal .form-group small {
+  display: block;
+  margin-top: var(--space-sm);
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.new-task-modal textarea {
+  min-height: calc(var(--space-xl) * 3 + var(--space-md));
+  transition: height var(--transition-instant);
+}
+
+.selected-deps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  padding: 0;
+}
+
+.dep-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  font-size: 12px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  max-width: 100%;
+}
+
+.dep-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-lg);
+  height: var(--space-lg);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+  margin-left: var(--space-xs);
+  border-radius: 50%;
+  transition: background var(--transition-instant), color var(--transition-instant);
+}
+
+.dep-chip-remove:hover {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+
+.dep-chip-remove:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+
+.model-select-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.model-select-row:last-child {
+  margin-bottom: 0;
+}
+
+.model-select-label {
+  width: calc(var(--space-xl) * 3);
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: right;
+}
+
 /* === Workflow Steps Section (TaskForm & WorkflowResultsTab) === */
 .workflow-steps-section {
   display: flex;
@@ -200,7 +290,7 @@
 .workflow-step-description {
   font-size: 12px;
   color: var(--text-muted);
-  margin-top: 2px;
+  margin-top: calc(var(--space-xs) * 0.5);
   line-height: 1.4;
 }
 
@@ -225,15 +315,15 @@
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  padding: 4px 6px;
+  padding: var(--space-xs) calc(var(--space-xs) * 1.5);
   border-radius: var(--radius-sm);
   transition: background var(--transition-fast);
 }
 
 .workflow-step-order-item + .workflow-step-order-item {
   border-top: 1px solid var(--border-subtle);
-  margin-top: 2px;
-  padding-top: 6px;
+  margin-top: calc(var(--space-xs) * 0.5);
+  padding-top: calc(var(--space-xs) * 1.5);
 }
 
 .workflow-step-order-item:hover {
@@ -244,8 +334,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 20px;
-  height: 20px;
+  min-width: calc(var(--space-lg) + var(--space-xs));
+  height: calc(var(--space-lg) + var(--space-xs));
   border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
@@ -275,8 +365,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: var(--space-xl);
+  height: var(--space-xl);
   padding: 0;
   background: transparent;
   border: 1px solid transparent;
@@ -297,6 +387,13 @@
 .workflow-step-order-actions .btn-icon:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+.workflow-step-order-actions .btn-icon:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+  border-color: var(--todo);
+  color: var(--text);
 }
 
 @media (max-width: 768px) {
@@ -362,6 +459,17 @@
 
   .new-task-modal .form-group {
     padding: 0 var(--space-md);
+  }
+
+  .model-select-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-xs);
+  }
+
+  .model-select-label {
+    width: auto;
+    text-align: left;
   }
 
   .task-form .dep-dropdown {

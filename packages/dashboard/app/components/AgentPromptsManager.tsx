@@ -41,15 +41,8 @@ const ROLE_LABELS: Record<AgentCapability, string> = {
   custom: "Custom Agent",
 };
 
-/** Role badge colors */
-const ROLE_COLORS: Record<AgentCapability, string> = {
-  executor: "#3b82f6",
-  triage: "#f59e0b",
-  reviewer: "#8b5cf6",
-  merger: "#10b981",
-  scheduler: "#06b6d4",
-  engineer: "#ec4899",
-  custom: "#6b7280",
+const getRoleToneClassName = (role: AgentCapability): string => {
+  return `prompt-role-tone--${role}`;
 };
 
 /** Form data for editing/creating a custom template */
@@ -385,6 +378,7 @@ export function AgentPromptsManager({
       {/* Tab Navigation */}
       <div className="prompt-manager-tabs">
         <button
+          type="button"
           className={`prompt-manager-tab ${activeTab === "templates" ? "active" : ""}`}
           onClick={() => setActiveTab("templates")}
           data-testid="tab-templates"
@@ -393,6 +387,7 @@ export function AgentPromptsManager({
           Templates
         </button>
         <button
+          type="button"
           className={`prompt-manager-tab ${activeTab === "assignments" ? "active" : ""}`}
           onClick={() => setActiveTab("assignments")}
           data-testid="tab-assignments"
@@ -401,6 +396,7 @@ export function AgentPromptsManager({
           Assignments
         </button>
         <button
+          type="button"
           className={`prompt-manager-tab ${activeTab === "overrides" ? "active" : ""}`}
           onClick={() => setActiveTab("overrides")}
           data-testid="tab-overrides"
@@ -549,6 +545,7 @@ export function AgentPromptsManager({
 
                   <div className="prompt-template-editor-actions">
                     <button
+                      type="button"
                       className="btn btn-secondary"
                       onClick={handleCancelEdit}
                       data-testid="cancel-template-btn"
@@ -556,6 +553,7 @@ export function AgentPromptsManager({
                       Cancel
                     </button>
                     <button
+                      type="button"
                       className="btn btn-primary"
                       onClick={handleSaveTemplate}
                       data-testid="save-template-btn"
@@ -586,17 +584,12 @@ export function AgentPromptsManager({
                           {template.name}
                         </span>
                         <span
-                          className="prompt-template-badge-built-in"
-                          style={{ borderColor: ROLE_COLORS[template.role] }}
+                          className={`prompt-template-badge-built-in ${getRoleToneClassName(template.role)}`}
                         >
                           Built-in
                         </span>
                         <span
-                          className="prompt-template-badge-role"
-                          style={{
-                            backgroundColor: ROLE_COLORS[template.role] + "20",
-                            color: ROLE_COLORS[template.role],
-                          }}
+                          className={`prompt-template-badge-role ${getRoleToneClassName(template.role)}`}
                         >
                           {ROLE_LABELS[template.role]}
                         </span>
@@ -651,6 +644,7 @@ export function AgentPromptsManager({
                           <p>Delete "{template.name}"?</p>
                           <div className="prompt-template-delete-actions">
                             <button
+                              type="button"
                               className="btn btn-sm btn-danger"
                               onClick={() => handleDeleteTemplate(template.id)}
                               data-testid={`confirm-delete-${template.id}`}
@@ -658,6 +652,7 @@ export function AgentPromptsManager({
                               Delete
                             </button>
                             <button
+                              type="button"
                               className="btn btn-sm"
                               onClick={() => setDeleteConfirmId(null)}
                               data-testid={`cancel-delete-${template.id}`}
@@ -677,11 +672,7 @@ export function AgentPromptsManager({
                                 Custom
                               </span>
                               <span
-                                className="prompt-template-badge-role"
-                                style={{
-                                  backgroundColor: ROLE_COLORS[template.role] + "20",
-                                  color: ROLE_COLORS[template.role],
-                                }}
+                                className={`prompt-template-badge-role ${getRoleToneClassName(template.role)}`}
                               >
                                 {ROLE_LABELS[template.role]}
                               </span>
@@ -704,6 +695,7 @@ export function AgentPromptsManager({
                                 <Maximize2 size={14} />
                               </button>
                               <button
+                                type="button"
                                 className="btn-icon"
                                 onClick={() => handleStartEdit(template)}
                                 title="Edit"
@@ -713,6 +705,7 @@ export function AgentPromptsManager({
                                 <Pencil size={14} />
                               </button>
                               <button
+                                type="button"
                                 className="btn-icon"
                                 onClick={() => setDeleteConfirmId(template.id)}
                                 title="Delete"
@@ -739,6 +732,7 @@ export function AgentPromptsManager({
               {/* Add Custom Template Button */}
               {!isCreating && editingTemplateId === null && (
                 <button
+                  type="button"
                   className="btn btn-primary prompt-template-add-btn"
                   onClick={handleStartCreate}
                   data-testid="add-template-btn"
@@ -767,11 +761,7 @@ export function AgentPromptsManager({
                   <div className="prompt-override-fullscreen-title">
                     {fullscreenTemplate.name}
                     <span
-                      className="prompt-template-badge-role"
-                      style={{
-                        backgroundColor: ROLE_COLORS[fullscreenTemplate.role] + "20",
-                        color: ROLE_COLORS[fullscreenTemplate.role],
-                      }}
+                      className={`prompt-template-badge-role ${getRoleToneClassName(fullscreenTemplate.role)}`}
                     >
                       {ROLE_LABELS[fullscreenTemplate.role]}
                     </span>
@@ -817,11 +807,7 @@ export function AgentPromptsManager({
                   >
                     <div className="prompt-role-assignment-label">
                       <span
-                        className="prompt-role-badge"
-                        style={{
-                          backgroundColor: ROLE_COLORS[role] + "20",
-                          color: ROLE_COLORS[role],
-                        }}
+                        className={`prompt-role-badge ${getRoleToneClassName(role)}`}
                       >
                         {ROLE_LABELS[role]}
                       </span>
@@ -884,16 +870,10 @@ export function AgentPromptsManager({
                     data-testid={`override-${key}`}
                   >
                     <div className="prompt-override-header">
-                      <div
+                      <button
+                        type="button"
                         className="prompt-override-info"
                         onClick={() => toggleOverrideExpanded(key)}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            toggleOverrideExpanded(key);
-                          }
-                        }}
                       >
                         <span className="prompt-override-name">
                           {promptMeta.name}
@@ -902,10 +882,11 @@ export function AgentPromptsManager({
                         {hasOverride && (
                           <span className="prompt-override-badge">customized</span>
                         )}
-                      </div>
+                      </button>
                       <div className="prompt-override-header-actions">
                         {isExpanded && (
                           <button
+                            type="button"
                             className="prompt-override-fullscreen-btn"
                             onClick={(e) => {
                               e.stopPropagation();
@@ -918,6 +899,7 @@ export function AgentPromptsManager({
                           </button>
                         )}
                         <button
+                          type="button"
                           className="prompt-override-expand-btn"
                           aria-label={isExpanded ? "Collapse" : "Expand"}
                           data-testid={`expand-${key}`}
