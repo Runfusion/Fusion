@@ -16,6 +16,7 @@ Features:
 - Inline quick entry creation
 - PR/issue badges with live updates
 - GitHub provenance marker on task cards imported from GitHub (`sourceType: github_import`), shown alongside existing footer metadata like timers
+- Column ordering semantics: `triage`, `todo`, `in-progress`, `in-review`, and `archived` stay priority-ordered; `done` is ordered by most recent completion first (`columnMovedAt`, then `updatedAt`, then `createdAt` fallback)
 
 ![Board view](./screenshots/dashboard-overview.png)
 

@@ -82,8 +82,24 @@ function compareTaskIdNumeric(a: string, b: string): number {
   return a.localeCompare(b);
 }
 
+function getDoneSortTimestamp(task: Task): number {
+  const timestamp = task.columnMovedAt ?? task.updatedAt ?? task.createdAt;
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function sortTasksForColumn(tasks: Task[], column: ColumnType): Task[] {
   return [...tasks].sort((a, b) => {
+    if (column === "done") {
+      const timestampCmp = getDoneSortTimestamp(b) - getDoneSortTimestamp(a);
+      if (timestampCmp !== 0) {
+        return timestampCmp;
+      }
+
+      // Deterministic tie-breaker when completion timestamps match.
+      return compareTaskIdNumeric(a.id, b.id);
+    }
+
     // In the in-review column, merging tasks stay pinned above non-merging tasks.
     if (column === "in-review") {
       const aIsMerging = a.status === "merging" || a.status === "merging-pr" || a.status === "merging-fix";
@@ -93,7 +109,7 @@ function sortTasksForColumn(tasks: Task[], column: ColumnType): Task[] {
       }
     }
 
-    // Primary sort: priority descending (urgent → high → normal → low).
+    // Primary sort for non-done columns: priority descending (urgent → high → normal → low).
     // compareTaskPriority normalizes missing/invalid values to `normal`.
     const priorityCmp = compareTaskPriority(a.priority, b.priority);
     if (priorityCmp !== 0) {

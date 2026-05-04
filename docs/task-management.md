@@ -86,6 +86,10 @@ Fusion task columns:
 5. **done** — merged/finalized
 6. **archived** — preserved history, optionally cleaned from filesystem
 
+Board ordering behavior:
+- Active work columns (`triage`, `todo`, `in-progress`, `in-review`) remain priority-ordered.
+- The `done` column is recency-ordered by completion time (newest first), using `columnMovedAt` as primary and falling back to `updatedAt` then `createdAt` for legacy tasks.
+
 ### Lifecycle commands
 
 ```bash

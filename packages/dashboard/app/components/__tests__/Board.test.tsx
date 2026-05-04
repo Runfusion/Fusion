@@ -292,12 +292,99 @@ describe("Board", () => {
     });
 
     describe("sortTasksForColumn priority ordering", () => {
-      it("orders tasks by priority descending (urgent → high → normal → low)", () => {
+      it("orders done tasks by most recent completion regardless of priority", () => {
         const tasks: Task[] = [
-          createTask({ id: "FN-003", description: "Low task", column: "todo", priority: "low" }),
-          createTask({ id: "FN-001", description: "Urgent task", column: "todo", priority: "urgent" }),
-          createTask({ id: "FN-004", description: "Normal task", column: "todo", priority: "normal" }),
-          createTask({ id: "FN-002", description: "High task", column: "todo", priority: "high" }),
+          createTask({
+            id: "FN-003",
+            description: "Older urgent done task",
+            column: "done",
+            priority: "urgent",
+            columnMovedAt: "2024-01-01T09:00:00.000Z",
+          }),
+          createTask({
+            id: "FN-001",
+            description: "Newest low-priority done task",
+            column: "done",
+            priority: "low",
+            columnMovedAt: "2024-01-01T11:00:00.000Z",
+          }),
+          createTask({
+            id: "FN-002",
+            description: "Middle high-priority done task",
+            column: "done",
+            priority: "high",
+            columnMovedAt: "2024-01-01T10:00:00.000Z",
+          }),
+        ];
+
+        renderBoard({ tasks });
+
+        const doneTasks = JSON.parse(screen.getByTestId("column-done").getAttribute("data-tasks") || "[]") as Task[];
+        expect(doneTasks.map((t: Task) => t.id)).toEqual(["FN-001", "FN-002", "FN-003"]);
+      });
+
+      it("falls back to updatedAt and createdAt for legacy done tasks missing columnMovedAt", () => {
+        const tasks: Task[] = [
+          createTask({
+            id: "FN-010",
+            description: "Has updatedAt fallback",
+            column: "done",
+            updatedAt: "2024-01-01T10:30:00.000Z",
+          }),
+          createTask({
+            id: "FN-011",
+            description: "Has createdAt fallback",
+            column: "done",
+            createdAt: "2024-01-01T10:45:00.000Z",
+          }),
+          createTask({
+            id: "FN-012",
+            description: "Has real completion timestamp",
+            column: "done",
+            columnMovedAt: "2024-01-01T11:00:00.000Z",
+          }),
+        ];
+
+        const taskWithCreatedAtOnly = tasks[1];
+        delete taskWithCreatedAtOnly.columnMovedAt;
+        delete taskWithCreatedAtOnly.updatedAt;
+
+        renderBoard({ tasks });
+
+        const doneTasks = JSON.parse(screen.getByTestId("column-done").getAttribute("data-tasks") || "[]") as Task[];
+        expect(doneTasks.map((t: Task) => t.id)).toEqual(["FN-012", "FN-011", "FN-010"]);
+      });
+
+      it("keeps non-done columns priority-ordered even when recency differs", () => {
+        const tasks: Task[] = [
+          createTask({
+            id: "FN-003",
+            description: "Low but newest",
+            column: "todo",
+            priority: "low",
+            columnMovedAt: "2024-01-01T12:00:00.000Z",
+          }),
+          createTask({
+            id: "FN-001",
+            description: "Urgent but older",
+            column: "todo",
+            priority: "urgent",
+            columnMovedAt: "2024-01-01T10:00:00.000Z",
+          }),
+          createTask({
+            id: "FN-004",
+            description: "Normal",
+            column: "todo",
+            priority: "normal",
+            columnMovedAt: "2024-01-01T11:00:00.000Z",
+          }),
+          createTask({
+            id: "FN-002",
+            description: "High",
+            column: "todo",
+            priority: "high",
+            columnMovedAt: "2024-01-01T09:00:00.000Z",
+          }),
         ];
 
         renderBoard({ tasks, searchQuery: "task" });
