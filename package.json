@@ -26,6 +26,7 @@
     "build:exe": "pnpm build && pnpm --filter @runfusion/fusion build:exe",
     "build:exe:all": "pnpm build && pnpm --filter @runfusion/fusion build:exe:all",
     "test": "node scripts/test-changed.mjs",
+    "test:scripts": "node --test scripts/__tests__/*.test.mjs",
     "test:full": "pnpm sync:fusion-skill:check && FUSION_TEST_TOTAL_WORKERS=4 FUSION_TEST_CONCURRENCY=2 pnpm -r --workspace-concurrency=2 test",
     "test:ci:shard": "node scripts/ci-test-shard.mjs",
     "test:serial": "FUSION_TEST_TOTAL_WORKERS=4 FUSION_TEST_CONCURRENCY=1 pnpm -r --workspace-concurrency=1 test",

@@ -22,6 +22,8 @@ import { tmpdir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 
+import { extractVersionNotes } from "./lib/extract-version-notes.mjs";
+
 const args = new Set(process.argv.slice(2));
 const DRY_RUN = args.has("--dry-run");
 const AUTO_YES = args.has("--yes") || args.has("-y");
@@ -523,4 +525,47 @@ info(`Creating and pushing tag v${version}…`);
 run(`git tag v${version}`);
 run(`git push origin v${version}`);
 
-ok(`Released v${version}. The 'v${version}' tag will trigger release.yml for binary builds.`);
+// --- GitHub Release ------------------------------------------------------
+
+let githubReleaseStatus = "not-created";
+const changelogContent = readFileSync("CHANGELOG.md", "utf8");
+const releaseNotes = extractVersionNotes(changelogContent, version);
+const ghCheck = spawnSync("gh", ["--version"], { stdio: "pipe" });
+
+if (ghCheck.status !== 0) {
+  githubReleaseStatus = "missing-gh";
+  warn(`⚠ gh CLI not found. Create the GitHub Release manually:\n  gh release create v${version} --title "v${version}" --latest`);
+} else {
+  let notesFile;
+  try {
+    const notesDir = mkdtempSync(join(tmpdir(), "fusion-release-notes-"));
+    notesFile = join(notesDir, `v${version}-notes.md`);
+    writeFileSync(notesFile, `${releaseNotes}\n`, "utf8");
+
+    const ghCreate = spawnSync(
+      "gh",
+      ["release", "create", `v${version}`, "--title", `v${version}`, "--notes-file", notesFile, "--latest"],
+      { stdio: "inherit" }
+    );
+
+    if (ghCreate.status !== 0) {
+      warn(`GitHub Release creation failed for v${version}. You can retry manually with gh release create.`);
+    } else {
+      githubReleaseStatus = "created";
+    }
+  } catch (error) {
+    warn(`GitHub Release creation failed for v${version}: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    if (notesFile && existsSync(notesFile)) {
+      unlinkSync(notesFile);
+    }
+  }
+}
+
+if (githubReleaseStatus === "created") {
+  ok(`Released v${version}. Published to npm, tag pushed, GitHub Release created.`);
+} else if (githubReleaseStatus === "missing-gh") {
+  ok(`Released v${version}. Published to npm, tag pushed. GitHub Release skipped (gh CLI not found).`);
+} else {
+  ok(`Released v${version}. Published to npm, tag pushed. GitHub Release was not created (see warnings above).`);
+}

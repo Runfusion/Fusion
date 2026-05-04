@@ -44,7 +44,7 @@
   font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: calc(var(--space-xs) * 0.125);
 }
 
 /* === Agent List View === */
