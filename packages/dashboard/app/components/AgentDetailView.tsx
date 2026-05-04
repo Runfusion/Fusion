@@ -1,5 +1,5 @@
 import "./AgentDetailView.css";
-import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   Bot, Heart, Activity, Pause, Play, Square, Trash2, RefreshCw, 
   Settings, FileText, ActivitySquare, X, Copy, 
@@ -131,7 +131,6 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
   const [isStreaming, setIsStreaming] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [latestRun, setLatestRun] = useState<AgentHeartbeatRun | null>(null);
-  const logContainerRef = useRef<HTMLDivElement>(null);
   const agentDetailModalRef = useRef<HTMLDivElement>(null);
   const overlayMouseDownRef = useRef(false);
   useModalResizePersist(agentDetailModalRef, !inline, "fusion:agent-detail-modal-size");
@@ -623,7 +622,6 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
             <LogsTab
               logs={logs}
               isStreaming={isStreaming}
-              containerRef={logContainerRef}
               hasTask={!!agent.taskId || logs.length > 0 || latestRun !== null}
               fallbackLabel={!agent.taskId && latestRun ? `Latest run · ${latestRun.id.slice(0, 8)}` : null}
             />
@@ -965,54 +963,17 @@ function DashboardTab({
 
 // ── Logs Tab ──────────────────────────────────────────────────────────────
 
-const BOTTOM_FOLLOW_THRESHOLD_PX = 50;
-
-function isNearBottom(container: HTMLDivElement): boolean {
-  return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_THRESHOLD_PX;
-}
-
 function LogsTab({
   logs,
   isStreaming,
-  containerRef,
   hasTask,
   fallbackLabel,
 }: {
   logs: AgentLogEntry[];
   isStreaming: boolean;
-  containerRef: React.RefObject<HTMLDivElement | null>;
   hasTask: boolean;
   fallbackLabel?: string | null;
 }) {
-  const [isFollowing, setIsFollowing] = useState(true);
-  const previousLogCountRef = useRef(0);
-
-  // Auto-scroll to bottom when new entries arrive and user is near the bottom
-  useLayoutEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const previousCount = previousLogCountRef.current;
-    previousLogCountRef.current = logs.length;
-
-    if (logs.length > previousCount && isFollowing) {
-      container.scrollTop = container.scrollHeight;
-    }
-  }, [logs.length, isFollowing, containerRef]);
-
-  const handleScroll = useCallback(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    setIsFollowing(isNearBottom(container));
-  }, [containerRef]);
-
-  const scrollToLive = useCallback(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    container.scrollTop = container.scrollHeight;
-    setIsFollowing(true);
-  }, [containerRef]);
-
   if (!hasTask) {
     return (
       <div className="logs-tab">
@@ -1041,95 +1002,17 @@ function LogsTab({
           </span>
         )}
       </div>
-      
-      <div ref={containerRef} className="logs-container" onScroll={handleScroll}>
-        {logs.length === 0 ? (
-          <div className="logs-empty">
-            <FileText size={48} opacity={0.3} />
-            <p>No log entries yet</p>
-            <p className="text-muted">
-              {isStreaming ? "Waiting for activity..." : "Logs will appear here when the agent is active"}
-            </p>
-          </div>
-        ) : (
-          logs.map((entry, i) => {
-            const prevEntry = i > 0 ? logs[i - 1] : undefined;
-            const showTimestamp = !prevEntry || prevEntry.agent !== entry.agent;
-            return (
-              <LogEntry key={`${entry.timestamp}-${i}`} entry={entry} showTimestamp={showTimestamp} />
-            );
-          })
-        )}
-        {!isFollowing && logs.length > 0 && (
-          <button
-            type="button"
-            className="logs-return-to-live"
-            onClick={scrollToLive}
-            data-testid="logs-return-to-live"
-          >
-            <ChevronDown size={12} />
-            <span>Live</span>
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function LogEntry({ entry, showTimestamp }: { entry: AgentLogEntry; showTimestamp: boolean }) {
-  const getEntryStyles = () => {
-    switch (entry.type) {
-      case "tool":
-        return {
-          color: "var(--accent)",
-          borderLeft: "3px solid var(--accent)",
-          background: "var(--log-tool-bg)",
-        };
-      case "tool_result":
-        return {
-          color: "var(--color-success)",
-          borderLeft: "3px solid var(--color-success)",
-          background: "var(--log-success-bg)",
-        };
-      case "tool_error":
-        return {
-          color: "var(--color-error)",
-          borderLeft: "3px solid var(--color-error)",
-          background: "var(--log-error-bg)",
-        };
-      case "thinking":
-        return {
-          color: "var(--text-muted)",
-          fontStyle: "italic" as const,
-          opacity: 0.7,
-        };
-      default:
-        return {
-          color: "var(--text)",
-        };
-    }
-  };
-
-  const styles = getEntryStyles();
-  const timestamp = new Date(entry.timestamp).toLocaleTimeString();
-
-  return (
-    <div className="log-entry" style={styles}>
-      {showTimestamp && (
-        <span className="log-timestamp">[{timestamp}]</span>
+      {logs.length === 0 ? (
+        <div className="logs-empty">
+          <FileText size={48} opacity={0.3} />
+          <p>No log entries yet</p>
+          <p className="text-muted">
+            {isStreaming ? "Waiting for activity..." : "Logs will appear here when the agent is active"}
+          </p>
+        </div>
+      ) : (
+        <AgentLogViewer entries={logs} loading={false} />
       )}
-      {entry.agent && (
-        <span className="log-agent">[{entry.agent}]</span>
-      )}
-      {entry.type === "tool" && <span className="log-icon">⚡</span>}
-      {entry.type === "tool_result" && <span className="log-icon">✓</span>}
-      {entry.type === "tool_error" && <span className="log-icon">✗</span>}
-      <span className="log-text">
-        {entry.text}
-        {entry.detail && (
-          <span className="log-detail"> — {entry.detail}</span>
-        )}
-      </span>
     </div>
   );
 }

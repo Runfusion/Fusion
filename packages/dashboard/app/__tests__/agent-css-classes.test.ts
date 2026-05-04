@@ -222,14 +222,7 @@ describe("Agent CSS classes", () => {
     expect(hasClass(".logs-count")).toBe(true);
     expect(hasClass(".streaming-indicator")).toBe(true);
     expect(hasClass(".streaming-dot")).toBe(true);
-    expect(hasClass(".logs-container")).toBe(true);
     expect(hasClass(".logs-empty")).toBe(true);
-    expect(hasClass(".log-entry")).toBe(true);
-    expect(hasClass(".log-timestamp")).toBe(true);
-    expect(hasClass(".log-agent")).toBe(true);
-    expect(hasClass(".log-icon")).toBe(true);
-    expect(hasClass(".log-text")).toBe(true);
-    expect(hasClass(".log-detail")).toBe(true);
     expect(hasClass(".runs-tab")).toBe(true);
     expect(hasClass(".runs-empty")).toBe(true);
     expect(hasClass(".run-card")).toBe(true);

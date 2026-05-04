@@ -39,9 +39,18 @@ vi.mock("../../api", () => ({
 }));
 
 vi.mock("../AgentLogViewer", () => ({
-  AgentLogViewer: ({ entries }: { entries: Array<{ text: string }> }) => (
+  AgentLogViewer: ({ entries }: { entries: Array<{ text: string; detail?: string }> }) => (
     <div data-testid="agent-log-viewer">
-      {entries.map((e, i) => <span key={i}>{e.text}</span>)}
+      {entries.map((e, i) => (
+        <div key={i}>
+          <span>{e.text}</span>
+          {e.detail ? (
+            <button type="button" data-testid="tool-detail-toggle" aria-expanded="false">
+              Show output
+            </button>
+          ) : null}
+        </div>
+      ))}
     </div>
   ),
 }));
@@ -1241,9 +1250,10 @@ describe("AgentDetailView", () => {
       });
 
       expect(screen.getByText("Latest run · run-1001")).toBeInTheDocument();
-      expect(
-        Array.from(document.querySelectorAll(".log-text")).map((node) => node.textContent?.trim()),
-      ).toEqual(["First entry", "Second entry"]);
+      await waitFor(() => {
+        expect(screen.getByText("First entry")).toBeInTheDocument();
+        expect(screen.getByText("Second entry")).toBeInTheDocument();
+      });
     });
 
     it("renders log entries in chronological order (oldest first)", async () => {
@@ -1284,13 +1294,12 @@ describe("AgentDetailView", () => {
         expect(screen.getByText("Oldest entry")).toBeInTheDocument();
       });
 
-      const logTexts = Array.from(document.querySelectorAll(".log-text")).map(
-        (node) => node.textContent?.trim(),
-      );
-      expect(logTexts).toEqual(["Oldest entry", "Middle entry", "Newest entry"]);
+      const viewerText = screen.getByTestId("agent-log-viewer").textContent ?? "";
+      expect(viewerText.indexOf("Oldest entry")).toBeLessThan(viewerText.indexOf("Middle entry"));
+      expect(viewerText.indexOf("Middle entry")).toBeLessThan(viewerText.indexOf("Newest entry"));
     });
 
-    it("shows Live button when scrolled away from bottom and hides when at bottom", async () => {
+    it("renders tool details collapsed by default", async () => {
       const latestRun = {
         id: "run-1003",
         agentId: "agent-001",
@@ -1304,14 +1313,15 @@ describe("AgentDetailView", () => {
         completedRuns: [],
       }));
       mockFetchAgentRuns.mockResolvedValue([latestRun]);
-      mockFetchAgentRunLogs.mockResolvedValue(
-        Array.from({ length: 20 }, (_, i) => ({
-          timestamp: `2024-01-01T00:${String(i).padStart(2, "0")}:00.000Z`,
+      mockFetchAgentRunLogs.mockResolvedValue([
+        {
+          timestamp: "2024-01-01T00:00:00.000Z",
           taskId: "agent-run",
-          text: `Log line ${i}`,
-          type: "text" as const,
-        })),
-      );
+          type: "tool",
+          text: "ls -la packages/",
+          detail: "very long tool output",
+        },
+      ]);
 
       render(
         <AgentDetailView
@@ -1321,99 +1331,11 @@ describe("AgentDetailView", () => {
         />
       );
 
-      await waitFor(() => {
-        expect(screen.getByText("Dashboard")).toBeInTheDocument();
-      });
-
-      fireEvent.click(screen.getByText("Logs"));
-
-      await waitFor(() => {
-        expect(screen.getByText("Log line 0")).toBeInTheDocument();
-      });
-
-      // No Live button when initially at bottom (isFollowing defaults to true and
-      // useLayoutEffect scrolls to bottom on first render with entries)
-      expect(screen.queryByTestId("logs-return-to-live")).not.toBeInTheDocument();
-
-      // Simulate scrolling up away from bottom
-      const container = document.querySelector(".logs-container") as HTMLDivElement;
-      expect(container).toBeTruthy();
-      Object.defineProperty(container, "scrollTop", { value: 0, writable: true, configurable: true });
-      Object.defineProperty(container, "scrollHeight", { value: 1000, writable: true, configurable: true });
-      Object.defineProperty(container, "clientHeight", { value: 200, writable: true, configurable: true });
-      fireEvent.scroll(container);
-
-      await waitFor(() => {
-        expect(screen.getByTestId("logs-return-to-live")).toBeInTheDocument();
-      });
-
-      // Simulate scrolling back to bottom
-      Object.defineProperty(container, "scrollTop", { value: 800, writable: true, configurable: true });
-      fireEvent.scroll(container);
-
-      await waitFor(() => {
-        expect(screen.queryByTestId("logs-return-to-live")).not.toBeInTheDocument();
-      });
-    });
-
-    it("scrolls to bottom when Live button is clicked", async () => {
-      const latestRun = {
-        id: "run-1004",
-        agentId: "agent-001",
-        startedAt: "2024-01-01T00:00:00.000Z",
-        endedAt: null,
-        status: "active",
-      } as AgentHeartbeatRun;
-      mockFetchAgent.mockResolvedValue(createMockAgent({
-        taskId: undefined,
-        activeRun: latestRun,
-        completedRuns: [],
-      }));
-      mockFetchAgentRuns.mockResolvedValue([latestRun]);
-      mockFetchAgentRunLogs.mockResolvedValue(
-        Array.from({ length: 20 }, (_, i) => ({
-          timestamp: `2024-01-01T00:${String(i).padStart(2, "0")}:00.000Z`,
-          taskId: "agent-run",
-          text: `Log line ${i}`,
-          type: "text" as const,
-        })),
-      );
-
-      render(
-        <AgentDetailView
-          agentId="agent-001"
-          onClose={vi.fn()}
-          addToast={vi.fn()}
-        />
-      );
-
-      await waitFor(() => {
-        expect(screen.getByText("Dashboard")).toBeInTheDocument();
-      });
-
-      fireEvent.click(screen.getByText("Logs"));
-
-      await waitFor(() => {
-        expect(screen.getByText("Log line 0")).toBeInTheDocument();
-      });
-
-      // Simulate scrolling up
-      const container = document.querySelector(".logs-container") as HTMLDivElement;
-      expect(container).toBeTruthy();
-      Object.defineProperty(container, "scrollTop", { value: 0, writable: true, configurable: true });
-      Object.defineProperty(container, "scrollHeight", { value: 1000, writable: true, configurable: true });
-      Object.defineProperty(container, "clientHeight", { value: 200, writable: true, configurable: true });
-      fireEvent.scroll(container);
-
-      const liveButton = await screen.findByTestId("logs-return-to-live");
-
-      // Set up scroll position to accept writes so scrollToLive can set scrollTop
-      Object.defineProperty(container, "scrollTop", { value: 0, writable: true, configurable: true });
-
-      fireEvent.click(liveButton);
-
-      // After clicking, scrollTop should be set to scrollHeight (1000)
-      expect(container.scrollTop).toBe(1000);
+      fireEvent.click(await screen.findByText("Logs"));
+      await screen.findByText("ls -la packages/");
+      const toggle = await screen.findByTestId("tool-detail-toggle");
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      expect(screen.getByTestId("agent-log-viewer")).toBeInTheDocument();
     });
   });
 

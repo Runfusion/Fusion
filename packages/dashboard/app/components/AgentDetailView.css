@@ -452,15 +452,6 @@
   animation: pulse 1.5s infinite;
 }
 
-.logs-container {
-  flex: 1;
-  overflow-y: auto;
-  font-family: var(--font-mono);
-  font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
-  line-height: 1.6;
-  max-height: calc(var(--space-2xl) * 12 + var(--space-lg));
-}
-
 .logs-empty {
   display: flex;
   flex-direction: column;
@@ -473,41 +464,6 @@
 
 .logs-empty p {
   margin: var(--space-sm) 0 0 0;
-}
-
-.log-entry {
-  display: flex;
-  gap: var(--space-sm);
-  padding: var(--space-xs) var(--space-sm);
-  margin: calc(var(--space-xs) * 0.5) 0;
-  border-radius: var(--radius-sm);
-}
-
-.log-timestamp {
-  color: var(--text-muted);
-  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
-  flex-shrink: 0;
-}
-
-.log-agent {
-  color: var(--text-muted);
-  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
-  font-weight: 600;
-  text-transform: uppercase;
-  flex-shrink: 0;
-}
-
-.log-icon {
-  flex-shrink: 0;
-}
-
-.log-text {
-  word-break: break-word;
-}
-
-.log-detail {
-  color: var(--text-muted);
-  font-size: var(--space-md);
 }
 
 /* --- Runs Tab --- */
@@ -1267,37 +1223,6 @@
   font-size: calc(var(--space-sm) + var(--space-xs));
 }
 
-.logs-return-to-live {
-  position: sticky;
-  right: var(--space-md);
-  bottom: var(--space-md);
-  width: fit-content;
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: var(--space-xs) var(--space-sm);
-  color: var(--text-muted);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  font-size: var(--space-md);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  z-index: 2;
-}
-
-.logs-return-to-live:hover {
-  background: var(--card-hover);
-  color: var(--text);
-}
-
-.logs-return-to-live:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-}
-
 .config-textarea-mono {
   font-family: var(--font-mono);
   font-size: calc(var(--space-md) + var(--space-xs) * 0.25);
@@ -1533,27 +1458,8 @@
   }
 
   /* Logs Tab mobile */
-  .logs-container {
-    max-height: 50vh;
-  }
-
-  .logs-return-to-live {
-    right: var(--space-sm);
-    bottom: var(--space-sm);
-  }
-
   .logs-empty {
     padding: var(--space-2xl) var(--space-lg);
-  }
-
-  .log-entry {
-    padding: var(--space-xs) calc(var(--space-xs) * 0.5);
-    font-size: var(--space-md);
-  }
-
-  .log-text {
-    min-width: 0;
-    overflow-wrap: anywhere;
   }
 
   /* Runs Tab mobile */
