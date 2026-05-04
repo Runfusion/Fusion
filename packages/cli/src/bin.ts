@@ -136,6 +136,7 @@ async function loadCommandHandlers() {
   const { runPluginCreate } = await import("./commands/plugin-scaffold.js");
   const { runSkillsSearch, runSkillsInstall } = await import("./commands/skills.js");
   const { runResearchCreate, runResearchList, runResearchShow, runResearchExport, runResearchCancel, runResearchRetry } = await import("./commands/research.js");
+  const { runUpdate } = await import("./commands/update.js");
 
   return {
     runDashboard,
@@ -222,6 +223,7 @@ async function loadCommandHandlers() {
     runResearchExport,
     runResearchCancel,
     runResearchRetry,
+    runUpdate,
   };
 }
 
@@ -243,6 +245,8 @@ Usage:
   fn desktop                          Launch the Fusion desktop app (Electron)
   fn desktop --dev                    Launch with hot-reload (connects to Vite dev server)
   fn desktop --paused                 Launch with automation paused
+  fn update [--check] [--global] [--json]   Update Fusion to the latest version
+  fn upgrade                           Alias for fn update
   fn task create [desc] [opts]         Create a new task (goes to triage; supports --node <name>)
   fn task plan [description] [opts]    Create task via AI-guided planning
   fn task list                        List all tasks
@@ -558,6 +562,7 @@ async function main() {
     runResearchExport,
     runResearchCancel,
     runResearchRetry,
+    runUpdate,
   } = await loadCommandHandlers();
 
   try {
@@ -633,6 +638,16 @@ async function main() {
         const dev = args.includes("--dev");
         const interactive = args.includes("--interactive");
         await runDesktop({ paused, dev, interactive });
+        break;
+      }
+
+      case "update":
+      case "upgrade": {
+        await runUpdate({
+          check: args.includes("--check"),
+          global: args.includes("--global") ? true : undefined,
+          json: args.includes("--json"),
+        });
         break;
       }
 
