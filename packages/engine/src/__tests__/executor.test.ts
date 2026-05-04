@@ -172,6 +172,13 @@ vi.mock("../step-session-executor.js", () => ({
 vi.mock("../rate-limit-retry.js", () => ({
   withRateLimitRetry: vi.fn((fn: () => Promise<unknown>) => fn()),
 }));
+vi.mock("../verification-utils.js", async () => {
+  const actual = await vi.importActual<typeof import("../verification-utils.js")>("../verification-utils.js");
+  return {
+    ...actual,
+    runVerificationCommand: vi.fn(),
+  };
+});
 vi.mock("@mariozechner/pi-coding-agent", () => {
   const mockSessionManager = {};
   return {
@@ -203,6 +210,7 @@ import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { StepSessionExecutor } from "../step-session-executor.js";
 import { executorLog } from "../logger.js";
 import { withRateLimitRetry } from "../rate-limit-retry.js";
+import { runVerificationCommand as mockedRunVerificationCommand } from "../verification-utils.js";
 
 const mockedCreateFnAgent = vi.mocked(createFnAgent);
 const mockedSessionManager = vi.mocked(SessionManager);
@@ -13497,5 +13505,356 @@ describe("determineRevisionResetStart", () => {
     // mentioning "test" alone should not target the "Update tests" step.
     const feedback = "Please test this by clicking.";
     expect(determineRevisionResetStart(steps, feedback)).toBe(1);
+  });
+});
+
+describe("Executor verification gate (FN-3345)", () => {
+  const mockedVerification = vi.mocked(mockedRunVerificationCommand);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockExecuteAll.mockResolvedValue([]);
+    mockTerminateAllSessions.mockResolvedValue(undefined);
+    mockCleanup.mockResolvedValue(undefined);
+    mockedVerification.mockReset();
+  });
+
+  /** Helper to create a step-session store with default settings */
+  function createVerificationStore(settingsOverrides: Record<string, unknown> = {}) {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      runStepsInNewSessions: true,
+      maxParallelSteps: 2,
+      ...settingsOverrides,
+    });
+    store.getTask.mockResolvedValue({
+      id: "FN-3345",
+      title: "Verification gate test task",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [
+        { name: "Step 0", status: "pending" },
+        { name: "Step 1", status: "pending" },
+      ],
+      currentStep: 0,
+      log: [],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check\n### Step 1: Implement\n- [ ] code",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      baseCommitSha: "abc123",
+      enabledWorkflowSteps: [],
+    });
+    return store;
+  }
+
+  /** Helper to create a task for step-session mode */
+  function createVerificationTask(overrides: Partial<Task> = {}): Task {
+    return {
+      id: "FN-3345",
+      title: "Verification gate test task",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [
+        { name: "Step 0", status: "pending" },
+        { name: "Step 1", status: "pending" },
+      ],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ...overrides,
+    };
+  }
+
+  it("no testCommand/buildCommand configured → gate skipped → task moves to in-review", async () => {
+    const store = createVerificationStore({});
+    mockExecuteAll.mockResolvedValue([
+      { stepIndex: 0, success: true, retries: 0 },
+      { stepIndex: 1, success: true, retries: 0 },
+    ]);
+
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+    await executor.execute(createVerificationTask());
+
+    // Verification command should NOT have been called
+    expect(mockedVerification).not.toHaveBeenCalled();
+    // Task should move to in-review normally
+    expect(store.moveTask).toHaveBeenCalledWith("FN-3345", "in-review");
+  });
+
+  it("testCommand configured, verification passes → task moves to in-review", async () => {
+    const store = createVerificationStore({ testCommand: "pnpm test" });
+    mockExecuteAll.mockResolvedValue([
+      { stepIndex: 0, success: true, retries: 0 },
+      { stepIndex: 1, success: true, retries: 0 },
+    ]);
+    mockedVerification.mockResolvedValue({
+      command: "pnpm test",
+      exitCode: 0,
+      stdout: "all passed",
+      stderr: "",
+      success: true,
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+    await executor.execute(createVerificationTask());
+
+    // Verification command should have been called
+    expect(mockedVerification).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining(".worktrees"),
+      "FN-3345",
+      "pnpm test",
+      "test",
+      undefined,
+      expect.anything(),
+      "executor",
+    );
+    // Task should move to in-review
+    expect(store.moveTask).toHaveBeenCalledWith("FN-3345", "in-review");
+  });
+
+  it("verification fails, fix agent succeeds on first attempt → task moves to in-review", async () => {
+    const store = createVerificationStore({
+      testCommand: "pnpm test",
+      verificationFixRetries: 3,
+    });
+    mockExecuteAll.mockResolvedValue([
+      { stepIndex: 0, success: true, retries: 0 },
+      { stepIndex: 1, success: true, retries: 0 },
+    ]);
+
+    // First verification fails, then re-verification passes after fix
+    mockedVerification
+      .mockResolvedValueOnce({
+        command: "pnpm test",
+        exitCode: 1,
+        stdout: "",
+        stderr: "1 test failed",
+        success: false,
+      })
+      // Re-verification after fix passes
+      .mockResolvedValue({
+        command: "pnpm test",
+        exitCode: 0,
+        stdout: "all passed",
+        stderr: "",
+        success: true,
+      });
+
+    // Mock the fix agent session
+    mockedCreateFnAgent.mockResolvedValueOnce({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        subscribe: vi.fn(),
+        on: vi.fn(),
+        sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-fix-1") },
+        state: {},
+      },
+    } as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+    await executor.execute(createVerificationTask());
+
+    // First call: initial verification (fails)
+    // Second call: re-verification after fix (passes)
+    expect(mockedVerification).toHaveBeenCalledTimes(2);
+    // Fix agent should have been created
+    expect(mockedCreateFnAgent).toHaveBeenCalled();
+    // Task should move to in-review
+    expect(store.moveTask).toHaveBeenCalledWith("FN-3345", "in-review");
+  });
+
+  it("verification fails, fix agent fails all attempts → task sent back to in-progress", async () => {
+    const store = createVerificationStore({
+      testCommand: "pnpm test",
+      verificationFixRetries: 2, // 2 fix attempts
+    });
+    mockExecuteAll.mockResolvedValue([
+      { stepIndex: 0, success: true, retries: 0 },
+      { stepIndex: 1, success: true, retries: 0 },
+    ]);
+
+    // All verification calls fail
+    mockedVerification.mockResolvedValue({
+      command: "pnpm test",
+      exitCode: 1,
+      stdout: "",
+      stderr: "1 test failed",
+      success: false,
+    });
+
+    // Mock the fix agent session (2 attempts)
+    mockedCreateFnAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        subscribe: vi.fn(),
+        on: vi.fn(),
+        sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-fix") },
+        state: {},
+      },
+    } as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+    await executor.execute(createVerificationTask());
+
+    // Fix agent should have been called twice (2 attempts)
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(2);
+    // Task should NOT move to in-review
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-3345", "in-review");
+    // Task should have been sent back for fix
+    expect(store.addTaskComment).toHaveBeenCalledWith(
+      "FN-3345",
+      expect.stringContaining("Deterministic verification failed"),
+      "agent",
+    );
+  });
+
+  it("test fails then fix succeeds → re-verification runs both test AND build", async () => {
+    const store = createVerificationStore({
+      testCommand: "pnpm test",
+      buildCommand: "pnpm build",
+      verificationFixRetries: 3,
+    });
+    mockExecuteAll.mockResolvedValue([
+      { stepIndex: 0, success: true, retries: 0 },
+      { stepIndex: 1, success: true, retries: 0 },
+    ]);
+
+    // Initial verification: test fails (build is never reached because test fails first)
+    // Re-verification after fix: both test and build pass
+    mockedVerification
+      .mockResolvedValueOnce({
+        command: "pnpm test",
+        exitCode: 1,
+        stdout: "",
+        stderr: "1 test failed",
+        success: false,
+      })
+      // Re-verification: test passes
+      .mockResolvedValueOnce({
+        command: "pnpm test",
+        exitCode: 0,
+        stdout: "all passed",
+        stderr: "",
+        success: true,
+      })
+      // Re-verification: build passes
+      .mockResolvedValueOnce({
+        command: "pnpm build",
+        exitCode: 0,
+        stdout: "build ok",
+        stderr: "",
+        success: true,
+      });
+
+    // Mock the fix agent session
+    mockedCreateFnAgent.mockResolvedValueOnce({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        subscribe: vi.fn(),
+        on: vi.fn(),
+        sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-fix-1") },
+        state: {},
+      },
+    } as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+    await executor.execute(createVerificationTask());
+
+    // Verification should have been called 3 times:
+    // 1. Initial test (fails)
+    // 2. Re-verification test (passes)
+    // 3. Re-verification build (passes)
+    expect(mockedVerification).toHaveBeenCalledTimes(3);
+    // Second call should be test
+    expect(mockedVerification).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.stringContaining(".worktrees"),
+      "FN-3345",
+      "pnpm test",
+      "test",
+      undefined,
+      expect.anything(),
+      "executor",
+    );
+    // Third call should be build
+    expect(mockedVerification).toHaveBeenNthCalledWith(
+      3,
+      expect.anything(),
+      expect.stringContaining(".worktrees"),
+      "FN-3345",
+      "pnpm build",
+      "build",
+      undefined,
+      expect.anything(),
+      "executor",
+    );
+    // Task should move to in-review
+    expect(store.moveTask).toHaveBeenCalledWith("FN-3345", "in-review");
+  });
+
+  it("fast mode → verification gate is skipped", async () => {
+    const store = createVerificationStore({
+      testCommand: "pnpm test",
+      buildCommand: "pnpm build",
+    });
+    mockExecuteAll.mockResolvedValue([
+      { stepIndex: 0, success: true, retries: 0 },
+      { stepIndex: 1, success: true, retries: 0 },
+    ]);
+
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+    await executor.execute(createVerificationTask({ executionMode: "fast" }));
+
+    // Verification command should NOT have been called (fast mode)
+    expect(mockedVerification).not.toHaveBeenCalled();
+    // Task should move to in-review normally
+    expect(store.moveTask).toHaveBeenCalledWith("FN-3345", "in-review");
+  });
+
+  it("verificationFixRetries is 0 → task sent back immediately without fix attempt", async () => {
+    const store = createVerificationStore({
+      testCommand: "pnpm test",
+      verificationFixRetries: 0,
+    });
+    mockExecuteAll.mockResolvedValue([
+      { stepIndex: 0, success: true, retries: 0 },
+      { stepIndex: 1, success: true, retries: 0 },
+    ]);
+
+    // Verification fails
+    mockedVerification.mockResolvedValue({
+      command: "pnpm test",
+      exitCode: 1,
+      stdout: "",
+      stderr: "1 test failed",
+      success: false,
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+    await executor.execute(createVerificationTask());
+
+    // Fix agent should NOT have been created (0 retries)
+    expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+    // Task should NOT move to in-review
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-3345", "in-review");
+    // Task should have been sent back for fix
+    expect(store.addTaskComment).toHaveBeenCalledWith(
+      "FN-3345",
+      expect.stringContaining("Deterministic verification failed"),
+      "agent",
+    );
   });
 });

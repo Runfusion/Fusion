@@ -1,136 +1,30 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { execSync, exec, spawn } from "node:child_process";
+import { execSync, exec } from "node:child_process";
 import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
+import {
+  runVerificationCommand as runVerificationCommandShared,
+  summarizeVerificationOutput,
+  truncateWithEllipsis,
+  VERIFICATION_COMMAND_MAX_BUFFER,
+  VERIFICATION_LOG_MAX_CHARS,
+  type VerificationCommandResult,
+  type VerificationResult,
+} from "./verification-utils.js";
 
-/**
- * Run a verification command with a wallclock timeout that reaps the whole
- * process group on expiry. Node's exec timeout only kills the immediate shell;
- * vitest/pnpm workers can survive and accumulate across retries. Using
- * detached + negative-pid signal terminates the full tree.
- *
- * Resolves with stdout/stderr/exitCode mirroring exec's promisified shape.
- * Rejects with an Error tagged `code: "ETIMEDOUT"` and `killed: true` on
- * timeout, matching exec's contract so callers don't need to special-case it.
- */
-async function execWithProcessGroup(
-  command: string,
-  options: { cwd: string; timeout: number; maxBuffer: number; signal?: AbortSignal },
-): Promise<{ stdout: string; stderr: string; bufferOverflow: boolean; aborted?: boolean }> {
-  return new Promise((resolve, reject) => {
-    if (options.signal?.aborted) {
-      reject(Object.assign(
-        new Error(`Command aborted before start: ${command}`),
-        { code: "ABORT_ERR", aborted: true, stdout: "", stderr: "" },
-      ));
-      return;
-    }
+// Re-export for backward compatibility (tests import from merger.ts)
+export {
+  execWithProcessGroup,
+  summarizeVerificationOutput,
+  truncateWithEllipsis,
+  VERIFICATION_COMMAND_MAX_BUFFER,
+  VERIFICATION_COMMAND_TIMEOUT_MS,
+  VERIFICATION_LOG_MAX_CHARS,
+  type VerificationCommandResult,
+  type VerificationResult,
+} from "./verification-utils.js";
 
-    const useProcessGroup = process.platform !== "win32";
-
-    const child = spawn(command, {
-      cwd: options.cwd,
-      shell: true,
-      detached: useProcessGroup,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let stdout = "";
-    let stderr = "";
-    let stdoutOverflow = false;
-    let stderrOverflow = false;
-    let timedOut = false;
-    let aborted = false;
-    let settled = false;
-
-    const killTree = (sig: NodeJS.Signals) => {
-      if (child.pid === undefined) return;
-      try {
-        if (useProcessGroup) {
-          process.kill(-child.pid, sig);
-        } else {
-          child.kill(sig);
-        }
-      } catch { /* group may already be gone */ }
-    };
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      killTree("SIGTERM");
-      setTimeout(() => {
-        if (settled) return;
-        killTree("SIGKILL");
-      }, 5_000).unref();
-    }, options.timeout);
-    timer.unref();
-
-    const onAbort = () => {
-      aborted = true;
-      killTree("SIGTERM");
-      setTimeout(() => {
-        if (settled) return;
-        killTree("SIGKILL");
-      }, 5_000).unref();
-    };
-    options.signal?.addEventListener("abort", onAbort, { once: true });
-
-    child.stdout?.on("data", (chunk: Buffer) => {
-      if (stdoutOverflow) return;
-      if (stdout.length + chunk.length > options.maxBuffer) {
-        stdoutOverflow = true;
-        stdout += chunk.toString("utf-8", 0, options.maxBuffer - stdout.length);
-        return;
-      }
-      stdout += chunk.toString("utf-8");
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      if (stderrOverflow) return;
-      if (stderr.length + chunk.length > options.maxBuffer) {
-        stderrOverflow = true;
-        stderr += chunk.toString("utf-8", 0, options.maxBuffer - stderr.length);
-        return;
-      }
-      stderr += chunk.toString("utf-8");
-    });
-
-    const finish = (err: NodeJS.ErrnoException | null, code: number | null, signal: NodeJS.Signals | null) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      options.signal?.removeEventListener("abort", onAbort);
-      if (aborted) {
-        reject(Object.assign(
-          new Error(`Command aborted: ${command}`),
-          { code: "ABORT_ERR", aborted: true, stdout, stderr, killed: true },
-        ));
-        return;
-      }
-      if (timedOut) {
-        reject(Object.assign(
-          new Error(`Command timed out after ${options.timeout}ms: ${command}`),
-          { code: "ETIMEDOUT", stdout, stderr, killed: true },
-        ));
-        return;
-      }
-      if (err) {
-        reject(Object.assign(err, { stdout, stderr }));
-        return;
-      }
-      if (code === 0) {
-        resolve({ stdout, stderr, bufferOverflow: stdoutOverflow || stderrOverflow });
-        return;
-      }
-      reject(Object.assign(
-        new Error(`Command failed (exit ${code ?? signal ?? "unknown"}): ${command}`),
-        { code: code ?? undefined, status: code, stdout, stderr },
-      ));
-    };
-
-    child.on("error", (err) => finish(err, null, null));
-    child.on("close", (code, signal) => finish(null, code, signal));
-  });
-}
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -216,9 +110,6 @@ const DEPENDENCY_SYNC_TRIGGER_PATTERNS = [
   "packages/*/package.json",
 ];
 
-const VERIFICATION_COMMAND_MAX_BUFFER = 50 * 1024 * 1024;
-const VERIFICATION_COMMAND_TIMEOUT_MS = 600_000;
-const VERIFICATION_LOG_MAX_CHARS = 20_000;
 const WORKFLOW_SCRIPT_OUTPUT_MAX_CHARS = 4_000;
 const PULL_REBASE_TIMEOUT_MS = 120_000;
 const PUSH_TIMEOUT_MS = 60_000;
@@ -230,172 +121,9 @@ const MERGE_COMMIT_LOG_MAX_CHARS = 5000;
 const MERGE_DIFF_STAT_MAX_CHARS = 3000;
 
 /**
- * Truncate text to maxChars with ellipsis indicator.
- * Returns original text if under limit.
+ * @deprecated Use summarizeVerificationOutput from verification-utils.js instead
  */
-function truncateWithEllipsis(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars)}\n... (truncated)`;
-}
-
-// Kept for potential future diagnostics use (may be helpful for detailed error analysis)
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function truncateVerificationOutput(output: string): string {
-  if (output.length <= VERIFICATION_LOG_MAX_CHARS) return output;
-  return `... output truncated to last ${VERIFICATION_LOG_MAX_CHARS} characters ...\n${output.slice(-VERIFICATION_LOG_MAX_CHARS)}`;
-}
-
-/**
- * Summarize test/build verification failure output into a concise message.
- * Extracts test counts and failure names from common test runner formats,
- * falls back to truncated output for unstructured output.
- *
- * @param output - The raw command output to summarize
- * @param type - The verification type (reserved for future use; currently unused)
- */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function summarizeVerificationOutput(output: string, type: "test" | "build"): string {
-  const lines = output.split("\n");
-  let summaryLine: string | null = null;
-  const failureNames = new Set<string>();
-
-  // 1. Extract summary line
-  for (const line of lines) {
-    // vitest/jest: "Tests: 2 failed, 48 passed, 50 total"
-    const testsMatch = line.match(/^Tests:\s*(\d+)\s+failed,\s*(\d+)\s+passed(?:,\s*(\d+)\s+total)?/i);
-    if (testsMatch) {
-      const failed = testsMatch[1];
-      const passed = testsMatch[2];
-      const total = testsMatch[3] ? `, ${testsMatch[3]} total` : "";
-      summaryLine = `Tests: ${failed} failed, ${passed} passed${total}`;
-      break;
-    }
-
-    // Generic: "X tests failed, Y passed, Z total"
-    const genericMatch = line.match(/^(\d+)\s+tests?\s+failed,\s*(\d+)\s+passed,\s*(\d+)\s+total/i);
-    if (genericMatch) {
-      summaryLine = `${genericMatch[1]} tests failed, ${genericMatch[2]} passed, ${genericMatch[3]} total`;
-      break;
-    }
-
-    // Various runners: "X failing" / "X failures" / "X failed"
-    const failCountMatch = line.match(/^(\d+)\s+(failings?|failures?|failed)/i);
-    if (failCountMatch) {
-      summaryLine = `${failCountMatch[1]} ${failCountMatch[2]}`;
-      break;
-    }
-  }
-
-  // 2. Extract failure names (up to 5 unique names)
-  // Priority: markers (✗, ●, -) provide descriptive names, FAIL lines provide file context
-  // Process markers first (they give actual test names), then FAIL lines (file context)
-  const markerLines: string[] = [];
-  const failLines: string[] = [];
-
-  for (const line of lines) {
-    // FAIL <file> — vitest file-level failure header (at start of line)
-    const failMatch = line.match(/^(FAIL)\s+(.+)/);
-    if (failMatch) {
-      failLines.push(failMatch[2].trim());
-      continue;
-    }
-
-    // Trim leading whitespace for marker detection (vitest indents failure details)
-    const trimmedLine = line.trimStart();
-
-    // Unicode cross markers: ✗ or ✕ or × (possibly indented)
-    const crossMatch = trimmedLine.match(/^[✗✕×]\s*(.+)/);
-    if (crossMatch) {
-      markerLines.push(crossMatch[1].trim());
-      continue;
-    }
-
-    // Jest failure bullet: ● (possibly indented)
-    const bulletMatch = trimmedLine.match(/^●\s*(.+)/);
-    if (bulletMatch) {
-      markerLines.push(bulletMatch[1].trim());
-      continue;
-    }
-
-    // Jest/Mocha indented test name: - MyTest › should do something (indented)
-    const dashMatch = trimmedLine.match(/^-\s+(\S[\s\S]*?)$/);
-    if (dashMatch) {
-      const potential = dashMatch[1].trim();
-      // Only include lines that look like test names (contain common test patterns)
-      if (/[\s›>]|(should|cannot|does|doesn|to|not|throws)/i.test(potential)) {
-        markerLines.push(potential);
-      }
-      continue;
-    }
-
-    // AssertionError — generic assertion failures (possibly indented)
-    const assertionMatch = trimmedLine.match(/^(AssertionError|AssertionError:.*)$/i);
-    if (assertionMatch) {
-      markerLines.push(assertionMatch[1]);
-    }
-  }
-
-  // Add marker names first (higher priority - they give actual test names)
-  for (const name of markerLines) {
-    const truncated = name.length > 120 ? name.slice(0, 120) : name;
-    failureNames.add(truncated);
-  }
-
-  // Fill remaining slots with FAIL file names (lower priority - just file context)
-  for (const name of failLines) {
-    const truncated = name.length > 120 ? name.slice(0, 120) : name;
-    failureNames.add(truncated);
-  }
-
-  // 3. Build the summary string
-  const footer = "(full output available in engine logs)";
-  const parts: string[] = [];
-
-  if (summaryLine) {
-    parts.push(summaryLine);
-  }
-
-  if (failureNames.size > 0) {
-    const names = Array.from(failureNames);
-    if (names.length <= 5) {
-      for (const name of names) {
-        parts.push(`  • ${name}`);
-      }
-    } else {
-      // Show first 5 and note overflow
-      for (let i = 0; i < 5; i++) {
-        parts.push(`  • ${names[i]}`);
-      }
-      parts.push(`  • ... and ${names.length - 5} more failures`);
-    }
-  }
-
-  if (parts.length > 0) {
-    parts.push(footer);
-    return parts.join("\n");
-  }
-
-  // 4. Fallback — no structured data found
-  const trimmed = output.trim();
-  if (!trimmed) {
-    return `Verification command failed with no output\n${footer}`;
-  }
-
-  if (trimmed.length <= 500) {
-    return `${trimmed}\n${footer}`;
-  }
-
-  // Truncate at last space or newline boundary
-  let cutoff = 500;
-  for (let i = 500; i < trimmed.length; i++) {
-    if (trimmed[i] === " " || trimmed[i] === "\n") {
-      cutoff = i;
-      break;
-    }
-  }
-
-  return `${trimmed.slice(0, cutoff)}...\n${footer}`;
-}
+export const summarizeVerificationOutputLocal = summarizeVerificationOutput;
 
 function truncateWorkflowScriptOutput(output: string): string {
   if (output.length <= WORKFLOW_SCRIPT_OUTPUT_MAX_CHARS) return output;
@@ -598,23 +326,6 @@ export function inferDefaultTestCommand(
 
 // ── Deterministic merge verification ──────────────────────────────────
 
-/** Result of running a single verification command */
-export interface VerificationCommandResult {
-  command: string;
-  exitCode: number | null;
-  stdout: string;
-  stderr: string;
-  success: boolean;
-}
-
-/** Result of running all verification commands */
-export interface VerificationResult {
-  testResult?: VerificationCommandResult;
-  buildResult?: VerificationCommandResult;
-  allPassed: boolean;
-  failedCommand?: string;
-}
-
 /**
  * Run verification commands deterministically in the engine.
  * Executes testCommand first, then buildCommand (when both are configured).
@@ -762,110 +473,7 @@ async function runVerificationCommand(
   signal?: AbortSignal,
 ): Promise<VerificationCommandResult> {
   throwIfAborted(signal, taskId);
-  mergerLog.log(`${taskId}: running ${type} command: ${command}`);
-  await store.logEntry(taskId, `[verification] Running ${type} command: ${command}`);
-  await store.appendAgentLog(taskId, `Running ${type} command`, "tool", command, "merger");
-
-  const result: VerificationCommandResult = {
-    command,
-    exitCode: null,
-    stdout: "",
-    stderr: "",
-    success: false,
-  };
-
-  const verificationStartedAt = Date.now();
-  try {
-    const { stdout, stderr, bufferOverflow } = await execWithProcessGroup(command, {
-      cwd: rootDir,
-      timeout: VERIFICATION_COMMAND_TIMEOUT_MS,
-      maxBuffer: VERIFICATION_COMMAND_MAX_BUFFER,
-      signal,
-    });
-
-    throwIfAborted(signal, taskId);
-
-    result.stdout = stdout?.toString?.() || "";
-    result.stderr = stderr?.toString?.() || "";
-    result.exitCode = 0;
-    result.success = true;
-
-    const verificationDurationMs = Date.now() - verificationStartedAt;
-    const timingDetail = `${verificationDurationMs}ms`;
-    if (bufferOverflow) {
-      mergerLog.log(`${taskId}: ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`);
-      await store.logEntry(
-        taskId,
-        `[timing] [verification] ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`,
-      );
-      await store.appendAgentLog(
-        taskId,
-        `${type} command succeeded (exit 0)`,
-        "tool_result",
-        timingDetail,
-        "merger",
-      );
-    } else {
-      mergerLog.log(`${taskId}: ${type} command succeeded in ${verificationDurationMs}ms`);
-      await store.logEntry(taskId, `[timing] [verification] ${type} command succeeded (exit 0) in ${verificationDurationMs}ms`);
-      await store.appendAgentLog(
-        taskId,
-        `${type} command succeeded (exit 0)`,
-        "tool_result",
-        timingDetail,
-        "merger",
-      );
-    }
-    return result;
-  } catch (error: any) {
-    throwIfAborted(signal, taskId);
-    const verificationDurationMs = Date.now() - verificationStartedAt;
-    result.stdout = error?.stdout?.toString?.() || "";
-    result.stderr = error?.stderr?.toString?.() || "";
-    result.exitCode = typeof error?.status === "number"
-      ? error.status
-      : (typeof error?.code === "number" ? error.code : null);
-
-    const maxBufferExceeded = error?.code === "ENOBUFS"
-      || error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
-      || String(error?.message ?? "").includes("maxBuffer");
-    result.success = maxBufferExceeded && result.exitCode === 0;
-
-    if (result.success) {
-      mergerLog.log(`${taskId}: ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`);
-      await store.logEntry(
-        taskId,
-        `[timing] [verification] ${type} command succeeded (exit 0, output exceeded buffer) in ${verificationDurationMs}ms`,
-      );
-      await store.appendAgentLog(
-        taskId,
-        `${type} command succeeded (exit 0)`,
-        "tool_result",
-        `${verificationDurationMs}ms`,
-        "merger",
-      );
-      return result;
-    }
-
-    // Keep command output out of process logs. The bounded excerpt is stored on
-    // the task for diagnostics without dumping test output to the engine stdout.
-    const output = result.stderr || result.stdout || error?.message || "Unknown error";
-    const summary = summarizeVerificationOutput(output, type);
-    mergerLog.error(`${taskId}: ${type} command failed (exit ${result.exitCode}) in ${verificationDurationMs}ms; output captured in task log`);
-    await store.logEntry(
-      taskId,
-      `[timing] [verification] ${type} command failed (exit ${result.exitCode}) after ${verificationDurationMs}ms:\n${summary}`,
-    );
-    await store.appendAgentLog(
-      taskId,
-      `${type} command failed (exit ${result.exitCode})`,
-      "tool_error",
-      summary,
-      "merger",
-    );
-  }
-
-  return result;
+  return runVerificationCommandShared(store, rootDir, taskId, command, type, signal, mergerLog, "merger");
 }
 
 /**
