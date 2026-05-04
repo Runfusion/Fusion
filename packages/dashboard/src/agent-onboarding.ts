@@ -304,7 +304,7 @@ export async function cancelAgentOnboardingSession(sessionId: string): Promise<v
   const session = sessions.get(sessionId);
   if (!session) throw new SessionNotFoundError(`Agent onboarding session ${sessionId} not found or expired`);
   stopAgentOnboardingGeneration(sessionId);
-  try { session.agent?.session.dispose?.(); } catch {}
+  try { session.agent?.session.dispose?.(); } catch { /* ignore dispose errors */ }
   sessions.delete(sessionId);
   agentOnboardingStreamManager.cleanupSession(sessionId);
 }

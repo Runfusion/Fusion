@@ -3867,10 +3867,10 @@ export function connectAgentOnboardingStream(
           try { handlers.onThinking?.(JSON.parse(event.data)); } catch { handlers.onThinking?.(event.data); }
         },
         question: (event) => {
-          try { handlers.onQuestion?.(JSON.parse(event.data) as PlanningQuestion); } catch {}
+          try { handlers.onQuestion?.(JSON.parse(event.data) as PlanningQuestion); } catch { /* ignore parse error */ }
         },
         summary: (event) => {
-          try { handlers.onSummary?.(JSON.parse(event.data) as AgentOnboardingSummary); } catch {}
+          try { handlers.onSummary?.(JSON.parse(event.data) as AgentOnboardingSummary); } catch { /* ignore parse error */ }
         },
         error: (event) => {
           try {

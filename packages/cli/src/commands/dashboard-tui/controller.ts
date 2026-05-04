@@ -829,6 +829,7 @@ export class DashboardTUI {
   // them from the stream.
   private installMouseListener(): void {
     if (this.mouseStdinListener) return;
+    // eslint-disable-next-line no-control-regex -- ESC byte is intentional for SGR mouse parsing
     const mouseRe = /\x1b\[<(\d+);\d+;\d+[Mm]/g;
     const listener = (chunk: Buffer | string): void => {
       const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");

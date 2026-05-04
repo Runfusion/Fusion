@@ -348,8 +348,7 @@ export function createEventBridge(
       // ToolCall.arguments is typed as Record<string, any> in pi-ai, but we
       // intentionally emit a raw string when JSON parse fails completely.
       // Pi handles string arguments gracefully at runtime.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- finalArgs may be a raw string when JSON parse fails; pi-ai handles it at runtime
-      (contentBlock as any).arguments = finalArgs;
+      (contentBlock as { arguments: unknown }).arguments = finalArgs;
       const toolCall = {
         type: "toolCall" as const,
         id: block.id,
