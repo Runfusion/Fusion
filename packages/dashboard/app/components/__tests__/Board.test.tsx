@@ -355,35 +355,35 @@ describe("Board", () => {
         expect(doneTasks.map((t: Task) => t.id)).toEqual(["FN-012", "FN-011", "FN-010"]);
       });
 
-      it("keeps non-done columns priority-ordered even when recency differs", () => {
+      it("orders todo by priority before age", () => {
         const tasks: Task[] = [
           createTask({
             id: "FN-003",
-            description: "Low but newest",
+            description: "Low but oldest",
             column: "todo",
             priority: "low",
-            columnMovedAt: "2024-01-01T12:00:00.000Z",
+            createdAt: "2024-01-01T08:00:00.000Z",
           }),
           createTask({
             id: "FN-001",
-            description: "Urgent but older",
+            description: "Urgent but newer",
             column: "todo",
             priority: "urgent",
-            columnMovedAt: "2024-01-01T10:00:00.000Z",
+            createdAt: "2024-01-01T10:00:00.000Z",
           }),
           createTask({
             id: "FN-004",
             description: "Normal",
             column: "todo",
             priority: "normal",
-            columnMovedAt: "2024-01-01T11:00:00.000Z",
+            createdAt: "2024-01-01T09:00:00.000Z",
           }),
           createTask({
             id: "FN-002",
             description: "High",
             column: "todo",
             priority: "high",
-            columnMovedAt: "2024-01-01T09:00:00.000Z",
+            createdAt: "2024-01-01T07:00:00.000Z",
           }),
         ];
 
@@ -394,11 +394,37 @@ describe("Board", () => {
         expect(todoTasks.map((t: Task) => t.id)).toEqual(["FN-001", "FN-002", "FN-004", "FN-003"]);
       });
 
-      it("orders same-priority tasks by numeric task ID ascending", () => {
+      it("orders same-priority todo tasks by oldest createdAt first", () => {
         const tasks: Task[] = [
-          createTask({ id: "FN-050", description: "Fifty", column: "in-progress", priority: "normal" }),
-          createTask({ id: "FN-010", description: "Ten", column: "in-progress", priority: "normal" }),
-          createTask({ id: "FN-030", description: "Thirty", column: "in-progress", priority: "normal" }),
+          createTask({ id: "FN-020", description: "Newest", column: "todo", priority: "high", createdAt: "2024-01-01T12:00:00.000Z" }),
+          createTask({ id: "FN-021", description: "Oldest", column: "todo", priority: "high", createdAt: "2024-01-01T09:00:00.000Z" }),
+          createTask({ id: "FN-022", description: "Middle", column: "todo", priority: "high", createdAt: "2024-01-01T10:00:00.000Z" }),
+        ];
+
+        renderBoard({ tasks });
+
+        const todoTasks = JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]") as Task[];
+        expect(todoTasks.map((t: Task) => t.id)).toEqual(["FN-021", "FN-022", "FN-020"]);
+      });
+
+      it("uses task ID as deterministic tie-breaker when todo createdAt matches", () => {
+        const tasks: Task[] = [
+          createTask({ id: "FN-050", description: "Fifty", column: "todo", priority: "normal", createdAt: "2024-01-01T10:00:00.000Z" }),
+          createTask({ id: "FN-010", description: "Ten", column: "todo", priority: "normal", createdAt: "2024-01-01T10:00:00.000Z" }),
+          createTask({ id: "FN-030", description: "Thirty", column: "todo", priority: "normal", createdAt: "2024-01-01T10:00:00.000Z" }),
+        ];
+
+        renderBoard({ tasks });
+
+        const todoTasks = JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]") as Task[];
+        expect(todoTasks.map((t: Task) => t.id)).toEqual(["FN-010", "FN-030", "FN-050"]);
+      });
+
+      it("keeps non-todo columns on priority then task ID ordering", () => {
+        const tasks: Task[] = [
+          createTask({ id: "FN-050", description: "Fifty", column: "in-progress", priority: "normal", createdAt: "2024-01-01T12:00:00.000Z" }),
+          createTask({ id: "FN-010", description: "Ten", column: "in-progress", priority: "normal", createdAt: "2024-01-01T09:00:00.000Z" }),
+          createTask({ id: "FN-030", description: "Thirty", column: "in-progress", priority: "normal", createdAt: "2024-01-01T10:00:00.000Z" }),
         ];
 
         renderBoard({ tasks });

@@ -1,5 +1,6 @@
-import type { Task, TaskDetail, Column as ColumnType, TaskCreateInput, TaskPriority } from "@fusion/core";
-import { COLUMNS, TASK_PRIORITIES, DEFAULT_TASK_PRIORITY } from "@fusion/core";
+import type { Task, TaskDetail, Column as ColumnType, TaskCreateInput } from "@fusion/core";
+import { COLUMNS } from "@fusion/core";
+import { compareTaskPriority, sortTasksByPriorityThenAgeAndId } from "../../../core/src/task-priority";
 import { Column } from "./Column";
 import type { ToastType } from "../hooks/useToast";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
@@ -53,24 +54,6 @@ interface BoardProps {
   lastFetchTimeMs?: number;
 }
 
-const PRIORITY_RANK: Record<TaskPriority, number> = {
-  low: 0,
-  normal: 1,
-  high: 2,
-  urgent: 3,
-};
-
-function normalizePriority(priority: unknown): TaskPriority {
-  if (typeof priority === "string" && (TASK_PRIORITIES as readonly string[]).includes(priority)) {
-    return priority as TaskPriority;
-  }
-  return DEFAULT_TASK_PRIORITY;
-}
-
-function compareTaskPriority(a: unknown, b: unknown): number {
-  return PRIORITY_RANK[normalizePriority(b)] - PRIORITY_RANK[normalizePriority(a)];
-}
-
 function compareTaskIdNumeric(a: string, b: string): number {
   const aNum = Number.parseInt(a.slice(a.lastIndexOf("-") + 1), 10);
   const bNum = Number.parseInt(b.slice(b.lastIndexOf("-") + 1), 10);
@@ -89,6 +72,11 @@ function getDoneSortTimestamp(task: Task): number {
 }
 
 function sortTasksForColumn(tasks: Task[], column: ColumnType): Task[] {
+  if (column === "todo") {
+    // Match scheduler pickup order: priority DESC, createdAt ASC, id ASC.
+    return sortTasksByPriorityThenAgeAndId(tasks);
+  }
+
   return [...tasks].sort((a, b) => {
     if (column === "done") {
       const timestampCmp = getDoneSortTimestamp(b) - getDoneSortTimestamp(a);
@@ -109,8 +97,7 @@ function sortTasksForColumn(tasks: Task[], column: ColumnType): Task[] {
       }
     }
 
-    // Primary sort for non-done columns: priority descending (urgent → high → normal → low).
-    // compareTaskPriority normalizes missing/invalid values to `normal`.
+    // Primary sort for non-done/non-todo columns: priority descending.
     const priorityCmp = compareTaskPriority(a.priority, b.priority);
     if (priorityCmp !== 0) {
       return priorityCmp;
