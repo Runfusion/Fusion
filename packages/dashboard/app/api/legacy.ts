@@ -1317,6 +1317,23 @@ export interface DroidCliStatus {
   ready: boolean;
 }
 
+export interface LlamaCppStatus {
+  enabled: boolean;
+  extension: {
+    status: "ok" | "not-installed" | "missing-entry" | "error";
+    path?: string;
+    packageVersion?: string;
+    reason?: string;
+  } | null;
+  ready: boolean;
+  server: {
+    available: boolean;
+    url: string;
+    hasApiKey: boolean;
+    reason?: string;
+  };
+}
+
 /** Probe the local Claude CLI binary + setting + extension state. */
 export function fetchClaudeCliStatus(): Promise<ClaudeCliStatus> {
   return api<ClaudeCliStatus>("/providers/claude-cli/status");
@@ -1366,6 +1383,11 @@ export function installFnBinary(): Promise<FnBinaryInstallResponse> {
 /** Probe the local Droid CLI binary + setting + extension state. */
 export function fetchDroidCliStatus(): Promise<DroidCliStatus> {
   return api<DroidCliStatus>("/providers/droid-cli/status");
+}
+
+/** Probe llama.cpp server + setting + extension state. */
+export function fetchLlamaCppStatus(): Promise<LlamaCppStatus> {
+  return api<LlamaCppStatus>("/providers/llama-cpp/status");
 }
 
 // --- Runtime Provider Status Types ---
@@ -1622,6 +1644,16 @@ export function setDroidCliEnabled(
   enabled: boolean,
 ): Promise<{ enabled: boolean; restartRequired: boolean }> {
   return api<{ enabled: boolean; restartRequired: boolean }>("/auth/droid-cli", {
+    method: "POST",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+/** Enable or disable the llama.cpp provider. */
+export function setLlamaCppEnabled(
+  enabled: boolean,
+): Promise<{ enabled: boolean; restartRequired: boolean }> {
+  return api<{ enabled: boolean; restartRequired: boolean }>("/auth/llama-cpp", {
     method: "POST",
     body: JSON.stringify({ enabled }),
   });

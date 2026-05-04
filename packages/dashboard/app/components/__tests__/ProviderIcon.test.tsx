@@ -95,6 +95,13 @@ describe("ProviderIcon", () => {
     expect(screen.getByLabelText("Ollama")).toBeInTheDocument();
   });
 
+  it("renders llama.cpp icon aliases", () => {
+    const { rerender } = render(<ProviderIcon provider="llama-cpp" />);
+    expect(screen.getByTestId("llama-cpp-icon")).toBeInTheDocument();
+    rerender(<ProviderIcon provider="llama-server" />);
+    expect(screen.getByTestId("llama-cpp-icon")).toBeInTheDocument();
+  });
+
   it("renders Cpu icon as fallback for unknown providers", () => {
     render(<ProviderIcon provider="unknown" />);
     // Cpu icon from lucide-react renders as an svg without our custom data-testid

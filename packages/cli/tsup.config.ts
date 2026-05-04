@@ -10,6 +10,8 @@ const piClaudeCliSrc = join(__dirname, "..", "pi-claude-cli");
 const piClaudeCliDest = join(__dirname, "dist", "pi-claude-cli");
 const droidCliSrc = join(__dirname, "..", "droid-cli");
 const droidCliDest = join(__dirname, "dist", "droid-cli");
+const llamaCppSrc = join(__dirname, "..", "pi-llama-cpp");
+const llamaCppDest = join(__dirname, "dist", "pi-llama-cpp");
 const dependencyGraphPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-dependency-graph");
 const dependencyGraphPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-dependency-graph");
 const dashboardClientStub = `<!doctype html>
@@ -93,6 +95,21 @@ export default defineConfig({
     } else {
       console.warn(
         `WARNING: droid-cli source not found at ${droidCliSrc}; useDroidCli will not work in the published package.`,
+      );
+    }
+
+    if (existsSync(llamaCppDest)) {
+      rmSync(llamaCppDest, { recursive: true, force: true });
+    }
+    if (existsSync(llamaCppSrc)) {
+      mkdirSync(llamaCppDest, { recursive: true });
+      cpSync(join(llamaCppSrc, "index.ts"), join(llamaCppDest, "index.ts"));
+      cpSync(join(llamaCppSrc, "src"), join(llamaCppDest, "src"), { recursive: true });
+      cpSync(join(llamaCppSrc, "package.json"), join(llamaCppDest, "package.json"));
+      console.log("Copied pi-llama-cpp extension to dist/pi-llama-cpp/");
+    } else {
+      console.warn(
+        `WARNING: pi-llama-cpp source not found at ${llamaCppSrc}; useLlamaCpp will not work in the published package.`,
       );
     }
 

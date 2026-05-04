@@ -287,6 +287,8 @@ export interface ServerOptions {
    * settings PUT to fail.
    */
   onUseDroidCliToggled?: (prev: boolean, next: boolean) => void;
+  /** Called when the user toggles the `useLlamaCpp` global setting. */
+  onUseLlamaCppToggled?: (prev: boolean, next: boolean) => void;
   /**
    * Returns the host's last-observed resolution of the bundled `droid-cli`
    * extension wiring. Populated by serve/daemon/dashboard startup checks.
@@ -298,6 +300,17 @@ export interface ServerOptions {
    * early startup) — callers should treat null as "unknown, try again".
    */
   getDroidCliExtensionStatus?: () =>
+    | {
+        status: "ok" | "not-installed" | "missing-entry" | "error";
+        path?: string;
+        packageVersion?: string;
+        reason?: string;
+      }
+    | null;
+  /** Returns the host's last-observed resolution of the bundled
+   * `@fusion/pi-llama-cpp` extension wiring. Populated by startup checks.
+   */
+  getLlamaCppExtensionStatus?: () =>
     | {
         status: "ok" | "not-installed" | "missing-entry" | "error";
         path?: string;

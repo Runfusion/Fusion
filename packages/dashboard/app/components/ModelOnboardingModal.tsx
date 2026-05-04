@@ -24,6 +24,7 @@ import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ProviderIcon } from "./ProviderIcon";
 import { ClaudeCliProviderCard } from "./ClaudeCliProviderCard";
 import { DroidCliProviderCard } from "./DroidCliProviderCard";
+import { LlamaCppProviderCard } from "./LlamaCppProviderCard";
 import { LoginInstructions } from "./LoginInstructions";
 import { OAuthManualCodeForm } from "./OAuthManualCodeForm";
 import { OnboardingDisclosure } from "./OnboardingDisclosure";
@@ -199,6 +200,7 @@ const ONBOARDING_CURATED_PROVIDER_FAMILY_ORDER = [
   "anthropic",
   "claude-cli",
   "droid-cli",
+  "llama-cpp",
   "openai-codex",
   "gemini",
   "minimax",
@@ -210,6 +212,7 @@ const ONBOARDING_PROVIDER_FAMILY_ALIASES: Record<string, (typeof ONBOARDING_CURA
   anthropic: "anthropic",
   "claude-cli": "claude-cli",
   "droid-cli": "droid-cli",
+  "llama-cpp": "llama-cpp",
   "openai-codex": "openai-codex",
   google: "gemini",
   gemini: "gemini",
@@ -1760,6 +1763,18 @@ export function ModelOnboardingModal({
     if (provider.id === "droid-cli" && provider.type === "cli") {
       return (
         <DroidCliProviderCard
+          key={provider.id}
+          authenticated={provider.authenticated}
+          onToggled={() => {
+            void loadAuthStatus();
+          }}
+        />
+      );
+    }
+
+    if (provider.id === "llama-cpp" && provider.type === "cli") {
+      return (
+        <LlamaCppProviderCard
           key={provider.id}
           authenticated={provider.authenticated}
           onToggled={() => {

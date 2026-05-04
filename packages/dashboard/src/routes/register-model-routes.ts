@@ -13,6 +13,7 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
     let defaultModelId: string | undefined;
     let useClaudeCli = false;
     let useDroidCli = false;
+    let useLlamaCpp = false;
     let resolvedPlanningProvider: string | undefined;
     let resolvedPlanningModelId: string | undefined;
     if (store) {
@@ -25,6 +26,7 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
         defaultModelId = globalSettings.defaultModelId;
         useClaudeCli = globalSettings.useClaudeCli === true;
         useDroidCli = globalSettings.useDroidCli === true;
+        useLlamaCpp = globalSettings.useLlamaCpp === true;
 
         const mergedSettings = await store.getSettingsFast();
         const resolvedPlanningModel = resolvePlanningSettingsModel(mergedSettings);
@@ -81,6 +83,9 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
       }
       if (!useDroidCli) {
         models = models.filter((m) => m.provider !== "droid-cli");
+      }
+      if (!useLlamaCpp) {
+        models = models.filter((m) => m.provider !== "llama-server");
       }
 
       res.json({

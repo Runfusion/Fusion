@@ -53,6 +53,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   modelOnboardingComplete: undefined,
   useClaudeCli: undefined,
   useDroidCli: undefined,
+  useLlamaCpp: undefined,
   // Global baseline lanes for per-role model selection
   executionGlobalProvider: undefined,
   executionGlobalModelId: undefined,

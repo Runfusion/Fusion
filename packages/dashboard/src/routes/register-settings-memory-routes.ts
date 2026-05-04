@@ -1615,6 +1615,14 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         // Best-effort: on read failure assume false so a flip-on still fires.
       }
 
+      let prevUseLlamaCpp = false;
+      try {
+        const priorGlobal = await store.getGlobalSettingsStore().getSettings();
+        prevUseLlamaCpp = priorGlobal.useLlamaCpp === true;
+      } catch {
+        // Best-effort: on read failure assume false so a flip-on still fires.
+      }
+
       const settings = await store.updateGlobalSettings(req.body);
       // Invalidate global settings caches in all project-scoped stores so the
       // next GET /settings?projectId=xxx reads fresh values from disk rather
@@ -1649,6 +1657,17 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         } catch (hookErr) {
           runtimeLogger.warn(
             `onUseDroidCliToggled callback threw: ${hookErr instanceof Error ? hookErr.message : String(hookErr)}`,
+          );
+        }
+      }
+
+      const nextUseLlamaCpp = settings.useLlamaCpp === true;
+      if (options?.onUseLlamaCppToggled && prevUseLlamaCpp !== nextUseLlamaCpp) {
+        try {
+          options.onUseLlamaCppToggled(prevUseLlamaCpp, nextUseLlamaCpp);
+        } catch (hookErr) {
+          runtimeLogger.warn(
+            `onUseLlamaCppToggled callback threw: ${hookErr instanceof Error ? hookErr.message : String(hookErr)}`,
           );
         }
       }
