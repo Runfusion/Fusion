@@ -1350,6 +1350,11 @@ export interface GlobalSettings {
    *  the OpenRouter API at startup so the model picker shows all available
    *  OpenRouter models (not just the static built-in list). Default: true. */
   openrouterModelSync?: boolean;
+  /** When true, startup refreshes the opencode-go model catalog via
+   *  `opencode models opencode --refresh` so model pickers expose an up-to-date
+   *  opencode-go provider list without waiting for a later session bootstrap.
+   *  Default: true. */
+  opencodeGoModelSync?: boolean;
   /** When true (default), checks npm for new versions of @runfusion/fusion and
    *  shows update notices in the CLI and dashboard. The actual cadence is
    *  governed by `updateCheckFrequency`. Disabled = no automatic checks at all. */

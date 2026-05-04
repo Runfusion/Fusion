@@ -45,6 +45,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   favoriteProviders: undefined,
   favoriteModels: undefined,
   openrouterModelSync: true,
+  opencodeGoModelSync: true,
   updateCheckEnabled: true,
   fnBinaryCheckEnabled: true,
   updateCheckFrequency: "daily",

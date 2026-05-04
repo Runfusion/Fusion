@@ -2,6 +2,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
+const { mockSyncStartupModels } = vi.hoisted(() => ({
+  mockSyncStartupModels: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../startup-model-sync.js", () => ({
+  syncStartupModels: mockSyncStartupModels,
+}));
+
 const CLI_PACKAGE_VERSION = (
   JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf-8")) as { version: string }
 ).version;
@@ -734,6 +742,13 @@ async function runDashboard(...args: Parameters<typeof runDashboardImpl>): Retur
 }
 
 // ── Tests ───────────────────────────────────────────────────────────
+
+describe("runDashboard — startup model sync", () => {
+  it("invokes shared startup model sync", async () => {
+    await runDashboard(0, { open: false });
+    expect(mockSyncStartupModels).toHaveBeenCalledTimes(1);
+  });
+});
 
 function resetGitHubMocks() {
   mockFindPrForBranch.mockReset();

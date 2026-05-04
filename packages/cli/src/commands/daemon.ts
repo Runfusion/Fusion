@@ -64,6 +64,7 @@ import { createReadOnlyAuthFileStorage, mergeAuthStorageReads, wrapAuthStorageWi
 import { getCodexCliAuthPath, getFusionAuthPath, getLegacyAuthPaths, getModelRegistryModelsPath, getPackageManagerAgentDir } from "./auth-paths.js";
 import { resolveProject } from "../project-context.js";
 import { ensureBundledDependencyGraphPluginInstalled } from "../plugins/bundled-plugin-install.js";
+import { syncStartupModels } from "./startup-model-sync.js";
 
 const DIAGNOSTIC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 let daemonStartTime = 0;
@@ -547,6 +548,13 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     createExtensionRuntime();
     modelRegistry.refresh();
   }
+
+  void syncStartupModels({
+    getSettings: () => store.getSettings(),
+    authStorage: dashboardAuthStorage,
+    modelRegistry,
+    log: (scope, message) => console.log(`[${scope}] ${message}`),
+  });
 
   // ── Skills adapter for skills discovery and execution toggling ─────────────
   const skillsAdapter = packageManager

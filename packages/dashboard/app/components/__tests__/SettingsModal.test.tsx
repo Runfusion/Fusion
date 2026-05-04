@@ -585,6 +585,32 @@ describe("SettingsModal", () => {
   });
 
   describe("Project Models", () => {
+    it("saves opencode-go startup model sync toggle in global settings", async () => {
+      mockFetchModels.mockResolvedValue({
+        models: MODEL_FIXTURE,
+        favoriteProviders: [],
+        favoriteModels: [],
+      });
+
+      renderModal();
+      await waitForSettingsModalReady();
+
+      await userEvent.click(screen.getByRole("button", { name: "Models" }));
+      const checkbox = await screen.findByLabelText("Sync opencode-go model list at startup");
+      expect(checkbox).toBeChecked();
+
+      await userEvent.click(checkbox);
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdateGlobalSettings).toHaveBeenCalled();
+      });
+
+      expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ opencodeGoModelSync: false }),
+      );
+    });
+
     it("renders a project-scoped default model lane", async () => {
       mockFetchSettings.mockResolvedValue({
         ...defaultSettings,

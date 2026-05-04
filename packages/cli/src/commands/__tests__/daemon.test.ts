@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 
+const { mockSyncStartupModels } = vi.hoisted(() => ({
+  mockSyncStartupModels: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../startup-model-sync.js", () => ({
+  syncStartupModels: mockSyncStartupModels,
+}));
+
 const mocks = vi.hoisted(() => {
   type ListenCall = {
     port: number;
@@ -584,6 +592,11 @@ vi.mock("../task-lifecycle.js", () => ({
 const { runDaemon } = await import("../daemon.js");
 
 describe("runDaemon", () => {
+  it("invokes shared startup model sync", async () => {
+    const { runDaemon } = await import("../daemon.js");
+    await runDaemon({});
+    expect(mockSyncStartupModels).toHaveBeenCalledTimes(1);
+  });
   const originalCwd = process.cwd;
   const originalExit = process.exit;
 

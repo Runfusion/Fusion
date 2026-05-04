@@ -2216,8 +2216,8 @@ export function SettingsModal({
               </>
             )}
 
-            {/* --- OpenRouter Model Sync --- */}
-            <h4 className="settings-section-heading settings-section-heading--spaced">OpenRouter Models</h4>
+            {/* --- Startup Model Sync --- */}
+            <h4 className="settings-section-heading settings-section-heading--spaced">Startup Model Sync</h4>
             <div className="form-group">
               <label htmlFor="openrouterModelSync" className="checkbox-label">
                 <input
@@ -2226,12 +2226,26 @@ export function SettingsModal({
                   checked={form.openrouterModelSync !== false}
                   onChange={(e) => setForm((f) => ({ ...f, openrouterModelSync: e.target.checked }))}
                 />
-                Sync OpenRouter model list at dashboard startup
+                Sync OpenRouter model list at startup
               </label>
               <small>
-                When enabled, the dashboard fetches the latest available models from the OpenRouter
-                API on startup, so the model picker always shows the most up-to-date catalog. Disable
-                to skip the initial API call and use only the built-in model list.
+                When enabled, startup fetches the latest available models from the OpenRouter API so
+                model pickers always include the newest catalog.
+              </small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="opencodeGoModelSync" className="checkbox-label">
+                <input
+                  id="opencodeGoModelSync"
+                  type="checkbox"
+                  checked={form.opencodeGoModelSync !== false}
+                  onChange={(e) => setForm((f) => ({ ...f, opencodeGoModelSync: e.target.checked }))}
+                />
+                Sync opencode-go model list at startup
+              </label>
+              <small>
+                When enabled, startup refreshes models through the local <code>opencode models opencode --refresh</code>
+                flow and publishes them under the opencode-go provider in model pickers.
               </small>
             </div>
 

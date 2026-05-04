@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
 
+const { mockSyncStartupModels } = vi.hoisted(() => ({
+  mockSyncStartupModels: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../startup-model-sync.js", () => ({
+  syncStartupModels: mockSyncStartupModels,
+}));
+
 // ── Multi-project test fixtures ─────────────────────────────────────────
 //
 // Test fixtures model at least two registered projects with distinct IDs/paths
@@ -649,6 +657,11 @@ vi.mock("../task-lifecycle.js", () => ({
 const { runServe } = await import("../serve.js");
 
 describe("runServe", () => {
+  it("invokes shared startup model sync", async () => {
+    const { runServe } = await import("../serve.js");
+    await runServe(4040, {});
+    expect(mockSyncStartupModels).toHaveBeenCalledTimes(1);
+  });
   const originalCwd = process.cwd;
   const originalOn = process.on;
   const originalExit = process.exit;
