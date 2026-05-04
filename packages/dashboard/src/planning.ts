@@ -2143,6 +2143,23 @@ export function getSummary(sessionId: string): PlanningSummary | undefined {
  * @param sessionId - The planning session ID
  * @returns Array of SubtaskItem with titles derived from keyDeliverables, or fallback
  */
+function buildPlanningSubtaskDescription(input: {
+  taskGuidance: string;
+  summaryDescription: string;
+  qaSection: string;
+}): string {
+  const contextSections = [
+    "## Larger Plan Context",
+    input.summaryDescription,
+  ];
+
+  if (input.qaSection) {
+    contextSections.push(input.qaSection);
+  }
+
+  return `${input.taskGuidance}\n\n${contextSections.join("\n\n")}`;
+}
+
 export function generateSubtasksFromPlanning(sessionId: string): SubtaskItem[] {
   const session = sessions.get(sessionId);
   if (!session) return [];
@@ -2150,9 +2167,6 @@ export function generateSubtasksFromPlanning(sessionId: string): SubtaskItem[] {
 
   const { summary } = session;
   const qaSection = formatInterviewQA(session.history);
-  const descriptionWithContext = qaSection
-    ? `${summary.description}\n\n${qaSection}`
-    : summary.description;
 
   // If key deliverables exist, create one subtask per deliverable
   if (summary.keyDeliverables.length > 0) {
@@ -2162,7 +2176,11 @@ export function generateSubtasksFromPlanning(sessionId: string): SubtaskItem[] {
       return {
         id,
         title: deliverable,
-        description: descriptionWithContext,
+        description: buildPlanningSubtaskDescription({
+          taskGuidance: `Implement "${deliverable}" as this subtask's primary outcome. Focus only on the concrete changes needed to deliver this item.`,
+          summaryDescription: summary.description,
+          qaSection,
+        }),
         suggestedSize: index === 0 ? "S" as const : index === summary.keyDeliverables.length - 1 ? "S" as const : "M" as const,
         dependsOn,
       };
@@ -2174,21 +2192,33 @@ export function generateSubtasksFromPlanning(sessionId: string): SubtaskItem[] {
     {
       id: "subtask-1",
       title: "Define implementation approach",
-      description: descriptionWithContext,
+      description: buildPlanningSubtaskDescription({
+        taskGuidance: "Define the implementation approach for the plan, including architecture and sequencing decisions needed before coding.",
+        summaryDescription: summary.description,
+        qaSection,
+      }),
       suggestedSize: "S" as const,
       dependsOn: [],
     },
     {
       id: "subtask-2",
       title: "Implement core changes",
-      description: descriptionWithContext,
+      description: buildPlanningSubtaskDescription({
+        taskGuidance: "Implement the core code changes described by the plan, using the agreed approach from the prior subtask.",
+        summaryDescription: summary.description,
+        qaSection,
+      }),
       suggestedSize: "M" as const,
       dependsOn: ["subtask-1"],
     },
     {
       id: "subtask-3",
       title: "Verify and polish",
-      description: descriptionWithContext,
+      description: buildPlanningSubtaskDescription({
+        taskGuidance: "Verify the implementation end-to-end, then polish quality items like tests, docs, and edge-case handling.",
+        summaryDescription: summary.description,
+        qaSection,
+      }),
       suggestedSize: "S" as const,
       dependsOn: ["subtask-2"],
     },

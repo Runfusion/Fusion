@@ -21,6 +21,7 @@ AI-guided interactive planning for creating well-specified tasks from high-level
    - Suggested dependencies from existing tasks
    - Key deliverables checklist
 5. Create the task directly from the summary
+6. Or use **Break into Tasks** to generate multiple subtasks where each description starts with subtask-specific implementation guidance, followed by a separate larger-plan context section (including planning interview context when available)
 
 **Features**:
 - **Rate Limiting**: Maximum 5 planning sessions per hour per IP

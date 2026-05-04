@@ -22,6 +22,7 @@ Use the 💡 button to open planning mode:
 - AI reasoning (thinking output) is preserved and visible throughout the session — expand the reasoning toggle to review the model's analysis before answering each question or accepting the summary
 - Produces summary + key deliverables
 - Create one task or **Break into Tasks** (multi-task generation with dependencies)
+- Break-into-tasks descriptions are structured with subtask-specific guidance first, then a separate larger-plan context section (plus `## Planning Interview Context` when interview history exists)
 - Sessions persist when the modal is closed — resume from the sidebar list at any time; reasoning context is restored automatically
 
 ### 3) Todo item → Plan Mode

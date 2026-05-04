@@ -1974,13 +1974,18 @@ describe("planning module", () => {
       });
     });
 
-    it("appends planning interview context to subtask descriptions when history exists", async () => {
+    it("generates deliverable subtasks with distinct lead guidance plus separate plan context", async () => {
       const mockIp = getUniqueIp();
       const sessionId = await createCompletedSession(mockIp, "Build auth system with context");
 
       const result = generateSubtasksFromPlanning(sessionId);
 
-      expect(result.length).toBeGreaterThan(0);
+      expect(result.length).toBe(3);
+      expect(result[0]?.description).toContain('Implement "Implementation" as this subtask\'s primary outcome.');
+      expect(result[1]?.description).toContain('Implement "Tests" as this subtask\'s primary outcome.');
+      expect(result[2]?.description).toContain('Implement "Documentation" as this subtask\'s primary outcome.');
+
+      expect(result[0]?.description).toContain("## Larger Plan Context");
       expect(result[0]?.description).toContain("## Planning Interview Context");
       expect(result[0]?.description).toContain("**Q: What is the scope of this plan?**");
       expect(result[0]?.description).toContain("A: Medium");
@@ -1990,7 +1995,7 @@ describe("planning module", () => {
       expect(result[0]?.description).toContain("A: Yes");
     });
 
-    it("keeps subtask descriptions unchanged when history is empty", async () => {
+    it("keeps larger-plan context section when history is empty", async () => {
       const mockIp = getUniqueIp();
       const sessionId = await createCompletedSession(mockIp, "Build auth without context");
 
@@ -2005,7 +2010,9 @@ describe("planning module", () => {
       const result = generateSubtasksFromPlanning(sessionId);
       expect(result.length).toBeGreaterThan(0);
       for (const subtask of result) {
-        expect(subtask.description).toBe(session.summary.description);
+        expect(subtask.description).toContain("## Larger Plan Context");
+        expect(subtask.description).toContain(session.summary.description);
+        expect(subtask.description).not.toContain("## Planning Interview Context");
       }
     });
 
@@ -2049,6 +2056,10 @@ describe("planning module", () => {
         suggestedSize: "S",
         dependsOn: ["subtask-2"],
       });
+      expect(result[0]?.description).toContain("Define the implementation approach for the plan");
+      expect(result[1]?.description).toContain("Implement the core code changes described by the plan");
+      expect(result[2]?.description).toContain("Verify the implementation end-to-end");
+      expect(result[0]?.description).toContain("## Larger Plan Context");
     });
 
     it("assigns correct sizes based on deliverable position", async () => {
