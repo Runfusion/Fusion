@@ -72,6 +72,9 @@ function createDeferredPromise<T>() {
 describe("QuickChatFAB session-first UX", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    window.dispatchEvent(new Event("resize"));
+    localStorage.clear();
     mockUseAgents.mockReturnValue({ agents, activeAgents: agents, stats: null, isLoading: false, loadAgents: vi.fn(), loadStats: vi.fn() });
     mockFetchResumeChatSession.mockResolvedValue({ session: modelSession });
     mockFetchChatMessages.mockResolvedValue({ messages: [] });
@@ -366,5 +369,40 @@ describe("QuickChatFAB session-first UX", () => {
     expect(await screen.findByTestId("quick-chat-streaming-message")).toBeInTheDocument();
     expect(screen.getByTestId("quick-chat-waiting")).toHaveTextContent("Connecting…");
     expect(screen.queryByText("Loading conversation…")).not.toBeInTheDocument();
+  });
+
+  it("keeps tap behavior for below-threshold touch movement", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.dispatchEvent(new Event("resize"));
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+
+    const fab = screen.getByTestId("quick-chat-fab");
+    fireEvent.pointerDown(fab, { pointerId: 21, pointerType: "touch", button: 0, clientX: 120, clientY: 420 });
+    fireEvent.pointerMove(document, { pointerId: 21, pointerType: "touch", clientX: 123, clientY: 423 });
+    fireEvent.pointerUp(document, { pointerId: 21, pointerType: "touch", clientX: 123, clientY: 423 });
+    fireEvent.click(fab);
+
+    expect(await screen.findByTestId("quick-chat-panel")).toBeInTheDocument();
+  });
+
+  it("repositions on touch drag without opening panel and persists position", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.dispatchEvent(new Event("resize"));
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+
+    const fab = screen.getByTestId("quick-chat-fab");
+    fireEvent.pointerDown(fab, { pointerId: 33, pointerType: "touch", button: 0, clientX: 150, clientY: 500 });
+    fireEvent.pointerMove(document, { pointerId: 33, pointerType: "touch", clientX: 180, clientY: 470 });
+    fireEvent.pointerUp(document, { pointerId: 33, pointerType: "touch", clientX: 180, clientY: 470 });
+    fireEvent.click(fab);
+
+    expect(screen.queryByTestId("quick-chat-panel")).toBeNull();
+
+    const saved = localStorage.getItem("fusion-quick-chat-position-proj-1");
+    expect(saved).not.toBeNull();
+    expect(saved).toContain("\"x\"");
+    expect(saved).toContain("\"y\"");
   });
 });

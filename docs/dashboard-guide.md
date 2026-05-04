@@ -59,6 +59,7 @@ Quick Chat is an optional floating panel for fast, project-scoped assistant conv
 - Resume lookups still use targeted session queries instead of loading the full active-session list first
 - Tool-call summaries in the floating quick-chat panel are intentionally condensed into a single-line header row (especially on small screens) so tool name + status stay scannable without multi-line wrapping
 - On mobile viewports, opening Quick Chat auto-focuses the composer as soon as it is ready so the keyboard opens immediately
+- FAB dragging uses pointer events with document-level move/up tracking and a 5px drag threshold so Android touch drags reposition reliably while short taps still open Quick Chat
 
 ## Mailbox View
 

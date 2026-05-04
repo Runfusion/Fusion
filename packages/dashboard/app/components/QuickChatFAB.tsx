@@ -386,8 +386,15 @@ function useDraggable(projectId?: string, externalDidDragRef?: React.MutableRefO
 
   const [isDragging, setIsDragging] = useState(false);
   const dragStartRef = useRef<{ x: number; y: number; pointerX: number; pointerY: number } | null>(null);
+  const positionRef = useRef(position);
+  const activePointerIdRef = useRef<number | null>(null);
+  const dragTargetRef = useRef<HTMLElement | null>(null);
   // Use external ref if provided, otherwise create internal one
   const didDragRef = externalDidDragRef ?? useRef(false);
+
+  useEffect(() => {
+    positionRef.current = position;
+  }, [position]);
 
   // Clamp position to keep FAB within viewport
   const clampPosition = useCallback((pos: Position): Position => {
@@ -422,90 +429,123 @@ function useDraggable(projectId?: string, externalDidDragRef?: React.MutableRefO
     }
   }, [projectId]);
 
-  // Handle pointer down (start drag)
-  const handlePointerDown = useCallback((e: React.PointerEvent) => {
-    // Only handle primary button (left click) or touch
-    if (e.button !== 0 && e.pointerType === "mouse") return;
-
-    // Check if this is a click on an interactive element inside the FAB (not the FAB itself)
-    const target = e.target as HTMLElement;
-    const fabButton = target.closest(".quick-chat-fab") as HTMLElement | null;
-    if (!fabButton) return;
-
-    e.preventDefault();
-    // setPointerCapture may not exist in jsdom/tests
-    if (typeof fabButton.setPointerCapture === "function") {
-      fabButton.setPointerCapture(e.pointerId);
+  const endDrag = useCallback(() => {
+    if (!dragStartRef.current) {
+      return;
     }
 
-    dragStartRef.current = {
-      x: position.x,
-      y: position.y,
-      pointerX: e.clientX,
-      pointerY: e.clientY,
-    };
-    didDragRef.current = false;
-    setIsDragging(true);
+    const dragTarget = dragTargetRef.current;
+    const pointerId = activePointerIdRef.current;
 
-    // Prevent text selection during drag
-    document.body.style.userSelect = "none";
-  }, [position]);
+    if (dragTarget && pointerId !== null && typeof dragTarget.releasePointerCapture === "function") {
+      dragTarget.releasePointerCapture(pointerId);
+    }
 
-  // Handle pointer move (during drag)
-  const handlePointerMove = useCallback((e: React.PointerEvent) => {
-    if (!dragStartRef.current || !isDragging) return;
+    dragStartRef.current = null;
+    activePointerIdRef.current = null;
+    dragTargetRef.current = null;
+    setIsDragging(false);
+    document.body.style.userSelect = "";
 
-    const deltaX = e.clientX - dragStartRef.current.pointerX;
-    const deltaY = e.clientY - dragStartRef.current.pointerY;
+    if (didDragRef.current) {
+      savePosition(positionRef.current);
+    }
+
+    document.removeEventListener("pointermove", handleDocumentPointerMove);
+    document.removeEventListener("pointerup", handleDocumentPointerUp);
+    document.removeEventListener("pointercancel", handleDocumentPointerCancel);
+  }, [savePosition]);
+
+  const handleDocumentPointerMove = useCallback((event: PointerEvent) => {
+    if (!dragStartRef.current) {
+      return;
+    }
+
+    if (activePointerIdRef.current !== null && event.pointerId !== activePointerIdRef.current) {
+      return;
+    }
+
+    const deltaX = event.clientX - dragStartRef.current.pointerX;
+    const deltaY = event.clientY - dragStartRef.current.pointerY;
 
     // Check if we've moved enough to be considered a drag (>= 5px)
     if (Math.abs(deltaX) >= 5 || Math.abs(deltaY) >= 5) {
       didDragRef.current = true;
     }
 
-    if (didDragRef.current) {
-      // Move in the opposite direction (dragging right moves FAB right, which means reducing right offset)
-      const newX = dragStartRef.current.x - deltaX;
-      const newY = dragStartRef.current.y - deltaY;
-
-      const clamped = clampPosition({ x: newX, y: newY });
-      setPosition(clamped);
-    }
-  }, [isDragging, clampPosition]);
-
-  // Handle pointer up (end drag)
-  const handlePointerUp = useCallback((e: React.PointerEvent) => {
-    if (!dragStartRef.current) return;
-
-    const fabButton = (e.target as HTMLElement).closest(".quick-chat-fab") as HTMLElement | null;
-    if (fabButton && typeof fabButton.releasePointerCapture === "function") {
-      fabButton.releasePointerCapture(e.pointerId);
-    }
-
-    setIsDragging(false);
-
-    // Restore text selection
-    document.body.style.userSelect = "";
-
-    // If we didn't drag (movement < 5px), this was a click - caller handles toggle
     if (!didDragRef.current) {
-      dragStartRef.current = null;
       return;
     }
 
-    // Save position to localStorage
-    savePosition(position);
+    // Move in the opposite direction (dragging right moves FAB right, which means reducing right offset)
+    const newX = dragStartRef.current.x - deltaX;
+    const newY = dragStartRef.current.y - deltaY;
 
-    dragStartRef.current = null;
+    const clamped = clampPosition({ x: newX, y: newY });
+    positionRef.current = clamped;
+    setPosition(clamped);
+  }, [clampPosition]);
+
+  const handleDocumentPointerUp = useCallback((event: PointerEvent) => {
+    if (activePointerIdRef.current !== null && event.pointerId !== activePointerIdRef.current) {
+      return;
+    }
+
+    endDrag();
+  }, [endDrag]);
+
+  const handleDocumentPointerCancel = useCallback((event: PointerEvent) => {
+    if (activePointerIdRef.current !== null && event.pointerId !== activePointerIdRef.current) {
+      return;
+    }
+
+    endDrag();
+  }, [endDrag]);
+
+  // Handle pointer down (start drag)
+  const handlePointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    // Only handle primary button (left click) or touch
+    if (event.button !== 0 && event.pointerType === "mouse") return;
+
+    const fabButton = event.currentTarget;
+
+    event.preventDefault();
+    // setPointerCapture may not exist in jsdom/tests
+    if (typeof fabButton.setPointerCapture === "function") {
+      fabButton.setPointerCapture(event.pointerId);
+    }
+
+    const currentPosition = positionRef.current;
+    dragStartRef.current = {
+      x: currentPosition.x,
+      y: currentPosition.y,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+    };
+    activePointerIdRef.current = event.pointerId;
+    dragTargetRef.current = fabButton;
     didDragRef.current = false;
-  }, [position, savePosition]);
+    setIsDragging(true);
+
+    // Prevent text selection during drag
+    document.body.style.userSelect = "none";
+
+    document.addEventListener("pointermove", handleDocumentPointerMove, { passive: true });
+    document.addEventListener("pointerup", handleDocumentPointerUp);
+    document.addEventListener("pointercancel", handleDocumentPointerCancel);
+  }, [handleDocumentPointerCancel, handleDocumentPointerMove, handleDocumentPointerUp]);
+
+  useEffect(() => () => {
+    document.removeEventListener("pointermove", handleDocumentPointerMove);
+    document.removeEventListener("pointerup", handleDocumentPointerUp);
+    document.removeEventListener("pointercancel", handleDocumentPointerCancel);
+    document.body.style.userSelect = "";
+  }, [handleDocumentPointerCancel, handleDocumentPointerMove, handleDocumentPointerUp]);
 
   return {
     position,
     isDragging,
     handlePointerDown,
-    handlePointerMove,
-    handlePointerUp,
   };
 }
 
@@ -887,8 +927,6 @@ export function QuickChatFAB({
     position,
     isDragging,
     handlePointerDown,
-    handlePointerMove,
-    handlePointerUp,
   } = useDraggable(projectId, didDragRef);
 
   // Panel stays 60px above FAB (FAB is 48px tall + 12px gap)
@@ -1974,8 +2012,6 @@ export function QuickChatFAB({
           data-dragging={isDragging ? "true" : "false"}
           style={{ right: position.x, bottom: position.y }}
           onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
           onClick={handleFABClick}
         >
           <MessageSquare size={24} />

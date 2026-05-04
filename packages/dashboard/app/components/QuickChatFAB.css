@@ -14,6 +14,7 @@
   justify-content: center;
   box-shadow: 0 8px 20px color-mix(in srgb, var(--todo) 35%, var(--bg));
   cursor: grab;
+  touch-action: none;
   z-index: 1000;
   transition: transform var(--transition-fast), box-shadow var(--transition-fast), filter var(--transition-fast);
 }
