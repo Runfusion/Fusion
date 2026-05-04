@@ -24,6 +24,8 @@ These tools are **not** part of the user-invokable extension surface. They are i
 | `fn_reflect_on_performance` | executor | Generate reflection insights from prior runs | `focus_area?` (string) |
 | `fn_list_agents` | triage, executor, heartbeat | List agents (optionally filtered) | `role?` (string), `state?` (string), `includeEphemeral?` (boolean) |
 | `fn_delegate_task` | triage, executor, heartbeat | Create and assign a new task to a specific agent | `agent_id` (string), `description` (string), `dependencies?` (string[]) |
+| `fn_get_agent_config` | executor, heartbeat | Read full config for a direct-report agent | `agent_id` (string) |
+| `fn_update_agent_config` | executor, heartbeat | Update config fields for a direct-report, non-ephemeral agent | `agent_id` (string), optional: `soul`, `instructions_text`, `instructions_path`, `heartbeat_procedure_path`, `heartbeat_interval_ms`, `heartbeat_timeout_ms`, `max_concurrent_runs`, `message_response_mode` |
 | `fn_send_message` | executor, heartbeat | Send inbox messages to agents/users | `to_id` (string), `content` (string), `type?` (`agent-to-agent` \| `agent-to-user`), `reply_to_message_id?` (string) |
 | `fn_read_messages` | executor, heartbeat | Read inbox messages | `unread_only?` (boolean), `limit?` (number) |
 

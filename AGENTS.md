@@ -234,7 +234,7 @@ The executor agent can spawn child agents that run in parallel. Each spawned age
 
 ## Agent Delegation Tools
 
-Two tools enable inter-agent delegation — discovering other agents and assigning work to them.
+Four tools enable inter-agent coordination — discovering agents, delegating tasks, and managing direct-report configuration.
 
 ### `list_agents` Tool
 
@@ -290,7 +290,44 @@ delegate_task({
 - `"ERROR: Agent {agent_id} not found"` — The agent ID does not exist
 - `"ERROR: Cannot delegate to ephemeral/runtime agent {agent_id}"` — Cannot delegate to runtime task-worker agents (use `spawn_agent` for parallel worktree tasks instead)
 
-**Note:** The delegation tools are available to both executor agents and heartbeat agents when the agent store is configured. Use `list_agents` first to discover agent IDs and capabilities before delegating.
+### `get_agent_config` Tool
+
+Read full configuration for a direct-report agent (soul, instructions, runtime heartbeat settings, and memory).
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `agent_id` | `string` (required) | The direct-report agent ID to inspect |
+
+**Authorization rule:** caller can only read agents where `target.reportsTo === caller.id`.
+
+### `update_agent_config` Tool
+
+Update configuration for a direct-report, non-ephemeral agent.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `agent_id` | `string` (required) | The direct-report agent ID to update |
+| `soul` | `string` (optional) | Agent personality/identity text |
+| `instructions_text` | `string` (optional) | Inline custom instructions |
+| `instructions_path` | `string` (optional) | Path to instructions markdown |
+| `heartbeat_procedure_path` | `string` (optional) | Path to heartbeat procedure markdown |
+| `heartbeat_interval_ms` | `number` (optional) | Heartbeat polling interval (min 1000) |
+| `heartbeat_timeout_ms` | `number` (optional) | Heartbeat timeout (min 5000) |
+| `max_concurrent_runs` | `number` (optional) | Max concurrent heartbeat runs (min 1) |
+| `message_response_mode` | `"immediate" \| "on-heartbeat"` (optional) | Message response behavior |
+
+**Authorization rule:** caller can only update agents where `target.reportsTo === caller.id`.
+
+**Error cases:**
+- `"ERROR: Agent {agent_id} not found"`
+- `"ERROR: You can only update configuration of agents that report to you"`
+- `"ERROR: Cannot update ephemeral/runtime agent {agent_id}"`
+
+**Note:** These coordination tools are available to executor and heartbeat agents when the relevant stores are configured.
 
 ## Checkout Leasing
 

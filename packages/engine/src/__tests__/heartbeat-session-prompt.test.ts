@@ -88,19 +88,21 @@ describe("createHeartbeatTools", () => {
     mockTaskStore = createMockTaskStoreForTools();
   });
 
-  it("returns fn_task_create, fn_task_log, fn_task_document_write, and fn_task_document_read tools", () => {
+  it("returns task, delegation, and agent-config tools", () => {
     const store = createMockStore();
     const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
 
     const tools = monitor.createHeartbeatTools("agent-001", mockTaskStore, "FN-001");
 
-    expect(tools).toHaveLength(6);
+    expect(tools).toHaveLength(8);
     expect(tools[0]!.name).toBe("fn_task_create");
     expect(tools[1]!.name).toBe("fn_task_log");
     expect(tools[2]!.name).toBe("fn_task_document_write");
     expect(tools[3]!.name).toBe("fn_task_document_read");
     expect(tools[4]!.name).toBe("fn_list_agents");
     expect(tools[5]!.name).toBe("fn_delegate_task");
+    expect(tools[6]!.name).toBe("fn_get_agent_config");
+    expect(tools[7]!.name).toBe("fn_update_agent_config");
   });
 
   it("fn_task_create tool creates a task in triage via TaskStore", async () => {

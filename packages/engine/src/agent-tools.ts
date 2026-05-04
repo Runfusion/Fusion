@@ -11,7 +11,7 @@ import { appendFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/p
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import type { AgentStore, AgentState, AgentCapability, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput } from "@fusion/core";
+import type { AgentStore, AgentState, AgentCapability, AgentUpdateInput, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput } from "@fusion/core";
 import { dailyMemoryPath, ensureOpenClawMemoryFiles, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, resolveMemoryBackend, resolveResearchSettings, resolveTitleSummarizerSettingsModel, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh, summarizeTitle } from "@fusion/core";
 import { ResearchOrchestrator } from "./research-orchestrator.js";
 import { ResearchProviderRegistry } from "./research/provider-registry.js";
@@ -73,6 +73,25 @@ export const delegateTaskParams = Type.Object({
   dependencies: Type.Optional(
     Type.Array(Type.String(), { description: "Task IDs this new task depends on (e.g. [\"KB-001\"])" }),
   ),
+});
+
+export const getAgentConfigParams = Type.Object({
+  agent_id: Type.String({ description: "The agent ID to read configuration for" }),
+});
+
+export const updateAgentConfigParams = Type.Object({
+  agent_id: Type.String({ description: "The agent ID to update" }),
+  soul: Type.Optional(Type.String({ description: "Agent personality/identity text", maxLength: 10000 })),
+  instructions_text: Type.Optional(Type.String({ description: "Inline custom instructions", maxLength: 50000 })),
+  instructions_path: Type.Optional(Type.String({ description: "Path to instructions markdown file", maxLength: 500 })),
+  heartbeat_procedure_path: Type.Optional(Type.String({ description: "Path to heartbeat procedure markdown file", maxLength: 500 })),
+  heartbeat_interval_ms: Type.Optional(Type.Number({ description: "Heartbeat polling interval in ms", minimum: 1000 })),
+  heartbeat_timeout_ms: Type.Optional(Type.Number({ description: "Heartbeat timeout in ms", minimum: 5000 })),
+  max_concurrent_runs: Type.Optional(Type.Number({ description: "Max concurrent heartbeat runs", minimum: 1 })),
+  message_response_mode: Type.Optional(Type.Union([
+    Type.Literal("immediate"),
+    Type.Literal("on-heartbeat"),
+  ], { description: "How agent responds to messages" })),
 });
 
 export const sendMessageParams = Type.Object({
@@ -976,6 +995,170 @@ export function createListAgentsTool(agentStore: AgentStore): ToolDefinition {
       return {
         content: [{ type: "text" as const, text: `Available agents:\n\n${lines.join("\n\n")}` }],
         details: { agents },
+      };
+    },
+  };
+}
+
+/**
+ * Create a `fn_delegate_task` tool that creates and assigns a task to a specific agent.
+ *
+ * @param agentStore - AgentStore for agent lookup
+ * @param taskStore - TaskStore for task creation
+ * @returns ToolDefinition for the `fn_delegate_task` tool
+ */
+export function createGetAgentConfigTool(agentStore: AgentStore, callingAgentId: string): ToolDefinition {
+  return {
+    name: "fn_get_agent_config",
+    label: "Get Agent Config",
+    description: "Read full configuration for one of your direct-report agents.",
+    parameters: getAgentConfigParams,
+    execute: async (_id: string, params: Static<typeof getAgentConfigParams>) => {
+      const target = await agentStore.getAgent(params.agent_id);
+      if (!target) {
+        return {
+          content: [{ type: "text" as const, text: `ERROR: Agent ${params.agent_id} not found` }],
+          details: {},
+        };
+      }
+
+      if (target.reportsTo !== callingAgentId) {
+        return {
+          content: [{ type: "text" as const, text: "ERROR: You can only read configuration of agents that report to you" }],
+          details: {},
+        };
+      }
+
+      const runtimeConfig = (target.runtimeConfig ?? {}) as Record<string, unknown>;
+      const lines: string[] = [
+        `Agent Config: ${target.name} (${target.id})`,
+        `Role: ${target.role}`,
+        `State: ${target.state}`,
+        `Title: ${target.title ?? "(none)"}`,
+        `Icon: ${target.icon ?? "(none)"}`,
+        "",
+        "Soul:",
+        target.soul ?? "(none)",
+        "",
+        "Instructions Text:",
+        target.instructionsText ?? "(none)",
+        `Instructions Path: ${target.instructionsPath ?? "(none)"}`,
+        `Heartbeat Procedure Path: ${target.heartbeatProcedurePath ?? "(none)"}`,
+        "",
+        "Runtime Config:",
+        `heartbeatIntervalMs: ${String(runtimeConfig.heartbeatIntervalMs ?? "(default)")}`,
+        `heartbeatTimeoutMs: ${String(runtimeConfig.heartbeatTimeoutMs ?? "(default)")}`,
+        `maxConcurrentRuns: ${String(runtimeConfig.maxConcurrentRuns ?? "(default)")}`,
+        `messageResponseMode: ${String(runtimeConfig.messageResponseMode ?? "(default)")}`,
+        `budget: ${JSON.stringify(runtimeConfig.budget ?? null)}`,
+        "",
+        "Memory:",
+        target.memory ?? "(none)",
+      ];
+
+      return {
+        content: [{ type: "text" as const, text: lines.join("\n") }],
+        details: { agent: target },
+      };
+    },
+  };
+}
+
+export function createUpdateAgentConfigTool(agentStore: AgentStore, callingAgentId: string): ToolDefinition {
+  return {
+    name: "fn_update_agent_config",
+    label: "Update Agent Config",
+    description: "Update configuration for one of your direct-report agents.",
+    parameters: updateAgentConfigParams,
+    execute: async (_id: string, params: Static<typeof updateAgentConfigParams>) => {
+      const target = await agentStore.getAgent(params.agent_id);
+      if (!target) {
+        return {
+          content: [{ type: "text" as const, text: `ERROR: Agent ${params.agent_id} not found` }],
+          details: {},
+        };
+      }
+
+      if (target.reportsTo !== callingAgentId) {
+        return {
+          content: [{ type: "text" as const, text: "ERROR: You can only update configuration of agents that report to you" }],
+          details: {},
+        };
+      }
+
+      if (isEphemeralAgent(target)) {
+        return {
+          content: [{ type: "text" as const, text: `ERROR: Cannot update ephemeral/runtime agent ${params.agent_id}` }],
+          details: {},
+        };
+      }
+
+      if (params.soul && params.soul.length > 10000) {
+        return {
+          content: [{ type: "text" as const, text: "ERROR: soul exceeds 10000 character limit" }],
+          details: {},
+        };
+      }
+      if (params.instructions_text && params.instructions_text.length > 50000) {
+        return {
+          content: [{ type: "text" as const, text: "ERROR: instructions_text exceeds 50000 character limit" }],
+          details: {},
+        };
+      }
+      if (params.instructions_path && params.instructions_path.length > 500) {
+        return {
+          content: [{ type: "text" as const, text: "ERROR: instructions_path exceeds 500 character limit" }],
+          details: {},
+        };
+      }
+      if (params.heartbeat_procedure_path && params.heartbeat_procedure_path.length > 500) {
+        return {
+          content: [{ type: "text" as const, text: "ERROR: heartbeat_procedure_path exceeds 500 character limit" }],
+          details: {},
+        };
+      }
+
+      const hasRuntimeConfigUpdates = [
+        params.heartbeat_interval_ms,
+        params.heartbeat_timeout_ms,
+        params.max_concurrent_runs,
+        params.message_response_mode,
+      ].some((value) => value !== undefined);
+
+      const updateInput: AgentUpdateInput = {};
+      if (params.soul !== undefined) updateInput.soul = params.soul;
+      if (params.instructions_text !== undefined) updateInput.instructionsText = params.instructions_text;
+      if (params.instructions_path !== undefined) updateInput.instructionsPath = params.instructions_path;
+      if (params.heartbeat_procedure_path !== undefined) updateInput.heartbeatProcedurePath = params.heartbeat_procedure_path;
+      if (hasRuntimeConfigUpdates) {
+        updateInput.runtimeConfig = {
+          ...((target.runtimeConfig ?? {}) as Record<string, unknown>),
+          ...(params.heartbeat_interval_ms !== undefined ? { heartbeatIntervalMs: params.heartbeat_interval_ms } : {}),
+          ...(params.heartbeat_timeout_ms !== undefined ? { heartbeatTimeoutMs: params.heartbeat_timeout_ms } : {}),
+          ...(params.max_concurrent_runs !== undefined ? { maxConcurrentRuns: params.max_concurrent_runs } : {}),
+          ...(params.message_response_mode !== undefined ? { messageResponseMode: params.message_response_mode } : {}),
+        };
+      }
+
+      if (Object.keys(updateInput).length === 0) {
+        return {
+          content: [{ type: "text" as const, text: "ERROR: Provide at least one field to update" }],
+          details: {},
+        };
+      }
+
+      const updated = await agentStore.updateAgent(params.agent_id, updateInput);
+      const updatedRuntimeConfig = (updated.runtimeConfig ?? {}) as Record<string, unknown>;
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Updated ${updated.name} (${updated.id})\n` +
+            `heartbeatIntervalMs: ${String(updatedRuntimeConfig.heartbeatIntervalMs ?? "(default)")}\n` +
+            `heartbeatTimeoutMs: ${String(updatedRuntimeConfig.heartbeatTimeoutMs ?? "(default)")}\n` +
+            `maxConcurrentRuns: ${String(updatedRuntimeConfig.maxConcurrentRuns ?? "(default)")}\n` +
+            `messageResponseMode: ${String(updatedRuntimeConfig.messageResponseMode ?? "(default)")}`,
+        }],
+        details: { agent: updated },
       };
     },
   };

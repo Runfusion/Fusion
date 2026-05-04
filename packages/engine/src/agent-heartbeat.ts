@@ -22,7 +22,7 @@ import { buildExecutionMemoryInstructions, isEphemeralAgent, hasAgentIdentity } 
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import { createHash } from "node:crypto";
-import { createTaskCreateTool, createTaskLogToolWithContext, createTaskDocumentWriteTool, createTaskDocumentReadTool, createListAgentsTool, createDelegateTaskTool, createSendMessageTool, createReadMessagesTool, createMemoryTools, taskCreateParams } from "./agent-tools.js";
+import { createTaskCreateTool, createTaskLogToolWithContext, createTaskDocumentWriteTool, createTaskDocumentReadTool, createListAgentsTool, createDelegateTaskTool, createGetAgentConfigTool, createUpdateAgentConfigTool, createSendMessageTool, createReadMessagesTool, createMemoryTools, taskCreateParams } from "./agent-tools.js";
 import { AgentLogger } from "./agent-logger.js";
 import { resolveAgentInstructionsWithRatings, buildSystemPromptWithInstructions, resolveAgentHeartbeatProcedure } from "./agent-instructions.js";
 import { heartbeatLog, formatError } from "./logger.js";
@@ -150,6 +150,7 @@ Your job:
 2. Do ONE useful action that changes project clarity or flow.
 3. Use fn_task_create to spawn follow-up work, fn_task_log to record observations, and fn_task_document_write for durable artifacts.
 4. Use fn_list_agents + fn_delegate_task when work should be assigned to a specific capable agent now.
+5. Use fn_get_agent_config and fn_update_agent_config to tune direct reports before delegating recurring work.
 5. Call fn_heartbeat_done when finished with an optional summary of what was accomplished.
 
 Examples of ONE useful action:
@@ -173,6 +174,7 @@ Use this decision rule:
 - **Task document (fn_task_document_write):** when findings are structured and likely useful across future sessions for the same task.
 - **Create task (fn_task_create):** when someone must do new executable work.
 - **Delegate task (fn_delegate_task):** when that new work should go to a specific agent based on role/availability.
+- **Manage report config (fn_get_agent_config / fn_update_agent_config):** when direct reports need heartbeat, instruction, or personality tuning.
 
 Prefer fn_task_create when assignment is unclear and scheduler routing is fine.
 Prefer fn_delegate_task when immediate ownership by a specific agent materially reduces latency or risk.
@@ -231,6 +233,7 @@ Your job:
 2. Do ONE useful action: analyze, create follow-up tasks, delegate work, or update memory.
 3. Use fn_task_create to spawn follow-up work.
 4. Use fn_list_agents and fn_delegate_task to coordinate with other agents.
+5. Use fn_get_agent_config and fn_update_agent_config to read/tune direct-report agents for better routing outcomes.
 5. Call fn_heartbeat_done when finished with an optional summary of what was accomplished.
 
 Examples of ONE useful action:
@@ -244,6 +247,7 @@ Keep work lightweight — this is a single-pass ambient check, not a full implem
 You have readonly file access plus:
 - fn_task_create
 - fn_list_agents and fn_delegate_task
+- fn_get_agent_config and fn_update_agent_config (for direct reports only)
 - fn_memory_search, fn_memory_get, and fn_memory_append
 - fn_heartbeat_done
 - fn_send_message and fn_read_messages when messaging is enabled for this run (they may not always be available)
@@ -1351,7 +1355,7 @@ export class HeartbeatMonitor {
         // For no-task runs, exclude fn_task_log and document tools (they require a taskId)
         let heartbeatTools: ToolDefinition[];
         if (isNoTaskRun) {
-          // No-task runs: fn_task_create, fn_list_agents, fn_delegate_task, messaging, memory, fn_heartbeat_done
+          // No-task runs: fn_task_create, fn_list_agents, fn_delegate_task, fn_get_agent_config, fn_update_agent_config, messaging, memory, fn_heartbeat_done
           heartbeatTools = [];
 
           // fn_task_create tool
@@ -1364,6 +1368,8 @@ export class HeartbeatMonitor {
           // Agent delegation tools
           heartbeatTools.push(createListAgentsTool(this.store));
           heartbeatTools.push(createDelegateTaskTool(this.store, taskStore, { rootDir: this.rootDir }));
+          heartbeatTools.push(createGetAgentConfigTool(this.store, agentId));
+          heartbeatTools.push(createUpdateAgentConfigTool(this.store, agentId));
 
           // Messaging tools — when MessageStore is available
           if (this.messageStore) {
@@ -1891,6 +1897,8 @@ export class HeartbeatMonitor {
     // Agent delegation tools — discover and delegate work to other agents
     tools.push(createListAgentsTool(this.store));
     tools.push(createDelegateTaskTool(this.store, taskStore, { rootDir: this.rootDir }));
+    tools.push(createGetAgentConfigTool(this.store, agentId));
+    tools.push(createUpdateAgentConfigTool(this.store, agentId));
 
     // Messaging tools — when MessageStore is available, agents can send and receive messages
     if (messageStore) {
