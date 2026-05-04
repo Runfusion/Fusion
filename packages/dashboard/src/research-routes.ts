@@ -18,16 +18,22 @@ const DEFAULT_AVAILABILITY = {
   available: true,
   supportedProviders: ["web-search", "page-fetch", "github", "local-docs", "llm-synthesis"],
   supportedExportFormats: ["markdown", "json", "html"],
+  setupInstructions: "If research fails to start, check Settings → Models and Authentication for provider enablement and credentials.",
 } as const;
 
 function rethrowAsApiError(error: unknown, fallback = "Internal server error"): never {
   if (error instanceof ApiError) throw error;
   if (error instanceof ResearchLifecycleError) {
-    const status = error.code === "invalid_transition" || error.code === "active_run_conflict" ? 409 : 400;
-    throw new ApiError(status, error.message, { code: error.code.toUpperCase() });
+    const status = error.code === "invalid_transition" || error.code === "active_run_conflict" || error.code === "not_retryable"
+      ? 409
+      : 400;
+    const mappedCode = error.code === "not_retryable"
+      ? "NON_RETRYABLE_PROVIDER_ERROR"
+      : "INVALID_TRANSITION";
+    throw new ApiError(status, error.message, { code: mappedCode, retryable: false });
   }
-  if (error instanceof Error) throw new ApiError(500, error.message);
-  throw new ApiError(500, fallback);
+  if (error instanceof Error) throw new ApiError(500, error.message, { code: "INTERNAL_ERROR" });
+  throw new ApiError(500, fallback, { code: "INTERNAL_ERROR" });
 }
 
 function getProjectId(req: Request): string | undefined {
@@ -207,6 +213,15 @@ export function createResearchRouter(store: TaskStore): Router {
 
   router.post("/runs/:id/cancel", (req, res) => {
     try {
+      const existing = getStore().getRun(req.params.id);
+      if (!existing) throw notFound(`Run not found: ${req.params.id}`);
+      if (["completed", "failed", "cancelled", "timed_out", "retry_exhausted"].includes(existing.status)) {
+        res.status(409).json({
+          error: `Run ${req.params.id} cannot be cancelled from status ${existing.status}`,
+          details: { code: "INVALID_TRANSITION", retryable: false },
+        });
+        return;
+      }
       const run = getStore().requestCancellation(req.params.id);
       res.json({ run: toRunDetail(run) });
     } catch (error) {
@@ -216,9 +231,30 @@ export function createResearchRouter(store: TaskStore): Router {
 
   router.post("/runs/:id/retry", (req, res) => {
     try {
+      const existing = getStore().getRun(req.params.id);
+      if (!existing) throw notFound(`Run not found: ${req.params.id}`);
       const retryRun = getStore().createRetryRun(req.params.id);
       res.json({ run: toRunDetail(retryRun) });
     } catch (error) {
+      if (error instanceof ResearchLifecycleError && error.code === "not_retryable") {
+        const run = getStore().getRun(req.params.id);
+        const exhausted = run?.status === "retry_exhausted" || run?.lifecycle?.errorCode === "RETRY_EXHAUSTED";
+        res.status(409).json({
+          error: error.message,
+          details: {
+            code: exhausted ? "RETRY_EXHAUSTED" : "NON_RETRYABLE_PROVIDER_ERROR",
+            retryable: false,
+          },
+        });
+        return;
+      }
+      if (error instanceof ResearchLifecycleError && error.code === "invalid_transition") {
+        res.status(409).json({
+          error: error.message,
+          details: { code: "INVALID_TRANSITION", retryable: false },
+        });
+        return;
+      }
       rethrowAsApiError(error, "Failed to retry research run");
     }
   });

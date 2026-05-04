@@ -227,8 +227,9 @@ describe("agents-view mobile CSS", () => {
 
   it("keeps mobile split layout constrained so inner panes own vertical scrolling", () => {
     expect(mobileMediaBlock).toContain(".agents-split-layout");
-    expect(extractRuleBlock(mobileMediaBlock, ".agents-split-layout")).toContain("min-height: 0");
-    expect(extractRuleBlock(mobileMediaBlock, ".agents-split-layout")).toContain("height: 100%");
+    const splitLayoutBlock = extractRuleBlock(mobileMediaBlock, ".agents-split-layout");
+    expect(splitLayoutBlock).toContain("min-height: 0");
+    expect(splitLayoutBlock).not.toContain("height: 100%");
 
     expect(extractRuleBlock(mobileMediaBlock, ".agents-split-sidebar")).toContain("min-height: 0");
     expect(extractRuleBlock(mobileMediaBlock, ".agents-split-sidebar")).toContain("overflow: hidden");
@@ -240,6 +241,9 @@ describe("agents-view mobile CSS", () => {
     expect(contentBlock).toContain("overflow-y: auto");
     expect(contentBlock).toContain("-webkit-overflow-scrolling: touch");
     expect(contentBlock).toContain("overscroll-behavior: contain");
+    expect(contentBlock).toContain("var(--mobile-nav-height)");
+    expect(contentBlock).toContain("env(safe-area-inset-bottom, 0px)");
+    expect(contentBlock).toContain("var(--standalone-bottom-gap)");
   });
 
   it("stacks grouped filter controls on mobile", () => {

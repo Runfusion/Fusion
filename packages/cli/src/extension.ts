@@ -149,8 +149,12 @@ async function getResearchAvailability(store: TaskStore): Promise<{ ok: boolean;
           ? Boolean(settings.researchTavilyApiKey)
           : false;
 
-  if (!configured && !resolved.searchProvider) {
+  if (!backend) {
     return { ok: false, code: "provider-unavailable", message: "Research provider is not configured. Set research provider credentials in Settings." };
+  }
+
+  if (!configured) {
+    return { ok: false, code: "missing-credentials", message: `Missing credentials for ${backend}. Add provider keys in Authentication and verify Research defaults.` };
   }
 
   return { ok: true };
@@ -1304,7 +1308,7 @@ export default function kbExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "fn_research_cancel",
     label: "fn: Cancel Research Run",
-    description: "Cancel a research run.",
+    description: "Cancel an in-flight research run. Terminal runs return INVALID_TRANSITION.",
     parameters: Type.Object({ id: Type.String({ description: "Research run ID" }) }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const store = await getStore(ctx.cwd);
@@ -1317,10 +1321,59 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
 
+      if (!["queued", "running", "cancelling", "retry_waiting"].includes(run.status)) {
+        return {
+          content: [{ type: "text", text: `Research run ${params.id} cannot be cancelled from status ${run.status}.` }],
+          isError: true,
+          details: {
+            ...toResearchRunDetails(run),
+            error: "invalid transition",
+            setup: { code: "INVALID_TRANSITION", message: "Cancel is only available for queued/running/cancelling/retry_waiting runs." },
+          },
+        };
+      }
+
       const updated = researchStore.requestCancellation(params.id);
       return {
         content: [{ type: "text", text: `Requested cancellation for research run ${params.id} (status: ${updated.status}).` }],
         details: toResearchRunDetails(updated),
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "fn_research_retry",
+    label: "fn: Retry Research Run",
+    description: "Retry a failed research run when lifecycle marks it retryable.",
+    parameters: Type.Object({ id: Type.String({ description: "Research run ID" }) }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const researchStore = store.getResearchStore();
+      const run = researchStore.getRun(params.id);
+      if (!run) {
+        return {
+          content: [{ type: "text", text: `Research run ${params.id} not found.` }],
+          isError: true,
+          details: { runId: params.id, status: "missing", summary: null, findings: [], citations: [], error: "not found", setup: null },
+        };
+      }
+      const isRetryExhausted = run.status === "retry_exhausted" || run.lifecycle?.errorCode === "RETRY_EXHAUSTED";
+      if ((run.status !== "failed" && run.status !== "timed_out") || run.lifecycle?.retryable === false || isRetryExhausted) {
+        return {
+          content: [{ type: "text", text: `Research run ${params.id} is not retryable from status ${run.status}.` }],
+          isError: true,
+          details: {
+            ...toResearchRunDetails(run),
+            error: "not retryable",
+            setup: { code: isRetryExhausted ? "RETRY_EXHAUSTED" : "INVALID_TRANSITION", message: "Retry is only available for failed/timed_out retryable runs." },
+          },
+        };
+      }
+
+      const retryRun = researchStore.createRetryRun(params.id);
+      return {
+        content: [{ type: "text", text: `Created retry run ${retryRun.id} from ${params.id}.` }],
+        details: toResearchRunDetails(retryRun),
       };
     },
   });

@@ -117,14 +117,14 @@ function resolveEffectivePlanning(
 function getStepStatusColor(status: string): string {
   switch (status) {
     case "done":
-      return "var(--color-success, #3fb950)";
+      return "var(--color-success)";
     case "in-progress":
-      return "var(--todo, #58a6ff)";
+      return "var(--todo)";
     case "skipped":
-      return "var(--text-dim, #484f58)";
+      return "var(--text-dim)";
     case "pending":
     default:
-      return "var(--border, #30363d)";
+      return "var(--border)";
   }
 }
 
@@ -1558,6 +1558,20 @@ export function TaskDetailContent({
     "merging-fix": "Merging fixes…",
   };
   const prAutomationLabel = task.status ? prAutomationStatusLabels[task.status] : undefined;
+  const mergeStrategy = settings?.mergeStrategy ?? "direct";
+  const autoMergeEnabled = settings?.autoMerge ?? false;
+  const isManualPrFlow = mergeStrategy === "pull-request" && !autoMergeEnabled;
+
+  let manualReviewActionLabel = "Merge & Close";
+  if (isManualPrFlow && !prAutomationLabel) {
+    if (!task.prInfo) {
+      manualReviewActionLabel = "Start PR Review";
+    } else if (task.prInfo.status === "open") {
+      manualReviewActionLabel = "Check PR Status";
+    } else if (task.prInfo.status === "merged") {
+      manualReviewActionLabel = "Finish & Close";
+    }
+  }
 
   return (
     <div
@@ -2374,11 +2388,11 @@ export function TaskDetailContent({
                 prInfo={task.prInfo}
                 automationStatus={task.status ?? null}
                 autoMerge={settings?.autoMerge ?? false}
+                isManualPrFlow={isManualPrFlow}
                 prAuthAvailable={prAuthAvailable ?? false}
                 onPrCreated={(prInfo) => {
                   // Update task locally to show new PR
                   (task as TaskDetail).prInfo = prInfo;
-                  addToast(`PR #${prInfo.number} created`, "success");
                 }}
                 onPrUpdated={(prInfo) => {
                   (task as TaskDetail).prInfo = prInfo;
@@ -2592,7 +2606,7 @@ export function TaskDetailContent({
                       </button>
                     ) : (
                       <button className="btn btn-primary btn-sm" onClick={handleMergeMenuItemClick}>
-                        Merge &amp; Close
+                        {manualReviewActionLabel}
                       </button>
                     )}
                   </div>

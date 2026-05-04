@@ -22,6 +22,7 @@ Use the 💡 button to open planning mode:
 - AI reasoning (thinking output) is preserved and visible throughout the session — expand the reasoning toggle to review the model's analysis before answering each question or accepting the summary
 - Produces summary + key deliverables
 - Create one task or **Break into Tasks** (multi-task generation with dependencies)
+- Break-into-tasks descriptions are structured with subtask-specific guidance first, then a separate larger-plan context section (plus `## Planning Interview Context` when interview history exists)
 - Sessions persist when the modal is closed — resume from the sidebar list at any time; reasoning context is restored automatically
 
 ### 3) Todo item → Plan Mode
@@ -287,6 +288,10 @@ fn task pr-create FN-120 --title "Fix flaky auth flow" --base main
 
 Manual/non-auto-merge behavior:
 - Task PR branches use `fusion/<task-id-lower>`.
+- In the dashboard task detail modal (`in-review`), the existing primary footer action can manually drive PR-first completion when `mergeStrategy: "pull-request"` and `autoMerge: false`:
+  - `Start PR Review` (no PR linked yet)
+  - `Check PR Status` (open PR linked)
+  - `Finish & Close` (PR already merged)
 - Manual PR creation first checks for an existing PR on that branch and links it when found.
 - If no PR exists, Fusion pushes the task branch to `origin` before creating the PR.
 - When buffered actionable PR feedback exists on a PR that is already merged/closed and the task leaves `in-review`, Fusion creates a dependency-linked follow-up task in `triage` so feedback is not stranded.

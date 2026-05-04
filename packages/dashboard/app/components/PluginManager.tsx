@@ -39,14 +39,14 @@ interface PluginManagerProps {
   projectId?: string;
 }
 
-interface BundledRuntimePlugin {
+interface BundledPlugin {
   id: string;
   name: string;
   path: string;
   experimental?: boolean;
 }
 
-const BUNDLED_RUNTIME_PLUGINS: BundledRuntimePlugin[] = [
+const BUNDLED_PLUGINS: BundledPlugin[] = [
   {
     id: "fusion-plugin-agent-browser-runtime",
     name: "Agent Browser Runtime",
@@ -68,6 +68,12 @@ const BUNDLED_RUNTIME_PLUGINS: BundledRuntimePlugin[] = [
     id: "fusion-plugin-openclaw-runtime",
     name: "OpenClaw Runtime",
     path: "./plugins/fusion-plugin-openclaw-runtime",
+    experimental: true,
+  },
+  {
+    id: "fusion-plugin-droid-runtime",
+    name: "Droid Runtime",
+    path: "./plugins/fusion-plugin-droid-runtime",
     experimental: true,
   },
 ];
@@ -209,7 +215,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
     }
   };
 
-  const handleInstallBundledRuntimePlugin = async (plugin: BundledRuntimePlugin) => {
+  const handleInstallBundledPlugin = async (plugin: BundledPlugin) => {
     try {
       setInstallingBundledPluginId(plugin.id);
       await installPlugin({ path: plugin.path }, projectId);
@@ -516,15 +522,15 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
   const installedPlugins = plugins;
 
   const renderBundledRuntimeSection = () => (
-    <section className="plugin-bundled-runtime-section" aria-label="Bundled Runtime Plugins">
+    <section className="plugin-bundled-runtime-section" aria-label="Bundled Plugins">
       <div className="plugin-bundled-runtime-header">
-        <h4 className="plugin-bundled-runtime-heading">Bundled Runtime Plugins</h4>
+        <h4 className="plugin-bundled-runtime-heading">Bundled Plugins</h4>
         <p className="plugin-bundled-runtime-description">
-          Install Fusion&apos;s bundled runtimes directly from this screen.
+          Install Fusion&apos;s bundled plugins directly from this screen.
         </p>
       </div>
-      <div className="plugin-bundled-runtime-list" aria-label="Bundled runtime plugin recommendations">
-        {BUNDLED_RUNTIME_PLUGINS.map((bundledPlugin) => {
+      <div className="plugin-bundled-runtime-list" aria-label="Bundled plugin recommendations">
+        {BUNDLED_PLUGINS.map((bundledPlugin) => {
           const isInstalled = installedPluginIds.has(bundledPlugin.id);
           return (
             <div key={bundledPlugin.id} className="plugin-bundled-runtime-item">
@@ -549,7 +555,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
                     }
                     return;
                   }
-                  void handleInstallBundledRuntimePlugin(bundledPlugin);
+                  void handleInstallBundledPlugin(bundledPlugin);
                 }}
                 disabled={installingBundledPluginId === bundledPlugin.id}
               >
@@ -617,7 +623,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
             <div className="settings-empty-state">
               <Package size={32} className="text-muted" />
               <p>No plugins installed.</p>
-              <p className="text-muted">Install a plugin to get started, or use a bundled runtime below.</p>
+              <p className="text-muted">Install a plugin to get started, or use a bundled plugin below.</p>
             </div>
           ) : (
             <div className="plugin-list">

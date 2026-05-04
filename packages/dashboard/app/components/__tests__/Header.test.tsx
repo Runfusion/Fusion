@@ -211,13 +211,29 @@ describe("Header", () => {
       expect(screen.getByTestId("view-toggle-overflow-trigger")).toBeDefined();
     });
 
-    it("renders view overflow trigger for research even when all optional feature flags are false", () => {
+    it("does not render research in overflow when researchView is disabled", () => {
       renderHeader({
         onChangeView: noop,
         showSkillsTab: false,
-        experimentalFeatures: { insights: false, roadmap: false, memoryView: false, devServerView: false },
+        experimentalFeatures: { insights: false, roadmap: false, memoryView: false, devServerView: false, researchView: false },
       });
-      expect(screen.getByTestId("view-toggle-overflow-trigger")).toBeDefined();
+
+      fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
+      expect(screen.queryByTestId("view-overflow-research")).toBeNull();
+    });
+
+    it("routes to research from the desktop view overflow when enabled", () => {
+      const onChangeView = vi.fn();
+      renderHeader({
+        onChangeView,
+        experimentalFeatures: { researchView: true },
+      });
+
+      fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
+      fireEvent.click(screen.getByTestId("view-overflow-research"));
+
+      expect(onChangeView).toHaveBeenCalledWith("research");
+      expect(screen.queryByTestId("view-overflow-research")).toBeNull();
     });
   });
 

@@ -52,6 +52,8 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
     attachRunToTask,
     statusCounts,
     refresh,
+    uiError,
+    runActionState,
   } = useResearch({ projectId });
   const [query, setQuery] = useState("");
   const [effectiveSettings, setEffectiveSettings] = useState(() => resolveResearchSettings(undefined));
@@ -331,10 +333,22 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
               <p className="research-view__run-query">{selectedRun.query}</p>
               <p className="research-view__run-summary" data-testid="research-state-results">{selectedRun.results?.summary ?? "No summary yet."}</p>
               <div className="research-view__actions">
-                <button className="btn" type="button" disabled={actionLoading === "cancel"} onClick={() => void runAction("cancel", () => cancelRun(selectedRun.id), "Run cancelled")}>
+                <button
+                  className="btn"
+                  type="button"
+                  title={!runActionState.cancelable ? runActionState.blockingReason : undefined}
+                  disabled={actionLoading === "cancel" || actionLoading === "retry" || !runActionState.cancelable}
+                  onClick={() => void runAction("cancel", () => cancelRun(selectedRun.id), "Run cancelled")}
+                >
                   Cancel
                 </button>
-                <button className="btn" type="button" disabled={actionLoading === "retry"} onClick={() => void runAction("retry", () => retryRun(selectedRun.id), "Run retried")}>
+                <button
+                  className="btn"
+                  type="button"
+                  title={!runActionState.retryable ? runActionState.blockingReason : undefined}
+                  disabled={actionLoading === "cancel" || actionLoading === "retry" || !runActionState.retryable}
+                  onClick={() => void runAction("retry", () => retryRun(selectedRun.id), "Run retried")}
+                >
                   Retry
                 </button>
                 {supportedExportFormats.includes("markdown") && <button className="btn" type="button" disabled={actionLoading === "export-markdown"} onClick={() => void handleExport("markdown")}>Export MD</button>}
@@ -342,6 +356,25 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
                 {supportedExportFormats.includes("html") && <button className="btn" type="button" disabled={actionLoading === "export-html"} onClick={() => void handleExport("html")}>Export HTML</button>}
               </div>
               {selectedRun.error && <p className="research-view__error">{selectedRun.error}</p>}
+              {uiError && (
+                <div className="form-error" role="alert">
+                  <p>{uiError.message}</p>
+                  {uiError.setupHint && <p>{uiError.setupHint}</p>}
+                  {uiError.code === "MISSING_CREDENTIALS" && (
+                    <button className="btn btn-sm" type="button" onClick={() => onOpenSettings?.("authentication")}>
+                      Open Authentication Settings
+                    </button>
+                  )}
+                  {uiError.code === "FEATURE_DISABLED" && (
+                    <button className="btn btn-sm" type="button" onClick={() => onOpenSettings?.("research-project")}>
+                      Open Research Settings
+                    </button>
+                  )}
+                </div>
+              )}
+              {runActionState.blockingReason && (
+                <p className="research-view__run-query">{runActionState.blockingReason}</p>
+              )}
               {Array.isArray(selectedRun.results?.findings) && selectedRun.results.findings.length > 0 && (
                 <div className="research-view__findings">
                   {selectedRun.results.findings.map((finding, index) => {

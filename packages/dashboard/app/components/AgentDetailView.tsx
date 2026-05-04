@@ -4,12 +4,12 @@ import {
   Bot, Heart, Activity, Pause, Play, Square, Trash2, RefreshCw, 
   Settings, FileText, ActivitySquare, X, Copy, 
   ExternalLink, CheckCircle, XCircle, Loader2, GitBranch, ListChecks,
-  ChevronDown, ChevronRight, BarChart3, BookOpen, Eye, FileEdit
+  ChevronDown, ChevronRight, ChevronLeft, BarChart3, BookOpen, Eye, FileEdit
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { AgentDetail, AgentState, AgentHeartbeatRun, AgentBudgetStatus, ModelInfo, MemoryFileInfo, AgentCapability, PluginRuntimeInfo } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, upgradeAgentHeartbeatProcedure } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, upgradeAgentHeartbeatProcedure, updateGlobalSettings } from "../api";
 import type { Agent } from "../api";
 import type { AgentLogEntry, Task } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
@@ -62,6 +62,7 @@ interface AgentDetailViewProps {
   addToast: (message: string, type?: "success" | "error") => void;
   onChildClick?: (childId: string) => void;
   inline?: boolean;
+  showInlineBackButton?: boolean;
   initialTab?: TabId;
   initialRunId?: string | null;
   preferActiveRun?: boolean;
@@ -122,7 +123,7 @@ function pickDefaultAgentMemoryPath(files: MemoryFileInfo[], currentPath: string
     ?? "";
 }
 
-export function AgentDetailView({ agentId, projectId, onClose, addToast, onChildClick, inline = false, initialTab, initialRunId, preferActiveRun = false }: AgentDetailViewProps) {
+export function AgentDetailView({ agentId, projectId, onClose, addToast, onChildClick, inline = false, showInlineBackButton = false, initialTab, initialRunId, preferActiveRun = false }: AgentDetailViewProps) {
   const [agent, setAgent] = useState<AgentDetail | null>(null);
   const { confirm } = useConfirm();
   const [logs, setLogs] = useState<AgentLogEntry[]>([]);
@@ -493,6 +494,17 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
         <div className="agent-detail-header">
           {/* Identity area: icon + name + badges */}
           <div className="agent-detail-identity">
+            {inline && showInlineBackButton ? (
+              <button
+                type="button"
+                className="btn agent-detail-inline-back"
+                onClick={onClose}
+                aria-label="Back to agents"
+              >
+                <ChevronLeft size={16} />
+                Agents
+              </button>
+            ) : null}
             <div className="agent-detail-icon">
               <Bot size={20} />
             </div>
@@ -886,7 +898,7 @@ function DashboardTab({
           </div>
           <div>
             <p className="dashboard-summary-label">Status</p>
-            <p className="dashboard-summary-health-row"><span className={cn("status-dot", agent.state === "running" && "status-dot--running")} />{health.label}{health.reason && <span className="text-secondary" style={{ marginLeft: 'var(--space-xs)', fontSize: '12px' }} title={health.reason}>({health.reason})</span>}</p>
+            <p className="dashboard-summary-health-row"><span className={cn("status-dot", agent.state === "running" && "status-dot--running")} />{health.label}{health.reason && <span className="text-secondary dashboard-summary-health-reason" title={health.reason}>({health.reason})</span>}</p>
           </div>
         </div>
       </section>
@@ -2037,7 +2049,7 @@ function MemoryTab({
           <div className="config-field">
             <label htmlFor="agent-memory-file-select">Memory Files</label>
             <span className="config-hint config-hint--block">
-              Full OpenClaw memory files at <code>.fusion/agent-memory/{agent.id}/</code> (MEMORY.md, DREAMS.md, and daily notes).
+              Full OpenClaw memory files at <code>agent/{agent.name || agent.id}/memory/</code> (MEMORY.md, DREAMS.md, and daily notes).
             </span>
 
             <select
@@ -2878,6 +2890,8 @@ function ConfigTab({
   // Model/runtime selector state
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
+  const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
+  const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
   const [availableRuntimes, setAvailableRuntimes] = useState<PluginRuntimeInfo[]>([]);
   const [runtimesLoading, setRuntimesLoading] = useState(false);
 
@@ -2936,12 +2950,48 @@ function ConfigTab({
   useEffect(() => {
     setModelsLoading(true);
     fetchModels()
-      .then((response) => setAvailableModels(response.models))
+      .then((response) => {
+        setAvailableModels(response.models);
+        setFavoriteProviders(response.favoriteProviders);
+        setFavoriteModels(response.favoriteModels);
+      })
       .catch(() => {
         // Gracefully handle unavailable models endpoint
       })
       .finally(() => setModelsLoading(false));
   }, []);
+
+  const handleToggleFavorite = useCallback(async (provider: string) => {
+    const currentFavorites = favoriteProviders;
+    const isFavorite = currentFavorites.includes(provider);
+    const newFavorites = isFavorite
+      ? currentFavorites.filter((p) => p !== provider)
+      : [provider, ...currentFavorites];
+
+    setFavoriteProviders(newFavorites);
+
+    try {
+      await updateGlobalSettings({ favoriteProviders: newFavorites, favoriteModels });
+    } catch {
+      setFavoriteProviders(currentFavorites);
+    }
+  }, [favoriteProviders, favoriteModels]);
+
+  const handleToggleModelFavorite = useCallback(async (modelId: string) => {
+    const currentFavorites = favoriteModels;
+    const isFavorite = currentFavorites.includes(modelId);
+    const newFavorites = isFavorite
+      ? currentFavorites.filter((m) => m !== modelId)
+      : [modelId, ...currentFavorites];
+
+    setFavoriteModels(newFavorites);
+
+    try {
+      await updateGlobalSettings({ favoriteProviders, favoriteModels: newFavorites });
+    } catch {
+      setFavoriteModels(currentFavorites);
+    }
+  }, [favoriteProviders, favoriteModels]);
 
   useEffect(() => {
     setRuntimesLoading(true);
@@ -3496,6 +3546,10 @@ function ConfigTab({
                 placeholder="Use global default"
                 label="Agent Model"
                 disabled={modelsLoading}
+                favoriteProviders={favoriteProviders}
+                onToggleFavorite={handleToggleFavorite}
+                favoriteModels={favoriteModels}
+                onToggleModelFavorite={handleToggleModelFavorite}
               />
             </div>
           ) : (

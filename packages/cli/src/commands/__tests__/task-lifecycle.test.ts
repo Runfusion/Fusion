@@ -189,6 +189,57 @@ describe("processPullRequestMergeTask", () => {
     expect(github.createPr).not.toHaveBeenCalled();
   });
 
+  it("finalizes task cleanup when PR is already merged on status refresh", async () => {
+    const task: MockTask = {
+      id: "FN-9004",
+      title: "test",
+      description: "desc",
+      column: "in-review",
+      worktree: "/tmp/worktree-fn-9004",
+      prInfo: {
+        number: 88,
+        url: "https://github.com/x/y/pull/88",
+        status: "open",
+        headBranch: "fusion/fn-9004",
+        baseBranch: "main",
+      },
+    };
+    const store = makeStore(task);
+    execMock.mockImplementation(() => "");
+
+    const github = {
+      findPrForBranch: vi.fn(),
+      createPr: vi.fn(),
+      getPrMergeStatus: vi.fn(async () => ({
+        prInfo: {
+          number: 88,
+          url: "https://github.com/x/y/pull/88",
+          status: "merged" as const,
+          headBranch: "fusion/fn-9004",
+          baseBranch: "main",
+        },
+        reviewDecision: "APPROVED",
+        checks: [],
+        mergeReady: true,
+        blockingReasons: [],
+      })),
+      mergePr: vi.fn(),
+    };
+
+    const result = await processPullRequestMergeTask(
+      store as never,
+      "/repo",
+      task.id,
+      github as never,
+      () => undefined,
+    );
+
+    expect(result).toBe("merged");
+    expect(github.mergePr).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9004", { status: null, mergeRetries: 0 });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-9004", "done");
+  });
+
   describe("requirePrApproval", () => {
     function makeReadyMergeStatus(reviewDecision: string | null) {
       const prInfo = {

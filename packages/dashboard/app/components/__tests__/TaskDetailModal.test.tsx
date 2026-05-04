@@ -2553,10 +2553,10 @@ describe("TaskDetailModal", () => {
       );
 
       const segments = container.querySelectorAll(".step-progress-segment");
-      expect((segments[0] as HTMLElement).style.backgroundColor).toBe("var(--color-success, #3fb950)");
-      expect((segments[1] as HTMLElement).style.backgroundColor).toBe("var(--todo, #58a6ff)");
-      expect((segments[2] as HTMLElement).style.backgroundColor).toBe("var(--border, #30363d)");
-      expect((segments[3] as HTMLElement).style.backgroundColor).toBe("var(--text-dim, #484f58)");
+      expect((segments[0] as HTMLElement).style.backgroundColor).toBe("var(--color-success)");
+      expect((segments[1] as HTMLElement).style.backgroundColor).toBe("var(--todo)");
+      expect((segments[2] as HTMLElement).style.backgroundColor).toBe("var(--border)");
+      expect((segments[3] as HTMLElement).style.backgroundColor).toBe("var(--text-dim)");
     });
 
     it("displays singular completion label for one-step tasks", () => {
@@ -2869,6 +2869,105 @@ describe("TaskDetailModal", () => {
       // Back to In Progress is in secondary move options
       fireEvent.click(document.querySelector(".detail-move-btn__arrow")!);
       expect(screen.getByRole("menuitem", { name: "Back to In Progress" })).toBeTruthy();
+    });
+
+    it("keeps Merge & Close when pull-request strategy has autoMerge enabled", async () => {
+      const { fetchSettings } = await import("../../api");
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        modelPresets: [],
+        autoSelectModelPreset: false,
+        defaultPresetBySize: {},
+        mergeStrategy: "pull-request",
+        autoMerge: true,
+      });
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "in-review" as Column })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(await screen.findByRole("button", { name: "Merge & Close" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Start PR Review" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Check PR Status" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Finish & Close" })).toBeNull();
+    });
+
+    it("shows Start PR Review and calls onMergeTask for pull-request strategy when autoMerge is off and no PR exists", async () => {
+      const { fetchSettings } = await import("../../api");
+      const onMergeTask = vi.fn(async () => ({ merged: false } as MergeResult));
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        modelPresets: [],
+        autoSelectModelPreset: false,
+        defaultPresetBySize: {},
+        mergeStrategy: "pull-request",
+        autoMerge: false,
+      });
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "in-review" as Column })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={onMergeTask}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const button = await screen.findByRole("button", { name: "Start PR Review" });
+      fireEvent.click(button);
+
+      await waitFor(() => {
+        expect(onMergeTask).toHaveBeenCalledWith("FN-099");
+      });
+    });
+
+    it.each([
+      [{ status: "open" as const }, "Check PR Status"],
+      [{ status: "merged" as const }, "Finish & Close"],
+    ])("shows %s footer label in manual PR flow", async (prInfoStatus, expectedLabel) => {
+      const { fetchSettings } = await import("../../api");
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        modelPresets: [],
+        autoSelectModelPreset: false,
+        defaultPresetBySize: {},
+        mergeStrategy: "pull-request",
+        autoMerge: false,
+      });
+
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "in-review" as Column,
+            prInfo: {
+              url: "https://github.com/owner/repo/pull/42",
+              number: 42,
+              status: prInfoStatus.status,
+              title: "Task",
+              headBranch: "fusion/fn-099",
+              baseBranch: "main",
+              commentCount: 0,
+            },
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(await screen.findByRole("button", { name: expectedLabel })).toBeTruthy();
+      expect(screen.queryByText("Merge & Close")).toBeNull();
     });
 
     it("shows PR automation waiting label instead of Merge & Close when awaiting PR checks", () => {

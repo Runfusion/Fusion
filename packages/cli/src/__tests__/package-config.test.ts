@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { builtinModules } from "node:module";
 import { parse } from "yaml";
 
 const workspaceRoot = join(__dirname, "..", "..", "..", "..");
@@ -79,12 +80,101 @@ describe("CLI package.json publishing config", () => {
     expect(deps).toContain("ioredis");
   });
 
-  it("declares dockerode as a runtime dependency when kept external in CLI bundling", () => {
-    const deps = Object.keys(pkg.dependencies || {});
-    const devDeps = Object.keys(pkg.devDependencies || {});
+  // Generalized guard derived from tsup.config.ts. Any non-builtin module
+  // marked `external` MUST be a runtime dep (so `npm install @runfusion/fusion`
+  // can resolve it after publish), and any module pulled in via `noExternal`
+  // (i.e. inlined into the bundle) MUST NOT leak into runtime deps.
+  // pnpm hoisting masks the missing-dep case in the workspace, so a hardcoded
+  // allowlist isn't enough — this iterates the live config instead.
+  describe("tsup external/noExternal vs published deps", () => {
+    const tsupRaw = readFileSync(
+      join(workspaceRoot, "packages", "cli", "tsup.config.ts"),
+      "utf-8",
+    );
 
-    expect(deps).toContain("dockerode");
-    expect(devDeps).not.toContain("dockerode");
+    function extractStringArray(name: string): string[] {
+      const m = tsupRaw.match(new RegExp(`${name}:\\s*\\[([\\s\\S]*?)\\]`, "m"));
+      if (!m) return [];
+      return [...m[1].matchAll(/["']([^"']+)["']/g)].map((mm) => mm[1]);
+    }
+
+    function extractRegexes(name: string): RegExp[] {
+      const m = tsupRaw.match(new RegExp(`${name}:\\s*\\[([\\s\\S]*?)\\]`, "m"));
+      if (!m) return [];
+      // Match `/PATTERN/flags` where PATTERN may contain escaped slashes (`\/`).
+      return [...m[1].matchAll(/\/((?:\\\/|[^/\n])+)\/[gimsuy]*/g)].map(
+        (mm) => new RegExp(mm[1].replace(/\\\//g, "/")),
+      );
+    }
+
+    const externals = extractStringArray("external");
+    const noExternalRegexes = extractRegexes("noExternal");
+    const noExternalStrings = extractStringArray("noExternal");
+
+    // Externals that intentionally aren't direct deps. Each entry needs a reason —
+    // when adding to this list, document *why* it doesn't need to be a runtime dep
+    // (transitive via another dep, only used by the Bun binary, etc.) so future
+    // edits don't silently re-introduce the dockerode-class bug.
+    const TRANSITIVE_EXTERNALS: Record<string, string> = {
+      ssh2: "transitive dep of dockerode",
+      "cpu-features": "transitive dep of dockerode (via ssh2)",
+      "node-pty": "only loaded by the Bun-compiled binary from dist/runtime/",
+      "@homebridge/node-pty-prebuilt-multiarch":
+        "only loaded by the Bun-compiled binary from dist/runtime/",
+    };
+
+    it("parses externals from tsup.config.ts", () => {
+      expect(externals.length).toBeGreaterThan(0);
+      expect(externals).toContain("dockerode");
+    });
+
+    it.each(externals.filter(
+      (e) =>
+        !builtinModules.includes(e) &&
+        !e.startsWith("node:") &&
+        !(e in TRANSITIVE_EXTERNALS),
+    ))(
+      'external "%s" is declared as a runtime dependency',
+      (external) => {
+        const deps = Object.keys(pkg.dependencies || {});
+        const devDeps = Object.keys(pkg.devDependencies || {});
+        expect(
+          deps,
+          `tsup external "${external}" must be in @runfusion/fusion dependencies — otherwise \`npx runfusion.ai\` fails with ERR_MODULE_NOT_FOUND on a clean install. If this is a transitive dep, add it to TRANSITIVE_EXTERNALS with a reason.`,
+        ).toContain(external);
+        expect(
+          devDeps,
+          `tsup external "${external}" must not be only a devDependency`,
+        ).not.toContain(external);
+      },
+    );
+
+    it("TRANSITIVE_EXTERNALS entries still appear in tsup external (otherwise stale)", () => {
+      for (const name of Object.keys(TRANSITIVE_EXTERNALS)) {
+        expect(
+          externals,
+          `TRANSITIVE_EXTERNALS["${name}"] is no longer in tsup external — remove the allowlist entry.`,
+        ).toContain(name);
+      }
+    });
+
+    it("noExternal (bundled) modules are not also runtime deps", () => {
+      const deps = Object.keys(pkg.dependencies || {});
+      for (const dep of deps) {
+        for (const re of noExternalRegexes) {
+          expect(
+            re.test(dep),
+            `dep "${dep}" matches noExternal pattern ${re} — bundled code should not also be a runtime dep`,
+          ).toBe(false);
+        }
+        for (const s of noExternalStrings) {
+          expect(
+            dep,
+            `dep "${dep}" is listed in noExternal — bundled code should not also be a runtime dep`,
+          ).not.toBe(s);
+        }
+      }
+    });
   });
 });
 
@@ -122,10 +212,11 @@ describe("Scoped @fusion/* packages publishing config", () => {
 describe("Workspace bootstrap script contract", () => {
   const rootPkg = loadRootPackageJson();
 
-  it("makes root test changed-only while keeping explicit full-suite command", () => {
+  it("makes root test changed-only while keeping explicit full-suite and CI-shard commands", () => {
     expect(rootPkg.scripts?.test).toBe("node scripts/test-changed.mjs");
     expect(rootPkg.scripts?.["test:full"]).toContain("pnpm -r --workspace-concurrency=2 test");
     expect(rootPkg.scripts?.["test:full"]).not.toContain("pnpm build");
+    expect(rootPkg.scripts?.["test:ci:shard"]).toBe("node scripts/ci-test-shard.mjs");
   });
 
   it("defines verify:workspace in lint -> test:full -> build order", () => {

@@ -1,6 +1,6 @@
 {
   "name": "fusion-workspace",
-  "version": "0.17.2",
+  "version": "0.18.1",
   "private": true,
   "license": "MIT",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -27,6 +27,7 @@
     "build:exe:all": "pnpm build && pnpm --filter @runfusion/fusion build:exe:all",
     "test": "node scripts/test-changed.mjs",
     "test:full": "pnpm sync:fusion-skill:check && FUSION_TEST_TOTAL_WORKERS=4 FUSION_TEST_CONCURRENCY=2 pnpm -r --workspace-concurrency=2 test",
+    "test:ci:shard": "node scripts/ci-test-shard.mjs",
     "test:serial": "FUSION_TEST_TOTAL_WORKERS=4 FUSION_TEST_CONCURRENCY=1 pnpm -r --workspace-concurrency=1 test",
     "test:fast": "FUSION_TEST_TOTAL_WORKERS=4 FUSION_TEST_CONCURRENCY=4 pnpm -r --workspace-concurrency=4 test",
     "test:locked": "node scripts/test-with-lock.mjs",

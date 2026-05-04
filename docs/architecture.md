@@ -174,7 +174,7 @@ Concrete references:
 - Engine orchestration is implemented in `packages/engine/src/research-orchestrator.ts` + `research-step-runner.ts`
 - Dashboard/API surface is implemented under `/api/research` (`packages/dashboard/src/research-routes.ts`) with `ResearchView.tsx` in the app
 - CLI surface is implemented in `packages/cli/src/commands/research.ts` with six subcommands (create, list, show, export, cancel, retry)
-- Agent tool surface is exposed via `packages/cli/src/extension.ts` (fn_research_run, fn_research_list, fn_research_get, fn_research_cancel)
+- Agent tool surface is exposed via `packages/cli/src/extension.ts` (`fn_research_run`, `fn_research_list`, `fn_research_get`, `fn_research_cancel`, `fn_research_retry`)
 - **Boundary note:** research and insights are parallel subsystems sharing host infrastructure, not one table/store family
 
 ### Plugin System

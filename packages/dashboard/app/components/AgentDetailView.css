@@ -94,6 +94,15 @@
   min-width: 0;
 }
 
+.agent-detail-inline-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
+  padding: calc(var(--space-sm) - var(--space-xs) * 0.5) calc(var(--space-sm) + var(--space-xs) * 0.5);
+  flex-shrink: 0;
+}
+
 .agent-detail-icon {
   width: calc(var(--space-lg) * 2 + var(--space-xs));
   height: calc(var(--space-lg) * 2 + var(--space-xs));
@@ -307,6 +316,11 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
+}
+
+.dashboard-summary-health-reason {
+  margin-left: var(--space-xs);
+  font-size: var(--space-md);
 }
 
 .runs-list {
@@ -1299,13 +1313,16 @@
   }
 
   .agent-detail-header {
-    flex-wrap: wrap;
-    gap: var(--space-sm);
-    padding: var(--space-md);
-    padding-top: max(var(--space-md), env(safe-area-inset-top, 0));
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    gap: var(--space-xs);
+    padding: var(--space-sm) var(--space-md);
+    padding-top: max(var(--space-sm), env(safe-area-inset-top, 0));
   }
 
   .agent-detail-identity {
+    grid-row: 1;
     flex: 1 1 auto;
     min-width: 0;
     gap: var(--space-sm);
@@ -1334,17 +1351,16 @@
   }
 
   .agent-detail-header-actions {
-    flex: 1 1 100%;
-    flex-wrap: wrap;
+    grid-row: 2;
+    flex: 1 1 auto;
     justify-content: space-between;
-    gap: var(--space-sm);
-    order: 3;
+    gap: var(--space-xs);
   }
 
   .agent-detail-controls {
     flex: 1 1 auto;
     flex-wrap: wrap;
-    gap: calc(var(--space-xs) + var(--space-sm) * 0.25);
+    gap: var(--space-xs);
   }
 
   .agent-detail-controls .btn--compact {

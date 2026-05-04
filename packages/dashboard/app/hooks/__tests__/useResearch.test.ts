@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useResearch } from "../useResearch";
+import { ApiRequestError } from "../../api";
 
 const mockListResearchRuns = vi.fn();
 const mockGetResearchRun = vi.fn();
@@ -12,16 +13,20 @@ const mockCreateTaskFromResearchRun = vi.fn();
 const mockAttachResearchRunToTask = vi.fn();
 const mockSubscribeSse = vi.fn(() => vi.fn());
 
-vi.mock("../../api", () => ({
-  listResearchRuns: (...args: unknown[]) => mockListResearchRuns(...args),
-  getResearchRun: (...args: unknown[]) => mockGetResearchRun(...args),
-  createResearchRun: (...args: unknown[]) => mockCreateResearchRun(...args),
-  cancelResearchRun: (...args: unknown[]) => mockCancelResearchRun(...args),
-  retryResearchRun: (...args: unknown[]) => mockRetryResearchRun(...args),
-  exportResearchRun: (...args: unknown[]) => mockExportResearchRun(...args),
-  createTaskFromResearchRun: (...args: unknown[]) => mockCreateTaskFromResearchRun(...args),
-  attachResearchRunToTask: (...args: unknown[]) => mockAttachResearchRunToTask(...args),
-}));
+vi.mock("../../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api")>();
+  return {
+    ...actual,
+    listResearchRuns: (...args: unknown[]) => mockListResearchRuns(...args),
+    getResearchRun: (...args: unknown[]) => mockGetResearchRun(...args),
+    createResearchRun: (...args: unknown[]) => mockCreateResearchRun(...args),
+    cancelResearchRun: (...args: unknown[]) => mockCancelResearchRun(...args),
+    retryResearchRun: (...args: unknown[]) => mockRetryResearchRun(...args),
+    exportResearchRun: (...args: unknown[]) => mockExportResearchRun(...args),
+    createTaskFromResearchRun: (...args: unknown[]) => mockCreateTaskFromResearchRun(...args),
+    attachResearchRunToTask: (...args: unknown[]) => mockAttachResearchRunToTask(...args),
+  };
+});
 
 vi.mock("../../sse-bus", () => ({
   subscribeSse: (...args: unknown[]) => mockSubscribeSse(...args),
@@ -130,6 +135,79 @@ describe("useResearch", () => {
       "p1",
     );
     expect(mockAttachResearchRunToTask).toHaveBeenCalledWith("RR-1", { taskId: "FN-1", findingId: "finding-1", attachExport: true }, "p1");
+  });
+
+  it("exposes actionable error metadata for cancel failures", async () => {
+    mockCancelResearchRun.mockRejectedValue(
+      Object.assign(new ApiRequestError("Cannot cancel from completed", 409, { code: "INVALID_TRANSITION", retryable: false }), {
+        researchCode: "INVALID_TRANSITION",
+        retryable: false,
+      }),
+    );
+
+    const { result } = renderHook(() => useResearch({ projectId: "p1" }));
+
+    await act(async () => {
+      await expect(result.current.cancelRun("RR-1")).rejects.toMatchObject({
+        code: "INVALID_TRANSITION",
+        retryable: false,
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.uiError).toMatchObject({
+        code: "INVALID_TRANSITION",
+        retryable: false,
+      });
+    });
+  });
+
+  it("exposes actionable error metadata for retry failures", async () => {
+    mockRetryResearchRun.mockRejectedValue(
+      Object.assign(new ApiRequestError("Retry exhausted", 409, { code: "RETRY_EXHAUSTED", retryable: false }), {
+        researchCode: "RETRY_EXHAUSTED",
+        retryable: false,
+      }),
+    );
+
+    const { result } = renderHook(() => useResearch({ projectId: "p1" }));
+
+    await act(async () => {
+      await expect(result.current.retryRun("RR-1")).rejects.toMatchObject({
+        code: "RETRY_EXHAUSTED",
+        retryable: false,
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.uiError).toMatchObject({
+        code: "RETRY_EXHAUSTED",
+        retryable: false,
+      });
+    });
+  });
+
+  it("derives selected-run action affordances from status and lifecycle", async () => {
+    mockGetResearchRun.mockResolvedValue({
+      run: {
+        id: "RR-2",
+        title: "t",
+        status: "failed",
+        lifecycle: { retryable: false, errorCode: "RETRY_EXHAUSTED" },
+      },
+      availability: { available: true },
+    });
+
+    const { result } = renderHook(() => useResearch({ projectId: "p1" }));
+
+    act(() => {
+      result.current.setSelectedRunId("RR-2");
+    });
+
+    await waitFor(() => {
+      expect(result.current.runActionState.retryable).toBe(false);
+      expect(result.current.runActionState.blockingReason).toBe("Retry attempts exhausted");
+    });
   });
 
   it("subscribes to research SSE events with project query and reconnect handler", async () => {

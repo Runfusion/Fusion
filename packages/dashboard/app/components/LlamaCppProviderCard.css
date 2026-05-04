@@ -1,0 +1,19 @@
+.llama-cpp-provider-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.llama-cpp-status {
+  color: var(--text-muted);
+}
+
+.llama-cpp-status--ok {
+  color: var(--color-success);
+}
+
+@media (max-width: 768px) {
+  .llama-cpp-provider-card {
+    gap: var(--space-xs);
+  }
+}

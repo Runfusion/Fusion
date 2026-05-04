@@ -41,11 +41,28 @@ async function getStore(projectName?: string): Promise<TaskStore> {
   return store;
 }
 
+function hasProviderCredentials(settings: Awaited<ReturnType<TaskStore["getSettings"]>>, providerId: string | undefined): boolean {
+  if (!providerId) return false;
+  if (providerId === "searxng") return Boolean(settings.researchSearxngUrl);
+  if (providerId === "brave") return Boolean(settings.researchBraveApiKey);
+  if (providerId === "google") return Boolean(settings.researchGoogleSearchApiKey && settings.researchGoogleSearchCx);
+  if (providerId === "tavily") return Boolean(settings.researchTavilyApiKey);
+  return false;
+}
+
 async function getResearchRuntime(store: TaskStore) {
   const settings = await store.getSettings();
   const resolved = resolveResearchSettings(settings);
   if (!resolved.enabled) {
     throw new Error("feature-disabled: Research is disabled in settings.");
+  }
+
+  const configuredProvider = (resolved.searchProvider as string | undefined) ?? settings.researchWebSearchProvider;
+  if (!configuredProvider) {
+    throw new Error("provider-unavailable: Research providers are not configured. Add provider credentials in settings.");
+  }
+  if (!hasProviderCredentials(settings, configuredProvider)) {
+    throw new Error(`missing-credentials: ${configuredProvider} credentials are missing. Configure Authentication and Research defaults in settings.`);
   }
 
   const registry = new ResearchProviderRegistry(settings, process.cwd());
@@ -237,6 +254,10 @@ export async function runResearchCancel(runId: string, options: ResearchCommandO
     const run = store.getResearchStore().getRun(runId);
     if (!run) throw new Error(`Research run not found: ${runId}`);
 
+    if (!["queued", "running", "cancelling", "retry_waiting"].includes(run.status)) {
+      throw new Error(`invalid-transition: Run ${runId} cannot be cancelled from status ${run.status}.`);
+    }
+
     const { orchestrator } = await getResearchRuntime(store);
     const cancelled = orchestrator.cancelRun(runId);
 
@@ -257,6 +278,13 @@ export async function runResearchRetry(runId: string, options: ResearchCommandOp
     const store = await getStore(options.projectName);
     const existing = store.getResearchStore().getRun(runId);
     if (!existing) throw new Error(`Research run not found: ${runId}`);
+
+    if (existing.status === "retry_exhausted" || existing.lifecycle?.errorCode === "RETRY_EXHAUSTED") {
+      throw new Error(`retry-exhausted: Run ${runId} has exhausted retry attempts.`);
+    }
+    if (existing.lifecycle?.retryable === false) {
+      throw new Error(`non-retryable-provider-error: Run ${runId} is marked non-retryable.`);
+    }
 
     const { orchestrator } = await getResearchRuntime(store);
     const newRunId = orchestrator.retryRun(runId);

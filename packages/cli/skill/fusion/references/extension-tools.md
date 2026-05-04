@@ -390,7 +390,15 @@ Get one research run and structured findings.
 
 ### fn_research_cancel
 
-Cancel a research run.
+Cancel an in-flight research run. Terminal runs return INVALID_TRANSITION.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | ✓ | Research run ID |
+
+### fn_research_retry
+
+Retry a failed research run when lifecycle marks it retryable.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

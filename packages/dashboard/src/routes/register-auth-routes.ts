@@ -1,6 +1,7 @@
 import { isGhAvailable, isGhAuthenticated } from "@fusion/core";
 import { probeClaudeCli } from "../claude-cli-probe.js";
 import { probeDroidCli } from "../droid-cli-probe.js";
+import { probeLlamaCpp } from "../llama-cpp-probe.js";
 import { ApiError, badRequest, conflict } from "../api-error.js";
 import { clearUsageCache } from "../usage.js";
 import { invalidateAllGlobalSettingsCaches } from "../project-store-resolver.js";
@@ -283,6 +284,26 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         });
       }
 
+      // Inject synthetic llama.cpp provider.
+      if (store) {
+        let llamaEnabled = false;
+        try {
+          const globalSettings = await store.getGlobalSettingsStore().getSettings();
+          llamaEnabled = globalSettings.useLlamaCpp === true;
+        } catch {
+          // Best-effort
+        }
+        const llamaExtension = options?.getLlamaCppExtensionStatus?.() ?? null;
+        const extensionOk = llamaExtension === null || llamaExtension.status === "ok";
+        const probe = await probeLlamaCpp();
+        providers.push({
+          id: "llama-cpp",
+          name: "llama.cpp — via HTTP server",
+          authenticated: llamaEnabled && probe.reachable && extensionOk,
+          type: "cli" as const,
+        });
+      }
+
       const ghCli = {
         available: isGhAvailable(),
         authenticated: isGhAuthenticated(),
@@ -508,6 +529,93 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         enabled,
         extension,
         ready: binary.available && enabled && (extension === null || extension.status === "ok"),
+      });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  router.post("/auth/llama-cpp", async (req, res) => {
+    try {
+      if (!store) {
+        throw new ApiError(500, "Settings store unavailable");
+      }
+      const enabled = req.body?.enabled;
+      if (typeof enabled !== "boolean") {
+        throw badRequest("enabled must be a boolean");
+      }
+
+      if (enabled) {
+        const probe = await probeLlamaCpp();
+        if (!probe.reachable) {
+          throw new ApiError(400, `Cannot enable llama.cpp routing: ${probe.reason ?? "server unreachable"}`);
+        }
+      }
+
+      let prev = false;
+      try {
+        const priorGlobal = await store.getGlobalSettingsStore().getSettings();
+        prev = priorGlobal.useLlamaCpp === true;
+      } catch {
+        // best effort
+      }
+
+      const settings = await store.updateGlobalSettings({ useLlamaCpp: enabled });
+      invalidateAllGlobalSettingsCaches();
+      const engineManager = options?.engineManager;
+      if (engineManager) {
+        for (const engine of engineManager.getAllEngines().values()) {
+          engine.getTaskStore().getGlobalSettingsStore().invalidateCache();
+        }
+      }
+
+      const next = settings.useLlamaCpp === true;
+      if (options?.onUseLlamaCppToggled && prev !== next) {
+        try {
+          options.onUseLlamaCppToggled(prev, next);
+        } catch (hookErr) {
+          console.warn(
+            `[auth/llama-cpp] onUseLlamaCppToggled callback threw: ${hookErr instanceof Error ? hookErr.message : String(hookErr)}`,
+          );
+        }
+      }
+
+      res.json({ enabled: next, restartRequired: false });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  router.get("/providers/llama-cpp/status", async (_req, res) => {
+    try {
+      const probe = await probeLlamaCpp();
+      let enabled = false;
+      if (store) {
+        try {
+          const globalSettings = await store.getGlobalSettingsStore().getSettings();
+          enabled = globalSettings.useLlamaCpp === true;
+        } catch {
+          // best-effort
+        }
+      }
+      const extension = options?.getLlamaCppExtensionStatus?.() ?? null;
+      const ready = enabled && probe.reachable && (extension === null || extension.status === "ok");
+      res.json({
+        enabled,
+        extension,
+        ready,
+        server: {
+          available: probe.reachable,
+          url: probe.url,
+          hasApiKey: probe.hasApiKey,
+          reason: probe.reason,
+        },
       });
     } catch (err: unknown) {
       if (err instanceof ApiError) {

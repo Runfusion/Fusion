@@ -1148,7 +1148,6 @@
     flex-direction: column;
     flex: 1;
     min-height: 0;
-    height: 100%;
   }
 
   .agents-split-sidebar {
@@ -1179,22 +1178,12 @@
     display: none;
   }
 
-  .agents-mobile-back-row {
-    padding: var(--space-md);
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-  }
-
-  .agents-mobile-back-btn {
-    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
-  }
-
   .agents-view-content {
     min-height: 0;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
-    padding: var(--space-md);
+    padding: var(--space-md) var(--space-md) calc(var(--space-md) + var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
   }
 }
 

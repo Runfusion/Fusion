@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ResearchRunStatus } from "@fusion/core";
 import {
+  ApiRequestError,
   attachResearchRunToTask,
   cancelResearchRun,
   createResearchRun,
@@ -10,12 +11,94 @@ import {
   listResearchRuns,
   retryResearchRun,
   type CreateResearchRunInput,
+  type ResearchActionError,
+  type ResearchActionErrorCode,
 } from "../api";
 import { subscribeSse } from "../sse-bus";
 import type { ResearchAvailability, ResearchRunDetail, ResearchRunListItem } from "../research-types";
 
 const SEARCH_DEBOUNCE_MS = 300;
 const POLL_INTERVAL_MS = 4000;
+
+const IN_FLIGHT_STATUSES: ResearchRunStatus[] = ["queued", "running", "cancelling", "retry_waiting"];
+
+interface ResearchUiError {
+  message: string;
+  status?: number;
+  code: ResearchActionErrorCode;
+  setupHint?: string;
+  retryable?: boolean;
+}
+
+function toResearchUiError(error: unknown, fallback: string): ResearchUiError {
+  if (error instanceof ApiRequestError) {
+    const maybeResearch = error as ResearchActionError;
+    return {
+      message: error.message,
+      status: error.status,
+      code: maybeResearch.researchCode ?? "INTERNAL_ERROR",
+      setupHint: maybeResearch.setupHint,
+      retryable: maybeResearch.retryable,
+    };
+  }
+
+  if (error instanceof Error) {
+    return {
+      message: error.message,
+      code: "INTERNAL_ERROR",
+    };
+  }
+
+  return {
+    message: fallback,
+    code: "INTERNAL_ERROR",
+  };
+}
+
+function getRunActionState(run: ResearchRunDetail | null) {
+  if (!run) {
+    return {
+      cancelable: false,
+      retryable: false,
+      isTransitioning: false,
+      blockingReason: "No run selected",
+    };
+  }
+
+  const isTransitioning = IN_FLIGHT_STATUSES.includes(run.status);
+  const cancelable = run.status === "queued" || run.status === "running";
+  const lifecycleRetryable = run.lifecycle?.retryable;
+  const retryableTerminal = run.status === "failed" || run.status === "timed_out";
+  const retryable = Boolean(retryableTerminal && lifecycleRetryable);
+
+  let blockingReason: string | undefined;
+  if (!cancelable && isTransitioning) {
+    blockingReason = "Run is already transitioning";
+  } else if (!cancelable && run.status === "completed") {
+    blockingReason = "Completed runs cannot be cancelled";
+  } else if (!cancelable && run.status === "cancelled") {
+    blockingReason = "Run is already cancelled";
+  } else if (!cancelable && run.status === "retry_exhausted") {
+    blockingReason = "Retry attempts exhausted";
+  } else if (!cancelable && run.status === "failed") {
+    blockingReason = "Failed runs cannot be cancelled";
+  } else if (!cancelable && run.status === "timed_out") {
+    blockingReason = "Timed out runs cannot be cancelled";
+  }
+
+  if (!retryable && retryableTerminal && lifecycleRetryable === false) {
+    blockingReason = run.lifecycle?.errorCode === "RETRY_EXHAUSTED"
+      ? "Retry attempts exhausted"
+      : "Run is not retryable";
+  }
+
+  return {
+    cancelable,
+    retryable,
+    isTransitioning,
+    blockingReason,
+  };
+}
 
 export function useResearch(options?: { projectId?: string }) {
   const projectId = options?.projectId;
@@ -25,6 +108,7 @@ export function useResearch(options?: { projectId?: string }) {
   const [availability, setAvailability] = useState<ResearchAvailability>({ available: true });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [uiError, setUiError] = useState<ResearchUiError | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const fetchVersionRef = useRef(0);
   const projectContextVersionRef = useRef(0);
@@ -42,6 +126,7 @@ export function useResearch(options?: { projectId?: string }) {
     const requestProjectId = projectId;
 
     setError(null);
+    setUiError(null);
 
     try {
       const response = await listResearchRuns({ q: query || undefined, limit: 100 }, requestProjectId);
@@ -54,7 +139,9 @@ export function useResearch(options?: { projectId?: string }) {
       }
     } catch (err) {
       if (requestVersion !== fetchVersionRef.current || requestProjectId !== projectId) return;
-      setError(err instanceof Error ? err.message : "Failed to load research runs");
+      const normalized = toResearchUiError(err, "Failed to load research runs");
+      setError(normalized.message);
+      setUiError(normalized);
     } finally {
       if (requestVersion === fetchVersionRef.current) {
         setLoading(false);
@@ -132,20 +219,34 @@ export function useResearch(options?: { projectId?: string }) {
     refresh: refreshRuns,
     createRun: (input: CreateResearchRunInput) => createResearchRun(input, projectId),
     cancelRun: async (runId: string) => {
-      const response = await cancelResearchRun(runId, projectId);
-      if (selectedRunId === runId) {
-        setSelectedRun(response.run);
+      try {
+        setUiError(null);
+        const response = await cancelResearchRun(runId, projectId);
+        if (selectedRunId === runId) {
+          setSelectedRun(response.run);
+        }
+        await refreshRuns();
+        return response;
+      } catch (err) {
+        const normalized = toResearchUiError(err, "Failed to cancel run");
+        setUiError(normalized);
+        throw normalized;
       }
-      await refreshRuns();
-      return response;
     },
     retryRun: async (runId: string) => {
-      const response = await retryResearchRun(runId, projectId);
-      if (selectedRunId === runId) {
-        setSelectedRun(response.run);
+      try {
+        setUiError(null);
+        const response = await retryResearchRun(runId, projectId);
+        if (selectedRunId === runId) {
+          setSelectedRun(response.run);
+        }
+        await refreshRuns();
+        return response;
+      } catch (err) {
+        const normalized = toResearchUiError(err, "Failed to retry run");
+        setUiError(normalized);
+        throw normalized;
       }
-      await refreshRuns();
-      return response;
     },
     exportRun: (runId: string, format: "markdown" | "json" | "html") => exportResearchRun(runId, format, projectId),
     createTaskFromRun: (
@@ -158,6 +259,8 @@ export function useResearch(options?: { projectId?: string }) {
     ) => createTaskFromResearchRun(runId, { title, findingId, description, priority, attachExport }, projectId),
     attachRunToTask: (runId: string, taskId: string, findingId?: string, attachExport?: boolean) =>
       attachResearchRunToTask(runId, { taskId, findingId, attachExport }, projectId),
+    uiError,
+    runActionState: getRunActionState(selectedRun),
     statusCounts: runs.reduce<Record<ResearchRunStatus, number>>(
       (acc, run) => {
         acc[run.status] += 1;

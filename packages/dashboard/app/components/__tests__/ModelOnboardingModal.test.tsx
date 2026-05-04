@@ -249,6 +249,12 @@ describe("ModelOnboardingModal", () => {
       });
     });
 
+    it("shows research setup guidance in AI setup step", async () => {
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+
+      expect(await screen.findByText(/Research runs require provider credentials and an enabled Research View/i)).toBeInTheDocument();
+    });
+
     it("hides deprecated google CLI and antigravity providers while keeping supported Google/Gemini entries", async () => {
       mockFetchAuthStatus.mockResolvedValueOnce({
         providers: [

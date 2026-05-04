@@ -21,6 +21,7 @@ AI-guided interactive planning for creating well-specified tasks from high-level
    - Suggested dependencies from existing tasks
    - Key deliverables checklist
 5. Create the task directly from the summary
+6. Or use **Break into Tasks** to generate multiple subtasks where each description starts with subtask-specific implementation guidance, followed by a separate larger-plan context section (including planning interview context when available)
 
 **Features**:
 - **Rate Limiting**: Maximum 5 planning sessions per hour per IP
@@ -435,7 +436,7 @@ View a centralized timeline of all task lifecycle events. Click the history icon
 - **Error Recovery**: If settings fail to load, the modal displays an inline error message with a retry button instead of getting stuck on "Loading…"
 - **Settings API Contract**: Server-owned fields like `githubTokenConfigured` are injected on GET /settings but stripped on PUT /settings to prevent persistence to config.json
 - **Notifications**: ntfy.sh integration for push notifications when tasks complete or fail
-- **Authentication**: Provider management for AI model access. OAuth providers (e.g. Anthropic) use a Login/Logout flow; API-key providers (e.g. OpenRouter) show a masked key entry with Save/Clear actions. After saving or clearing a key, the auth status refreshes immediately so the authenticated badge stays in sync. Stored key values are never prefilled or displayed.
+- **Authentication**: Provider management for AI model access. OAuth providers (e.g. Anthropic) use a Login/Logout flow; API-key providers (e.g. OpenRouter) show a masked key entry with Save/Clear actions; CLI/server-backed providers (Claude CLI, Droid CLI, llama.cpp) expose provider cards with Test + Enable/Disable. After saving or clearing a key, the auth status refreshes immediately so the authenticated badge stays in sync. Stored key values are never prefilled or displayed.
 - **Onboarding Wizard**: On first dashboard launch, a multi-step onboarding wizard guides users through three steps: (1) AI Setup — authenticate with a provider and select a default model, (2) GitHub (optional) — connect GitHub for issue import and PR management, and (3) First Task — create your first task or import from GitHub. If there is no active project, the First Task step blocks task/import actions and prompts the user to open the existing project setup wizard first. The wizard is dismissible and non-blocking — completion is tracked via the `modelOnboardingComplete` global setting. Users can skip onboarding or re-trigger it by clearing the flag in Settings.
 - **Pause Controls**: Soft pause (stop new work) and hard stop (kill all agents)
 - **Theming**: Light/dark/system mode toggle and 12 color themes (see Theming section below)

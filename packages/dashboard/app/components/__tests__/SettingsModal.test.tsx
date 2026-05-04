@@ -2726,6 +2726,20 @@ describe("SettingsModal", () => {
       expect(await screen.findByText("Research max concurrent runs must be at least 1.")).toBeInTheDocument();
     });
 
+    it("shows incomplete research defaults guidance when no search provider is set", async () => {
+      mockFetchSettings.mockResolvedValueOnce({
+        ...defaultSettings,
+        experimentalFeatures: { researchView: true },
+        researchGlobalDefaults: {},
+      });
+
+      renderModal();
+      await waitForSettingsModalReady();
+      await openResearchGlobalSection();
+
+      expect(await screen.findByText(/Research defaults are incomplete/i)).toBeInTheDocument();
+    });
+
     it("shows missing credentials warning and routes CTA to Authentication", async () => {
       mockFetchSettings.mockResolvedValueOnce({
         ...defaultSettings,

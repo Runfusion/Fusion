@@ -232,6 +232,22 @@ describe("useViewState", () => {
     });
   });
 
+  it("reads saved research taskView from scoped localStorage on init", async () => {
+    localStorage.setItem("kb:proj_123:kb-dashboard-task-view", "research");
+
+    const { result } = renderHook(() =>
+      useViewState(
+        createOptions({
+          currentProject: PROJECT,
+        }),
+      ),
+    );
+
+    await waitFor(() => {
+      expect(result.current.taskView).toBe("research");
+    });
+  });
+
   it("persists insights taskView changes to scoped localStorage", async () => {
     const { result } = renderHook(() =>
       useViewState(
@@ -246,6 +262,22 @@ describe("useViewState", () => {
     });
 
     expect(localStorage.getItem("kb:proj_123:kb-dashboard-task-view")).toBe("insights");
+  });
+
+  it("persists research taskView changes to scoped localStorage", async () => {
+    const { result } = renderHook(() =>
+      useViewState(
+        createOptions({
+          currentProject: PROJECT,
+        }),
+      ),
+    );
+
+    await act(async () => {
+      result.current.setTaskView("research");
+    });
+
+    expect(localStorage.getItem("kb:proj_123:kb-dashboard-task-view")).toBe("research");
   });
 
   it("restores dev-server task view and normalizes legacy devserver values", async () => {

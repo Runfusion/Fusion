@@ -1095,6 +1095,34 @@ describe("runDashboard — PR-first auto-merge queue", () => {
     });
     expect(aiMergeTask).not.toHaveBeenCalled();
   });
+
+  it("manual onMerge still uses PR lifecycle when autoMerge is disabled", async () => {
+    const { aiMergeTask } = await import("@fusion/engine");
+    const { createServer } = await import("@fusion/dashboard");
+
+    mockStore.getSettings.mockResolvedValue({
+      maxConcurrent: 1,
+      maxWorktrees: 2,
+      autoMerge: false,
+      mergeStrategy: "pull-request",
+      pollIntervalMs: 60_000,
+      enginePaused: false,
+      globalPause: false,
+    });
+
+    await runDashboard(0, { open: false, dev: true });
+
+    const createServerCall = (createServer as ReturnType<typeof vi.fn>).mock.calls[0];
+    const serverOpts = createServerCall[1] as { onMerge: (taskId: string) => Promise<unknown> };
+    await serverOpts.onMerge("FN-093");
+
+    expect(mockCreatePr).toHaveBeenCalledWith({
+      title: "FN-093: Task",
+      body: "Automated PR for FN-093.\n\nDescription",
+      head: "fusion/fn-093",
+    });
+    expect(aiMergeTask).not.toHaveBeenCalled();
+  });
 });
 
 describe("runDashboard — WorktreePool wiring", () => {

@@ -5,7 +5,7 @@ const mockRun = {
   id: "RR-001",
   query: "test query",
   topic: "test query",
-  status: "completed",
+  status: "running",
   sources: [],
   events: [],
   tags: [],
@@ -22,7 +22,7 @@ const researchStoreMock = {
 
 const storeMock = {
   init: vi.fn(),
-  getSettings: vi.fn(async () => ({ researchSettings: { enabled: true }, researchTavilyApiKey: "x" })),
+  getSettings: vi.fn(async () => ({ researchSettings: { enabled: true }, researchWebSearchProvider: "tavily", researchTavilyApiKey: "x" })),
   getResearchStore: vi.fn(() => researchStoreMock),
 };
 
@@ -42,7 +42,7 @@ const { resolveResearchSettingsMock, providerRegistryMock, writeFileMock } = vi.
 vi.mock("@fusion/core", () => ({
   TaskStore: vi.fn(() => storeMock),
   resolveResearchSettings: resolveResearchSettingsMock,
-  RESEARCH_RUN_STATUSES: ["pending", "running", "completed", "failed", "cancelled"],
+  RESEARCH_RUN_STATUSES: ["queued", "running", "cancelling", "retry_waiting", "completed", "failed", "cancelled", "timed_out", "retry_exhausted"],
   RESEARCH_EXPORT_FORMATS: ["json", "markdown", "pdf"],
 }));
 
@@ -109,7 +109,7 @@ describe("research commands", () => {
     const writeArgs = writeFileMock.mock.calls[0]!;
     expect(String(writeArgs[0])).toContain("out.json");
     expect(String(writeArgs[1])).toContain('"id": "RR-001"');
-    expect(String(writeArgs[1])).toContain('"status": "completed"');
+    expect(String(writeArgs[1])).toContain('"status": "running"');
     expect(String(writeArgs[1])).toContain('"query": "test query"');
     expect(researchStoreMock.createExport).toHaveBeenCalledWith("RR-001", "json", expect.stringContaining('"id": "RR-001"'));
   });
@@ -126,7 +126,7 @@ describe("research commands", () => {
   });
 
   it("retries a run", async () => {
-    researchStoreMock.getRun.mockImplementation((id: string) => (id === "RR-003" ? { ...mockRun, id: "RR-003", status: "pending" } : mockRun));
+    researchStoreMock.getRun.mockImplementation((id: string) => (id === "RR-003" ? { ...mockRun, id: "RR-003", status: "queued" } : { ...mockRun, status: "failed" }));
     await runResearchRetry("RR-001", { json: true });
     expect(orchestratorMock.retryRun).toHaveBeenCalledWith("RR-001");
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"retryOf"'));
@@ -142,6 +142,24 @@ describe("research commands", () => {
     providerRegistryMock.mockReturnValue({ getAvailableProviders: () => [], getProvider: () => undefined });
     await expect(runResearchCreate({ query: "hello" })).rejects.toThrow("process.exit:1");
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("provider-unavailable"));
+  });
+
+  it("errors when provider credentials are missing", async () => {
+    storeMock.getSettings.mockResolvedValueOnce({ researchSettings: { enabled: true }, researchWebSearchProvider: "tavily" });
+    await expect(runResearchCreate({ query: "hello" })).rejects.toThrow("process.exit:1");
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("missing-credentials"));
+  });
+
+  it("errors on cancel for terminal runs", async () => {
+    researchStoreMock.getRun.mockReturnValueOnce({ ...mockRun, status: "completed" });
+    await expect(runResearchCancel("RR-001")).rejects.toThrow("process.exit:1");
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("invalid-transition"));
+  });
+
+  it("errors on retry exhausted runs", async () => {
+    researchStoreMock.getRun.mockReturnValueOnce({ ...mockRun, status: "retry_exhausted", lifecycle: { errorCode: "RETRY_EXHAUSTED" } });
+    await expect(runResearchRetry("RR-001")).rejects.toThrow("process.exit:1");
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("retry-exhausted"));
   });
 
   it("errors on invalid export format", async () => {

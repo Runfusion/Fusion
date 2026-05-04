@@ -22,7 +22,8 @@ function loadWorkflow(name: string): any {
 describe("CI workflow (.github/workflows/ci.yml)", () => {
   let workflow: any;
   let content: string;
-  let ciSteps: any[];
+  let buildSteps: any[];
+  let testShardJob: any;
   let contributingContent: string;
   let readmeContent: string;
   let cliPackageJsonContent: string;
@@ -34,7 +35,8 @@ describe("CI workflow (.github/workflows/ci.yml)", () => {
     const result = loadWorkflow("ci.yml");
     workflow = result.parsed;
     content = result.content;
-    ciSteps = workflow.jobs?.ci?.steps ?? [];
+    buildSteps = workflow.jobs?.build?.steps ?? [];
+    testShardJob = workflow.jobs?.["test-shards"];
     contributingContent = readFileSync(join(workspaceRoot, "docs", "contributing.md"), "utf-8");
     readmeContent = readFileSync(join(workspaceRoot, "README.md"), "utf-8");
     cliPackageJsonContent = readFileSync(join(workspaceRoot, "packages", "cli", "package.json"), "utf-8");
@@ -52,13 +54,8 @@ describe("CI workflow (.github/workflows/ci.yml)", () => {
     );
   });
 
-  const findStepByRun = (runSnippet: string) => ciSteps.find((step) => typeof step.run === "string" && step.run.includes(runSnippet));
-
-  const findStepByRunExact = (runCommand: string) =>
-    ciSteps.find((step) => typeof step.run === "string" && step.run.trim() === runCommand);
-
-  const findStepIndexByRun = (runSnippet: string) =>
-    ciSteps.findIndex((step) => typeof step.run === "string" && step.run.includes(runSnippet));
+  const findBuildStepByRun = (runSnippet: string) =>
+    buildSteps.find((step) => typeof step.run === "string" && step.run.includes(runSnippet));
 
   it("is valid YAML", () => {
     expect(workflow).toBeDefined();
@@ -80,26 +77,21 @@ describe("CI workflow (.github/workflows/ci.yml)", () => {
     expect(content).not.toContain("--no-frozen-lockfile");
   });
 
-  it("uses verify:workspace as the single lint/test/build contract", () => {
-    const verifyStep = findStepByRun("pnpm verify:workspace");
-    expect(verifyStep).toBeDefined();
-    expect(verifyStep.name).toContain("bootstrap contract");
+  it("uses deterministic test sharding and keeps lint/build as explicit jobs", () => {
+    expect(workflow.jobs?.lint).toBeDefined();
+    expect(testShardJob).toBeDefined();
+    expect(workflow.jobs?.build).toBeDefined();
 
-    const directLintStep = findStepByRunExact("pnpm lint");
-    const directTestStep = findStepByRunExact("pnpm test");
-    const directBuildStep = findStepByRunExact("pnpm build");
-    expect(directLintStep).toBeUndefined();
-    expect(directTestStep).toBeUndefined();
-    expect(directBuildStep).toBeUndefined();
+    expect(testShardJob.strategy?.matrix?.shard).toEqual([1, 2, 3]);
+    expect(content).toContain("pnpm test:ci:shard --shard ${{ matrix.shard }} --total 3");
+    expect(content).not.toContain("pnpm verify:workspace");
   });
 
-  it("runs workspace verification before slow lane and binary packaging", () => {
-    const verifyIdx = findStepIndexByRun("pnpm verify:workspace");
-    const slowLaneIdx = findStepIndexByRun("pnpm test:slow-cli");
-    const buildExeIdx = findStepIndexByRun("build:exe");
-    expect(verifyIdx).toBeGreaterThanOrEqual(0);
-    expect(slowLaneIdx).toBeGreaterThan(verifyIdx);
-    expect(buildExeIdx).toBeGreaterThan(slowLaneIdx);
+  it("runs build job after lint and sharded tests, then executes slow lane and binary packaging", () => {
+    expect(workflow.jobs?.build?.needs).toEqual(["lint", "test-shards"]);
+    expect(findBuildStepByRun("pnpm build")).toBeDefined();
+    expect(findBuildStepByRun("pnpm test:slow-cli")).toBeDefined();
+    expect(findBuildStepByRun("build:exe")).toBeDefined();
   });
 
   it("keeps contributing docs aligned with verification and slow-lane contracts", () => {
@@ -158,13 +150,11 @@ describe("CI workflow (.github/workflows/ci.yml)", () => {
 describe("PR checks workflow (.github/workflows/pr-checks.yml)", () => {
   let workflow: any;
   let content: string;
-  let steps: any[];
 
   beforeAll(() => {
     const result = loadWorkflow("pr-checks.yml");
     workflow = result.parsed;
     content = result.content;
-    steps = workflow.jobs?.checks?.steps ?? [];
   });
 
   it("is valid YAML", () => {
@@ -176,10 +166,12 @@ describe("PR checks workflow (.github/workflows/pr-checks.yml)", () => {
     expect(workflow.on?.pull_request?.branches).toContain("main");
   });
 
-  it("runs explicit full-suite tests (not changed-only root test)", () => {
-    const testStep = steps.find((step: any) => step.name?.includes("Test"));
-    expect(testStep).toBeDefined();
-    expect(testStep.run).toBe("pnpm test:full");
+  it("uses the same deterministic test sharding command as manual CI", () => {
+    expect(workflow.jobs?.lint).toBeDefined();
+    expect(workflow.jobs?.typecheck).toBeDefined();
+    expect(workflow.jobs?.["test-shards"]).toBeDefined();
+    expect(workflow.jobs?.["test-shards"]?.strategy?.matrix?.shard).toEqual([1, 2, 3]);
+    expect(content).toContain("pnpm test:ci:shard --shard ${{ matrix.shard }} --total 3");
     expect(content).not.toContain("run: pnpm test\n");
   });
 });

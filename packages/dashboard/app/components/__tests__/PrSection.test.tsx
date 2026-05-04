@@ -204,11 +204,12 @@ describe("PrSection", () => {
       expect(screen.queryByRole("button", { name: "Create PR" })).toBeNull();
     });
 
-    it("preserves manual PR creation behavior when auto-merge is disabled", () => {
-      render(
+    it("shows manual PR-footer hint only when manual PR flow is active", () => {
+      const { rerender } = render(
         <PrSection
           taskId="FN-001"
           autoMerge={false}
+          isManualPrFlow={true}
           prAuthAvailable={false}
           onPrCreated={mockOnPrCreated}
           onPrUpdated={mockOnPrUpdated}
@@ -217,8 +218,23 @@ describe("PrSection", () => {
       );
 
       expect(screen.getByRole("button", { name: "Create PR" })).toBeDefined();
+      expect(screen.getByText(/Use the footer action to run PR-first completion/i)).toBeDefined();
       expect(screen.getByText(/gh auth login/i)).toBeDefined();
       expect(screen.queryByText("Auto-merge will handle this task automatically.")).toBeNull();
+
+      rerender(
+        <PrSection
+          taskId="FN-001"
+          autoMerge={false}
+          isManualPrFlow={false}
+          prAuthAvailable={false}
+          onPrCreated={mockOnPrCreated}
+          onPrUpdated={mockOnPrUpdated}
+          addToast={mockAddToast}
+        />
+      );
+
+      expect(screen.queryByText(/Use the footer action to run PR-first completion/i)).toBeNull();
     });
   });
 

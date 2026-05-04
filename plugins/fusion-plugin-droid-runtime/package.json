@@ -1,9 +1,13 @@
 {
   "name": "@fusion-plugin-examples/droid-runtime",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "type": "module",
   "description": "Droid runtime plugin for Fusion",
-  "keywords": ["fusion-plugin", "droid", "runtime"],
+  "keywords": [
+    "fusion-plugin",
+    "droid",
+    "runtime"
+  ],
   "exports": {
     ".": {
       "types": "./src/index.ts",

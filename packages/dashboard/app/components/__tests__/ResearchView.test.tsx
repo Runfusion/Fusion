@@ -96,7 +96,9 @@ describe("ResearchView", () => {
     exportRun: vi.fn().mockResolvedValue({ filename: "run.md", content: "# test", format: "markdown" }),
     createTaskFromRun: vi.fn().mockResolvedValue({}),
     attachRunToTask: vi.fn().mockResolvedValue({}),
-    statusCounts: { pending: 0, running: 0, completed: 0, failed: 0, cancelled: 0 },
+    uiError: null,
+    runActionState: { cancelable: true, retryable: true, isTransitioning: false, blockingReason: undefined },
+    statusCounts: { queued: 0, running: 0, cancelling: 0, retry_waiting: 0, completed: 0, failed: 0, cancelled: 0, timed_out: 0, retry_exhausted: 0 },
     refresh: vi.fn(),
   };
 
@@ -133,7 +135,7 @@ describe("ResearchView", () => {
         results: { summary: "Summary", findings: [], citations: ["https://example.com"] },
       },
       selectedRunId: "RR-1",
-      statusCounts: { pending: 0, running: 1, completed: 0, failed: 0, cancelled: 0 },
+      statusCounts: { queued: 0, running: 1, cancelling: 0, retry_waiting: 0, completed: 0, failed: 0, cancelled: 0, timed_out: 0, retry_exhausted: 0 },
     });
     mockFetchAuthStatus.mockResolvedValue({ providers: [{ id: "openrouter", type: "api_key", authenticated: true }] });
 
@@ -144,9 +146,55 @@ describe("ResearchView", () => {
     expect(screen.getByText("Started")).toBeInTheDocument();
   });
 
+  it("disables cancel/retry when lifecycle state blocks transitions", async () => {
+    mockUseResearch.mockReturnValue({
+      ...baseHookValue,
+      runs: [{ id: "RR-1", title: "t", query: "q", status: "completed" }],
+      selectedRun: {
+        id: "RR-1",
+        title: "t",
+        query: "q",
+        status: "completed",
+        events: [{ id: "E-1", message: "completed" }],
+        results: { summary: "Summary", findings: [], citations: [] },
+      },
+      selectedRunId: "RR-1",
+      runActionState: { cancelable: false, retryable: false, isTransitioning: false, blockingReason: "Completed runs cannot be cancelled" },
+    });
+    mockFetchAuthStatus.mockResolvedValue({ providers: [{ id: "openrouter", type: "api_key", authenticated: true }] });
+
+    render(<ResearchView projectId="p1" />);
+    expect(await screen.findByText("Cancel")).toBeDisabled();
+    expect(screen.getByText("Retry")).toBeDisabled();
+    expect(screen.getByText("Completed runs cannot be cancelled")).toBeInTheDocument();
+  });
+
+  it("shows actionable uiError guidance", async () => {
+    mockUseResearch.mockReturnValue({
+      ...baseHookValue,
+      runs: [{ id: "RR-1", title: "t", query: "q", status: "failed" }],
+      selectedRun: {
+        id: "RR-1",
+        title: "t",
+        query: "q",
+        status: "failed",
+        events: [],
+        results: { summary: "Summary", findings: [], citations: [] },
+      },
+      selectedRunId: "RR-1",
+      uiError: { message: "Missing credentials", code: "MISSING_CREDENTIALS", setupHint: "Configure provider key" },
+    });
+    mockFetchAuthStatus.mockResolvedValue({ providers: [{ id: "openrouter", type: "api_key", authenticated: true }] });
+    const onOpenSettings = vi.fn();
+
+    render(<ResearchView projectId="p1" onOpenSettings={onOpenSettings} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Missing credentials");
+    fireEvent.click(screen.getByRole("button", { name: "Open Authentication Settings" }));
+    expect(onOpenSettings).toHaveBeenCalledWith("authentication");
+  });
+
   it("triggers lifecycle/task/export actions", async () => {
     const cancelRun = vi.fn().mockResolvedValue({});
-    const retryRun = vi.fn().mockResolvedValue({});
     const createTaskFromRun = vi.fn().mockResolvedValue({});
     const attachRunToTask = vi.fn().mockResolvedValue({});
     const exportRun = vi.fn().mockResolvedValue({ filename: "run.md", content: "# test", format: "markdown" });
@@ -164,7 +212,6 @@ describe("ResearchView", () => {
       },
       selectedRunId: "RR-1",
       cancelRun,
-      retryRun,
       createTaskFromRun,
       attachRunToTask,
       exportRun,
@@ -175,7 +222,6 @@ describe("ResearchView", () => {
     await screen.findByText("Cancel");
 
     fireEvent.click(screen.getByText("Cancel"));
-    fireEvent.click(screen.getByText("Retry"));
     fireEvent.click(screen.getByText("Export MD"));
 
     fireEvent.click(screen.getAllByText("Create Task")[0]);
@@ -184,7 +230,6 @@ describe("ResearchView", () => {
 
     await waitFor(() => {
       expect(cancelRun).toHaveBeenCalled();
-      expect(retryRun).toHaveBeenCalled();
       expect(createTaskFromRun).toHaveBeenCalled();
       expect(exportRun).toHaveBeenCalled();
     });

@@ -2948,12 +2948,16 @@ describe("ChatView mobile CSS contract", () => {
 
   it("mobile keeps ChatView dialog backdrop centered with safe-area padding", () => {
     expect(mobileRuleContains(".chat-view-dialog-backdrop", "align-items: center")).toBe(true);
+    expect(mobileRuleContains(".chat-view-dialog-backdrop", "justify-content: center")).toBe(true);
+    expect(mobileRuleContains(".chat-view-dialog-backdrop", "overflow-y: auto")).toBe(true);
     expect(mobileRuleContains(".chat-view-dialog-backdrop", "padding-top: max(var(--space-md), env(safe-area-inset-top, 0px))")).toBe(true);
     expect(mobileRuleContains(".chat-view-dialog-backdrop", "padding-bottom: max(var(--space-md), env(safe-area-inset-bottom, 0px))")).toBe(true);
   });
 
   it("mobile constrains ChatView dialog height and allows internal scrolling", () => {
     expect(mobileRuleContains(".chat-view-dialog", "max-height: calc(100dvh - (var(--space-md) * 2) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))")).toBe(true);
+    expect(mobileRuleContains(".chat-view-dialog", "display: flex")).toBe(true);
+    expect(mobileRuleContains(".chat-view-dialog", "flex-direction: column")).toBe(true);
     expect(mobileRuleContains(".chat-view-dialog", "overflow-y: auto")).toBe(true);
   });
 

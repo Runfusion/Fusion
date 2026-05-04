@@ -69,12 +69,14 @@ fn research retry RR-001 --json
 | `fn research show <run-id> [--json]` | Show one run with timestamps, summary, and error details. |
 | `fn research export <run-id> [--format <json\|markdown\|pdf>] [--output <path>] [--json]` | Export run results and persist an export record. |
 | `fn research cancel <run-id> [--json]` | Request cancellation for an active run. |
-| `fn research retry <run-id> [--json]` | Create a new retry run from a failed/cancelled run. |
+| `fn research retry <run-id> [--json]` | Create a new retry run from a `failed`/`timed_out` run when lifecycle marks it retryable. |
 
 Disabled/setup behavior mirrors dashboard and agent surfaces:
 - Feature disabled → `FEATURE_DISABLED` (enable project/global research settings)
 - Missing credentials → `MISSING_CREDENTIALS` (configure provider auth)
 - Provider unavailable or cooldown/rate limit → `PROVIDER_UNAVAILABLE` / `RATE_LIMITED` with retry metadata
+- Invalid cancel/retry transitions are reported explicitly (`INVALID_TRANSITION`) with current status context
+- Retry budget exhaustion and non-retryable failures are reported explicitly (`RETRY_EXHAUSTED`, `NON_RETRYABLE_PROVIDER_ERROR`)
 - Non-retryable failures and invalid state transitions are surfaced as structured errors instead of generic failures
 
 ---

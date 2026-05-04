@@ -381,6 +381,18 @@ describe("MobileNavBar", () => {
     expect(screen.getByTestId("mobile-more-item-insights")).toBeDefined();
   });
 
+  it("shows research in more sheet when experimentalFeatures.researchView is true", () => {
+    render(<MobileNavBar {...createDefaultProps()} experimentalFeatures={{ researchView: true }} />);
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.getByTestId("mobile-more-item-research")).toBeDefined();
+  });
+
+  it("does not show research in more sheet when experimentalFeatures.researchView is false", () => {
+    render(<MobileNavBar {...createDefaultProps()} experimentalFeatures={{ researchView: false }} />);
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    expect(screen.queryByTestId("mobile-more-item-research")).toBeNull();
+  });
+
   it("shows nodes in more sheet only when nodesView is enabled", () => {
     const disabledProps = createDefaultProps();
     const { unmount } = render(<MobileNavBar {...disabledProps} experimentalFeatures={{}} />);
@@ -425,6 +437,17 @@ describe("MobileNavBar", () => {
 
     expect(container.querySelector(".mobile-more-sheet")).toBeNull();
     expect(props.onChangeView).toHaveBeenCalledWith("insights");
+  });
+
+  it("research item in more sheet calls onChangeView with 'research'", () => {
+    const props = createDefaultProps();
+    const { container } = render(<MobileNavBar {...props} experimentalFeatures={{ researchView: true }} />);
+
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+    fireEvent.click(screen.getByTestId("mobile-more-item-research"));
+
+    expect(container.querySelector(".mobile-more-sheet")).toBeNull();
+    expect(props.onChangeView).toHaveBeenCalledWith("research");
   });
 
   it("activity log item in more sheet calls onOpenActivityLog", () => {

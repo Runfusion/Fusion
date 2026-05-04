@@ -230,9 +230,10 @@ describe("PluginManager", () => {
     expect(screen.getByText("Hermes Runtime")).toBeTruthy();
     expect(screen.getByText("Paperclip Runtime")).toBeTruthy();
     expect(screen.getByText("OpenClaw Runtime")).toBeTruthy();
+    expect(screen.getByText("Droid Runtime")).toBeTruthy();
   });
 
-  it("installs bundled runtime plugins from the bundled runtime section", async () => {
+  it("installs bundled plugins from the bundled plugin section", async () => {
     render(<PluginManager addToast={addToast} />);
 
     await waitFor(() => {
@@ -264,7 +265,7 @@ describe("PluginManager", () => {
     expect(screen.getByText("Test Plugin B")).toBeTruthy();
     expect(screen.getByText("v1.0.0")).toBeTruthy();
     expect(screen.getByText("v2.0.0")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Bundled Runtime Plugins" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Bundled Plugins" })).toBeTruthy();
     expect(screen.getAllByText("Not installed").length).toBeGreaterThan(0);
   });
 

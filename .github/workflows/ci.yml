@@ -5,20 +5,16 @@ on:
   workflow_dispatch:
 
 jobs:
-  ci:
-    name: Build & Test
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          node-version: "24"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
-        with:
-          node-version: "24"
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -29,8 +25,62 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Verify workspace bootstrap contract (lint -> test -> build)
-        run: pnpm verify:workspace
+      - name: Lint
+        run: pnpm lint
+
+  test-shards:
+    name: Test shard ${{ matrix.shard }}/3
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Test (deterministic shard)
+        run: pnpm test:ci:shard --shard ${{ matrix.shard }} --total 3
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [lint, test-shards]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace
+        run: pnpm build
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2

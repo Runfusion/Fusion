@@ -2,11 +2,14 @@
 import { describe, it, expect, vi } from "vitest";
 import express from "express";
 import { get as performGet, request as performRequest } from "../test-request.js";
+import { ResearchLifecycleError } from "@fusion/core";
 import { createResearchRouter } from "../research-routes.js";
 
 function createMockStore(options?: {
   taskColumn?: string;
   runId?: string;
+  runStatus?: string;
+  runLifecycle?: Record<string, unknown>;
   missingRun?: boolean;
   missingFinding?: boolean;
   missingTask?: boolean;
@@ -17,7 +20,7 @@ function createMockStore(options?: {
     id: options?.runId ?? "RR-1",
     query: "test",
     topic: "test",
-    status: "queued",
+    status: options?.runStatus ?? "queued",
     sources: [],
     events: [],
     tags: [],
@@ -34,6 +37,7 @@ function createMockStore(options?: {
         },
       ],
     },
+    lifecycle: options?.runLifecycle,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -47,7 +51,15 @@ function createMockStore(options?: {
     updateStatus: vi.fn(),
     updateRun: vi.fn(),
     requestCancellation: vi.fn(() => ({ ...run, status: "cancelling" })),
-    createRetryRun: vi.fn(() => ({ ...run, id: "RR-2", status: "retry_waiting" })),
+    createRetryRun: vi.fn(() => {
+      if (run.status === "retry_exhausted") {
+        throw new ResearchLifecycleError(`Run ${run.id} exhausted retries`, "not_retryable");
+      }
+      if (run.status !== "failed" && run.status !== "timed_out" && run.status !== "queued") {
+        throw new ResearchLifecycleError(`Run ${run.id} is not retryable from status ${run.status}`, "invalid_transition");
+      }
+      return { ...run, id: "RR-2", status: "retry_waiting" };
+    }),
     appendEvent: vi.fn(),
     addSource: vi.fn(),
     searchRuns: vi.fn(() => []),
@@ -122,6 +134,43 @@ describe("research-routes", () => {
     expect(store.getResearchStore().requestCancellation).toHaveBeenCalledWith("RR-1");
     expect(store.getResearchStore().createRetryRun).toHaveBeenCalledWith("RR-1");
   });
+
+  it.each(["completed", "cancelled", "timed_out", "retry_exhausted"])(
+    "returns INVALID_TRANSITION when cancelling terminal run status %s",
+    async (status) => {
+      const app = express();
+      app.use(express.json());
+      app.use(createResearchRouter(createMockStore({ runStatus: status }) as any));
+
+      const response = await performRequest(app, "POST", "/runs/RR-1/cancel");
+
+      expect(response.status).toBe(409);
+      expect(response.body.details?.code).toBe("INVALID_TRANSITION");
+    },
+  );
+
+  it("returns RETRY_EXHAUSTED when retry limit is exhausted", async () => {
+    const app = express();
+    app.use(express.json());
+    app.use(createResearchRouter(createMockStore({ runStatus: "retry_exhausted", runLifecycle: { errorCode: "RETRY_EXHAUSTED", retryable: false } }) as any));
+
+    const response = await performRequest(app, "POST", "/runs/RR-1/retry");
+
+    expect(response.status).toBe(409);
+    expect(response.body.details?.code).toBe("RETRY_EXHAUSTED");
+  });
+
+  it("returns INVALID_TRANSITION when retrying from a non-retryable status", async () => {
+    const app = express();
+    app.use(express.json());
+    app.use(createResearchRouter(createMockStore({ runStatus: "completed" }) as any));
+
+    const response = await performRequest(app, "POST", "/runs/RR-1/retry");
+
+    expect(response.status).toBe(409);
+    expect(response.body.details?.code).toBe("INVALID_TRANSITION");
+  });
+
   it("creates task from finding with research provenance", async () => {
     const store = createMockStore();
     const app = express();

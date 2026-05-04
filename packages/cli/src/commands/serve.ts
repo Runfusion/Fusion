@@ -57,6 +57,11 @@ import {
   resolveDroidCliExtensionPaths,
   setCachedDroidCliResolution,
 } from "./droid-cli-extension.js";
+import {
+  getCachedLlamaCppResolution,
+  resolveLlamaCppExtensionPaths,
+  setCachedLlamaCppResolution,
+} from "./llama-cpp-extension.js";
 import { resolveSelfExtension } from "./self-extension.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
 import { ensureBundledDependencyGraphPluginInstalled } from "../plugins/bundled-plugin-install.js";
@@ -539,6 +544,24 @@ export async function runServe(
       }
     })();
 
+    const llamaCppPaths = await (async () => {
+      try {
+        const globalSettings = await store.getGlobalSettingsStore().getSettings();
+        const result = resolveLlamaCppExtensionPaths(globalSettings);
+        setCachedLlamaCppResolution(result.resolution);
+        if (result.warning) {
+          console.warn(`[extensions] llama-cpp: ${result.warning}`);
+        }
+        return result.paths;
+      } catch (err) {
+        console.warn(
+          `[extensions] Unable to evaluate useLlamaCpp setting: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        setCachedLlamaCppResolution(null);
+        return [];
+      }
+    })();
+
     // Inject the cli's own extension so fn_* tools register globally without
     // requiring `pi install npm:@runfusion/fusion`.
     const selfExtension = resolveSelfExtension();
@@ -555,6 +578,7 @@ export async function runServe(
         ...packageExtensionPaths,
         ...claudeCliPaths,
         ...droidCliPaths,
+        ...llamaCppPaths,
       ],
       cwd,
       join(cwd, ".fusion", "disabled-auto-extension-discovery"),
@@ -772,6 +796,17 @@ export async function runServe(
     },
     getDroidCliExtensionStatus: () => {
       const r = getCachedDroidCliResolution();
+      if (!r) return null;
+      if (r.status === "ok") {
+        return { status: "ok", path: r.path, packageVersion: r.packageVersion };
+      }
+      if (r.status === "not-installed") {
+        return { status: "not-installed" };
+      }
+      return { status: r.status, reason: r.reason };
+    },
+    getLlamaCppExtensionStatus: () => {
+      const r = getCachedLlamaCppResolution();
       if (!r) return null;
       if (r.status === "ok") {
         return { status: "ok", path: r.path, packageVersion: r.packageVersion };

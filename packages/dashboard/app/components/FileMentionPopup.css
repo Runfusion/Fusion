@@ -320,6 +320,8 @@
      overlays, so scope the compact override to ChatView's modifier class only. */
   .chat-view-dialog-backdrop {
     align-items: center;
+    justify-content: center;
+    overflow-y: auto;
     padding: var(--space-md);
     padding-top: max(var(--space-md), env(safe-area-inset-top, 0px));
     padding-bottom: max(var(--space-md), env(safe-area-inset-bottom, 0px));
@@ -329,6 +331,8 @@
     width: 100%;
     max-width: min(100%, calc(var(--space-xl) * 16));
     max-height: calc(100dvh - (var(--space-md) * 2) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    display: flex;
+    flex-direction: column;
     overflow-y: auto;
   }
 }

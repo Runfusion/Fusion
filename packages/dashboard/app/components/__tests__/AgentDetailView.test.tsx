@@ -36,6 +36,7 @@ vi.mock("../../api", () => ({
   fetchModels: vi.fn(),
   fetchPluginRuntimes: vi.fn(),
   upgradeAgentHeartbeatProcedure: vi.fn(),
+  updateGlobalSettings: vi.fn(),
 }));
 
 vi.mock("../AgentLogViewer", () => ({
@@ -56,7 +57,7 @@ vi.mock("../AgentLogViewer", () => ({
 }));
 
 vi.mock("../CustomModelDropdown", () => ({
-  CustomModelDropdown: ({ models, value, onChange, disabled, label, placeholder, id }: {
+  CustomModelDropdown: ({ models, value, onChange, disabled, label, placeholder, id, favoriteProviders = [], favoriteModels = [] }: {
     models: Array<{ provider: string; id: string }> ;
     value: string;
     onChange: (v: string) => void;
@@ -64,10 +65,14 @@ vi.mock("../CustomModelDropdown", () => ({
     label: string;
     placeholder?: string;
     id?: string;
+    favoriteProviders?: string[];
+    onToggleFavorite?: (provider: string) => void;
+    favoriteModels?: string[];
+    onToggleModelFavorite?: (modelId: string) => void;
   }) => {
     const selectId = id ?? "custom-model-dropdown";
     return (
-      <div data-testid="custom-model-dropdown">
+      <div data-testid="custom-model-dropdown" data-favorite-providers={favoriteProviders.join(",")} data-favorite-models={favoriteModels.join(",")}>
         <label htmlFor={selectId}>{label}</label>
         <select
           id={selectId}
@@ -112,7 +117,7 @@ vi.mock("../../hooks/useConfirm", () => ({
   useConfirm: () => ({ confirm: mockConfirm }),
 }));
 
-import { fetchAgent, fetchAgents, updateAgent, updateAgentState, deleteAgent, fetchAgentChildren, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchDiscoveredSkills, fetchModels, fetchPluginRuntimes, fetchAgentLogsWithMeta, upgradeAgentHeartbeatProcedure } from "../../api";
+import { fetchAgent, fetchAgents, updateAgent, updateAgentState, deleteAgent, fetchAgentChildren, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchDiscoveredSkills, fetchModels, fetchPluginRuntimes, fetchAgentLogsWithMeta, upgradeAgentHeartbeatProcedure, updateGlobalSettings } from "../../api";
 import { subscribeSse } from "../../sse-bus";
 
 const mockFetchAgent = vi.mocked(fetchAgent);
@@ -138,6 +143,7 @@ const mockFetchModels = vi.mocked(fetchModels);
 const mockFetchPluginRuntimes = vi.mocked(fetchPluginRuntimes);
 const mockFetchAgentLogsWithMeta = vi.mocked(fetchAgentLogsWithMeta);
 const mockUpgradeAgentHeartbeatProcedure = vi.mocked(upgradeAgentHeartbeatProcedure);
+const mockUpdateGlobalSettings = vi.mocked(updateGlobalSettings);
 const mockSubscribeSse = vi.mocked(subscribeSse);
 
 const MOCK_SKILLS = [
@@ -239,6 +245,7 @@ describe("AgentDetailView", () => {
       heartbeatProcedurePath: ".fusion/agents/agent-001/HEARTBEAT.md",
       procedureFileSeeded: true,
     });
+    mockUpdateGlobalSettings.mockResolvedValue({} as any);
   });
 
   it("shows loading state initially", () => {
@@ -269,7 +276,31 @@ describe("AgentDetailView", () => {
 
     expect(document.querySelector(".agent-detail-overlay")).toBeNull();
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Back to agents" })).toBeNull();
     expect(screen.getByRole("heading", { name: "Test Agent" })).toBeInTheDocument();
+  });
+
+  it("renders inline mobile back affordance inside detail header when enabled", async () => {
+    const onClose = vi.fn();
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={onClose}
+        addToast={vi.fn()}
+        inline
+        showInlineBackButton
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Back to agents")).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByLabelText("Back to agents"));
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    const identityContainer = document.querySelector(".agent-detail-identity");
+    expect(identityContainer?.querySelector(".agent-detail-inline-back")).toBeTruthy();
   });
 
   it("keeps modal mode as dialog with close button", async () => {
@@ -841,14 +872,20 @@ describe("AgentDetailView", () => {
     });
   });
 
-  it("keeps desktop header actions on one row and mobile wraps them safely", () => {
+  it("keeps desktop header actions on one row and mobile uses explicit two-row header contracts", () => {
     const stylesContent = loadAllAppCss();
 
     expect(stylesContent).toContain(".agent-detail-header-actions {");
     expect(stylesContent).toContain("justify-content: flex-end;");
+    expect(stylesContent).toContain(".agent-detail-inline-back {");
 
-    const mobileHeaderActionsBlock = /@media \(max-width: 768px\)\s*\{[\s\S]*?\.agent-detail-header-actions\s*\{[\s\S]*?flex-wrap: wrap;[\s\S]*?\}/;
-    expect(stylesContent).toMatch(mobileHeaderActionsBlock);
+    expect(stylesContent).toContain("@media (max-width: 768px)");
+    expect(stylesContent).toContain(".agent-detail-header {");
+    expect(stylesContent).toContain("grid-template-rows: auto auto;");
+    expect(stylesContent).toContain(".agent-detail-identity {");
+    expect(stylesContent).toContain("grid-row: 1;");
+    expect(stylesContent).toContain(".agent-detail-header-actions {");
+    expect(stylesContent).toContain("grid-row: 2;");
   });
 
   it("shows statistics section on dashboard", async () => {
@@ -1673,6 +1710,31 @@ describe("AgentDetailView", () => {
 
       const modelSelect = await screen.findByLabelText("Agent Model") as HTMLSelectElement;
       expect(modelSelect.value).toBe("openai/gpt-4o");
+    });
+
+    it("passes favorited providers and models to model dropdown", async () => {
+      mockFetchModels.mockResolvedValueOnce({
+        models: [
+          { provider: "openai", id: "gpt-4o", name: "gpt-4o", reasoning: false, contextWindow: 128000 },
+        ],
+        favoriteProviders: ["openai"],
+        favoriteModels: ["openai/gpt-4o"],
+      });
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToSettings(user);
+
+      const dropdown = await screen.findByTestId("custom-model-dropdown");
+      expect(dropdown).toHaveAttribute("data-favorite-providers", "openai");
+      expect(dropdown).toHaveAttribute("data-favorite-models", "openai/gpt-4o");
     });
 
     it("shows runtime mode selected when agent runtimeConfig has runtimeHint", async () => {

@@ -1403,6 +1403,13 @@ export interface GlobalSettings {
    *  by the dashboard auth toggle. Setting this field explicitly (true/false)
    *  always wins. */
   useDroidCli?: boolean;
+  /** When true, enable llama.cpp model-provider support (provider ID: `llama-server`)
+   *  via Fusion's bundled `@fusion/pi-llama-cpp` extension.
+   *
+   *  When left undefined, llama.cpp routing stays disabled unless explicitly enabled
+   *  by the dashboard auth toggle. Setting this field explicitly (true/false)
+   *  always wins. */
+  useLlamaCpp?: boolean;
   /** Global baseline AI model provider for task execution (executor agent).
    *  This is the global lane that project-level `executionProvider` can override.
    *  Must be set together with `executionGlobalModelId`. Falls back to

@@ -11,6 +11,7 @@ interface PrSectionProps {
   prInfo?: PrInfo;
   automationStatus?: string | null;
   autoMerge?: boolean;
+  isManualPrFlow?: boolean;
   prAuthAvailable: boolean;
   onPrCreated: (prInfo: PrInfo) => void;
   onPrUpdated: (prInfo: PrInfo) => void;
@@ -29,6 +30,7 @@ export function PrSection({
   prInfo,
   automationStatus,
   autoMerge = false,
+  isManualPrFlow = false,
   prAuthAvailable,
   onPrCreated,
   onPrUpdated,
@@ -168,6 +170,11 @@ export function PrSection({
           <Plus size={14} className="pr-section-icon--sm" />
           Create PR
         </button>
+        {isManualPrFlow && (
+          <div className="pr-hint pr-hint--subtle">
+            Use the footer action to run PR-first completion for this task.
+          </div>
+        )}
         {!prAuthAvailable && (
           <div className="pr-hint pr-hint--subtle">
             Run <code>gh auth login</code> to enable PR creation.

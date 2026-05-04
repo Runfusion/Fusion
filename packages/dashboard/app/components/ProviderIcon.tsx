@@ -1,5 +1,9 @@
 import { Cpu } from "lucide-react";
 
+function LlamaCppIcon({ size, color, label = "llama.cpp" }: { size: number; color: string; label?: string }) {
+  return <Cpu size={size} color={color} aria-label={label} data-testid="llama-cpp-icon" />;
+}
+
 export interface ProviderIconProps {
   provider: string;
   size?: "sm" | "md" | "lg";
@@ -653,6 +657,8 @@ const providerConfig: Record<
   "claude-cli": { component: ClaudeCliIcon, color: "var(--provider-anthropic)", label: "Anthropic — via Claude CLI" },
   "pi-claude-cli": { component: ClaudeCliIcon, color: "var(--provider-anthropic)", label: "Anthropic — via Claude CLI" },
   "droid-cli": { component: DroidCliIcon, color: "var(--provider-openai)", label: "Factory AI — via Droid CLI" },
+  "llama-cpp": { component: LlamaCppIcon, color: "var(--provider-ollama)", label: "llama.cpp" },
+  "llama-server": { component: LlamaCppIcon, color: "var(--provider-ollama)", label: "llama.cpp" },
 
   openai: { component: OpenAIIcon, color: "var(--provider-openai)" },
   "openai-codex": { component: OpenAIIcon, color: "var(--provider-openai)", label: "OpenAI Codex" }, // OpenAI alias

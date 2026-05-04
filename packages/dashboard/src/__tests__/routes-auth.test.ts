@@ -31,6 +31,7 @@ import { SESSION_CLEANUP_DEFAULT_MAX_AGE_MS } from "../ai-session-store.js";
 import * as usageModule from "../usage.js";
 import * as claudeCliProbeModule from "../claude-cli-probe.js";
 import * as droidCliProbeModule from "../droid-cli-probe.js";
+import * as llamaCppProbeModule from "../llama-cpp-probe.js";
 import * as projectStoreResolver from "../project-store-resolver.js";
 import * as terminalServiceModule from "../terminal-service.js";
 import { get as performGet, request as performRequest } from "../test-request.js";
@@ -562,7 +563,7 @@ describe("GET /auth/status", () => {
     expect(res.status).toBe(200);
     // Filter out synthetic CLI providers — they have dedicated route tests.
     // Structural assertions here are about OAuth + API-key paths only.
-    const providers = res.body.providers.filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli");
+    const providers = res.body.providers.filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli" && p.id !== "llama-cpp");
     expect(providers).toEqual([
       { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth", loginInProgress: false },
       { id: "openrouter", name: "OpenRouter", authenticated: false, type: "api_key" },
@@ -587,7 +588,7 @@ describe("GET /auth/status", () => {
     const res = await GET(buildApp(), "/api/auth/status");
 
     expect(res.status).toBe(200);
-    const providers = res.body.providers.filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli");
+    const providers = res.body.providers.filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli" && p.id !== "llama-cpp");
     expect(providers).toEqual([
       { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth", loginInProgress: false },
       { id: "github-copilot", name: "GitHub Copilot", authenticated: false, type: "oauth", loginInProgress: false },
@@ -3143,3 +3144,182 @@ describe("Pause/Unpause endpoints", () => {
 });
 
 // --- GitHub Import route tests ---
+
+describe("llama.cpp auth routes", () => {
+  let store: TaskStore;
+  let authStorage: AuthStorageLike;
+
+  function buildApp(options?: Parameters<typeof createApiRoutes>[1]) {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { authStorage, ...options }));
+    return app;
+  }
+
+  beforeEach(() => {
+    store = createMockStore({
+      updateGlobalSettings: vi.fn().mockResolvedValue({ useLlamaCpp: true }),
+      getGlobalSettingsStore: vi.fn().mockReturnValue({
+        ...createMockGlobalSettingsStore(),
+        getSettings: vi.fn().mockResolvedValue({ useLlamaCpp: false }),
+      }),
+    });
+    authStorage = createMockAuthStorage();
+    vi.spyOn(llamaCppProbeModule, "probeLlamaCpp").mockResolvedValue({
+      reachable: true,
+      url: "http://127.0.0.1:8080",
+      hasApiKey: false,
+    });
+  });
+
+  it("enables llama.cpp when probe passes", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/llama-cpp", JSON.stringify({ enabled: true }), {
+      "content-type": "application/json",
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ enabled: true, restartRequired: false });
+    expect(store.updateGlobalSettings).toHaveBeenCalledWith({ useLlamaCpp: true });
+  });
+
+  it("returns 400 when enabling with unreachable server", async () => {
+    vi.spyOn(llamaCppProbeModule, "probeLlamaCpp").mockResolvedValue({
+      reachable: false,
+      url: "http://127.0.0.1:8080",
+      hasApiKey: false,
+      reason: "llama.cpp server did not return a healthy response",
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/llama-cpp", JSON.stringify({ enabled: true }), {
+      "content-type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Cannot enable llama.cpp routing");
+  });
+
+  it("disabling works without probing the server", async () => {
+    const probeSpy = vi.spyOn(llamaCppProbeModule, "probeLlamaCpp");
+
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/llama-cpp", JSON.stringify({ enabled: false }), {
+      "content-type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(probeSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for non-boolean enabled", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/llama-cpp", JSON.stringify({ enabled: "yes" }), {
+      "content-type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("returns llama.cpp provider status including API key flag", async () => {
+    vi.spyOn(llamaCppProbeModule, "probeLlamaCpp").mockResolvedValue({
+      reachable: true,
+      url: "http://127.0.0.1:8080",
+      hasApiKey: true,
+    });
+
+    const res = await GET(buildApp(), "/api/providers/llama-cpp/status");
+    expect(res.status).toBe(200);
+    expect(res.body.server.url).toBe("http://127.0.0.1:8080");
+    expect(res.body.server.hasApiKey).toBe(true);
+    expect(res.body.ready).toBe(false);
+  });
+
+  it("marks llama.cpp status not ready when extension resolution fails", async () => {
+    const res = await GET(
+      buildApp({
+        getLlamaCppExtensionStatus: () => ({ status: "error", reason: "extension failed" }),
+      } as Parameters<typeof createApiRoutes>[1]),
+      "/api/providers/llama-cpp/status",
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.ready).toBe(false);
+    expect(res.body.extension.status).toBe("error");
+  });
+
+  it("GET /auth/status includes llama-cpp provider with cli type", async () => {
+    store.getGlobalSettingsStore = vi.fn().mockReturnValue({
+      ...createMockGlobalSettingsStore(),
+      getSettings: vi.fn().mockResolvedValue({ useLlamaCpp: true }),
+    });
+
+    const res = await GET(buildApp(), "/api/auth/status");
+    expect(res.status).toBe(200);
+    expect(res.body.providers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "llama-cpp",
+          name: "llama.cpp — via HTTP server",
+          type: "cli",
+          authenticated: true,
+        }),
+      ]),
+    );
+  });
+
+  it("GET /auth/status marks llama-cpp unauthenticated when extension status is not ok", async () => {
+    store.getGlobalSettingsStore = vi.fn().mockReturnValue({
+      ...createMockGlobalSettingsStore(),
+      getSettings: vi.fn().mockResolvedValue({ useLlamaCpp: true }),
+    });
+
+    const res = await GET(
+      buildApp({ getLlamaCppExtensionStatus: () => ({ status: "error", reason: "bad ext" }) } as Parameters<
+        typeof createApiRoutes
+      >[1]),
+      "/api/auth/status",
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.providers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "llama-cpp",
+          authenticated: false,
+          type: "cli",
+        }),
+      ]),
+    );
+  });
+
+  it("fires onUseLlamaCppToggled hook on transition", async () => {
+    const onUseLlamaCppToggled = vi.fn();
+
+    const res = await REQUEST(
+      buildApp({ onUseLlamaCppToggled } as Parameters<typeof createApiRoutes>[1]),
+      "POST",
+      "/api/auth/llama-cpp",
+      JSON.stringify({ enabled: true }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(onUseLlamaCppToggled).toHaveBeenCalledWith(false, true);
+  });
+
+  it("PUT /settings/global with useLlamaCpp fires onUseLlamaCppToggled", async () => {
+    const onUseLlamaCppToggled = vi.fn();
+    store.updateGlobalSettings = vi.fn().mockResolvedValue({ useLlamaCpp: true });
+    store.getGlobalSettingsStore = vi.fn().mockReturnValue({
+      ...createMockGlobalSettingsStore(),
+      getSettings: vi.fn().mockResolvedValue({ useLlamaCpp: false, useClaudeCli: false, useDroidCli: false }),
+    });
+
+    const res = await REQUEST(
+      buildApp({ onUseLlamaCppToggled } as Parameters<typeof createApiRoutes>[1]),
+      "PUT",
+      "/api/settings/global",
+      JSON.stringify({ useLlamaCpp: true }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(onUseLlamaCppToggled).toHaveBeenCalledWith(false, true);
+  });
+});

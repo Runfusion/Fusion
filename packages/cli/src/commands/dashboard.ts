@@ -31,6 +31,7 @@ import { aiMergeTask, MissionAutopilot, MissionExecutionLoop, HeartbeatMonitor, 
 import { AuthStorage, DefaultPackageManager, ModelRegistry, SettingsManager, discoverAndLoadExtensions, createExtensionRuntime } from "@mariozechner/pi-coding-agent";
 import {
   getMergeStrategy,
+  getTaskBranchName,
   processPullRequestMergeTask,
 } from "./task-lifecycle.js";
 import { promptForPort } from "./port-prompt.js";
@@ -52,6 +53,11 @@ import {
   resolveDroidCliExtensionPaths,
   setCachedDroidCliResolution,
 } from "./droid-cli-extension.js";
+import {
+  getCachedLlamaCppResolution,
+  resolveLlamaCppExtensionPaths,
+  setCachedLlamaCppResolution,
+} from "./llama-cpp-extension.js";
 import { getCachedUpdateStatus, isUpdateCheckEnabled } from "../update-cache.js";
 import { resolveSelfExtension } from "./self-extension.js";
 import { ensureBundledDependencyGraphPluginInstalled } from "../plugins/bundled-plugin-install.js";
@@ -1148,6 +1154,21 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // (semaphore-gated via the engine's InProcessRuntime).
   //
   const onMergeImpl = async (taskId: string) => {
+    const settings = await store.getSettings();
+    if (getMergeStrategy(settings) === "pull-request") {
+      const githubClient = new GitHubClient();
+      const outcome = await processPullRequestMergeTask(store, cwd, taskId, githubClient, getTaskMergeBlocker);
+      const task = await store.getTask(taskId);
+      return {
+        task,
+        branch: getTaskBranchName(taskId),
+        merged: outcome === "merged",
+        worktreeRemoved: false,
+        branchDeleted: false,
+        error: outcome === "waiting" ? "pull request not ready" : undefined,
+      };
+    }
+
     const streamedMergeLog = new StreamedLogBuffer(
       (line) => logSink.log(line, "merge"),
       STREAM_LOG_FLUSH_IDLE_MS,
@@ -1256,6 +1277,24 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       }
     })();
 
+    const llamaCppPaths = await (async () => {
+      try {
+        const globalSettings = await store.getGlobalSettingsStore().getSettings();
+        const result = resolveLlamaCppExtensionPaths(globalSettings);
+        setCachedLlamaCppResolution(result.resolution);
+        if (result.warning) {
+          console.warn(`[extensions] llama-cpp: ${result.warning}`);
+        }
+        return result.paths;
+      } catch (err) {
+        console.warn(
+          `[extensions] Unable to evaluate useLlamaCpp setting: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        setCachedLlamaCppResolution(null);
+        return [];
+      }
+    })();
+
     // Always inject the cli's own extension (`@runfusion/fusion`) so its
     // `fn_*` tools register globally even when the user hasn't run
     // `pi install npm:@runfusion/fusion`. Without this, agent chat with
@@ -1278,6 +1317,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         ...packageExtensionPaths,
         ...claudeCliPaths,
         ...droidCliPaths,
+        ...llamaCppPaths,
       ],
       cwd,
       join(cwd, ".fusion", "disabled-auto-extension-discovery"),
@@ -1564,6 +1604,17 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         }
         return { status: r.status, reason: r.reason };
       },
+      getLlamaCppExtensionStatus: () => {
+        const r = getCachedLlamaCppResolution();
+        if (!r) return null;
+        if (r.status === "ok") {
+          return { status: "ok", path: r.path, packageVersion: r.packageVersion };
+        }
+        if (r.status === "not-installed") {
+          return { status: "not-installed" };
+        }
+        return { status: r.status, reason: r.reason };
+      },
       onUseClaudeCliToggled: (_prev, next) => {
         if (!next) return;
         void (async () => {
@@ -1804,6 +1855,17 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       },
       getDroidCliExtensionStatus: () => {
         const r = getCachedDroidCliResolution();
+        if (!r) return null;
+        if (r.status === "ok") {
+          return { status: "ok", path: r.path, packageVersion: r.packageVersion };
+        }
+        if (r.status === "not-installed") {
+          return { status: "not-installed" };
+        }
+        return { status: r.status, reason: r.reason };
+      },
+      getLlamaCppExtensionStatus: () => {
+        const r = getCachedLlamaCppResolution();
         if (!r) return null;
         if (r.status === "ok") {
           return { status: "ok", path: r.path, packageVersion: r.packageVersion };

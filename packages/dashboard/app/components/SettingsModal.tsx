@@ -28,6 +28,7 @@ const PiExtensionsManager = lazy(() => import("./PiExtensionsManager").then((m) 
 import { ClaudeCliProviderCard } from "./ClaudeCliProviderCard";
 import { CliBinaryPanel } from "./CliBinaryPanel";
 import { DroidCliProviderCard } from "./DroidCliProviderCard";
+import { LlamaCppProviderCard } from "./LlamaCppProviderCard";
 import { HermesRuntimeCard } from "./HermesRuntimeCard";
 import { OpenClawRuntimeCard } from "./OpenClawRuntimeCard";
 import { PaperclipRuntimeCard } from "./PaperclipRuntimeCard";
@@ -3883,6 +3884,7 @@ export function SettingsModal({
       case "research-global": {
         const providerStatuses = authProviders.filter((provider) => provider.id === "brave" || provider.id === "tavily");
         const hasMissingResearchCredential = providerStatuses.some((provider) => !provider.authenticated);
+        const hasSearchProvider = Boolean(form.researchGlobalDefaults?.searchProvider?.trim());
 
         return (
           <>
@@ -3925,6 +3927,11 @@ export function SettingsModal({
                 }
               />
             </div>
+            {!hasSearchProvider && (
+              <div className="settings-empty-state" role="alert">
+                Research defaults are incomplete: choose a default search provider before running research.
+              </div>
+            )}
             {hasMissingResearchCredential && (
               <div className="settings-empty-state" role="alert">
                 Missing credentials for one or more research providers.
@@ -5027,6 +5034,7 @@ export function SettingsModal({
         // auth state (Authenticated when signed in, Available otherwise).
         const claudeCliProvider = cliAuthProviders.find((p) => p.id === "claude-cli");
         const droidCliProvider = cliAuthProviders.find((p) => p.id === "droid-cli");
+        const llamaCppProvider = cliAuthProviders.find((p) => p.id === "llama-cpp");
         const hasDroidPluginSlot = getSlotsForId("settings-provider-card").some(
           (entry) => entry.pluginId === "fusion-plugin-droid-runtime",
         );
@@ -5048,14 +5056,25 @@ export function SettingsModal({
             }}
           />
         ) : null;
+        const llamaCppCard = llamaCppProvider ? (
+          <LlamaCppProviderCard
+            compact
+            authenticated={llamaCppProvider.authenticated}
+            onToggled={() => {
+              void loadAuthStatus();
+            }}
+          />
+        ) : null;
         const showAuthenticatedGroup =
           authenticatedProviders.length > 0
           || (claudeCliProvider?.authenticated ?? false)
-          || ((droidCliProvider?.authenticated ?? false) && !hasDroidPluginSlot);
+          || ((droidCliProvider?.authenticated ?? false) && !hasDroidPluginSlot)
+          || (llamaCppProvider?.authenticated ?? false);
         const showAvailableGroup =
           unauthenticatedProviders.length > 0
           || (claudeCliProvider && !claudeCliProvider.authenticated)
-          || (droidCliProvider && !droidCliProvider.authenticated && !hasDroidPluginSlot);
+          || (droidCliProvider && !droidCliProvider.authenticated && !hasDroidPluginSlot)
+          || (llamaCppProvider && !llamaCppProvider.authenticated);
         return (
           <>
             <h4 className="settings-section-heading">Authentication</h4>
@@ -5079,6 +5098,7 @@ export function SettingsModal({
                   <div className="auth-group-label">Authenticated</div>
                   {claudeCliProvider?.authenticated && claudeCliCard}
                   {droidCliProvider?.authenticated && droidCliCard}
+                  {llamaCppProvider?.authenticated && llamaCppCard}
                   {authenticatedProviders.map((provider) => (
                     <div key={provider.id} className="auth-provider-card auth-provider-card--authenticated">
                       <div className="auth-provider-header">
@@ -5173,6 +5193,7 @@ export function SettingsModal({
                   <div className="auth-group-label">Available</div>
                   {claudeCliProvider && !claudeCliProvider.authenticated && claudeCliCard}
                   {droidCliProvider && !droidCliProvider.authenticated && droidCliCard}
+                  {llamaCppProvider && !llamaCppProvider.authenticated && llamaCppCard}
                   {unauthenticatedProviders.map((provider) => (
                     <div key={provider.id} className="auth-provider-card">
                       <div className="auth-provider-header">

@@ -165,7 +165,7 @@ describe("core modals mobile css coverage", () => {
 
     // Verify .gm-modal is included in the modal sizing rule block
     const modalRuleMatch = mobileBlock.match(
-      /\.modal,\s*\.modal-lg,\s*\.modal-md,\s*\.gm-modal\s*\{[^}]+\}/,
+      /\.modal:not\(\.confirm-dialog\),\s*\.modal-lg,\s*\.modal-md,\s*\.gm-modal\s*\{[^}]+\}/,
     );
     expect(modalRuleMatch).not.toBeNull();
     const modalRule = modalRuleMatch![0];

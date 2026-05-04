@@ -32,7 +32,8 @@ All skill/extension tool invocations in this catalog use the public `fn_*` names
 | `fn_research_run` | Start a bounded research run and optionally wait for findings. |
 | `fn_research_list` | List recent research runs. |
 | `fn_research_get` | Get one research run and structured findings. |
-| `fn_research_cancel` | Cancel a research run. |
+| `fn_research_cancel` | Cancel an in-flight research run. Terminal runs return INVALID_TRANSITION. |
+| `fn_research_retry` | Retry a failed research run when lifecycle marks it retryable. |
 | `fn_insight_list` | List persisted project insights with optional category/status filters. |
 | `fn_insight_show` | Show a single persisted insight by ID. |
 | `fn_insight_run_list` | List recent insight-generation runs with optional status/trigger filters. |

@@ -156,6 +156,11 @@ describe("Agent CSS classes", () => {
     expect(viewContent).toContain("min-height: 0");
   });
 
+  it("removes legacy standalone mobile back-row classes from AgentsView", () => {
+    expect(hasClass(".agents-mobile-back-row")).toBe(false);
+    expect(hasClass(".agents-mobile-back-btn")).toBe(false);
+  });
+
   it("should visually group the filter controls", () => {
     const filtersBlock = extractRuleBlock(".agent-controls-filters");
     expect(filtersBlock).toContain("padding: var(--space-xs) var(--space-sm)");
@@ -196,6 +201,7 @@ describe("Agent CSS classes", () => {
     expect(hasClass(".agent-detail-actions")).toBe(true);
     // Redesigned compact header structure
     expect(hasClass(".agent-detail-identity")).toBe(true);
+    expect(hasClass(".agent-detail-inline-back")).toBe(true);
     expect(hasClass(".agent-detail-controls")).toBe(true);
     expect(hasClass(".agent-detail-utility-actions")).toBe(true);
     expect(hasClass(".agent-detail-tabs")).toBe(true);

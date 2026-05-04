@@ -31,8 +31,11 @@ vi.mock("../../api", async (importOriginal) => {
 });
 
 vi.mock("../AgentDetailView", () => ({
-  AgentDetailView: ({ agentId, inline, initialTab, initialRunId, preferActiveRun }: { agentId: string; inline?: boolean; initialTab?: string; initialRunId?: string | null; preferActiveRun?: boolean }) => (
+  AgentDetailView: ({ agentId, inline, onClose, showInlineBackButton, initialTab, initialRunId, preferActiveRun }: { agentId: string; inline?: boolean; onClose?: () => void; showInlineBackButton?: boolean; initialTab?: string; initialRunId?: string | null; preferActiveRun?: boolean }) => (
     <div data-testid="agent-detail-view" data-inline={inline ? "true" : "false"} data-initial-tab={initialTab ?? "dashboard"} data-initial-run-id={initialRunId ?? ""} data-prefer-active-run={preferActiveRun ? "true" : "false"}>
+      {showInlineBackButton ? (
+        <button type="button" aria-label="Back to agents" onClick={onClose}>Agents</button>
+      ) : null}
       Agent detail: {agentId}
     </div>
   ),
@@ -325,19 +328,52 @@ describe("AgentsView", () => {
       fireEvent.click(await screen.findByRole("button", { name: "View details for Test Agent 1" }));
 
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: "Agents" })).toBeTruthy();
+        expect(screen.getByRole("button", { name: "Back to agents" })).toBeTruthy();
         expect(screen.getByTestId("agent-detail-view")).toHaveAttribute("data-inline", "true");
       });
 
       expect(container.querySelector(".agents-split-sidebar--hidden-mobile")).toBeTruthy();
       expect(container.querySelector(".agents-split-detail--hidden-mobile")).toBeNull();
 
-      fireEvent.click(screen.getByRole("button", { name: "Agents" }));
+      fireEvent.click(screen.getByRole("button", { name: "Back to agents" }));
 
       await waitFor(() => {
         expect(screen.getByText("Select an agent")).toBeInTheDocument();
       });
       expect(container.querySelector(".agents-split-detail--hidden-mobile")).toBeTruthy();
+    });
+
+    it("closes mobile detail and shows org chart when switching views", async () => {
+      mockViewportMode.mockReturnValue("mobile");
+      mockFetchOrgTree.mockResolvedValue([
+        {
+          agent: {
+            id: "agent-org-1",
+            name: "Org Lead",
+            role: "scheduler",
+            state: "active",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            metadata: {},
+          },
+          children: [],
+        },
+      ]);
+
+      render(<AgentsView addToast={mockAddToast} />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "View details for Test Agent 1" }));
+      await waitFor(() => {
+        expect(screen.getByTestId("agent-detail-view")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Org Chart view" }));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("agent-detail-view")).toBeNull();
+        expect(screen.getByTestId("agent-org-chart")).toBeTruthy();
+        expect(screen.getByText("Org Lead")).toBeTruthy();
+      });
     });
 
     it("collapses mobile overview after selecting an active agent card", async () => {
@@ -737,6 +773,33 @@ describe("AgentsView", () => {
       expect(options).not.toContain("10s");
       expect(options).not.toContain("30s");
       expect(options).not.toContain("1m");
+    });
+
+    it("renders Last/Next heartbeat timestamps without seconds", async () => {
+      const lastHeartbeatAt = "2026-05-04T14:23:45.000Z";
+      mockFetchAgents.mockResolvedValueOnce([
+        {
+          ...mockAgents[1],
+          lastHeartbeatAt,
+          runtimeConfig: { heartbeatIntervalMs: 300000 },
+        },
+      ]);
+      mockFetchAgentStats.mockResolvedValueOnce({ total: 1, byState: { active: 1 }, byRole: { triage: 1 } });
+
+      render(<AgentsView addToast={mockAddToast} />);
+
+      const lastAt = new Date(lastHeartbeatAt);
+      const nextAt = new Date(lastAt.getTime() + 300000);
+      const expectedLast = `Last: ${lastAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+      const expectedNext = `Next: ${nextAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+
+      await waitFor(() => {
+        expect(screen.getByText(expectedLast)).toBeTruthy();
+        expect(screen.getByText(expectedNext)).toBeTruthy();
+      });
+
+      expect(screen.queryByText(/Last: .*:\d{2}:\d{2}/)).toBeNull();
+      expect(screen.queryByText(/Next: .*:\d{2}:\d{2}/)).toBeNull();
     });
 
     it("uses the system default heartbeat interval when runtime config is unset", async () => {

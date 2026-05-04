@@ -3261,57 +3261,49 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
   // ── ID Generators ───────────────────────────────────────────────────
 
-  private generateMissionId(): string {
-    const timestamp = Date.now();
+  private idSequence = 0;
+
+  private generateId(prefix: string): string {
+    const timestamp = Date.now().toString(36).toUpperCase();
+    this.idSequence += 1;
+    const sequence = this.idSequence.toString(36).toUpperCase().padStart(4, "0");
     const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-    return `M-${timestamp.toString(36).toUpperCase()}-${random}`;
+    return `${prefix}-${timestamp}-${sequence}-${random}`;
+  }
+
+  private generateMissionId(): string {
+    return this.generateId("M");
   }
 
   private generateMilestoneId(): string {
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-    return `MS-${timestamp.toString(36).toUpperCase()}-${random}`;
+    return this.generateId("MS");
   }
 
   private generateSliceId(): string {
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-    return `SL-${timestamp.toString(36).toUpperCase()}-${random}`;
+    return this.generateId("SL");
   }
 
   private generateFeatureId(): string {
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-    return `F-${timestamp.toString(36).toUpperCase()}-${random}`;
+    return this.generateId("F");
   }
 
   private generateMissionEventId(): string {
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-    return `ME-${timestamp.toString(36).toUpperCase()}-${random}`;
+    return this.generateId("ME");
   }
 
   private generateAssertionId(): string {
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-    return `CA-${timestamp.toString(36).toUpperCase()}-${random}`;
+    return this.generateId("CA");
   }
 
   private generateValidatorRunId(): string {
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-    return `VR-${timestamp.toString(36).toUpperCase()}-${random}`;
+    return this.generateId("VR");
   }
 
   private generateFailureId(): string {
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-    return `VF-${timestamp.toString(36).toUpperCase()}-${random}`;
+    return this.generateId("VF");
   }
 
   private generateLineageId(): string {
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-    return `FL-${timestamp.toString(36).toUpperCase()}-${random}`;
+    return this.generateId("FL");
   }
 }

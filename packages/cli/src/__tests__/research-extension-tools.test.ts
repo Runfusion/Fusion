@@ -53,6 +53,7 @@ describe("research extension tools", () => {
     expect(api.tools.has("fn_research_list")).toBe(true);
     expect(api.tools.has("fn_research_get")).toBe(true);
     expect(api.tools.has("fn_research_cancel")).toBe(true);
+    expect(api.tools.has("fn_research_retry")).toBe(true);
   });
 
   it("returns actionable disabled response when research is off", async () => {
@@ -67,29 +68,68 @@ describe("research extension tools", () => {
     expect(result.content[0].text).toContain("disabled");
   });
 
+  it("returns actionable missing-credentials response", async () => {
+    const store = new TaskStore(tmpDir);
+    await store.init();
+    await store.updateSettings({
+      researchWebSearchProvider: "tavily",
+      researchSettings: { enabled: true },
+      researchGlobalDefaults: { searchProvider: "tavily" },
+    });
+
+    const runTool = api.tools.get("fn_research_run")!;
+    const result = await runTool.execute("call-0", { query: "fusion" }, undefined, undefined, makeCtx(tmpDir));
+
+    expect(result.details.setup.code).toBe("missing-credentials");
+    expect(result.content[0].text).toContain("Missing credentials");
+  });
+
   it("creates, reads, lists, and cancels runs", async () => {
     const store = new TaskStore(tmpDir);
     await store.init();
     await store.updateSettings({
       researchWebSearchProvider: "tavily",
       researchTavilyApiKey: "test-key",
-      researchSettings: { enabled: true, searchProvider: "tavily" },
+      researchSettings: { enabled: true },
+      researchGlobalDefaults: { searchProvider: "tavily" },
     });
 
-    const runTool = api.tools.get("fn_research_run")!;
-    const runResult = await runTool.execute("call-1", { query: "fusion architecture" }, undefined, undefined, makeCtx(tmpDir));
-    expect(runResult.details.runId).toBeTruthy();
+    const created = store.getResearchStore().createRun({ query: "fusion architecture", topic: "fusion architecture" });
 
     const listTool = api.tools.get("fn_research_list")!;
     const listResult = await listTool.execute("call-2", {}, undefined, undefined, makeCtx(tmpDir));
     expect(listResult.details.runs.length).toBeGreaterThan(0);
 
     const getTool = api.tools.get("fn_research_get")!;
-    const getResult = await getTool.execute("call-3", { id: runResult.details.runId }, undefined, undefined, makeCtx(tmpDir));
-    expect(getResult.details.runId).toBe(runResult.details.runId);
+    const getResult = await getTool.execute("call-3", { id: created.id }, undefined, undefined, makeCtx(tmpDir));
+    expect(getResult.details.runId).toBe(created.id);
 
     const cancelTool = api.tools.get("fn_research_cancel")!;
-    const cancelResult = await cancelTool.execute("call-4", { id: runResult.details.runId }, undefined, undefined, makeCtx(tmpDir));
+    const cancelResult = await cancelTool.execute("call-4", { id: created.id }, undefined, undefined, makeCtx(tmpDir));
     expect(["cancelling", "cancelled"]).toContain(cancelResult.details.status);
+
+    const retryTool = api.tools.get("fn_research_retry")!;
+    const retryBlocked = await retryTool.execute("call-5", { id: created.id }, undefined, undefined, makeCtx(tmpDir));
+    expect(retryBlocked.isError).toBe(true);
+  });
+
+  it("returns INVALID_TRANSITION for cancel on terminal run", async () => {
+    const store = new TaskStore(tmpDir);
+    await store.init();
+    await store.updateSettings({
+      researchWebSearchProvider: "tavily",
+      researchTavilyApiKey: "test-key",
+      researchSettings: { enabled: true },
+      researchGlobalDefaults: { searchProvider: "tavily" },
+    });
+
+    const run = store.getResearchStore().createRun({ query: "fusion", topic: "fusion" });
+    store.getResearchStore().updateStatus(run.id, "running");
+    store.getResearchStore().updateStatus(run.id, "completed");
+
+    const cancelTool = api.tools.get("fn_research_cancel")!;
+    const result = await cancelTool.execute("call-6", { id: run.id }, undefined, undefined, makeCtx(tmpDir));
+    expect(result.isError).toBe(true);
+    expect(result.details.setup.code).toBe("INVALID_TRANSITION");
   });
 });

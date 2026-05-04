@@ -290,6 +290,12 @@ When that flag is disabled, the Settings modal also hides both Research sections
 
 Research failures are normalized to a shared error-code contract (`FEATURE_DISABLED`, `MISSING_CREDENTIALS`, `PROVIDER_UNAVAILABLE`, `RATE_LIMITED`, `PROVIDER_TIMEOUT`, `RUN_CANCELLED`, `RETRY_EXHAUSTED`, `INVALID_TRANSITION`, `NON_RETRYABLE_PROVIDER_ERROR`, `INTERNAL_ERROR`) with retryability metadata so dashboard, API, CLI, and agent tooling show consistent recovery guidance.
 
+Recovery entrypoints in the dashboard:
+- **Settings → Research Defaults**: fix missing default provider configuration and provider-level readiness.
+- **Settings → Authentication**: repair missing provider credentials (`MISSING_CREDENTIALS`).
+- **Settings → Research (project)**: re-enable project research or source toggles when runs are blocked by project settings.
+- **Settings → Experimental Features**: enable `researchView` when the standalone Research route/surfaces are hidden.
+
 **Credential storage rule:** API keys for Research providers are not stored in settings JSON. They are managed through the existing auth storage pipeline (`/api/auth/status`, `POST /api/auth/api-key`, `DELETE /api/auth/api-key`) and persisted in auth credential storage with masked hints in API responses.
 
 ### Node Routing settings (project scope)
@@ -542,7 +548,7 @@ fn plugin install ./plugins/fusion-plugin-hermes-runtime
 fn plugin install ./plugins/fusion-plugin-openclaw-runtime
 ```
 
-> 💡 In the dashboard, go to **Settings → Plugins → Fusion Plugins**. The **Bundled Runtime Plugins** section surfaces Hermes, Paperclip, and OpenClaw directly from shipped manifests, shows install status, and provides one-click install actions for runtimes that are not yet installed.
+> 💡 In the dashboard, go to **Settings → Plugins → Fusion Plugins**. The **Bundled Plugins** section surfaces Agent Browser, Hermes, Paperclip, OpenClaw, and Droid directly from shipped manifests, shows install status, and provides one-click install actions for plugins that are not yet installed.
 
 2. Create agents with the appropriate `runtimeConfig`:
 
