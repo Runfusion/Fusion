@@ -266,7 +266,7 @@ describe("SettingsModal mobile adaptations", () => {
 
     // Authentication is first with no scope banner by default - click the Project-scoped General section
     expect(container.querySelectorAll(".settings-scope-icon").length).toBeGreaterThan(0);
-    await user.click(getAllByText("General")[1]);
+    await user.click(getByText("Project General"));
 
     // Verify project scope banner contains icon elements (SVG from Lucide, not emoji)
     const projectBanner = container.querySelector(".settings-scope-project");

@@ -218,7 +218,7 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
 
   // Project group (specific to this project)
   { id: "__project_header", label: "Project", scope: undefined, isGroupHeader: true },
-  { id: "general", label: "General", scope: "project" },
+  { id: "general", label: "Project General", scope: "project" },
   { id: "project-models", label: "Project Models", scope: "project" },
   { id: "scheduling", label: "Scheduling", scope: "project" },
   { id: "node-routing", label: "Node Routing", scope: "project" },
