@@ -191,6 +191,8 @@ Agents can be configured with:
 - Budget governance settings
 - Model overrides for heartbeat sessions
 
+In Agent Detail → **Settings**, configuration fields auto-save after edits (debounced) when validation passes. The inline status indicator shows saving/saved/error state, and no separate **Save Settings** click is required for settings persistence.
+
 ### Runtime Configuration Fields
 
 The `runtimeConfig` field on agents supports the following options:

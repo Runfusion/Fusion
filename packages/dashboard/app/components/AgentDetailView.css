@@ -916,6 +916,10 @@
   color: var(--color-success);
 }
 
+.config-saved-indicator--error {
+  color: var(--color-error);
+}
+
 .heartbeat-procedure-actions {
   margin-top: var(--space-sm);
 }

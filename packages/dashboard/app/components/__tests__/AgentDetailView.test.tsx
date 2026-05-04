@@ -4363,4 +4363,99 @@ describe("AgentDetailView", () => {
       });
     });
   });
+
+  describe("Config autosave", () => {
+    const openSettings = async (user: ReturnType<typeof userEvent.setup>) => {
+      const settingsTab = await screen.findByRole("button", { name: "Settings" });
+      await user.click(settingsTab);
+      await screen.findByText("Agent Configuration");
+    };
+
+    it("auto-saves after debounce without clicking Save Settings", async () => {
+      const user = userEvent.setup();
+      render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+      await openSettings(user);
+
+      const heartbeatInput = screen.getByLabelText("Heartbeat Interval (s)");
+      await user.clear(heartbeatInput);
+      await user.type(heartbeatInput, "45");
+
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenCalledTimes(1);
+      }, { timeout: 3000 });
+      expect(mockUpdateAgent.mock.calls[0]?.[1]).toMatchObject({
+        runtimeConfig: expect.objectContaining({ heartbeatIntervalMs: 45_000 }),
+      });
+    });
+
+    it("does not autosave while validation errors are present", async () => {
+      const user = userEvent.setup();
+      render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+      await openSettings(user);
+
+      const heartbeatInput = screen.getByLabelText("Heartbeat Interval (s)");
+      await user.clear(heartbeatInput);
+      await user.type(heartbeatInput, "abc");
+
+      await waitFor(() => {
+        expect(screen.getByText('"Heartbeat Interval" must be a valid number')).toBeInTheDocument();
+      });
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenCalledTimes(0);
+      }, { timeout: 900 });
+    });
+
+    it("shows saving then saved indicator during autosave", async () => {
+      const initialAgent = createMockAgent();
+      const refreshedAgent = createMockAgent({
+        runtimeConfig: { ...(initialAgent.runtimeConfig ?? {}), heartbeatTimeoutMs: 90_000 },
+        updatedAt: "2024-01-01T00:10:00.000Z",
+      });
+      mockFetchAgent.mockReset();
+      mockFetchAgent.mockResolvedValueOnce(initialAgent).mockResolvedValue(refreshedAgent);
+
+      let resolveSave: (() => void) | null = null;
+      mockUpdateAgent.mockImplementationOnce(() => new Promise((resolve) => {
+        resolveSave = () => resolve(createMockAgent() as any);
+      }));
+
+      const user = userEvent.setup();
+      render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+      await openSettings(user);
+
+      const heartbeatInput = screen.getByLabelText("Heartbeat Timeout (s)");
+      await user.clear(heartbeatInput);
+      await user.type(heartbeatInput, "90");
+
+      await waitFor(() => {
+        expect(screen.getByText("Saving changes…")).toBeInTheDocument();
+      }, { timeout: 3000 });
+
+      resolveSave?.();
+      await waitFor(() => {
+        expect(screen.getByText("All changes saved")).toBeInTheDocument();
+      });
+    });
+
+    it("debounces rapid edits into a single autosave using latest value", async () => {
+      const user = userEvent.setup();
+      render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+      await openSettings(user);
+
+      const heartbeatInput = screen.getByLabelText("Heartbeat Interval (s)");
+      await user.clear(heartbeatInput);
+      await user.type(heartbeatInput, "1");
+      await user.clear(heartbeatInput);
+      await user.type(heartbeatInput, "12");
+      await user.clear(heartbeatInput);
+      await user.type(heartbeatInput, "123");
+
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenCalledTimes(1);
+      }, { timeout: 4000 });
+      expect(mockUpdateAgent.mock.calls[0]?.[1]).toMatchObject({
+        runtimeConfig: expect.objectContaining({ heartbeatIntervalMs: 123_000 }),
+      });
+    });
+  });
 });
