@@ -19,9 +19,10 @@
   background: var(--surface);
   border-top: 1px solid var(--border);
   min-height: var(--mobile-nav-height);
-  /* No safe-area padding: icons render flush with the screen bottom in PWA;
-     the iOS home indicator floats over the bar. Same convention as Instagram/X. */
-  padding-bottom: 0;
+  /* Extend the bar's surface into the iOS home-indicator area so icons sit above
+     the indicator (PWA standalone) and the bar meets the executor status bar
+     flush — its `bottom` already adds these same terms. */
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
   box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.15);
 }
 
