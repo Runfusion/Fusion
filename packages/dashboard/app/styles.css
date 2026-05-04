@@ -3048,16 +3048,15 @@ input[type="range"]:focus-visible {
   }
 
   /* Modal: full-screen on mobile (cross-cutting overlay/modal base chrome) */
-  .modal-overlay,
+  .modal-overlay:not(.confirm-dialog-overlay),
   .agent-detail-overlay,
   .agent-dialog-overlay,
-  .chat-new-dialog-backdrop,
   .workflow-output-modal-overlay {
     padding-top: 0;
     align-items: stretch;
   }
 
-  .modal,
+  .modal:not(.confirm-dialog),
   .modal-lg,
   .modal-md,
   .gm-modal {

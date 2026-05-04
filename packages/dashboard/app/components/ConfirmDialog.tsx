@@ -35,7 +35,7 @@ export function ConfirmDialog({ isOpen, options, onConfirm, onCancel }: ConfirmD
   }
 
   return (
-    <div className="modal-overlay open" onClick={onCancel}>
+    <div className="modal-overlay open confirm-dialog-overlay" onClick={onCancel}>
       <div
         className="modal confirm-dialog"
         onClick={(event) => event.stopPropagation()}

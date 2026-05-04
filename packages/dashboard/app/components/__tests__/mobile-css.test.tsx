@@ -95,7 +95,7 @@ describe("mobile CSS foundation", () => {
     expect(mobileSection).toContain("padding-left: max(var(--space-md), env(safe-area-inset-left, 0px));");
     expect(mobileSection).toContain(".board {");
     expect(mobileSection).toContain("padding-bottom: max(var(--space-md), env(safe-area-inset-bottom, 0px));");
-    expect(mobileSection).toContain(".modal,");
+    expect(mobileSection).toContain(".modal:not(.confirm-dialog),");
     expect(mobileSection).toContain("padding-bottom: env(safe-area-inset-bottom, 0px);");
   });
 

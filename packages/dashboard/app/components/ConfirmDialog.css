@@ -1,5 +1,5 @@
 .confirm-dialog {
-  width: min(420px, calc(100vw - var(--space-2xl)));
+  width: min(calc(var(--space-xl) * 18), calc(100vw - var(--space-2xl)));
 }
 
 .confirm-dialog__body {
@@ -7,6 +7,7 @@
   line-height: 1.5;
   padding: 0 var(--space-xl) var(--space-lg);
   white-space: pre-wrap;
+  overflow-y: auto;
 }
 
 .confirm-dialog__actions {
@@ -16,7 +17,22 @@
 }
 
 @media (max-width: 768px) {
+  .confirm-dialog-overlay {
+    align-items: center;
+    padding-top: max(var(--space-md), env(safe-area-inset-top, 0px));
+    padding-right: var(--space-sm);
+    padding-bottom: max(var(--space-md), env(safe-area-inset-bottom, 0px));
+    padding-left: var(--space-sm);
+  }
+
   .confirm-dialog {
-    width: min(100vw - var(--space-md), 100%);
+    width: min(100%, calc(var(--space-xl) * 16));
+    max-height: calc(100dvh - (var(--space-md) * 2) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    height: auto;
+    border: var(--btn-border-width) solid var(--border);
+    border-radius: var(--radius-lg);
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: hidden;
   }
 }

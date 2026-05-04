@@ -91,4 +91,18 @@ describe("ConfirmDialog", () => {
 
     expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
   });
+
+  it("uses compact mobile override classes on overlay and dialog surface", () => {
+    const { container } = render(
+      <ConfirmDialog
+        isOpen={true}
+        options={{ title: "Discard", message: "Discard changes?" }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector(".confirm-dialog-overlay")).toBeTruthy();
+    expect(container.querySelector(".confirm-dialog.modal")).toBeTruthy();
+  });
 });
