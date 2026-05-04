@@ -288,7 +288,7 @@
   background: none;
   border: none;
   border-left: 3px solid transparent;
-  border-radius: 0 var(--radius) var(--radius) 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
   cursor: pointer;
   text-align: left;
   transition:
@@ -458,7 +458,7 @@
   padding: var(--space-sm) var(--space-xl);
   margin: 0 var(--space-xl) var(--space-xs);
   font-size: 12px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   color: var(--text-muted);
 }
 .settings-scope-global {
@@ -1143,10 +1143,10 @@
 }
 
 .auth-section-hint {
-  padding: 12px 16px;
+  padding: var(--space-md) var(--space-lg);
   margin-bottom: 12px;
   background: var(--bg-tertiary);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   font-size: 13px;
   color: var(--text-muted);
   border-left: 3px solid var(--text-muted);
@@ -1302,6 +1302,33 @@
   margin-block: 0 var(--space-md);
   line-height: 1.5;
 }
+
+.settings-token-cap-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.settings-model-lane-label-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-xs);
+}
+
+.settings-model-lane-control-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.settings-model-lane-control-main {
+  flex: 1;
+}
+
+.settings-summarization-actions {
+  justify-content: flex-start;
+}
 /* === Settings: Model Presets === */
 .settings-model-presets {
   display: flex;
@@ -1439,7 +1466,7 @@
     gap: 4px;
     border-left: none;
     border-bottom: 2px solid transparent;
-    border-radius: var(--radius) var(--radius) 0 0;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
     padding: 6px 12px;
     white-space: nowrap;
   }
@@ -1555,7 +1582,7 @@
 
   .auth-provider-row {
     flex-wrap: wrap;
-    padding: 12px 14px;
+    padding: var(--space-md) calc(var(--space-md) + var(--space-xs) / 2);
     gap: var(--space-sm);
   }
 

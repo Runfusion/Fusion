@@ -32,7 +32,7 @@ describe("detail-body mobile overflow (FN-1331)", () => {
     expect(rule).toContain("overflow-y: auto");
   });
 
-  it("mobile .detail-body rule preserves padding: 14px", () => {
+  it("mobile .detail-body rule uses tokenized 14px-equivalent padding", () => {
     const detailModalCss = readFileSync(
       resolve(__dirname, "../components/TaskDetailModal.css"),
       "utf-8",
@@ -43,6 +43,8 @@ describe("detail-body mobile overflow (FN-1331)", () => {
 
     const detailBodyMatch = mobileBlock.match(/\.detail-body\s*\{[^}]*\}/s);
     expect(detailBodyMatch).toBeTruthy();
-    expect(detailBodyMatch![0]).toContain("padding: 14px");
+    expect(detailBodyMatch![0]).toContain(
+      "padding: calc(var(--space-md) + var(--space-xs) / 2);",
+    );
   });
 });

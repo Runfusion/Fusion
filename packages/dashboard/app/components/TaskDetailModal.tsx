@@ -2080,7 +2080,7 @@ export function TaskDetailContent({
                   </span>
                 )}
                 <span className="detail-meta-label">
-                  <Bot size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />
+                  <Bot size={14} className="detail-meta-label-icon" />
                   Agent
                 </span>
               </div>

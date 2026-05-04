@@ -60,7 +60,7 @@
 }
 
 .detail-body {
-  padding: 20px;
+  padding: calc(var(--space-lg) + var(--space-xs));
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-color: var(--border) transparent;
@@ -209,7 +209,7 @@
   align-items: flex-start;
   gap: var(--space-md);
   margin: var(--space-md) 0 var(--space-lg);
-  padding: 12px 14px;
+  padding: var(--space-md) calc(var(--space-md) + var(--space-xs) / 2);
   background: color-mix(in srgb, var(--color-error-dark) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-error-dark) 30%, transparent);
   border-radius: var(--radius-md);
@@ -252,6 +252,11 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
+}
+
+.detail-meta-label-icon {
+  vertical-align: middle;
+  margin-right: var(--space-xs);
 }
 
 .detail-source-section {
@@ -1172,7 +1177,7 @@
 }
 
 .detail-prompt {
-  padding: 14px;
+  padding: calc(var(--space-md) + var(--space-xs) / 2);
   font-size: 13px;
   line-height: 1.6;
   font-family: var(--font-mono);
@@ -1182,7 +1187,7 @@
 }
 
 .spec-loading {
-  padding: 14px;
+  padding: calc(var(--space-md) + var(--space-xs) / 2);
   font-size: 13px;
   color: var(--text-muted);
   display: flex;
@@ -1240,7 +1245,9 @@
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: pointer;
-  transition: all 0.15s;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
 }
 
 .modal-edit-btn:hover {
@@ -1444,7 +1451,7 @@
   }
 
   .detail-body {
-    padding: 14px;
+    padding: calc(var(--space-md) + var(--space-xs) / 2);
     overflow-x: hidden;
     overflow-y: auto;
   }
@@ -1456,7 +1463,7 @@
   .modal-actions {
     flex-wrap: wrap;
     gap: var(--space-sm);
-    padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+    padding: var(--space-md) calc(var(--space-md) + var(--space-xs) / 2) calc(var(--space-md) + env(safe-area-inset-bottom, 0px));
   }
 
   .modal-actions .btn {
@@ -1474,7 +1481,7 @@
   }
 
   .modal-header {
-    padding: 12px 14px;
+    padding: var(--space-md) calc(var(--space-md) + var(--space-xs) / 2);
   }
 
   .detail-tabs {

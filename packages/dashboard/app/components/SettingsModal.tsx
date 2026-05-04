@@ -2273,7 +2273,7 @@ export function SettingsModal({
             <h4 className="settings-section-heading">Token Cap</h4>
             <div className="form-group">
               <label htmlFor="tokenCap">Token Cap</label>
-              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+              <div className="settings-token-cap-row">
                 <input
                   id="tokenCap"
                   type="number"
@@ -2322,7 +2322,7 @@ export function SettingsModal({
 
                   return (
                     <div className="form-group" key={lane.laneId}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem" }}>
+                      <div className="settings-model-lane-label-row">
                         <label htmlFor={`${lane.laneId}Model`}>{laneLabel}</label>
                         <span
                           className={`settings-lane-badge ${isOverridden ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`}
@@ -2331,8 +2331,8 @@ export function SettingsModal({
                           {isOverridden ? "Override (Project)" : "Inherited (Global)"}
                         </span>
                       </div>
-                      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-                        <div style={{ flex: 1 }}>
+                      <div className="settings-model-lane-control-row">
+                        <div className="settings-model-lane-control-main">
                           <CustomModelDropdown
                             id={`${lane.laneId}Model`}
                             label={laneLabel}
@@ -2739,7 +2739,7 @@ export function SettingsModal({
                 </div>
 
                 <div className="form-group">
-                  <div className="modal-actions" style={{ justifyContent: "flex-start" }}>
+                  <div className="modal-actions settings-summarization-actions">
                     <button
                       type="button"
                       className="btn btn-sm"
