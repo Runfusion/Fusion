@@ -4857,6 +4857,17 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       // Stale rows were already filtered out above.
       if (!flushSucceeded && validEntries.length > 0) {
         this.agentLogBuffer.unshift(...validEntries);
+        // Re-arm the flush timer so retried entries don't sit in memory forever.
+        if (!this.agentLogFlushTimer) {
+          this.agentLogFlushTimer = setTimeout(() => {
+            try {
+              this.flushAgentLogBuffer();
+            } catch (err) {
+              console.error(`[fusion] Retry agent log flush failed (${this.db.path}):`, err);
+            }
+          }, TaskStore.AGENT_LOG_FLUSH_MS);
+          this.agentLogFlushTimer.unref();
+        }
       }
     }
   }
