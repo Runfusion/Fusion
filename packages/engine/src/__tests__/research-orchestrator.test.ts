@@ -1,5 +1,8 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { ResearchRun, ResearchSource } from "@fusion/core";
+import { createDatabase, type Database, ResearchStore, type ResearchRun, type ResearchSource } from "@fusion/core";
 import { ResearchOrchestrator } from "../research-orchestrator.js";
 
 function createHarness() {
@@ -165,6 +168,12 @@ describe("ResearchOrchestrator", () => {
 
     const run = await orchestrator.startRun(runId, "fallback query");
     expect(run.status).toBe("completed");
+    expect(stepRunner.runContentFetch).toHaveBeenCalledWith(
+      "https://backup.com",
+      "backup",
+      undefined,
+      expect.anything(),
+    );
     expect(store.addEvent).toHaveBeenCalledWith(
       runId,
       expect.objectContaining({
@@ -172,6 +181,43 @@ describe("ResearchOrchestrator", () => {
         metadata: expect.objectContaining({ orchestrationEventType: "step-failed" }),
       }),
     );
+  });
+
+  it("continues with partial fetched sources when one fetch step fails", async () => {
+    const { store, stepRunner } = createHarness();
+    stepRunner.runSourceQuery.mockResolvedValueOnce({
+      ok: true,
+      data: [
+        { type: "web", reference: "https://a.example", status: "pending" },
+        { type: "web", reference: "https://b.example", status: "pending" },
+      ],
+    } as never);
+    stepRunner.runContentFetch
+      .mockResolvedValueOnce({ ok: false, error: { code: "provider_error", message: "fetch failed", retryable: true } } as never)
+      .mockResolvedValueOnce({ ok: true, data: { content: "good", metadata: {} } } as never);
+
+    const orchestrator = new ResearchOrchestrator({
+      store: store as never,
+      stepRunner: stepRunner as never,
+      maxConcurrentRuns: 1,
+    });
+
+    const runId = orchestrator.createRun({
+      providers: [{ type: "web" }],
+      maxSources: 2,
+      maxSynthesisRounds: 1,
+    });
+
+    const run = await orchestrator.startRun(runId, "partial fetch");
+    expect(run.status).toBe("completed");
+    expect(store.addEvent).toHaveBeenCalledWith(
+      runId,
+      expect.objectContaining({
+        type: "error",
+        metadata: expect.objectContaining({ orchestrationEventType: "step-failed" }),
+      }),
+    );
+    expect(store.setResults).toHaveBeenCalled();
   });
 
   it("emits step-failed for timeout-classified step errors", async () => {
@@ -235,6 +281,55 @@ describe("ResearchOrchestrator", () => {
     await p1;
     await p2;
     expect(stepRunner.runSourceQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it("persists provider-substitution lifecycle with real ResearchStore", async () => {
+    const fusionDir = mkdtempSync(join(tmpdir(), "fn-research-orch-"));
+    const db: Database = createDatabase(fusionDir, { inMemory: true });
+    db.init();
+    const store = new ResearchStore(db);
+
+    const stepRunner = {
+      runSourceQuery: vi
+        .fn()
+        .mockResolvedValueOnce({ ok: false, error: { code: "provider_error", message: "primary down", retryable: true } })
+        .mockResolvedValueOnce({
+          ok: true,
+          data: [{ type: "web", reference: "https://backup.example", status: "pending", metadata: { origin: "backup" } }],
+        }),
+      runContentFetch: vi.fn(async () => ({ ok: true, data: { content: "backup content", metadata: { fetchedBy: "backup" } } })),
+      runSynthesis: vi.fn(async () => ({ ok: true, data: { output: "summary", citations: ["src-1"], confidence: 0.7 } })),
+    };
+
+    const orchestrator = new ResearchOrchestrator({
+      store,
+      stepRunner,
+      maxConcurrentRuns: 1,
+    });
+
+    const runId = orchestrator.createRun({
+      providers: [{ type: "primary" }, { type: "backup" }],
+      maxSources: 2,
+      maxSynthesisRounds: 1,
+    });
+
+    const run = await orchestrator.startRun(runId, "provider substitution");
+    expect(run.status).toBe("completed");
+
+    const persisted = store.getRun(runId)!;
+    expect(persisted.sources).toHaveLength(1);
+    expect(persisted.sources[0].metadata?.providerType).toBe("backup");
+    expect(stepRunner.runContentFetch).toHaveBeenCalledWith(
+      "https://backup.example",
+      "backup",
+      undefined,
+      expect.anything(),
+    );
+
+    const runEvents = store.listRunEvents(runId);
+    expect(runEvents.some((event) => event.status === "completed")).toBe(true);
+    expect(persisted.events.some((event) => event.metadata?.orchestrationEventType === "step-failed")).toBe(true);
+    expect(persisted.results?.summary).toBe("summary");
   });
 
   it("retries failed run with inherited config", () => {

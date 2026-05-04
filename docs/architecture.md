@@ -169,13 +169,18 @@ Concrete references:
 
 ### Research Runs
 
-- `ResearchStore` (`research-store.ts`, `research-types.ts`, `research-settings.ts`) persists bounded research runs, sources/events, and exports
-- Backed by `research_runs`, `research_exports`, and `research_run_events`
-- Engine orchestration is implemented in `packages/engine/src/research-orchestrator.ts` + `research-step-runner.ts`
-- Dashboard/API surface is implemented under `/api/research` (`packages/dashboard/src/research-routes.ts`) with `ResearchView.tsx` in the app
-- CLI surface is implemented in `packages/cli/src/commands/research.ts` with six subcommands (create, list, show, export, cancel, retry)
-- Agent tool surface is exposed via `packages/cli/src/extension.ts` (`fn_research_run`, `fn_research_list`, `fn_research_get`, `fn_research_cancel`, `fn_research_retry`)
-- **Boundary note:** research and insights are parallel subsystems sharing host infrastructure, not one table/store family
+- `ResearchStore` (`research-store.ts`, `research-types.ts`, `research-settings.ts`) persists bounded research runs, sources/events, exports, lifecycle metadata, and retry/cancel state transitions.
+- Backed by `research_runs`, `research_exports`, and `research_run_events`.
+- Engine orchestration is implemented in `packages/engine/src/research-orchestrator.ts` + `research-step-runner.ts`.
+- Dashboard/API surface is implemented under `/api/research` (`packages/dashboard/src/research-routes.ts`) with `ResearchView.tsx` in the app.
+- CLI surface is implemented in `packages/cli/src/commands/research.ts` with six subcommands (create, list, show, export, cancel, retry).
+- Agent tool surface is exposed via `packages/cli/src/extension.ts` (`fn_research_run`, `fn_research_list`, `fn_research_get`, `fn_research_cancel`, `fn_research_retry`).
+- **Boundary contract (FN-3292):**
+  - `ResearchStore` owns persistence and lifecycle writes (status transitions, lifecycle event log rows, sources/results snapshots).
+  - `ResearchStepRunner` owns provider I/O concerns only (provider selection, timeout/abort/provider-error classification, synthesis call execution); it does not read/write run state.
+  - `ResearchOrchestrator` owns sequencing and failure policy (phase progression, provider fallback, partial-step continuation, terminal status choice) and interacts with store only through public store methods.
+  - Provider substitution must remain data-driven: source metadata can carry provider identity, and fetching should resolve providers per source rather than relying on provider ordering.
+- **Boundary note:** research and insights are parallel subsystems sharing host infrastructure, not one table/store family.
 
 ### Plugin System
 

@@ -147,7 +147,19 @@ Key endpoints:
 4. **Export surface asymmetry**
    - Route export endpoint advertises markdown/json/html behavior while core export type includes `pdf`; CLI command accepts `pdf` format but markdown renderer fallback behavior should remain explicitly documented/validated.
 
-## 9) Validation references used for this baseline
+## 9) FN-3292 boundary stress-test confirmations
+
+- Provider ordering assumptions were tightened: content fetch selection can now use source-level provider metadata (`providerType`) and falls back only when that provider is unavailable.
+- Orchestrator/provider seam was validated with behavior-first tests:
+  - fallback from failed primary provider to a later provider,
+  - partial fetch failure with successful completion when at least one source is fetched,
+  - real `ResearchStore` persistence verification at orchestrator level (sources/events/results/lifecycle events persisted end-to-end).
+- Boundary guidance for future work:
+  - keep retryability/lifecycle ownership in `ResearchStore` transitions,
+  - keep error classification in `ResearchStepRunner`,
+  - keep sequencing and policy decisions in `ResearchOrchestrator`.
+
+## 10) Validation references used for this baseline
 
 - `packages/dashboard/src/__tests__/research-routes.test.ts`
 - `packages/core/src/__tests__/research-store.test.ts`

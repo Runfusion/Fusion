@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ResearchStepRunner } from "../research-step-runner.js";
 
 describe("ResearchStepRunner", () => {
@@ -75,6 +75,38 @@ describe("ResearchStepRunner", () => {
     const result = await runner.runContentFetch("https://example.com");
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe("provider_not_configured");
+  });
+
+  it("prefers requested provider for content fetch and falls back when unavailable", async () => {
+    const fetchPrimary = vi.fn(async () => ({ content: "primary", metadata: { provider: "primary" } }));
+    const fetchFallback = vi.fn(async () => ({ content: "fallback", metadata: { provider: "fallback" } }));
+
+    const runner = new ResearchStepRunner({
+      providers: [
+        {
+          type: "primary",
+          isConfigured: () => true,
+          search: async () => [],
+          fetchContent: fetchPrimary,
+        },
+        {
+          type: "fallback",
+          isConfigured: () => true,
+          search: async () => [],
+          fetchContent: fetchFallback,
+        },
+      ],
+    });
+
+    const requested = await runner.runContentFetch("https://example.com", "fallback");
+    expect(requested.ok).toBe(true);
+    expect(requested.data?.metadata.provider).toBe("fallback");
+
+    const missing = await runner.runContentFetch("https://example.com", "missing");
+    expect(missing.ok).toBe(true);
+    expect(missing.data?.metadata.provider).toBe("primary");
+    expect(fetchPrimary).toHaveBeenCalledTimes(1);
+    expect(fetchFallback).toHaveBeenCalledTimes(1);
   });
 
   it("returns provider_not_configured for synthesis when no runner configured", async () => {

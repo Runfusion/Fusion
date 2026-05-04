@@ -260,7 +260,13 @@ export class ResearchOrchestrator {
       }
 
       for (const source of result.data.slice(0, Math.max(0, config.maxSources - allSources.length))) {
-        const saved = this.store.addSource(runId, source);
+        const saved = this.store.addSource(runId, {
+        ...source,
+        metadata: {
+          ...(source.metadata ?? {}),
+          providerType: provider.type,
+        },
+      });
         allSources.push(saved);
         this.store.addEvent(runId, {
           type: "source_added",
@@ -298,7 +304,9 @@ export class ResearchOrchestrator {
       });
       this.stepStarted(runId, step);
 
-      const result = await this.stepRunner.runContentFetch(source.reference, provider?.config, signal);
+      const sourceProvider = this.getSourceProviderType(source);
+      const providerConfig = sourceProvider ? config.providers.find((p) => p.type === sourceProvider)?.config : provider?.config;
+      const result = await this.stepRunner.runContentFetch(source.reference, sourceProvider, providerConfig, signal);
       if (!result.ok || !result.data) {
         this.stepFailed(runId, step.id, result.error?.message ?? "Failed to fetch source content", result.error);
         continue;
@@ -545,6 +553,11 @@ export class ResearchOrchestrator {
     if (signal.aborted) {
       throw signal.reason ?? new Error("Research run aborted");
     }
+  }
+
+  private getSourceProviderType(source: ResearchSource): string | undefined {
+    const providerType = source.metadata?.providerType;
+    return typeof providerType === "string" && providerType.length > 0 ? providerType : undefined;
   }
 
   private canWriteRunData(runId: string): boolean {

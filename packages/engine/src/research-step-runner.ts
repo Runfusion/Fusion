@@ -64,6 +64,7 @@ export interface ResearchStepRunnerApi {
   ): Promise<ResearchStepResult<ResearchSource[]>>;
   runContentFetch(
     url: string,
+    providerType?: string,
     config?: ResearchProviderConfig,
     signal?: AbortSignal,
   ): Promise<ResearchStepResult<{ content: string; metadata: Record<string, unknown> }>>;
@@ -118,10 +119,11 @@ export class ResearchStepRunner implements ResearchStepRunnerApi {
 
   async runContentFetch(
     url: string,
+    providerType?: string,
     config: ResearchProviderConfig = {},
     signal?: AbortSignal,
   ): Promise<ResearchStepResult<{ content: string; metadata: Record<string, unknown> }>> {
-    const provider = this.findFirstConfiguredProvider();
+    const provider = this.resolveContentProvider(providerType);
     if (!provider) {
       return this.unconfigured("no configured provider available for content fetch");
     }
@@ -167,6 +169,14 @@ export class ResearchStepRunner implements ResearchStepRunnerApi {
       if (provider.isConfigured()) return provider;
     }
     return undefined;
+  }
+
+  private resolveContentProvider(providerType?: string): ResearchProvider | undefined {
+    if (providerType) {
+      const selected = this.providers.get(providerType);
+      if (selected?.isConfigured()) return selected;
+    }
+    return this.findFirstConfiguredProvider();
   }
 
   private classifyError<T>(step: string, error: unknown): ResearchStepResult<T> {
