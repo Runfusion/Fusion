@@ -54,6 +54,14 @@ function systemMemSeverity(used: number, total: number): Severity {
   return "normal";
 }
 
+function cpuSeverity(percent: number | null, cores: number): Severity {
+  if (percent === null || !Number.isFinite(percent) || percent < 0) return "normal";
+  const normalized = cores > 0 ? percent / cores : percent;
+  if (normalized >= 80) return "critical";
+  if (normalized >= 50) return "warning";
+  return "normal";
+}
+
 function severityClassName(severity: Severity): string {
   if (severity === "critical") return "system-stats-modal__value--critical";
   if (severity === "warning") return "system-stats-modal__value--warning";
@@ -219,6 +227,15 @@ export function SystemStatsModal({ isOpen, onClose, projectId }: SystemStatsModa
     ? `System memory used: ${usedSystemMemPercent.toFixed(1)}% (${formatBytes(usedSystemMem)} of ${formatBytes(system.systemTotalMem)})`
     : "System memory usage unavailable";
   const vitestProcessCount = stats?.vitestProcessCount;
+  const cpuLoadSeverity = cpuSeverity(system?.cpuPercent ?? null, system?.cpuCount ?? 0);
+  const cpuClassName = severityClassName(cpuLoadSeverity);
+  const cpuPercentValue = system?.cpuPercent ?? null;
+  const cpuBarPercent = cpuPercentValue === null ? 0 : Math.max(0, Math.min(100, cpuPercentValue));
+  const cpuPercentLabel = cpuPercentValue === null ? "Sampling…" : `${cpuPercentValue.toFixed(1)}%`;
+  const cpuProgressLabel =
+    cpuPercentValue === null
+      ? "App CPU usage unavailable: waiting for another sample"
+      : `App CPU usage: ${cpuPercentValue.toFixed(1)}%`;
   const killResultClassName = killResult
     ? killResult.killed > 0
       ? "system-stats-modal__kill-result system-stats-modal__kill-result--success"
@@ -294,6 +311,28 @@ export function SystemStatsModal({ isOpen, onClose, projectId }: SystemStatsModa
             <section className="system-stats-modal__section" aria-label="CPU and load stats">
               <h3 className="system-stats-modal__section-title">CPU &amp; Load</h3>
               <dl className="system-stats-modal__grid">
+                <div className="system-stats-modal__row system-stats-modal__row--cpu-used">
+                  <dt>App CPU</dt>
+                  <dd>
+                    <span className={`system-stats-modal__value ${cpuClassName}`.trim()}>{cpuPercentLabel}</span>
+                    <span className="system-stats-modal__detail">{cpuPercentValue === null ? "First sample pending" : "process usage"}</span>
+                  </dd>
+                  <div className="system-stats-modal__memory-progress-wrapper">
+                    <div
+                      className={`system-stats-modal__memory-progress-track system-stats-modal__memory-progress-track--${cpuLoadSeverity}`}
+                      role="progressbar"
+                      aria-valuenow={Math.round(cpuBarPercent)}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label={cpuProgressLabel}
+                    >
+                      <div
+                        className={`system-stats-modal__memory-progress-fill system-stats-modal__memory-progress-fill--${cpuLoadSeverity}`}
+                        style={{ width: `${cpuBarPercent}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
                 <div className="system-stats-modal__row">
                   <dt>Load Avg</dt>
                   <dd>{system?.loadAvg.map((value) => value.toFixed(2)).join(" ") ?? "—"}</dd>

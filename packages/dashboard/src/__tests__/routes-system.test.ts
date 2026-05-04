@@ -321,6 +321,22 @@ describe("GET /api/system-stats", () => {
   }
 
   it("returns process/system metrics with task and agent aggregates", async () => {
+    const cpuUsageSpy = vi.spyOn(process, "cpuUsage");
+    const dateNowSpy = vi.spyOn(Date, "now");
+    cpuUsageSpy
+      .mockReturnValueOnce({ user: 1_000_000, system: 500_000 })
+      .mockImplementation((previousValue?: NodeJS.CpuUsage) => {
+        if (previousValue) {
+          return { user: 200_000, system: 100_000 };
+        }
+        return { user: 1_200_000, system: 600_000 };
+      });
+    let now = 1_000;
+    dateNowSpy.mockImplementation(() => {
+      now += 1_000;
+      return now;
+    });
+
     const store = createMockStore({
       listTasks: vi.fn().mockResolvedValue([
         { id: "FN-1", column: "triage" },
@@ -330,7 +346,7 @@ describe("GET /api/system-stats", () => {
       getFusionDir: vi.fn().mockReturnValue("/fake/default"),
     });
 
-    mockExecFile.mockImplementationOnce((...callArgs: unknown[]) => {
+    mockExecFile.mockImplementation((...callArgs: unknown[]) => {
       const cb = callArgs[callArgs.length - 1] as (err: unknown, stdout?: string, stderr?: string) => void;
       cb(null, `${process.pid}\n111\n222\n`, "");
     });
@@ -343,7 +359,8 @@ describe("GET /api/system-stats", () => {
       { id: "agent-4", state: "error" },
     ] as Array<Awaited<ReturnType<AgentStore["listAgents"]>>[number]>);
 
-    const res = await GET(buildApp(store), "/api/system-stats");
+    const app = buildApp(store);
+    const res = await GET(app, "/api/system-stats");
 
     expect(res.status).toBe(200);
     expect(res.body.systemStats).toEqual(
@@ -364,6 +381,11 @@ describe("GET /api/system-stats", () => {
         platform: expect.stringContaining("/"),
       }),
     );
+
+    const secondRes = await GET(app, "/api/system-stats");
+    expect(secondRes.status).toBe(200);
+    expect(secondRes.body.systemStats.cpuPercent).toBe(30);
+
     expect(res.body.taskStats).toEqual({
       total: 3,
       byColumn: {
@@ -384,6 +406,9 @@ describe("GET /api/system-stats", () => {
     });
     expect(res.body.vitestProcessCount).toBe(2);
     expect(res.body.vitestLastAutoKillAt).toBeNull();
+
+    cpuUsageSpy.mockRestore();
+    dateNowSpy.mockRestore();
     mockExecFile.mockClear();
   });
 
@@ -451,6 +476,7 @@ describe("GET /api/system-stats", () => {
       expect.objectContaining({
         rss: expect.any(Number),
         heapUsed: expect.any(Number),
+        cpuPercent: expect.toSatisfy((value: unknown) => value === null || typeof value === "number"),
       }),
     );
     expect(res.body.taskStats).toEqual({

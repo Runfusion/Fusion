@@ -17,11 +17,6 @@ import { homedir } from "node:os";
 import { createRequire } from "node:module";
 
 const processRef = globalThis.process;
-const fetchRef = globalThis.fetch;
-const abortControllerRef = globalThis.AbortController;
-const setTimeoutRef = globalThis.setTimeout;
-const clearTimeoutRef = globalThis.clearTimeout;
-
 const args = processRef.argv.slice(2);
 const invokedAs = basename(processRef.argv[1] || "").replace(/\.(js|cjs|mjs|exe)$/i, "");
 const isAliasInvocation = invokedAs === "runfusion.ai" || invokedAs === "runfusion";

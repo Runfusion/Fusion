@@ -113,12 +113,14 @@
   gap: var(--space-md);
 }
 
-.system-stats-modal__row--memory-used {
+.system-stats-modal__row--memory-used,
+.system-stats-modal__row--cpu-used {
   align-items: stretch;
   flex-direction: column;
 }
 
-.system-stats-modal__row--memory-used dd {
+.system-stats-modal__row--memory-used dd,
+.system-stats-modal__row--cpu-used dd {
   width: 100%;
   justify-content: flex-end;
 }

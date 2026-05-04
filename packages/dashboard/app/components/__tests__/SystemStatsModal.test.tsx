@@ -30,7 +30,7 @@ const sampleStats = {
     heapLimit: 1000 * 1024 * 1024,
     external: 50 * 1024 * 1024,
     arrayBuffers: 20 * 1024 * 1024,
-    cpuPercent: null,
+    cpuPercent: 68.4,
     loadAvg: [1.2, 0.8, 0.5] as [number, number, number],
     cpuCount: 8,
     systemTotalMem: 10 * 1024 * 1024 * 1024,
@@ -115,6 +115,13 @@ describe("SystemStatsModal", () => {
     expect(memoryUsageProgress.className).toContain("system-stats-modal__memory-progress-track--critical");
     const criticalFill = memoryUsageProgress.querySelector(".system-stats-modal__memory-progress-fill");
     expect(criticalFill?.className).toContain("system-stats-modal__memory-progress-fill--critical");
+
+    expect(screen.getByText("68.4%")).toBeDefined();
+    const cpuUsageProgress = screen.getByRole("progressbar", {
+      name: "App CPU usage: 68.4%",
+    });
+    expect(cpuUsageProgress).toHaveAttribute("aria-valuenow", "68");
+    expect(cpuUsageProgress.className).toContain("system-stats-modal__memory-progress-track--normal");
 
     expect(screen.getByText("1.20 0.80 0.50")).toBeDefined();
     expect(screen.getByText("Vitest Processes")).toBeDefined();
@@ -265,6 +272,24 @@ describe("SystemStatsModal", () => {
     await waitFor(() => {
       expect(mockUpdateGlobalSettings).toHaveBeenCalledWith({ vitestKillThresholdPct: 95 });
     });
+  });
+
+  it("shows deterministic fallback copy when app CPU percentage is unavailable", async () => {
+    mockFetchSystemStats.mockResolvedValue({
+      ...sampleStats,
+      systemStats: {
+        ...sampleStats.systemStats,
+        cpuPercent: null,
+      },
+    });
+
+    render(<SystemStatsModal isOpen={true} onClose={vi.fn()} />);
+
+    expect(await screen.findByText("Sampling…")).toBeDefined();
+    const cpuUsageProgress = screen.getByRole("progressbar", {
+      name: "App CPU usage unavailable: waiting for another sample",
+    });
+    expect(cpuUsageProgress).toHaveAttribute("aria-valuenow", "0");
   });
 
   it("shows fallback text when last auto-kill timestamp is unavailable", async () => {

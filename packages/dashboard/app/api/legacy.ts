@@ -5717,6 +5717,7 @@ export interface SystemStatsSnapshot {
   heapLimit: number;
   external: number;
   arrayBuffers: number;
+  // Null until at least two samples are available to compute process CPU delta.
   cpuPercent: number | null;
   loadAvg: [number, number, number];
   cpuCount: number;

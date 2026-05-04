@@ -1303,6 +1303,38 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
   });
 
+  let lastCpuUsageSample: NodeJS.CpuUsage | null = null;
+  let lastCpuSampleAt: number | null = null;
+
+  const getAppCpuPercent = (): number | null => {
+    const currentCpuUsage = process.cpuUsage();
+    const currentSampleAt = Date.now();
+
+    if (lastCpuUsageSample === null || lastCpuSampleAt === null) {
+      lastCpuUsageSample = { user: currentCpuUsage.user, system: currentCpuUsage.system };
+      lastCpuSampleAt = currentSampleAt;
+      return null;
+    }
+
+    const elapsedMs = currentSampleAt - lastCpuSampleAt;
+    const cpuUsageDelta = process.cpuUsage(lastCpuUsageSample);
+
+    lastCpuUsageSample = { user: currentCpuUsage.user, system: currentCpuUsage.system };
+    lastCpuSampleAt = currentSampleAt;
+
+    if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) {
+      return null;
+    }
+
+    const elapsedMicros = elapsedMs * 1_000;
+    const usedMicros = cpuUsageDelta.user + cpuUsageDelta.system;
+    if (!Number.isFinite(usedMicros) || usedMicros < 0) {
+      return null;
+    }
+
+    return Math.max(0, Number(((usedMicros / elapsedMicros) * 100).toFixed(1)));
+  };
+
   const getVitestProcessIds = async (): Promise<number[]> => {
     // execFile (not execSync) so the dashboard's event loop stays responsive
     // while pgrep walks the process table — that walk can take 100ms+ on a
@@ -1332,6 +1364,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const heapStats = v8.getHeapStatistics();
       const load = os.loadavg();
       const vitestProcessIds = await getVitestProcessIds();
+      const cpuPercent = getAppCpuPercent();
 
       let totalTasks = 0;
       let activeTasks = 0;
@@ -1390,7 +1423,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           heapLimit: heapStats.heap_size_limit,
           external: mem.external,
           arrayBuffers: mem.arrayBuffers,
-          cpuPercent: null,
+          cpuPercent,
           loadAvg: [load[0] ?? 0, load[1] ?? 0, load[2] ?? 0],
           cpuCount: os.cpus().length,
           systemTotalMem: os.totalmem(),
