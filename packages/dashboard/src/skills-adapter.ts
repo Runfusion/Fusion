@@ -264,8 +264,9 @@ export function createSkillsAdapter(options: {
         // Compute relative path for the skill.
         // Guard against baseDir being the parent of the skills directory,
         // which causes relative() to already include "skills/" in the result.
-        const _rel = relative(resource.metadata.baseDir ?? "", resource.path);
-        const skillRelativePath = _rel.startsWith("skills/") ? _rel : "skills/" + _rel;
+        const relPath = relative(resource.metadata.baseDir ?? "", resource.path)
+          .replaceAll("\\", "/");
+        const skillRelativePath = relPath.startsWith("skills/") ? relPath : `skills/${relPath}`;
 
         const skillId = computeSkillId(resource.metadata.source, skillRelativePath);
         const skillName = extractSkillName(skillRelativePath, resource.metadata.source);
