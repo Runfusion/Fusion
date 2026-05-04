@@ -345,8 +345,11 @@ export function useTasks(options?: UseTasksOptions) {
     return normalizeTask(await api.pauseTask(id, projectId));
   }, [projectId]);
 
-  const deleteTask = useCallback(async (id: string): Promise<Task> => {
-    return normalizeTask(await api.deleteTask(id, projectId));
+  const deleteTask = useCallback(async (
+    id: string,
+    options?: { removeDependencyReferences?: boolean },
+  ): Promise<Task> => {
+    return normalizeTask(await api.deleteTask(id, projectId, options));
   }, [projectId]);
 
   const mergeTask = useCallback(async (id: string): Promise<MergeResult> => {
