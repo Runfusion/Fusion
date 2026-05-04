@@ -4744,21 +4744,21 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     let validEntries = batch;
     let flushSucceeded = false;
     try {
-      // Filter out entries for deleted tasks to prevent FK violations
-      // from poisoning the entire buffer.
-      const liveTaskIds = new Set(
-        (this.db.prepare("SELECT id FROM tasks").all() as Array<{ id: string }>).map((r) => r.id),
-      );
-      validEntries = batch.filter((e) => liveTaskIds.has(e.taskId));
-      const dropped = batch.length - validEntries.length;
-      if (dropped > 0) {
-        console.warn(
-          `[fusion] Dropped ${dropped} buffered agent log entries for deleted tasks (${this.db.path})`,
+      this.db.transaction(() => {
+        // Query live task IDs inside the transaction so the check is
+        // atomic with the inserts (prevents TOCTOU FK violations).
+        const liveTaskIds = new Set(
+          (this.db.prepare("SELECT id FROM tasks").all() as Array<{ id: string }>).map((r) => r.id),
         );
-      }
+        validEntries = batch.filter((e) => liveTaskIds.has(e.taskId));
+        const dropped = batch.length - validEntries.length;
+        if (dropped > 0) {
+          console.warn(
+            `[fusion] Dropped ${dropped} buffered agent log entries for deleted tasks (${this.db.path})`,
+          );
+        }
 
-      if (validEntries.length > 0) {
-        this.db.transaction(() => {
+        if (validEntries.length > 0) {
           const stmt = this.db.prepare(`
             INSERT INTO agentLogEntries (taskId, timestamp, text, type, detail, agent)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -4767,8 +4767,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
             stmt.run(entry.taskId, entry.timestamp, entry.text, entry.type, entry.detail, entry.agent);
           }
           this.db.bumpLastModified();
-        });
-      }
+        }
+      });
       flushSucceeded = true;
     } finally {
       // Always drain the original slice from the buffer.
