@@ -379,6 +379,7 @@ describe("Navigation history integration", () => {
   it("pushes history entry when opening Settings modal on desktop", async () => {
     await renderAppAndWait();
 
+    const pushCallsBefore = (window.history.pushState as any).mock.calls.length;
     const settingsBtn = screen.getByTitle("Settings");
     fireEvent.click(settingsBtn);
 
@@ -386,8 +387,8 @@ describe("Navigation history integration", () => {
       expect(screen.getByTestId("settings-modal")).toBeTruthy();
     });
 
-    // Back-button nav is enabled on desktop too
-    expect(window.history.pushState).toHaveBeenCalled();
+    // Back-button nav is enabled on desktop too — pushState called for the modal open
+    expect((window.history.pushState as any).mock.calls.length).toBeGreaterThan(pushCallsBefore);
   });
 
   // 2. Desktop: popstate dismisses modals
@@ -418,6 +419,7 @@ describe("Navigation history integration", () => {
 
     await renderAppAndWait();
 
+    const pushCallsBefore = (window.history.pushState as any).mock.calls.length;
     // Switch to agents view
     const agentsTab = screen.queryByTitle("Agents");
     if (!agentsTab) return;
@@ -428,7 +430,7 @@ describe("Navigation history integration", () => {
     });
 
     // pushState should have been called for the view change
-    expect(window.history.pushState).toHaveBeenCalled();
+    expect((window.history.pushState as any).mock.calls.length).toBeGreaterThan(pushCallsBefore);
   });
 
   // 4. Desktop: popstate reverts view changes
