@@ -1,23 +1,36 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchPluginDashboardViews } from "../api";
 import type { PluginDashboardViewEntry } from "../api";
 
 const dashboardViewsCache = new Map<string, { views: PluginDashboardViewEntry[]; expiresAt: number }>();
 const CACHE_TTL_MS = 60_000;
 
+/** Clear module cache for deterministic hook tests. */
 export function __test_clearDashboardViewsCache(): void {
   dashboardViewsCache.clear();
 }
 
+/**
+ * Fetch plugin dashboard views with a 60s project-scoped cache.
+ * Loading is only true for the first fetch of each hook lifecycle.
+ */
 export function usePluginDashboardViews(projectId?: string): {
   views: PluginDashboardViewEntry[];
   loading: boolean;
   error: string | null;
+  refetch: () => void;
 } {
   const [views, setViews] = useState<PluginDashboardViewEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const initialLoadCompleteRef = useRef(false);
+
+  const refetch = useCallback(() => {
+    const cacheKey = projectId ?? "default";
+    dashboardViewsCache.delete(cacheKey);
+    setReloadKey((key) => key + 1);
+  }, [projectId]);
 
   useEffect(() => {
     const cacheKey = projectId ?? "default";
@@ -57,7 +70,7 @@ export function usePluginDashboardViews(projectId?: string): {
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [projectId, reloadKey]);
 
-  return useMemo(() => ({ views, loading, error }), [views, loading, error]);
+  return useMemo(() => ({ views, loading, error, refetch }), [views, loading, error, refetch]);
 }

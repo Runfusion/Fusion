@@ -1,64 +1,82 @@
 import { AlertTriangle } from "lucide-react";
-import type { ComponentType, ReactNode } from "react";
-import type { Task, TaskDetail, WorkflowStep } from "@fusion/core";
-import { DependencyGraphView } from "@fusion-plugin-examples/dependency-graph/dashboard-view";
+import { lazy, Suspense, type LazyExoticComponent, type ReactNode } from "react";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import "./pluginViewRegistry.css";
 
 export type PluginTaskView = `plugin:${string}:${string}`;
 
-export interface PluginDashboardHostContext {
-  projectId?: string;
-  tasks: Task[];
-  workflowSteps: WorkflowStep[];
-  openTaskDetail: (task: Task | TaskDetail, initialTab?: "logs" | "changes") => void;
-  renderTaskCard: (task: Task) => ReactNode;
-}
+type PluginViewComponent = LazyExoticComponent<() => JSX.Element>;
 
-export interface PluginDashboardViewComponentProps {
-  context: PluginDashboardHostContext;
-}
+const registry = new Map<string, PluginViewComponent>();
 
-export interface PluginDashboardViewRegistration {
-  pluginId: string;
-  viewId: string;
-  component: ComponentType<PluginDashboardViewComponentProps>;
-}
-
-const REGISTRY: PluginDashboardViewRegistration[] = [
-  {
-    pluginId: "fusion-plugin-dependency-graph",
-    viewId: "graph",
-    component: DependencyGraphView as ComponentType<PluginDashboardViewComponentProps>,
-  },
-];
-
-export function buildPluginTaskViewId(pluginId: string, viewId: string): PluginTaskView {
+/** Build composite plugin task view ID: plugin:{pluginId}:{viewId}. */
+export function getPluginViewId(pluginId: string, viewId: string): PluginTaskView {
   return `plugin:${pluginId}:${viewId}`;
 }
 
-export function parsePluginTaskViewId(taskView: string): { pluginId: string; viewId: string } | null {
-  if (!taskView.startsWith("plugin:")) return null;
-  const [, pluginId, ...viewParts] = taskView.split(":");
-  const viewId = viewParts.join(":");
-  if (!pluginId || !viewId) return null;
-  return { pluginId, viewId };
+/** Parse composite plugin task view ID. Returns null for non-plugin IDs. */
+export function parsePluginViewId(value: string): { pluginId: string; viewId: string } | null {
+  const match = /^plugin:([^:]+):(.+)$/u.exec(value);
+  if (!match) return null;
+  return { pluginId: match[1], viewId: match[2] };
 }
 
-export function resolvePluginDashboardView(pluginId: string, viewId: string): ComponentType<PluginDashboardViewComponentProps> | null {
-  const hit = REGISTRY.find((entry) => entry.pluginId === pluginId && entry.viewId === viewId);
-  return hit?.component ?? null;
+/** True when a view ID matches the plugin composite ID format. */
+export function isPluginViewId(value: string): value is PluginTaskView {
+  return parsePluginViewId(value) !== null;
 }
 
-export function MissingPluginDashboardView({ pluginId, viewId }: { pluginId: string; viewId: string }): ReactNode {
+/** Register a lazy plugin dashboard view component in the static host registry. */
+export function registerPluginView(pluginId: string, viewId: string, lazyComponent: PluginViewComponent): void {
+  registry.set(getPluginViewId(pluginId, viewId), lazyComponent);
+}
+
+/** Resolve a plugin dashboard lazy component from the static host registry. */
+export function getPluginViewComponent(pluginId: string, viewId: string): PluginViewComponent | null {
+  return registry.get(getPluginViewId(pluginId, viewId)) ?? null;
+}
+
+/** Test helper for clearing global registry state. */
+export function __test_clearPluginViewRegistry(): void {
+  registry.clear();
+}
+
+function PluginViewUnavailable({ viewId }: { viewId: string }): ReactNode {
   return (
-    <section className="card plugin-dashboard-view-missing">
+    <section className="card plugin-dashboard-view-missing" data-testid="plugin-view-unavailable">
       <h2 className="plugin-dashboard-view-missing-title">
         <AlertTriangle />
         Plugin view unavailable
       </h2>
       <p className="plugin-dashboard-view-missing-description">
-        The dashboard could not resolve <code>{pluginId}:{viewId}</code> from the host registry.
+        No host registration found for <code>{viewId}</code>.
       </p>
     </section>
   );
 }
+
+export function PluginDashboardViewHost({ viewId }: { viewId: PluginTaskView }): ReactNode {
+  const parsed = parsePluginViewId(viewId);
+  if (!parsed) return <PluginViewUnavailable viewId={viewId} />;
+
+  const ViewComponent = getPluginViewComponent(parsed.pluginId, parsed.viewId);
+  if (!ViewComponent) {
+    return <PluginViewUnavailable viewId={viewId} />;
+  }
+
+  return (
+    <ErrorBoundary fallback={<PluginViewUnavailable viewId={viewId} />}>
+      <Suspense fallback={null}>
+        <ViewComponent />
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
+
+// Backward-compatible aliases.
+export const buildPluginTaskViewId = getPluginViewId;
+export const parsePluginTaskViewId = parsePluginViewId;
+export const resolvePluginDashboardView = getPluginViewComponent;
+
+// Ensure lazy is referenced for plugin authors importing only this module pattern.
+void lazy;

@@ -555,6 +555,28 @@ Current host constraints:
 - `componentPath` is stored for authoring symmetry/future expansion, but render resolution is currently done through a host-side static registry (`pluginId + viewId`)
 - Use stable IDs; runtime view key format is `plugin:${pluginId}:${viewId}`
 
+### Static host registry model
+
+Dashboard view components are resolved from a host-side registry and must be explicitly registered:
+
+```ts
+import { lazy } from "react";
+import { registerPluginView } from "../app/plugins/pluginViewRegistry";
+
+registerPluginView(
+  "fusion-plugin-dependency-graph",
+  "graph",
+  lazy(() => import("@fusion-plugin-examples/dependency-graph/dashboard-view")),
+);
+```
+
+The host then renders plugin views via `PluginDashboardViewHost` using the composite ID.
+
+Placement guidance:
+- `primary`: top-level nav tab (host may limit count on mobile)
+- `overflow`: desktop header overflow menu
+- `more`: mobile More sheet / secondary nav surfaces
+
 ---
 
 ## 9. Registering Agent Runtimes

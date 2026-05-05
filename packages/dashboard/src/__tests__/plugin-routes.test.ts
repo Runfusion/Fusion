@@ -703,6 +703,16 @@ describe("GET /api/plugins/dashboard-views", () => {
     return app;
   }
 
+  it("returns empty array when pluginLoader is not available", async () => {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, { pluginStore }));
+
+    const res = await performGet(app, "/api/plugins/dashboard-views");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
   it("returns 200 with empty array when no plugins have dashboard views", async () => {
     (pluginLoader.getPluginDashboardViews as ReturnType<typeof vi.fn>).mockReturnValue([]);
     const res = await performGet(buildApp(), "/api/plugins/dashboard-views");

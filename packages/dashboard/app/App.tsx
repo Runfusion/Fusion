@@ -49,6 +49,7 @@ import { useViewState, type TaskView } from "./hooks/useViewState";
 import { useNavigationHistory } from "./hooks/useNavigationHistory";
 import { usePluginDashboardViews } from "./hooks/usePluginDashboardViews";
 import { PluginDashboardViewHost } from "./plugins/PluginDashboardViewHost";
+import { isPluginViewId } from "./plugins/pluginViewRegistry";
 import { useProjectActions } from "./hooks/useProjectActions";
 import { useTaskHandlers } from "./hooks/useTaskHandlers";
 import { useRemoteNodeData } from "./hooks/useRemoteNodeData";
@@ -448,6 +449,7 @@ function AppInner() {
   // Redirect to board if feature-gated views are disabled.
   useEffect(() => {
     if (!settingsLoaded) return;
+    if (isPluginViewId(taskView)) return;
     if (taskView === "skills" && !skillsEnabled) {
       handleChangeTaskView("board");
     }
@@ -867,7 +869,7 @@ function AppInner() {
     }
 
     // Project view
-    if (taskView.startsWith("plugin:")) {
+    if (isPluginViewId(taskView)) {
       return (
         <PageErrorBoundary>
           <PluginDashboardViewHost
@@ -1319,7 +1321,7 @@ function AppInner() {
           <NativeShellConnectionStatus state={shellState} onManage={() => setShellConnectionManagerOpen(true)} />
         ) : undefined}
       />
-      {viewMode === "project" && currentProject && taskView !== "chat" && taskView !== "mailbox" && taskView !== "insights" && taskView !== "devserver" && taskView !== "dev-server" && !taskView.startsWith("plugin:") && (
+      {viewMode === "project" && currentProject && taskView !== "chat" && taskView !== "mailbox" && taskView !== "insights" && taskView !== "devserver" && taskView !== "dev-server" && !isPluginViewId(taskView) && (
         <QuickChatFAB
           projectId={currentProject.id}
           addToast={addToast}

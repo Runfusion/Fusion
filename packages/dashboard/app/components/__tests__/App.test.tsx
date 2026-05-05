@@ -1645,8 +1645,7 @@ describe("App view switching", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Zoom In")).toBeInTheDocument();
-      expect(screen.getByText("Zoom Out")).toBeInTheDocument();
+      expect(screen.getByText("Plugin view unavailable")).toBeInTheDocument();
     });
 
     localStorage.removeItem(taskViewStorageKey());

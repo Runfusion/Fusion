@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ThemeMode } from "@fusion/core";
 import type { ProjectInfo } from "../api";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
+import { isPluginViewId } from "../plugins/pluginViewRegistry";
 
 export type ViewMode = "overview" | "project";
 export type BuiltInTaskView = "board" | "list" | "agents" | "missions" | "chat" | "documents" | "research" | "roadmaps" | "skills" | "mailbox" | "insights" | "memory" | "devserver" | "dev-server";
@@ -29,12 +30,8 @@ function isBuiltInTaskView(value: string | null): value is BuiltInTaskView {
   return value !== null && BUILT_IN_TASK_VIEWS.includes(value as BuiltInTaskView);
 }
 
-function isPluginTaskView(value: string | null): value is PluginTaskView {
-  return value !== null && /^plugin:[^:]+:.+$/u.test(value);
-}
-
 function isTaskView(value: string | null): value is TaskView {
-  return isBuiltInTaskView(value) || isPluginTaskView(value);
+  return value !== null && (isBuiltInTaskView(value) || isPluginViewId(value));
 }
 
 function normalizeTaskView(value: TaskView): TaskView {

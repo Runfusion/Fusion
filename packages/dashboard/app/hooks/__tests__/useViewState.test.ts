@@ -329,6 +329,22 @@ describe("useViewState", () => {
     expect(localStorage.getItem("kb:proj_123:kb-dashboard-task-view")).toBe("plugin:fusion-plugin-dependency-graph:graph");
   });
 
+  it("rejects invalid plugin view IDs and falls back to board", async () => {
+    localStorage.setItem("kb:proj_123:kb-dashboard-task-view", "plugin:only-one-segment");
+
+    const { result } = renderHook(() =>
+      useViewState(
+        createOptions({
+          currentProject: PROJECT,
+        }),
+      ),
+    );
+
+    await waitFor(() => {
+      expect(result.current.taskView).toBe("board");
+    });
+  });
+
   it("restores legacy views (board/list/agents/missions/chat) from scoped storage", async () => {
     const legacyViews = ["board", "list", "agents", "missions", "chat"] as const;
 
