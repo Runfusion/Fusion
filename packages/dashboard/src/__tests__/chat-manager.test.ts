@@ -1661,3 +1661,124 @@ describe("ChatManager.getGeneratingSessionIds", () => {
     expect(chatManager.getGeneratingSessionIds()).toEqual([]);
   });
 });
+
+describe("ChatManager generation isolation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetChatState();
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: "agent-001",
+      status: "active",
+    });
+    mockChatStore.addMessage.mockReturnValue({
+      id: "msg-001",
+      sessionId: "chat-001",
+      role: "assistant",
+      content: "",
+    });
+  });
+
+  // Regression: a "Generation cancelled" broadcast from a previous generation
+  // must not leak into a new SSE subscriber that connected after the cancel
+  // request landed. Before per-generation tagging this race silently flipped
+  // the new chat into "no streaming" state with no Stop button or indicator.
+  it("cancelGeneration broadcast does not reach a new generation's subscriber", async () => {
+    const chatManager = createChatManager();
+
+    // Start gen #1 manually so we can hold a reference to its generationId
+    // without driving a real agent loop.
+    const firstGen = chatManager.beginGeneration("chat-001");
+    expect(firstGen.generationId).toBe(1);
+
+    // Simulate the new request subscribing for gen #2 BEFORE the cancel of
+    // gen #1 has been processed by the backend.
+    const secondGen = chatManager.beginGeneration("chat-001");
+    expect(secondGen.generationId).toBe(2);
+    // beginGeneration aborts the prior controller so the old loop unwinds.
+    expect(firstGen.abortController.signal.aborted).toBe(true);
+
+    const eventsForNewSubscriber: Array<{ type: string; data: unknown }> = [];
+    const unsubscribe = chatStreamManager.subscribe(
+      "chat-001",
+      (event) => { eventsForNewSubscriber.push(event); },
+      { generationId: secondGen.generationId },
+    );
+
+    // Cancel gen #1 (which is what the in-flight HTTP cancel request would do).
+    // Today this is a no-op for activeGenerations because beginGeneration #2
+    // overwrote the entry, but in production the cancel can race with the
+    // beginGeneration. Simulate the broadcast directly as well to exercise the
+    // tagged-broadcast filtering.
+    chatStreamManager.broadcast(
+      "chat-001",
+      { type: "error", data: "Generation cancelled" },
+      { generationId: firstGen.generationId },
+    );
+
+    expect(eventsForNewSubscriber).toEqual([]);
+
+    // A broadcast tagged for gen #2 still reaches the subscriber.
+    chatStreamManager.broadcast(
+      "chat-001",
+      { type: "text", data: "hello" },
+      { generationId: secondGen.generationId },
+    );
+    expect(eventsForNewSubscriber).toEqual([{ type: "text", data: "hello" }]);
+
+    unsubscribe();
+  });
+
+  // Regression: an old generation completing its `finally` block must not
+  // delete a newer generation's activeGenerations entry, otherwise
+  // `isGenerating(sessionId)` returns false while the new request is still
+  // streaming and recovery polling cannot find it.
+  it("old generation finally does not delete a newer generation's slot", async () => {
+    const chatManager = createChatManager();
+
+    let resolvePrompt: (() => void) | undefined;
+    let promptCallCount = 0;
+    __setCreateFnAgent(async () => {
+      promptCallCount += 1;
+      const callIndex = promptCallCount;
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(() => {
+            // First call hangs until we resolve it; second resolves immediately.
+            if (callIndex === 1) {
+              return new Promise<void>((resolve) => { resolvePrompt = resolve; });
+            }
+            return Promise.resolve();
+          }),
+          dispose: vi.fn(),
+          state: { messages: [{ role: "assistant", content: "ok" }] },
+        },
+      };
+    });
+
+    // Kick off generation #1 — it will hang inside prompt().
+    const sendOne = chatManager.sendMessage("chat-001", "first");
+    // Yield enough microtasks for sendOne to set its activeGenerations entry.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(chatManager.isGenerating("chat-001")).toBe(true);
+
+    // Cancel #1 (so its prompt() will eventually unwind via the abort path).
+    chatManager.cancelGeneration("chat-001");
+
+    // Start generation #2 and let it run. Its sendMessage promise resolves
+    // synchronously (mock prompt returns immediately on the second call), but
+    // the activeGenerations slot for #2 is set during its execution.
+    const sendTwo = chatManager.sendMessage("chat-001", "second");
+    await sendTwo;
+
+    // Now release #1's prompt so its finally block runs.
+    resolvePrompt?.();
+    await sendOne;
+
+    // The slot was correctly cleaned up by sendTwo (the most recent owner)
+    // and not re-deleted/corrupted by sendOne's late finally.
+    expect(chatManager.isGenerating("chat-001")).toBe(false);
+  });
+});

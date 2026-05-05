@@ -168,6 +168,12 @@ export type ChatStreamEvent =
 /** Callback function for streaming events */
 export type ChatStreamCallback = (event: ChatStreamEvent, eventId?: number) => void;
 
+/** Per-subscription record. `generationId` (if set) filters which broadcasts are delivered. */
+interface ChatStreamSubscription {
+  callback: ChatStreamCallback;
+  generationId?: number;
+}
+
 interface RateLimitEntry {
   count: number;
   firstRequestAt: Date;
@@ -285,7 +291,7 @@ export async function resolveFileReferences(content: string, rootDir: string): P
  * Follows the PlanningStreamManager pattern.
  */
 export class ChatStreamManager extends EventEmitter {
-  private readonly sessions = new Map<string, Set<ChatStreamCallback>>();
+  private readonly sessions = new Map<string, Set<ChatStreamSubscription>>();
   private readonly buffers = new Map<string, SessionEventBuffer>();
 
   constructor(private readonly bufferSize = 100) {
@@ -295,18 +301,29 @@ export class ChatStreamManager extends EventEmitter {
   /**
    * Register a client callback for a chat session.
    * Returns a function to unsubscribe.
+   *
+   * If `options.generationId` is provided, this subscriber only receives broadcasts
+   * tagged with the same generationId (or untagged broadcasts). This isolates each
+   * client SSE connection to events from its own `chatManager.sendMessage` call so
+   * that a previous generation's late "Generation cancelled" event cannot leak into
+   * a new request that has just subscribed for the same session.
    */
-  subscribe(sessionId: string, callback: ChatStreamCallback): () => void {
+  subscribe(
+    sessionId: string,
+    callback: ChatStreamCallback,
+    options?: { generationId?: number },
+  ): () => void {
     if (!this.sessions.has(sessionId)) {
       this.sessions.set(sessionId, new Set());
     }
 
-    const callbacks = this.sessions.get(sessionId)!;
-    callbacks.add(callback);
+    const subscriptions = this.sessions.get(sessionId)!;
+    const subscription: ChatStreamSubscription = { callback, generationId: options?.generationId };
+    subscriptions.add(subscription);
 
     return () => {
-      callbacks.delete(callback);
-      if (callbacks.size === 0) {
+      subscriptions.delete(subscription);
+      if (subscriptions.size === 0) {
         this.sessions.delete(sessionId);
       }
     };
@@ -324,18 +341,36 @@ export class ChatStreamManager extends EventEmitter {
   /**
    * Broadcast an event to all clients subscribed to a session.
    * Every event is buffered and assigned a monotonically increasing id.
+   *
+   * When `options.generationId` is set, the event is delivered only to subscribers
+   * that registered without a generation filter or whose generation matches.
+   * Subscribers tied to a different generation will not receive it. Untagged
+   * broadcasts (no generationId) reach every subscriber for backward compatibility.
    */
-  broadcast(sessionId: string, event: ChatStreamEvent): number {
+  broadcast(
+    sessionId: string,
+    event: ChatStreamEvent,
+    options?: { generationId?: number },
+  ): number {
     const serialized = JSON.stringify((event as { data?: unknown }).data ?? {});
     const eventData = typeof serialized === "string" ? serialized : "{}";
     const eventId = this.getBuffer(sessionId).push(event.type, eventData);
 
-    const callbacks = this.sessions.get(sessionId);
-    if (!callbacks) return eventId;
+    const subscriptions = this.sessions.get(sessionId);
+    if (!subscriptions) return eventId;
 
-    for (const callback of callbacks) {
+    const broadcastGenerationId = options?.generationId;
+
+    for (const subscription of subscriptions) {
+      if (
+        broadcastGenerationId !== undefined &&
+        subscription.generationId !== undefined &&
+        subscription.generationId !== broadcastGenerationId
+      ) {
+        continue;
+      }
       try {
-        callback(event, eventId);
+        subscription.callback(event, eventId);
       } catch (err) {
         diagnostics.error(`Error broadcasting to client for session ${sessionId}:`, err);
       }
@@ -357,8 +392,8 @@ export class ChatStreamManager extends EventEmitter {
    * Check if a session has active subscribers.
    */
   hasSubscribers(sessionId: string): boolean {
-    const callbacks = this.sessions.get(sessionId);
-    return callbacks !== undefined && callbacks.size > 0;
+    const subscriptions = this.sessions.get(sessionId);
+    return subscriptions !== undefined && subscriptions.size > 0;
   }
 
   /**
@@ -447,9 +482,11 @@ export function getRateLimitResetTime(ip: string): Date | null {
  */
 export class ChatManager {
   private agentStoreReady?: Promise<void>;
+  private generationCounter = 0;
   private activeGenerations = new Map<string, {
     abortController: AbortController;
     agentResult?: AgentResult;
+    generationId: number;
   }>();
 
   constructor(
@@ -490,6 +527,7 @@ export class ChatManager {
 
   private handleFallbackModelUsed(
     sessionId: string,
+    generationId: number,
     payload: {
       primaryModel: string;
       fallbackModel: string;
@@ -510,7 +548,38 @@ export class ChatManager {
     chatStreamManager.broadcast(sessionId, {
       type: "fallback",
       data: payload,
-    });
+    }, { generationId });
+  }
+
+  /**
+   * Allocate a fresh generation slot for a session before subscribing/streaming.
+   *
+   * Returns a monotonically increasing `generationId` plus an `AbortController` that
+   * later steps (the SSE route, `sendMessage`, `cancelGeneration`) use to drive and
+   * tear down this specific generation. Any in-flight generation for the same
+   * session is pre-emptively aborted; its lingering broadcasts will carry the old
+   * generationId, which `ChatStreamManager` filters out for new subscribers.
+   *
+   * Routes that subscribe to SSE before invoking `sendMessage` should call this
+   * first so subscription and broadcast generationIds are tied together.
+   */
+  beginGeneration(sessionId: string): { generationId: number; abortController: AbortController } {
+    const existing = this.activeGenerations.get(sessionId);
+    if (existing) {
+      existing.abortController.abort();
+      if (existing.agentResult) {
+        try {
+          existing.agentResult.session.dispose?.();
+        } catch (err) {
+          diagnostics.error(`Error disposing previous agent session during pre-emption:`, err);
+        }
+      }
+    }
+    this.generationCounter += 1;
+    const generationId = this.generationCounter;
+    const abortController = new AbortController();
+    this.activeGenerations.set(sessionId, { abortController, generationId });
+    return { generationId, abortController };
   }
 
   /**
@@ -686,9 +755,25 @@ export class ChatManager {
     modelProvider?: string,
     modelId?: string,
     attachments?: ChatAttachment[],
+    options?: { generationId?: number },
   ): Promise<void> {
-    const abortController = new AbortController();
-    this.activeGenerations.set(sessionId, { abortController });
+    // The SSE route allocates a generation via `beginGeneration` so it can subscribe
+    // with a matching filter before this method runs. Direct callers (tests, internal
+    // code) pass nothing and we allocate a generation here.
+    const preallocated = options?.generationId !== undefined
+      ? this.activeGenerations.get(sessionId)
+      : undefined;
+    let generationId: number;
+    let abortController: AbortController;
+    if (preallocated && preallocated.generationId === options?.generationId) {
+      generationId = preallocated.generationId;
+      abortController = preallocated.abortController;
+    } else {
+      const allocated = this.beginGeneration(sessionId);
+      generationId = allocated.generationId;
+      abortController = allocated.abortController;
+    }
+    const broadcastOptions = { generationId };
 
     const session = this.chatStore.getSession(sessionId);
     let agentResult: AgentResult | undefined;
@@ -712,7 +797,7 @@ export class ChatManager {
         chatStreamManager.broadcast(sessionId, {
           type: "error",
           data: `Chat session ${sessionId} not found`,
-        });
+        }, broadcastOptions);
         return;
       }
 
@@ -732,7 +817,7 @@ export class ChatManager {
         chatStreamManager.broadcast(sessionId, {
           type: "error",
           data: `Failed to save message: ${err instanceof Error ? err.message : "Unknown error"}`,
-        });
+        }, broadcastOptions);
         return;
       }
 
@@ -879,21 +964,21 @@ export class ChatManager {
           triggerPoint: "session-creation" | "prompt-time";
         }) => {
           fallbackInfo = payload;
-          this.handleFallbackModelUsed(sessionId, payload);
+          this.handleFallbackModelUsed(sessionId, generationId, payload);
         },
         onThinking: (delta: string) => {
           accumulatedThinking += delta;
           chatStreamManager.broadcast(sessionId, {
             type: "thinking",
             data: delta,
-          });
+          }, broadcastOptions);
         },
         onText: (delta: string) => {
           accumulatedText += delta;
           chatStreamManager.broadcast(sessionId, {
             type: "text",
             data: delta,
-          });
+          }, broadcastOptions);
         },
         onToolStart: (name: string, args?: Record<string, unknown>) => {
           const pendingForTool = pendingToolStarts.get(name) ?? [];
@@ -903,7 +988,7 @@ export class ChatManager {
           chatStreamManager.broadcast(sessionId, {
             type: "tool_start",
             data: { toolName: name, args },
-          });
+          }, broadcastOptions);
         },
         onToolEnd: (name: string, isError: boolean, result?: unknown) => {
           const pendingForTool = pendingToolStarts.get(name);
@@ -922,7 +1007,7 @@ export class ChatManager {
           chatStreamManager.broadcast(sessionId, {
             type: "tool_end",
             data: { toolName: name, isError, result },
-          });
+          }, broadcastOptions);
         },
       };
 
@@ -937,7 +1022,7 @@ export class ChatManager {
       } else {
         agentResult = await createFnAgent(sessionOptions);
       }
-      this.activeGenerations.set(sessionId, { abortController, agentResult });
+      this.activeGenerations.set(sessionId, { abortController, agentResult, generationId });
 
       if (abortController.signal.aborted) {
         agentResult.session.dispose?.();
@@ -960,7 +1045,7 @@ export class ChatManager {
         chatStreamManager.broadcast(sessionId, {
           type: "error",
           data: sessionErrorMessage,
-        });
+        }, broadcastOptions);
         return;
       }
 
@@ -1021,13 +1106,13 @@ export class ChatManager {
           },
           attachments,
         },
-      });
+      }, broadcastOptions);
     } catch (err) {
       if (abortController.signal.aborted) {
         chatStreamManager.broadcast(sessionId, {
           type: "error",
           data: "Generation cancelled",
-        });
+        }, broadcastOptions);
         return;
       }
 
@@ -1054,9 +1139,15 @@ export class ChatManager {
       chatStreamManager.broadcast(sessionId, {
         type: "error",
         data: errorMessage,
-      });
+      }, broadcastOptions);
     } finally {
-      this.activeGenerations.delete(sessionId);
+      // Only clear the active-generation slot if it still belongs to us. If a newer
+      // sendMessage pre-empted us via beginGeneration, the slot now holds that newer
+      // generation's controller and must not be deleted by our cleanup.
+      const current = this.activeGenerations.get(sessionId);
+      if (current?.generationId === generationId) {
+        this.activeGenerations.delete(sessionId);
+      }
 
       // Always dispose agent session
       if (agentResult) {
@@ -1088,7 +1179,7 @@ export class ChatManager {
     chatStreamManager.broadcast(sessionId, {
       type: "error",
       data: "Generation cancelled",
-    });
+    }, { generationId: entry.generationId });
 
     return true;
   }

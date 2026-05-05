@@ -48,7 +48,7 @@ function createSSEResponse(): {
 const mockInit = vi.fn().mockResolvedValue(undefined);
 
 // Create mock functions before vi.mock
-const { mockCreateFnAgent, mockChatStreamManager, mockSendMessage, mockCancelGeneration } = vi.hoisted(() => {
+const { mockCreateFnAgent, mockChatStreamManager, mockSendMessage, mockCancelGeneration, mockBeginGeneration } = vi.hoisted(() => {
   // Store subscribers per session for broadcast simulation
   const subscribers = new Map<string, Set<(event: any, eventId?: number) => void>>();
 
@@ -107,6 +107,7 @@ const { mockCreateFnAgent, mockChatStreamManager, mockSendMessage, mockCancelGen
     mockCreateFnAgent: vi.fn(),
     mockSendMessage: vi.fn(),
     mockCancelGeneration: vi.fn(),
+    mockBeginGeneration: vi.fn(() => ({ generationId: 1, abortController: new AbortController() })),
     mockChatStreamManager: chatStreamManager,
   };
 });
@@ -162,6 +163,7 @@ vi.mock("../chat.js", () => {
     ChatManager: class MockChatManager {
       sendMessage = mockSendMessage;
       cancelGeneration = mockCancelGeneration;
+      beginGeneration = mockBeginGeneration;
     },
     chatStreamManager: mockChatStreamManager,
     checkRateLimit: vi.fn().mockReturnValue(true),
@@ -263,6 +265,7 @@ function createMockChatManager() {
   return {
     sendMessage: mockSendMessage,
     cancelGeneration: mockCancelGeneration,
+    beginGeneration: mockBeginGeneration,
   };
 }
 
