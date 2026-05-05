@@ -135,15 +135,16 @@ async function enableResearch(cwd: string): Promise<TaskStore> {
 
 // ── Tests ──────────────────────────────────────────────────────────
 
-// Audited in FN-3189: this suite is expensive (~62s) and currently stale
-// against modern extension behavior/tooling (see FN-3204). Keep an explicit,
-// discoverable gate so it never silently disappears behind unconditional skip,
-// but do not include it in the default slow lane until the failures are fixed.
-const SHOULD_RUN_EXTENSION_INTEGRATION =
-  process.env.FUSION_TEST_EXTENSION_INTEGRATION === "1" ||
-  process.env.FUSION_TEST_EXTENSION_INTEGRATION === "true";
+// Audited in FN-3189: this exhaustive suite is expensive (~62s) and stale
+// against modern extension behavior/tooling (see FN-3204). The maintained
+// release lane lives in extension-integration.test.ts and uses
+// FUSION_TEST_EXTENSION_INTEGRATION. Keep this under a separate legacy gate for
+// historical debugging only.
+const SHOULD_RUN_LEGACY_EXTENSION_INTEGRATION =
+  process.env.FUSION_TEST_LEGACY_EXTENSION_INTEGRATION === "1" ||
+  process.env.FUSION_TEST_LEGACY_EXTENSION_INTEGRATION === "true";
 
-describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("fn pi extension", () => {
+describe.skipIf(!SHOULD_RUN_LEGACY_EXTENSION_INTEGRATION)("fn pi extension (legacy exhaustive suite)", () => {
   let tmpDir: string;
   let api: ReturnType<typeof createMockAPI>;
 

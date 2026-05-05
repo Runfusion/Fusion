@@ -50,7 +50,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --silent=passed-only --reporter=dot",
     "test:slow-cli": "cross-env FUSION_TEST_SLOW_CLI=1 vitest run src/commands/__tests__/agent-export.test.ts --silent=passed-only --reporter=dot",
-    "test:extension-integration": "cross-env FUSION_TEST_EXTENSION_INTEGRATION=1 vitest run src/__tests__/extension.test.ts --silent=passed-only --reporter=dot",
+    "test:extension-integration": "cross-env FUSION_TEST_EXTENSION_INTEGRATION=1 vitest run src/__tests__/extension-integration.test.ts --silent=passed-only --reporter=dot",
     "test:build-exe": "cross-env FUSION_TEST_BUILD_EXE=1 vitest run --config vitest.build-exe.config.ts --silent=passed-only --reporter=dot",
     "test:pre-release": "pnpm test:slow-cli && pnpm test:build-exe"
   },

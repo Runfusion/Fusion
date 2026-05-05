@@ -3,9 +3,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { CustomProvider } from "@fusion/core";
 
-export function readCustomProviders(): CustomProvider[] {
+export function readCustomProviders(homeDir = homedir()): CustomProvider[] {
   try {
-    const settingsPath = join(homedir(), ".fusion", "settings.json");
+    const settingsPath = join(homeDir, ".fusion", "settings.json");
     const raw = readFileSync(settingsPath, "utf-8");
     const parsed = JSON.parse(raw) as { customProviders?: CustomProvider[] };
     return Array.isArray(parsed.customProviders) ? parsed.customProviders : [];

@@ -41,7 +41,7 @@ describe("CI workflow (.github/workflows/ci.yml)", () => {
     readmeContent = readFileSync(join(workspaceRoot, "README.md"), "utf-8");
     cliPackageJsonContent = readFileSync(join(workspaceRoot, "packages", "cli", "package.json"), "utf-8");
     extensionSuiteContent = readFileSync(
-      join(workspaceRoot, "packages", "cli", "src", "__tests__", "extension.test.ts"),
+      join(workspaceRoot, "packages", "cli", "src", "__tests__", "extension-integration.test.ts"),
       "utf-8",
     );
     agentExportSuiteContent = readFileSync(
@@ -124,11 +124,13 @@ describe("CI workflow (.github/workflows/ci.yml)", () => {
     expect(cliPackageJsonContent).toContain("FUSION_TEST_SLOW_CLI=1");
     expect(cliPackageJsonContent).toContain('"test:extension-integration"');
     expect(cliPackageJsonContent).toContain("FUSION_TEST_EXTENSION_INTEGRATION=1");
+    expect(cliPackageJsonContent).toContain("extension-integration.test.ts");
     expect(cliPackageJsonContent).toContain('"test:build-exe"');
     expect(cliPackageJsonContent).toContain("FUSION_TEST_BUILD_EXE=1");
 
     expect(extensionSuiteContent).toContain("describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)");
     expect(extensionSuiteContent).toContain("FUSION_TEST_EXTENSION_INTEGRATION");
+    expect(extensionSuiteContent).toContain("dist/extension.js");
 
     expect(agentExportSuiteContent).toContain("describe.skipIf(!SHOULD_RUN_SLOW_CLI)");
     expect(agentExportSuiteContent).toContain("FUSION_TEST_SLOW_CLI");
