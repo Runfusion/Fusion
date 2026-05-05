@@ -1821,6 +1821,7 @@ function RemotesPanel({
   const [remoteCommits, setRemoteCommits] = useState<GitCommit[]>([]);
   const [loadingRemoteCommits, setLoadingRemoteCommits] = useState(false);
   const [remoteCommitsError, setRemoteCommitsError] = useState<string | null>(null);
+  const remoteCommitsRequestIdRef = useRef(0);
 
   // Derived state for selected remote
   const selectedRemoteData = remotes.find((r) => r.name === selectedRemote);
@@ -1867,6 +1868,12 @@ function RemotesPanel({
     }
   }, [selectedRemote]);
 
+  // Refresh selected remote commits after successful sync operations.
+  useEffect(() => {
+    if (!selectedRemote || !lastRemoteResult) return;
+    loadRemoteCommits(selectedRemote);
+  }, [selectedRemote, lastRemoteResult]);
+
   // Clear selected remote if it was removed from the list
   useEffect(() => {
     if (selectedRemote && !remotes.find((r) => r.name === selectedRemote)) {
@@ -1900,16 +1907,26 @@ function RemotesPanel({
   };
 
   const loadRemoteCommits = async (remoteName: string) => {
+    const requestId = remoteCommitsRequestIdRef.current + 1;
+    remoteCommitsRequestIdRef.current = requestId;
     setLoadingRemoteCommits(true);
     setRemoteCommitsError(null);
     try {
       const commits = await fetchRemoteCommits(remoteName, undefined, 10, projectId);
+      if (remoteCommitsRequestIdRef.current !== requestId) {
+        return;
+      }
       setRemoteCommits(commits);
     } catch (err) {
+      if (remoteCommitsRequestIdRef.current !== requestId) {
+        return;
+      }
       setRemoteCommitsError(getErrorMessage(err) || "Failed to load remote commits");
       setRemoteCommits([]);
     } finally {
-      setLoadingRemoteCommits(false);
+      if (remoteCommitsRequestIdRef.current === requestId) {
+        setLoadingRemoteCommits(false);
+      }
     }
   };
 

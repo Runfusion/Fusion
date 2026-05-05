@@ -1928,6 +1928,66 @@ describe("GitManagerModal", () => {
     });
   });
 
+  it("refreshes recent remote commits after pull without reopening modal", async () => {
+    const user = userEvent.setup();
+    (fetchRemoteCommits as any)
+      .mockResolvedValueOnce([
+        { hash: "rc1", shortHash: "rc1", message: "Remote commit before pull", author: "Dev", date: "2026-01-01T00:00:00Z", parents: [] },
+      ])
+      .mockResolvedValueOnce([
+        { hash: "rc2", shortHash: "rc2", message: "Remote commit after pull", author: "Dev", date: "2026-01-02T00:00:00Z", parents: [] },
+      ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Remote commit before pull")).toBeInTheDocument();
+    });
+
+    const syncCard = screen.getByTestId("remote-sync-card");
+    await user.click(within(syncCard).getByRole("button", { name: /pull/i }));
+
+    await waitFor(() => {
+      expect(pullBranch).toHaveBeenCalled();
+      expect(fetchRemoteCommits).toHaveBeenCalledTimes(2);
+      expect(screen.getByText("Remote commit after pull")).toBeInTheDocument();
+      expect(screen.queryByText("Remote commit before pull")).not.toBeInTheDocument();
+    });
+  });
+
+  it("refreshes recent remote commits after push without reopening modal", async () => {
+    const user = userEvent.setup();
+    (fetchRemoteCommits as any)
+      .mockResolvedValueOnce([
+        { hash: "rc10", shortHash: "rc10", message: "Remote commit before push", author: "Dev", date: "2026-01-01T00:00:00Z", parents: [] },
+      ])
+      .mockResolvedValueOnce([
+        { hash: "rc11", shortHash: "rc11", message: "Remote commit after push", author: "Dev", date: "2026-01-02T00:00:00Z", parents: [] },
+      ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /remotes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Remote commit before push")).toBeInTheDocument();
+    });
+
+    const syncCard = screen.getByTestId("remote-sync-card");
+    await user.click(within(syncCard).getByRole("button", { name: /push/i }));
+
+    await waitFor(() => {
+      expect(pushBranch).toHaveBeenCalled();
+      expect(fetchRemoteCommits).toHaveBeenCalledTimes(2);
+      expect(screen.getByText("Remote commit after push")).toBeInTheDocument();
+      expect(screen.queryByText("Remote commit before push")).not.toBeInTheDocument();
+    });
+  });
+
   it("does not show remote commits section when no remotes configured", async () => {
     (fetchGitRemotesDetailed as any).mockResolvedValue([]);
 
