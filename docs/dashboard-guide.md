@@ -90,6 +90,7 @@ Features:
 - Commit and diff browsing
 - Push/pull/fetch actions
 - Remote editing controls
+- Remotes tab keeps "Recent commits on {remote}" in sync immediately after successful push/pull actions
 
 ![Git manager](./screenshots/git-manager.png)
 
