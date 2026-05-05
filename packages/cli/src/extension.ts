@@ -120,7 +120,7 @@ const INSIGHT_CATEGORIES: InsightCategory[] = [
   "trends",
 ];
 
-const INSIGHT_STATUSES: InsightStatus[] = ["generated", "confirmed", "stale", "dismissed"];
+const INSIGHT_STATUSES: InsightStatus[] = ["generated", "confirmed", "stale", "dismissed", "archived"];
 const INSIGHT_RUN_STATUSES: InsightRunStatus[] = ["pending", "running", "completed", "failed", "cancelled"];
 const INSIGHT_RUN_TRIGGERS: InsightRunTrigger[] = ["schedule", "manual", "task_completion", "merge_event", "api"];
 

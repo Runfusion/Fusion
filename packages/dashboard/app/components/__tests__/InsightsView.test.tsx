@@ -63,6 +63,9 @@ vi.mock("lucide-react", () => ({
   Archive: ({ size = 24, className = "" }: { size?: number; className?: string }) => (
     <span data-testid="archive-icon" className={className}>{`Archive-${size}`}</span>
   ),
+  ArchiveRestore: ({ size = 24, className = "" }: { size?: number; className?: string }) => (
+    <span data-testid="archive-restore-icon" className={className}>{`ArchiveRestore-${size}`}</span>
+  ),
   Clock: ({ size = 24, className = "" }: { size?: number; className?: string }) => (
     <span data-testid="clock-icon" className={className}>{`Clock-${size}`}</span>
   ),
@@ -100,10 +103,17 @@ describe("InsightsView", () => {
       runInsights: vi.fn(),
       dismiss: vi.fn(),
       createTask: vi.fn(),
+      archive: vi.fn(),
+      unarchive: vi.fn(),
+      toggleShowArchived: vi.fn(),
       dismissStates: new Map(),
       createTaskStates: new Map(),
+      archiveStates: new Map(),
+      unarchiveStates: new Map(),
       totalCount: 0,
       dismissedCount: 0,
+      archivedCount: 0,
+      showArchived: false,
     });
   });
 
@@ -1011,6 +1021,66 @@ describe("InsightsView", () => {
       await waitFor(() => {
         expect(screen.getByTestId("insights-status")).toHaveTextContent("Create failed");
       });
+    });
+  });
+
+  describe("archived insights", () => {
+    it("renders archived insights with archived class and unarchive button", () => {
+      const sectionsWithArchived = [
+        {
+          category: "features" as const,
+          label: "Features",
+          items: [
+            {
+              id: "INS-ARCH",
+              projectId: "test",
+              title: "Archived Insight",
+              content: "Archived content",
+              category: "features" as const,
+              status: "archived" as const,
+              fingerprint: "fp-arch",
+              provenance: { trigger: "manual" as const },
+              lastRunId: null,
+              createdAt: "2024-01-01T00:00:00Z",
+              updatedAt: "2024-01-01T00:00:00Z",
+            },
+          ],
+          isLoading: false,
+          error: null,
+        },
+        ...mockSections.slice(1),
+      ];
+
+      mockUseInsights.mockReturnValue({
+        sections: sectionsWithArchived,
+        loading: false,
+        error: null,
+        latestRun: null,
+        isRunInFlight: false,
+        runError: null,
+        refresh: vi.fn(),
+        runInsights: vi.fn(),
+        dismiss: vi.fn(),
+        createTask: vi.fn(),
+        archive: vi.fn(),
+        unarchive: vi.fn(),
+        toggleShowArchived: vi.fn(),
+        dismissStates: new Map(),
+        createTaskStates: new Map(),
+        archiveStates: new Map(),
+        unarchiveStates: new Map(),
+        totalCount: 1,
+        dismissedCount: 0,
+        archivedCount: 1,
+        showArchived: true,
+      });
+
+      render(<InsightsView {...defaultProps} />);
+
+      const item = screen.getByText("Archived Insight").closest("li");
+      expect(item?.className).toContain("insight-item--archived");
+      expect(screen.getByTestId("unarchive-INS-ARCH")).toBeTruthy();
+      expect(screen.getByTestId("toggle-archived-insights")).toHaveTextContent("Hide Archived");
     });
   });
 

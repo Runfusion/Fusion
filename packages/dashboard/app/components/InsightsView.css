@@ -419,6 +419,25 @@
   color: var(--text-dim);
 }
 
+.insight-item-status--archived {
+  background: color-mix(in srgb, var(--text-dim) 15%, transparent);
+  color: var(--text-dim);
+}
+
+.insight-item--archived {
+  opacity: 0.6;
+  border-left-color: var(--text-dim);
+}
+
+.insight-item--archived .insight-item-title {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.insight-item--archived .insight-item-content {
+  text-decoration: line-through;
+}
+
 .insight-item-date {
   display: flex;
   align-items: center;
@@ -537,6 +556,13 @@
 
   .insights-view-actions .btn {
     min-height: 36px;
+  }
+
+  .insights-show-archived-toggle {
+    max-width: 180px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .insights-view-close {

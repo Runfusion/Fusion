@@ -13,6 +13,8 @@ import type { Insight, InsightCategory, InsightStatus, InsightRun } from "@fusio
 import {
   fetchInsights,
   dismissInsight,
+  archiveInsight,
+  unarchiveInsight,
   triggerInsightRun,
   fetchInsightRuns,
   getInsightCreateTaskData,
@@ -63,6 +65,7 @@ export const STATUS_LABELS: Record<InsightStatus, string> = {
   confirmed: "Confirmed",
   stale: "Stale",
   dismissed: "Dismissed",
+  archived: "Archived",
 };
 
 // Section data structure
@@ -99,14 +102,21 @@ export interface UseInsightsResult {
   runInsights: () => Promise<void>;
   dismiss: (id: string) => Promise<void>;
   createTask: (id: string) => Promise<{ title: string; description: string } | null>;
+  archive: (id: string) => Promise<void>;
+  unarchive: (id: string) => Promise<void>;
+  toggleShowArchived: () => void;
 
   // Per-insight action states
   dismissStates: Map<string, InsightActionState>;
   createTaskStates: Map<string, InsightActionState>;
+  archiveStates: Map<string, InsightActionState>;
+  unarchiveStates: Map<string, InsightActionState>;
 
   // Dismissed/filtered counts
   totalCount: number;
   dismissedCount: number;
+  archivedCount: number;
+  showArchived: boolean;
 }
 
 /**
@@ -116,6 +126,8 @@ export interface UseInsightsResult {
  * @returns Insights data and action handlers
  */
 export function useInsights(projectId?: string): UseInsightsResult {
+  const [allInsights, setAllInsights] = useState<Insight[]>([]);
+
   // Section items (keyed by category)
   const [sections, setSections] = useState<InsightSection[]>(() =>
     INSIGHT_CATEGORIES.map((category) => ({
@@ -141,6 +153,9 @@ export function useInsights(projectId?: string): UseInsightsResult {
   // Per-insight action states
   const [dismissStates, setDismissStates] = useState<Map<string, InsightActionState>>(new Map());
   const [createTaskStates, setCreateTaskStates] = useState<Map<string, InsightActionState>>(new Map());
+  const [archiveStates, setArchiveStates] = useState<Map<string, InsightActionState>>(new Map());
+  const [unarchiveStates, setUnarchiveStates] = useState<Map<string, InsightActionState>>(new Map());
+  const [showArchived, setShowArchived] = useState(false);
 
   // Refresh function
   const refresh = useCallback(async () => {
@@ -154,32 +169,7 @@ export function useInsights(projectId?: string): UseInsightsResult {
         projectId,
       );
 
-      // Group by category
-      const grouped = new Map<InsightCategory, Insight[]>();
-
-      // Initialize all categories
-      for (const category of INSIGHT_CATEGORIES) {
-        grouped.set(category, []);
-      }
-
-      // Group non-dismissed insights
-      for (const insight of response.insights) {
-        if (insight.status !== "dismissed") {
-          const existing = grouped.get(insight.category) ?? [];
-          grouped.set(insight.category, [...existing, insight]);
-        }
-      }
-
-      // Update sections
-      setSections(
-        INSIGHT_CATEGORIES.map((category) => ({
-          category,
-          label: CATEGORY_LABELS[category] ?? category,
-          items: grouped.get(category) ?? [],
-          isLoading: false,
-          error: null,
-        })),
-      );
+      setAllInsights(response.insights.filter((insight) => insight.status !== "dismissed"));
 
       // Fetch latest run
       const runsResponse = await fetchInsightRuns(projectId);
@@ -193,6 +183,10 @@ export function useInsights(projectId?: string): UseInsightsResult {
       setLoading(false);
     }
   }, [projectId]);
+
+  const toggleShowArchived = useCallback(() => {
+    setShowArchived((prev) => !prev);
+  }, []);
 
   // Run insights generation
   const runInsights = useCallback(async () => {
@@ -230,12 +224,7 @@ export function useInsights(projectId?: string): UseInsightsResult {
         await dismissInsight(id, projectId);
 
         // Update local state
-        setSections((prev) =>
-          prev.map((section) => ({
-            ...section,
-            items: section.items.filter((item) => item.id !== id),
-          })),
-        );
+        setAllInsights((prev) => prev.filter((item) => item.id !== id));
 
         setDismissStates((prev) => {
           const next = new Map(prev);
@@ -266,6 +255,16 @@ export function useInsights(projectId?: string): UseInsightsResult {
 
       try {
         const data = await getInsightCreateTaskData(id, projectId);
+        await archiveInsight(id, projectId);
+        setAllInsights((prev) => prev.map((insight) =>
+          insight.id === id
+            ? {
+                ...insight,
+                status: "archived",
+                updatedAt: new Date().toISOString(),
+              }
+            : insight,
+        ));
         setCreateTaskStates((prev) => {
           const next = new Map(prev);
           next.set(id, { running: false, error: null });
@@ -288,15 +287,106 @@ export function useInsights(projectId?: string): UseInsightsResult {
     [projectId],
   );
 
+  useEffect(() => {
+    const grouped = new Map<InsightCategory, Insight[]>();
+
+    for (const category of INSIGHT_CATEGORIES) {
+      grouped.set(category, []);
+    }
+
+    for (const insight of allInsights) {
+      if (!showArchived && insight.status === "archived") {
+        continue;
+      }
+      const existing = grouped.get(insight.category) ?? [];
+      grouped.set(insight.category, [...existing, insight]);
+    }
+
+    setSections(
+      INSIGHT_CATEGORIES.map((category) => ({
+        category,
+        label: CATEGORY_LABELS[category] ?? category,
+        items: grouped.get(category) ?? [],
+        isLoading: false,
+        error: null,
+      })),
+    );
+  }, [allInsights, showArchived]);
+
+  const archive = useCallback(
+    async (id: string) => {
+      setArchiveStates((prev) => {
+        const next = new Map(prev);
+        next.set(id, { running: true, error: null });
+        return next;
+      });
+
+      try {
+        await archiveInsight(id, projectId);
+        setAllInsights((prev) => prev.map((insight) =>
+          insight.id === id ? { ...insight, status: "archived", updatedAt: new Date().toISOString() } : insight,
+        ));
+        setArchiveStates((prev) => {
+          const next = new Map(prev);
+          next.set(id, { running: false, error: null });
+          return next;
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to archive insight";
+        setArchiveStates((prev) => {
+          const next = new Map(prev);
+          next.set(id, { running: false, error: message });
+          return next;
+        });
+        throw err;
+      }
+    },
+    [projectId],
+  );
+
+  const unarchive = useCallback(
+    async (id: string) => {
+      setUnarchiveStates((prev) => {
+        const next = new Map(prev);
+        next.set(id, { running: true, error: null });
+        return next;
+      });
+
+      try {
+        await unarchiveInsight(id, projectId);
+        setAllInsights((prev) => prev.map((insight) =>
+          insight.id === id ? { ...insight, status: "confirmed", updatedAt: new Date().toISOString() } : insight,
+        ));
+        setUnarchiveStates((prev) => {
+          const next = new Map(prev);
+          next.set(id, { running: false, error: null });
+          return next;
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to unarchive insight";
+        setUnarchiveStates((prev) => {
+          const next = new Map(prev);
+          next.set(id, { running: false, error: message });
+          return next;
+        });
+        throw err;
+      }
+    },
+    [projectId],
+  );
+
   // Computed counts
   const totalCount = useMemo(() => {
     return sections.reduce((sum, section) => sum + section.items.length, 0);
   }, [sections]);
 
   const dismissedCount = useMemo(() => {
-    // This would need to be tracked separately if needed
     return 0;
-  }, [sections]);
+  }, []);
+
+  const archivedCount = useMemo(() => {
+    return allInsights.filter((insight) => insight.status === "archived").length;
+  }, [allInsights]);
 
   // Initial load - intentionally runs once on mount
   useEffect(() => {
@@ -314,9 +404,16 @@ export function useInsights(projectId?: string): UseInsightsResult {
     runInsights,
     dismiss,
     createTask,
+    archive,
+    unarchive,
+    toggleShowArchived,
     dismissStates,
     createTaskStates,
+    archiveStates,
+    unarchiveStates,
     totalCount,
     dismissedCount,
+    archivedCount,
+    showArchived,
   };
 }

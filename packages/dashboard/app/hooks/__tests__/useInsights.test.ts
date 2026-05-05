@@ -11,6 +11,8 @@ import type { InsightCategory, InsightStatus } from "@fusion/core";
 vi.mock("../../api", () => ({
   fetchInsights: vi.fn(),
   dismissInsight: vi.fn(),
+  archiveInsight: vi.fn(),
+  unarchiveInsight: vi.fn(),
   triggerInsightRun: vi.fn(),
   fetchInsightRuns: vi.fn(),
   getInsightCreateTaskData: vi.fn(),
@@ -40,6 +42,8 @@ vi.mock("lucide-react", () => ({
 import {
   fetchInsights,
   dismissInsight,
+  archiveInsight,
+  unarchiveInsight,
   triggerInsightRun,
   fetchInsightRuns,
   getInsightCreateTaskData,
@@ -47,6 +51,8 @@ import {
 
 const mockFetchInsights = vi.mocked(fetchInsights);
 const mockDismissInsight = vi.mocked(dismissInsight);
+const mockArchiveInsight = vi.mocked(archiveInsight);
+const mockUnarchiveInsight = vi.mocked(unarchiveInsight);
 const mockTriggerInsightRun = vi.mocked(triggerInsightRun);
 const mockFetchInsightRuns = vi.mocked(fetchInsightRuns);
 const mockGetInsightCreateTaskData = vi.mocked(getInsightCreateTaskData);
@@ -453,6 +459,7 @@ describe("useInsights", () => {
       });
 
       expect(mockGetInsightCreateTaskData).toHaveBeenCalledWith("INS-1", "project-1");
+      expect(mockArchiveInsight).toHaveBeenCalledWith("INS-1", "project-1");
       expect(taskData).toEqual({
         title: "Implement Feature X",
         description: "Detailed description of the feature",
@@ -489,6 +496,74 @@ describe("useInsights", () => {
 
       // Test that createTask throws
       await expect(result.current.createTask("INS-1")).rejects.toThrow("Create task failed");
+    });
+  });
+
+  describe("archive lifecycle", () => {
+    it("archives and unarchives an insight", async () => {
+      const insight = {
+        id: "INS-1",
+        projectId: "project-1",
+        title: "Keep me",
+        content: "Content",
+        category: "features" as InsightCategory,
+        status: "confirmed" as InsightStatus,
+        fingerprint: "fp1",
+        provenance: { trigger: "manual" },
+        lastRunId: null,
+        createdAt: "2024-01-01T00:00:00Z",
+        updatedAt: "2024-01-01T00:00:00Z",
+      };
+      mockFetchInsights.mockResolvedValue({ insights: [insight], count: 1 });
+      mockFetchInsightRuns.mockResolvedValue({ runs: [] });
+      mockArchiveInsight.mockResolvedValue({ ...insight, status: "archived" as InsightStatus });
+      mockUnarchiveInsight.mockResolvedValue({ ...insight, status: "confirmed" as InsightStatus });
+
+      const { result } = renderHook(() => useInsights("project-1"));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await act(async () => {
+        await result.current.archive("INS-1");
+      });
+      expect(mockArchiveInsight).toHaveBeenCalledWith("INS-1", "project-1");
+      expect(result.current.archivedCount).toBe(1);
+
+      await act(async () => {
+        await result.current.unarchive("INS-1");
+      });
+      expect(mockUnarchiveInsight).toHaveBeenCalledWith("INS-1", "project-1");
+      expect(result.current.archivedCount).toBe(0);
+    });
+
+    it("toggleShowArchived hides and shows archived insights", async () => {
+      const archivedInsight = {
+        id: "INS-A",
+        projectId: "project-1",
+        title: "Archived insight",
+        content: "Hidden by default",
+        category: "features" as InsightCategory,
+        status: "archived" as InsightStatus,
+        fingerprint: "fpA",
+        provenance: { trigger: "manual" },
+        lastRunId: null,
+        createdAt: "2024-01-01T00:00:00Z",
+        updatedAt: "2024-01-01T00:00:00Z",
+      };
+      mockFetchInsights.mockResolvedValue({ insights: [archivedInsight], count: 1 });
+      mockFetchInsightRuns.mockResolvedValue({ runs: [] });
+
+      const { result } = renderHook(() => useInsights("project-1"));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.archivedCount).toBe(1);
+      expect(result.current.totalCount).toBe(0);
+
+      act(() => {
+        result.current.toggleShowArchived();
+      });
+
+      expect(result.current.showArchived).toBe(true);
+      expect(result.current.totalCount).toBe(1);
     });
   });
 

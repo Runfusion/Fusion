@@ -8258,6 +8258,24 @@ export function dismissInsight(id: string, projectId?: string): Promise<Insight>
 }
 
 /**
+ * Archive an insight (set status to archived).
+ */
+export function archiveInsight(id: string, projectId?: string): Promise<Insight> {
+  return api<Insight>(withProjectId(`/insights/${encodeURIComponent(id)}/archive`, projectId), {
+    method: "POST",
+  });
+}
+
+/**
+ * Unarchive an insight (set status back to confirmed).
+ */
+export function unarchiveInsight(id: string, projectId?: string): Promise<Insight> {
+  return api<Insight>(withProjectId(`/insights/${encodeURIComponent(id)}/unarchive`, projectId), {
+    method: "POST",
+  });
+}
+
+/**
  * Trigger a manual insight generation run.
  */
 export function triggerInsightRun(

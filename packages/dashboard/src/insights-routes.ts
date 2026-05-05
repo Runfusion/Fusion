@@ -72,7 +72,7 @@ const VALID_CATEGORIES: InsightCategory[] = [
 ];
 
 // Valid insight statuses
-const VALID_STATUSES: InsightStatus[] = ["generated", "confirmed", "stale", "dismissed"];
+const VALID_STATUSES: InsightStatus[] = ["generated", "confirmed", "stale", "dismissed", "archived"];
 
 // Valid run triggers
 const VALID_TRIGGERS: InsightRunTrigger[] = ["schedule", "manual", "task_completion", "merge_event", "api"];
@@ -590,6 +590,34 @@ export function createInsightsRouter(store: TaskStore): Router {
       res.json(insight);
     } catch (error) {
       rethrowAsApiError(error, "Failed to dismiss insight");
+    }
+  });
+
+  router.post("/:id/archive", (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const store = getInsightStore();
+      const insight = store.updateInsight(id, { status: "archived" });
+      if (!insight) {
+        throw notFound(`Insight not found: ${id}`);
+      }
+      res.json(insight);
+    } catch (error) {
+      rethrowAsApiError(error, "Failed to archive insight");
+    }
+  });
+
+  router.post("/:id/unarchive", (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const store = getInsightStore();
+      const insight = store.updateInsight(id, { status: "confirmed" });
+      if (!insight) {
+        throw notFound(`Insight not found: ${id}`);
+      }
+      res.json(insight);
+    } catch (error) {
+      rethrowAsApiError(error, "Failed to unarchive insight");
     }
   });
 

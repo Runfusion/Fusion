@@ -60,11 +60,15 @@ export type InsightCategory =
  *   generated → confirmed → stale
  *                  ↓
  *               dismissed
+ *                  ↕
+ *               archived
  *
  * A "stale" insight has been superseded or is no longer relevant.
  * A "dismissed" insight was manually rejected by a reviewer.
+ * An "archived" insight was actioned or intentionally hidden, and can be
+ * unarchived back to "confirmed".
  */
-export type InsightStatus = "generated" | "confirmed" | "stale" | "dismissed";
+export type InsightStatus = "generated" | "confirmed" | "stale" | "dismissed" | "archived";
 
 // ── Provenance Metadata ───────────────────────────────────────────────
 

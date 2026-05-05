@@ -20,6 +20,7 @@ import {
   TrendingUp,
   ExternalLink,
   Archive,
+  ArchiveRestore,
   Clock,
 } from "lucide-react";
 import { useInsights, type InsightSection } from "../hooks/useInsights";
@@ -63,9 +64,16 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
     runInsights,
     dismiss,
     createTask: createTaskFromInsight,
+    archive = async () => {},
+    unarchive = async () => {},
+    toggleShowArchived = () => {},
     dismissStates,
     createTaskStates,
+    archiveStates = new Map(),
+    unarchiveStates = new Map(),
     totalCount,
+    archivedCount = 0,
+    showArchived = false,
   } = useInsights(projectId);
 
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -135,6 +143,44 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
       }
     },
     [dismiss, addToast],
+  );
+
+  const handleArchive = useCallback(
+    async (id: string, title: string) => {
+      try {
+        setStatusMessage(`Archiving "${title}"...`);
+        setStatusType("info");
+        await archive(id);
+        setStatusMessage(`Archived "${title}"`);
+        setStatusType("success");
+        addToast(`Insight archived: ${title}`, "success");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to archive insight";
+        setStatusMessage(message);
+        setStatusType("error");
+        addToast(message, "error");
+      }
+    },
+    [archive, addToast],
+  );
+
+  const handleUnarchive = useCallback(
+    async (id: string, title: string) => {
+      try {
+        setStatusMessage(`Unarchiving "${title}"...`);
+        setStatusType("info");
+        await unarchive(id);
+        setStatusMessage(`Unarchived "${title}"`);
+        setStatusType("success");
+        addToast(`Insight unarchived: ${title}`, "success");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to unarchive insight";
+        setStatusMessage(message);
+        setStatusType("error");
+        addToast(message, "error");
+      }
+    },
+    [unarchive, addToast],
   );
 
   const handleCreateTask = useCallback(
@@ -213,31 +259,61 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
             {activeSection.items.map((insight) => {
               const dismissState = dismissStates.get(insight.id);
               const createState = createTaskStates.get(insight.id);
+              const archiveState = archiveStates.get(insight.id);
+              const unarchiveState = unarchiveStates.get(insight.id);
               const isDismissInFlight = dismissState?.running ?? false;
               const isCreateInFlight = createState?.running ?? false;
+              const isArchiveInFlight = archiveState?.running ?? false;
+              const isUnarchiveInFlight = unarchiveState?.running ?? false;
+              const isArchived = insight.status === "archived";
               const isAnyActionInFlight = activeSection.items.some(
-                (item) => dismissStates.get(item.id)?.running || createTaskStates.get(item.id)?.running,
+                (item) =>
+                  dismissStates.get(item.id)?.running ||
+                  createTaskStates.get(item.id)?.running ||
+                  archiveStates.get(item.id)?.running ||
+                  unarchiveStates.get(item.id)?.running,
               );
 
               return (
-                <li key={insight.id} className="insight-item" data-insight-id={insight.id}>
+                <li key={insight.id} className={`insight-item${isArchived ? " insight-item--archived" : ""}`} data-insight-id={insight.id}>
                   <div className="insight-item-header">
                     <h4 className="insight-item-title">{insight.title}</h4>
                     <div className="insight-item-actions">
-                      <button
-                        className="insight-item-action-btn"
-                        onClick={() => void handleCreateTask(insight.id, insight.title)}
-                        disabled={isCreateInFlight || isAnyActionInFlight}
-                        title="Create task from this insight"
-                        aria-label="Create task from this insight"
-                        data-testid={`create-task-${insight.id}`}
-                      >
-                        {isCreateInFlight ? (
-                          <RefreshCw size={20} className="spin" />
-                        ) : (
-                          <Plus size={20} />
-                        )}
-                      </button>
+                      {isArchived ? (
+                        <button
+                          className="insight-item-action-btn"
+                          onClick={() => void handleUnarchive(insight.id, insight.title)}
+                          disabled={isUnarchiveInFlight || isAnyActionInFlight}
+                          title="Unarchive this insight"
+                          aria-label="Unarchive this insight"
+                          data-testid={`unarchive-${insight.id}`}
+                        >
+                          {isUnarchiveInFlight ? <RefreshCw size={20} className="spin" /> : <ArchiveRestore size={20} />}
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            className="insight-item-action-btn"
+                            onClick={() => void handleCreateTask(insight.id, insight.title)}
+                            disabled={isCreateInFlight || isAnyActionInFlight}
+                            title="Create task from this insight"
+                            aria-label="Create task from this insight"
+                            data-testid={`create-task-${insight.id}`}
+                          >
+                            {isCreateInFlight ? <RefreshCw size={20} className="spin" /> : <Plus size={20} />}
+                          </button>
+                          <button
+                            className="insight-item-action-btn"
+                            onClick={() => void handleArchive(insight.id, insight.title)}
+                            disabled={isArchiveInFlight || isAnyActionInFlight}
+                            title="Archive this insight"
+                            aria-label="Archive this insight"
+                            data-testid={`archive-${insight.id}`}
+                          >
+                            {isArchiveInFlight ? <RefreshCw size={20} className="spin" /> : <Archive size={20} />}
+                          </button>
+                        </>
+                      )}
                       <button
                         className="insight-item-action-btn"
                         onClick={() => void handleDismiss(insight.id, insight.title)}
@@ -297,6 +373,17 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
               title="Close"
             >
               <X size={16} />
+            </button>
+          )}
+          {archivedCount > 0 && (
+            <button
+              className="btn btn-sm insights-show-archived-toggle"
+              onClick={toggleShowArchived}
+              aria-label={showArchived ? "Hide archived insights" : "Show archived insights"}
+              data-testid="toggle-archived-insights"
+            >
+              <Archive size={14} />
+              {showArchived ? "Hide Archived" : `Show Archived (${archivedCount})`}
             </button>
           )}
           <button

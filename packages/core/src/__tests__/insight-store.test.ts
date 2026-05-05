@@ -173,10 +173,15 @@ describe("InsightStore", () => {
     it("filters by status", () => {
       store.createInsight("proj", { title: "A", category: "quality", status: "confirmed", provenance: createProvenance() });
       store.createInsight("proj", { title: "B", category: "quality", status: "generated", provenance: createProvenance() });
+      store.createInsight("proj", { title: "C", category: "quality", status: "archived", provenance: createProvenance() });
 
       const list = store.listInsights({ projectId: "proj", status: "confirmed" });
       expect(list).toHaveLength(1);
       expect(list[0].title).toBe("A");
+
+      const archived = store.listInsights({ projectId: "proj", status: "archived" });
+      expect(archived).toHaveLength(1);
+      expect(archived[0].title).toBe("C");
     });
 
     it("supports pagination with limit and offset", () => {
@@ -248,6 +253,18 @@ describe("InsightStore", () => {
       expect(updated!.createdAt).toBe(original.createdAt);
       // updatedAt should be >= original.createdAt (updated after creation)
       expect(updated!.updatedAt >= original.createdAt).toBe(true);
+    });
+
+    it("updates status to archived", () => {
+      const original = store.createInsight("proj", {
+        title: "Archive me",
+        category: "quality",
+        status: "confirmed",
+        provenance: createProvenance(),
+      });
+
+      const updated = store.updateInsight(original.id, { status: "archived" });
+      expect(updated?.status).toBe("archived");
     });
 
     it("returns undefined for non-existent insight", () => {
