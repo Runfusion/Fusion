@@ -55,8 +55,8 @@
     "test:pre-release": "pnpm test:slow-cli && pnpm test:build-exe"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "^0.72.1",
-    "@mariozechner/pi-coding-agent": "^0.72.1",
+    "@mariozechner/pi-ai": "^0.73.0",
+    "@mariozechner/pi-coding-agent": "^0.73.0",
     "dockerode": "^4.0.12",
     "express": "^5.1.0",
     "ink": "^6.8.0",

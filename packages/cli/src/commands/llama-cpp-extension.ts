@@ -17,7 +17,7 @@ export function resolveLlamaCppExtensionFromModuleUrl(
   let pkgJsonPath: string | undefined;
 
   const here = dirname(fileURLToPath(moduleUrl));
-  for (const rel of ["pi-llama-cpp", "../pi-llama-cpp", "../../pi-llama-cpp"]) {
+  for (const rel of ["pi-llama-cpp", "../pi-llama-cpp", "../../pi-llama-cpp", "../../../pi-llama-cpp"]) {
     const candidate = resolve(here, rel, "package.json");
     if (existsSync(candidate)) {
       pkgJsonPath = candidate;

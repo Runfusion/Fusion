@@ -45,6 +45,8 @@ For a full walkthrough (installation, onboarding, first task, and daily workflow
 | [Architecture](./architecture.md) | System architecture, package layout, storage model, and engine execution flow |
 | [Dashboard Real-Time](./dashboard-realtime.md) | Canonical event-stream architecture contract (shared `/api/events` bus + dedicated stream boundaries), with project/node scoping, reconnect/cleanup behavior, and realtime pitfalls |
 | [Storage](./storage.md) | Storage architecture, migration, archive system, and SQLite schema |
+| [Dev Server Module Audit](./dev-server-modules.md) | Analysis of parallel dashboard dev-server module families, production wiring, and consolidation guidance |
+| [Beads and Dolt Evaluation for Fusion Node Sync](./beads-dolt-sync-evaluation.md) | Evaluation of Beads and Dolt for node sync, with a recommendation for Fusion-native sync design |
 | [Contributing](./contributing.md) | Local development setup, testing, release flow, and contributor conventions |
 | [Docker](./docker.md) | Container builds, deployment, and persistence configuration |
 | [Code Signing](./CODE_SIGNING.md) | macOS and Windows code signing configuration for release binaries |
@@ -64,6 +66,8 @@ For a full walkthrough (installation, onboarding, first task, and daily workflow
 | [Gap Analysis](./gap-analysis.md) | System completeness analysis comparing Fusion to Paperclip feature set |
 | [Agent Sandbox Research](./agent-sandboxing-research.md) | Research on agent isolation, capability enforcement, and sandboxing approaches |
 | [Agent Gap Analysis](./agent-paperclip-gap-analysis.md) | Gap analysis for agent Paperclip integration |
+| [pi-autoresearch Analysis for Fusion Port](./research/pi-autoresearch-analysis.md) | Upstream architecture/license analysis and Fusion integration mapping for autoresearch capabilities |
+| [Research Hardening Preflight Baseline](./research/research-hardening-preflight.md) | Verified research subsystem baseline, lifecycle contracts, and hardening pressure points |
 | [Test Audit Report](./test-audit-report.md) | Test coverage and effectiveness audit with recommendations |
 | [Skipped Test Inventory](./skipped-test-inventory.md) | Current intentional test-skip inventory and reconciliation status for older skip follow-ups |
 | [Dev Server Module Boundary Audit](./dev-server-module-boundary-audit.md) | Boundary/ownership audit for parallel `dev-server-*` vs `devserver-*` dashboard modules and FN-2212 prioritization guidance |
