@@ -141,6 +141,7 @@ const featureStatusColors: Record<FeatureStatus, { bg: string; text: string }> =
   triaged: { bg: "var(--feature-triaged-bg)", text: "var(--feature-triaged-text)" },
   "in-progress": { bg: "var(--feature-in-progress-bg)", text: "var(--feature-in-progress-text)" },
   done: { bg: "var(--feature-done-bg)", text: "var(--feature-done-text)" },
+  blocked: { bg: "var(--mission-blocked-bg)", text: "var(--mission-blocked-text)" },
 };
 
 const autopilotStateColors: Record<AutopilotState, { bg: string; text: string }> = {

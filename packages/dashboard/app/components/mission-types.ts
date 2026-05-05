@@ -10,7 +10,7 @@ export type MissionStatus = "planning" | "active" | "blocked" | "complete" | "ar
 export type MilestoneStatus = "planning" | "active" | "blocked" | "complete";
 export type SliceStatus = "pending" | "active" | "complete";
 export type SlicePlanState = "not_started" | "planned" | "needs_update";
-export type FeatureStatus = "defined" | "triaged" | "in-progress" | "done";
+export type FeatureStatus = "defined" | "triaged" | "in-progress" | "done" | "blocked";
 
 /** Loop state values for a feature's execution loop lifecycle */
 export type FeatureLoopState = "idle" | "implementing" | "validating" | "needs_fix" | "passed" | "blocked";

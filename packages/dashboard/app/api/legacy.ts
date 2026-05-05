@@ -5978,7 +5978,7 @@ export type MilestoneStatus = "planning" | "active" | "blocked" | "complete";
 export type SliceStatus = "pending" | "active" | "complete";
 
 /** Feature status values */
-export type FeatureStatus = "defined" | "triaged" | "in-progress" | "done";
+export type FeatureStatus = "defined" | "triaged" | "in-progress" | "done" | "blocked";
 
 /** Autopilot state values for mission autonomous progression */
 export type AutopilotState = "inactive" | "watching" | "activating" | "completing";
