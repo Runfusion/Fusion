@@ -14,20 +14,20 @@ import {
 
 function createRemoteSettings(overrides: Partial<RemoteAccessProjectSettings> = {}): RemoteAccessProjectSettings {
   return {
-    activeProvider: "tailscale",
+    activeProvider: "cloudflare",
     providers: {
       tailscale: {
-        enabled: true,
-        hostname: "tail.example.ts.net",
+        enabled: false,
+        hostname: "",
         targetPort: 4040,
         acceptRoutes: false,
       },
       cloudflare: {
-        enabled: false,
+        enabled: true,
         quickTunnel: false,
         tunnelName: "",
         tunnelToken: null,
-        ingressUrl: "",
+        ingressUrl: "https://demo.trycloudflare.com",
       },
     },
     tokenStrategy: {

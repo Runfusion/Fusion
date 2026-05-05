@@ -36,7 +36,7 @@ function initRepo(dir: string): string {
   const git = (cmd: string) =>
     execSync(cmd, { cwd: dir, stdio: "pipe" }).toString().trim();
 
-  git("git init");
+  git("git init -b main");
   git('git config user.email "test@example.com"');
   git('git config user.name "Test"');
   git('git config commit.gpgsign false');

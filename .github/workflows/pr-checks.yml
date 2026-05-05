@@ -29,6 +29,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Build plugins
+        run: pnpm -r --filter './plugins/**' build
+
       - name: Lint
         run: pnpm lint
 
@@ -81,6 +87,9 @@ jobs:
 
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
+
+      - name: Build
+        run: pnpm build
 
       - name: Test (deterministic shard)
         run: pnpm test:ci:shard --shard ${{ matrix.shard }} --total 3

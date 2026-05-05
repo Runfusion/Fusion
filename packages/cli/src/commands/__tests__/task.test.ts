@@ -530,6 +530,8 @@ describe("project-aware task command behavior", () => {
   });
 
   it("runTaskPrCreate falls back to current working directory without project flag", async () => {
+    const originalGitHubRepo = process.env.GITHUB_REPOSITORY;
+    delete process.env.GITHUB_REPOSITORY;
     const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue("/local/project");
     const mockCreatePr = vi.fn().mockResolvedValue({ number: 123, url: "https://example.com/pr/123" });
     vi.mocked(isGhAvailable).mockReturnValue(true);
@@ -549,6 +551,7 @@ describe("project-aware task command behavior", () => {
     expect(getCurrentRepo).toHaveBeenCalledWith("/local/project");
     expect(mockCreatePr).toHaveBeenCalledWith(expect.objectContaining({ head: "fusion/fn-001" }));
     cwdSpy.mockRestore();
+    if (originalGitHubRepo !== undefined) process.env.GITHUB_REPOSITORY = originalGitHubRepo;
   });
 
   it("runTaskPlan uses resolved project path only when project name is provided", async () => {

@@ -177,6 +177,7 @@ export default tseslint.config(
       "scripts/**/*.js",
       "scripts/**/*.mjs",
       "**/*.cjs",
+      "packages/cli-alias/**/*.js",
     ],
     languageOptions: {
       ecmaVersion: "latest",
@@ -195,6 +196,8 @@ export default tseslint.config(
         __dirname: "readonly",
         __filename: "readonly",
         Buffer: "readonly",
+        AbortController: "readonly",
+        fetch: "readonly",
       },
     },
     rules: {

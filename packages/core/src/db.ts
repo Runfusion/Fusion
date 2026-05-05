@@ -735,10 +735,13 @@ export class Database {
   private db: DatabaseSync;
   private readonly dbPath: string;
   private readonly inMemory: boolean;
+  /** Returns the database file path (or ":memory:" for in-memory databases). */
+  get path(): string { return this.dbPath; }
   corruptionDetected = false;
   /** Tracks transaction nesting depth for savepoint-based nested transactions. */
   private transactionDepth = 0;
   private readonly _fts5Available: boolean;
+
 
   constructor(fusionDir: string, options?: { inMemory?: boolean }) {
     // In-memory mode is a test-only fast path that swaps the on-disk
@@ -792,9 +795,10 @@ export class Database {
       this.db.exec("PRAGMA busy_timeout = 5000");
       // In WAL mode NORMAL is nearly as durable as FULL with much lower fsync cost.
       this.db.exec("PRAGMA synchronous = NORMAL");
-      // Let WAL grow to roughly the journal size limit before auto-checkpointing.
-      // This avoids frequent synchronous checkpoints on log-heavy workloads.
-      this.db.exec("PRAGMA wal_autocheckpoint = 1000");
+      // Checkpoint every 100 pages (~400 KB) to keep WAL small and reduce
+      // corruption risk. More aggressive than the default 1000, but paired
+      // with journal_size_limit to prevent WAL bloat.
+      this.db.exec("PRAGMA wal_autocheckpoint = 100");
       // Bound WAL growth between checkpoints/maintenance cycles.
       this.db.exec("PRAGMA journal_size_limit = 4194304");
     } else {
@@ -943,6 +947,47 @@ export class Database {
    * and seed meta values.
    */
   init(): void {
+    // Startup integrity check — run BEFORE any writes to avoid
+    // compounding corruption. Attempts WAL checkpoint recovery on failure.
+    const integrity = this.integrityCheck();
+    if (!integrity.ok) {
+      this.corruptionDetected = true;
+      console.warn(`[fusion:db] Database integrity check FAILED for ${this.dbPath} — corruption detected`);
+      // Attempt WAL checkpoint recovery
+      try {
+        this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+        const recheck = this.integrityCheck();
+        if (recheck.ok) {
+          this.corruptionDetected = false;
+          console.warn(`[fusion:db] Database recovered via WAL checkpoint: ${this.dbPath}`);
+        } else {
+          const recheckMsg = ("errors" in recheck && Array.isArray(recheck.errors))
+            ? recheck.errors.slice(0, 3).join(" | ")
+            : "unknown";
+          console.error(
+            `[fusion:db] Database is corrupted and could not be auto-recovered. ` +
+            `Run: sqlite3 ${this.dbPath} ".recover" | sqlite3 ${this.dbPath}.recovered`,
+          );
+          throw new Error(
+            `[fusion:db] Refusing to initialize corrupted database at ${this.dbPath}. Integrity errors: ${recheckMsg}`,
+          );
+        }
+      } catch (err) {
+        // Re-throw our own abort error; wrap others
+        if (err instanceof Error && err.message.startsWith("[fusion:db] Refusing")) {
+          throw err;
+        }
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error(
+          `[fusion:db] Database corruption detected for ${this.dbPath} and checkpoint recovery failed: ${errMsg}. ` +
+          "Manual recovery required.",
+        );
+        throw new Error(
+          `[fusion:db] Refusing to initialize corrupted database at ${this.dbPath}. Recovery error: ${errMsg}`,
+        );
+      }
+    }
+
     this.db.exec(SCHEMA_SQL);
 
     // Seed schemaVersion and lastModified idempotently
@@ -964,12 +1009,6 @@ export class Database {
     this.db.exec(
       `INSERT OR IGNORE INTO config (id, nextId, nextWorkflowStepId, settings, workflowSteps, updatedAt) VALUES (1, 1, 1, '${JSON.stringify(DEFAULT_PROJECT_SETTINGS)}', '[]', '${configNow}')`,
     );
-
-    const integrity = this.integrityCheck();
-    if (!integrity.ok) {
-      this.corruptionDetected = true;
-      console.warn("[fusion:db] Database integrity check FAILED — corruption detected");
-    }
   }
 
   /**

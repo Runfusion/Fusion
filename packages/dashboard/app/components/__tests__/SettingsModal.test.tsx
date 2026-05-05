@@ -1123,7 +1123,7 @@ describe("SettingsModal", () => {
           extension: { status: "ok" },
           ready: true,
         },
-        expectedText: "✓ Connected — 1.2.3",
+        expectedText: "✓ Active",
       },
     ])("renders plugin-driven droid card state: $name", async ({ status, expectedText }) => {
       mockFetchAuthStatus.mockResolvedValueOnce({

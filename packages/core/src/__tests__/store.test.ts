@@ -4376,6 +4376,7 @@ Task with acceptance criteria
 
       await store.appendAgentLog(task.id, "Hello world", "text");
       await store.appendAgentLog(task.id, "Read", "tool");
+      (store as any).flushAgentLogBuffer();
 
       const rows = (store as any).db.prepare(`
         SELECT taskId, text, type FROM agentLogEntries
@@ -4863,6 +4864,7 @@ Task with acceptance criteria
     it("deleting a task cascades agent log entry deletion", async () => {
       const task = await createTestTask();
       await store.appendAgentLog(task.id, "cascade me", "text");
+      (store as any).flushAgentLogBuffer();
 
       const before = (store as any).db.prepare(
         "SELECT COUNT(*) as count FROM agentLogEntries WHERE taskId = ?",
@@ -4961,6 +4963,125 @@ Task with acceptance criteria
         "SELECT value FROM __meta WHERE key = ?",
       ).get("agentLogLegacyFileImportVersion") as { value: string } | undefined;
       expect(migrationRow?.value).toBe("1");
+    });
+
+    describe("agent log buffering", () => {
+      it("buffers entries and flushes in a single transaction when buffer is full", async () => {
+        const task = await createTestTask();
+
+        // Fill the buffer to its max size (50)
+        for (let i = 0; i < 50; i++) {
+          await store.appendAgentLog(task.id, `entry ${i}`, "text");
+        }
+
+        // Validate DB persistence without invoking read-path auto-flush helpers.
+        const row = (store as any).db
+          .prepare("SELECT COUNT(*) as count FROM agentLogEntries WHERE taskId = ?")
+          .get(task.id) as { count: number };
+        expect(row.count).toBe(50);
+      });
+
+      it("auto-flushes buffered entries when getAgentLogs is called", async () => {
+        const task = await createTestTask();
+
+        // Write fewer than BUFFER_SIZE entries — these stay buffered
+        await store.appendAgentLog(task.id, "buffered 1", "text");
+        await store.appendAgentLog(task.id, "buffered 2", "text");
+
+        // getAgentLogs triggers a flush
+        const logs = await store.getAgentLogs(task.id);
+        expect(logs).toHaveLength(2);
+        expect(logs[0].text).toBe("buffered 1");
+        expect(logs[1].text).toBe("buffered 2");
+      });
+
+      it("auto-flushes buffered entries when getAgentLogCount is called", async () => {
+        const task = await createTestTask();
+
+        await store.appendAgentLog(task.id, "counted", "text");
+        const count = await store.getAgentLogCount(task.id);
+        expect(count).toBe(1);
+      });
+
+      it("auto-flushes before deleteTask so FK cascade finds the rows", async () => {
+        const task = await createTestTask();
+
+        await store.appendAgentLog(task.id, "to be cascaded", "text");
+        // Prove flush happens before delete
+        const flushSpy = vi.spyOn(store as any, "flushAgentLogBuffer");
+        await store.deleteTask(task.id);
+        expect(flushSpy).toHaveBeenCalled();
+        flushSpy.mockRestore();
+
+        const after = (store as any).db.prepare(
+          "SELECT COUNT(*) as count FROM agentLogEntries WHERE taskId = ?",
+        ).get(task.id) as { count: number };
+        expect(after.count).toBe(0);
+      });
+
+      it("flushes remaining entries on close without throwing", async () => {
+        // Disk-backed store required — in-memory data doesn't survive close+reopen
+        store.close();
+        store = new TaskStore(rootDir, globalDir); // no inMemoryDb
+        await store.init();
+
+        const task = await createTestTask();
+
+        await store.appendAgentLog(task.id, "flush on close", "text");
+        // close() should flush the buffer gracefully
+        expect(() => store.close()).not.toThrow();
+
+        // Re-open and verify the entry was persisted
+        store = new TaskStore(rootDir, globalDir);
+        await store.init();
+        const logs = await store.getAgentLogs(task.id);
+        expect(logs).toHaveLength(1);
+        expect(logs[0].text).toBe("flush on close");
+      });
+
+      it("close does not throw when flushing entries for already-deleted tasks", async () => {
+        const task = await createTestTask();
+
+        await store.appendAgentLog(task.id, "orphaned entry", "text");
+        // Flush so the entry is in the DB, then delete the task
+        (store as any).flushAgentLogBuffer();
+        await store.deleteTask(task.id);
+
+        // Now buffer another entry for the deleted task
+        await store.appendAgentLog(task.id, "ghost entry", "text");
+        // close() should not throw despite FK constraint violation on flush
+        expect(() => store.close()).not.toThrow();
+      });
+
+      it("emits agent:log event immediately even when buffered", async () => {
+        const task = await createTestTask();
+        const events: any[] = [];
+        store.on("agent:log", (entry) => events.push(entry));
+
+        await store.appendAgentLog(task.id, "immediate event", "text");
+
+        // Event fires immediately, even though DB write is deferred
+        expect(events).toHaveLength(1);
+        expect(events[0].text).toBe("immediate event");
+        expect(events[0].taskId).toBe(task.id);
+      });
+
+      it("flushes interleaved entries from multiple tasks correctly", async () => {
+        const taskA = await createTestTask();
+        const taskB = await store.createTask({ description: "Task B" });
+
+        // Interleave entries for two tasks
+        for (let i = 0; i < 25; i++) {
+          await store.appendAgentLog(taskA.id, `A-${i}`, "text");
+          await store.appendAgentLog(taskB.id, `B-${i}`, "text");
+        }
+        // 50 total = buffer full, triggers flush
+
+        const countA = await store.getAgentLogCount(taskA.id);
+        const countB = await store.getAgentLogCount(taskB.id);
+        expect(countA).toBe(25);
+        expect(countB).toBe(25);
+      });
     });
   });
 
