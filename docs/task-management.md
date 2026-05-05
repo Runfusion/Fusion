@@ -192,6 +192,12 @@ Research document content appears in the existing **Documents** tab in Task Deta
 
 ## Task Detail Modal (Dashboard)
 
+The task detail modal exposes multiple tabs.
+
+Task settings edited from the modal now auto-save as you edit (change/blur with debounce for text-like fields). This includes title, description, dependencies, workflow-step selection, model overrides in the edit form, and source issue metadata. The footer Save button remains available, but normal field edits no longer depend on a manual save click.
+
+The edit footer shows inline autosave state (saving/saved/error), and successful saves propagate the returned task through `onTaskUpdated` so open detail/list state stays fresh.
+
 The task detail modal exposes multiple tabs:
 
 - **Details** — primary metadata and description

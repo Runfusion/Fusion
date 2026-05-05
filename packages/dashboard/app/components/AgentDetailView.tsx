@@ -3563,6 +3563,19 @@ function ConfigTab({
     await persistSettings(true, "manual");
   };
 
+  const scheduleAutoSave = useCallback(() => {
+    if (!hasChanges || isSaving) {
+      return;
+    }
+
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors(validationErrors);
+      return;
+    }
+
+    void persistSettings(false, "auto");
+  }, [hasChanges, isSaving, persistSettings, validationErrors]);
+
   useEffect(() => {
     if (!hasChanges || isSaving) {
       return;
@@ -3605,6 +3618,7 @@ function ConfigTab({
               className="input" 
               value={nameValue}
               onChange={(e) => setNameValue(e.target.value)}
+              onBlur={() => { void scheduleAutoSave(); }}
             />
           </div>
           
@@ -3614,7 +3628,10 @@ function ConfigTab({
               id="agent-role"
               className="select"
               value={roleValue}
-              onChange={(e) => setRoleValue(e.target.value as AgentCapability)}
+              onChange={(e) => {
+                setRoleValue(e.target.value as AgentCapability);
+                void scheduleAutoSave();
+              }}
             >
               <option value="triage">Triage</option>
               <option value="executor">Executor</option>
@@ -3634,6 +3651,7 @@ function ConfigTab({
               placeholder="e.g. Senior Code Reviewer"
               value={titleValue}
               onChange={(e) => setTitleValue(e.target.value)}
+              onBlur={() => { void scheduleAutoSave(); }}
             />
           </div>
 
@@ -3646,6 +3664,7 @@ function ConfigTab({
               placeholder="e.g. 🤖"
               value={iconValue}
               onChange={(e) => setIconValue(e.target.value)}
+              onBlur={() => { void scheduleAutoSave(); }}
             />
           </div>
 
@@ -3655,7 +3674,10 @@ function ConfigTab({
               id="agent-reports-to"
               className="select"
               value={reportsToValue}
-              onChange={(e) => setReportsToValue(e.target.value)}
+              onChange={(e) => {
+                setReportsToValue(e.target.value);
+                void scheduleAutoSave();
+              }}
               disabled={isLoadingManagers}
             >
               <option value="">No manager</option>
@@ -3684,7 +3706,10 @@ function ConfigTab({
               id="agent-skills"
               label="Skills"
               value={selectedSkills}
-              onChange={setSelectedSkills}
+              onChange={(nextSkills) => {
+                setSelectedSkills(nextSkills);
+                void scheduleAutoSave();
+              }}
               projectId={projectId}
             />
           </div>
@@ -3710,6 +3735,7 @@ function ConfigTab({
                 onClick={() => {
                   setRuntimeMode("model");
                   setSelectedRuntimeId("");
+                  void scheduleAutoSave();
                 }}
               >
                 Built-in Model
@@ -3720,7 +3746,10 @@ function ConfigTab({
                 role="tab"
                 aria-selected={runtimeMode === "runtime"}
                 tabIndex={runtimeMode === "runtime" ? 0 : -1}
-                onClick={() => setRuntimeMode("runtime")}
+                onClick={() => {
+                  setRuntimeMode("runtime");
+                  void scheduleAutoSave();
+                }}
               >
                 Plugin Runtime
               </button>
@@ -3732,7 +3761,10 @@ function ConfigTab({
               <CustomModelDropdown
                 models={availableModels}
                 value={modelValue}
-                onChange={setModelValue}
+                onChange={(value) => {
+                  setModelValue(value);
+                  void scheduleAutoSave();
+                }}
                 placeholder="Use global default"
                 label="Agent Model"
                 disabled={modelsLoading}
@@ -3752,7 +3784,10 @@ function ConfigTab({
                   id="agent-runtime-hint"
                   className="select"
                   value={selectedRuntimeId}
-                  onChange={(e) => setSelectedRuntimeId(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedRuntimeId(e.target.value);
+                    void scheduleAutoSave();
+                  }}
                 >
                   <option value="">
                     {availableRuntimes.length > 0 ? "Select a plugin runtime…" : "No plugin runtimes available"}
@@ -3782,7 +3817,10 @@ function ConfigTab({
                 id="hb-enabled"
                 type="checkbox"
                 checked={heartbeatEnabled}
-                onChange={(e) => handleHeartbeatEnabledChange(e.target.checked)}
+                onChange={(e) => {
+                  handleHeartbeatEnabledChange(e.target.checked);
+                  void scheduleAutoSave();
+                }}
               />
               Heartbeat Enabled
             </label>
@@ -3795,7 +3833,10 @@ function ConfigTab({
                 id="hb-autoClaimRelevantTasks"
                 type="checkbox"
                 checked={autoClaimRelevantTasksEnabled}
-                onChange={(e) => setAutoClaimRelevantTasksEnabled(e.target.checked)}
+                onChange={(e) => {
+                  setAutoClaimRelevantTasksEnabled(e.target.checked);
+                  void scheduleAutoSave();
+                }}
               />
               Auto-Claim Relevant Tasks
             </label>

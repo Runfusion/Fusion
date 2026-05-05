@@ -732,166 +732,168 @@ export function TaskDetailContent({
     setEditPendingImages([]);
   }, [task.title, task.description, task.dependencies, task.nodeId, task.priority, task.executionMode, editPendingImages]);
 
-  const handleSave = useCallback(async () => {
+  const [editAutoSaveStatus, setEditAutoSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const editAutoSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const editAutoSaveRevisionRef = useRef(0);
+
+  const buildEditUpdates = useCallback((includeDescription: boolean) => {
+    const updates: Record<string, unknown> = {};
+    const trimmedTitle = editTitle.trim();
+    const trimmedDescription = editDescription.trim();
+
+    if (trimmedTitle && trimmedTitle !== (task.title ?? "")) updates.title = trimmedTitle;
+    if (includeDescription && trimmedDescription && trimmedDescription !== (task.description ?? "")) updates.description = trimmedDescription;
+    if (!sameStringArray(editDependencies, task.dependencies ?? [])) updates.dependencies = editDependencies;
+    if (!sameStringArray(editSelectedWorkflowSteps, task.enabledWorkflowSteps ?? [])) updates.enabledWorkflowSteps = editSelectedWorkflowSteps;
+
+    const executorSelection = splitModelSelection(editExecutorModel);
+    const currentExecutorModel = task.modelProvider && task.modelId ? `${task.modelProvider}/${task.modelId}` : "";
+    if (editExecutorModel !== currentExecutorModel) {
+      updates.modelProvider = executorSelection?.provider ?? null;
+      updates.modelId = executorSelection?.modelId ?? null;
+    }
+
+    const validatorSelection = splitModelSelection(editValidatorModel);
+    const currentValidatorModel = task.validatorModelProvider && task.validatorModelId ? `${task.validatorModelProvider}/${task.validatorModelId}` : "";
+    if (editValidatorModel !== currentValidatorModel) {
+      updates.validatorModelProvider = validatorSelection?.provider ?? null;
+      updates.validatorModelId = validatorSelection?.modelId ?? null;
+    }
+
+    const planningSelection = splitModelSelection(editPlanningModel);
+    const currentPlanningModel = task.planningModelProvider && task.planningModelId ? `${task.planningModelProvider}/${task.planningModelId}` : "";
+    if (editPlanningModel !== currentPlanningModel) {
+      updates.planningModelProvider = planningSelection?.provider ?? null;
+      updates.planningModelId = planningSelection?.modelId ?? null;
+    }
+
+    const currentThinkingLevel = task.thinkingLevel ?? "";
+    if (editThinkingLevel !== currentThinkingLevel) updates.thinkingLevel = editThinkingLevel !== "" ? (editThinkingLevel as "minimal" | "low" | "medium" | "high") : null;
+    if ((task.nodeId ?? undefined) !== editNodeId) updates.nodeId = editNodeId ?? null;
+    if (editReviewLevel !== task.reviewLevel) updates.reviewLevel = editReviewLevel;
+    if (editPriority !== normalizeTaskPriorityValue(task.priority)) updates.priority = editPriority;
+    if (editExecutionMode !== normalizeExecutionModeValue(task.executionMode)) updates.executionMode = editExecutionMode === "fast" ? "fast" : null;
+
+    const normalizedProvider = normalizeSourceIssueText(editSourceIssueProvider);
+    const normalizedRepository = normalizeSourceIssueText(editSourceIssueRepository);
+    const normalizedExternalId = normalizeSourceIssueText(editSourceIssueExternalId);
+    const normalizedUrl = normalizeSourceIssueUrl(editSourceIssueUrl);
+    const allSourceFieldsEmpty = normalizedProvider.length === 0 && normalizedRepository.length === 0 && normalizedExternalId.length === 0 && !normalizedUrl;
+
+    if (allSourceFieldsEmpty) {
+      if (task.sourceIssue) updates.sourceIssue = null;
+    } else {
+      if (!normalizedProvider || !normalizedRepository || !normalizedExternalId) {
+        return { updates: null, error: "Source issue provider, repository, and issue identifier are required" };
+      }
+      const fallbackIssueNumber = Number.parseInt(normalizedExternalId, 10);
+      const issueNumber = task.sourceIssue?.issueNumber ?? fallbackIssueNumber;
+      if (!Number.isFinite(issueNumber) || issueNumber <= 0) {
+        return { updates: null, error: "Source issue identifier must be numeric for new metadata" };
+      }
+      const nextSourceIssue: TaskSourceIssue = {
+        provider: normalizedProvider,
+        repository: normalizedRepository,
+        externalIssueId: normalizedExternalId,
+        issueNumber,
+        ...(normalizedUrl ? { url: normalizedUrl } : {}),
+      };
+      const previousSourceIssue = task.sourceIssue;
+      const sourceIssueChanged = !previousSourceIssue
+        || previousSourceIssue.provider !== nextSourceIssue.provider
+        || previousSourceIssue.repository !== nextSourceIssue.repository
+        || previousSourceIssue.externalIssueId !== nextSourceIssue.externalIssueId
+        || previousSourceIssue.issueNumber !== nextSourceIssue.issueNumber
+        || (previousSourceIssue.url ?? undefined) !== nextSourceIssue.url;
+      if (sourceIssueChanged) updates.sourceIssue = nextSourceIssue;
+    }
+
+    return { updates, error: null as string | null };
+  }, [editDependencies, editDescription, editExecutionMode, editExecutorModel, editNodeId, editPlanningModel, editPriority, editReviewLevel, editSelectedWorkflowSteps, editSourceIssueExternalId, editSourceIssueProvider, editSourceIssueRepository, editSourceIssueUrl, editThinkingLevel, editTitle, editValidatorModel, task]);
+
+  const persistEditChanges = useCallback(async (includeDescription: boolean) => {
+    const { updates, error } = buildEditUpdates(includeDescription);
+    if (!updates) {
+      setEditAutoSaveStatus("error");
+      if (error) {
+        addToast(`Failed to update ${task.id}: ${error}`, "error");
+      }
+      return false;
+    }
+    if (Object.keys(updates).length === 0) {
+      return true;
+    }
+    const revision = ++editAutoSaveRevisionRef.current;
     setIsSaving(true);
+    setEditAutoSaveStatus("saving");
     try {
-      const updates: Record<string, unknown> = {};
-      const trimmedTitle = editTitle.trim();
-      const trimmedDescription = editDescription.trim();
-
-      if (trimmedTitle && trimmedTitle !== (task.title ?? "")) {
-        updates.title = trimmedTitle;
-      }
-      if (trimmedDescription && trimmedDescription !== (task.description ?? "")) {
-        updates.description = trimmedDescription;
-      }
-      if (!sameStringArray(editDependencies, task.dependencies ?? [])) {
-        updates.dependencies = editDependencies;
-      }
-      if (!sameStringArray(editSelectedWorkflowSteps, task.enabledWorkflowSteps ?? [])) {
-        updates.enabledWorkflowSteps = editSelectedWorkflowSteps;
-      }
-
-      const executorSelection = splitModelSelection(editExecutorModel);
-      const currentExecutorModel = task.modelProvider && task.modelId ? `${task.modelProvider}/${task.modelId}` : "";
-      if (editExecutorModel !== currentExecutorModel) {
-        updates.modelProvider = executorSelection?.provider ?? null;
-        updates.modelId = executorSelection?.modelId ?? null;
-      }
-
-      const validatorSelection = splitModelSelection(editValidatorModel);
-      const currentValidatorModel = task.validatorModelProvider && task.validatorModelId ? `${task.validatorModelProvider}/${task.validatorModelId}` : "";
-      if (editValidatorModel !== currentValidatorModel) {
-        updates.validatorModelProvider = validatorSelection?.provider ?? null;
-        updates.validatorModelId = validatorSelection?.modelId ?? null;
-      }
-
-      const planningSelection = splitModelSelection(editPlanningModel);
-      const currentPlanningModel = task.planningModelProvider && task.planningModelId ? `${task.planningModelProvider}/${task.planningModelId}` : "";
-      if (editPlanningModel !== currentPlanningModel) {
-        updates.planningModelProvider = planningSelection?.provider ?? null;
-        updates.planningModelId = planningSelection?.modelId ?? null;
-      }
-
-      const currentThinkingLevel = task.thinkingLevel ?? "";
-      if (editThinkingLevel !== currentThinkingLevel) {
-        updates.thinkingLevel = editThinkingLevel !== "" ? (editThinkingLevel as "minimal" | "low" | "medium" | "high") : null;
-      }
-      if ((task.nodeId ?? undefined) !== editNodeId) {
-        updates.nodeId = editNodeId ?? null;
-      }
-
-      const currentReviewLevel = task.reviewLevel;
-      if (editReviewLevel !== currentReviewLevel) {
-        updates.reviewLevel = editReviewLevel;
-      }
-
-      const currentPriority = normalizeTaskPriorityValue(task.priority);
-      if (editPriority !== currentPriority) {
-        updates.priority = editPriority;
-      }
-
-      const currentExecutionMode = normalizeExecutionModeValue(task.executionMode);
-      if (editExecutionMode !== currentExecutionMode) {
-        updates.executionMode = editExecutionMode === "fast" ? "fast" : null;
-      }
-
-      const normalizedProvider = normalizeSourceIssueText(editSourceIssueProvider);
-      const normalizedRepository = normalizeSourceIssueText(editSourceIssueRepository);
-      const normalizedExternalId = normalizeSourceIssueText(editSourceIssueExternalId);
-      const normalizedUrl = normalizeSourceIssueUrl(editSourceIssueUrl);
-      const allSourceFieldsEmpty =
-        normalizedProvider.length === 0
-        && normalizedRepository.length === 0
-        && normalizedExternalId.length === 0
-        && !normalizedUrl;
-
-      if (allSourceFieldsEmpty) {
-        if (task.sourceIssue) {
-          updates.sourceIssue = null;
-        }
-      } else {
-        if (!normalizedProvider || !normalizedRepository || !normalizedExternalId) {
-          addToast("Source issue provider, repository, and issue identifier are required", "error");
-          setIsSaving(false);
-          return;
-        }
-
-        const fallbackIssueNumber = Number.parseInt(normalizedExternalId, 10);
-        const issueNumber = task.sourceIssue?.issueNumber ?? fallbackIssueNumber;
-        if (!Number.isFinite(issueNumber) || issueNumber <= 0) {
-          addToast("Source issue identifier must be numeric for new metadata", "error");
-          setIsSaving(false);
-          return;
-        }
-
-        const nextSourceIssue: TaskSourceIssue = {
-          provider: normalizedProvider,
-          repository: normalizedRepository,
-          externalIssueId: normalizedExternalId,
-          issueNumber,
-          ...(normalizedUrl ? { url: normalizedUrl } : {}),
-        };
-
-        const previousSourceIssue = task.sourceIssue;
-        const sourceIssueChanged =
-          !previousSourceIssue
-          || previousSourceIssue.provider !== nextSourceIssue.provider
-          || previousSourceIssue.repository !== nextSourceIssue.repository
-          || previousSourceIssue.externalIssueId !== nextSourceIssue.externalIssueId
-          || previousSourceIssue.issueNumber !== nextSourceIssue.issueNumber
-          || (previousSourceIssue.url ?? undefined) !== nextSourceIssue.url;
-
-        if (sourceIssueChanged) {
-          updates.sourceIssue = nextSourceIssue;
-        }
-      }
-
-      const hasTaskUpdates = Object.keys(updates).length > 0;
-      if (hasTaskUpdates) {
-        const updatedTask = await updateTask(task.id, updates as never, projectId);
-        onTaskUpdated?.(updatedTask);
-      }
-
-      // Upload pending images as attachments
-      if (editPendingImages.length > 0) {
-        const failures: string[] = [];
-        for (const img of editPendingImages) {
-          try {
-            const attachment = await uploadAttachment(task.id, img.file, projectId);
-            setAttachments((prev) => [...prev, attachment]);
-          } catch {
-            failures.push(img.file.name);
-          }
-        }
-        if (failures.length > 0) {
-          addToast(`Failed to upload: ${failures.join(", ")}`, "error");
-        }
-      }
-
-      // Clean up
-      editPendingImages.forEach((img) => URL.revokeObjectURL(img.previewUrl));
-      setEditPendingImages([]);
-      addToast(`Updated ${task.id}`, "success");
-      setIsEditing(false);
+      const updatedTask = await updateTask(task.id, updates as never, projectId);
+      if (revision !== editAutoSaveRevisionRef.current) return;
+      onTaskUpdated?.(updatedTask);
+      setEditAutoSaveStatus("saved");
+      return true;
     } catch (err) {
-      addToast(`Failed to update ${task.id}: ${getErrorMessage(err)}`, "error");
+      if (revision === editAutoSaveRevisionRef.current) {
+        setEditAutoSaveStatus("error");
+        addToast(`Failed to update ${task.id}: ${getErrorMessage(err)}`, "error");
+      }
+      return false;
     } finally {
-      if (mountedRef.current) {
+      if (mountedRef.current && revision === editAutoSaveRevisionRef.current) {
         setIsSaving(false);
       }
     }
-  }, [task, editTitle, editDescription, editDependencies, editExecutorModel, editValidatorModel, editPlanningModel, editThinkingLevel, editNodeId, editReviewLevel, editPriority, editExecutionMode, editSelectedWorkflowSteps, editSourceIssueProvider, editSourceIssueRepository, editSourceIssueExternalId, editSourceIssueUrl, editPendingImages, addToast, projectId, onTaskUpdated]);
+  }, [addToast, buildEditUpdates, onTaskUpdated, projectId, task.id]);
 
-  const handleAutoSaveDescription = useCallback(async (description: string) => {
-    try {
-      const updatedTask = await updateTask(task.id, { description }, projectId);
-      onTaskUpdated?.(updatedTask);
-      addToast("Description saved", "success");
-    } catch (err) {
-      addToast(`Failed to save: ${getErrorMessage(err)}`, "error");
+  const handleAutoSaveDescription = useCallback(async (_description: string) => {
+    await persistEditChanges(true);
+  }, [persistEditChanges]);
+
+  const handleSave = useCallback(async () => {
+    const didSave = await persistEditChanges(true);
+    if (!didSave) {
+      return;
     }
-  }, [task.id, addToast, projectId, onTaskUpdated]);
+    addToast(`Updated ${task.id}`, "success");
+    if (mountedRef.current) {
+      setIsEditing(false);
+    }
+  }, [addToast, persistEditChanges, task.id]);
+
+  useEffect(() => {
+    if (!isEditing) return;
+    if (editAutoSaveTimeoutRef.current) {
+      clearTimeout(editAutoSaveTimeoutRef.current);
+    }
+    editAutoSaveTimeoutRef.current = setTimeout(() => {
+      void persistEditChanges(false);
+    }, 700);
+
+    return () => {
+      if (editAutoSaveTimeoutRef.current) {
+        clearTimeout(editAutoSaveTimeoutRef.current);
+        editAutoSaveTimeoutRef.current = null;
+      }
+    };
+  }, [
+    isEditing,
+    editTitle,
+    editDependencies,
+    editExecutorModel,
+    editValidatorModel,
+    editPlanningModel,
+    editThinkingLevel,
+    editNodeId,
+    editReviewLevel,
+    editPriority,
+    editExecutionMode,
+    editSelectedWorkflowSteps,
+    editSourceIssueProvider,
+    editSourceIssueRepository,
+    editSourceIssueExternalId,
+    editSourceIssueUrl,
+    persistEditChanges,
+  ]);
 
   const handleInlinePriorityChange = useCallback(async (nextValue: string) => {
     const normalizedNextPriority = normalizeTaskPriorityValue(nextValue as Task["priority"]);
@@ -929,7 +931,7 @@ export function TaskDetailContent({
       exitEditMode();
     } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
-      handleSave();
+      void handleSave();
     }
   }, [isEditing, exitEditMode, handleSave]);
 
@@ -2410,7 +2412,7 @@ export function TaskDetailContent({
           {isEditing ? (
             <>
               <span className="modal-edit-hint">
-                <kbd>Ctrl+Enter</kbd> to save · <kbd>Escape</kbd> to cancel
+                {editAutoSaveStatus === "saving" ? "Autosaving…" : editAutoSaveStatus === "saved" ? "Saved" : editAutoSaveStatus === "error" ? "Save failed" : "Changes autosave as you edit"}
               </span>
               <div className="modal-actions-spacer" />
               <button
@@ -2422,7 +2424,7 @@ export function TaskDetailContent({
               </button>
               <button
                 className="btn btn-primary btn-sm"
-                onClick={handleSave}
+                onClick={() => void handleSave()}
                 disabled={isSaving}
               >
                 {isSaving ? "Saving…" : "Save"}
