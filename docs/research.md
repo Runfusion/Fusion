@@ -208,7 +208,7 @@ See [CLI Reference → `fn research`](./cli-reference.md) for the full command r
 
 ## API Reference
 
-All research endpoints are under `/api/research`. The router is registered in `packages/dashboard/src/routes/register-integrated-routers.ts`.
+All research endpoints are under `/api/research`. The router is registered in `packages/dashboard/src/routes/register-integrated-routes.ts`.
 
 ### Runs
 

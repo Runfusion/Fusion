@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render } from "ink-testing-library";
 import { DashboardApp } from "../app.js";
 import { DashboardTUI } from "../controller.js";
+import { createInitialState } from "../state.js";
 import type { ProjectItem, TaskItem, AgentItem, AgentDetailItem, ModelItem, SettingsValues, TaskDetailData } from "../state.js";
 
 function newController(): DashboardTUI {
@@ -230,6 +231,23 @@ describe("DashboardApp smoke", () => {
     // Board shows the currently selected project; first project "alpha" is selected by default
     expect(frame).toContain("alpha");
     unmount();
+  });
+});
+
+describe("Default active section", () => {
+  it("createInitialState defaults to system panel", () => {
+    const state = createInitialState();
+    expect(state.activeSection).toBe("system");
+  });
+
+  it("DashboardTUI controller defaults to system panel", () => {
+    const controller = newController();
+    expect(controller.getSnapshot().activeSection).toBe("system");
+  });
+
+  it("createInitialState defaults to mouseEnabled = true", () => {
+    const state = createInitialState();
+    expect(state.mouseEnabled).toBe(true);
   });
 });
 

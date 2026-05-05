@@ -358,13 +358,22 @@ export interface DashboardState {
   // `interactiveData.remote` is available. Used to surface tunnel state
   // (state/url) globally in the TUI header.
   remoteStatus: RemoteStatus | null;
+  // Whether xterm mouse reporting is currently enabled. When true, the
+  // controller decodes wheel events into log/list scrolling. When false,
+  // the terminal owns the mouse — needed for native click-drag selection
+  // under tmux, where Shift-bypass is intercepted by tmux itself.
+  mouseEnabled: boolean;
 }
 
-export const SECTION_ORDER: SectionId[] = ["system", "logs", "utilities", "stats", "settings"];
+// Order matches the visual layout in StatusModeGrid: System (top), Logs
+// (middle), then the bottom row left-to-right (Stats, Utilities, Settings).
+// Both Tab/Shift+Tab (PANEL_ORDER in app.tsx) and ←/→ (cycleSection) use
+// this same order so panel navigation matches what the user sees.
+export const SECTION_ORDER: SectionId[] = ["system", "logs", "stats", "utilities", "settings"];
 
 export function createInitialState(): DashboardState {
   return {
-    activeSection: "logs",
+    activeSection: "system",
     logEntries: [],
     systemInfo: null,
     taskStats: null,
@@ -387,5 +396,6 @@ export function createInitialState(): DashboardState {
     updateStatus: null,
     clipboardFlash: null,
     remoteStatus: null,
+    mouseEnabled: true,
   };
 }

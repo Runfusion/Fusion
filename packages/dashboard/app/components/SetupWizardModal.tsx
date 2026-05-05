@@ -15,7 +15,7 @@ export interface SetupWizardModalProps {
   onClose?: () => void;
 }
 
-type WizardStep = "manual" | "complete";
+type WizardStep = "auth" | "manual" | "complete";
 type ManualSetupMode = "existing" | "clone";
 
 interface WizardState {
@@ -42,8 +42,8 @@ export function SetupWizardModal({
 }: SetupWizardModalProps) {
   const helpUrl = "https://github.com/runfusion/fusion/discussions";
   const [isOpen, setIsOpen] = useState(true);
-  const [state, setState] = useState<WizardState>({
-    step: "manual",
+  const [state, setState] = useState<WizardState>(() => ({
+    step: getAuthToken() ? "manual" : "auth",
     manualMode: "existing",
     manualPath: "",
     manualCloneUrl: "",
@@ -52,7 +52,7 @@ export function SetupWizardModal({
     manualNodeId: "",
     isRegistering: false,
     error: null,
-  });
+  }));
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [authTokenInput, setAuthTokenInput] = useState("");
   const [storedAuthToken, setStoredAuthToken] = useState(() => getAuthToken());
@@ -116,14 +116,20 @@ export function SetupWizardModal({
     const token = authTokenInput.trim();
     if (!token) return;
     setAuthToken(token);
-    window.location.reload();
+    setStoredAuthToken(token);
+    setAuthTokenInput("");
+    // If we're on the auth step, advance to the manual step
+    setState((prev) => prev.step === "auth" ? { ...prev, step: "manual" } : prev);
   }, [authTokenInput]);
 
   const handleResetAuthToken = useCallback(() => {
     clearAuthToken();
     setStoredAuthToken(undefined);
     setAuthTokenInput("");
-    window.location.reload();
+  }, []);
+
+  const handleSkipAuth = useCallback(() => {
+    setState((prev) => ({ ...prev, step: "manual" }));
   }, []);
 
   if (!isOpen) return null;
@@ -169,6 +175,7 @@ export function SetupWizardModal({
               <span className="setup-wizard-brand-name">Fusion</span>
             </div>
             <h2 id="wizard-title" className="setup-wizard-title">
+              {state.step === "auth" && "Set Auth Token"}
               {state.step === "manual" && "Welcome to Fusion"}
               {state.step === "complete" && "Setup Complete!"}
             </h2>
@@ -186,6 +193,37 @@ export function SetupWizardModal({
 
         {/* Content */}
         <div className="setup-wizard-content">
+          {/* Auth Step */}
+          {state.step === "auth" && (
+            <div className="setup-wizard-auth-step">
+              <p className="setup-wizard-auth-step-description">
+                This dashboard requires an auth token to communicate with the Fusion daemon.
+                Paste the token below to continue.
+              </p>
+              <div className="form-group">
+                <label htmlFor="setup-auth-token">Auth Token</label>
+                <input
+                  id="setup-auth-token"
+                  type="password"
+                  value={authTokenInput}
+                  onChange={(e) => setAuthTokenInput(e.target.value)}
+                  placeholder="Paste the daemon auth token"
+                  autoComplete="off"
+                  spellCheck={false}
+                  autoFocus
+                />
+                <p className="form-hint">
+                  The token was set via the <code>FUSION_DAEMON_TOKEN</code> environment variable when starting the dashboard.
+                </p>
+              </div>
+              {state.error && (
+                <div className="wizard-error" role="alert">
+                  {state.error}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Manual Step */}
           {state.step === "manual" && (
             <div className="setup-wizard-manual">
@@ -339,10 +377,10 @@ export function SetupWizardModal({
                     </div>
 
                     <div className="form-group">
-                      <label htmlFor="setup-auth-token">Browser Auth Token</label>
+                      <label htmlFor="advanced-auth-token">Browser Auth Token</label>
                       <div className="setup-wizard-auth-token">
                         <input
-                          id="setup-auth-token"
+                          id="advanced-auth-token"
                           type="password"
                           value={authTokenInput}
                           onChange={(e) => setAuthTokenInput(e.target.value)}
@@ -372,8 +410,8 @@ export function SetupWizardModal({
                       </div>
                       <p className="form-hint">
                         {storedAuthToken
-                          ? "A token is already stored in this browser. Updating or resetting it will reload the page."
-                          : "Store a token in this browser for authenticated dashboard requests, then reload the page."}
+                          ? "A token is already stored in this browser. You can update or reset it below."
+                          : "No token is stored. Use the auth prompt at the top of the wizard, or set one here."}
                       </p>
                     </div>
                   </div>
@@ -413,6 +451,23 @@ export function SetupWizardModal({
           >
             Need help?
           </a>
+          {state.step === "auth" && (
+            <>
+              <button
+                className="btn"
+                onClick={handleSkipAuth}
+              >
+                Skip
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleSetAuthToken}
+                disabled={authTokenInput.trim().length === 0}
+              >
+                <span>Set Token &amp; Continue</span>
+              </button>
+            </>
+          )}
           {state.step === "manual" && (
             <button
               className="btn btn-primary"

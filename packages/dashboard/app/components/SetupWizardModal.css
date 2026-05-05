@@ -292,6 +292,28 @@
   min-height: 36px;
 }
 
+.setup-wizard-auth-step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.setup-wizard-auth-step-description {
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.setup-wizard-auth-step code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 2px 6px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
 .setup-wizard-isolation-option {
   display: flex;
   align-items: flex-start;

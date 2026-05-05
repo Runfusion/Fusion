@@ -60,7 +60,7 @@ import { SECTION_ORDER } from "./state.js";
 
 export class DashboardTUI {
   // State fields mirror the original private layout so tests can access them.
-  activeSection: SectionId = "logs";
+  activeSection: SectionId = "system";
   // Named `logBuffer` to match what captureConsole tests access via
   // `(tui as unknown as { logBuffer: LogRingBuffer }).logBuffer`.
   logBuffer: LogRingBuffer;
@@ -144,6 +144,11 @@ export class DashboardTUI {
   // requested. (See ink#222 / @zenobius/ink-mouse for prior art.)
   private wheelHandlers: Set<(direction: "up" | "down") => void> = new Set();
   private mouseStdinListener: ((chunk: Buffer | string) => void) | null = null;
+  // Tracks the desired mouse-reporting state. Toggled at runtime by the
+  // user (e.g. to allow native click-drag selection under tmux, where
+  // Shift-bypass is intercepted by tmux itself before reaching the
+  // terminal). Default true; only flipped via setMouseEnabled().
+  mouseEnabled: boolean = true;
 
   constructor() {
     this.logBuffer = new LogRingBuffer();
@@ -192,6 +197,7 @@ export class DashboardTUI {
       updateStatus: this.updateStatus,
       clipboardFlash: this.clipboardFlash,
       remoteStatus: this.remoteStatus,
+      mouseEnabled: this.mouseEnabled,
     };
     return this.cachedSnapshot;
   }
@@ -500,6 +506,25 @@ export class DashboardTUI {
 
   setShowHelp(show: boolean): void {
     this.showHelp = show;
+    this.notify();
+  }
+
+  // Toggle xterm mouse reporting at runtime. When disabled, the terminal
+  // owns the mouse — click-drag does native text selection (the only path
+  // that works under tmux, where Shift-bypass is intercepted by tmux).
+  // Re-enable to restore wheel-driven log/list scrolling.
+  setMouseEnabled(enabled: boolean): void {
+    if (this.mouseEnabled === enabled) return;
+    this.mouseEnabled = enabled;
+    if (process.stdout?.isTTY && typeof process.stdout.write === "function") {
+      if (enabled) {
+        process.stdout.write("\x1b[?1000h\x1b[?1006h");
+        this.installMouseListener();
+      } else {
+        this.uninstallMouseListener();
+        process.stdout.write("\x1b[?1006l\x1b[?1000l");
+      }
+    }
     this.notify();
   }
 

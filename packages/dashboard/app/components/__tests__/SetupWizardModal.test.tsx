@@ -66,12 +66,36 @@ describe("SetupWizardModal", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetAuthToken.mockReturnValue(undefined);
+    // Default: auth token is stored so wizard starts on the project form step.
+    // Tests for the auth step explicitly unset this.
+    mockGetAuthToken.mockReturnValue("stored-token");
     reloadMock = vi.fn();
     vi.stubGlobal("location", { ...window.location, reload: reloadMock });
   });
 
-  it("renders with welcome message", () => {
+  it("renders with auth step when no token is stored", () => {
+    mockGetAuthToken.mockReturnValue(undefined);
+
+    render(
+      <SetupWizardModal
+        onProjectRegistered={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    // No token stored → shows auth step first
+    expect(screen.getByText("Set Auth Token")).toBeDefined();
+    expect(screen.getByText("Skip")).toBeDefined();
+    expect(screen.getByText("Set Token & Continue")).toBeDefined();
+    expect(screen.getByRole("link", { name: "Need help?" })).toHaveAttribute(
+      "href",
+      "https://github.com/runfusion/fusion/discussions"
+    );
+  });
+
+  it("skips auth step and shows project form when auth token is already stored", () => {
+    mockGetAuthToken.mockReturnValue("stored-token");
+
     render(
       <SetupWizardModal
         onProjectRegistered={vi.fn()}
@@ -83,10 +107,46 @@ describe("SetupWizardModal", () => {
     expect(screen.getByText("Project Name")).toBeDefined();
     expect(screen.getByLabelText("Fusion logo")).toBeDefined();
     expect(screen.getByText("Advanced settings")).toBeDefined();
-    expect(screen.getByRole("link", { name: "Need help?" })).toHaveAttribute(
-      "href",
-      "https://github.com/runfusion/fusion/discussions"
+  });
+
+  it("auth step advances to project form after setting token", () => {
+    mockGetAuthToken.mockReturnValue(undefined);
+
+    render(
+      <SetupWizardModal
+        onProjectRegistered={vi.fn()}
+        onClose={vi.fn()}
+      />
     );
+
+    // On auth step initially
+    expect(screen.getByText("Set Auth Token")).toBeDefined();
+
+    // Set a token
+    fireEvent.change(screen.getByPlaceholderText("Paste the daemon auth token"), {
+      target: { value: "my-daemon-token" },
+    });
+    fireEvent.click(screen.getByText("Set Token & Continue"));
+
+    expect(mockSetAuthToken).toHaveBeenCalledWith("my-daemon-token");
+    // Should now show the project form
+    expect(screen.getByText("Welcome to Fusion")).toBeDefined();
+    expect(screen.getByText("Project Name")).toBeDefined();
+  });
+
+  it("auth step can be skipped", () => {
+    mockGetAuthToken.mockReturnValue(undefined);
+
+    render(
+      <SetupWizardModal
+        onProjectRegistered={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("Set Auth Token")).toBeDefined();
+    fireEvent.click(screen.getByText("Skip"));
+    expect(screen.getByText("Welcome to Fusion")).toBeDefined();
   });
 
   it("has DirectoryPicker for path selection", () => {
@@ -409,12 +469,17 @@ describe("SetupWizardModal", () => {
   });
 
   it("shows a set token action when no browser auth token is stored", () => {
+    mockGetAuthToken.mockReturnValue(undefined);
+
     render(
       <SetupWizardModal
         onProjectRegistered={vi.fn()}
         onClose={vi.fn()}
       />
     );
+
+    // Skip auth step to get to the project form
+    fireEvent.click(screen.getByText("Skip"));
 
     fireEvent.click(screen.getByText("Advanced settings"));
 
@@ -423,7 +488,7 @@ describe("SetupWizardModal", () => {
     expect(screen.queryByRole("button", { name: "Reset token" })).toBeNull();
   });
 
-  it("stores a browser auth token and reloads the page", () => {
+  it("stores a browser auth token without reloading", () => {
     render(
       <SetupWizardModal
         onProjectRegistered={vi.fn()}
@@ -435,10 +500,10 @@ describe("SetupWizardModal", () => {
     fireEvent.change(screen.getByLabelText("Browser Auth Token"), {
       target: { value: "daemon-token" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Set token" }));
+    fireEvent.click(screen.getByRole("button", { name: "Update token" }));
 
     expect(mockSetAuthToken).toHaveBeenCalledWith("daemon-token");
-    expect(reloadMock).toHaveBeenCalledTimes(1);
+    expect(reloadMock).not.toHaveBeenCalled();
   });
 
   it("shows reset when a browser auth token is already stored", () => {
@@ -457,7 +522,7 @@ describe("SetupWizardModal", () => {
     expect(screen.getByRole("button", { name: "Reset token" })).toBeDefined();
   });
 
-  it("resets the stored browser auth token and reloads the page", () => {
+  it("resets the stored browser auth token without reloading", () => {
     mockGetAuthToken.mockReturnValue("stored-token");
 
     render(
@@ -471,7 +536,7 @@ describe("SetupWizardModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reset token" }));
 
     expect(mockClearAuthToken).toHaveBeenCalledTimes(1);
-    expect(reloadMock).toHaveBeenCalledTimes(1);
+    expect(reloadMock).not.toHaveBeenCalled();
   });
 
   describe("node selector", () => {
