@@ -5430,7 +5430,7 @@ Task with acceptance criteria
         expect(updateSpy).toHaveBeenCalled();
 
         const warningCall = warnSpy.mock.calls.find(
-          (call) => typeof call[0] === "string" && call[0].includes("[task-store] Best-effort post-comment awaiting-approval invalidation failed"),
+          (call) => typeof call[0] === "string" && call[0].includes("[task-store] Best-effort post-comment re-triage failed"),
         );
         expect(warningCall).toBeDefined();
 
@@ -5476,7 +5476,7 @@ Task with acceptance criteria
         expect(logEntrySpy).toHaveBeenCalled();
 
         const warningCall = warnSpy.mock.calls.find(
-          (call) => typeof call[0] === "string" && call[0].includes("[task-store] Best-effort post-comment awaiting-approval invalidation failed"),
+          (call) => typeof call[0] === "string" && call[0].includes("[task-store] Best-effort post-comment re-triage failed"),
         );
         expect(warningCall).toBeDefined();
 
@@ -5654,14 +5654,76 @@ Task with acceptance criteria
       expect(updated.comments).toHaveLength(1);
     });
 
-    it("does NOT transition to needs-replan when user comments on non-awaiting-approval triage task", async () => {
+    it("transitions to needs-replan when user comments on non-awaiting-approval triage task with real spec", async () => {
       const task = await store.createTask({ description: "Task in triage" });
-      // Task is in triage with no status (not awaiting-approval)
-      expect(task.status).toBeUndefined();
+      const promptPath = join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
+      await writeFile(promptPath, `# Task: ${task.id} - Triage Plan\n\n## Mission\n\nPlanned task.`);
 
-      const updated = await store.addComment(task.id, "User feedback", "user");
+      await store.addComment(task.id, "User feedback", "user");
+      const updated = await store.getTask(task.id);
 
-      // Status should remain undefined
+      expect(updated.status).toBe("needs-replan");
+      expect(updated.column).toBe("triage");
+      expect(updated.comments?.[0]?.text).toBe("User feedback");
+    });
+
+    it("does NOT transition to needs-replan when user comments on triage task with bootstrap stub prompt", async () => {
+      const task = await store.createTask({ description: "Task in triage" });
+
+      await store.addComment(task.id, "User feedback", "user");
+      const updated = await store.getTask(task.id);
+
+      expect(updated.status).toBeUndefined();
+    });
+
+    it("transitions todo task to needs-replan when user comments and task has real spec", async () => {
+      const task = await store.createTask({ description: "Task in todo", column: "todo" });
+      const promptPath = join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
+      await writeFile(promptPath, `# Task: ${task.id} - Todo Plan\n\n## Mission\n\nPlanned task.`);
+
+      await store.addComment(task.id, "Please update approach", "user");
+      const updated = await store.getTask(task.id);
+
+      expect(updated.status).toBe("needs-replan");
+      expect(updated.column).toBe("todo");
+      expect(updated.log.some((entry) => entry.action === "User comment requested re-specification of planned task")).toBe(true);
+    });
+
+    it("does NOT transition todo task to needs-replan when prompt matches bootstrap stub", async () => {
+      const task = await store.createTask({ description: "Task in todo", column: "todo" });
+      const promptPath = join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
+      await writeFile(promptPath, `# ${task.id}\n\nTask in todo\n`);
+
+      await store.addComment(task.id, "Please update approach", "user");
+      const updated = await store.getTask(task.id);
+
+      expect(updated.status).toBeUndefined();
+    });
+
+    it("does NOT transition to needs-replan when user comments on in-progress task", async () => {
+      const task = await store.createTask({ description: "Task in progress", column: "todo" });
+      const promptPath = join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
+      await writeFile(promptPath, `# Task: ${task.id} - Plan\n\n## Mission\n\nPlanned task.`);
+      await store.moveTask(task.id, "in-progress");
+
+      await store.addComment(task.id, "Please adjust implementation", "user");
+      const updated = await store.getTask(task.id);
+
+      expect(updated.column).toBe("in-progress");
+      expect(updated.status).toBeUndefined();
+    });
+
+    it("does NOT transition to needs-replan when user comments on in-review task", async () => {
+      const task = await store.createTask({ description: "Task in review", column: "todo" });
+      const promptPath = join(rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
+      await writeFile(promptPath, `# Task: ${task.id} - Plan\n\n## Mission\n\nPlanned task.`);
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+
+      await store.addComment(task.id, "Please adjust before merge", "user");
+      const updated = await store.getTask(task.id);
+
+      expect(updated.column).toBe("in-review");
       expect(updated.status).toBeUndefined();
     });
   });

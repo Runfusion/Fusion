@@ -1687,6 +1687,18 @@ export interface ProjectSettings {
   unavailableNodePolicy?: UnavailableNodePolicy;
   /** Project-level research configuration overrides. */
   researchSettings?: ResearchProjectSettings;
+  /** Enable scheduled evaluation batches for recently completed tasks. */
+  taskEvaluationEnabled?: boolean;
+  /** Cron expression for scheduled task-evaluation batches. */
+  taskEvaluationSchedule?: string;
+  /** Optional provider override for scheduled task evaluation runs. */
+  taskEvaluationProvider?: string;
+  /** Optional model override for scheduled task evaluation runs. */
+  taskEvaluationModelId?: string;
+  /** Follow-up policy for scheduled task evaluation findings. */
+  taskEvaluationFollowUpPolicy?: "off" | "suggest" | "create";
+  /** Optional retention window (days) for task evaluation history. */
+  taskEvaluationRetention?: number;
   /** Enable or disable the research subsystem for this project.
    *  When undefined, falls back to global settings.
    *  @deprecated Prefer researchSettings.enabled */

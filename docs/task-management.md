@@ -231,6 +231,20 @@ This file is the contract for execution and review.
 
 Steering comments can be injected mid-run into active executor sessions.
 
+### User comments and triage re-consideration
+
+User comments can trigger **re-triage** for already-planned but non-executing work:
+
+- `triage` + `awaiting-approval` → user comment sets `status: "needs-replan"`
+- `triage` or `todo` with a real (non-bootstrap-stub) `PROMPT.md` → user comment sets `status: "needs-replan"`
+- `triage` or `todo` with only bootstrap-stub/unplanned prompt content → no re-triage transition
+
+Execution ownership is preserved for active work:
+
+- User comments on `in-progress` and `in-review` tasks do **not** re-route those tasks back through triage.
+- Agent/system comments do **not** trigger comment-driven re-triage.
+
+This is distinct from steering comments: steering feedback targets the currently running executor session, while comment-driven re-triage requests a fresh specification pass for planned work.
 ## Refinement Tasks
 
 `fn task refine <id>` creates a new planning task that depends on the original done/in-review task.

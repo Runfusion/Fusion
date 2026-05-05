@@ -49,6 +49,8 @@ export interface EvalRunWindow {
   since?: string;
   until?: string;
   baselineRunId?: string;
+  windowStartExclusive?: string;
+  windowEndInclusive?: string;
 }
 
 export interface EvalProvenance {

@@ -1077,11 +1077,24 @@ export class TriageProcessor {
           let feedback: string | undefined;
 
           if (isReplan) {
-            // Extract feedback from the most recent "AI spec revision requested" log entry
-            const revisionLogEntry = [...task.log]
+            // Prefer explicit re-specification feedback logged by comment-triggered
+            // and approval-invalidation flows; fall back to legacy revision logs.
+            const feedbackLogEntry = [...task.log]
               .reverse()
-              .find((entry) => entry.action === "AI spec revision requested");
-            feedback = revisionLogEntry?.outcome;
+              .find((entry) =>
+                entry.action === "User comment requested re-specification of planned task"
+                || entry.action === "User comment invalidated spec approval — task needs re-specification"
+                || entry.action === "AI spec revision requested"
+              );
+            feedback = feedbackLogEntry?.outcome;
+
+            // Ensure the latest user feedback is always actionable for re-plans.
+            if (!feedback) {
+              const latestUserComment = [...(detail.comments || [])]
+                .reverse()
+                .find((comment) => comment.author === "user");
+              feedback = latestUserComment?.text;
+            }
 
             planLog.log(
               `${task.id} re-planning with feedback: ${feedback?.slice(0, 100)}...`,
@@ -2270,7 +2283,7 @@ Please revise the specification above to address this feedback. Write the comple
 ## Re-specification Instructions
 You are creating a fresh replacement specification based on user feedback.
 
-**Important:** Do not reuse stale PROMPT.md content. Start from the current task description, inspect the codebase, and write a complete new specification that addresses the feedback below.
+**Important:** Do not reuse stale PROMPT.md content. Treat the current task title and description as required primary inputs, inspect the codebase, and write a complete new specification that addresses the feedback below.
 
 ## User Feedback
 ${feedback}
@@ -2340,7 +2353,7 @@ ${task.breakIntoSubtasks ? "- **Break into subtasks:** Yes (user requested)" : "
 ${task.dependencies.length > 0 ? `- **Dependencies:** ${task.dependencies.join(", ")}` : ""}${revisionSection}${subtaskSection}
 
 ## Instructions
-${isRevision ? "1. Review the existing specification and user feedback carefully\n2. Revise the PROMPT.md to address the feedback while maintaining the structure\n3. Ensure the specification is detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a fresh complete PROMPT.md specification to the given path following the format in your system prompt\n3. Address the user feedback without carrying forward stale assumptions from the old spec\n4. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n4. Name actual files, functions, and patterns from the codebase — be specific"}
+${isRevision ? "1. Review the existing specification and user feedback carefully\n2. Revise the PROMPT.md to address the feedback while maintaining the structure\n3. Ensure the specification is detailed enough for an AI agent to execute" : isFreshRespecification ? "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Treat the current task title and description as mandatory primary inputs for a new spec\n3. Write a fresh complete PROMPT.md specification to the given path following the format in your system prompt\n4. Address the user feedback without carrying forward stale assumptions from the old spec\n5. Name actual files, functions, and patterns from the codebase — be specific" : "1. Read the project structure to understand context (package.json, source files, etc.)\n2. Write a complete PROMPT.md specification to the given path following the format in your system prompt\n3. The specification must be detailed enough for an autonomous AI agent to implement without asking questions\n4. Name actual files, functions, and patterns from the codebase — be specific"}
 
 Use the write tool to write the specification file.${commandsSection}${completionDocumentationSection}${memorySection}${attachmentsSection}${userCommentsSection}`;
 }

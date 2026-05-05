@@ -263,6 +263,7 @@ describe("buildSpecificationPrompt", () => {
     expect(prompt).toContain(feedback);
     expect(prompt).not.toContain("Existing Specification");
     expect(prompt).toContain("without carrying forward stale assumptions");
+    expect(prompt).toContain("Treat the current task title and description as required primary inputs");
   });
 
   it("includes attachments when provided", () => {
@@ -1170,6 +1171,35 @@ describe("Re-specification flow", () => {
 
     expect(revisionLogEntry?.outcome).toBe("Most recent feedback");
   });
+
+  it("prefers latest comment-triggered re-spec feedback log over legacy revision requests", () => {
+    const taskWithCommentTriggeredFeedback: Task = {
+      ...taskWithRevisionRequest,
+      log: [
+        {
+          timestamp: "2026-01-01T00:00:00.000Z",
+          action: "AI spec revision requested",
+          outcome: "Older feedback",
+        },
+        {
+          timestamp: "2026-01-01T00:03:00.000Z",
+          action: "User comment requested re-specification of planned task",
+          outcome: "Latest feedback",
+        },
+      ],
+    };
+
+    const feedbackLogEntry = [...taskWithCommentTriggeredFeedback.log]
+      .reverse()
+      .find((entry) =>
+        entry.action === "User comment requested re-specification of planned task"
+        || entry.action === "User comment invalidated spec approval — task needs re-specification"
+        || entry.action === "AI spec revision requested"
+      );
+
+    expect(feedbackLogEntry?.outcome).toBe("Latest feedback");
+  });
+
 });
 
 describe("requirePlanApproval setting", () => {
