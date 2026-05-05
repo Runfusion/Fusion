@@ -356,7 +356,7 @@ export function MissionInterviewModal({
         setMissionGoal(persisted);
       }
     }
-  }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isOpen]); // intentional: only re-run on open/close, not on every keystroke
 
   // Auto-start when initialGoal prop is provided
   useEffect(() => {
