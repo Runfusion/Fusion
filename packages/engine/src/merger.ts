@@ -839,6 +839,103 @@ function resetMergeWithWarn(rootDir: string, taskId: string, label: string): voi
   }
 }
 
+/**
+ * Stash any unrelated dirty changes in `rootDir` before a merge runs.
+ *
+ * The merger frequently issues `git reset --hard` / `git reset --merge` /
+ * forced checkouts against `rootDir`. When `rootDir` happens to be the
+ * developer's primary checkout (the common case for solo / single-host
+ * setups), those resets discard any uncommitted dev edits in the working
+ * tree — silently and without recourse. We've burned developer work this
+ * way (FN-3329 retro): dashboard-tui edits were wiped mid-flight by an
+ * unrelated FN-3329 merge.
+ *
+ * The fix: snapshot dirty state up-front, stash it (including untracked
+ * files) under a recognizable label, and pop it back after the merge
+ * finishes — success OR failure — via a try/finally in `aiMergeTask`.
+ *
+ * Returns the stash ref (e.g. `stash@{0}`) when a stash was created, or
+ * `null` when the working tree was already clean. Best-effort: any failure
+ * to stash logs and returns null — the merge still proceeds, but with the
+ * old behavior. We do NOT want a stash failure to block the merge entirely
+ * (that would be a strictly worse regression than the current state).
+ */
+async function stashUnrelatedRootDirChanges(
+  rootDir: string,
+  taskId: string,
+): Promise<string | null> {
+  try {
+    // Cheap dirty-check first so we don't litter empty stashes during the
+    // common all-clean case.
+    const dirty = await snapshotDirtyFiles(rootDir);
+    if (dirty.size === 0) return null;
+
+    const label = `fusion-merger-autostash:${taskId}:${Date.now()}`;
+    // -u → include untracked. -m → label so we can locate it later even if
+    // another stash arrives (unlikely but possible under concurrent tooling).
+    await execAsync(
+      `git stash push -u -m "${label}"`,
+      { cwd: rootDir },
+    );
+
+    // Resolve the actual ref. `git stash push` doesn't print one in a
+    // machine-friendly way, so we look up the most recent stash that
+    // matches our label. This guards against another tool sneaking in a
+    // stash between push and resolve.
+    const { stdout } = await execAsync(
+      `git stash list --format="%gd %s"`,
+      { cwd: rootDir, encoding: "utf-8" },
+    );
+    const lines = String(stdout).split("\n");
+    const match = lines.find((line) => line.includes(label));
+    if (!match) {
+      mergerLog.warn(
+        `${taskId}: created autostash but could not locate it in stash list — leaving in place to avoid data loss`,
+      );
+      return null;
+    }
+    const ref = match.split(/\s+/)[0] ?? null;
+    mergerLog.log(
+      `${taskId}: stashed ${dirty.size} unrelated dirty path(s) in rootDir as ${ref} (${label})`,
+    );
+    return ref;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    mergerLog.warn(
+      `${taskId}: pre-merge autostash failed (${msg}) — proceeding without stash; concurrent dev edits in rootDir may be wiped`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Restore the autostash created by `stashUnrelatedRootDirChanges` after a
+ * merge completes. Best-effort: any failure logs a warning but does not
+ * throw — by the time we reach the finally block the merge result has
+ * already been recorded, and a stash-pop failure should never mask or
+ * undo a successful merge.
+ *
+ * On pop conflict (e.g. the merge committed a change that overlaps the
+ * stashed dev edit) we leave the stash in place and instruct the operator
+ * to recover manually. That's vastly preferable to silently dropping the
+ * stash via `git stash drop`.
+ */
+async function restoreUnrelatedRootDirChanges(
+  rootDir: string,
+  taskId: string,
+  stashRef: string,
+): Promise<void> {
+  try {
+    await execAsync(`git stash pop "${stashRef}"`, { cwd: rootDir });
+    mergerLog.log(`${taskId}: restored autostash ${stashRef}`);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    mergerLog.warn(
+      `${taskId}: failed to pop autostash ${stashRef} (${msg}) — stash left intact; recover with: cd ${rootDir} && git stash list && git stash pop ${stashRef}`,
+    );
+  }
+}
+
 async function generateAiMergeSummary(
   commitLog: string,
   diffStat: string,
@@ -2485,6 +2582,15 @@ export async function aiMergeTask(
 ): Promise<MergeResult> {
   throwIfAborted(options.signal, taskId);
 
+  // Pre-merge guard against the common single-checkout setup where rootDir
+  // is the developer's working tree. The merge flow below issues several
+  // `git reset --hard/--merge` calls and forced checkouts that would
+  // otherwise wipe any unrelated unstaged/untracked dev edits. Stash them
+  // here, restore in the finally below — see stashUnrelatedRootDirChanges
+  // for the full rationale.
+  const autostashRef = await stashUnrelatedRootDirChanges(rootDir, taskId);
+  try {
+
   // 1. Validate task state
   const task = await store.getTask(taskId);
   const mergeBlocker = getTaskMergeBlocker(task);
@@ -3867,6 +3973,12 @@ export async function aiMergeTask(
   });
   await completeTask(store, taskId, result);
   return result;
+
+  } finally {
+    if (autostashRef) {
+      await restoreUnrelatedRootDirChanges(rootDir, taskId, autostashRef);
+    }
+  }
 }
 
 /** Best-effort `git fetch origin <currentBranch>` + fast-forward of local
