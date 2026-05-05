@@ -201,12 +201,12 @@ describe("ResearchView", () => {
 
     mockUseResearch.mockReturnValue({
       ...baseHookValue,
-      runs: [{ id: "RR-1", title: "t", query: "q", status: "pending" }],
+      runs: [{ id: "RR-1", title: "t", query: "q", status: "queued" }],
       selectedRun: {
         id: "RR-1",
         title: "t",
         query: "q",
-        status: "pending",
+        status: "queued",
         events: [{ id: "E-1", message: "queued" }],
         results: { summary: "Summary", findings: [{ id: "finding-1", heading: "Finding", content: "Impact." }], citations: [] },
       },
@@ -239,12 +239,12 @@ describe("ResearchView", () => {
     const attachRunToTask = vi.fn().mockResolvedValue({});
     mockUseResearch.mockReturnValue({
       ...baseHookValue,
-      runs: [{ id: "RR-1", title: "t", query: "q", status: "pending" }],
+      runs: [{ id: "RR-1", title: "t", query: "q", status: "queued" }],
       selectedRun: {
         id: "RR-1",
         title: "t",
         query: "q",
-        status: "pending",
+        status: "queued",
         events: [],
         results: { summary: "Summary", findings: [{ id: "finding-1", heading: "Finding", content: "Impact." }], citations: [] },
       },
@@ -298,7 +298,7 @@ describe("ResearchView", () => {
       setSearchQuery,
       setSelectedRunId,
       runs: [
-        { id: "RR-1", title: "Alpha", query: "alpha", status: "pending" },
+        { id: "RR-1", title: "Alpha", query: "alpha", status: "queued" },
         { id: "RR-2", title: "Beta", query: "beta", status: "completed" },
       ],
     });
@@ -458,6 +458,66 @@ describe("ResearchView", () => {
     rerender(<ResearchView projectId="p1" onOpenSettings={onOpenSettings} readinessVersion={1} />);
 
     expect(await screen.findByTestId("research-state-empty")).toBeInTheDocument();
+  });
+
+  it("wires create-task modal payload with trimmed fields and attachment toggle", async () => {
+    const createTaskFromRun = vi.fn().mockResolvedValue({});
+    mockUseResearch.mockReturnValue({
+      ...baseHookValue,
+      createTaskFromRun,
+      runs: [{ id: "RR-1", title: "t", query: "q", status: "completed" }],
+      selectedRun: {
+        id: "RR-1",
+        title: "t",
+        query: "q",
+        status: "completed",
+        events: [],
+        results: { summary: "Summary", findings: [{ id: "finding-1", heading: "Finding", content: "Impact." }], citations: [] },
+      },
+      selectedRunId: "RR-1",
+    });
+    mockFetchAuthStatus.mockResolvedValue({ providers: [{ id: "openrouter", type: "api_key", authenticated: true }] });
+
+    render(<ResearchView projectId="p1" />);
+    fireEvent.click((await screen.findAllByText("Create Task"))[0]);
+
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "  Follow up task  " } });
+    fireEvent.change(within(dialog).getByLabelText("Description"), { target: { value: "  Take action now.  " } });
+    fireEvent.click(within(dialog).getByLabelText("Attach markdown export artifact"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create Task" }));
+
+    await waitFor(() => {
+      expect(createTaskFromRun).toHaveBeenCalledWith("RR-1", "Follow up task", "finding-1", "Take action now.", "normal", true);
+    });
+  });
+
+  it("keeps enrich action disabled until a task id is provided", async () => {
+    mockUseResearch.mockReturnValue({
+      ...baseHookValue,
+      runs: [{ id: "RR-1", title: "t", query: "q", status: "completed" }],
+      selectedRun: {
+        id: "RR-1",
+        title: "t",
+        query: "q",
+        status: "completed",
+        events: [],
+        results: { summary: "Summary", findings: [{ id: "finding-1", heading: "Finding", content: "Impact." }], citations: [] },
+      },
+      selectedRunId: "RR-1",
+    });
+    mockFetchAuthStatus.mockResolvedValue({ providers: [{ id: "openrouter", type: "api_key", authenticated: true }] });
+
+    render(<ResearchView projectId="p1" />);
+    fireEvent.click((await screen.findAllByText("Enrich Task"))[0]);
+
+    const dialog = await screen.findByRole("dialog");
+    const enrichButton = within(dialog).getByRole("button", { name: "Enrich Task" });
+    expect(enrichButton).toBeDisabled();
+
+    const targetInput = within(dialog).getByRole("combobox", { name: "Target task" });
+    fireEvent.change(targetInput, { target: { value: "FN-1" } });
+    await waitFor(() => expect(enrichButton).not.toBeDisabled());
   });
 
   it("includes mobile layout media rule", async () => {

@@ -1712,6 +1712,18 @@ export interface ProjectSettings {
   testCommand?: string;
   /** Custom build command for the project (e.g. "pnpm build") */
   buildCommand?: string;
+  /** Enables automated scheduled evaluation of completed tasks. */
+  taskEvaluationEnabled?: boolean;
+  /** Cron expression for scheduled task evaluation batches. */
+  taskEvaluationSchedule?: string;
+  /** Optional provider override for task evaluation. */
+  taskEvaluationProvider?: string;
+  /** Optional model override for task evaluation. */
+  taskEvaluationModelId?: string;
+  /** Follow-up behavior for evaluation findings. */
+  taskEvaluationFollowUpPolicy?: "off" | "suggest" | "create";
+  /** Number of days to retain evaluation data. */
+  taskEvaluationRetention?: number;
   /** When true, completed task worktrees are returned to an idle pool instead
    *  of being deleted. New tasks acquire a warm worktree from the pool,
    *  preserving build caches (node_modules, target/, dist/). Default: false. */

@@ -35,6 +35,7 @@ vi.mock("../../sse-bus", () => ({
 describe("useResearch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
     mockListResearchRuns.mockResolvedValue({ runs: [], availability: { available: true } });
     mockGetResearchRun.mockResolvedValue({ run: { id: "RR-2", title: "t" }, availability: { available: true } });
   });
@@ -221,6 +222,34 @@ describe("useResearch", () => {
           onReconnect: expect.any(Function),
         }),
       );
+    });
+  });
+
+  it("refreshes list and selected run on reconnect", async () => {
+    let handlers: { onReconnect?: () => void; events?: Record<string, () => void> } = {};
+    mockSubscribeSse.mockImplementationOnce((_url, opts) => {
+      handlers = opts;
+      return vi.fn();
+    });
+
+    const { result } = renderHook(() => useResearch({ projectId: "p1" }));
+
+    act(() => {
+      result.current.setSelectedRunId("RR-2");
+    });
+
+    await waitFor(() => {
+      expect(mockGetResearchRun).toHaveBeenCalledWith("RR-2", "p1");
+    });
+
+    const listCallsBefore = mockListResearchRuns.mock.calls.length;
+
+    act(() => {
+      handlers.onReconnect?.();
+    });
+
+    await waitFor(() => {
+      expect(mockListResearchRuns.mock.calls.length).toBeGreaterThan(listCallsBefore);
     });
   });
 });

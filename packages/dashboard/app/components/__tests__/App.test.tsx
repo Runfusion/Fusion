@@ -1453,6 +1453,28 @@ describe("App view switching", () => {
     localStorage.removeItem(taskViewStorageKey());
   });
 
+  it("does not expose research navigation when research feature is disabled", async () => {
+    localStorage.setItem("kb-dashboard-view-mode", "project");
+    (fetchSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...defaultSettings,
+      experimentalFeatures: {
+        ...defaultSettings.experimentalFeatures,
+        researchView: false,
+      },
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("view-toggle-overflow-trigger")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
+    expect(screen.queryByTestId("view-overflow-research")).not.toBeInTheDocument();
+
+    localStorage.removeItem("kb-dashboard-view-mode");
+  });
+
   it("initializes research view from persisted task-view when feature-enabled", async () => {
     localStorage.setItem("kb-dashboard-view-mode", "project");
     localStorage.setItem(taskViewStorageKey(), "research");

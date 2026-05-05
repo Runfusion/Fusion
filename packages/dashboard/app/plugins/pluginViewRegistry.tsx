@@ -1,11 +1,11 @@
 import { AlertTriangle } from "lucide-react";
-import { lazy, Suspense, type LazyExoticComponent, type ReactNode } from "react";
+import { lazy, Suspense, type LazyExoticComponent, type ReactElement, type ReactNode } from "react";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import "./pluginViewRegistry.css";
 
 export type PluginTaskView = `plugin:${string}:${string}`;
 
-type PluginViewComponent = LazyExoticComponent<() => JSX.Element>;
+type PluginViewComponent = LazyExoticComponent<() => ReactElement>;
 
 const registry = new Map<string, PluginViewComponent>();
 

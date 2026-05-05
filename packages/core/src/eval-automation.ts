@@ -145,8 +145,6 @@ export async function runScheduledEvalBatch(
       window: {
         since: windowStartExclusive,
         until: windowEndInclusive,
-        windowStartExclusive,
-        windowEndInclusive,
       },
       metadata: {
         windowStartExclusive,

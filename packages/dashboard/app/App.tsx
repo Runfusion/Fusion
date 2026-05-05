@@ -878,8 +878,12 @@ function AppInner() {
               projectId: currentProject?.id,
               tasks: isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks,
               workflowSteps,
-              openTaskDetail: isMobile ? (task, initialTab) => openDetailTaskWithHistory(task, initialTab) : (task, initialTab) => modalManager.openDetailTask(task, initialTab),
-              renderTaskCard: (task) => (
+              openTaskDetail: isMobile
+                ? (task: Task | TaskDetail, initialTab?: Parameters<typeof modalManager.openDetailTask>[1]) =>
+                    openDetailTaskWithHistory(task, initialTab)
+                : (task: Task | TaskDetail, initialTab?: Parameters<typeof modalManager.openDetailTask>[1]) =>
+                    modalManager.openDetailTask(task, initialTab),
+              renderTaskCard: (task: Task) => (
                 <TaskCard
                   task={task}
                   projectId={currentProject?.id}

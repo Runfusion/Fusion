@@ -164,7 +164,13 @@ Key endpoints:
 - FN-3370 replaces FN-3015's stale insights-backed child scope with the landed research subsystem surfaces in this document (core `ResearchStore` + dashboard `/api/research` + engine orchestrator lifecycle persistence).
 - Regression coverage work should stay bounded to shipped lifecycle/status/export/task-integration contracts and use follow-up tasks for any unshipped behavior instead of feature expansion.
 
-## 11) Validation references used for this baseline
+## 11) Dashboard regression coverage status (FN-3368 refinement)
+
+- Dashboard interaction tests are anchored to landed standalone research surfaces (`ResearchView`, `ResearchTaskActionModal`, `useResearch`, `App` research route wiring).
+- Route regression tests explicitly cover finding-to-task create/enrich provenance metadata, task-document writes, duplicate-attachment skip behavior, archived/missing target guards, and payload validation.
+- There is no placeholder/optional assumption that research dashboard files or `/api/research` routes are absent.
+
+## 12) Validation references used for this baseline
 
 - `packages/dashboard/src/__tests__/research-routes.test.ts`
 - `packages/core/src/__tests__/research-store.test.ts`

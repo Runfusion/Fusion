@@ -85,6 +85,7 @@ function createMockStore(options?: {
       }
       return { filename: "RR-1-finding-1.md" };
     }),
+    appendAgentLog: vi.fn(async () => undefined),
     log: vi.fn(async () => undefined),
   };
 }
@@ -197,9 +198,25 @@ describe("research-routes", () => {
       expect.objectContaining({
         source: expect.objectContaining({
           sourceType: "research",
-          sourceMetadata: expect.objectContaining({ runId: "RR-1", findingId: "finding-1" }),
+          sourceRunId: "RR-1",
+          sourceMetadata: expect.objectContaining({ runId: "RR-1", findingId: "finding-1", documentKey: "research-RR-1" }),
         }),
       }),
+    );
+    expect(store.upsertTaskDocument).toHaveBeenCalledWith(
+      "FN-1",
+      expect.objectContaining({
+        key: "research-RR-1",
+        author: "research",
+        metadata: expect.objectContaining({ runId: "RR-1", findingId: "finding-1" }),
+      }),
+    );
+    expect(store.appendAgentLog).toHaveBeenCalledWith(
+      "FN-1",
+      expect.stringContaining("Task created from research finding finding-1 in run RR-1"),
+      "text",
+      "research-task-integration",
+      "executor",
     );
   });
 
@@ -221,6 +238,21 @@ describe("research-routes", () => {
     expect(response.body.taskId).toBe("FN-42");
     expect(response.body.documentKey).toBe("research-RR-1");
     expect(response.body.revision).toBe(1);
+    expect(store.upsertTaskDocument).toHaveBeenCalledWith(
+      "FN-42",
+      expect.objectContaining({
+        key: "research-RR-1",
+        author: "research",
+        metadata: expect.objectContaining({ runId: "RR-1", findingId: "finding-1" }),
+      }),
+    );
+    expect(store.appendAgentLog).toHaveBeenCalledWith(
+      "FN-42",
+      expect.stringContaining("Task enriched from research finding finding-1 in run RR-1"),
+      "text",
+      "research-task-integration",
+      "executor",
+    );
   });
 
   it("skips duplicate attachment when original name already exists", async () => {
@@ -399,6 +431,29 @@ describe("research-routes", () => {
 
     expect(response.status).toBe(400);
     expect(response.body.error).toContain("attachExport must be a boolean");
+  });
+
+  it("returns 400 when create payload title/description are empty strings", async () => {
+    const store = createMockStore();
+    const app = express();
+    app.use(express.json());
+    app.use(createResearchRouter(store as any));
+
+    const response = await performRequest(
+      app,
+      "POST",
+      "/runs/RR-1/findings/finding-1/task",
+      JSON.stringify({ title: "   ", description: "   " }),
+      { "content-type": "application/json" },
+    );
+
+    expect(response.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Research: Finding One",
+        description: expect.stringContaining("Important actionable result."),
+      }),
+    );
   });
 
   it("returns 400 when attachment exceeds size limit", async () => {
