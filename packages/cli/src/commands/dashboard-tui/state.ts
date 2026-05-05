@@ -396,6 +396,6 @@ export function createInitialState(): DashboardState {
     updateStatus: null,
     clipboardFlash: null,
     remoteStatus: null,
-    mouseEnabled: true,
+    mouseEnabled: false,
   };
 }

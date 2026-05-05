@@ -269,19 +269,18 @@ function SystemPanel({ state, isFocused }: { state: DashboardState; isFocused: b
           </Box>
           {isFocused && (
             // Inline hint row — only shown when the System panel is focused.
-            // Discoverability for Enter / [c] / [M] since mouse-mode blocks
-            // click-drag selection of the token. Single <Text wrap="truncate-end">
-            // so on narrow terminals the hint clips cleanly to one row instead
-            // of wrapping into 2-3 lines and overflowing the SYSTEM_HEIGHT
-            // budget. Disappears when the user moves focus.
+            // Mouse reporting is auto-off here so users can click-drag to
+            // select the token; it auto-toggles on when they focus Logs /
+            // Files / Git / Board for wheel scrolling. [c] is the keyboard
+            // shortcut to copy the token in one keystroke.
             <Box flexShrink={0}>
               <Text dimColor wrap="truncate-end">
                 <Text color="cyanBright">[Enter]</Text> open URL
                 {info.authToken ? (
-                  <Text> · <Text color="cyanBright">[c]</Text> copy token</Text>
-                ) : null}
-                {" · "}
-                <Text color="cyanBright">[M]</Text> mouse {state.mouseEnabled ? "on" : "off (drag to select)"}
+                  <Text> · <Text color="cyanBright">[c]</Text> copy token · drag to select</Text>
+                ) : (
+                  <Text> · drag to select</Text>
+                )}
               </Text>
             </Box>
           )}
@@ -703,8 +702,7 @@ function HelpOverlay() {
     ["[+/-]", "Adjust vitest kill memory threshold (Utilities)"],
     ["[Enter]", "Open dashboard URL in browser (System)"],
     ["[c]", "Copy auth token to clipboard (System)"],
-    ["[M]", "Toggle mouse mode (off → click-drag selects text; works under tmux)"],
-    ["[Shift+drag]", "Bypass mouse mode to select text (most native terminals; not tmux)"],
+    ["[M]", "Manual mouse-mode toggle (auto: on for Logs/Files/Git/Board, off elsewhere)"],
     ["[↑/↓/k/j]", "Navigate list / log entries"],
     ["[Home / G]", "First / last log entry (Logs)"],
     ["[Enter/Space]", "Expand log entry (Logs)"],
@@ -4014,6 +4012,26 @@ export function DashboardApp({ controller }: DashboardAppProps) {
       }
     });
   }, [controller]);
+
+  // Auto-toggle xterm mouse reporting based on whether the focused panel
+  // benefits from wheel scrolling. We default-off so click-drag selection
+  // works (e.g. copying the auth token from the System panel), and switch
+  // on for panels that wire `controller.onWheel` consumers:
+  //   - Status mode: Logs panel
+  //   - Interactive: Files / Git / Board (task detail uses the wheel too)
+  // Other status panels (System / Stats / Utilities / Settings) leave it
+  // off so the user can select text natively. [M] is still a manual
+  // override, but the next focus change will reapply this policy.
+  const wantsMouse = state.mode === "interactive"
+    ? (state.interactiveView === "files"
+       || state.interactiveView === "git"
+       || state.interactiveView === "board")
+    : state.activeSection === "logs";
+  useEffect(() => {
+    if (state.mouseEnabled !== wantsMouse) {
+      controller.setMouseEnabled(wantsMouse);
+    }
+  }, [controller, wantsMouse, state.mouseEnabled]);
 
   // Global QR overlay state — populated when the user hits Ctrl+Q on a
   // running tunnel. `loading` covers the network request; `error` surfaces

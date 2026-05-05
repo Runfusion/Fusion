@@ -144,11 +144,13 @@ export class DashboardTUI {
   // requested. (See ink#222 / @zenobius/ink-mouse for prior art.)
   private wheelHandlers: Set<(direction: "up" | "down") => void> = new Set();
   private mouseStdinListener: ((chunk: Buffer | string) => void) | null = null;
-  // Tracks the desired mouse-reporting state. Toggled at runtime by the
-  // user (e.g. to allow native click-drag selection under tmux, where
-  // Shift-bypass is intercepted by tmux itself before reaching the
-  // terminal). Default true; only flipped via setMouseEnabled().
-  mouseEnabled: boolean = true;
+  // Tracks the desired mouse-reporting state. Default OFF so click-drag
+  // text selection works out of the box — terminal owns the mouse. The
+  // dashboard auto-enables it via setMouseEnabled() when the user focuses
+  // a panel that uses wheel scrolling (Logs / Files / Git / Board task
+  // detail). [M] is also a manual override, but the next focus change
+  // will reapply the auto policy.
+  mouseEnabled: boolean = false;
 
   constructor() {
     this.logBuffer = new LogRingBuffer();
@@ -665,7 +667,7 @@ export class DashboardTUI {
     // before raw mode is on, the terminal can deliver the first wheel
     // report's leading ESC byte alone, which Ink would parse as a bare
     // Esc keypress (closing modals on every wheel tick).
-    if (process.stdin?.isTTY) {
+    if (process.stdin?.isTTY && this.mouseEnabled) {
       // Enable xterm mouse reporting with SGR-encoded coordinates.
       //   ?1000h = button press/release reports (includes wheel as
       //            buttons 64/65)
@@ -677,6 +679,11 @@ export class DashboardTUI {
       // terminals plain click+drag) keeps doing native text selection.
       // Holding Shift always works as a hard override even on terminals
       // that grab the bare drag gesture.
+      //
+      // Gated by `this.mouseEnabled` so the default-off policy
+      // (selection-friendly on the System panel) holds at startup. The
+      // app component re-enables via setMouseEnabled() as soon as the
+      // user focuses a panel that uses wheel scrolling.
       process.stdout.write("\x1b[?1000h\x1b[?1006h");
       this.installMouseListener();
     }
