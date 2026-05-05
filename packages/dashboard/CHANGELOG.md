@@ -1,5 +1,19 @@
 # @fusion/dashboard
 
+## 0.21.0
+
+### Patch Changes
+
+- e6fd593: Differentiate the CLI banner between missing-install and version-mismatch states: when the installed `fn`/`fusion` CLI is out of date, show "Update the Fusion CLI" with current vs target versions and an "Update with npm" button instead of the generic install copy.
+- dc8863d: Add `blocked` to `FeatureStatus` so blocked features render with mission-blocked colors in the mission manager.
+  - @fusion/core@0.21.0
+  - @fusion/engine@0.21.0
+  - @fusion-plugin-examples/dependency-graph@0.1.10
+  - @fusion-plugin-examples/droid-runtime@0.1.5
+  - @fusion-plugin-examples/hermes-runtime@0.2.29
+  - @fusion-plugin-examples/openclaw-runtime@0.2.29
+  - @fusion-plugin-examples/paperclip-runtime@0.2.29
+
 ## 0.20.0
 
 ### Patch Changes

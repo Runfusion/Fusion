@@ -2,6 +2,55 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
+## 0.21.0
+
+### @fusion/dashboard
+
+#### Patch Changes
+
+- e6fd593: Differentiate the CLI banner between missing-install and version-mismatch states: when the installed `fn`/`fusion` CLI is out of date, show "Update the Fusion CLI" with current vs target versions and an "Update with npm" button instead of the generic install copy.
+- dc8863d: Add `blocked` to `FeatureStatus` so blocked features render with mission-blocked colors in the mission manager.
+  - @fusion/core@0.21.0
+  - @fusion/engine@0.21.0
+  - @fusion-plugin-examples/dependency-graph@0.1.10
+  - @fusion-plugin-examples/droid-runtime@0.1.5
+  - @fusion-plugin-examples/hermes-runtime@0.2.29
+  - @fusion-plugin-examples/openclaw-runtime@0.2.29
+  - @fusion-plugin-examples/paperclip-runtime@0.2.29
+
+### @fusion/engine
+
+#### Patch Changes
+
+- @fusion/core@0.21.0
+- @fusion/pi-claude-cli@0.21.0
+
+### @fusion/plugin-sdk
+
+#### Patch Changes
+
+- @fusion/core@0.21.0
+
+### @runfusion/fusion
+
+#### Minor Changes
+
+- ac74cb0: Enable browser back-button navigation within the SPA dashboard. Previously, the back button would leave the dashboard entirely. Now it dismisses the top modal or reverts to the previous view, matching standard SPA behavior on both desktop and mobile.
+
+#### Patch Changes
+
+- 61dac28: fix: declare node-pty as a runtime dependency so `npx runfusion.ai` can start the embedded terminal on a clean install. Previously node-pty was only present transitively via the workspace `@fusion/dashboard` devDependency, which is stripped at publish time — fresh users hit a 503 "PTY module could not be loaded" when opening the dashboard terminal. The package-config test guard has been tightened to catch this regression.
+- 8a57d3f: feat(tui): up/down arrows now cycle sections on the Main page (matching ←/→), except on the Logs panel where they continue to navigate log entries. Pressing Enter on a Logs entry now also releases xterm mouse reporting while the entry is expanded, so users can click-drag to select log text for copying; closing the expanded view restores wheel scrolling automatically.
+
+### runfusion.ai
+
+#### Patch Changes
+
+- Updated dependencies [ac74cb0]
+- Updated dependencies [61dac28]
+- Updated dependencies [8a57d3f]
+  - @runfusion/fusion@0.21.0
+
 ## 0.20.0
 
 ### @fusion/dashboard
@@ -3166,6 +3215,14 @@ for reference.
 - Updated dependencies [25d44e1]
 - Updated dependencies [a2ed6d0]
   - @runfusion/fusion@0.1.0
+
+## 0.11.5
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.5
 
 ## 0.11.4
 
