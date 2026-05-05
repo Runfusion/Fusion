@@ -1,5 +1,5 @@
 .desktop-mode-chooser {
-  max-width: 640px;
+  max-width: calc(var(--space-2xl) * 20);
   margin: 0 auto;
   padding: var(--space-2xl);
   display: flex;
@@ -13,7 +13,7 @@
 
 .desktop-mode-chooser__title {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: calc(var(--space-lg) + var(--space-sm));
   line-height: 1.2;
   color: var(--text);
 }

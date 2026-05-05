@@ -308,7 +308,7 @@ Fusion supports OAuth-based authentication for AI providers configured via **Set
 
 - **Anthropic (Claude)** — Authenticates via the same Settings/onboarding OAuth flow as other OAuth providers
 - **OpenAI Codex** — Authenticates via Settings OAuth flow with secure state validation
-- **Factory AI — via Droid CLI** *(optional)* — requires local `droid` install + `droid auth login`, then enable the provider in **Settings → Authentication** and restart Fusion
+- **Factory AI — via Droid CLI** *(optional)* — requires local Droid CLI install + `droid auth login`; detection follows the effective runtime binary path (default `droid`, or plugin `droidBinaryPath` when configured), then enable in **Settings → Authentication** and restart Fusion
 - **llama.cpp — via HTTP server** *(optional)* — configure your llama.cpp server URL (default `http://127.0.0.1:8080`) and optional API key, then enable in **Settings → Authentication**
 - **Other providers** — Authenticate via API key entry in Settings (including Google/Gemini API key, Google Generative AI, Vertex, and Cloud Code aliases)
 

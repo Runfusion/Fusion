@@ -808,6 +808,19 @@ describe("GET /providers/claude-cli/status", () => {
 describe("Droid CLI auth routes", () => {
   let store: TaskStore;
 
+  function setDroidPluginSettings(settings: Record<string, unknown>) {
+    (store as TaskStore & {
+      getPluginStore: () => { getPlugin: (id: string) => Promise<{ settings: Record<string, unknown> }> };
+    }).getPluginStore = vi.fn().mockReturnValue({
+      getPlugin: vi.fn().mockImplementation(async (id: string) => {
+        if (id !== "fusion-plugin-droid-runtime") {
+          throw new Error("not found");
+        }
+        return { settings };
+      }),
+    });
+  }
+
   beforeEach(() => {
     store = createMockStore({
       updateGlobalSettings: vi.fn().mockResolvedValue({ useDroidCli: true }),
@@ -826,6 +839,7 @@ describe("Droid CLI auth routes", () => {
   }
 
   it("enables Droid CLI when binary is available", async () => {
+    setDroidPluginSettings({ droidBinaryPath: "/opt/custom-droid" });
     const probeSpy = vi.spyOn(droidCliProbeModule, "probeDroidCli").mockResolvedValue({
       available: true,
       version: "droid 1.0.0",
@@ -839,6 +853,7 @@ describe("Droid CLI auth routes", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ enabled: true, restartRequired: false });
     expect(store.updateGlobalSettings).toHaveBeenCalledWith({ useDroidCli: true });
+    expect(probeSpy).toHaveBeenCalledWith({ settings: { droidBinaryPath: "/opt/custom-droid" } });
     probeSpy.mockRestore();
   });
 
@@ -899,7 +914,8 @@ describe("Droid CLI auth routes", () => {
   });
 
   it("returns binary + toggle + extension diagnostics and computed readiness", async () => {
-    vi.spyOn(droidCliProbeModule, "probeDroidCli").mockResolvedValue({
+    setDroidPluginSettings({ droidBinaryPath: "/opt/custom-droid" });
+    const probeSpy = vi.spyOn(droidCliProbeModule, "probeDroidCli").mockResolvedValue({
       available: true,
       version: "droid 1.0.0",
       probeDurationMs: 10,
@@ -921,6 +937,7 @@ describe("Droid CLI auth routes", () => {
     expect(res.body.ready).toBe(true);
     expect(res.body.binary).toMatchObject({ available: true, version: "droid 1.0.0" });
     expect(res.body.extension).toMatchObject({ status: "ok" });
+    expect(probeSpy).toHaveBeenCalledWith({ settings: { droidBinaryPath: "/opt/custom-droid" } });
   });
 
   it("returns ready false when binary unavailable", async () => {
@@ -952,7 +969,8 @@ describe("Droid CLI auth routes", () => {
   });
 
   it("GET /auth/status includes droid-cli provider with cli type", async () => {
-    vi.spyOn(droidCliProbeModule, "probeDroidCli").mockResolvedValue({
+    setDroidPluginSettings({ droidBinaryPath: "/opt/custom-droid" });
+    const probeSpy = vi.spyOn(droidCliProbeModule, "probeDroidCli").mockResolvedValue({
       available: true,
       version: "droid 1.0.0",
       probeDurationMs: 10,
@@ -974,6 +992,7 @@ describe("Droid CLI auth routes", () => {
         }),
       ]),
     );
+    expect(probeSpy).toHaveBeenCalledWith({ settings: { droidBinaryPath: "/opt/custom-droid" } });
   });
 
   it("GET /auth/status marks droid-cli unauthenticated when extension status is not ok", async () => {

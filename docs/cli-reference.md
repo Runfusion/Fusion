@@ -269,9 +269,11 @@ To revoke/reset access, choose the behavior you want:
 When the published CLI bundle includes the vendored `@fusion/droid-cli` extension, users can enable **Factory AI — via Droid CLI** in **Settings → Authentication**.
 
 Requirements:
-- `droid` binary installed and available on `PATH`
+- a working Droid CLI binary (`droid` on `PATH` by default, or a custom plugin `droidBinaryPath`)
 - successful local login (`droid auth login`)
 - Fusion restart after toggling the provider on (to reload extensions)
+
+Authentication status checks in **Settings → Authentication** use the same effective Droid binary path as the Droid runtime plugin, so custom binary-path installs are detected correctly.
 
 ---
 

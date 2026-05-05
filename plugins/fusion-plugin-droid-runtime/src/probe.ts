@@ -9,6 +9,13 @@ export interface DroidBinaryStatus {
   probeDurationMs: number;
 }
 
+export function resolveDroidBinaryPath(settings?: Record<string, unknown>): string {
+  if (typeof settings?.droidBinaryPath === "string" && settings.droidBinaryPath.trim().length > 0) {
+    return settings.droidBinaryPath.trim();
+  }
+  return "droid";
+}
+
 async function run(binary: string, args: string[], timeoutMs = 2000): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(binary, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -33,9 +40,9 @@ async function run(binary: string, args: string[], timeoutMs = 2000): Promise<{ 
   });
 }
 
-export async function probeDroidBinary(options?: { binaryPath?: string; timeoutMs?: number }): Promise<DroidBinaryStatus> {
+export async function probeDroidBinary(options?: { binaryPath?: string; settings?: Record<string, unknown>; timeoutMs?: number }): Promise<DroidBinaryStatus> {
   const startedAt = Date.now();
-  const binaryPath = options?.binaryPath?.trim() || "droid";
+  const binaryPath = options?.binaryPath?.trim() || resolveDroidBinaryPath(options?.settings);
   const timeoutMs = options?.timeoutMs ?? 2000;
 
   const versionRun = await run(binaryPath, ["--version"], timeoutMs);
@@ -43,7 +50,10 @@ export async function probeDroidBinary(options?: { binaryPath?: string; timeoutM
     return {
       available: false,
       binaryPath,
-      reason: versionRun.code === 124 ? `Probe timed out after ${timeoutMs}ms` : "`droid` not found on PATH",
+      reason:
+        versionRun.code === 124
+          ? `Probe timed out after ${timeoutMs}ms`
+          : `Binary not found or not executable: ${binaryPath}`,
       probeDurationMs: Date.now() - startedAt,
     };
   }

@@ -1,3 +1,4 @@
+import type { Request } from "express";
 import { isGhAvailable, isGhAuthenticated } from "@fusion/core";
 import { probeClaudeCli } from "../claude-cli-probe.js";
 import { probeDroidCli } from "../droid-cli-probe.js";
@@ -9,7 +10,7 @@ import type { AuthStorageLike } from "../routes.js";
 import type { ApiRouteRegistrar } from "./types.js";
 
 export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
-  const { router, options, store, rethrowAsApiError } = ctx;
+  const { router, options, store, getScopedStore, rethrowAsApiError } = ctx;
   const authStorage = options?.authStorage;
 
   // Use injected AuthStorage or fail gracefully if not provided.
@@ -164,6 +165,23 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
     };
   }
 
+  async function probeDroidCliWithEffectiveBinary(req?: Request) {
+    let pluginSettings: Record<string, unknown> | undefined;
+    if (req) {
+      try {
+        const scopedStore = await getScopedStore(req);
+        const plugin = await scopedStore.getPluginStore().getPlugin("fusion-plugin-droid-runtime");
+        if (plugin && typeof plugin.settings === "object" && plugin.settings !== null) {
+          pluginSettings = plugin.settings as Record<string, unknown>;
+        }
+      } catch {
+        // Missing/unreadable plugin settings: fall back to default droid binary resolution.
+      }
+    }
+
+    return probeDroidCli({ settings: pluginSettings });
+  }
+
   function appendManualCodeHint(
     instructions: string | undefined,
     providerId: string,
@@ -195,7 +213,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
    *   ghCli: { available: boolean, authenticated: boolean }
    * }
    */
-  router.get("/auth/status", async (_req, res) => {
+  router.get("/auth/status", async (req, res) => {
     try {
       const storage = getAuthStorage();
       storage.reload();
@@ -274,7 +292,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
           // Unreadable settings — fall through with enabled=false
         }
         const droidExtension = options?.getDroidCliExtensionStatus?.() ?? null;
-        const droidBinary = await probeDroidCli();
+        const droidBinary = await probeDroidCliWithEffectiveBinary(req);
         const droidExtensionOk = droidExtension === null || droidExtension.status === "ok";
         providers.push({
           id: "droid-cli",
@@ -422,7 +440,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       }
 
       if (enabled) {
-        const binary = await probeDroidCli();
+        const binary = await probeDroidCliWithEffectiveBinary(req);
         if (!binary.available) {
           throw new ApiError(
             400,
@@ -511,9 +529,9 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
     }
   });
 
-  router.get("/providers/droid-cli/status", async (_req, res) => {
+  router.get("/providers/droid-cli/status", async (req, res) => {
     try {
-      const binary = await probeDroidCli();
+      const binary = await probeDroidCliWithEffectiveBinary(req);
       let enabled = false;
       if (store) {
         try {
