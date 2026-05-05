@@ -497,7 +497,7 @@ function AppInner() {
   const {
     handleSelectProject,
     handleViewAllProjects,
-    handleOpenSettings,
+    handleOpenSettings: _handleOpenSettings,
     handleAddProject,
     handleSetupComplete,
     handleModelOnboardingComplete,
@@ -613,7 +613,7 @@ function AppInner() {
     [workflowSteps],
   );
 
-  const handleOpenNodes = useCallback(() => {
+  const _handleOpenNodes = useCallback(() => {
     if (!nodesEnabled) return;
     setNodesOpen((prev) => !prev);
   }, [nodesEnabled]);
