@@ -35,24 +35,46 @@ describe("streamChatResponse SSE parser", () => {
     );
 
     const textChunks: string[] = [];
-    const doneIds: string[] = [];
+    const donePayloads: Array<{ messageId: string; message?: { content: string } }> = [];
 
     streamChatResponse("s-1", "hi", {
       onText: (data) => textChunks.push(data),
-      onDone: (data) => doneIds.push(data.messageId),
+      onDone: (data) => donePayloads.push(data),
       onError: vi.fn(),
     });
 
     await vi.waitFor(() => {
       expect(textChunks.join("")).toBe("Hello world");
-      expect(doneIds).toEqual(["msg-1"]);
+      expect(donePayloads).toEqual([{ messageId: "msg-1" }]);
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("handles done events that have no data payload", async () => {
+  it("parses done payload assistant snapshots when present", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        createChunkedStream([
+          "event: done\n",
+          "data: {\"messageId\":\"msg-1\",\"message\":{\"id\":\"msg-1\",\"sessionId\":\"s-1\",\"role\":\"assistant\",\"content\":\"Final reply\",\"thinkingOutput\":null,\"metadata\":null,\"createdAt\":\"2026-01-01T00:00:00.000Z\"}}\n\n",
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const donePayloads: Array<{ messageId: string; message?: { content: string } }> = [];
+
+    streamChatResponse("s-1", "hi", {
+      onDone: (data) => donePayloads.push(data),
+      onError: vi.fn(),
+    });
+
+    await vi.waitFor(() => {
+      expect(donePayloads).toEqual([{ messageId: "msg-1", message: { id: "msg-1", sessionId: "s-1", role: "assistant", content: "Final reply", thinkingOutput: null, metadata: null, createdAt: "2026-01-01T00:00:00.000Z" } }]);
+    });
+  });
+
+  it("handles done events that have no data payload", async () => {    vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(createChunkedStream(["event: done\n\n"]), { status: 200 }),
     );
 

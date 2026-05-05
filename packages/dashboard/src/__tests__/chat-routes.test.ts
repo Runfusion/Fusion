@@ -1148,6 +1148,48 @@ describe("Chat API Routes", () => {
         expect(output).toContain('data: {"toolName":"read","args":{"path":"/foo.ts"}}');
         expect(output).toContain('data: {"toolName":"read","isError":false,"result":"file contents"}');
       });
+
+      it("SSE route forwards done payload with assistant snapshot", async () => {
+        mockGetSession.mockReturnValue(sampleSession);
+
+        const chatModule = await import("../chat.js");
+        vi.mocked(chatModule.checkRateLimit).mockReturnValue(true);
+
+        mockSendMessage.mockImplementation(async (sessionId: string) => {
+          mockChatStreamManager.broadcast(sessionId, {
+            type: "done",
+            data: {
+              messageId: "msg-final",
+              message: {
+                id: "msg-final",
+                sessionId,
+                role: "assistant",
+                content: "Final reply",
+                thinkingOutput: null,
+                metadata: null,
+                createdAt: "2026-01-01T00:00:00.000Z",
+              },
+            },
+          });
+        });
+
+        const req = createSSERequest();
+        const { res, chunks } = createSSEResponse();
+
+        req.body = { content: "Hello" };
+        req.params = { id: "chat-abc123" };
+        req.query = {} as any;
+        req.headers = {} as any;
+        req.ip = "127.0.0.1";
+        req.socket = { remoteAddress: "127.0.0.1" } as any;
+
+        await invokeSSEHandler(req, res, store, mockChatStore, mockChatManager);
+
+        const output = chunks.join("");
+        expect(output).toContain("event: done");
+        expect(output).toContain('"messageId":"msg-final"');
+        expect(output).toContain('"content":"Final reply"');
+      });
     });
   });
 

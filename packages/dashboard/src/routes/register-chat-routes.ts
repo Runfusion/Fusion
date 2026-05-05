@@ -471,7 +471,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
    * Event types:
    * - thinking: AI thinking output chunks
    * - text: AI response text chunks
-   * - done: Message sent successfully with messageId
+   * - done: Message sent successfully with messageId + persisted assistant message snapshot
    * - error: Error message
    */
   router.post("/chat/sessions/:id/messages", rateLimit(RATE_LIMITS.sse), async (req, res) => {

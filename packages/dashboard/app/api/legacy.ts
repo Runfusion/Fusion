@@ -7998,7 +7998,7 @@ export function streamChatResponse(
     onToolStart?: (data: { toolName: string; args?: Record<string, unknown> }) => void;
     onToolEnd?: (data: { toolName: string; isError: boolean; result?: unknown }) => void;
     onFallback?: (data: { primaryModel: string; fallbackModel: string; triggerPoint: "session-creation" | "prompt-time" }) => void;
-    onDone?: (data: { messageId: string }) => void;
+    onDone?: (data: { messageId: string; message?: ChatMessage }) => void;
     onError?: (data: string) => void;
     onConnectionStateChange?: (state: StreamConnectionState) => void;
   },
@@ -8056,7 +8056,11 @@ export function streamChatResponse(
         break;
       case "done":
         try {
-          handlers.onDone?.(JSON.parse(rawData));
+          const parsed = JSON.parse(rawData) as { messageId?: unknown; message?: unknown };
+          handlers.onDone?.({
+            messageId: typeof parsed.messageId === "string" ? parsed.messageId : "",
+            ...(parsed.message && typeof parsed.message === "object" ? { message: parsed.message as ChatMessage } : {}),
+          });
         } catch {
           handlers.onDone?.({ messageId: "" });
         }

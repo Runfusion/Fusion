@@ -40,7 +40,7 @@ Chat view provides project-scoped conversations with agents.
 
 - Entering `/clear` (exact match after trimming) in the composer starts a fresh thread for the current chat target instead of sending the literal command to the model
 - On mobile, the New Chat and Delete Conversation dialogs use a compact inset treatment (centered, viewport-bounded, internally scrollable) instead of the app's default full-height mobile modal chrome.
-- Full Chat and Quick Chat both consume the same streamed `/api/chat/sessions/:id/messages` response contract, so assistant text/chunk/done events are restored consistently across both surfaces
+- Full Chat and Quick Chat both consume the same streamed `/api/chat/sessions/:id/messages` response contract, and both now prefer the authoritative assistant `message` snapshot on `done` while still accumulating `text` chunks when present (so providers without incremental text streaming still render output immediately)
 
 ![Chat view](./screenshots/chat-view.png)
 

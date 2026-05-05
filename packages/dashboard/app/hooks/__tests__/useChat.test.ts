@@ -456,6 +456,104 @@ describe("useChat", () => {
     });
   });
 
+  it("uses done payload assistant snapshot when no text chunks were streamed", async () => {
+    const session = makeSession({ id: "session-001", agentId: "agent-001" });
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+    mockFetchChatMessages.mockResolvedValueOnce({ messages: [] });
+
+    let doneHandler: ((data: { messageId: string; message?: ChatMessage }) => void) | undefined;
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      doneHandler = handlers.onDone as typeof doneHandler;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    const { result } = renderHook(() => useChat());
+
+    await waitFor(() => {
+      expect(result.current.sessions).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.selectSession("session-001");
+    });
+
+    await act(async () => {
+      result.current.sendMessage("Hello!");
+    });
+
+    act(() => {
+      doneHandler?.({
+        messageId: "msg-002",
+        message: {
+          id: "msg-002",
+          sessionId: "session-001",
+          role: "assistant",
+          content: "Snapshot reply",
+          thinkingOutput: null,
+          metadata: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        } as ChatMessage,
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.messages.at(-1)).toEqual(expect.objectContaining({
+        id: "msg-002",
+        role: "assistant",
+        content: "Snapshot reply",
+      }));
+      expect(result.current.isStreaming).toBe(false);
+    });
+  });
+
+  it("prefers done payload assistant snapshot over streamed text", async () => {
+    const session = makeSession({ id: "session-001", agentId: "agent-001" });
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+    mockFetchChatMessages.mockResolvedValueOnce({ messages: [] });
+
+    let textHandler: ((data: string) => void) | undefined;
+    let doneHandler: ((data: { messageId: string; message?: ChatMessage }) => void) | undefined;
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      textHandler = handlers.onText;
+      doneHandler = handlers.onDone as typeof doneHandler;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    const { result } = renderHook(() => useChat());
+
+    await waitFor(() => {
+      expect(result.current.sessions).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.selectSession("session-001");
+    });
+
+    act(() => {
+      result.current.sendMessage("Hello!");
+      textHandler?.("streamed text");
+      doneHandler?.({
+        messageId: "msg-003",
+        message: {
+          id: "msg-003",
+          sessionId: "session-001",
+          role: "assistant",
+          content: "snapshot wins",
+          thinkingOutput: null,
+          metadata: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        } as ChatMessage,
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.messages.at(-1)).toEqual(expect.objectContaining({
+        id: "msg-003",
+        content: "snapshot wins",
+      }));
+    });
+  });
+
   it("handles stream errors and surfaces them to the user", async () => {
     const session = makeSession({ id: "session-001", agentId: "agent-001" });
     mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });

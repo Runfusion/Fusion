@@ -146,7 +146,23 @@ export type ChatStreamEvent =
   | { type: "tool_start"; data: { toolName: string; args?: Record<string, unknown> } }
   | { type: "tool_end"; data: { toolName: string; isError: boolean; result?: unknown } }
   | { type: "fallback"; data: { primaryModel: string; fallbackModel: string; triggerPoint: "session-creation" | "prompt-time" } }
-  | { type: "done"; data: { messageId: string; attachments?: ChatAttachment[] } }
+  | {
+      type: "done";
+      data: {
+        messageId: string;
+        message?: {
+          id: string;
+          sessionId: string;
+          role: "assistant";
+          content: string;
+          thinkingOutput: string | null;
+          metadata: Record<string, unknown> | null;
+          attachments?: ChatAttachment[];
+          createdAt: string;
+        };
+        attachments?: ChatAttachment[];
+      };
+    }
   | { type: "error"; data: string };
 
 /** Callback function for streaming events */
@@ -987,10 +1003,24 @@ export class ChatManager {
         metadata: Object.keys(assistantMetadata).length > 0 ? assistantMetadata : undefined,
       });
 
-      // Broadcast done event
+      // Broadcast done event with persisted assistant snapshot so clients can
+      // render completion even when incremental text deltas were absent.
       chatStreamManager.broadcast(sessionId, {
         type: "done",
-        data: { messageId: assistantMessage.id, attachments },
+        data: {
+          messageId: assistantMessage.id,
+          message: {
+            id: assistantMessage.id,
+            sessionId: assistantMessage.sessionId,
+            role: "assistant",
+            content: assistantMessage.content,
+            thinkingOutput: assistantMessage.thinkingOutput,
+            metadata: assistantMessage.metadata,
+            attachments: assistantMessage.attachments,
+            createdAt: assistantMessage.createdAt,
+          },
+          attachments,
+        },
       });
     } catch (err) {
       if (abortController.signal.aborted) {

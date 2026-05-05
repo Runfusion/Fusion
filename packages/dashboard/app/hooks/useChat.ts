@@ -651,18 +651,21 @@ export function useChat(
             : prev);
           addToast?.(`Primary model unavailable. Switched to fallback ${data.fallbackModel}.`, "warning");
         },
-        onDone: (data: { messageId: string }) => {
+        onDone: (data: { messageId: string; message?: ChatMessage }) => {
           cancelStreamingFlushes();
-          const assistantMessage: ChatMessageInfo = {
-            id: data.messageId || `msg-${Date.now()}`,
-            sessionId: activeSession.id,
-            role: "assistant",
-            content: capturedText,
-            thinkingOutput: capturedThinking,
-            toolCalls: capturedToolCalls.length > 0 ? capturedToolCalls : undefined,
-            fallbackInfo: capturedFallbackInfo,
-            createdAt: new Date().toISOString(),
-          };
+          const finalMessage = data.message;
+          const assistantMessage: ChatMessageInfo = finalMessage
+            ? mapChatMessageToInfo(finalMessage)
+            : {
+                id: data.messageId || `msg-${Date.now()}`,
+                sessionId: activeSession.id,
+                role: "assistant",
+                content: capturedText,
+                thinkingOutput: capturedThinking,
+                toolCalls: capturedToolCalls.length > 0 ? capturedToolCalls : undefined,
+                fallbackInfo: capturedFallbackInfo,
+                createdAt: new Date().toISOString(),
+              };
 
           // Track this message ID so SSE handler skips it if event arrives first
           streamingMessageIdsRef.current.add(assistantMessage.id);

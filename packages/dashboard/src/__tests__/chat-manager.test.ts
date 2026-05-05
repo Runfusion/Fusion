@@ -349,6 +349,57 @@ describe("ChatManager.sendMessage", () => {
     expect(assistantCall?.[1].content).toBe("Hello world!");
   });
 
+  it("broadcasts done with persisted assistant message snapshot", async () => {
+    const events: Array<{ type: string; data: unknown }> = [];
+    const unsubscribe = chatStreamManager.subscribe("chat-001", (event) => {
+      events.push(event);
+    });
+
+    __setCreateFnAgent(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        state: {
+          messages: [{ role: "assistant", content: "Final content" }],
+        },
+      },
+    }));
+
+    mockChatStore.addMessage.mockReturnValueOnce({ id: "msg-user", role: "user" });
+    mockChatStore.addMessage.mockReturnValueOnce({
+      id: "msg-final",
+      sessionId: "chat-001",
+      role: "assistant",
+      content: "Final content",
+      thinkingOutput: null,
+      metadata: null,
+      attachments: undefined,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    const chatManager = createChatManager();
+    await chatManager.sendMessage("chat-001", "Hello");
+    unsubscribe();
+
+    expect(events).toContainEqual({
+      type: "done",
+      data: {
+        messageId: "msg-final",
+        message: {
+          id: "msg-final",
+          sessionId: "chat-001",
+          role: "assistant",
+          content: "Final content",
+          thinkingOutput: null,
+          metadata: null,
+          attachments: undefined,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        attachments: undefined,
+      },
+    });
+  });
+
 
   it("broadcasts tool_start and tool_end SSE events when agent calls tools", async () => {
     const events: Array<{ type: string; data: unknown }> = [];

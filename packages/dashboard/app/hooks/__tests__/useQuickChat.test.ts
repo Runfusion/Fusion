@@ -78,6 +78,92 @@ describe("useQuickChat", () => {
     await expect(sendResult).resolves.toBeUndefined();
   });
 
+  it("uses done payload assistant snapshot when no text chunks were streamed", async () => {
+    const session = makeSession({ id: "session-001", agentId: "agent-001" });
+    mockFetchResumeChatSession.mockResolvedValue({ session });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+    const { result } = renderHook(() => useQuickChat("proj-123"));
+
+    await act(async () => {
+      await result.current.switchSession("agent-001");
+    });
+
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      setTimeout(() => {
+        handlers.onDone?.({
+          messageId: "msg-001",
+          message: {
+            id: "msg-001",
+            sessionId: "session-001",
+            role: "assistant",
+            content: "Snapshot reply",
+            thinkingOutput: null,
+            metadata: null,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          } as any,
+        });
+      }, 0);
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    await act(async () => {
+      await result.current.sendMessage("Hello");
+    });
+
+    await waitFor(() => {
+      expect(result.current.messages.at(-1)).toEqual(expect.objectContaining({
+        id: "msg-001",
+        role: "assistant",
+        content: "Snapshot reply",
+      }));
+    });
+  });
+
+  it("prefers done payload assistant snapshot over streamed text", async () => {
+    const session = makeSession({ id: "session-001", agentId: "agent-001" });
+    mockFetchResumeChatSession.mockResolvedValue({ session });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+    let onText: ((data: string) => void) | undefined;
+    let onDone: ((data: { messageId: string; message?: any }) => void) | undefined;
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      onText = handlers.onText;
+      onDone = handlers.onDone as typeof onDone;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    const { result } = renderHook(() => useQuickChat("proj-123"));
+
+    await act(async () => {
+      await result.current.switchSession("agent-001");
+    });
+
+    act(() => {
+      void result.current.sendMessage("Hello");
+      onText?.("streamed text");
+      onDone?.({
+        messageId: "msg-002",
+        message: {
+          id: "msg-002",
+          sessionId: "session-001",
+          role: "assistant",
+          content: "snapshot wins",
+          thinkingOutput: null,
+          metadata: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.messages.at(-1)).toEqual(expect.objectContaining({
+        id: "msg-002",
+        content: "snapshot wins",
+      }));
+    });
+  });
+
   it("startModelChat creates a KB session with provider/model override", async () => {
     const { result } = renderHook(() => useQuickChat("proj-123"));
 

@@ -661,18 +661,21 @@ export function useQuickChat(
               : prev);
             addToast?.(`Primary model unavailable. Switched to fallback ${data.fallbackModel}.`, "warning");
           },
-          onDone: (data: { messageId: string }) => {
+          onDone: (data: { messageId: string; message?: ChatMessage }) => {
             cancelStreamingFlushes();
-            const assistantMessage: ChatMessageInfo = {
-              id: data.messageId || `msg-${Date.now()}`,
-              sessionId: activeSession.id,
-              role: "assistant",
-              content: capturedText,
-              thinkingOutput: capturedThinking || undefined,
-              toolCalls: capturedToolCalls.length > 0 ? capturedToolCalls : undefined,
-              fallbackInfo: capturedFallbackInfo,
-              createdAt: new Date().toISOString(),
-            };
+            const finalMessage = data.message;
+            const assistantMessage: ChatMessageInfo = finalMessage
+              ? mapChatMessageToInfo(finalMessage)
+              : {
+                  id: data.messageId || `msg-${Date.now()}`,
+                  sessionId: activeSession.id,
+                  role: "assistant",
+                  content: capturedText,
+                  thinkingOutput: capturedThinking || undefined,
+                  toolCalls: capturedToolCalls.length > 0 ? capturedToolCalls : undefined,
+                  fallbackInfo: capturedFallbackInfo,
+                  createdAt: new Date().toISOString(),
+                };
 
             // Preserve user message and add assistant message
             setMessages((prev) => [...prev, assistantMessage]);
