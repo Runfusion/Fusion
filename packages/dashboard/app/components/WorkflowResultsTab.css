@@ -5,7 +5,7 @@
   gap: var(--space-sm);
   padding: var(--space-md);
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
 }
 
 .workflow-results-spinner {
@@ -28,7 +28,7 @@
 }
 
 .workflow-results-empty-hint {
-  font-size: 12px;
+  font-size: calc(var(--space-sm) + var(--space-xs));
   margin-top: var(--space-xs);
   opacity: 0.7;
 }
@@ -48,21 +48,21 @@
 
 .workflow-results-edit-header h4 {
   margin: 0;
-  font-size: 14px;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
   color: var(--text);
 }
 
 .workflow-results-edit-toggle {
   width: auto;
-  height: 30px;
-  padding: 0 10px;
+  height: calc(var(--space-lg) * 2 - var(--space-xs));
+  padding: 0 calc(var(--space-sm) + var(--space-xs) * 0.5);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: calc(var(--space-sm) + var(--space-xs));
   font-weight: 500;
-  gap: 6px;
+  gap: calc(var(--space-xs) + var(--space-xs) * 0.5);
 }
 
 .workflow-results-edit-toggle:hover {
@@ -95,18 +95,18 @@
 
 .workflow-configured-title-row h4 {
   margin: 0;
-  font-size: 14px;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
   color: var(--text);
 }
 
 .workflow-configured-count {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding: calc(var(--space-xs) * 0.5) var(--space-sm);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
   font-weight: 600;
 }
 
@@ -118,7 +118,7 @@
 
 .workflow-configured-item {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: var(--space-md);
   background: var(--surface);
 }
@@ -127,20 +127,20 @@
   display: flex;
   align-items: center;
   font-weight: 600;
-  font-size: 14px;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
   color: var(--text);
 }
 
 .workflow-configured-description {
   margin: var(--space-xs) 0 0;
-  font-size: 12px;
+  font-size: calc(var(--space-sm) + var(--space-xs));
   line-height: 1.4;
   color: var(--text-muted);
 }
 
 .workflow-results-editor {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--surface);
   padding: var(--space-md);
 }
@@ -153,7 +153,7 @@
 
 .workflow-result-item {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: var(--space-md);
   background: var(--surface);
 }
@@ -174,15 +174,15 @@
   gap: var(--space-xs);
   min-width: 0;
   font-weight: 600;
-  font-size: 14px;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
   color: var(--text);
 }
 
 .workflow-result-badge {
   display: inline-block;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 11px;
+  padding: calc(var(--space-xs) * 0.5) var(--space-sm);
+  border-radius: var(--radius-pill);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -230,7 +230,7 @@
 .workflow-result-meta {
   display: flex;
   gap: var(--space-sm);
-  font-size: 12px;
+  font-size: calc(var(--space-sm) + var(--space-xs));
   color: var(--text-muted);
   margin-bottom: var(--space-xs);
 }
@@ -240,7 +240,7 @@
 }
 
 .workflow-result-output-label {
-  font-size: 12px;
+  font-size: calc(var(--space-sm) + var(--space-xs));
   font-weight: 600;
   color: var(--text-muted);
   margin-bottom: var(--space-xs);
@@ -249,16 +249,16 @@
 .workflow-result-output {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: var(--space-sm) var(--space-md);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: calc(var(--space-sm) + var(--space-xs));
   line-height: 1.5;
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-x: auto;
-  max-height: 300px;
+  max-height: calc(var(--space-2xl) * 9 + var(--space-xs) * 3);
   overflow-y: auto;
 }
 
@@ -267,10 +267,10 @@
   align-items: center;
   gap: var(--space-xs);
   padding: var(--space-sm) var(--space-md);
-  font-size: 13px;
+  font-size: calc(var(--space-sm) + var(--space-xs) * 1.25);
   color: var(--text-muted);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--surface);
 }
 
@@ -290,7 +290,7 @@
 }
 
 .workflow-result-output-preview {
-  font-size: 11px;
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
   color: var(--text-dim);
   font-style: italic;
 }
@@ -316,7 +316,7 @@
   padding: 0;
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: calc(var(--space-sm) + var(--space-xs));
   line-height: 1.5;
   color: var(--text);
   white-space: pre-wrap;
@@ -325,7 +325,7 @@
 
 .workflow-result-output--markdown .markdown-body {
   font-family: var(--font-primary);
-  font-size: 13px;
+  font-size: calc(var(--space-sm) + var(--space-xs) * 1.25);
   line-height: 1.6;
 }
 
@@ -387,7 +387,7 @@
 
 .workflow-output-modal-name {
   font-weight: 600;
-  font-size: 14px;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
   color: var(--text);
 }
 
@@ -421,10 +421,10 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  max-height: 200px;
+  max-height: calc(var(--space-2xl) * 6 + var(--space-sm));
   overflow-y: auto;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: calc(var(--space-sm) + var(--space-xs));
   line-height: 1.5;
 }
 
@@ -442,23 +442,23 @@
 
 .workflow-live-log-tool {
   color: var(--color-info);
-  padding: 2px 0;
+  padding: calc(var(--space-xs) * 0.5) 0;
 }
 
 .workflow-live-log-tool-result {
   color: var(--color-success);
-  padding: 2px 0 2px 8px;
+  padding: calc(var(--space-xs) * 0.5) 0 calc(var(--space-xs) * 0.5) var(--space-sm);
 }
 
 .workflow-live-log-tool-error {
   color: var(--color-error);
-  padding: 2px 0 2px 8px;
+  padding: calc(var(--space-xs) * 0.5) 0 calc(var(--space-xs) * 0.5) var(--space-sm);
 }
 
 .workflow-live-log-thinking {
   color: var(--text-muted);
   font-style: italic;
-  padding: 2px 0;
+  padding: calc(var(--space-xs) * 0.5) 0;
 }
 
 .workflow-live-log-detail {

@@ -133,7 +133,7 @@
 }
 
 .bulk-edit-label {
-  font-size: 12px;
+  font-size: calc(var(--space-sm) + var(--space-xs));
   font-weight: 500;
   color: var(--text-muted);
   white-space: nowrap;
@@ -150,14 +150,14 @@
 }
 
 .bulk-edit-dropdown .model-combobox-trigger {
-  font-size: 12px;
+  font-size: calc(var(--space-sm) + var(--space-xs));
   padding: var(--space-xs) var(--space-md);
 }
 
 .bulk-node-select {
   width: 100%;
-  min-height: 30px;
-  font-size: 12px;
+  min-height: calc(var(--space-lg) * 2 - var(--space-xs));
+  font-size: calc(var(--space-sm) + var(--space-xs));
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   background: var(--surface);
@@ -183,9 +183,9 @@
 /* Checkbox column in table */
 .list-header-checkbox,
 .list-cell-checkbox {
-  width: 40px;
+  width: calc(var(--space-xl) + var(--space-md) + var(--space-xs));
   text-align: center;
-  padding: 8px 4px;
+  padding: var(--space-sm) var(--space-xs);
 }
 
 .list-header-checkbox input[type="checkbox"],
@@ -509,14 +509,14 @@
 
 .list-row.stuck {
   border-left: 3px solid var(--triage);
-  background: rgba(210, 153, 34, 0.06);
+  background: color-mix(in srgb, var(--triage) 8%, transparent);
 }
 
 .list-row.agent-active {
   border-color: var(--in-progress);
   box-shadow:
-    0 0 8px rgba(var(--in-progress-rgb), 0.4),
-    0 0 20px rgba(var(--in-progress-rgb), 0.15);
+    0 0 var(--space-sm) color-mix(in srgb, var(--in-progress) 40%, transparent),
+    0 0 calc(var(--space-xl) - var(--space-xs)) color-mix(in srgb, var(--in-progress) 15%, transparent);
   animation: agent-glow 2.5s ease-in-out infinite;
 }
 
@@ -529,11 +529,11 @@
 
 .list-cell-id {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: calc(var(--space-sm) + var(--space-xs));
   font-weight: 600;
   color: var(--text-muted);
   white-space: nowrap;
-  padding: 12px 8px 12px 16px; /* Reduced right padding to tighten space with title */
+  padding: var(--space-md) var(--space-sm) var(--space-md) var(--space-lg); /* Reduced right padding to tighten space with title */
 }
 
 .list-cell-title {
@@ -599,12 +599,12 @@
 }
 
 .list-status-badge.failed {
-  background: rgba(218, 54, 51, 0.15);
+  background: color-mix(in srgb, var(--color-error-dark) 15%, transparent);
   color: var(--color-error-dark);
 }
 
 .list-status-badge.stuck {
-  background: rgba(210, 153, 34, 0.2);
+  background: color-mix(in srgb, var(--triage) 20%, transparent);
   color: var(--triage);
   animation: stuck-pulse 2s ease-in-out infinite;
 }
@@ -635,7 +635,7 @@
 }
 .list-status-badge--archived {
   background: var(--status-archived-bg);
-  color: var(--text-muted, #8b949e);
+  color: var(--text-muted);
 }
 
 .list-column-badge {
@@ -749,7 +749,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-right: 8px;
+  margin-right: var(--space-sm);
   color: var(--text-muted);
   transition: transform var(--transition-fast), color var(--transition-fast);
   transform: rotate(0deg);
@@ -762,10 +762,10 @@
 }
 
 .list-section-cell {
-  padding: 10px 16px;
+  padding: calc(var(--space-sm) + var(--space-xs) * 0.5) var(--space-lg);
   text-align: left;
   font-weight: 600;
-  font-size: 12px;
+  font-size: calc(var(--space-sm) + var(--space-xs));
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--text);
@@ -775,17 +775,17 @@
 
 .list-section-dot {
   display: inline-block;
-  width: 10px;
-  height: 10px;
+  width: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  height: calc(var(--space-sm) + var(--space-xs) * 0.5);
   border-radius: 50%;
-  margin-right: 8px;
+  margin-right: var(--space-sm);
   vertical-align: middle;
 }
 
 .list-section-title {
   display: inline-block;
   vertical-align: middle;
-  margin-right: 8px;
+  margin-right: var(--space-sm);
 }
 
 .list-section-count {
@@ -793,9 +793,9 @@
   font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
   color: var(--text-muted);
   background: var(--card);
-  padding: 2px 8px;
+  padding: calc(var(--space-xs) * 0.5) var(--space-sm);
   border-radius: var(--radius-pill);
-  min-width: 24px;
+  min-width: calc(var(--space-lg) + var(--space-sm));
   text-align: center;
   vertical-align: middle;
 }
@@ -856,7 +856,7 @@
 
   .list-drop-zones {
     padding: var(--space-sm) var(--space-md);
-    gap: 6px;
+    gap: calc(var(--space-xs) + var(--space-xs) * 0.5);
   }
 
   .drop-zone-label {
@@ -964,8 +964,8 @@
   .list-card.agent-active {
     border-color: var(--in-progress);
     box-shadow:
-      0 0 8px rgba(var(--in-progress-rgb), 0.4),
-      0 0 20px rgba(var(--in-progress-rgb), 0.15);
+      0 0 var(--space-sm) color-mix(in srgb, var(--in-progress) 40%, transparent),
+      0 0 calc(var(--space-xl) - var(--space-xs)) color-mix(in srgb, var(--in-progress) 15%, transparent);
     animation: agent-glow 2.5s ease-in-out infinite;
   }
 
@@ -1021,7 +1021,7 @@
   }
 
   .list-card--selectable {
-    padding-left: 32px;
+    padding-left: var(--space-2xl);
   }
 
   .list-card-empty {

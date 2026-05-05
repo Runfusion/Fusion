@@ -580,6 +580,17 @@ A `prefetchLazyViews()` function runs once on mount via `requestIdleCallback` to
   - Response: `{ status: "ok", version: string, uptime: number }`
   - No authentication required
 
+### Custom Provider endpoints
+
+Custom-provider settings routes are registered in `register-custom-provider-routes.ts`.
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/custom-providers` | List configured custom providers from global settings with API keys masked in the response payload. |
+| POST | `/api/custom-providers` | Create a custom provider (`name`, `apiType`, `baseUrl`, optional `apiKey` and `models`) and return the new provider with masked API key. |
+| PUT | `/api/custom-providers/:id` | Update an existing custom provider by ID (partial updates supported) and return the sanitized provider payload. |
+| DELETE | `/api/custom-providers/:id` | Delete a custom provider by ID and return a success envelope. |
+
 ### Node settings sync and update-check endpoints
 
 | Method | Path | Description |
@@ -915,6 +926,44 @@ Settings are split by scope.
 ## 13) Git Integration
 
 Git behavior is implemented primarily in engine executor/merger + dashboard/CLI git APIs.
+
+### Git REST API endpoints
+
+Git dashboard routes are registered in `register-git-github.ts`.
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/git/remotes` | List GitHub remotes parsed from `git remote -v` output. |
+| GET | `/api/git/remotes/detailed` | List all remotes with fetch/push URLs. |
+| POST | `/api/git/remotes` | Add a new remote (`name`, `url`). |
+| DELETE | `/api/git/remotes/:name` | Remove an existing remote by name. |
+| PATCH | `/api/git/remotes/:name` | Rename a remote (`newName`). |
+| PUT | `/api/git/remotes/:name/url` | Update a remote URL. |
+| GET | `/api/git/status` | Return branch, short commit, dirty state, and ahead/behind counts. |
+| GET | `/api/git/commits` | Return recent commits (`?limit=` capped at 100). |
+| GET | `/api/git/commits/:hash/diff` | Return commit stat + patch for a validated commit hash. |
+| GET | `/api/git/commits/ahead` | Return local commits ahead of upstream (empty when upstream is not configured). |
+| GET | `/api/git/remotes/:name/commits` | Return commits for a remote ref (`?ref=` optional, `?limit=` max 50, with remote HEAD/main/master fallback resolution). |
+| GET | `/api/git/branches` | List local branches with current/tracking metadata and last commit date. |
+| GET | `/api/git/branches/:name/commits` | Return commits for a branch (`?limit=` default 10, max 100). |
+| GET | `/api/git/worktrees` | List worktrees with branch/path metadata and task association when available. |
+| POST | `/api/git/branches` | Create a branch from HEAD or an optional base ref. |
+| POST | `/api/git/branches/:name/checkout` | Checkout an existing branch. |
+| DELETE | `/api/git/branches/:name` | Delete a branch (`?force=true` allows deleting unmerged branches). |
+| POST | `/api/git/fetch` | Fetch from a remote (`remote` defaults to `origin`). |
+| POST | `/api/git/pull` | Pull the current branch and return structured conflict metadata on merge conflicts. |
+| POST | `/api/git/push` | Push the current branch. |
+| GET | `/api/git/stashes` | List stash entries. |
+| POST | `/api/git/stashes` | Create a stash with an optional message. |
+| POST | `/api/git/stashes/:index/apply` | Apply a stash by index (optionally drop after apply via `drop: true`). |
+| DELETE | `/api/git/stashes/:index` | Drop a stash by index. |
+| GET | `/api/git/diff` | Return unstaged working-tree diff text. |
+| GET | `/api/git/diff/file` | Return staged or unstaged diff for one file (`path` + `staged=true|false` query required). |
+| GET | `/api/git/changes` | Return staged and unstaged file change summary. |
+| POST | `/api/git/stage` | Stage specified files. |
+| POST | `/api/git/unstage` | Unstage specified files. |
+| POST | `/api/git/commit` | Create a commit from staged changes with a required message. |
+| POST | `/api/git/discard` | Discard working-tree changes for specified files. |
 
 ### Worktree model
 - Each active task runs in isolated worktree under `.worktrees/*`
