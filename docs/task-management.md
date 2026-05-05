@@ -114,6 +114,8 @@ Use supported TaskStore/API paths to reconcile safely:
 
 Completion gating treats dependencies as resolved only when the dependency task is in `done`, `in-review`, or `archived`.
 
+Auto-merge recovery follow-up creation is deduplicated: Fusion creates at most one active (`not done/archived`) recovery task per unresolved parent failure, and merge-conflict recovery also deduplicates by active branch ownership to prevent parallel duplicate follow-ups on the same conflict branch.
+
 ## Task Execution Modes
 
 Each task has an execution mode that controls how the executor agent approaches the task:

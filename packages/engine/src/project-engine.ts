@@ -1107,6 +1107,32 @@ export class ProjectEngine {
     return eligible.length;
   }
 
+  private async findActiveRecoveryFollowUp(
+    store: TaskStore,
+    parentTaskId: string,
+    branch?: string,
+  ): Promise<{ task: Task; reason: "parent" | "branch" } | null> {
+    const tasks = await store.listTasks({ slim: true }).catch(() => [] as Task[]);
+    const activeRecoveryTasks = tasks.filter(
+      (task) =>
+        task.column !== "done" &&
+        task.column !== "archived" &&
+        task.sourceType === "recovery",
+    );
+
+    const sameParent = activeRecoveryTasks.find(
+      (task) => task.sourceParentTaskId === parentTaskId,
+    );
+    if (sameParent) return { task: sameParent, reason: "parent" };
+
+    if (branch) {
+      const sameBranch = activeRecoveryTasks.find((task) => task.branch === branch);
+      if (sameBranch) return { task: sameBranch, reason: "branch" };
+    }
+
+    return null;
+  }
+
   private async drainMergeQueue(): Promise<void> {
     if (this.mergeRunning) return;
     this.mergeRunning = true;
@@ -1368,28 +1394,45 @@ export class ProjectEngine {
                   `Investigate repeated ${failedKind} verification failure on ${taskId} (${taskOnErr.title || "untitled"}). ` +
                   `Auto-merge attempted to fix and re-verify ${nextBounces} times without success — likely a flaky test or unrelated regression rather than a fix this task can produce on its own. ` +
                   `Look at the most recent [verification] log entries on ${taskId} for the failing command and output, then either fix the underlying issue or quarantine the flake.`;
-                const followUp = await store.createTask({
-                  description: followUpDescription,
-                  column: "triage",
-                  priority: "high",
-                  source: {
-                    sourceType: "recovery",
-                    sourceParentTaskId: taskId,
-                  },
-                });
-                await store.addTaskComment(
-                  taskId,
-                  `Auto-merge giving up after ${nextBounces} verification-failure bounces. Created follow-up ${followUp.id} to investigate.`,
-                  "agent",
-                );
-                await store.logEntry(
-                  taskId,
-                  `Auto-merge gave up after ${nextBounces} verification-failure bounces — created follow-up ${followUp.id}`,
-                  "VerificationError",
-                );
-                runtimeLog.warn(
-                  `Auto-merge: ${taskId} hit verification-failure cap (${nextBounces}/${cap}) — failed task and created follow-up ${followUp.id}`,
-                );
+                const existingFollowUp = await this.findActiveRecoveryFollowUp(store, taskId);
+                if (existingFollowUp) {
+                  await store.addTaskComment(
+                    taskId,
+                    `Auto-merge giving up after ${nextBounces} verification-failure bounces. Reusing existing follow-up ${existingFollowUp.task.id}.`,
+                    "agent",
+                  );
+                  await store.logEntry(
+                    taskId,
+                    `Auto-merge gave up after ${nextBounces} verification-failure bounces — skipped creating duplicate follow-up (existing ${existingFollowUp.task.id})`,
+                    "VerificationError",
+                  );
+                  runtimeLog.warn(
+                    `Auto-merge: ${taskId} hit verification-failure cap (${nextBounces}/${cap}) — skipped duplicate follow-up (existing ${existingFollowUp.task.id})`,
+                  );
+                } else {
+                  const followUp = await store.createTask({
+                    description: followUpDescription,
+                    column: "triage",
+                    priority: "high",
+                    source: {
+                      sourceType: "recovery",
+                      sourceParentTaskId: taskId,
+                    },
+                  });
+                  await store.addTaskComment(
+                    taskId,
+                    `Auto-merge giving up after ${nextBounces} verification-failure bounces. Created follow-up ${followUp.id} to investigate.`,
+                    "agent",
+                  );
+                  await store.logEntry(
+                    taskId,
+                    `Auto-merge gave up after ${nextBounces} verification-failure bounces — created follow-up ${followUp.id}`,
+                    "VerificationError",
+                  );
+                  runtimeLog.warn(
+                    `Auto-merge: ${taskId} hit verification-failure cap (${nextBounces}/${cap}) — failed task and created follow-up ${followUp.id}`,
+                  );
+                }
               } catch (followUpErr) {
                 runtimeLog.error(
                   `Auto-merge: failed to fail-and-followup ${taskId} after verification cap: ${followUpErr instanceof Error ? followUpErr.message : String(followUpErr)}`,
@@ -1503,24 +1546,49 @@ export class ProjectEngine {
                       // auto-resolve is just disabled, the user is presumed to
                       // be handling merges manually and a follow-up is noise.
                       try {
-                        const followUp = await store.createTask({
-                          description:
-                            `Resolve auto-merge conflict on ${taskId} (${taskOnErr.title || "untitled"}). ` +
-                            `Auto-merge attempted to rebase + resolve ${nextBounces - 1} times against main and exhausted retries each pass. ` +
-                            `Branch: \`${taskOnErr.branch ?? "?"}\`. Worktree: \`${taskOnErr.worktree ?? "?"}\`. ` +
-                            `Last merge error: ${errorMsg}`,
-                          column: "triage",
-                          priority: "high",
-                          source: {
-                            sourceType: "recovery",
-                            sourceParentTaskId: taskId,
-                          },
-                        });
-                        await store.addTaskComment(
+                        const existingFollowUp = await this.findActiveRecoveryFollowUp(
+                          store,
                           taskId,
-                          `Created follow-up ${followUp.id} to track manual conflict resolution.`,
-                          "agent",
+                          taskOnErr.branch,
                         );
+                        if (existingFollowUp) {
+                          const dedupReason =
+                            existingFollowUp.reason === "branch"
+                              ? `active recovery already owns branch \`${taskOnErr.branch ?? "?"}\``
+                              : "active recovery already exists for this parent task";
+                          await store.addTaskComment(
+                            taskId,
+                            `Auto-merge recovery follow-up already exists (${existingFollowUp.task.id}; ${dedupReason}). Skipping duplicate follow-up creation.`,
+                            "agent",
+                          );
+                          await store.logEntry(
+                            taskId,
+                            `Auto-merge conflict recovery skipped duplicate follow-up (existing ${existingFollowUp.task.id}; ${dedupReason})`,
+                            "MergeConflictGiveUp",
+                          );
+                          runtimeLog.warn(
+                            `Auto-merge: ${taskId} conflict give-up skipped duplicate follow-up (existing ${existingFollowUp.task.id}; reason=${existingFollowUp.reason})`,
+                          );
+                        } else {
+                          const followUp = await store.createTask({
+                            description:
+                              `Resolve auto-merge conflict on ${taskId} (${taskOnErr.title || "untitled"}). ` +
+                              `Auto-merge attempted to rebase + resolve ${nextBounces - 1} times against main and exhausted retries each pass. ` +
+                              `Branch: \`${taskOnErr.branch ?? "?"}\`. Worktree: \`${taskOnErr.worktree ?? "?"}\`. ` +
+                              `Last merge error: ${errorMsg}`,
+                            column: "triage",
+                            priority: "high",
+                            source: {
+                              sourceType: "recovery",
+                              sourceParentTaskId: taskId,
+                            },
+                          });
+                          await store.addTaskComment(
+                            taskId,
+                            `Created follow-up ${followUp.id} to track manual conflict resolution.`,
+                            "agent",
+                          );
+                        }
                       } catch (followUpErr) {
                         runtimeLog.warn(
                           `Auto-merge: failed to create follow-up for ${taskId}: ${followUpErr instanceof Error ? followUpErr.message : String(followUpErr)}`,
