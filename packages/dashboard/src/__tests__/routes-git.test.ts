@@ -387,6 +387,9 @@ describe("Git Management endpoints", () => {
         expect(res.body[0]).toHaveProperty("message");
         expect(res.body[0]).toHaveProperty("author");
         expect(res.body[0]).toHaveProperty("date");
+        if ("body" in res.body[0] && res.body[0].body !== undefined) {
+          expect(typeof res.body[0].body).toBe("string");
+        }
       }
     });
 
@@ -550,6 +553,9 @@ describe("Git Management endpoints", () => {
         expect(commit).toHaveProperty("author");
         expect(commit).toHaveProperty("date");
         expect(commit).toHaveProperty("parents");
+        if ("body" in commit && commit.body !== undefined) {
+          expect(typeof commit.body).toBe("string");
+        }
       }
     });
 
@@ -593,6 +599,9 @@ describe("Git Management endpoints", () => {
           expect(commit).toHaveProperty("author");
           expect(commit).toHaveProperty("date");
           expect(commit).toHaveProperty("parents");
+          if ("body" in commit && commit.body !== undefined) {
+            expect(typeof commit.body).toBe("string");
+          }
         }
       }
     });

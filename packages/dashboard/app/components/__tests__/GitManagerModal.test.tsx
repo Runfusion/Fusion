@@ -130,6 +130,7 @@ describe("GitManagerModal", () => {
         hash: "abc1234def5678",
         shortHash: "abc1234",
         message: "Test commit",
+        body: "Detailed description\n\nMultiple paragraphs.",
         author: "User",
         date: "2026-01-01T00:00:00Z",
         parents: [],
@@ -592,6 +593,57 @@ describe("GitManagerModal", () => {
     await waitFor(() => {
       expectLatestCallStartsWith(fetchCommitDiff as any, "abc1234def5678");
     });
+  });
+
+  it("shows commit body when expanding a commit in commits panel", async () => {
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /commits/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Test commit")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("Test commit"));
+
+    await waitFor(() => {
+      const fullMessage = document.querySelector(".gm-commit-message-full");
+      expect(fullMessage?.textContent).toContain("Detailed description");
+      expect(fullMessage?.textContent).toContain("Multiple paragraphs.");
+    });
+  });
+
+  it("does not render full message block for commits without body", async () => {
+    (fetchGitCommits as any).mockResolvedValue([
+      {
+        hash: "abc1234def5678",
+        shortHash: "abc1234",
+        message: "Subject only commit",
+        body: "",
+        author: "User",
+        date: "2026-01-01T00:00:00Z",
+        parents: [],
+      },
+    ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /commits/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Subject only commit")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("Subject only commit"));
+
+    await waitFor(() => {
+      expectLatestCallStartsWith(fetchCommitDiff as any, "abc1234def5678");
+    });
+
+    const expandedDiff = document.querySelector(".gm-commit-diff");
+    expect(expandedDiff?.querySelector(".gm-commit-message-full")).toBeNull();
   });
 
   // ── Branches Panel ─────────────────────────────────────────

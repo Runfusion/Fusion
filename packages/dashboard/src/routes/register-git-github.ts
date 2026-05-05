@@ -156,28 +156,53 @@ export interface GitCommit {
   hash: string;
   shortHash: string;
   message: string;
+  body?: string;
   author: string;
   date: string;
   parents: string[];
 }
 
-export async function getGitCommits(limit = 20, cwd?: string): Promise<GitCommit[]> {
-  try {
-    const format = "%H|%h|%s|%an|%aI|%P";
-    const output = await runGitCommand(["log", `--max-count=${limit}`, `--pretty=format:${format}`], cwd, 10000);
+function parseGitCommitsFromLogOutput(output: string): GitCommit[] {
+  const commits: GitCommit[] = [];
 
-    const commits: GitCommit[] = [];
-    for (const line of output.split("\n")) {
-      const parts = line.split("|");
-      if (parts.length < 5) continue;
+  for (const record of output.split("\0")) {
+    if (!record) continue;
 
-      const [hash, shortHash, message, author, date, parentsStr] = parts;
-      const parents = parentsStr ? parentsStr.split(" ").filter(Boolean) : [];
+    const parts = record.split("\x1f");
+    if (parts.length < 7) continue;
 
-      commits.push({ hash, shortHash, message: message || "", author: author || "", date: date || "", parents });
+    const [hash, shortHash, message, fullMessage, author, date, parentsStr] = parts;
+    const trimmedFullMessage = fullMessage.trimEnd();
+    const subjectLine = message || "";
+    let body = trimmedFullMessage;
+
+    if (subjectLine && body.startsWith(subjectLine)) {
+      body = body.slice(subjectLine.length);
+      body = body.replace(/^\n+/, "");
     }
 
-    return commits;
+    body = body.trim();
+    const parents = parentsStr ? parentsStr.split(" ").filter(Boolean) : [];
+
+    commits.push({
+      hash,
+      shortHash,
+      message: subjectLine,
+      body: body || undefined,
+      author: author || "",
+      date: date || "",
+      parents,
+    });
+  }
+
+  return commits;
+}
+
+export async function getGitCommits(limit = 20, cwd?: string): Promise<GitCommit[]> {
+  try {
+    const format = "%H%x1f%h%x1f%s%x1f%B%x1f%an%x1f%aI%x1f%P";
+    const output = await runGitCommand(["log", "-z", `--max-count=${limit}`, `--pretty=format:${format}`], cwd, 10000);
+    return parseGitCommitsFromLogOutput(output);
   } catch {
     return [];
   }
@@ -199,21 +224,9 @@ export function isValidGitRef(ref: string): boolean {
 
 export async function getGitCommitsForBranch(branch: string, limit = 10, cwd?: string): Promise<GitCommit[]> {
   try {
-    const format = "%H|%h|%s|%an|%aI|%P";
-    const output = await runGitCommand(["log", `--max-count=${limit}`, `--pretty=format:${format}`, branch], cwd, 10000);
-
-    const commits: GitCommit[] = [];
-    for (const line of output.split("\n")) {
-      const parts = line.split("|");
-      if (parts.length < 5) continue;
-
-      const [hash, shortHash, message, author, date, parentsStr] = parts;
-      const parents = parentsStr ? parentsStr.split(" ").filter(Boolean) : [];
-
-      commits.push({ hash, shortHash, message: message || "", author: author || "", date: date || "", parents });
-    }
-
-    return commits;
+    const format = "%H%x1f%h%x1f%s%x1f%B%x1f%an%x1f%aI%x1f%P";
+    const output = await runGitCommand(["log", "-z", `--max-count=${limit}`, `--pretty=format:${format}`, branch], cwd, 10000);
+    return parseGitCommitsFromLogOutput(output);
   } catch {
     return [];
   }
@@ -227,21 +240,9 @@ export async function getAheadCommits(cwd?: string): Promise<GitCommit[]> {
       return [];
     }
 
-    const format = "%H|%h|%s|%an|%aI|%P";
-    const output = await runGitCommand(["log", "@{u}..HEAD", `--pretty=format:${format}`], cwd, 10000);
-
-    const commits: GitCommit[] = [];
-    for (const line of output.split("\n")) {
-      const parts = line.split("|");
-      if (parts.length < 5) continue;
-
-      const [hash, shortHash, message, author, date, parentsStr] = parts;
-      const parents = parentsStr ? parentsStr.split(" ").filter(Boolean) : [];
-
-      commits.push({ hash, shortHash, message: message || "", author: author || "", date: date || "", parents });
-    }
-
-    return commits;
+    const format = "%H%x1f%h%x1f%s%x1f%B%x1f%an%x1f%aI%x1f%P";
+    const output = await runGitCommand(["log", "-z", "@{u}..HEAD", `--pretty=format:${format}`], cwd, 10000);
+    return parseGitCommitsFromLogOutput(output);
   } catch {
     return [];
   }
@@ -259,22 +260,10 @@ export async function getRemoteCommits(remoteRef: string, limit = 10, cwd?: stri
       return [];
     }
 
-    const format = "%H|%h|%s|%an|%aI|%P";
+    const format = "%H%x1f%h%x1f%s%x1f%B%x1f%an%x1f%aI%x1f%P";
     const safeLimit = Math.min(Math.max(1, limit), 50);
-    const output = await runGitCommand(["log", `--max-count=${safeLimit}`, `--pretty=format:${format}`, remoteRef], cwd, 10000);
-
-    const commits: GitCommit[] = [];
-    for (const line of output.split("\n")) {
-      const parts = line.split("|");
-      if (parts.length < 5) continue;
-
-      const [hash, shortHash, message, author, date, parentsStr] = parts;
-      const parents = parentsStr ? parentsStr.split(" ").filter(Boolean) : [];
-
-      commits.push({ hash, shortHash, message: message || "", author: author || "", date: date || "", parents });
-    }
-
-    return commits;
+    const output = await runGitCommand(["log", "-z", `--max-count=${safeLimit}`, `--pretty=format:${format}`, remoteRef], cwd, 10000);
+    return parseGitCommitsFromLogOutput(output);
   } catch {
     return [];
   }

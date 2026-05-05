@@ -1372,6 +1372,7 @@ function CommitsPanel({
                       </div>
                     ) : commitDiff ? (
                       <>
+                        {commit.body && <div className="gm-commit-message-full">{commit.body}</div>}
                         {commitDiff.stat && <pre className="gm-diff-stat">{commitDiff.stat}</pre>}
                         <pre className="gm-diff-patch">{commitDiff.patch}</pre>
                       </>
@@ -1591,6 +1592,9 @@ function BranchesPanel({
                                 </div>
                               ) : branchCommitDiff ? (
                                 <>
+                                  {(commit.body || commit.message) && (
+                                    <div className="gm-commit-message-full">{commit.body || commit.message}</div>
+                                  )}
                                   {branchCommitDiff.stat && <pre className="gm-diff-stat">{branchCommitDiff.stat}</pre>}
                                   <pre className="gm-diff-patch">{branchCommitDiff.patch}</pre>
                                 </>
@@ -2381,8 +2385,8 @@ function RemotesPanel({
                                 </div>
                               ) : aheadCommitDiff ? (
                                 <>
-                                  {commit.message && (
-                                    <div className="gm-commit-message-full">{commit.message}</div>
+                                  {(commit.body || commit.message) && (
+                                    <div className="gm-commit-message-full">{commit.body || commit.message}</div>
                                   )}
                                   {aheadCommitDiff.stat && <pre className="gm-diff-stat">{aheadCommitDiff.stat}</pre>}
                                   <pre className="gm-diff-patch">{aheadCommitDiff.patch}</pre>
@@ -2468,8 +2472,8 @@ function RemotesPanel({
                               </div>
                             ) : remoteCommitDiff ? (
                               <>
-                                {commit.message && (
-                                  <div className="gm-commit-message-full">{commit.message}</div>
+                                {(commit.body || commit.message) && (
+                                  <div className="gm-commit-message-full">{commit.body || commit.message}</div>
                                 )}
                                 {remoteCommitDiff.stat && <pre className="gm-diff-stat">{remoteCommitDiff.stat}</pre>}
                                 <pre className="gm-diff-patch">{remoteCommitDiff.patch}</pre>
