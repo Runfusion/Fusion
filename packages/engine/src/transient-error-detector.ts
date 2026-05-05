@@ -64,6 +64,15 @@ export const TRANSIENT_ERROR_PATTERNS: RegExp[] = [
   /"type":"server_error"/i,
   /"code":"server_error"/i,
   /An error occurred while processing your request\./i,
+
+  // pi-ai openai-codex-responses WebSocket transport errors. The provider holds
+  // a long-lived WebSocket to the Codex backend; transient drops surface as
+  // bare "WebSocket error" / "WebSocket closed <code> <reason>" / a half-open
+  // stream that ended before `response.completed`. All three are network-layer
+  // hiccups, not task defects — retry them.
+  /WebSocket error\b/i,
+  /WebSocket closed\b/i,
+  /WebSocket stream closed before response\.completed/i,
 ];
 
 /**

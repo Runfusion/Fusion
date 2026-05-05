@@ -92,6 +92,19 @@ describe("Transient Error Detector", () => {
       expect(isTransientError("OPERATION WAS ABORTED")).toBe(true);
     });
 
+    it("matches pi-ai Codex WebSocket transport drops", () => {
+      // Bare "WebSocket error" — pi-ai falls back to this when the ErrorEvent
+      // has no `message`. The diagnostic patch tags the model id onto it.
+      expect(isTransientError("WebSocket error")).toBe(true);
+      expect(isTransientError("WebSocket error (model=openai/gpt-5-codex)")).toBe(true);
+      // "WebSocket closed <code> <reason>" from extractWebSocketCloseError.
+      expect(isTransientError("WebSocket closed 1006")).toBe(true);
+      expect(isTransientError("WebSocket closed 1011 internal error")).toBe(true);
+      expect(isTransientError("WebSocket closed")).toBe(true);
+      // Half-open stream that ended before response.completed.
+      expect(isTransientError("WebSocket stream closed before response.completed")).toBe(true);
+    });
+
     it("matches OpenAI/Codex structured server_error payloads", () => {
       const message = `Codex error: {"type":"error","error":{"type":"server_error","code":"server_error","message":"An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID 9349dabf-bcb7-4c36-aa40-f645dd04a472 in your message.","param":null},"sequence_number":2}`;
       expect(isTransientError(message)).toBe(true);

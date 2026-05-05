@@ -177,6 +177,18 @@ async function promptSessionAndCheck(session: AgentSession, prompt: string, opti
       clearSessionStateError(session);
       return;
     }
+    // pi-ai's openai-codex-responses provider (Codex via ChatGPT-plan WebSocket)
+    // surfaces transport drops as bare "WebSocket error" / "WebSocket closed".
+    // The underlying ErrorEvent's `event.error` (cause/code) is dropped by
+    // pi-ai's `extractWebSocketError` (it only inspects `event.message`), so
+    // by the time we see the string the cause is gone. Tag the message with
+    // the model identity so retry/transient classification can at least tell
+    // which transport is unstable, and emit a structured warn for triage.
+    if (/^WebSocket (error|closed)\b/i.test(stateError) || /WebSocket stream closed before response\.completed/i.test(stateError)) {
+      const modelDesc = describeModel(session);
+      piLog.warn(`pi state error — Codex WebSocket transport drop (model=${modelDesc}): ${stateError}`);
+      throw new Error(`${stateError} (model=${modelDesc})`);
+    }
     throw new Error(stateError);
   }
 }
