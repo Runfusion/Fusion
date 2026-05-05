@@ -31,6 +31,14 @@
   gap: var(--space-sm);
 }
 
+.list-sidebar-controls__actions .list-new-task-action {
+  margin-left: auto;
+}
+
+.list-toolbar .list-new-task-action {
+  margin-left: auto;
+}
+
 .list-sidebar-summary-chips {
   display: flex;
   flex-wrap: wrap;

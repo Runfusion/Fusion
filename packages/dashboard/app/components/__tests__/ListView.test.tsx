@@ -881,6 +881,25 @@ describe("ListView", () => {
     expect(mockOnNewTask).toHaveBeenCalled();
   });
 
+  it("renders + New Task as the trailing desktop sidebar control", () => {
+    renderListView({}, { openViewOptions: false });
+
+    const actions = document.querySelector(".list-sidebar-controls__actions");
+    const actionButtons = Array.from(actions?.querySelectorAll("button") ?? []);
+    expect(actionButtons.at(-1)?.textContent).toContain("+ New Task");
+  });
+
+  it("renders + New Task as the trailing mobile toolbar control", () => {
+    const viewportSpy = mockMobileViewport();
+    renderListView({}, { openViewOptions: false });
+
+    const toolbar = document.querySelector(".list-toolbar");
+    const toolbarButtons = Array.from(toolbar?.querySelectorAll("button") ?? []);
+    expect(toolbarButtons.at(-1)?.textContent).toContain("+ New Task");
+
+    viewportSpy.mockRestore();
+  });
+
   it("+ New Task button uses theme-driven btn-task-create class", () => {
     const mockOnNewTask = vi.fn();
     renderListView({ onNewTask: mockOnNewTask });

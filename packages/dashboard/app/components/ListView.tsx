@@ -1007,11 +1007,6 @@ export function ListView({
             <button className="btn btn-sm" onClick={toggleBulkEdit} aria-pressed={bulkEditEnabled}>
               {bulkEditEnabled ? "Done Editing" : "Bulk Edit"}
             </button>
-            {onNewTask ? (
-              <button className="btn btn-task-create btn-sm" onClick={onNewTask}>
-                + New Task
-              </button>
-            ) : null}
             <button
               className="btn btn-sm list-view-options-toggle"
               onClick={() => setViewOptionsOpen((prev) => !prev)}
@@ -1021,6 +1016,11 @@ export function ListView({
               <Columns3 size={14} />
               View options
             </button>
+            {onNewTask ? (
+              <button className="btn btn-task-create btn-sm list-new-task-action" onClick={onNewTask}>
+                + New Task
+              </button>
+            ) : null}
             <div className="list-stats">
               {selectedColumn
                 ? `${filteredCount} of ${tasks.length} tasks in ${COLUMN_LABELS[selectedColumn]}`
@@ -1053,14 +1053,14 @@ export function ListView({
                     )}
                   </p>
                   <div className="list-sidebar-controls__actions">
-                    {onNewTask ? (
-                      <button className="btn btn-task-create btn-sm" onClick={onNewTask}>
-                        + New Task
-                      </button>
-                    ) : null}
                     <button className="btn btn-sm" onClick={toggleBulkEdit} aria-pressed={bulkEditEnabled}>
                       {bulkEditEnabled ? "Done Editing" : "Bulk Edit"}
                     </button>
+                    {onNewTask ? (
+                      <button className="btn btn-task-create btn-sm list-new-task-action" onClick={onNewTask}>
+                        + New Task
+                      </button>
+                    ) : null}
                   </div>
                   <div className="list-sidebar-summary-chips">
                     {selectedColumn ? (
