@@ -693,8 +693,9 @@ function HelpOverlay() {
     ["[Shift+Tab]", "Cycle focused panel / pane backward"],
     ["[1-5]", "Jump to panel (Main: System/Logs/Stats/Utilities/Settings)"],
     ["[← / →]", "Switch pane (Agents, Settings, Files, Git)"],
-    ["[→] / [n]", "Next panel (Main)"],
-    ["[←] / [p]", "Previous panel (Main)"],
+    ["[→] / [↓] / [n]", "Next panel (Main; ↑/↓ scroll on Logs)"],
+    ["[←] / [↑] / [p]", "Previous panel (Main; ↑/↓ scroll on Logs)"],
+    ["[Enter]", "Expand log + release mouse for text selection (Logs)"],
     ["[r]", "Refresh stats (Utilities)"],
     ["[c]", "Clear logs (Utilities)"],
     ["[k]", "Kill all vitest processes (Utilities)"],
@@ -4022,11 +4023,14 @@ export function DashboardApp({ controller }: DashboardAppProps) {
   // Other status panels (System / Stats / Utilities / Settings) leave it
   // off so the user can select text natively. [M] is still a manual
   // override, but the next focus change will reapply this policy.
+  // When a log entry is expanded, disable mouse reporting so the user can
+  // click-drag to select the message text natively. Esc/Enter closes the
+  // expanded view and the policy reapplies, restoring wheel scrolling.
   const wantsMouse = state.mode === "interactive"
     ? (state.interactiveView === "files"
        || state.interactiveView === "git"
        || state.interactiveView === "board")
-    : state.activeSection === "logs";
+    : (state.activeSection === "logs" && !state.logsExpandedMode);
   useEffect(() => {
     if (state.mouseEnabled !== wantsMouse) {
       controller.setMouseEnabled(wantsMouse);
@@ -4239,6 +4243,16 @@ export function DashboardApp({ controller }: DashboardAppProps) {
       if (state.activeSection !== "logs" || !state.logsExpandedMode) {
         controller.cycleSection(-1);
       }
+      return;
+    }
+
+    // Up/Down also cycle sections, except on Logs where they navigate entries.
+    if (key.downArrow && state.activeSection !== "logs") {
+      controller.cycleSection(1);
+      return;
+    }
+    if (key.upArrow && state.activeSection !== "logs") {
+      controller.cycleSection(-1);
       return;
     }
 
