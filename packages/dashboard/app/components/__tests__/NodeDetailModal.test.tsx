@@ -129,6 +129,21 @@ describe("NodeDetailModal docker section", () => {
     expect(screen.getByText("Exit code: 1")).toBeInTheDocument();
   });
 
+  it("shows an error toast when container status refresh fails", async () => {
+    const addToast = vi.fn();
+    const onFetchContainerStatus = vi.fn().mockRejectedValue(new Error("Docker host unreachable"));
+    render(
+      <NodeDetailModal
+        {...baseProps}
+        addToast={addToast}
+        managedDockerNode={makeDockerNode()}
+        onFetchContainerStatus={onFetchContainerStatus}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /refresh status/i }));
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("Docker host unreachable", "error"));
+  });
+
   it("renders docker config editor and saves", async () => {
     const onUpdateDockerConfig = vi.fn().mockResolvedValue({ ...dockerConfig, configVersion: 2 });
     const onFetchDockerConfigDiff = vi.fn().mockResolvedValue({ persistedVersion: 1, deployedVersion: null, needsRecreate: true });
@@ -146,6 +161,39 @@ describe("NodeDetailModal docker section", () => {
     await waitFor(() => expect(screen.getByText("Needs Recreate")).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: /save docker config/i }));
     await waitFor(() => expect(onUpdateDockerConfig).toHaveBeenCalledWith("node-1", expect.objectContaining({ image: "runfusion/fusion:latest" })));
+  });
+
+  it("shows an error toast when docker config save fails", async () => {
+    const addToast = vi.fn();
+    const onUpdateDockerConfig = vi.fn().mockRejectedValue(new Error("Invalid environment variable format"));
+    render(
+      <NodeDetailModal
+        {...baseProps}
+        addToast={addToast}
+        node={makeNode({ dockerConfig })}
+        onUpdateDockerConfig={onUpdateDockerConfig}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /docker configuration/i }));
+    fireEvent.click(screen.getByRole("button", { name: /save docker config/i }));
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("Invalid environment variable format", "error"));
+  });
+
+  it("shows an error toast when logs fetch fails", async () => {
+    const addToast = vi.fn();
+    const onFetchLogs = vi.fn().mockRejectedValue(new Error("Timed out while reading container logs"));
+    render(
+      <NodeDetailModal
+        {...baseProps}
+        addToast={addToast}
+        managedDockerNode={makeDockerNode()}
+        onFetchLogs={onFetchLogs}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /view logs/i }));
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith("Timed out while reading container logs", "error"));
   });
 
   it("masks sensitive env values and shows read-only mount", () => {
