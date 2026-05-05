@@ -37,7 +37,7 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.post("/nodes", async (req, res) => {
     try {
-      const { name, type, url, apiKey, maxConcurrent, capabilities } = req.body;
+      const { name, type, url, apiKey, maxConcurrent, capabilities, dockerConfig } = req.body;
 
       if (!name || typeof name !== "string" || !name.trim()) {
         throw badRequest("name is required and must be a non-empty string");
@@ -75,6 +75,7 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
         apiKey: typeof apiKey === "string" ? apiKey : undefined,
         maxConcurrent,
         capabilities,
+        dockerConfig,
       });
 
       await central.close();
@@ -124,7 +125,7 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
    */
   router.patch("/nodes/:id", async (req, res) => {
     try {
-      const { name, url, apiKey, maxConcurrent, status, capabilities } = req.body;
+      const { name, url, apiKey, maxConcurrent, status, capabilities, dockerConfig } = req.body;
 
       const updates: Partial<Omit<import("@fusion/core").NodeConfig, "id" | "createdAt">> = {};
       if (name !== undefined) updates.name = name;
@@ -133,6 +134,7 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
       if (maxConcurrent !== undefined) updates.maxConcurrent = maxConcurrent;
       if (status !== undefined) updates.status = status as import("@fusion/core").NodeStatus;
       if (capabilities !== undefined) updates.capabilities = capabilities;
+      if (dockerConfig !== undefined) updates.dockerConfig = dockerConfig;
 
       const { CentralCore } = await import("@fusion/core");
       const central = new CentralCore();
@@ -152,6 +154,125 @@ export const registerNodeRoutes: ApiRouteRegistrar = (ctx) => {
           ? 400
           : 500;
       throw new ApiError(status, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  /**
+   * GET /api/nodes/:id/docker-config
+   * Return sanitized Docker config for a node.
+   */
+  router.get("/nodes/:id/docker-config", async (req, res) => {
+    try {
+      const { CentralCore, sanitizeDockerNodeConfigForResponse } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      const node = await central.getNode(req.params.id);
+      await central.close();
+      if (!node) throw notFound("Node not found");
+      res.json(node.dockerConfig ? sanitizeDockerNodeConfigForResponse(node.dockerConfig) : null);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
+  /**
+   * PUT /api/nodes/:id/docker-config
+   * Replace full Docker config for a node.
+   */
+  router.put("/nodes/:id/docker-config", async (req, res) => {
+    try {
+      const { CentralCore, validateDockerNodeConfig, sanitizeDockerNodeConfigForResponse } = await import("@fusion/core");
+      const validation = validateDockerNodeConfig(req.body);
+      if (!validation.valid || !validation.config) {
+        throw new ApiError(400, "Invalid Docker config", { errors: validation.errors ?? [] });
+      }
+      const central = new CentralCore();
+      await central.init();
+      const node = await central.getNode(req.params.id);
+      if (!node) {
+        await central.close();
+        throw notFound("Node not found");
+      }
+      const updated = await central.updateNode(req.params.id, { dockerConfig: validation.config });
+      await central.close();
+      res.json(sanitizeDockerNodeConfigForResponse(updated.dockerConfig!));
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
+  router.patch("/nodes/:id/docker-config", async (req, res) => {
+    try {
+      const { CentralCore, validateDockerNodeConfig, sanitizeDockerNodeConfigForResponse } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      const node = await central.getNode(req.params.id);
+      if (!node) {
+        await central.close();
+        throw notFound("Node not found");
+      }
+      const existing = node.dockerConfig;
+      if (!existing) {
+        await central.close();
+        throw badRequest("Node has no existing Docker config; use PUT first");
+      }
+
+      const patch = req.body as Record<string, unknown>;
+      const mergedEnvironment: Record<string, string> = { ...existing.environment };
+      if (patch.environment && typeof patch.environment === "object" && !Array.isArray(patch.environment)) {
+        for (const [key, value] of Object.entries(patch.environment as Record<string, unknown>)) {
+          if (value === null) {
+            delete mergedEnvironment[key];
+          } else if (typeof value === "string") {
+            mergedEnvironment[key] = value;
+          }
+        }
+      }
+
+      const merged = {
+        ...existing,
+        ...patch,
+        environment: mergedEnvironment,
+        volumeMounts: patch.volumeMounts !== undefined ? patch.volumeMounts : existing.volumeMounts,
+      };
+
+      const validation = validateDockerNodeConfig(merged);
+      if (!validation.valid || !validation.config) {
+        await central.close();
+        throw new ApiError(400, "Invalid Docker config", { errors: validation.errors ?? [] });
+      }
+
+      const updated = await central.updateNode(req.params.id, { dockerConfig: validation.config });
+      await central.close();
+      res.json(sanitizeDockerNodeConfigForResponse(updated.dockerConfig!));
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
+  router.get("/nodes/:id/docker-config/diff", async (req, res) => {
+    try {
+      const { CentralCore } = await import("@fusion/core");
+      const central = new CentralCore();
+      await central.init();
+      const node = await central.getNode(req.params.id);
+      await central.close();
+      if (!node) throw notFound("Node not found");
+      if (!node.dockerConfig) {
+        res.json({ config: null });
+        return;
+      }
+      res.json({
+        persistedVersion: node.dockerConfig.configVersion,
+        deployedVersion: null,
+        needsRecreate: false,
+      });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
     }
   });
 

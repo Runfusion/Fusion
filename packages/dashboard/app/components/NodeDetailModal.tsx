@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  ChevronDown,
   Download,
+  Eye,
+  EyeOff,
   FileText,
   Pencil,
   Play,
@@ -12,7 +15,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import type { ContainerStatusInfo, ManagedDockerNodeInfo, NodeInfo, NodeUpdateInput, ProjectInfo } from "../api";
+import type { ContainerStatusInfo, DockerNodeConfig, ManagedDockerNodeInfo, NodeInfo, NodeUpdateInput, ProjectInfo } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { getProjectsForNode } from "../utils/nodeProjectAssignment";
 import type { ComputedNodeSyncStatus } from "../hooks/useNodeSettingsSync";
@@ -41,6 +44,8 @@ interface NodeDetailModalProps {
   containerStatus?: ContainerStatusInfo;
   onFetchContainerStatus?: (managedId: string) => Promise<ContainerStatusInfo>;
   onFetchLogs?: (managedId: string) => Promise<string>;
+  onUpdateDockerConfig?: (nodeId: string, config: Partial<DockerNodeConfig>) => Promise<DockerNodeConfig>;
+  onFetchDockerConfigDiff?: (nodeId: string) => Promise<{ persistedVersion: number; deployedVersion: number | null; needsRecreate: boolean }>;
 }
 
 const SENSITIVE_ENV_KEY_PATTERN = /(KEY|TOKEN|SECRET|PASSWORD)/i;
@@ -127,6 +132,8 @@ export function NodeDetailModal({
   containerStatus,
   onFetchContainerStatus,
   onFetchLogs,
+  onUpdateDockerConfig,
+  onFetchDockerConfigDiff,
 }: NodeDetailModalProps) {
   const isMountedRef = useRef(true);
   const [editMode, setEditMode] = useState(false);
@@ -149,6 +156,11 @@ export function NodeDetailModal({
   const [logsOpen, setLogsOpen] = useState(false);
   const [logs, setLogs] = useState("");
   const [logsLoading, setLogsLoading] = useState(false);
+  const [dockerConfigExpanded, setDockerConfigExpanded] = useState(false);
+  const [dockerConfigDraft, setDockerConfigDraft] = useState<DockerNodeConfig | null>(node?.dockerConfig ?? null);
+  const [dockerEnvReveal, setDockerEnvReveal] = useState<Record<string, boolean>>({});
+  const [dockerConfigSaving, setDockerConfigSaving] = useState(false);
+  const [dockerConfigNeedsRecreate, setDockerConfigNeedsRecreate] = useState(false);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -174,6 +186,9 @@ export function NodeDetailModal({
     setApiKey(node.apiKey ?? "");
     setMaxConcurrent(node.maxConcurrent);
     setEditMode(false);
+    setDockerConfigDraft(node.dockerConfig ?? null);
+    setDockerConfigExpanded(false);
+    setDockerEnvReveal({});
   }, [isOpen, node]);
 
   useEffect(() => {
@@ -359,6 +374,45 @@ export function NodeDetailModal({
     }
   }, [addToast, apiKey, isSaving, maxConcurrent, name, node, onUpdate, url]);
 
+  useEffect(() => {
+    if (!node?.dockerConfig || !onFetchDockerConfigDiff || !isOpen) return;
+    void onFetchDockerConfigDiff(node.id)
+      .then((diff) => {
+        if (!isMountedRef.current) return;
+        setDockerConfigNeedsRecreate(diff.needsRecreate);
+      })
+      .catch(() => {
+        if (!isMountedRef.current) return;
+        setDockerConfigNeedsRecreate(false);
+      });
+  }, [isOpen, node, onFetchDockerConfigDiff]);
+
+  const handleDockerConfigSave = useCallback(async () => {
+    if (!node || !dockerConfigDraft || !onUpdateDockerConfig || dockerConfigSaving) return;
+    setDockerConfigSaving(true);
+    try {
+      const result = await onUpdateDockerConfig(node.id, {
+        image: dockerConfigDraft.image,
+        volumeMounts: dockerConfigDraft.volumeMounts,
+        environment: dockerConfigDraft.environment,
+        resources: dockerConfigDraft.resources,
+        host: dockerConfigDraft.host,
+        extraClis: dockerConfigDraft.extraClis,
+        persistence: dockerConfigDraft.persistence,
+        containerName: dockerConfigDraft.containerName,
+      });
+      if (!isMountedRef.current) return;
+      setDockerConfigDraft(result);
+      addToast("Docker config saved", "success");
+    } catch (error) {
+      if (!isMountedRef.current) return;
+      const message = error instanceof Error ? error.message : "Failed to save Docker config";
+      addToast(message, "error");
+    } finally {
+      if (isMountedRef.current) setDockerConfigSaving(false);
+    }
+  }, [addToast, dockerConfigDraft, dockerConfigSaving, node, onUpdateDockerConfig]);
+
   const handleCancelEdit = useCallback(() => {
     if (!node) return;
     setName(node.name);
@@ -517,6 +571,156 @@ export function NodeDetailModal({
               <span>Last check: <strong>{formatTimestamp(node.updatedAt)}</strong></span>
             </div>
           </section>
+
+          {dockerConfigDraft && (
+            <section className="node-detail-modal__section node-detail-modal__docker-config">
+              <button
+                className="btn btn-sm node-detail-modal__docker-toggle"
+                onClick={() => setDockerConfigExpanded((prev) => !prev)}
+                aria-expanded={dockerConfigExpanded}
+              >
+                <ChevronDown size={14} className={dockerConfigExpanded ? "node-detail-modal__docker-toggle-icon--expanded" : ""} />
+                Docker Configuration
+              </button>
+
+              {dockerConfigExpanded && (
+                <div className="node-detail-modal__docker-config-content">
+                  <div className="node-detail-modal__grid">
+                    <label className="node-detail-modal__field node-detail-modal__field--full">
+                      <span>Image</span>
+                      <input className="input" value={dockerConfigDraft.image} onChange={(event) => setDockerConfigDraft({ ...dockerConfigDraft, image: event.target.value })} />
+                    </label>
+                  </div>
+
+                  <details>
+                    <summary>Volume Mounts</summary>
+                    <div className="node-detail-modal__docker-list">
+                      {dockerConfigDraft.volumeMounts.map((mount, index) => (
+                        <div key={`${mount.hostPath}-${mount.containerPath}-${index}`} className="node-detail-modal__docker-row">
+                          <input className="input" value={mount.hostPath} placeholder="Host path" onChange={(event) => {
+                            const next = [...dockerConfigDraft.volumeMounts];
+                            next[index] = { ...next[index], hostPath: event.target.value };
+                            setDockerConfigDraft({ ...dockerConfigDraft, volumeMounts: next });
+                          }} />
+                          <input className="input" value={mount.containerPath} placeholder="Container path" onChange={(event) => {
+                            const next = [...dockerConfigDraft.volumeMounts];
+                            next[index] = { ...next[index], containerPath: event.target.value };
+                            setDockerConfigDraft({ ...dockerConfigDraft, volumeMounts: next });
+                          }} />
+                          <select className="input" value={mount.mode ?? "rw"} onChange={(event) => {
+                            const next = [...dockerConfigDraft.volumeMounts];
+                            next[index] = { ...next[index], mode: event.target.value as "rw" | "ro" };
+                            setDockerConfigDraft({ ...dockerConfigDraft, volumeMounts: next });
+                          }}>
+                            <option value="rw">rw</option>
+                            <option value="ro">ro</option>
+                          </select>
+                          <select className="input" value={mount.type ?? "volume"} onChange={(event) => {
+                            const next = [...dockerConfigDraft.volumeMounts];
+                            next[index] = { ...next[index], type: event.target.value as "volume" | "bind" };
+                            setDockerConfigDraft({ ...dockerConfigDraft, volumeMounts: next });
+                          }}>
+                            <option value="volume">volume</option>
+                            <option value="bind">bind</option>
+                          </select>
+                          <button className="btn btn-sm" onClick={() => setDockerConfigDraft({ ...dockerConfigDraft, volumeMounts: dockerConfigDraft.volumeMounts.filter((_, i) => i !== index) })}>Remove</button>
+                        </div>
+                      ))}
+                      <button className="btn btn-sm" onClick={() => setDockerConfigDraft({ ...dockerConfigDraft, volumeMounts: [...dockerConfigDraft.volumeMounts, { hostPath: "", containerPath: "", mode: "rw", type: "volume" }] })}>Add Mount</button>
+                    </div>
+                  </details>
+
+                  <details>
+                    <summary>Environment Variables</summary>
+                    <div className="node-detail-modal__docker-list">
+                      {Object.entries(dockerConfigDraft.environment).map(([key, value]) => {
+                        const masked = SENSITIVE_ENV_KEY_PATTERN.test(key) && !dockerEnvReveal[key];
+                        return (
+                          <div key={key} className="node-detail-modal__docker-row">
+                            <input className="input" value={key} onChange={(event) => {
+                              const next = { ...dockerConfigDraft.environment };
+                              delete next[key];
+                              next[event.target.value] = value;
+                              setDockerConfigDraft({ ...dockerConfigDraft, environment: next });
+                            }} />
+                            <input className="input" value={masked ? "***" : value} onChange={(event) => setDockerConfigDraft({ ...dockerConfigDraft, environment: { ...dockerConfigDraft.environment, [key]: event.target.value } })} />
+                            <button className="btn btn-sm" onClick={() => setDockerEnvReveal((prev) => ({ ...prev, [key]: !prev[key] }))}>
+                              {dockerEnvReveal[key] ? <EyeOff size={14} /> : <Eye size={14} />}
+                            </button>
+                            <button className="btn btn-sm" onClick={() => {
+                              const next = { ...dockerConfigDraft.environment };
+                              delete next[key];
+                              setDockerConfigDraft({ ...dockerConfigDraft, environment: next });
+                            }}>Remove</button>
+                          </div>
+                        );
+                      })}
+                      <button className="btn btn-sm" onClick={() => {
+                        const nextKey = `NEW_VAR_${Object.keys(dockerConfigDraft.environment).length + 1}`;
+                        setDockerConfigDraft({ ...dockerConfigDraft, environment: { ...dockerConfigDraft.environment, [nextKey]: "" } });
+                      }}>Add Variable</button>
+                    </div>
+                  </details>
+
+                  <details>
+                    <summary>Resources</summary>
+                    <div className="node-detail-modal__docker-stack">
+                      <input className="input" type="number" placeholder="Memory bytes (2 GB = 2147483648)" value={dockerConfigDraft.resources?.memoryBytes ?? ""} onChange={(event) => setDockerConfigDraft({ ...dockerConfigDraft, resources: { ...dockerConfigDraft.resources, memoryBytes: event.target.value ? Number(event.target.value) : undefined } })} />
+                      <input className="input" type="number" placeholder="CPU count" value={dockerConfigDraft.resources?.cpuCount ?? ""} onChange={(event) => setDockerConfigDraft({ ...dockerConfigDraft, resources: { ...dockerConfigDraft.resources, cpuCount: event.target.value ? Number(event.target.value) : undefined } })} />
+                      <input className="input" type="number" placeholder="PIDs limit" value={dockerConfigDraft.resources?.pidsLimit ?? ""} onChange={(event) => setDockerConfigDraft({ ...dockerConfigDraft, resources: { ...dockerConfigDraft.resources, pidsLimit: event.target.value ? Number(event.target.value) : undefined } })} />
+                    </div>
+                  </details>
+
+                  <details>
+                    <summary>Host Config</summary>
+                    <div className="node-detail-modal__docker-stack">
+                      <input className="input" placeholder="Context name" value={dockerConfigDraft.host?.contextName ?? ""} onChange={(event) => setDockerConfigDraft({ ...dockerConfigDraft, host: { ...dockerConfigDraft.host, contextName: event.target.value } })} />
+                      <input className="input" placeholder="Docker host URL" value={dockerConfigDraft.host?.dockerHost ?? ""} onChange={(event) => setDockerConfigDraft({ ...dockerConfigDraft, host: { ...dockerConfigDraft.host, dockerHost: event.target.value } })} />
+                      <input className="input" placeholder="TLS CA cert path" value={dockerConfigDraft.host?.tlsCaCert ?? ""} onChange={(event) => setDockerConfigDraft({ ...dockerConfigDraft, host: { ...dockerConfigDraft.host, tlsCaCert: event.target.value } })} />
+                      <input className="input" placeholder="TLS cert path" value={dockerConfigDraft.host?.tlsCert ?? ""} onChange={(event) => setDockerConfigDraft({ ...dockerConfigDraft, host: { ...dockerConfigDraft.host, tlsCert: event.target.value } })} />
+                      <input className="input" placeholder="TLS key path" value={dockerConfigDraft.host?.tlsKey ?? ""} onChange={(event) => setDockerConfigDraft({ ...dockerConfigDraft, host: { ...dockerConfigDraft.host, tlsKey: event.target.value } })} />
+                      <label className="node-detail-modal__checkbox"><input type="checkbox" checked={dockerConfigDraft.host?.tlsVerify ?? true} onChange={(event) => setDockerConfigDraft({ ...dockerConfigDraft, host: { ...dockerConfigDraft.host, tlsVerify: event.target.checked } })} />TLS verify</label>
+                    </div>
+                  </details>
+
+                  <details>
+                    <summary>Extra CLIs</summary>
+                    <div className="node-detail-modal__docker-list">
+                      {(dockerConfigDraft.extraClis ?? []).map((cli, index) => (
+                        <div key={`${cli}-${index}`} className="node-detail-modal__docker-row">
+                          <input className="input" value={cli} onChange={(event) => {
+                            const next = [...(dockerConfigDraft.extraClis ?? [])];
+                            next[index] = event.target.value;
+                            setDockerConfigDraft({ ...dockerConfigDraft, extraClis: next });
+                          }} />
+                          <button className="btn btn-sm" onClick={() => setDockerConfigDraft({ ...dockerConfigDraft, extraClis: (dockerConfigDraft.extraClis ?? []).filter((_, i) => i !== index) })}>Remove</button>
+                        </div>
+                      ))}
+                      <button className="btn btn-sm" onClick={() => setDockerConfigDraft({ ...dockerConfigDraft, extraClis: [...(dockerConfigDraft.extraClis ?? []), ""] })}>Add CLI</button>
+                    </div>
+                  </details>
+
+                  <details>
+                    <summary>Persistence</summary>
+                    <div className="node-detail-modal__docker-stack">
+                      <input className="input" placeholder="Volume name" value={dockerConfigDraft.persistence?.volumeName ?? ""} onChange={(event) => setDockerConfigDraft({ ...dockerConfigDraft, persistence: { ...dockerConfigDraft.persistence, volumeName: event.target.value } })} />
+                      <label className="node-detail-modal__checkbox"><input type="checkbox" checked={dockerConfigDraft.persistence?.retainOnDelete ?? false} onChange={(event) => setDockerConfigDraft({ ...dockerConfigDraft, persistence: { ...dockerConfigDraft.persistence, retainOnDelete: event.target.checked } })} />Retain on delete</label>
+                    </div>
+                  </details>
+
+                  <div className="node-detail-modal__docker-meta">
+                    <span>Config v{dockerConfigDraft.configVersion} • Updated {formatRelativeTime(dockerConfigDraft.lastUpdated ?? node.updatedAt)}</span>
+                    {dockerConfigNeedsRecreate && <span className="node-detail-modal__docker-recreate">Needs Recreate</span>}
+                  </div>
+
+                  <button className="btn btn-primary btn-sm" onClick={() => void handleDockerConfigSave()} disabled={dockerConfigSaving}>
+                    <Save size={14} />
+                    {dockerConfigSaving ? "Saving..." : "Save Docker Config"}
+                  </button>
+                </div>
+              )}
+            </section>
+          )}
 
           {managedDockerNode && (
             <section className="node-detail-modal__section docker-management">

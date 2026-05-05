@@ -70,6 +70,7 @@ import type {
   TaskPriority,
   TaskSourceIssue,
   ManagedDockerNodeInput,
+  DockerNodeConfig,
   DockerHostConfig,
   DockerResourceSizing,
   DockerVolumeMount,
@@ -5306,6 +5307,8 @@ export interface ProjectCreateInput {
   cloneUrl?: string;
 }
 
+export type DockerNodeConfigInfo = DockerNodeConfig;
+
 /** Node information returned by node endpoints */
 export interface NodeInfo {
   id: NodeConfig["id"];
@@ -5318,6 +5321,7 @@ export interface NodeInfo {
   maxConcurrent: NodeConfig["maxConcurrent"];
   createdAt: NodeConfig["createdAt"];
   updatedAt: NodeConfig["updatedAt"];
+  dockerConfig?: DockerNodeConfigInfo;
 }
 
 /** Managed Docker node information returned by docker node endpoints */
@@ -5396,10 +5400,11 @@ export interface NodeCreateInput {
   url?: string;
   apiKey?: string;
   maxConcurrent?: number;
+  dockerConfig?: DockerNodeConfigInfo;
 }
 
 /** Input for updating an existing node */
-export type NodeUpdateInput = Partial<Pick<NodeCreateInput, "name" | "type" | "url" | "apiKey" | "maxConcurrent">> & {
+export type NodeUpdateInput = Partial<Pick<NodeCreateInput, "name" | "type" | "url" | "apiKey" | "maxConcurrent" | "dockerConfig">> & {
   status?: NodeStatus;
   capabilities?: string[];
 };
@@ -5610,6 +5615,38 @@ export function updateNode(id: string, updates: NodeUpdateInput): Promise<NodeIn
     method: "PATCH",
     body: JSON.stringify(updates),
   });
+}
+
+/** Fetch sanitized docker config for a node */
+export function fetchDockerNodeConfig(nodeId: string): Promise<DockerNodeConfigInfo | null> {
+  return api<DockerNodeConfigInfo | null>(`/nodes/${encodeURIComponent(nodeId)}/docker-config`);
+}
+
+/** Replace full docker config for a node */
+export function replaceDockerNodeConfig(nodeId: string, config: DockerNodeConfig): Promise<DockerNodeConfigInfo> {
+  return api<DockerNodeConfigInfo>(`/nodes/${encodeURIComponent(nodeId)}/docker-config`, {
+    method: "PUT",
+    body: JSON.stringify(config),
+  });
+}
+
+/** Patch docker config for a node */
+export function updateDockerNodeConfig(nodeId: string, config: Partial<DockerNodeConfig>): Promise<DockerNodeConfigInfo> {
+  return api<DockerNodeConfigInfo>(`/nodes/${encodeURIComponent(nodeId)}/docker-config`, {
+    method: "PATCH",
+    body: JSON.stringify(config),
+  });
+}
+
+/** Fetch docker config diff status for a node */
+export function fetchDockerConfigDiff(nodeId: string): Promise<{
+  persistedVersion: number;
+  deployedVersion: number | null;
+  needsRecreate: boolean;
+}> {
+  return api<{ persistedVersion: number; deployedVersion: number | null; needsRecreate: boolean }>(
+    `/nodes/${encodeURIComponent(nodeId)}/docker-config/diff`,
+  );
 }
 
 /** Unregister a node */

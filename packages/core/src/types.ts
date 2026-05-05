@@ -2491,12 +2491,211 @@ export interface NodeConfig {
   versionInfo?: NodeVersionInfo;
   /** Snapshot of plugin ID → version mapping */
   pluginVersions?: Record<string, string>;
+  /** Persisted Docker-managed container configuration, when present. */
+  dockerConfig?: DockerNodeConfig;
   /** Maximum concurrent tasks/runtimes this node can host */
   maxConcurrent: number;
   /** ISO-8601 timestamp of creation */
   createdAt: string;
   /** ISO-8601 timestamp of last update */
   updatedAt: string;
+}
+
+/** Persisted configuration for a Docker-managed Fusion node. */
+export interface DockerNodeConfig {
+  /** Docker image name (e.g., "runfusion/fusion:latest") */
+  image: string;
+  /** Container name (defaults to "fusion-{nodeId}") */
+  containerName?: string;
+  /** Volume mount definitions */
+  volumeMounts: DockerNodeVolumeMount[];
+  /** Environment variable overrides (key-value pairs) */
+  environment: Record<string, string>;
+  /** Resource limits */
+  resources?: DockerNodeContainerResourceConfig;
+  /** Docker host connection settings */
+  host?: DockerNodeHostConfig;
+  /** Optional CLI tools to include in the container */
+  extraClis?: string[];
+  /** Persistent storage configuration */
+  persistence?: DockerNodePersistenceConfig;
+  /** Config version counter — starts at 1, auto-incremented on every update */
+  configVersion: number;
+  /** ISO timestamp of last config change (auto-set on update) */
+  lastUpdated?: string;
+}
+
+export interface DockerNodeVolumeMount {
+  /** Host path or named volume */
+  hostPath: string;
+  /** Container mount path */
+  containerPath: string;
+  /** "rw" (default) or "ro" */
+  mode?: "rw" | "ro";
+  /** "volume" (default) for named volumes, "bind" for host bind mounts */
+  type?: "volume" | "bind";
+}
+
+export interface DockerNodeContainerResourceConfig {
+  /** Memory limit in bytes (e.g., 2147483648 for 2GB) */
+  memoryBytes?: number;
+  /** CPU count limit (e.g., 2.0 for two cores) */
+  cpuCount?: number;
+  /** PIDs limit */
+  pidsLimit?: number;
+}
+
+export interface DockerNodeHostConfig {
+  /** Docker context name (for named Docker context selection) */
+  contextName?: string;
+  /** Explicit Docker host URL (e.g., "tcp://192.168.1.100:2376") */
+  dockerHost?: string;
+  /** Path to TLS CA cert */
+  tlsCaCert?: string;
+  /** Path to TLS client cert */
+  tlsCert?: string;
+  /** Path to TLS client key */
+  tlsKey?: string;
+  /** Whether to verify TLS (default: true) */
+  tlsVerify?: boolean;
+}
+
+export interface DockerNodePersistenceConfig {
+  /** Named Docker volume for Fusion data */
+  volumeName?: string;
+  /** Whether to retain the volume when the node is deleted (default: false) */
+  retainOnDelete?: boolean;
+}
+
+export function validateDockerNodeConfig(config: unknown): {
+  valid: boolean;
+  config?: DockerNodeConfig;
+  errors?: string[];
+} {
+  const errors: string[] = [];
+
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    return { valid: false, errors: ["config must be an object"] };
+  }
+
+  const candidate = config as Record<string, unknown>;
+
+  if (typeof candidate.image !== "string" || !candidate.image.trim()) {
+    errors.push("image must be a non-empty string");
+  }
+
+  if (!Array.isArray(candidate.volumeMounts)) {
+    errors.push("volumeMounts must be an array");
+  } else {
+    candidate.volumeMounts.forEach((mount, index) => {
+      if (!mount || typeof mount !== "object" || Array.isArray(mount)) {
+        errors.push(`volumeMounts[${index}] must be an object`);
+        return;
+      }
+      const mountCandidate = mount as Record<string, unknown>;
+      if (typeof mountCandidate.hostPath !== "string") {
+        errors.push(`volumeMounts[${index}].hostPath must be a string`);
+      }
+      if (typeof mountCandidate.containerPath !== "string") {
+        errors.push(`volumeMounts[${index}].containerPath must be a string`);
+      }
+      if (mountCandidate.mode !== undefined && mountCandidate.mode !== "rw" && mountCandidate.mode !== "ro") {
+        errors.push(`volumeMounts[${index}].mode must be "rw" or "ro"`);
+      }
+      if (mountCandidate.type !== undefined && mountCandidate.type !== "volume" && mountCandidate.type !== "bind") {
+        errors.push(`volumeMounts[${index}].type must be "volume" or "bind"`);
+      }
+    });
+  }
+
+  if (!candidate.environment || typeof candidate.environment !== "object" || Array.isArray(candidate.environment)) {
+    errors.push("environment must be an object");
+  } else {
+    for (const [key, value] of Object.entries(candidate.environment)) {
+      if (typeof key !== "string" || typeof value !== "string") {
+        errors.push(`environment.${key} must be a string value`);
+      }
+    }
+  }
+
+  if (typeof candidate.configVersion !== "number" || !Number.isFinite(candidate.configVersion) || candidate.configVersion < 1) {
+    errors.push("configVersion must be a number >= 1");
+  }
+
+  const validateOptionalObject = (
+    fieldName: string,
+    value: unknown,
+    validators: Array<[string, (value: unknown) => boolean, string]>,
+  ) => {
+    if (value === undefined) return;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      errors.push(`${fieldName} must be an object`);
+      return;
+    }
+    const typed = value as Record<string, unknown>;
+    for (const [prop, test, message] of validators) {
+      if (typed[prop] !== undefined && !test(typed[prop])) {
+        errors.push(`${fieldName}.${prop} ${message}`);
+      }
+    }
+  };
+
+  validateOptionalObject("resources", candidate.resources, [
+    ["memoryBytes", (value) => typeof value === "number" && Number.isFinite(value), "must be a number"],
+    ["cpuCount", (value) => typeof value === "number" && Number.isFinite(value), "must be a number"],
+    ["pidsLimit", (value) => typeof value === "number" && Number.isFinite(value), "must be a number"],
+  ]);
+
+  validateOptionalObject("host", candidate.host, [
+    ["contextName", (value) => typeof value === "string", "must be a string"],
+    ["dockerHost", (value) => typeof value === "string", "must be a string"],
+    ["tlsCaCert", (value) => typeof value === "string", "must be a string"],
+    ["tlsCert", (value) => typeof value === "string", "must be a string"],
+    ["tlsKey", (value) => typeof value === "string", "must be a string"],
+    ["tlsVerify", (value) => typeof value === "boolean", "must be a boolean"],
+  ]);
+
+  validateOptionalObject("persistence", candidate.persistence, [
+    ["volumeName", (value) => typeof value === "string", "must be a string"],
+    ["retainOnDelete", (value) => typeof value === "boolean", "must be a boolean"],
+  ]);
+
+  if (candidate.extraClis !== undefined) {
+    if (!Array.isArray(candidate.extraClis) || candidate.extraClis.some((item) => typeof item !== "string")) {
+      errors.push("extraClis must be an array of strings");
+    }
+  }
+
+  if (candidate.containerName !== undefined && typeof candidate.containerName !== "string") {
+    errors.push("containerName must be a string");
+  }
+
+  if (candidate.lastUpdated !== undefined && typeof candidate.lastUpdated !== "string") {
+    errors.push("lastUpdated must be a string");
+  }
+
+  if (errors.length > 0) {
+    return { valid: false, errors };
+  }
+
+  return { valid: true, config: candidate as unknown as DockerNodeConfig };
+}
+
+export function sanitizeDockerNodeConfigForResponse(config: DockerNodeConfig): DockerNodeConfig {
+  const clone = structuredClone(config);
+  const sensitivePattern = /API_KEY|SECRET|TOKEN|PASSWORD/i;
+
+  for (const [key, value] of Object.entries(clone.environment)) {
+    if (sensitivePattern.test(key) && typeof value === "string") {
+      clone.environment[key] = "***";
+    }
+  }
+
+  if (clone.host?.tlsKey) {
+    clone.host.tlsKey = "***";
+  }
+
+  return clone;
 }
 
 /** Version information tracked per node for plugin synchronization */

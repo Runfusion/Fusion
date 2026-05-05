@@ -39,7 +39,7 @@ describe("CentralDatabase", () => {
 
     it("should initialize schema version", () => {
       db.init();
-      expect(db.getSchemaVersion()).toBe(6);
+      expect(db.getSchemaVersion()).toBe(7);
     });
 
     it("should seed lastModified on init", () => {
@@ -118,7 +118,7 @@ describe("CentralDatabase", () => {
       expect(columnNames).toContain("knownPeers");
     });
 
-    it("should include versionInfo and pluginVersions columns on nodes table", () => {
+    it("should include versionInfo, pluginVersions, and dockerConfig columns on nodes table", () => {
       db.init();
 
       const columns = db.prepare("PRAGMA table_info(nodes)").all() as Array<{
@@ -127,6 +127,7 @@ describe("CentralDatabase", () => {
       const columnNames = columns.map((column) => column.name);
       expect(columnNames).toContain("versionInfo");
       expect(columnNames).toContain("pluginVersions");
+      expect(columnNames).toContain("dockerConfig");
     });
 
     it("should create peerNodes table with expected columns", () => {
@@ -213,7 +214,7 @@ describe("CentralDatabase", () => {
 
       db.init();
 
-      expect(db.getSchemaVersion()).toBe(6);
+      expect(db.getSchemaVersion()).toBe(7);
 
       const nodeColumns = db.prepare("PRAGMA table_info(nodes)").all() as Array<{ name: string }>;
       const nodeColumnNames = nodeColumns.map((column) => column.name);
@@ -278,7 +279,7 @@ describe("CentralDatabase", () => {
 
       db.init();
 
-      expect(db.getSchemaVersion()).toBe(6);
+      expect(db.getSchemaVersion()).toBe(7);
 
       const nodeColumns = db.prepare("PRAGMA table_info(nodes)").all() as Array<{ name: string }>;
       const nodeColumnNames = nodeColumns.map((column) => column.name);
@@ -295,7 +296,7 @@ describe("CentralDatabase", () => {
       expect(row?.pluginVersions).toBeNull();
     });
 
-    it("should migrate from v5 to v6 with managed Docker node schema", () => {
+    it("should migrate from v5 to v7 with managed Docker node schema and node docker config column", () => {
       const now = new Date().toISOString();
 
       db.exec(`
@@ -366,7 +367,10 @@ describe("CentralDatabase", () => {
 
       db.init();
 
-      expect(db.getSchemaVersion()).toBe(6);
+      expect(db.getSchemaVersion()).toBe(7);
+
+      const nodeColumns = db.prepare("PRAGMA table_info(nodes)").all() as Array<{ name: string }>;
+      expect(nodeColumns.map((column) => column.name)).toContain("dockerConfig");
 
       const columns = db.prepare("PRAGMA table_info(managedDockerNodes)").all() as Array<{ name: string }>;
       const columnNames = columns.map((column) => column.name);
@@ -424,6 +428,22 @@ describe("CentralDatabase", () => {
       expect(fromJson(row?.volumeMounts, [])).toEqual([]);
       expect(fromJson(row?.resourceSizing, {})).toEqual({});
       expect(fromJson(row?.extraClis, [])).toEqual([]);
+
+      db.prepare(
+        "INSERT INTO nodes (id, name, type, dockerConfig, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run(
+        "node_docker_config",
+        "docker-config-node",
+        "remote",
+        JSON.stringify({ image: "runfusion/fusion:latest", volumeMounts: [], environment: {}, configVersion: 1 }),
+        now,
+        now,
+      );
+
+      const insertedNode = db.prepare("SELECT dockerConfig FROM nodes WHERE id = ?").get("node_docker_config") as {
+        dockerConfig: string | null;
+      } | undefined;
+      expect(insertedNode?.dockerConfig).toBeTruthy();
     });
   });
 

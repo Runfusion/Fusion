@@ -1,11 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { NodeDetailModal } from "../NodeDetailModal";
-import type { ManagedDockerNodeInfo, NodeInfo, ProjectInfo } from "../../api";
+import type { DockerNodeConfig, ManagedDockerNodeInfo, NodeInfo, ProjectInfo } from "../../api";
 
 vi.mock("lucide-react", () => ({
   Activity: () => <span>activity</span>,
   Download: () => <span>download</span>,
+  Eye: () => <span>eye</span>,
+  EyeOff: () => <span>eye-off</span>,
   FileText: () => <span>file-text</span>,
   Pencil: () => <span>pencil</span>,
   Play: () => <span>play</span>,
@@ -63,6 +65,14 @@ const baseProps = {
   addToast: vi.fn(),
 };
 
+const dockerConfig: DockerNodeConfig = {
+  image: "runfusion/fusion:latest",
+  volumeMounts: [{ hostPath: "fusion-data", containerPath: "/app/.fusion", mode: "rw", type: "volume" }],
+  environment: { FUSION_TOKEN: "secret" },
+  configVersion: 1,
+  lastUpdated: "2026-01-01T00:00:00.000Z",
+};
+
 describe("NodeDetailModal docker section", () => {
   it("does not render docker section without managedDockerNode", () => {
     render(<NodeDetailModal {...baseProps} />);
@@ -117,6 +127,25 @@ describe("NodeDetailModal docker section", () => {
     await waitFor(() => expect(onFetchContainerStatus).toHaveBeenCalledWith("mdn-1"));
     expect(await screen.findByText("Stopped")).toBeInTheDocument();
     expect(screen.getByText("Exit code: 1")).toBeInTheDocument();
+  });
+
+  it("renders docker config editor and saves", async () => {
+    const onUpdateDockerConfig = vi.fn().mockResolvedValue({ ...dockerConfig, configVersion: 2 });
+    const onFetchDockerConfigDiff = vi.fn().mockResolvedValue({ persistedVersion: 1, deployedVersion: null, needsRecreate: true });
+    render(
+      <NodeDetailModal
+        {...baseProps}
+        node={makeNode({ dockerConfig })}
+        onUpdateDockerConfig={onUpdateDockerConfig}
+        onFetchDockerConfigDiff={onFetchDockerConfigDiff}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /docker configuration/i }));
+    expect(screen.getByText(/Config v1/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Needs Recreate")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /save docker config/i }));
+    await waitFor(() => expect(onUpdateDockerConfig).toHaveBeenCalledWith("node-1", expect.objectContaining({ image: "runfusion/fusion:latest" })));
   });
 
   it("masks sensitive env values and shows read-only mount", () => {

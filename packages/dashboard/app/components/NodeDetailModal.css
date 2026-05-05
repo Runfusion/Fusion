@@ -90,6 +90,65 @@
   justify-content: space-between;
 }
 
+.node-detail-modal__docker-config {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.node-detail-modal__docker-toggle {
+  align-self: flex-start;
+}
+
+.node-detail-modal__docker-toggle-icon--expanded {
+  transform: rotate(180deg);
+}
+
+.node-detail-modal__docker-config-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.node-detail-modal__docker-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.node-detail-modal__docker-row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-sm);
+}
+
+.node-detail-modal__docker-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.node-detail-modal__checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text-muted);
+}
+
+.node-detail-modal__docker-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+}
+
+.node-detail-modal__docker-recreate {
+  color: var(--color-warning);
+}
+
 .node-detail-modal__docker-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -315,6 +374,15 @@
 
   .docker-management__info-grid {
     grid-template-columns: 1fr;
+  }
+
+  .node-detail-modal__docker-row {
+    grid-template-columns: 1fr;
+  }
+
+  .node-detail-modal__docker-toggle,
+  .node-detail-modal__docker-config-content .btn {
+    min-height: calc(var(--space-lg) * 2.25);
   }
 
   .docker-management__env-list div {

@@ -23,7 +23,7 @@ export { toJson, toJsonNullable, fromJson };
 
 // ── Schema Definition ───────────────────────────────────────────────────
 
-const CENTRAL_SCHEMA_VERSION = 6;
+const CENTRAL_SCHEMA_VERSION = 7;
 
 const CENTRAL_SCHEMA_SQL = `
 -- Projects table (project registry)
@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   knownPeers TEXT,
   versionInfo TEXT,
   pluginVersions TEXT,
+  dockerConfig TEXT,
   maxConcurrent INTEGER NOT NULL DEFAULT 2,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL
@@ -253,6 +254,8 @@ CREATE INDEX IF NOT EXISTS idxManagedDockerNodesStatus ON managedDockerNodes(sta
 CREATE INDEX IF NOT EXISTS idxManagedDockerNodesNodeId ON managedDockerNodes(nodeId);
 `;
 
+// V7 migration adds dockerConfig persistence to nodes for Docker-managed runtime config updates.
+
 // ── Central Database Class ────────────────────────────────────────────────
 
 export class CentralDatabase {
@@ -332,6 +335,13 @@ export class CentralDatabase {
 
     if (currentVersion < 6) {
       this.db.exec(CENTRAL_SCHEMA_V6_MIGRATION_SQL);
+      migrated = true;
+    }
+
+    if (currentVersion < 7) {
+      if (!this.hasColumn("nodes", "dockerConfig")) {
+        this.db.exec("ALTER TABLE nodes ADD COLUMN dockerConfig TEXT");
+      }
       migrated = true;
     }
 

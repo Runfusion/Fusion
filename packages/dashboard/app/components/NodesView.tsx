@@ -20,7 +20,18 @@ interface NodesViewProps {
 }
 
 export function NodesView({ addToast, onClose }: NodesViewProps) {
-  const { nodes, loading, error, refresh, register, update, unregister, healthCheck } = useNodes();
+  const {
+    nodes,
+    loading,
+    error,
+    refresh,
+    register,
+    update,
+    unregister,
+    healthCheck,
+    patchDockerConfig,
+    fetchDockerDiff,
+  } = useNodes();
   const { projects } = useProjects();
   const { syncStatusMap, pushSettings, pullSettings, syncAuth, trackNode, getAuthSyncState, getAuthProviders } = useNodeSettingsSync();
   const {
@@ -264,6 +275,8 @@ export function NodesView({ addToast, onClose }: NodesViewProps) {
         managedDockerNode={selectedNode ? dockerNodeMap.get(selectedNode.id) : undefined}
         onFetchContainerStatus={getContainerStatus}
         onFetchLogs={getLogs}
+        onUpdateDockerConfig={patchDockerConfig}
+        onFetchDockerConfigDiff={fetchDockerDiff}
       />
     </div>
   );

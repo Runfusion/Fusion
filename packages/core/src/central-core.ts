@@ -54,6 +54,7 @@ import type {
   NodeVersionInfoInput,
   DockerNodeStatus,
   DockerHostConfig,
+  DockerNodeConfig,
   ManagedDockerNode,
   ManagedDockerNodeInput,
   ManagedDockerNodeUpdate,
@@ -66,6 +67,7 @@ import type {
   ProviderAuthEntry,
 } from "./types.js";
 import { getAppVersion, parseSemver } from "./app-version.js";
+import { validateDockerNodeConfig } from "./types.js";
 import { CentralDatabase, toJson, toJsonNullable, fromJson } from "./central-db.js";
 import { resolveGlobalDir } from "./global-settings.js";
 import { NodeConnection } from "./node-connection.js";
@@ -529,6 +531,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     apiKey?: string;
     capabilities?: AgentCapability[];
     maxConcurrent?: number;
+    dockerConfig?: DockerNodeConfig;
   }): Promise<NodeConfig> {
     this.ensureInitialized();
 
@@ -556,6 +559,20 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     }
 
     const now = new Date().toISOString();
+    let dockerConfig = input.dockerConfig;
+    if (dockerConfig !== undefined) {
+      const normalized = {
+        ...dockerConfig,
+        configVersion: dockerConfig.configVersion && dockerConfig.configVersion > 0 ? dockerConfig.configVersion : 1,
+        lastUpdated: now,
+      };
+      const validation = validateDockerNodeConfig(normalized);
+      if (!validation.valid) {
+        throw new Error(`Invalid Docker config: ${(validation.errors ?? []).join("; ")}`);
+      }
+      dockerConfig = normalized;
+    }
+
     const node: NodeConfig = {
       id: `node_${randomUUID().replace(/-/g, "").slice(0, 16)}`,
       name,
@@ -565,13 +582,14 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       status: "offline",
       capabilities: input.capabilities,
       maxConcurrent,
+      dockerConfig,
       createdAt: now,
       updatedAt: now,
     };
 
     this.db!.prepare(
-      `INSERT INTO nodes (id, name, type, url, apiKey, status, capabilities, maxConcurrent, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO nodes (id, name, type, url, apiKey, status, capabilities, dockerConfig, maxConcurrent, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       node.id,
       node.name,
@@ -580,6 +598,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       node.apiKey ?? null,
       node.status,
       toJsonNullable(node.capabilities),
+      toJsonNullable(node.dockerConfig),
       node.maxConcurrent,
       node.createdAt,
       node.updatedAt
@@ -696,6 +715,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
           knownPeers: string | null;
           versionInfo: string | null;
           pluginVersions: string | null;
+          dockerConfig: string | null;
           maxConcurrent: number;
           createdAt: string;
           updatedAt: string;
@@ -725,6 +745,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
           knownPeers: string | null;
           versionInfo: string | null;
           pluginVersions: string | null;
+          dockerConfig: string | null;
           maxConcurrent: number;
           createdAt: string;
           updatedAt: string;
@@ -753,6 +774,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       knownPeers: string | null;
       versionInfo: string | null;
       pluginVersions: string | null;
+      dockerConfig: string | null;
       maxConcurrent: number;
       createdAt: string;
       updatedAt: string;
@@ -766,7 +788,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    */
   async updateNode(
     id: string,
-    updates: Partial<Omit<NodeConfig, "id" | "createdAt">>
+    updates: Partial<Omit<NodeConfig, "id" | "createdAt">> & { dockerConfig?: DockerNodeConfig | null }
   ): Promise<NodeConfig> {
     this.ensureInitialized();
 
@@ -783,6 +805,24 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       createdAt: node.createdAt,
       updatedAt: now,
     };
+
+    if ("dockerConfig" in updates) {
+      if (updates.dockerConfig === null) {
+        updated.dockerConfig = undefined;
+      } else if (updates.dockerConfig !== undefined) {
+        const nextVersion = (node.dockerConfig?.configVersion ?? 0) + 1;
+        const normalized = {
+          ...updates.dockerConfig,
+          configVersion: nextVersion,
+          lastUpdated: now,
+        };
+        const validation = validateDockerNodeConfig(normalized);
+        if (!validation.valid) {
+          throw new Error(`Invalid Docker config: ${(validation.errors ?? []).join("; ")}`);
+        }
+        updated.dockerConfig = normalized;
+      }
+    }
 
     if (!Number.isFinite(updated.maxConcurrent) || updated.maxConcurrent < 1) {
       throw new Error(`Node maxConcurrent must be >= 1: ${updated.maxConcurrent}`);
@@ -807,6 +847,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
         knownPeers = ?,
         versionInfo = ?,
         pluginVersions = ?,
+        dockerConfig = ?,
         maxConcurrent = ?,
         updatedAt = ?
        WHERE id = ?`
@@ -821,6 +862,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       toJsonNullable(updated.knownPeers),
       toJsonNullable(updated.versionInfo),
       toJsonNullable(updated.pluginVersions),
+      toJsonNullable(updated.dockerConfig),
       updated.maxConcurrent,
       updated.updatedAt,
       id
@@ -2212,6 +2254,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     knownPeers: string | null;
     versionInfo: string | null;
     pluginVersions: string | null;
+    dockerConfig: string | null;
     maxConcurrent: number;
     createdAt: string;
     updatedAt: string;
@@ -2228,6 +2271,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       knownPeers: fromJson<string[]>(row.knownPeers),
       versionInfo: fromJson<NodeVersionInfo>(row.versionInfo),
       pluginVersions: fromJson<Record<string, string>>(row.pluginVersions),
+      dockerConfig: fromJson<DockerNodeConfig>(row.dockerConfig),
       maxConcurrent: row.maxConcurrent,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
@@ -2314,6 +2358,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
           knownPeers: string | null;
           versionInfo: string | null;
           pluginVersions: string | null;
+          dockerConfig: string | null;
           maxConcurrent: number;
           createdAt: string;
           updatedAt: string;

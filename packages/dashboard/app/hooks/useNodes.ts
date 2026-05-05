@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { NodeCreateInput, NodeInfo, NodeUpdateInput } from "../api";
+import type { DockerNodeConfig, NodeCreateInput, NodeInfo, NodeUpdateInput } from "../api";
 import {
+  fetchDockerConfigDiff,
+  fetchDockerNodeConfig,
   fetchNodes,
   registerNode,
+  updateDockerNodeConfig,
   updateNode,
   unregisterNode,
   checkNodeHealth,
@@ -17,6 +20,9 @@ export interface UseNodesResult {
   update: (id: string, updates: NodeUpdateInput) => Promise<NodeInfo>;
   unregister: (id: string) => Promise<void>;
   healthCheck: (id: string) => Promise<void>;
+  fetchDockerConfig: (nodeId: string) => Promise<DockerNodeConfig | null>;
+  patchDockerConfig: (nodeId: string, config: Partial<DockerNodeConfig>) => Promise<DockerNodeConfig>;
+  fetchDockerDiff: (nodeId: string) => Promise<{ persistedVersion: number; deployedVersion: number | null; needsRecreate: boolean }>;
 }
 
 const POLL_INTERVAL_MS = 10000; // 10 seconds
@@ -136,6 +142,26 @@ export function useNodes(): UseNodesResult {
     )));
   }, []);
 
+  const fetchDockerConfig = useCallback((nodeId: string) => fetchDockerNodeConfig(nodeId), []);
+
+  const patchDockerConfig = useCallback(async (nodeId: string, config: Partial<DockerNodeConfig>) => {
+    const updatedConfig = await updateDockerNodeConfig(nodeId, config);
+    setNodes((prev) => prev.map((node) => (
+      node.id === nodeId
+        ? { ...node, dockerConfig: updatedConfig }
+        : node
+    )));
+    return updatedConfig;
+  }, []);
+
+  const fetchDockerDiff = useCallback(async (nodeId: string) => {
+    const diff = await fetchDockerConfigDiff(nodeId);
+    if ("persistedVersion" in diff) {
+      return diff;
+    }
+    return { persistedVersion: 0, deployedVersion: null, needsRecreate: false };
+  }, []);
+
   return {
     nodes,
     loading,
@@ -145,5 +171,8 @@ export function useNodes(): UseNodesResult {
     update,
     unregister,
     healthCheck,
+    fetchDockerConfig,
+    patchDockerConfig,
+    fetchDockerDiff,
   };
 }
