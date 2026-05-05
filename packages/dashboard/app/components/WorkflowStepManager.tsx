@@ -10,6 +10,7 @@ import {
   deleteWorkflowStep,
   refineWorkflowStepPrompt,
   fetchWorkflowStepTemplates,
+  fetchPluginWorkflowStepTemplates,
   createWorkflowStepFromTemplate,
   fetchScripts,
   fetchModels,
@@ -36,6 +37,7 @@ import {
   BookOpen,
   Terminal,
   MessageSquare,
+  Puzzle,
 } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 
@@ -104,6 +106,8 @@ function getTemplateIcon(iconName: string | undefined) {
       return Globe;
     case "layout-grid":
       return LayoutGrid;
+    case "puzzle":
+      return Puzzle;
     default:
       return CheckCircle;
   }
@@ -124,6 +128,7 @@ function getCategoryClassName(category: string): string {
 export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: WorkflowStepManagerProps) {
   const [steps, setSteps] = useState<WorkflowStep[]>([]);
   const [templates, setTemplates] = useState<WorkflowStepTemplate[]>([]);
+  const [pluginTemplateOwners, setPluginTemplateOwners] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabId>("my-steps");
@@ -174,8 +179,13 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
   const loadTemplates = useCallback(async () => {
     try {
       setTemplatesLoading(true);
-      const response = await fetchWorkflowStepTemplates();
+      const [response, pluginResponse] = await Promise.all([
+        fetchWorkflowStepTemplates(),
+        fetchPluginWorkflowStepTemplates(),
+      ]);
       setTemplates(response.templates);
+      const owners = Object.fromEntries(pluginResponse.templates.map(({ pluginId, template }) => [template.id, pluginId]));
+      setPluginTemplateOwners(owners);
     } catch (err) {
       addToast(getErrorMessage(err) || "Failed to load templates", "error");
     } finally {
@@ -562,11 +572,14 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                                   <span className="wfm-template-name">
                                     {template.name}
                                   </span>
-                                  <span
-                                    className={categoryClassName}
-                                  >
+                                  <span className={categoryClassName}>
                                     {template.category}
                                   </span>
+                                  {pluginTemplateOwners[template.id] && (
+                                    <span className="wfm-badge-category wfm-badge-category-plugin">
+                                      {pluginTemplateOwners[template.id]}
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="wfm-template-desc">
                                   {template.description}
@@ -647,6 +660,11 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                                 <div className="wfm-template-title-row">
                                   <span className="wfm-template-name">{template.name}</span>
                                   <span className={categoryClassName}>{template.category}</span>
+                                  {pluginTemplateOwners[template.id] && (
+                                    <span className="wfm-badge-category wfm-badge-category-plugin">
+                                      {pluginTemplateOwners[template.id]}
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="wfm-template-desc">{template.description}</div>
                                 <button

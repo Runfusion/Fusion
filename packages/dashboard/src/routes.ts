@@ -12,7 +12,7 @@ import * as nodeFs from "node:fs";
 import os from "node:os";
 import v8 from "node:v8";
 
-import type { TaskStore, ScheduleType, ActivityEventType, ModelPreset, RoutineTriggerType } from "@fusion/core";
+import type { TaskStore, ScheduleType, ActivityEventType, ModelPreset, RoutineTriggerType, WorkflowStepTemplate } from "@fusion/core";
 import {
   type Task,
   type PiExtensionEntry,
@@ -2876,7 +2876,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.get("/workflow-step-templates", async (_req, res) => {
     try {
       const { WORKFLOW_STEP_TEMPLATES } = await import("@fusion/core");
-      res.json({ templates: WORKFLOW_STEP_TEMPLATES });
+      const pluginTemplates = options?.pluginRunner?.getPluginWorkflowStepTemplates?.() ?? [];
+      res.json({
+        templates: [
+          ...WORKFLOW_STEP_TEMPLATES,
+          ...pluginTemplates.map(({ template }) => template),
+        ],
+      });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
@@ -2894,7 +2900,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { WORKFLOW_STEP_TEMPLATES } = await import("@fusion/core");
-      const template = WORKFLOW_STEP_TEMPLATES.find((t) => t.id === req.params.id);
+      let template: WorkflowStepTemplate | undefined = WORKFLOW_STEP_TEMPLATES.find((t) => t.id === req.params.id);
+
+      if (!template) {
+        const pluginTemplates = options?.pluginRunner?.getPluginWorkflowStepTemplates?.() ?? [];
+        template = pluginTemplates.find(({ template: pluginTemplate }) => pluginTemplate.id === req.params.id)?.template;
+      }
 
       if (!template) {
         throw notFound(`Template '${req.params.id}' not found`);
@@ -2916,6 +2927,18 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       });
 
       res.status(201).json(step);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  router.get("/plugin-workflow-step-templates", (_req, res) => {
+    try {
+      const templates = options?.pluginRunner?.getPluginWorkflowStepTemplates?.() ?? [];
+      res.json({ templates });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

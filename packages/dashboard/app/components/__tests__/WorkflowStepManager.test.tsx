@@ -68,6 +68,31 @@ vi.mock("../../api", () => ({
         icon: "layout-grid",
         toolMode: "readonly",
       },
+      {
+        id: "plugin:agent-browser:workflow-check",
+        name: "Plugin Workflow Check",
+        description: "Plugin contributed workflow validation",
+        prompt: "Run plugin workflow check",
+        category: "Plugin",
+        icon: "puzzle",
+        toolMode: "coding",
+      },
+    ],
+  })),
+  fetchPluginWorkflowStepTemplates: vi.fn(() => Promise.resolve({
+    templates: [
+      {
+        pluginId: "agent-browser",
+        template: {
+          id: "plugin:agent-browser:workflow-check",
+          name: "Plugin Workflow Check",
+          description: "Plugin contributed workflow validation",
+          prompt: "Run plugin workflow check",
+          category: "Plugin",
+          icon: "puzzle",
+          toolMode: "coding",
+        },
+      },
     ],
   })),
   createWorkflowStepFromTemplate: vi.fn((templateId?: string) => {
@@ -157,6 +182,7 @@ import {
   deleteWorkflowStep,
   refineWorkflowStepPrompt,
   fetchWorkflowStepTemplates,
+  fetchPluginWorkflowStepTemplates,
   createWorkflowStepFromTemplate,
   fetchModels,
 } from "../../api";
@@ -779,6 +805,19 @@ describe("WorkflowStepManager templates tab", () => {
       expect(createWorkflowStepFromTemplate).toHaveBeenCalledWith("frontend-ux-design", undefined);
       expect(addToast).toHaveBeenCalledWith("Added Frontend UX Design workflow step", "success");
     });
+  });
+
+  it("shows plugin template badge and puzzle icon", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    fireEvent.click(await screen.findByTestId("tab-templates"));
+
+    const templateCard = await screen.findByTestId("template-plugin:agent-browser:workflow-check");
+    expect(templateCard.querySelector(".lucide-puzzle")).toBeInTheDocument();
+    expect(within(templateCard).getByText("agent-browser")).toBeInTheDocument();
+    expect(fetchPluginWorkflowStepTemplates).toHaveBeenCalled();
   });
 });
 

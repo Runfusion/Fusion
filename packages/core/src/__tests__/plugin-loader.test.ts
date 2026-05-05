@@ -1895,6 +1895,7 @@ export default plugin;
       loader = new PluginLoader({ pluginStore, taskStore: mockTaskStore });
       expect(loader.getPluginSkills()).toEqual([]);
       expect(loader.getPluginWorkflowSteps()).toEqual([]);
+      expect(loader.getPluginWorkflowStepTemplates()).toEqual([]);
       expect(loader.getPluginPromptContributions()).toEqual([]);
       expect(loader.getPluginSetupInfo()).toEqual([]);
     });
@@ -1941,6 +1942,19 @@ export default plugin;
           step: { stepId: "wf", name: "WF", description: "desc", mode: "prompt", prompt: "check" },
         },
       ]);
+      expect(loader.getPluginWorkflowStepTemplates()).toEqual([
+        {
+          pluginId: "contrib-plugin",
+          template: expect.objectContaining({
+            id: "plugin:contrib-plugin:wf",
+            name: "WF",
+            description: "desc",
+            prompt: "check",
+            category: "Plugin",
+            icon: "puzzle",
+          }),
+        },
+      ]);
       expect(loader.getPluginPromptContributions()).toEqual([
         {
           pluginId: "contrib-plugin",
@@ -1956,6 +1970,48 @@ export default plugin;
           pluginId: "contrib-plugin",
           manifest: { binaryName: "agent-browser", description: "Binary" },
           hooks: { checkSetup },
+        },
+      ]);
+    });
+
+    it("getPluginWorkflowStepTemplates maps multiple plugins with prefixed ids", async () => {
+      await pluginStore.init();
+      loader = new PluginLoader({ pluginStore, taskStore: mockTaskStore });
+      (loader as any).plugins.set("alpha", {
+        manifest: makeManifest({ id: "alpha" }),
+        state: "started",
+        hooks: {},
+        workflowSteps: [{ stepId: "one", name: "One", description: "First", mode: "script", scriptName: "check" }],
+      } as FusionPlugin);
+      (loader as any).plugins.set("beta", {
+        manifest: makeManifest({ id: "beta" }),
+        state: "started",
+        hooks: {},
+        workflowSteps: [{ stepId: "two", name: "Two", description: "Second", mode: "prompt" }],
+      } as FusionPlugin);
+
+      expect(loader.getPluginWorkflowStepTemplates()).toEqual([
+        {
+          pluginId: "alpha",
+          template: expect.objectContaining({
+            id: "plugin:alpha:one",
+            name: "One",
+            description: "First",
+            prompt: "",
+            category: "Plugin",
+            icon: "puzzle",
+          }),
+        },
+        {
+          pluginId: "beta",
+          template: expect.objectContaining({
+            id: "plugin:beta:two",
+            name: "Two",
+            description: "Second",
+            prompt: "",
+            category: "Plugin",
+            icon: "puzzle",
+          }),
         },
       ]);
     });

@@ -214,6 +214,7 @@ export interface ServerOptions {
   /** Optional PluginRunner for plugin hooks, routes, and lifecycle operations */
   pluginRunner?: {
     getPluginRoutes(): Array<{ pluginId: string; route: import("@fusion/core").PluginRouteDefinition }>;
+    getPluginWorkflowStepTemplates?(): Array<{ pluginId: string; template: import("@fusion/core").WorkflowStepTemplate }>;
     getRuntimeById?(runtimeId: string): unknown;
     createRuntimeContext?(pluginId: string): Promise<unknown>;
     reloadPlugin?(pluginId: string): Promise<unknown>;

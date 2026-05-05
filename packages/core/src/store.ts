@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType } from "./types.js";
+import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType, WorkflowStepTemplate } from "./types.js";
 import { VALID_TRANSITIONS, DEFAULT_SETTINGS, isGlobalSettingsKey, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { normalizeTaskPriority } from "./task-priority.js";
 import { GlobalSettingsStore } from "./global-settings.js";
@@ -483,6 +483,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private configLock: Promise<void> = Promise.resolve();
   /** Cached workflow steps — invalidated on create/update/delete */
   private workflowStepsCache: import("./types.js").WorkflowStep[] | null = null;
+  /** Plugin-contributed workflow step templates injected by engine runtime. */
+  private _pluginWorkflowStepTemplates: Array<{ pluginId: string; template: WorkflowStepTemplate }> = [];
   /** Global settings store (`~/.fusion/settings.json`) */
   private globalSettingsStore: GlobalSettingsStore;
   /** Polling interval for change detection */
@@ -2129,6 +2131,14 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     for (const rawId of stepIds) {
       const stepId = rawId.trim();
       if (!stepId) continue;
+
+      if (stepId.startsWith("plugin:")) {
+        if (!seen.has(stepId)) {
+          seen.add(stepId);
+          resolved.push(stepId);
+        }
+        continue;
+      }
 
       const template = this.getBuiltInWorkflowTemplate(stepId);
       const resolvedId = template
@@ -6008,6 +6018,37 @@ ${stepsSection}`;
     });
   }
 
+  setPluginWorkflowStepTemplates(templates: Array<{ pluginId: string; template: WorkflowStepTemplate }>): void {
+    this._pluginWorkflowStepTemplates = [...templates];
+    this.workflowStepsCache = null;
+  }
+
+  private resolvePluginWorkflowStep(id: string): import("./types.js").WorkflowStep | undefined {
+    const match = id.match(/^plugin:([^:]+):(.+)$/);
+    if (!match) return undefined;
+
+    const [, pluginId, stepId] = match;
+    const entry = this._pluginWorkflowStepTemplates.find(
+      ({ pluginId: candidatePluginId, template }) => candidatePluginId === pluginId && template.id === id,
+    );
+    if (!entry) return undefined;
+
+    const now = new Date().toISOString();
+    return {
+      id,
+      templateId: stepId,
+      name: entry.template.name,
+      description: entry.template.description,
+      mode: "prompt",
+      phase: "pre-merge",
+      prompt: entry.template.prompt,
+      toolMode: entry.template.toolMode,
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
   /**
    * List all workflow step definitions from workflow_steps.
    * Results are cached and invalidated on create/update/delete.
@@ -6031,7 +6072,11 @@ ${stepsSection}`;
       createdAt: string;
       updatedAt: string;
     }>;
-    this.workflowStepsCache = rows.map((row) => this.applyLegacyWorkflowStepOverrides(this.toStoredWorkflowStep(row)));
+    const storedSteps = rows.map((row) => this.applyLegacyWorkflowStepOverrides(this.toStoredWorkflowStep(row)));
+    const pluginSteps = this._pluginWorkflowStepTemplates
+      .map(({ template }) => this.resolvePluginWorkflowStep(template.id))
+      .filter((step): step is import("./types.js").WorkflowStep => Boolean(step));
+    this.workflowStepsCache = [...storedSteps, ...pluginSteps];
     return this.workflowStepsCache;
   }
 
@@ -6039,6 +6084,13 @@ ${stepsSection}`;
    * Get a single workflow step by ID.
    */
   async getWorkflowStep(id: string): Promise<import("./types.js").WorkflowStep | undefined> {
+    if (id.startsWith("plugin:")) {
+      const pluginStep = this.resolvePluginWorkflowStep(id);
+      if (pluginStep) {
+        return pluginStep;
+      }
+    }
+
     const byId = this.db.prepare("SELECT * FROM workflow_steps WHERE id = ?").get(id) as
       | {
           id: string;

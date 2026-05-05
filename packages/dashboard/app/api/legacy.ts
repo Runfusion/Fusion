@@ -4253,7 +4253,16 @@ export function fetchWorkflowStepTemplates(): Promise<{ templates: import("@fusi
   return api<{ templates: import("@fusion/core").WorkflowStepTemplate[] }>("/workflow-step-templates");
 }
 
-/** Create a workflow step from a built-in template */
+/** Fetch plugin-contributed workflow step templates */
+export function fetchPluginWorkflowStepTemplates(): Promise<{
+  templates: Array<{ pluginId: string; template: import("@fusion/core").WorkflowStepTemplate }>;
+}> {
+  return api<{
+    templates: Array<{ pluginId: string; template: import("@fusion/core").WorkflowStepTemplate }>;
+  }>("/plugin-workflow-step-templates");
+}
+
+/** Create a workflow step from a built-in or plugin template */
 export function createWorkflowStepFromTemplate(templateId: string, projectId?: string): Promise<WorkflowStep> {
   return api<WorkflowStep>(withProjectId(`/workflow-step-templates/${encodeURIComponent(templateId)}/create`, projectId), {
     method: "POST",

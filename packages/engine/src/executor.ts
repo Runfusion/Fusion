@@ -2004,6 +2004,12 @@ export class TaskExecutor {
     // Fetch settings early — needed for worktree naming and later configuration
     const settings = await this.store.getSettings();
 
+    // Keep runtime plugin workflow step templates synchronized into TaskStore.
+    // TaskStore resolves plugin-prefixed workflow IDs from this injected cache
+    // to avoid a PluginLoader↔TaskStore circular dependency.
+    const pluginWorkflowStepTemplates = this.options.pluginRunner?.getPluginWorkflowStepTemplates() ?? [];
+    this.store.setPluginWorkflowStepTemplates(pluginWorkflowStepTemplates);
+
     // Read execution mode to determine whether to skip review and workflow steps
     const executionMode = task.executionMode ?? "standard";
 
@@ -4927,7 +4933,11 @@ ${failureFeedback}
         return "deferred-paused";
       }
 
-      await this.store.logEntry(task.id, `[pre-merge] Starting workflow step: ${ws.name} (${stepMode} mode)`);
+      if (ws.id.startsWith("plugin:")) {
+        await this.store.logEntry(task.id, `[pre-merge] Starting plugin workflow step: ${ws.name} (${ws.id})`);
+      } else {
+        await this.store.logEntry(task.id, `[pre-merge] Starting workflow step: ${ws.name} (${stepMode} mode)`);
+      }
       executorLog.log(`${task.id} — [pre-merge] running workflow step: ${ws.name} (${stepMode} mode)`);
 
       const startedAt = new Date().toISOString();

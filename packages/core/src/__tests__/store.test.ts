@@ -8838,6 +8838,105 @@ Task with acceptance criteria
       expect(found).toBeUndefined();
     });
 
+    it("should resolve plugin workflow steps from injected templates", async () => {
+      store.setPluginWorkflowStepTemplates([
+        {
+          pluginId: "my-plugin",
+          template: {
+            id: "plugin:my-plugin:my-step",
+            name: "My Plugin Step",
+            description: "Plugin-provided step",
+            prompt: "Run plugin checks",
+            toolMode: "readonly",
+            category: "Plugin",
+            icon: "puzzle",
+          },
+        },
+      ]);
+
+      const step = await store.getWorkflowStep("plugin:my-plugin:my-step");
+      expect(step).toMatchObject({
+        id: "plugin:my-plugin:my-step",
+        templateId: "my-step",
+        name: "My Plugin Step",
+        mode: "prompt",
+        phase: "pre-merge",
+        enabled: true,
+      });
+    });
+
+    it("should list db workflow steps and plugin workflow steps together", async () => {
+      const dbStep = await store.createWorkflowStep({ name: "DB Step", description: "stored" });
+      store.setPluginWorkflowStepTemplates([
+        {
+          pluginId: "my-plugin",
+          template: {
+            id: "plugin:my-plugin:my-step",
+            name: "My Plugin Step",
+            description: "Plugin-provided step",
+            prompt: "Run plugin checks",
+            toolMode: "coding",
+            category: "Plugin",
+            icon: "puzzle",
+          },
+        },
+      ]);
+
+      const steps = await store.listWorkflowSteps();
+      expect(steps.map((step) => step.id)).toEqual([dbStep.id, "plugin:my-plugin:my-step"]);
+    });
+
+    it("should list disabled plugin steps without auto-materializing them", async () => {
+      store.setPluginWorkflowStepTemplates([
+        {
+          pluginId: "my-plugin",
+          template: {
+            id: "plugin:my-plugin:disabled-step",
+            name: "Disabled Plugin Step",
+            description: "Plugin-provided step",
+            prompt: "Run plugin checks",
+            toolMode: "readonly",
+            category: "Plugin",
+            icon: "puzzle",
+            enabled: false,
+          },
+        },
+      ]);
+
+      const listed = await store.listWorkflowSteps();
+      expect(listed.find((step) => step.id === "plugin:my-plugin:disabled-step")?.enabled).toBe(false);
+
+      const task = await store.createTask({
+        description: "Task with plugin-only workflow steps",
+        enabledWorkflowSteps: ["plugin:my-plugin:disabled-step"],
+      });
+      expect(task.enabledWorkflowSteps).toEqual(["plugin:my-plugin:disabled-step"]);
+    });
+
+    it("should keep plugin workflow IDs unchanged while materializing built-in templates", async () => {
+      store.setPluginWorkflowStepTemplates([
+        {
+          pluginId: "my-plugin",
+          template: {
+            id: "plugin:my-plugin:my-step",
+            name: "My Plugin Step",
+            description: "Plugin-provided step",
+            prompt: "Run plugin checks",
+            toolMode: "readonly",
+            category: "Plugin",
+            icon: "puzzle",
+          },
+        },
+      ]);
+
+      const task = await store.createTask({
+        description: "Task with mixed workflow steps",
+        enabledWorkflowSteps: ["plugin:my-plugin:my-step", "browser-verification"],
+      });
+
+      expect(task.enabledWorkflowSteps).toEqual(["plugin:my-plugin:my-step", "WS-001"]);
+    });
+
     it("should update a workflow step", async () => {
       const ws = await store.createWorkflowStep({
         name: "Original",

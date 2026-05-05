@@ -266,6 +266,7 @@ function createMockStore() {
     updateStep: vi.fn().mockResolvedValue({}),
     getWorkflowStep: vi.fn().mockResolvedValue(undefined),
     listWorkflowSteps: vi.fn().mockResolvedValue([]),
+    setPluginWorkflowStepTemplates: vi.fn(),
     appendAgentLog: vi.fn().mockResolvedValue(undefined),
     getFusionDir: vi.fn().mockReturnValue("/tmp/test/.fusion"),
     clearStaleBaseBranchReferences: vi.fn().mockReturnValue([]),
@@ -7732,6 +7733,88 @@ describe("Workflow Steps Execution", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
   });
 
+  it("executes plugin-prefixed workflow steps", async () => {
+    const store = createMockStore();
+
+    store.getTask.mockResolvedValue({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["plugin:agent-browser:workflow-check"],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    store.getWorkflowStep.mockResolvedValue({
+      id: "plugin:agent-browser:workflow-check",
+      name: "Plugin Workflow Check",
+      description: "Plugin contributed step",
+      prompt: "Run plugin check",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    let callIdx = 0;
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      callIdx++;
+      if (callIdx === 1) {
+        const customTools = opts.customTools || [];
+        return {
+          session: {
+            prompt: vi.fn().mockImplementation(async () => {
+              const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
+              if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
+            }),
+            dispose: vi.fn(),
+            subscribe: vi.fn(),
+            on: vi.fn(),
+            sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+            state: {},
+          },
+        };
+      }
+
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          subscribe: vi.fn(),
+          on: vi.fn(),
+          state: {},
+        },
+      };
+    }) as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["plugin:agent-browser:workflow-check"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(store.setPluginWorkflowStepTemplates).toHaveBeenCalledWith([]);
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-001",
+      "[pre-merge] Starting plugin workflow step: Plugin Workflow Check (plugin:agent-browser:workflow-check)",
+    );
+  });
+
   it("runs browser verification workflow steps with coding tools", async () => {
     const store = createMockStore();
 
@@ -8272,6 +8355,152 @@ describe("Workflow Steps Execution", () => {
     );
     const updatePayloads = store.updateTask.mock.calls.map((call: any[]) => call[1]);
     expect(JSON.stringify(updatePayloads)).not.toContain("all tests passed");
+  });
+
+  it("executes plugin script-mode workflow step successfully", async () => {
+    const store = createMockStore();
+
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      scripts: { test: "echo 'all tests passed'" },
+    });
+
+    store.getTask.mockResolvedValue({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["plugin:agent-browser:script-check"],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    store.getWorkflowStep.mockResolvedValue({
+      id: "plugin:agent-browser:script-check",
+      name: "Plugin Script Check",
+      description: "Execute plugin script",
+      mode: "script",
+      prompt: "",
+      scriptName: "test",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    mockedExecSync.mockImplementation((cmd: string | string[]) => {
+      if (typeof cmd === "string" && cmd.includes("echo")) return Buffer.from("all tests passed\n");
+      return Buffer.from("");
+    });
+
+    createAgentWithTaskDone();
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["plugin:agent-browser:script-check"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-001",
+      expect.objectContaining({
+        workflowStepResults: expect.arrayContaining([
+          expect.objectContaining({
+            workflowStepId: "plugin:agent-browser:script-check",
+            status: "passed",
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it("executes mixed db and plugin workflow steps in sequence", async () => {
+    const store = createMockStore();
+
+    store.getTask.mockResolvedValue({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001", "plugin:agent-browser:workflow-check"],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    store.getWorkflowStep.mockImplementation(async (id: string) => id === "WS-001"
+      ? {
+        id: "WS-001", name: "DB Step", description: "DB", prompt: "Run DB step", enabled: true,
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      }
+      : {
+        id: "plugin:agent-browser:workflow-check", name: "Plugin Step", description: "Plugin", prompt: "Run plugin step", enabled: true,
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      });
+
+    let callIdx = 0;
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      callIdx++;
+      if (callIdx === 1) {
+        const customTools = opts.customTools || [];
+        return { session: { prompt: vi.fn().mockImplementation(async () => {
+          const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
+          if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
+        }), dispose: vi.fn(), subscribe: vi.fn(), on: vi.fn(), sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") }, state: {} } };
+      }
+      return { session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), subscribe: vi.fn(), on: vi.fn(), state: {} } };
+    }) as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+    await executor.execute({
+      id: "FN-001", title: "Test", description: "Test task", column: "in-progress", dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }], currentStep: 0, log: [],
+      enabledWorkflowSteps: ["WS-001", "plugin:agent-browser:workflow-check"], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    expect(store.getWorkflowStep).toHaveBeenNthCalledWith(1, "WS-001");
+    expect(store.getWorkflowStep).toHaveBeenNthCalledWith(2, "plugin:agent-browser:workflow-check");
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(3);
+  });
+
+  it("skips missing plugin workflow step IDs with warning log", async () => {
+    const store = createMockStore();
+
+    store.getTask.mockResolvedValue({
+      id: "FN-001", title: "Test", description: "Test task", column: "in-progress", dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }], currentStep: 0, log: [],
+      enabledWorkflowSteps: ["plugin:missing:step"], prompt: "# test", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    store.getWorkflowStep.mockResolvedValue(undefined);
+    createAgentWithTaskDone();
+
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+    await executor.execute({
+      id: "FN-001", title: "Test", description: "Test task", column: "in-progress", dependencies: [],
+      steps: [{ name: "Preflight", status: "pending" }], currentStep: 0, log: [], enabledWorkflowSteps: ["plugin:missing:step"],
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "[pre-merge] Workflow step plugin:missing:step not found — skipping");
   });
 
   it("sends task back to in-progress when script-mode workflow step fails with exhausted retries", async () => {

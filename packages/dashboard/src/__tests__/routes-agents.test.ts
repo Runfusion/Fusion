@@ -1552,15 +1552,17 @@ describe("POST /agents/generate/spec with projectId scoping", () => {
 
 describe("GET /workflow-step-templates", () => {
   let store: TaskStore;
+  let pluginRunner: { getPluginWorkflowStepTemplates?: () => Array<{ pluginId: string; template: { id: string; name: string; description: string; prompt: string; toolMode: "readonly" | "coding"; category: string; icon: string } }> };
 
   beforeEach(() => {
     store = createMockStore();
+    pluginRunner = {};
   });
 
   function buildApp() {
     const app = express();
     app.use(express.json());
-    app.use("/api", createApiRoutes(store));
+    app.use("/api", createApiRoutes(store, { pluginRunner: pluginRunner as any }));
     return app;
   }
 
@@ -1595,19 +1597,67 @@ describe("GET /workflow-step-templates", () => {
     expect(ids).toContain("browser-verification");
     expect(ids).toContain("frontend-ux-design");
   });
+
+  it("merges plugin templates into workflow-step-templates response", async () => {
+    pluginRunner.getPluginWorkflowStepTemplates = () => [
+      {
+        pluginId: "my-plugin",
+        template: {
+          id: "plugin:my-plugin:my-step",
+          name: "My Plugin Step",
+          description: "Plugin contributed step",
+          prompt: "Run plugin checks",
+          toolMode: "readonly",
+          category: "Plugin",
+          icon: "puzzle",
+        },
+      },
+    ];
+
+    const res = await GET(buildApp(), "/api/workflow-step-templates");
+
+    expect(res.status).toBe(200);
+    expect(res.body.templates.some((t: { id: string }) => t.id === "plugin:my-plugin:my-step")).toBe(true);
+  });
+
+  it("returns plugin-only templates endpoint", async () => {
+    pluginRunner.getPluginWorkflowStepTemplates = () => [
+      {
+        pluginId: "my-plugin",
+        template: {
+          id: "plugin:my-plugin:my-step",
+          name: "My Plugin Step",
+          description: "Plugin contributed step",
+          prompt: "Run plugin checks",
+          toolMode: "readonly",
+          category: "Plugin",
+          icon: "puzzle",
+        },
+      },
+    ];
+
+    const res = await GET(buildApp(), "/api/plugin-workflow-step-templates");
+
+    expect(res.status).toBe(200);
+    expect(res.body.templates).toHaveLength(1);
+    expect(res.body.templates[0].pluginId).toBe("my-plugin");
+    expect(res.body.templates[0].template.id).toBe("plugin:my-plugin:my-step");
+  });
 });
 
 describe("POST /workflow-step-templates/:id/create", () => {
   let store: TaskStore;
+  let pluginRunner: { getPluginWorkflowStepTemplates?: () => Array<{ pluginId: string; template: { id: string; name: string; description: string; prompt: string; toolMode: "readonly" | "coding"; category: string; icon: string } }> };
 
   beforeEach(() => {
     store = createMockStore();
+    pluginRunner = {};
   });
 
   function buildApp() {
     const app = express();
     app.use(express.json());
-    app.use("/api", createApiRoutes(store));
+    app.use("/api", createApiRoutes(store, { pluginRunner: pluginRunner as any }));
     return app;
   }
 
@@ -1699,6 +1749,45 @@ describe("POST /workflow-step-templates/:id/create", () => {
       toolMode: "readonly",
       enabled: true,
     });
+  });
+
+  it("creates workflow step from plugin template", async () => {
+    pluginRunner.getPluginWorkflowStepTemplates = () => [
+      {
+        pluginId: "my-plugin",
+        template: {
+          id: "plugin:my-plugin:my-step",
+          name: "My Plugin Step",
+          description: "Plugin contributed step",
+          prompt: "Run plugin checks",
+          toolMode: "coding",
+          category: "Plugin",
+          icon: "puzzle",
+        },
+      },
+    ];
+    (store.listWorkflowSteps as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+    (store.createWorkflowStep as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: "WS-999",
+      templateId: "plugin:my-plugin:my-step",
+      name: "My Plugin Step",
+      description: "Plugin contributed step",
+      prompt: "Run plugin checks",
+      toolMode: "coding",
+      enabled: true,
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-01",
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/workflow-step-templates/plugin:my-plugin:my-step/create", JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(201);
+    expect(store.createWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
+      templateId: "plugin:my-plugin:my-step",
+      name: "My Plugin Step",
+    }));
   });
 
   it("returns 404 for non-existent template", async () => {

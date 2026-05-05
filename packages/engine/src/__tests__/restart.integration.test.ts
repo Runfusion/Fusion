@@ -212,6 +212,7 @@ function createMockStore(overrides: Record<string, any> = {}) {
     parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
     parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
     getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS }),
+    setPluginWorkflowStepTemplates: vi.fn(),
     getRootDir: vi.fn().mockReturnValue("/tmp/root"),
     getFusionDir: vi.fn().mockReturnValue("/tmp/root/.fusion"),
     getTasksDir: vi.fn().mockReturnValue("/tmp/root/.fusion/tasks"),

@@ -321,6 +321,8 @@ export interface WorkflowStepTemplate {
   category: string;
   /** Optional icon identifier for UI (e.g., "file-text", "shield") */
   icon?: string;
+  /** Optional default enabled state for plugin-provided templates. */
+  enabled?: boolean;
 }
 
 /** Built-in workflow step templates available for one-click creation. */

@@ -14,6 +14,7 @@ import { copyFile, rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { EventEmitter } from "node:events";
 import type { TaskStore } from "./store.js";
+import type { WorkflowStepTemplate } from "./types.js";
 import { PluginStore } from "./plugin-store.js";
 import type {
   FusionPlugin,
@@ -872,6 +873,24 @@ export class PluginLoader extends EventEmitter<{
       }
     }
     return steps;
+  }
+
+  /**
+   * Get all workflow step templates derived from loaded plugin contributions.
+   */
+  getPluginWorkflowStepTemplates(): Array<{ pluginId: string; template: WorkflowStepTemplate }> {
+    return this.getPluginWorkflowSteps().map(({ pluginId, step }) => ({
+      pluginId,
+      template: {
+        id: `plugin:${pluginId}:${step.stepId}`,
+        name: step.name,
+        description: step.description,
+        prompt: step.prompt ?? "",
+        toolMode: step.toolMode,
+        category: "Plugin",
+        icon: "puzzle",
+      },
+    }));
   }
 
   /**
