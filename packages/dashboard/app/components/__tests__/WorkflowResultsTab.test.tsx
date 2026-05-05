@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { WorkflowResultsTab } from "../WorkflowResultsTab";
 import { fetchWorkflowSteps } from "../../api";
+import { loadAllAppCssBaseOnly } from "../../test/cssFixture";
 import type { WorkflowStep, WorkflowStepResult } from "@fusion/core";
 
 vi.mock("../../api", () => ({
@@ -794,6 +795,28 @@ describe("WorkflowResultsTab", () => {
       // The getStatusColor function should not exist (removed to use CSS classes)
       expect(componentSource).not.toMatch(/function getStatusColor/);
       expect(componentSource).not.toMatch(/getStatusColor\(/);
+    });
+
+    it("keeps workflow tab CSS selector blocks free of raw color literals", () => {
+      const css = loadAllAppCssBaseOnly();
+      const selectors = [
+        ".workflow-result-badge--passed",
+        ".workflow-result-badge--failed",
+        ".workflow-result-badge--pending",
+        ".phase-badge--pre-merge",
+        ".phase-badge--post-merge",
+        ".workflow-result-output",
+        ".workflow-live-log-tool",
+        ".workflow-live-log-tool-result",
+        ".workflow-live-log-tool-error",
+        ".workflow-output-modal-overlay",
+      ];
+
+      for (const selector of selectors) {
+        const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const match = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
+        expect(match?.[1] ?? "").not.toMatch(/#[0-9a-fA-F]{3,8}|rgba?\(/);
+      }
     });
   });
 

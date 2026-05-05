@@ -502,7 +502,8 @@ export function WorkflowResultsTab({
                   <div className="workflow-result-output-header">
                     <span className="workflow-result-output-label">Output:</span>
                     <button
-                      className="workflow-result-toggle"
+                      type="button"
+                      className="btn btn-sm workflow-result-toggle"
                       onClick={() => toggleOutput(result.workflowStepId)}
                       data-testid={`workflow-result-toggle-${result.workflowStepId}`}
                     >
@@ -519,7 +520,8 @@ export function WorkflowResultsTab({
                     {isExpanded && (
                       <>
                         <button
-                          className="workflow-result-mode-toggle"
+                          type="button"
+                          className="btn btn-sm workflow-result-mode-toggle"
                           onClick={() => toggleRenderMode(result.workflowStepId)}
                           data-testid={`workflow-result-mode-toggle-${result.workflowStepId}`}
                           title={(renderModes[result.workflowStepId] ?? "markdown") === "markdown" ? "Switch to plain text" : "Switch to markdown"}
@@ -527,7 +529,8 @@ export function WorkflowResultsTab({
                           {(renderModes[result.workflowStepId] ?? "markdown") === "markdown" ? "Markdown" : "Plain"}
                         </button>
                         <button
-                          className="workflow-result-expand-toggle"
+                          type="button"
+                          className="btn btn-icon btn-sm workflow-result-expand-toggle"
                           onClick={() => openExpandedView(result.workflowStepId)}
                           data-testid={`workflow-result-expand-${result.workflowStepId}`}
                           title="Expand output"
@@ -663,7 +666,8 @@ export function WorkflowResultsTab({
                 </div>
                 <div className="workflow-output-modal-controls">
                   <button
-                    className="workflow-result-mode-toggle"
+                    type="button"
+                    className="btn btn-sm workflow-result-mode-toggle"
                     onClick={() => toggleRenderMode(result.workflowStepId)}
                     data-testid="workflow-output-modal-mode-toggle"
                     title={renderMode === "markdown" ? "Switch to plain text" : "Switch to markdown"}
@@ -671,7 +675,8 @@ export function WorkflowResultsTab({
                     {renderMode === "markdown" ? "Markdown" : "Plain"}
                   </button>
                   <button
-                    className="workflow-output-modal-close"
+                    type="button"
+                    className="btn btn-icon btn-sm workflow-output-modal-close"
                     onClick={closeExpandedView}
                     data-testid="workflow-output-modal-close"
                     aria-label="Close"

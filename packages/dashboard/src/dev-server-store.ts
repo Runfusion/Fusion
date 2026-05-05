@@ -128,6 +128,7 @@ function normalizeConfig(candidate: Partial<DevServerConfig> | null | undefined)
 
 export class DevServerStore {
   private readonly filePath: string;
+  private directoryReady = false;
   private state: DevServerState = DEV_SERVER_DEFAULT_STATE();
   private config: DevServerConfig = { ...DEV_SERVER_CONFIG_DEFAULTS };
 
@@ -158,13 +159,16 @@ export class DevServerStore {
       return (error as NodeJS.ErrnoException).code === "ENOENT";
     };
 
-    try {
-      await mkdir(dir, { recursive: true });
-    } catch (error) {
-      if (isMissingPathError(error)) {
-        return;
+    if (!this.directoryReady) {
+      try {
+        await mkdir(dir, { recursive: true });
+        this.directoryReady = true;
+      } catch (error) {
+        if (isMissingPathError(error)) {
+          return;
+        }
+        throw error;
       }
-      throw error;
     }
 
     try {
@@ -174,9 +178,11 @@ export class DevServerStore {
         throw error;
       }
 
-      // Directory may have been removed between mkdir and write (e.g. temp-dir cleanup race).
+      // Directory may have been removed after first successful write (e.g. temp-dir cleanup race).
+      this.directoryReady = false;
       try {
         await mkdir(dir, { recursive: true });
+        this.directoryReady = true;
       } catch (retryMkdirError) {
         if (isMissingPathError(retryMkdirError)) {
           return;
@@ -188,6 +194,7 @@ export class DevServerStore {
         await writeFile(this.filePath, serializedPayload, "utf-8");
       } catch (retryWriteError) {
         if (isMissingPathError(retryWriteError)) {
+          this.directoryReady = false;
           return;
         }
         throw retryWriteError;
