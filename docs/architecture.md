@@ -263,6 +263,36 @@ From `packages/core/src/index.ts` exports (selected high-impact modules):
 - **Identity/version/extensions**: `daemon-token.ts`, `app-version.ts`, `pi-extensions.ts`
 - **Agent companies import/export**: `agent-companies-parser.ts`, `agent-companies-exporter.ts`, `agent-companies-types.ts`
 
+### Docker Node Provisioning
+
+Fusion has a managed Docker node provisioning subsystem spanning `@fusion/core` services and dashboard routes.
+
+**Core services:**
+- `DockerClientService` (`packages/core/src/docker-client.ts`)
+  - Creates Dockerode clients from host settings.
+  - Supports default local daemon, named Docker `context`, or explicit `host` with optional TLS fields.
+  - Host/TLS inputs: `context`, `host`, `tlsVerify`, `tlsCaPath`, `tlsCertPath`, `tlsKeyPath`.
+- `DockerProvisioningService` (`packages/core/src/docker-provisioning.ts`)
+  - Handles initial container lifecycle actions (provision/deprovision/start/stop/restart/status).
+  - Provisioning creates and starts a container first, then route-level orchestration registers metadata/node records.
+- `MeshConfigGenerator` (`packages/core/src/mesh-config-generator.ts`)
+  - Generates mesh env/config, applies config by recreating the container, registers the node into mesh state, then health-checks until online or timeout.
+
+**Route boundary (dashboard):**
+- `register-docker-provisioning-routes.ts` owns initial container lifecycle endpoints (`/api/docker/provision`, `/api/docker/deprovision`, and per-container start/stop/restart/status).
+- `register-docker-node-routes.ts` owns managed-node metadata + mesh configuration endpoints (for example `/api/docker/nodes/:managedId/apply-mesh-config` and mesh-status checks) after a container is provisioned.
+
+**Provisioning lifecycle (implemented flow):**
+1. **Container provisioning**: dashboard provisioning route calls `DockerProvisioningService.provision()` to create/start a managed container.
+2. **Mesh config generation**: `MeshConfigGenerator.generateConfig()` resolves API key, reachable URL, and mesh env vars.
+3. **Mesh config application**: `MeshConfigGenerator.applyConfig()` calls `DockerClientService.recreateContainer()` so env vars are applied to a recreated container.
+4. **Node registration**: `MeshConfigGenerator.registerInMesh()` creates/links a remote `NodeConfig` entry.
+5. **Health check**: mesh registration flow polls `checkNodeHealth()` until online or timeout.
+
+**Port convention:**
+- Managed Docker mesh-node containers default to **`4041`** (`DEFAULT_CONTAINER_PORT` in `mesh-config-generator.ts`).
+- **`4040` remains reserved** for the production dashboard and should not be documented as the managed mesh-node default.
+
 ### Memory System
 
 Fusion uses OpenClaw-style project memory files and separates memory into two responsibilities:
@@ -563,6 +593,21 @@ A `prefetchLazyViews()` function runs once on mount via `requestIdleCallback` to
 | GET | `/api/update-check` | Read cached/TTL-guarded npm update status for `@runfusion/fusion` (respects `updateCheckEnabled`). |
 | POST | `/api/update-check/refresh` | Clear cached update data and force a fresh npm update check. |
 | GET | `/api/updates/check` | Perform an on-demand npm registry check for the latest `@runfusion/fusion` version (no cache). |
+
+### Docker provisioning endpoints
+
+Initial container provisioning and lifecycle routes are registered by `register-docker-provisioning-routes.ts`.
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/docker/provision` | Provision and start a managed Docker container. |
+| POST | `/api/docker/deprovision` | Stop/remove a managed Docker container. |
+| POST | `/api/docker/containers/:containerId/start` | Start an existing container. |
+| POST | `/api/docker/containers/:containerId/stop` | Stop a running container. |
+| POST | `/api/docker/containers/:containerId/restart` | Restart a container. |
+| GET | `/api/docker/containers/:containerId/status` | Read runtime status for a container. |
+
+Mesh configuration and post-provision managed-node operations are registered separately in `register-docker-node-routes.ts` (for example `/api/docker/nodes/:managedId/apply-mesh-config` and `/api/docker/nodes/:managedId/mesh-status`).
 
 ### Run Audit API
 The run-audit system records every mutation performed by the engine across three domains:

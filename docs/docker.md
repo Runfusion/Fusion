@@ -2,6 +2,9 @@
 
 This guide shows how to build and run Fusion in a container.
 
+> This document is about containerizing Fusion itself (`docker build` / `docker run`).
+> For managed Docker mesh-node provisioning architecture (services, routes, mesh config flow, and `4041` vs reserved `4040` port convention), see [Architecture → Docker Node Provisioning](./architecture.md#docker-node-provisioning).
+
 ## Build the image
 
 ```bash

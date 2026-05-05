@@ -6,6 +6,7 @@ const workspaceRoot = resolve(import.meta.dirname, "../../../..");
 const dockerfilePath = resolve(workspaceRoot, "Dockerfile");
 const dockerignorePath = resolve(workspaceRoot, ".dockerignore");
 const dockerDocsPath = resolve(workspaceRoot, "docs", "docker.md");
+const architectureDocsPath = resolve(workspaceRoot, "docs", "architecture.md");
 
 describe("Docker configuration", () => {
   it("has a Dockerfile with required production instructions", () => {
@@ -61,6 +62,31 @@ describe("Docker configuration", () => {
     expect(docs).toContain("build");
     expect(docs).toContain("run");
     expect(docs).toContain("environment variables");
+  });
+
+  it("documents managed docker node provisioning architecture and endpoint boundaries", () => {
+    expect(existsSync(architectureDocsPath)).toBe(true);
+    const docs = readFileSync(architectureDocsPath, "utf8");
+
+    expect(docs).toContain("### Docker Node Provisioning");
+    expect(docs).toContain("register-docker-provisioning-routes.ts");
+    expect(docs).toContain("register-docker-node-routes.ts");
+    expect(docs).toContain("/api/docker/provision");
+    expect(docs).toContain("/api/docker/deprovision");
+    expect(docs).toContain("/api/docker/containers/:containerId/start");
+    expect(docs).toContain("/api/docker/containers/:containerId/stop");
+    expect(docs).toContain("/api/docker/containers/:containerId/restart");
+    expect(docs).toContain("/api/docker/containers/:containerId/status");
+  });
+
+  it("documents mesh node port convention and docker guide cross-reference", () => {
+    const architectureDocs = readFileSync(architectureDocsPath, "utf8");
+    const dockerDocs = readFileSync(dockerDocsPath, "utf8");
+
+    expect(architectureDocs).toContain("default to **`4041`**");
+    expect(architectureDocs).toContain("**`4040` remains reserved**");
+    expect(dockerDocs).toContain("[Architecture → Docker Node Provisioning]");
+    expect(dockerDocs).toContain("This document is about containerizing Fusion itself");
   });
 
   it("does not patch the CLI bundle at build time", () => {
