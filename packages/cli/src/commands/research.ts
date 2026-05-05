@@ -43,10 +43,10 @@ async function getStore(projectName?: string): Promise<TaskStore> {
 
 function hasProviderCredentials(settings: Awaited<ReturnType<TaskStore["getSettings"]>>, providerId: string | undefined): boolean {
   if (!providerId) return false;
-  if (providerId === "searxng") return Boolean(settings.researchSearxngUrl);
-  if (providerId === "brave") return Boolean(settings.researchBraveApiKey);
-  if (providerId === "google") return Boolean(settings.researchGoogleSearchApiKey && settings.researchGoogleSearchCx);
-  if (providerId === "tavily") return Boolean(settings.researchTavilyApiKey);
+  if (providerId === "searxng") return Boolean(settings.researchGlobalSearxngUrl);
+  if (providerId === "brave") return Boolean(settings.researchGlobalBraveApiKey);
+  if (providerId === "google") return Boolean(settings.researchGlobalGoogleSearchApiKey && settings.researchGlobalGoogleSearchCx);
+  if (providerId === "tavily") return Boolean(settings.researchGlobalTavilyApiKey);
   return false;
 }
 
@@ -57,7 +57,7 @@ async function getResearchRuntime(store: TaskStore) {
     throw new Error("feature-disabled: Research is disabled in settings.");
   }
 
-  const configuredProvider = (resolved.searchProvider as string | undefined) ?? settings.researchWebSearchProvider;
+  const configuredProvider = (resolved.searchProvider as string | undefined) ?? settings.researchGlobalWebSearchProvider;
   if (!configuredProvider) {
     throw new Error("provider-unavailable: Research providers are not configured. Add provider credentials in settings.");
   }

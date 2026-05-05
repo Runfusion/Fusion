@@ -44,30 +44,30 @@ export class ResearchProviderRegistry {
 
   private instantiateProviders(): void {
     const backend = this.resolveSearchBackend();
-    const maxResults = Number(this.settings.researchMaxSearchResults ?? 10);
-    const fetchTimeoutMs = Number(this.settings.researchFetchTimeoutMs ?? 30_000);
-    const userAgent = this.settings.researchUserAgent ?? "FusionResearchBot/1.0";
+    const maxResults = Number(this.settings.researchGlobalMaxSearchResults ?? 10);
+    const fetchTimeoutMs = Number(this.settings.researchGlobalFetchTimeoutMs ?? 30_000);
+    const userAgent = this.settings.researchGlobalUserAgent ?? "FusionResearchBot/1.0";
 
     this.providers = new Map<ResearchProviderType, ResearchProvider>([
       [
         "web-search",
         new WebSearchProvider({
           backend,
-          searxngUrl: this.settings.researchSearxngUrl,
-          braveApiKey: this.settings.researchBraveApiKey,
-          googleApiKey: this.settings.researchGoogleSearchApiKey,
-          googleCx: this.settings.researchGoogleSearchCx,
-          tavilyApiKey: this.settings.researchTavilyApiKey,
+          searxngUrl: this.settings.researchGlobalSearxngUrl,
+          braveApiKey: this.settings.researchGlobalBraveApiKey,
+          googleApiKey: this.settings.researchGlobalGoogleSearchApiKey,
+          googleCx: this.settings.researchGlobalGoogleSearchCx,
+          tavilyApiKey: this.settings.researchGlobalTavilyApiKey,
           maxResults,
           timeoutMs: fetchTimeoutMs,
           userAgent,
         }),
       ],
       ["page-fetch", new PageFetchProvider({ timeoutMs: fetchTimeoutMs, userAgent })],
-      ["github", this.settings.researchGitHubEnabled ? new GitHubProvider() : new DisabledProvider("github")],
+      ["github", this.settings.researchGlobalGitHubEnabled ? new GitHubProvider() : new DisabledProvider("github")],
       [
         "local-docs",
-        this.settings.researchLocalDocsEnabled === false
+        this.settings.researchGlobalLocalDocsEnabled === false
           ? new DisabledProvider("local-docs")
           : new LocalDocsProvider({ projectRoot: this.projectRoot, timeoutMs: fetchTimeoutMs, maxResults }),
       ],
@@ -78,13 +78,13 @@ export class ResearchProviderRegistry {
   }
 
   private resolveSearchBackend(): WebSearchBackend {
-    const explicit = this.settings.researchWebSearchProvider;
+    const explicit = this.settings.researchGlobalWebSearchProvider;
     if (explicit && explicit !== "none") return explicit;
 
-    if (this.settings.researchSearxngUrl) return "searxng";
-    if (this.settings.researchTavilyApiKey) return "tavily";
-    if (this.settings.researchBraveApiKey) return "brave";
-    if (this.settings.researchGoogleSearchApiKey && this.settings.researchGoogleSearchCx) return "google";
+    if (this.settings.researchGlobalSearxngUrl) return "searxng";
+    if (this.settings.researchGlobalTavilyApiKey) return "tavily";
+    if (this.settings.researchGlobalBraveApiKey) return "brave";
+    if (this.settings.researchGlobalGoogleSearchApiKey && this.settings.researchGlobalGoogleSearchCx) return "google";
     return "none";
   }
 }

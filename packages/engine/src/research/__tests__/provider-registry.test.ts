@@ -11,19 +11,19 @@ describe("ResearchProviderRegistry", () => {
   });
 
   it("detects search backend from credentials", () => {
-    const tavily = new ResearchProviderRegistry({ researchTavilyApiKey: "key" }, process.cwd());
+    const tavily = new ResearchProviderRegistry({ researchGlobalTavilyApiKey: "key" }, process.cwd());
     expect(tavily.isProviderAvailable("web-search")).toBe(true);
 
-    const searx = new ResearchProviderRegistry({ researchSearxngUrl: "https://sx.local" }, process.cwd());
+    const searx = new ResearchProviderRegistry({ researchGlobalSearxngUrl: "https://sx.local" }, process.cwd());
     expect(searx.isProviderAvailable("web-search")).toBe(true);
   });
 
   it("returns only configured providers in available list", () => {
     const registry = new ResearchProviderRegistry(
       {
-        researchWebSearchProvider: "brave",
-        researchBraveApiKey: "token",
-        researchGitHubEnabled: true,
+        researchGlobalWebSearchProvider: "brave",
+        researchGlobalBraveApiKey: "token",
+        researchGlobalGitHubEnabled: true,
       },
       process.cwd(),
     );
@@ -34,15 +34,15 @@ describe("ResearchProviderRegistry", () => {
   });
 
   it("refreshes providers after settings changes", () => {
-    const registry = new ResearchProviderRegistry({ researchWebSearchProvider: "none" }, process.cwd());
+    const registry = new ResearchProviderRegistry({ researchGlobalWebSearchProvider: "none" }, process.cwd());
     expect(registry.isProviderAvailable("web-search")).toBe(false);
 
-    registry.refreshSettings({ researchWebSearchProvider: "tavily", researchTavilyApiKey: "key" });
+    registry.refreshSettings({ researchGlobalWebSearchProvider: "tavily", researchGlobalTavilyApiKey: "key" });
     expect(registry.isProviderAvailable("web-search")).toBe(true);
   });
 
   it("gracefully degrades disabled providers", () => {
-    const registry = new ResearchProviderRegistry({ researchGitHubEnabled: false, researchLocalDocsEnabled: false }, process.cwd());
+    const registry = new ResearchProviderRegistry({ researchGlobalGitHubEnabled: false, researchGlobalLocalDocsEnabled: false }, process.cwd());
     expect(registry.isProviderAvailable("github")).toBe(false);
     expect(registry.isProviderAvailable("local-docs")).toBe(false);
   });

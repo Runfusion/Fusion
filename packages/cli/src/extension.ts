@@ -139,15 +139,15 @@ async function getResearchAvailability(store: TaskStore): Promise<{ ok: boolean;
     return { ok: false, code: "feature-disabled", message: "Research is disabled in settings." };
   }
 
-  const backend = (resolved.searchProvider as string | undefined) ?? settings.researchWebSearchProvider;
+  const backend = (resolved.searchProvider as string | undefined) ?? settings.researchGlobalWebSearchProvider;
   const configured = backend === "searxng"
-    ? Boolean(settings.researchSearxngUrl)
+    ? Boolean(settings.researchGlobalSearxngUrl)
     : backend === "brave"
-      ? Boolean(settings.researchBraveApiKey)
+      ? Boolean(settings.researchGlobalBraveApiKey)
       : backend === "google"
-        ? Boolean(settings.researchGoogleSearchApiKey && settings.researchGoogleSearchCx)
+        ? Boolean(settings.researchGlobalGoogleSearchApiKey && settings.researchGlobalGoogleSearchCx)
         : backend === "tavily"
-          ? Boolean(settings.researchTavilyApiKey)
+          ? Boolean(settings.researchGlobalTavilyApiKey)
           : false;
 
   if (!backend) {

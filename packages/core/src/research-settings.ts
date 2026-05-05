@@ -58,7 +58,7 @@ export function resolveResearchSettings(settings: Partial<Settings> | undefined)
       maxConcurrentRuns: projectSettings?.limits?.maxConcurrentRuns ?? settings?.researchMaxConcurrentRuns ?? settings?.researchGlobalMaxConcurrentRuns ?? 3,
       maxSourcesPerRun: projectSettings?.limits?.maxSourcesPerRun ?? globalDefaults?.maxSourcesPerRun ?? settings?.researchMaxSourcesPerRun ?? settings?.researchGlobalMaxSourcesPerRun ?? 20,
       maxDurationMs: projectSettings?.limits?.maxDurationMs ?? settings?.researchDefaultTimeout ?? settings?.researchGlobalDefaultTimeout ?? 300000,
-      requestTimeoutMs: projectSettings?.limits?.requestTimeoutMs ?? settings?.researchFetchTimeoutMs ?? 30000,
+      requestTimeoutMs: projectSettings?.limits?.requestTimeoutMs ?? settings?.researchGlobalFetchTimeoutMs ?? 30000,
     },
     defaultExportFormat: globalDefaults?.defaultExportFormat ?? "markdown",
   };

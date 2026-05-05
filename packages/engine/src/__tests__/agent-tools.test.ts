@@ -824,7 +824,7 @@ describe("createResearchTools", () => {
     researchGlobalMaxConcurrentRuns: 2,
     researchGlobalDefaultTimeout: 30_000,
     researchGlobalMaxSynthesisRounds: 2,
-    researchWebSearchProvider: "none",
+    researchGlobalWebSearchProvider: "none",
     researchSettings: { enabled: true },
   };
 
@@ -897,7 +897,7 @@ describe("createResearchTools", () => {
     const tools = createResearchTools({
       store: store as any,
       rootDir: process.cwd(),
-      getSettings: async () => ({ ...baseSettings, researchTavilyApiKey: "key", researchWebSearchProvider: "tavily" } as any),
+      getSettings: async () => ({ ...baseSettings, researchGlobalTavilyApiKey: "key", researchGlobalWebSearchProvider: "tavily" } as any),
     });
 
     const runTool = tools.find((tool) => tool.name === "fn_research_run")!;

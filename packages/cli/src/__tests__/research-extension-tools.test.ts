@@ -72,7 +72,7 @@ describe("research extension tools", () => {
     const store = new TaskStore(tmpDir);
     await store.init();
     await store.updateSettings({
-      researchWebSearchProvider: "tavily",
+      researchGlobalWebSearchProvider: "tavily",
       researchSettings: { enabled: true },
       researchGlobalDefaults: { searchProvider: "tavily" },
     });
@@ -88,8 +88,8 @@ describe("research extension tools", () => {
     const store = new TaskStore(tmpDir);
     await store.init();
     await store.updateSettings({
-      researchWebSearchProvider: "tavily",
-      researchTavilyApiKey: "test-key",
+      researchGlobalWebSearchProvider: "tavily",
+      researchGlobalTavilyApiKey: "test-key",
       researchSettings: { enabled: true },
       researchGlobalDefaults: { searchProvider: "tavily" },
     });
@@ -117,8 +117,8 @@ describe("research extension tools", () => {
     const store = new TaskStore(tmpDir);
     await store.init();
     await store.updateSettings({
-      researchWebSearchProvider: "tavily",
-      researchTavilyApiKey: "test-key",
+      researchGlobalWebSearchProvider: "tavily",
+      researchGlobalTavilyApiKey: "test-key",
       researchSettings: { enabled: true },
       researchGlobalDefaults: { searchProvider: "tavily" },
     });

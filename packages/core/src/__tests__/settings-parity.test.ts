@@ -98,6 +98,29 @@ describe("settings key parity", () => {
 
 // ── Model Lane Key Parity Regression Tests (FN-1729) ────────────────────────
 
+describe("research global key parity regression (FN-3313)", () => {
+  const globalResearchFlatKeys = [
+    "researchGlobalWebSearchProvider",
+    "researchGlobalSearxngUrl",
+    "researchGlobalBraveApiKey",
+    "researchGlobalGoogleSearchApiKey",
+    "researchGlobalGoogleSearchCx",
+    "researchGlobalTavilyApiKey",
+    "researchGlobalGitHubEnabled",
+    "researchGlobalLocalDocsEnabled",
+    "researchGlobalMaxSearchResults",
+    "researchGlobalFetchTimeoutMs",
+    "researchGlobalUserAgent",
+  ] as const;
+
+  it.each(globalResearchFlatKeys)("%s is global-scoped only", (key) => {
+    expect(isGlobalSettingsKey(key)).toBe(true);
+    expect(isProjectSettingsKey(key)).toBe(false);
+  });
+});
+
+// ── Model Lane Key Parity Regression Tests (FN-1729) ────────────────────────
+
 describe("model lane key parity regression (FN-1729)", () => {
   // All model lane provider/modelId pairs that should exist
   const allModelLanePairs = [

@@ -1519,27 +1519,27 @@ export interface GlobalSettings {
    *  Default: 2. */
   researchGlobalMaxSynthesisRounds?: number;
   /** Web search backend for auto-research. Default: "none" (disabled). */
-  researchWebSearchProvider?: WebSearchBackend;
-  /** SearXNG instance URL (required when researchWebSearchProvider is "searxng"). */
-  researchSearxngUrl?: string;
-  /** Brave Search API key (required when researchWebSearchProvider is "brave"). */
-  researchBraveApiKey?: string;
-  /** Google Custom Search API key (required when researchWebSearchProvider is "google"). */
-  researchGoogleSearchApiKey?: string;
-  /** Google Custom Search engine ID (required when researchWebSearchProvider is "google"). */
-  researchGoogleSearchCx?: string;
-  /** Tavily API key (required when researchWebSearchProvider is "tavily"). */
-  researchTavilyApiKey?: string;
+  researchGlobalWebSearchProvider?: WebSearchBackend;
+  /** SearXNG instance URL (required when researchGlobalWebSearchProvider is "searxng"). */
+  researchGlobalSearxngUrl?: string;
+  /** Brave Search API key (required when researchGlobalWebSearchProvider is "brave"). */
+  researchGlobalBraveApiKey?: string;
+  /** Google Custom Search API key (required when researchGlobalWebSearchProvider is "google"). */
+  researchGlobalGoogleSearchApiKey?: string;
+  /** Google Custom Search engine ID (required when researchGlobalWebSearchProvider is "google"). */
+  researchGlobalGoogleSearchCx?: string;
+  /** Tavily API key (required when researchGlobalWebSearchProvider is "tavily"). */
+  researchGlobalTavilyApiKey?: string;
   /** Enable GitHub repository/issue search provider. Default: false. */
-  researchGitHubEnabled?: boolean;
+  researchGlobalGitHubEnabled?: boolean;
   /** Enable local project documentation search provider. Default: true. */
-  researchLocalDocsEnabled?: boolean;
+  researchGlobalLocalDocsEnabled?: boolean;
   /** Maximum search results per provider query. Default: 10. */
-  researchMaxSearchResults?: number;
+  researchGlobalMaxSearchResults?: number;
   /** HTTP fetch timeout in milliseconds for page/content fetching. Default: 30000. */
-  researchFetchTimeoutMs?: number;
+  researchGlobalFetchTimeoutMs?: number;
   /** User-Agent header for HTTP requests made by research providers. Default: "FusionResearchBot/1.0". */
-  researchUserAgent?: string;
+  researchGlobalUserAgent?: string;
   /** Global-scoped remote access configuration persisted in `~/.fusion/settings.json`.
    *  Stores both provider configs, active provider selection, token strategy,
    *  and lifecycle restart metadata for remote tunnel orchestration. */

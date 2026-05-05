@@ -53,14 +53,14 @@ This also reveals the **Research Defaults** and **Research** settings sections i
 
 ### 2. Configure a web search provider
 
-Set `researchWebSearchProvider` in global settings to one of the supported backends:
+Set `researchGlobalWebSearchProvider` in global settings to one of the supported backends:
 
 | Provider | Required settings |
 |---|---|
-| `"searxng"` | `researchSearxngUrl` — URL of your SearXNG instance |
-| `"brave"` | `researchBraveApiKey` — Brave Search API key |
-| `"google"` | `researchGoogleSearchApiKey` + `researchGoogleSearchCx` — Google Custom Search credentials |
-| `"tavily"` | `researchTavilyApiKey` — Tavily API key |
+| `"searxng"` | `researchGlobalSearxngUrl` — URL of your SearXNG instance |
+| `"brave"` | `researchGlobalBraveApiKey` — Brave Search API key |
+| `"google"` | `researchGlobalGoogleSearchApiKey` + `researchGlobalGoogleSearchCx` — Google Custom Search credentials |
+| `"tavily"` | `researchGlobalTavilyApiKey` — Tavily API key |
 | `"none"` | Disables web search (other sources still work) |
 
 API keys are stored through Fusion's auth credential pipeline (`/api/auth/api-key`), not in settings JSON directly.

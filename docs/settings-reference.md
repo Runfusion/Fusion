@@ -85,17 +85,17 @@ Defaults from `DEFAULT_GLOBAL_SETTINGS`; key scope from `GLOBAL_SETTINGS_KEYS`.
 | `researchGlobalDefaultTimeout` | `number` | `300000` | Default timeout for end-to-end research runs in milliseconds (5 minutes). |
 | `researchGlobalMaxSourcesPerRun` | `number` | `20` | Maximum number of sources per research run. |
 | `researchGlobalMaxSynthesisRounds` | `number` | `2` | Maximum synthesis rounds per research run. |
-| `researchWebSearchProvider` | `"searxng" \| "brave" \| "google" \| "tavily" \| "none"` | `"none"` | Web search backend for research. Default: `"none"` (disabled). |
-| `researchSearxngUrl` | `string` | `undefined` | SearXNG instance URL (required when provider is `"searxng"`). |
-| `researchBraveApiKey` | `string` | `undefined` | Brave Search API key (required when provider is `"brave"`). |
-| `researchGoogleSearchApiKey` | `string` | `undefined` | Google Custom Search API key (required when provider is `"google"`). |
-| `researchGoogleSearchCx` | `string` | `undefined` | Google Custom Search engine ID (required when provider is `"google"`). |
-| `researchTavilyApiKey` | `string` | `undefined` | Tavily API key (required when provider is `"tavily"`). |
-| `researchGitHubEnabled` | `boolean` | `undefined` | Enable GitHub as a research source. |
-| `researchLocalDocsEnabled` | `boolean` | `undefined` | Enable local docs as a research source. |
-| `researchMaxSearchResults` | `number` | `undefined` | Maximum search results per provider query. |
-| `researchFetchTimeoutMs` | `number` | `30000` | Timeout for individual HTTP fetches in milliseconds. |
-| `researchUserAgent` | `string` | `"FusionResearchBot/1.0"` | User-Agent header for HTTP requests made by research providers. |
+| `researchGlobalWebSearchProvider` | `"searxng" \| "brave" \| "google" \| "tavily" \| "none"` | `"none"` | Web search backend for research. Default: `"none"` (disabled). |
+| `researchGlobalSearxngUrl` | `string` | `undefined` | SearXNG instance URL (required when provider is `"searxng"`). |
+| `researchGlobalBraveApiKey` | `string` | `undefined` | Brave Search API key (required when provider is `"brave"`). |
+| `researchGlobalGoogleSearchApiKey` | `string` | `undefined` | Google Custom Search API key (required when provider is `"google"`). |
+| `researchGlobalGoogleSearchCx` | `string` | `undefined` | Google Custom Search engine ID (required when provider is `"google"`). |
+| `researchGlobalTavilyApiKey` | `string` | `undefined` | Tavily API key (required when provider is `"tavily"`). |
+| `researchGlobalGitHubEnabled` | `boolean` | `undefined` | Enable GitHub as a research source. |
+| `researchGlobalLocalDocsEnabled` | `boolean` | `undefined` | Enable local docs as a research source. |
+| `researchGlobalMaxSearchResults` | `number` | `undefined` | Maximum search results per provider query. |
+| `researchGlobalFetchTimeoutMs` | `number` | `30000` | Timeout for individual HTTP fetches in milliseconds. |
+| `researchGlobalUserAgent` | `string` | `"FusionResearchBot/1.0"` | User-Agent header for HTTP requests made by research providers. |
 | `experimentalFeatures` | `Record<string, boolean>` | `{}` | Global-scoped experimental feature flags. Includes `experimentalFeatures.researchView` for standalone Research route visibility. |
 | `remoteAccess` | `RemoteAccessSettings` | `{ activeProvider: null, providers: {...}, tokenStrategy: {...}, lifecycle: {...} }` | Global-scoped remote access provider + token strategy configuration used by Remote Access routes and tunnel lifecycle controls. |
 

@@ -96,7 +96,7 @@ describe("resolveResearchSettings", () => {
   it("falls back through legacy and hardcoded limit chains", () => {
     const fromLegacyProjectTimeout = resolveResearchSettings({
       researchDefaultTimeout: 111_000,
-      researchFetchTimeoutMs: 8_000,
+      researchGlobalFetchTimeoutMs: 8_000,
     });
     expect(fromLegacyProjectTimeout.limits.maxDurationMs).toBe(111_000);
     expect(fromLegacyProjectTimeout.limits.requestTimeoutMs).toBe(8_000);

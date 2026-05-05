@@ -22,7 +22,7 @@ const researchStoreMock = {
 
 const storeMock = {
   init: vi.fn(),
-  getSettings: vi.fn(async () => ({ researchSettings: { enabled: true }, researchWebSearchProvider: "tavily", researchTavilyApiKey: "x" })),
+  getSettings: vi.fn(async () => ({ researchSettings: { enabled: true }, researchGlobalWebSearchProvider: "tavily", researchGlobalTavilyApiKey: "x" })),
   getResearchStore: vi.fn(() => researchStoreMock),
 };
 
@@ -145,7 +145,7 @@ describe("research commands", () => {
   });
 
   it("errors when provider credentials are missing", async () => {
-    storeMock.getSettings.mockResolvedValueOnce({ researchSettings: { enabled: true }, researchWebSearchProvider: "tavily" });
+    storeMock.getSettings.mockResolvedValueOnce({ researchSettings: { enabled: true }, researchGlobalWebSearchProvider: "tavily" });
     await expect(runResearchCreate({ query: "hello" })).rejects.toThrow("process.exit:1");
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("missing-credentials"));
   });
