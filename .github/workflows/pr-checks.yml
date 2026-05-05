@@ -32,8 +32,8 @@ jobs:
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Build plugins
-        run: pnpm -r --filter './plugins/**' build
+      - name: Build plugins and core packages
+        run: pnpm build
 
       - name: Lint
         run: pnpm lint

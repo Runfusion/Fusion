@@ -1167,8 +1167,11 @@ describe("PlanningModeModal", () => {
         expect(screen.getByText("What is the scope?")).toBeDefined();
       });
 
-      fireEvent.click(screen.getByText("Medium"));
-      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      const mediumOption = await screen.findByText("Medium");
+      fireEvent.click(mediumOption);
+
+      const continueBtn = await screen.findByRole("button", { name: "Continue" });
+      fireEvent.click(continueBtn);
 
       await waitFor(() => {
         expect(screen.getByText("What are the key requirements?")).toBeDefined();
