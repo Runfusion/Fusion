@@ -830,46 +830,6 @@ describe("AgentDetailView", () => {
     });
   });
 
-  it("shows Delete button for terminated agent", async () => {
-    mockFetchAgent.mockResolvedValue(createMockAgent({ state: "terminated" }));
-
-    render(
-      <AgentDetailView
-        agentId="agent-001"
-        onClose={vi.fn()}
-        addToast={vi.fn()}
-      />
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Start")).toBeInTheDocument();
-      expect(screen.getByText("Delete")).toBeInTheDocument();
-    });
-  });
-
-  it("shows Start button for terminated agent", async () => {
-    mockFetchAgent.mockResolvedValue(createMockAgent({ state: "terminated" }));
-    mockUpdateAgentState.mockResolvedValue(createMockAgent({ state: "active" }));
-
-    render(
-      <AgentDetailView
-        agentId="agent-001"
-        onClose={vi.fn()}
-        addToast={vi.fn()}
-      />
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Start")).toBeInTheDocument();
-    });
-
-    await userEvent.click(screen.getByText("Start"));
-
-    await waitFor(() => {
-      expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-001", "active", undefined);
-    });
-  });
-
   it("shows Delete button for idle agent", async () => {
     mockFetchAgent.mockResolvedValue(createMockAgent({ state: "idle" }));
 
@@ -1589,7 +1549,7 @@ describe("AgentDetailView", () => {
       await user.click(screen.getByText("Settings"));
     };
 
-    it("shows settings delete control for idle, terminated, and paused agents", async () => {
+    it("shows settings delete control for idle and paused agents", async () => {
       const user = userEvent.setup();
 
       mockFetchAgent.mockResolvedValue(createMockAgent({ state: "idle" }));
@@ -1604,19 +1564,6 @@ describe("AgentDetailView", () => {
       await navigateToSettings(user);
       expect(await screen.findByRole("button", { name: "Delete Agent" })).toBeEnabled();
       idleRender.unmount();
-
-      mockFetchAgent.mockResolvedValue(createMockAgent({ state: "terminated" }));
-      const terminatedRender = render(
-        <AgentDetailView
-          agentId="agent-001"
-          onClose={vi.fn()}
-          addToast={vi.fn()}
-        />,
-      );
-
-      await navigateToSettings(user);
-      expect(await screen.findByRole("button", { name: "Delete Agent" })).toBeEnabled();
-      terminatedRender.unmount();
 
       mockFetchAgent.mockResolvedValue(createMockAgent({ state: "paused" }));
       render(
@@ -1707,7 +1654,7 @@ describe("AgentDetailView", () => {
 
       expect(await screen.findByRole("button", { name: "Delete Agent" })).toBeDisabled();
       expect(
-        screen.getByText("Agent deletion is only available when state is idle, terminated, or paused (current state: active)."),
+        screen.getByText("Agent deletion is only available when state is idle or paused (current state: active)."),
       ).toBeInTheDocument();
     });
 
@@ -2374,6 +2321,64 @@ describe("AgentDetailView", () => {
           "agent-001",
           expect.objectContaining({
             runtimeConfig: expect.objectContaining({ enabled: false, heartbeatIntervalMs: 30000 }),
+          }),
+          undefined,
+        );
+      });
+    });
+
+    it("defaults run-missed-heartbeat-on-startup toggle to disabled when runtimeConfig flag is missing", async () => {
+      mockFetchAgent.mockResolvedValue(createMockAgent({
+        runtimeConfig: {
+          heartbeatIntervalMs: 30000,
+        },
+      }));
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToSettings(user);
+
+      await waitFor(() => {
+        expect((screen.getByLabelText("Run Missed Heartbeat On Startup") as HTMLInputElement).checked).toBe(false);
+      });
+    });
+
+    it("persists run-missed-heartbeat-on-startup toggle changes on save", async () => {
+      mockFetchAgent.mockResolvedValue(createMockAgent({
+        runtimeConfig: {
+          enabled: true,
+          heartbeatIntervalMs: 30000,
+        },
+      }));
+      mockUpdateAgent.mockResolvedValue(createMockAgent() as any);
+
+      const user = userEvent.setup();
+      render(
+        <AgentDetailView
+          agentId="agent-001"
+          onClose={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+
+      await navigateToSettings(user);
+
+      const toggle = await screen.findByLabelText("Run Missed Heartbeat On Startup");
+      await user.click(toggle);
+      await user.click(screen.getByText("Save Settings"));
+
+      await waitFor(() => {
+        expect(mockUpdateAgent).toHaveBeenCalledWith(
+          "agent-001",
+          expect.objectContaining({
+            runtimeConfig: expect.objectContaining({ runMissedHeartbeatOnStartup: true }),
           }),
           undefined,
         );

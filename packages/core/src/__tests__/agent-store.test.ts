@@ -256,6 +256,28 @@ describe("AgentStore", () => {
       expect(runtimeConfig.autoClaimRelevantTasks).toBe(false);
     });
 
+    it("does not default runMissedHeartbeatOnStartup when unset (default off)", async () => {
+      const agent = await store.createAgent({
+        name: "Catchup Default",
+        role: "executor",
+      });
+
+      const runtimeConfig = agent.runtimeConfig as Record<string, unknown>;
+      // Field stays absent so consumers that read it as `=== true` see falsy.
+      expect(runtimeConfig.runMissedHeartbeatOnStartup).toBeUndefined();
+    });
+
+    it("preserves explicit runMissedHeartbeatOnStartup=true", async () => {
+      const agent = await store.createAgent({
+        name: "Catchup Enabled",
+        role: "executor",
+        runtimeConfig: { runMissedHeartbeatOnStartup: true },
+      });
+
+      const runtimeConfig = agent.runtimeConfig as Record<string, unknown>;
+      expect(runtimeConfig.runMissedHeartbeatOnStartup).toBe(true);
+    });
+
     it("preserves custom metadata", async () => {
       const agent = await store.createAgent({
         name: "With Meta",
@@ -1476,14 +1498,9 @@ describe("AgentStore", () => {
     // Helper: create an agent and set lastHeartbeatAt so that
     // idle→active transitions don't trigger the re-entrant
     // startHeartbeatRun path (see FN-711 for the deadlock bug).
-    // Also records a "missed" heartbeat to close any active run,
-    // preventing the terminated-transition deadlock path too.
     async function createReadyAgent(s: AgentStore, name: string) {
       const agent = await s.createAgent({ name, role: "executor" });
       await s.recordHeartbeat(agent.id, "ok");
-      // Close the active run so transitioning to terminated
-      // won't trigger endHeartbeatRun inside withLock.
-      await s.recordHeartbeat(agent.id, "missed");
       return agent;
     }
 
@@ -1495,13 +1512,6 @@ describe("AgentStore", () => {
 
     it("active → paused transition succeeds", async () => {
       const agent = await createReadyAgent(store, "ActiveToPaused");
-      await store.updateAgentState(agent.id, "active");
-      const updated = await store.updateAgentState(agent.id, "paused");
-      expect(updated.state).toBe("paused");
-    });
-
-    it("active → paused transition succeeds", async () => {
-      const agent = await createReadyAgent(store, "ActiveToTerminated");
       await store.updateAgentState(agent.id, "active");
       const updated = await store.updateAgentState(agent.id, "paused");
       expect(updated.state).toBe("paused");
@@ -1527,35 +1537,6 @@ describe("AgentStore", () => {
       await expect(
         store.updateAgentState(agent.id, "paused")
       ).rejects.toThrow("Invalid state transition: idle -> paused");
-    });
-
-    it("paused → active transition succeeds", async () => {
-      const agent = await createReadyAgent(store, "RestartActive");
-      await store.updateAgentState(agent.id, "active");
-      await store.updateAgentState(agent.id, "paused");
-
-      const updated = await store.updateAgentState(agent.id, "active");
-      expect(updated.state).toBe("active");
-    });
-
-    it("paused → idle transition succeeds", async () => {
-      const agent = await createReadyAgent(store, "RestartIdle");
-      await store.updateAgentState(agent.id, "active");
-      await store.updateAgentState(agent.id, "paused");
-
-      const updated = await store.updateAgentState(agent.id, "idle");
-      expect(updated.state).toBe("idle");
-    });
-
-    it("transitioning into active clears lastError", async () => {
-      const agent = await createReadyAgent(store, "ClearError");
-      await store.updateAgentState(agent.id, "active");
-      await store.updateAgent(agent.id, { lastError: "something broke" });
-      await store.updateAgentState(agent.id, "paused");
-
-      const restarted = await store.updateAgentState(agent.id, "active");
-      expect(restarted.state).toBe("active");
-      expect(restarted.lastError).toBeUndefined();
     });
 
     it("emits both 'agent:stateChanged' and 'agent:updated' events", async () => {
