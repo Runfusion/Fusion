@@ -775,17 +775,14 @@ describe("MissionManager", () => {
       expect(mobileSpan?.textContent).toBe("Build Auth System");
     });
 
-    it("sidebar header hides title and shows only action buttons", async () => {
+    it("sidebar header surfaces a centered Plan New Mission CTA", async () => {
       globalThis.fetch = createFetchMock();
       render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
 
       await waitFor(() => {
-        const sidebarTitle = document.querySelector(".mission-manager__sidebar-title");
-        const sidebarActions = document.querySelector(".mission-manager__sidebar-actions");
-        expect(sidebarTitle).toBeInTheDocument();
-        expect(sidebarActions).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "Plan with AI" })).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "New Mission" })).toBeInTheDocument();
+        const cta = document.querySelector(".mission-manager__sidebar-cta");
+        expect(cta).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Plan New Mission" })).toBeInTheDocument();
       });
     });
   });
@@ -1379,12 +1376,13 @@ describe("MissionManager", () => {
     });
   });
 
-  it("shows empty state when no missions exist", async () => {
+  it("shows empty state with Plan New Mission CTA when no missions exist", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(mockApiResponse([]));
     render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
 
     await waitFor(() => {
-      expect(screen.getByText("No missions yet. Create one to start planning.")).toBeDefined();
+      expect(screen.getByText("No missions yet")).toBeDefined();
+      expect(screen.getAllByRole("button", { name: "Plan New Mission" }).length).toBeGreaterThan(0);
     });
   });
 
@@ -1494,7 +1492,7 @@ describe("MissionManager", () => {
     render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "New Mission" })).toBeDefined();
+      expect(screen.getByRole("button", { name: "Plan New Mission" })).toBeDefined();
     });
   });
 
@@ -1572,11 +1570,8 @@ describe("MissionManager", () => {
 
       render(<MissionManager isOpen={true} isInline={true} onClose={vi.fn()} addToast={vi.fn()} />);
 
-      await waitFor(() => {
-        expect(screen.getByText("Build Auth System")).toBeDefined();
-      });
-      fireEvent.click(screen.getByText("Build Auth System"));
-
+      // Inline mode auto-selects the first mission, so the detail view is
+      // already populated; just wait for the detail content to render.
       await waitForDetailLoaded();
       expect(screen.getByTestId("mission-back-btn")).toBeInTheDocument();
       expect(getComputedStyle(screen.getByTestId("mission-back-btn")).display).toBe("none");
@@ -1591,10 +1586,10 @@ describe("MissionManager", () => {
     render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Plan with AI" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Plan New Mission" })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Plan with AI" }));
+    fireEvent.click(screen.getByRole("button", { name: "Plan New Mission" }));
 
     await waitFor(() => {
       expect(screen.getByText("Plan Mission with AI")).toBeInTheDocument();
@@ -2955,12 +2950,11 @@ describe("MissionManager", () => {
       await waitFor(() => expect(document.querySelector(".mission-manager__detail-pane .mission-confirm-panel")).toBeTruthy());
     });
 
-    it("renders sidebar header title and compact add buttons", async () => {
+    it("renders sidebar header with Plan New Mission CTA button", async () => {
       globalThis.fetch = createFetchMock();
       render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
-      await waitFor(() => expect(document.querySelector(".mission-manager__sidebar-title")?.textContent).toBe("Missions"));
-      expect(screen.getByLabelText("Plan with AI")).toBeInTheDocument();
-      expect(screen.getByLabelText("New Mission")).toBeInTheDocument();
+      await waitFor(() => expect(document.querySelector(".mission-manager__sidebar-cta")).toBeInTheDocument());
+      expect(screen.getByLabelText("Plan New Mission")).toBeInTheDocument();
     });
   });
 

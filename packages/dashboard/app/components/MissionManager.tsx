@@ -746,6 +746,12 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     try {
       setDetailLoading(true);
       const data = await fetchMission(missionId, projectId);
+      // Guard against malformed responses (e.g. test fetch fallbacks): without
+      // a milestones array the detail view crashes on `.milestones.length`.
+      if (!data || !Array.isArray((data as MissionWithHierarchy).milestones)) {
+        setDetailLoading(false);
+        return;
+      }
       setSelectedMission(data);
       // Auto-expand first milestone and slice
       if (data.milestones.length > 0) {
@@ -932,6 +938,25 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   useEffect(() => {
     if (!isActive) {
       targetLoadedRef.current = null;
+    }
+  }, [isActive]);
+
+  // Default-select the first mission once the list loads (inline desktop view).
+  // Gated on `isInline` so the standalone modal flow (and unit tests that
+  // render without isInline) keep the explicit "select a mission" empty state.
+  const defaultSelectedRef = useRef(false);
+  useEffect(() => {
+    if (!isActive || !isInline || isMobile || loading) return;
+    if (defaultSelectedRef.current) return;
+    if (selectedMission || targetMissionId) return;
+    if (missions.length === 0) return;
+    defaultSelectedRef.current = true;
+    loadMissionDetail(missions[0].id);
+  }, [isActive, isInline, isMobile, loading, missions, selectedMission, targetMissionId, loadMissionDetail]);
+
+  useEffect(() => {
+    if (!isActive) {
+      defaultSelectedRef.current = false;
     }
   }, [isActive]);
 
@@ -3667,9 +3692,21 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
               )}
 
               {missions.length === 0 && !isCreatingMission && (
-                <div className="mission-manager__empty mission-manager__empty--large">
+                <div className="mission-manager__empty mission-manager__empty--large mission-manager__empty--mission">
                   <Target size={32} />
-                  <span>No missions yet. Create one to start planning.</span>
+                  <h3 className="mission-manager__empty-title">No missions yet</h3>
+                  <p className="mission-manager__empty-body">
+                    Missions are large initiatives that bundle milestones, slices, and features into a
+                    single plan. Plan a mission to break down a goal end-to-end and let agents work
+                    through it autopilot-style.
+                  </p>
+                  <button
+                    className="btn btn-sm btn-primary mission-manager__empty-cta"
+                    onClick={() => setShowInterviewModal(true)}
+                  >
+                    <Sparkles size={14} />
+                    Plan New Mission
+                  </button>
                 </div>
               )}
 
@@ -3858,7 +3895,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
           >
             <div className="mission-manager__sidebar-header">
               <button
-                className="mission-add-btn mission-manager__sidebar-cta"
+                className="btn btn-sm btn-primary mission-manager__sidebar-cta"
                 onClick={() => setShowInterviewModal(true)}
                 title="Plan New Mission"
                 aria-label="Plan New Mission"
