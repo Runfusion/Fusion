@@ -2905,6 +2905,20 @@ export function SettingsModal({
               <small>Timeout in minutes for detecting stuck tasks. When a task&apos;s agent session shows no activity for longer than this duration, the task is terminated and retried. Leave empty to disable. Suggested: 10.</small>
             </div>
             <div className="form-group">
+              <label htmlFor="preserveProgressOnStuckRequeue" className="checkbox-label">
+                <input
+                  id="preserveProgressOnStuckRequeue"
+                  type="checkbox"
+                  checked={form.preserveProgressOnStuckRequeue !== false}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, preserveProgressOnStuckRequeue: e.target.checked }))
+                  }
+                />
+                Preserve step progress on stuck-task requeue
+              </label>
+              <small>When the stuck detector kills and re-queues a task, keep completed step statuses so the agent can resume from where it left off. Disable to reset every step to pending on each stuck retry. Default: enabled.</small>
+            </div>
+            <div className="form-group">
               <label htmlFor="specStalenessEnabled" className="checkbox-label">
                 <input
                   id="specStalenessEnabled"

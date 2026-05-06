@@ -6424,7 +6424,7 @@ describe("TaskExecutor bounded recovery retries", () => {
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review");
     // Executor now handles the requeue in its finally block
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "stuck-killed", worktree: null, branch: null });
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveProgress: true });
   });
 
   it("does not requeue when stuck-kill budget is exhausted", async () => {
@@ -6464,14 +6464,26 @@ describe("TaskExecutor bounded recovery retries", () => {
     );
   });
 
-  it("skips moveTask when task is already in todo at execute start", async () => {
+  it("skips stuck-requeue cleanup when task was concurrently recovered to in-review", async () => {
     const store = createMockStore();
+    // Self-healing already moved the task to in-review while execute() was unwinding.
+    store.getTask.mockResolvedValue({
+      id: "FN-001",
+      title: "Test",
+      description: "Test",
+      column: "in-review",
+      dependencies: [],
+      steps: [{ name: "step", status: "done" }],
+      currentStep: 1,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
     const executor = new TaskExecutor(store, "/tmp/test", {});
 
     mockedCreateFnAgent.mockImplementation(async () => ({
       session: {
         prompt: vi.fn(async () => {
-          // Simulate stuck kill
           executor.markStuckAborted("FN-001", true);
           throw new Error("Stuck task");
         }),
@@ -6484,7 +6496,44 @@ describe("TaskExecutor bounded recovery retries", () => {
       id: "FN-001",
       title: "Test",
       description: "Test",
-      column: "todo", // Task was already in todo when execute started
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "step", status: "done" }],
+      currentStep: 1,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Must NOT undo the recovery: no move, no stuck-killed status, no worktree clearing.
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo", expect.anything());
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      "FN-001",
+      { status: "stuck-killed", worktree: null, branch: null },
+    );
+  });
+
+  it("preserves step progress when requeuing stuck task by default", async () => {
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+    const resetSpy = vi.spyOn(executor as any, "resetStepsIfWorkLost").mockResolvedValue(undefined);
+
+    mockedCreateFnAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn(async () => {
+          executor.markStuckAborted("FN-001", true);
+        }),
+        dispose: vi.fn(),
+        state: {},
+      },
+    }) as any);
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
       dependencies: [],
       steps: [],
       currentStep: 0,
@@ -6493,10 +6542,52 @@ describe("TaskExecutor bounded recovery retries", () => {
       updatedAt: new Date().toISOString(),
     });
 
-    // Should NOT call moveTask because task is already in todo
-    expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
-    // Should still clean up and mark as stuck-killed
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: "stuck-killed", worktree: null, branch: null });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveProgress: true });
+    // resetStepsIfWorkLost MUST be skipped when preserveProgress is on, otherwise
+    // the requeue would silently drop committed step status before moveTask preserves it.
+    expect(resetSpy).not.toHaveBeenCalled();
+  });
+
+  it("resets step progress when preserveProgressOnStuckRequeue is disabled", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      worktreeInitCommand: undefined,
+      preserveProgressOnStuckRequeue: false,
+    });
+    const executor = new TaskExecutor(store, "/tmp/test", {});
+    const resetSpy = vi.spyOn(executor as any, "resetStepsIfWorkLost").mockResolvedValue(undefined);
+
+    mockedCreateFnAgent.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn(async () => {
+          executor.markStuckAborted("FN-001", true);
+        }),
+        dispose: vi.fn(),
+        state: {},
+      },
+    }) as any);
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // No options arg → moveTask defaults to resetting steps
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", undefined);
+    expect(resetSpy).toHaveBeenCalledTimes(1);
   });
 
   it("clears recovery metadata after successful run completes", async () => {
@@ -12490,7 +12581,7 @@ describe("StepSessionExecutor integration", () => {
       worktree: null,
       branch: null,
     }));
-    expect(store.moveTask).toHaveBeenCalledWith("FN-200", "todo");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-200", "todo", { preserveProgress: true });
   });
 
   it("REGRESSION: stuck-kill with exhausted budget does not requeue step-session task", async () => {
@@ -12516,6 +12607,7 @@ describe("StepSessionExecutor integration", () => {
 
     // Should NOT move to todo or mark as stuck-killed
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-200", "todo");
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-200", "todo", expect.anything());
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-200", expect.objectContaining({
       status: "stuck-killed",
     }));

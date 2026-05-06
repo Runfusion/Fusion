@@ -1971,6 +1971,12 @@ export interface ProjectSettings {
   /** Maximum number of times the stuck-task detector can kill and re-queue a task
    *  before it is marked as permanently failed. Default: 6. */
   maxStuckKills?: number;
+  /** When the stuck-task detector kills and re-queues a task, preserve the
+   *  task's step progress (step statuses + currentStep) instead of resetting
+   *  every step to `pending`. The worktree and branch are still cleared so
+   *  the retry gets a fresh checkout, but completed steps stay completed so
+   *  the agent can resume from where it left off. Default: true. */
+  preserveProgressOnStuckRequeue?: boolean;
   /** Maximum number of times the self-healing manager may auto-revive a task parked
    *  in `in-review` with a failed pre-merge workflow step. Each revival injects the
    *  failure feedback into `PROMPT.md`, resets steps, and sends the task back through

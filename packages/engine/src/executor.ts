@@ -2739,22 +2739,37 @@ export class TaskExecutor {
           // Stuck-requeue: clean up worktree and move to todo
           if (stuckRequeue === true) {
             try {
-              // Reset steps whose work was never committed before destroying the worktree
+              // Re-read latest task state. Self-healing may have already moved
+              // the task out of in-progress while this step-session execution
+              // was unwinding; continuing the cleanup would clobber a valid
+              // recovery (see the analogous block in the outer finally for the
+              // full reasoning).
               const latestTask = await this.store.getTask(task.id);
-              await this.resetStepsIfWorkLost(latestTask);
+              if (latestTask.column !== "in-progress" && latestTask.column !== "todo") {
+                executorLog.log(
+                  `${task.id} stuck-requeue skipped — task is now in '${latestTask.column}' (recovered concurrently)`,
+                );
+              } else {
+                const settings = await this.store.getSettings();
+                const preserveProgress = settings.preserveProgressOnStuckRequeue !== false;
 
-              if (worktreePath && existsSync(worktreePath)) {
-                try {
-                  await execAsync(`git worktree remove "${worktreePath}" --force`, { cwd: this.rootDir });
-                } catch (wtErr: unknown) {
-                  const msg = wtErr instanceof Error ? wtErr.message : String(wtErr);
-                  executorLog.warn(`${task.id}: worktree removal failed during stuck-requeue cleanup (${worktreePath}): ${msg}`);
+                if (!preserveProgress) {
+                  await this.resetStepsIfWorkLost(latestTask);
                 }
-              }
-              await this.store.updateTask(task.id, { status: "stuck-killed", worktree: null, branch: null });
-              if (task.column !== "todo") {
-                await this.store.moveTask(task.id, "todo");
-                executorLog.log(`${task.id} moved to todo for retry after stuck kill`);
+
+                if (worktreePath && existsSync(worktreePath)) {
+                  try {
+                    await execAsync(`git worktree remove "${worktreePath}" --force`, { cwd: this.rootDir });
+                  } catch (wtErr: unknown) {
+                    const msg = wtErr instanceof Error ? wtErr.message : String(wtErr);
+                    executorLog.warn(`${task.id}: worktree removal failed during stuck-requeue cleanup (${worktreePath}): ${msg}`);
+                  }
+                }
+                await this.store.updateTask(task.id, { status: "stuck-killed", worktree: null, branch: null });
+                if (latestTask.column !== "todo") {
+                  await this.store.moveTask(task.id, "todo", preserveProgress ? { preserveProgress: true } : undefined);
+                  executorLog.log(`${task.id} moved to todo for retry after stuck kill${preserveProgress ? " (progress preserved)" : ""}`);
+                }
               }
             } catch (err: unknown) {
               const errorMessage = err instanceof Error ? err.message : String(err);
@@ -3688,33 +3703,55 @@ export class TaskExecutor {
       // task in "in-progress" with no active session or worktree.
       if (stuckRequeue === true) {
         try {
-          // Reset steps whose work was never committed before destroying the worktree
+          // Re-read latest task state. While this execute() invocation was
+          // unwinding, self-healing (e.g. recoverCompletedTasks) may have
+          // already transitioned the task to in-review or done. Continuing
+          // the stuck-requeue cleanup in that case would destroy the worktree
+          // the recovery now relies on and clobber the task back to todo with
+          // all step progress reset, undoing valid completion. Skip the
+          // entire cleanup if the column has moved on past in-progress/todo.
           const latestTask = await this.store.getTask(task.id);
-          await this.resetStepsIfWorkLost(latestTask);
-
-          // Clean up the old worktree so the retry gets a fresh one
-          if (worktreePath && existsSync(worktreePath)) {
-            try {
-              await execAsync(`git worktree remove "${worktreePath}" --force`, { cwd: this.rootDir });
-              executorLog.log(`Removed old worktree for stuck-killed retry: ${worktreePath}`);
-              // Audit trail: record worktree removal (FN-1404)
-              await audit.git({ type: "worktree:remove", target: worktreePath });
-            } catch (cleanupErr: unknown) {
-              const cleanupErrMessage = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
-              executorLog.warn(`Failed to remove old worktree ${worktreePath}: ${cleanupErrMessage}`);
-            }
-          }
-          await this.store.updateTask(task.id, { status: "stuck-killed", worktree: null, branch: null });
-          // Only move to todo if not already there. The task.column check uses the
-          // captured task object from execute() start — if the task was already in "todo"
-          // when execute() started (e.g., resumed orphan), we skip the redundant move.
-          if (task.column !== "todo") {
-            await this.store.moveTask(task.id, "todo");
-            // Audit trail: record task move (FN-1404)
-            await audit.database({ type: "task:move", target: task.id, metadata: { to: "todo" } });
-            executorLog.log(`${task.id} moved to todo for retry after stuck kill`);
+          if (latestTask.column !== "in-progress" && latestTask.column !== "todo") {
+            executorLog.log(
+              `${task.id} stuck-requeue skipped — task is now in '${latestTask.column}' (recovered concurrently)`,
+            );
           } else {
-            executorLog.log(`${task.id} already in todo — skipping redundant move`);
+            const settings = await this.store.getSettings();
+            const preserveProgress = settings.preserveProgressOnStuckRequeue !== false;
+
+            // Reset steps whose work was never committed before destroying
+            // the worktree. Skipped when preserveProgress is on — the
+            // setting's whole point is to keep step status across the
+            // requeue so the agent can resume from where it left off.
+            if (!preserveProgress) {
+              await this.resetStepsIfWorkLost(latestTask);
+            }
+
+            // Clean up the old worktree so the retry gets a fresh one
+            if (worktreePath && existsSync(worktreePath)) {
+              try {
+                await execAsync(`git worktree remove "${worktreePath}" --force`, { cwd: this.rootDir });
+                executorLog.log(`Removed old worktree for stuck-killed retry: ${worktreePath}`);
+                // Audit trail: record worktree removal (FN-1404)
+                await audit.git({ type: "worktree:remove", target: worktreePath });
+              } catch (cleanupErr: unknown) {
+                const cleanupErrMessage = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
+                executorLog.warn(`Failed to remove old worktree ${worktreePath}: ${cleanupErrMessage}`);
+              }
+            }
+            await this.store.updateTask(task.id, { status: "stuck-killed", worktree: null, branch: null });
+            // Only move to todo if not already there. Use the freshly-read
+            // latestTask.column rather than the stale captured task.column —
+            // the captured snapshot can be hours old and would race against
+            // any concurrent recovery (see comment above).
+            if (latestTask.column !== "todo") {
+              await this.store.moveTask(task.id, "todo", preserveProgress ? { preserveProgress: true } : undefined);
+              // Audit trail: record task move (FN-1404)
+              await audit.database({ type: "task:move", target: task.id, metadata: { to: "todo" } });
+              executorLog.log(`${task.id} moved to todo for retry after stuck kill${preserveProgress ? " (progress preserved)" : ""}`);
+            } else {
+              executorLog.log(`${task.id} already in todo — skipping redundant move`);
+            }
           }
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);
@@ -6570,17 +6607,41 @@ and show an appropriate message to the user.\`
       const FORCE_REQUEUE_GRACE_MS = 60_000; // 60 s — generous, but bounded
       setTimeout(async () => {
         if (!this.executing.has(taskId)) return; // executor unwound normally — nothing to do
+        // Re-check the latest column: self-healing may have already moved the
+        // task out of in-progress (e.g. recoverCompletedTasks → in-review).
+        // Force-requeueing in that case would clobber a valid recovery, undo
+        // the worktree/branch state that recovery now relies on, and reset
+        // step progress.
+        let latestColumn: string | undefined;
+        try {
+          const latestTask = await this.store.getTask(taskId);
+          latestColumn = latestTask.column;
+        } catch (err: unknown) {
+          executorLog.warn(
+            `${taskId} force-requeue could not read latest task state: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        if (latestColumn && latestColumn !== "in-progress") {
+          executorLog.log(
+            `${taskId} force-requeue skipped — task is now in '${latestColumn}' (recovered concurrently)`,
+          );
+          this.executing.delete(taskId);
+          this.stuckAborted.delete(taskId);
+          return;
+        }
         executorLog.warn(
           `${taskId} still executing ${FORCE_REQUEUE_GRACE_MS / 1000}s after stuck-kill signal ` +
           `(likely a hung subprocess) — force-requeueing`,
         );
         try {
+          const settings = await this.store.getSettings();
+          const preserveProgress = settings.preserveProgressOnStuckRequeue !== false;
           await this.store.logEntry(
             taskId,
-            `Force-requeued after stuck-kill: executor did not unwind within ${FORCE_REQUEUE_GRACE_MS / 1000}s (hung subprocess)`,
+            `Force-requeued after stuck-kill: executor did not unwind within ${FORCE_REQUEUE_GRACE_MS / 1000}s (hung subprocess)${preserveProgress ? " — progress preserved" : ""}`,
           );
           await this.store.updateTask(taskId, { status: "stuck-killed", worktree: null, branch: null });
-          await this.store.moveTask(taskId, "todo");
+          await this.store.moveTask(taskId, "todo", preserveProgress ? { preserveProgress: true } : undefined);
           // Remove from executing so the scheduler can re-dispatch normally.
           // The old Promise is still running but the executing guard is cleared so
           // a fresh execute() call won't be blocked.
