@@ -2926,6 +2926,42 @@ describe("ChatView mobile behavior", () => {
       restoreMatchMedia.mockRestore();
     }
   });
+
+  it("shows jump-to-latest only after scrolling away from bottom and jumps back on click", async () => {
+    const restoreMatchMedia = mockDesktopViewport();
+    try {
+      setupMockChat({
+        activeSession: activeSessionFixture,
+        messages: [
+          { id: "msg-001", sessionId: "session-001", role: "assistant", content: "One", createdAt: "2026-04-08T00:00:00.000Z" },
+        ],
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const messagesContainer = document.querySelector(".chat-messages") as HTMLDivElement;
+      let scrollTopValue = 0;
+      Object.defineProperty(messagesContainer, "scrollHeight", { configurable: true, get: () => 1000 });
+      Object.defineProperty(messagesContainer, "clientHeight", { configurable: true, get: () => 200 });
+      Object.defineProperty(messagesContainer, "scrollTop", {
+        configurable: true,
+        get: () => scrollTopValue,
+        set: (value: number) => {
+          scrollTopValue = value;
+        },
+      });
+
+      scrollTopValue = 600;
+      fireEvent.scroll(messagesContainer);
+      expect(screen.getByTestId("chat-jump-to-latest")).toBeInTheDocument();
+
+      await userEvent.click(screen.getByTestId("chat-jump-to-latest"));
+      expect(scrollTopValue).toBe(1000);
+      expect(screen.queryByTestId("chat-jump-to-latest")).not.toBeInTheDocument();
+    } finally {
+      restoreMatchMedia.mockRestore();
+    }
+  });
 });
 
 describe("ChatView mobile CSS contract", () => {
@@ -3022,5 +3058,9 @@ describe("ChatView mobile CSS contract", () => {
 
   it("mobile includes keyboard-aware chat-thread height rule", () => {
     expect(css).toMatch(/\.chat-thread\[style\*=\"--keyboard-overlap\"\]\s*\{[^}]*--vv-height/);
+  });
+
+  it("mobile widens chat bubbles for readability", () => {
+    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.chat-message\s*\{[\s\S]*?max-width:\s*82%/);
   });
 });

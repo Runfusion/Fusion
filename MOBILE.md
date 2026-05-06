@@ -88,6 +88,12 @@ Install from browser:
 
 Planning Mode opens directly into the composer pane on mobile when no planning sessions exist, avoiding an empty-sidebar dead end. On desktop/tablet the split view is unaffected. Once sessions are saved, mobile shows the session list as usual and the user can navigate between list and detail panes.
 
+### Chat and Quick Chat mobile scroll/readability behavior
+
+- Chat and Quick Chat must keep scrolling container-scoped (`.chat-messages` / `.quick-chat-panel-messages`) and must not switch to page-level scroll APIs (including `scrollIntoView()`) to avoid mobile Safari viewport drift.
+- Both surfaces now pause live-tail autoscroll when the user scrolls away from bottom, show a temporary **Latest** jump control, and resume tail-follow only after jumping back.
+- Mobile bubble widths are intentionally slightly wider for readability, but safe-area padding, full-screen Quick Chat bounds, and compact mobile tool-call summaries must remain intact.
+
 ## CI/CD Pipeline
 
 Mobile CI is defined in `.github/workflows/mobile.yml`.
