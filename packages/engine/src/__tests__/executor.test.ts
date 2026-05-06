@@ -14138,3 +14138,103 @@ describe("Executor verification gate (FN-3345)", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// allowParallelExecution gate
+// ---------------------------------------------------------------------------
+
+describe("allowParallelExecution heartbeat gate", () => {
+  const TASK_BASE: Omit<Task, "id"> = {
+    title: "Gated task",
+    description: "Test task",
+    column: "in-progress",
+    dependencies: [],
+    steps: [],
+    currentStep: 0,
+    log: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  function makeAgentStore(opts: {
+    ephemeral: boolean;
+    allowParallelExecution?: boolean;
+    hasActiveRun: boolean;
+  }) {
+    const agent = {
+      id: "agent-perm-1",
+      name: "Permanent Agent",
+      role: "executor",
+      state: "running",
+      metadata: opts.ephemeral ? { agentKind: "task-worker" } : {},
+      runtimeConfig: opts.allowParallelExecution !== undefined
+        ? { allowParallelExecution: opts.allowParallelExecution }
+        : {},
+    };
+    return {
+      getAgent: vi.fn().mockResolvedValue(agent),
+      getActiveHeartbeatRun: vi.fn().mockResolvedValue(
+        opts.hasActiveRun ? { id: "run-1", status: "active" } : null,
+      ),
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it.each([
+    {
+      label: "permanent agent, allowParallelExecution=false, active heartbeat run → skipped",
+      ephemeral: false,
+      allowParallelExecution: false as boolean | undefined,
+      hasActiveRun: true,
+      expectExecute: false,
+    },
+    {
+      label: "permanent agent, allowParallelExecution=true, active heartbeat run → proceeds",
+      ephemeral: false,
+      allowParallelExecution: true as boolean | undefined,
+      hasActiveRun: true,
+      expectExecute: true,
+    },
+    {
+      label: "permanent agent, allowParallelExecution=false, no heartbeat run → proceeds",
+      ephemeral: false,
+      allowParallelExecution: false as boolean | undefined,
+      hasActiveRun: false,
+      expectExecute: true,
+    },
+    {
+      label: "ephemeral agent, allowParallelExecution=false, active heartbeat run → proceeds (flag ignored)",
+      ephemeral: true,
+      allowParallelExecution: false as boolean | undefined,
+      hasActiveRun: true,
+      expectExecute: true,
+    },
+  ])("$label", async ({ ephemeral, allowParallelExecution, hasActiveRun, expectExecute }) => {
+    const agentStore = makeAgentStore({ ephemeral, allowParallelExecution, hasActiveRun });
+    const store = createMockStore();
+
+    mockedCreateFnAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test", { agentStore: agentStore as any });
+
+    await executor.execute({
+      ...TASK_BASE,
+      id: "FN-GATE-1",
+      assignedAgentId: "agent-perm-1",
+    });
+
+    if (expectExecute) {
+      expect(mockedCreateFnAgent).toHaveBeenCalled();
+    } else {
+      expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+    }
+  });
+});

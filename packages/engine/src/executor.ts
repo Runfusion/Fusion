@@ -5,10 +5,11 @@ const execAsync = promisify(exec);
 import { isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext } from "@fusion/core";
+import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig } from "@fusion/core";
 import {
   buildExecutionMemoryInstructions,
   getTaskMergeBlocker,
+  isEphemeralAgent,
   resolveAgentPrompt,
   resolveProjectDefaultModel,
   type RunCommandResult,
@@ -1840,6 +1841,50 @@ export class TaskExecutor {
   }
 
   /**
+   * Returns true when execute() should be deferred because the agent bound to
+   * this task has an active heartbeat run and allowParallelExecution=false.
+   *
+   * Only applies to permanent (non-ephemeral) agents. Always returns false
+   * when agentStore is unavailable or the agent cannot be resolved.
+   */
+  private async shouldDeferForHeartbeat(agentId: string): Promise<boolean> {
+    if (!this.options.agentStore) return false;
+    const agent = await this.options.agentStore.getAgent(agentId).catch(() => null);
+    if (!agent) return false;
+    if (isEphemeralAgent(agent)) return false;
+    const rc = (agent.runtimeConfig ?? {}) as AgentHeartbeatConfig;
+    if (rc.allowParallelExecution !== false) return false;
+    const activeRun = await this.options.agentStore.getActiveHeartbeatRun(agentId).catch(() => null);
+    return activeRun !== null;
+  }
+
+  /**
+   * Re-dispatch execute() for any unstarted in-progress task belonging to the
+   * given agent. Called after a heartbeat run completes to unblock tasks that
+   * were deferred by the allowParallelExecution=false gate.
+   */
+  async resumeTaskForAgent(agentId: string): Promise<void> {
+    const settings = await this.store.getSettings();
+    if (settings.globalPause || settings.enginePaused) return;
+    const tasks = await this.store.listTasks({ slim: true, column: "in-progress" });
+    for (const task of tasks) {
+      if (
+        task.assignedAgentId === agentId
+        && !task.paused
+        && !this.executing.has(task.id)
+        && !this.activeSessions.has(task.id)
+        && !this.activeStepExecutors.has(task.id)
+        && !this.activeWorkflowStepSessions.has(task.id)
+      ) {
+        executorLog.log(`${task.id}: re-dispatching execute() after heartbeat completion for agent ${agentId}`);
+        this.execute(task).catch((err) =>
+          executorLog.error(`Failed to resume ${task.id} after heartbeat completion:`, err),
+        );
+      }
+    }
+  }
+
+  /**
    * Resume orphaned in-progress tasks (e.g., after crash/restart).
    * Call once after engine startup.
    *
@@ -1987,6 +2032,13 @@ export class TaskExecutor {
   async execute(task: Task): Promise<void> {
     executorLog.log(`execute() called for ${task.id} (already executing=${this.executing.has(task.id)})`);
     if (this.executing.has(task.id)) return;
+
+    const assignedAgentId = task.assignedAgentId;
+    if (assignedAgentId && await this.shouldDeferForHeartbeat(assignedAgentId)) {
+      executorLog.log(`${task.id}: skipping execute — agent ${assignedAgentId} has active heartbeat run (allowParallelExecution=false)`);
+      return;
+    }
+
     this.executing.add(task.id);
 
     executorLog.log(`Starting ${task.id}: ${task.title || task.description.slice(0, 60)}`);

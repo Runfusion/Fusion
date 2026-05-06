@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import {
   HeartbeatMonitor,
   HeartbeatTriggerScheduler,
-  isBlockedStateDuplicate,
   type AgentSession,
   type HeartbeatExecutionOptions,
   HEARTBEAT_SYSTEM_PROMPT,

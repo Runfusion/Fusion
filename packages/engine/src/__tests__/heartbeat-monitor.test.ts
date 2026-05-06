@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import {
   HeartbeatMonitor,
   HeartbeatTriggerScheduler,
-  isBlockedStateDuplicate,
   type AgentSession,
   type HeartbeatExecutionOptions,
   HEARTBEAT_SYSTEM_PROMPT,
@@ -74,31 +73,6 @@ describe("constructor", () => {
   });
 });
 
-describe("isBlockedStateDuplicate", () => {
-  it("returns true when blockedBy and contextHash match", () => {
-    expect(
-      isBlockedStateDuplicate(
-        { taskId: "FN-1", blockedBy: "FN-0", recordedAt: "2026-01-01T00:00:00.000Z", contextHash: "abc" },
-        { taskId: "FN-1", blockedBy: "FN-0", recordedAt: "2026-01-02T00:00:00.000Z", contextHash: "abc" },
-      ),
-    ).toBe(true);
-  });
-
-  it("returns false when blockedBy differs or contextHash differs", () => {
-    expect(
-      isBlockedStateDuplicate(
-        { taskId: "FN-1", blockedBy: "FN-0", recordedAt: "2026-01-01T00:00:00.000Z", contextHash: "abc" },
-        { taskId: "FN-1", blockedBy: "FN-2", recordedAt: "2026-01-02T00:00:00.000Z", contextHash: "abc" },
-      ),
-    ).toBe(false);
-    expect(
-      isBlockedStateDuplicate(
-        { taskId: "FN-1", blockedBy: "FN-0", recordedAt: "2026-01-01T00:00:00.000Z", contextHash: "abc" },
-        { taskId: "FN-1", blockedBy: "FN-0", recordedAt: "2026-01-02T00:00:00.000Z", contextHash: "xyz" },
-      ),
-    ).toBe(false);
-  });
-});
 
 describe("start", () => {
   it("initiates polling interval", () => {

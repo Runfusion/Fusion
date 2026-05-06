@@ -448,6 +448,13 @@ export class InProcessRuntime
           onTerminated: (agentId, reason) => {
             runtimeLog.warn(`Agent ${agentId} terminated (unresponsive): ${reason}`);
           },
+          onRunCompleted: (agentId) => {
+            if (this.executor) {
+              void this.executor.resumeTaskForAgent(agentId).catch((err) => {
+                runtimeLog.warn(`resumeTaskForAgent failed for ${agentId}: ${err instanceof Error ? err.message : String(err)}`);
+              });
+            }
+          },
         });
         this.heartbeatMonitor.start();
       }

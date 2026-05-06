@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import {
   HeartbeatMonitor,
   HeartbeatTriggerScheduler,
-  isBlockedStateDuplicate,
   type AgentSession,
   type HeartbeatExecutionOptions,
   HEARTBEAT_SYSTEM_PROMPT,
@@ -1185,6 +1184,107 @@ describe("HeartbeatTriggerScheduler", () => {
         undefined,
         undefined,
       );
+    });
+  });
+
+  describe("allowParallelExecution gate", () => {
+    function makeAgentWithConfig(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "agent-par",
+        name: "Parallel Agent",
+        role: "executor",
+        state: "active",
+        taskId: "FN-TASK-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+        runtimeConfig: overrides,
+      };
+    }
+
+    it("timer tick skips when allowParallelExecution=false and task is executing", async () => {
+      vi.useFakeTimers();
+      const isTaskExecuting = vi.fn().mockReturnValue(true);
+
+      const parallelStore = {
+        getAgent: vi.fn().mockResolvedValue(makeAgentWithConfig({ allowParallelExecution: false })),
+        getActiveHeartbeatRun: vi.fn().mockResolvedValue(null),
+        getBudgetStatus: vi.fn().mockResolvedValue(createBudgetStatus()),
+        on: vi.fn(),
+        off: vi.fn(),
+      } as unknown as AgentStore;
+
+      scheduler = new HeartbeatTriggerScheduler(parallelStore, callback, undefined, { isTaskExecuting });
+      scheduler.start();
+      scheduler.registerAgent("agent-par", { heartbeatIntervalMs: 1000 });
+
+      await vi.advanceTimersByTimeAsync(1100);
+
+      expect(callback).not.toHaveBeenCalled();
+      expect(isTaskExecuting).toHaveBeenCalledWith("FN-TASK-1");
+    });
+
+    it("timer tick fires when allowParallelExecution=false and task is NOT executing", async () => {
+      vi.useFakeTimers();
+      const isTaskExecuting = vi.fn().mockReturnValue(false);
+
+      const parallelStore = {
+        getAgent: vi.fn().mockResolvedValue(makeAgentWithConfig({ allowParallelExecution: false })),
+        getActiveHeartbeatRun: vi.fn().mockResolvedValue(null),
+        getBudgetStatus: vi.fn().mockResolvedValue(createBudgetStatus()),
+        on: vi.fn(),
+        off: vi.fn(),
+      } as unknown as AgentStore;
+
+      scheduler = new HeartbeatTriggerScheduler(parallelStore, callback, undefined, { isTaskExecuting });
+      scheduler.start();
+      scheduler.registerAgent("agent-par", { heartbeatIntervalMs: 1000 });
+
+      await vi.advanceTimersByTimeAsync(1100);
+
+      expect(callback).toHaveBeenCalledOnce();
+    });
+
+    it("timer tick fires when allowParallelExecution=true even while task is executing", async () => {
+      vi.useFakeTimers();
+      const isTaskExecuting = vi.fn().mockReturnValue(true);
+
+      const parallelStore = {
+        getAgent: vi.fn().mockResolvedValue(makeAgentWithConfig({ allowParallelExecution: true })),
+        getActiveHeartbeatRun: vi.fn().mockResolvedValue(null),
+        getBudgetStatus: vi.fn().mockResolvedValue(createBudgetStatus()),
+        on: vi.fn(),
+        off: vi.fn(),
+      } as unknown as AgentStore;
+
+      scheduler = new HeartbeatTriggerScheduler(parallelStore, callback, undefined, { isTaskExecuting });
+      scheduler.start();
+      scheduler.registerAgent("agent-par", { heartbeatIntervalMs: 1000 });
+
+      await vi.advanceTimersByTimeAsync(1100);
+
+      expect(callback).toHaveBeenCalledOnce();
+    });
+
+    it("timer tick fires when allowParallelExecution is unset (default) even while task is executing", async () => {
+      vi.useFakeTimers();
+      const isTaskExecuting = vi.fn().mockReturnValue(true);
+
+      const parallelStore = {
+        getAgent: vi.fn().mockResolvedValue(makeAgentWithConfig({})),
+        getActiveHeartbeatRun: vi.fn().mockResolvedValue(null),
+        getBudgetStatus: vi.fn().mockResolvedValue(createBudgetStatus()),
+        on: vi.fn(),
+        off: vi.fn(),
+      } as unknown as AgentStore;
+
+      scheduler = new HeartbeatTriggerScheduler(parallelStore, callback, undefined, { isTaskExecuting });
+      scheduler.start();
+      scheduler.registerAgent("agent-par", { heartbeatIntervalMs: 1000 });
+
+      await vi.advanceTimersByTimeAsync(1100);
+
+      expect(callback).toHaveBeenCalledOnce();
     });
   });
 });
