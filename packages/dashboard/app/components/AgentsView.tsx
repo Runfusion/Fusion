@@ -800,6 +800,18 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
               <RefreshCw size={16} className={isLoading ? "spin" : undefined} />
             </button>
             <button
+              className="btn btn-sm"
+              onClick={() => {
+                setIsImporting(true);
+                setIsControlsPanelOpen(false);
+              }}
+              aria-label="Import agents"
+              title="Import agents"
+            >
+              <Upload size={16} />
+              Import
+            </button>
+            <button
               className="btn btn-task-create btn-sm"
               onClick={() => {
                 handleOpenNewAgent();
@@ -854,18 +866,6 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
               </label>
             </div>
 
-            <div className="agent-controls-actions">
-              <button
-                className="btn"
-                onClick={() => {
-                  setIsImporting(true);
-                  setIsControlsPanelOpen(false);
-                }}
-              >
-                <Upload size={16} />
-                Import
-              </button>
-            </div>
           </div>
 
           <div className="agent-global-controls">
