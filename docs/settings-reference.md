@@ -863,7 +863,7 @@ Common built-in dashboard flags include:
 - `todoView` (enables dashboard Todo View; see [Todo View](./todo-view.md))
 - `researchView`
 - `remoteAccess`
-- `agentOnboarding` (gates the planning-style New Agent onboarding flow in Agents view)
+- `agentOnboarding` (enables the **AI Interview** option inside the New Agent dialog)
 
 ---
 

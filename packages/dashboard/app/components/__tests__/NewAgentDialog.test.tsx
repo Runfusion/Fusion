@@ -27,6 +27,29 @@ vi.mock("../SkillMultiselect", () => ({
 }));
 
 // Mock AgentGenerationModal
+vi.mock("../ExperimentalAgentOnboardingModal", () => ({
+  ExperimentalAgentOnboardingModal: ({ isOpen, onClose, onUseDraft }: { isOpen: boolean; onClose: () => void; onUseDraft: (draft: any) => void }) => {
+    if (!isOpen) return null;
+    return (
+      <div role="dialog" aria-label="AI Interview">
+        <button onClick={onClose}>Close Interview</button>
+        <button
+          onClick={() => onUseDraft({
+            name: "Interview Draft",
+            role: "reviewer",
+            title: "Interview Title",
+            instructionsText: "Interview instructions",
+            thinkingLevel: "low",
+            maxTurns: 12,
+          })}
+        >
+          Apply Interview Draft
+        </button>
+      </div>
+    );
+  },
+}));
+
 vi.mock("../AgentGenerationModal", () => ({
   AgentGenerationModal: ({ isOpen, onClose, onGenerated }: { isOpen: boolean; onClose: () => void; onGenerated: (spec: any) => void }) => {
     if (!isOpen) return null;
@@ -233,6 +256,47 @@ describe("NewAgentDialog", () => {
 
       const nameInput = getStepZeroField(/Name/) as HTMLInputElement;
       expect(nameInput.value).toBe("Custom Value");
+    });
+
+    it("shows AI Interview button only when onboarding flag is enabled", async () => {
+      const { rerender } = render(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} agentOnboardingEnabled={false} />,
+      );
+
+      expect(screen.queryByRole("button", { name: "AI Interview" })).toBeNull();
+
+      rerender(
+        <NewAgentDialog isOpen={true} onClose={mockOnClose} onCreated={mockOnCreated} agentOnboardingEnabled={true} />,
+      );
+
+      expect(screen.getByRole("button", { name: "AI Interview" })).toBeInTheDocument();
+    });
+
+    it("opens interview modal and applies draft back into the form", async () => {
+      const user = userEvent.setup();
+      const onPrefillDraft = vi.fn();
+      render(
+        <NewAgentDialog
+          isOpen={true}
+          onClose={mockOnClose}
+          onCreated={mockOnCreated}
+          agentOnboardingEnabled={true}
+          onPrefillDraft={onPrefillDraft}
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: "AI Interview" }));
+      expect(screen.getByRole("dialog", { name: "AI Interview" })).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Apply Interview Draft" }));
+
+      await waitFor(() => {
+        expect(onPrefillDraft).toHaveBeenCalledWith(expect.objectContaining({ name: "Interview Draft" }));
+        expect(screen.getByRole("button", { name: "Model" })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole("button", { name: "Back" }));
+      expect((getStepZeroField(/Name/) as HTMLInputElement).value).toBe("Interview Draft");
     });
   });
 

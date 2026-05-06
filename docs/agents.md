@@ -370,14 +370,16 @@ The final `createAgent(...)` call always uses the latest values from these step-
 
 ### Experimental planning-style onboarding
 
-When **Settings → Experimental Features → Planning-style Agent Onboarding** (`experimentalFeatures.agentOnboarding`) is enabled, clicking **New Agent** opens an AI-guided onboarding modal instead of jumping straight to the classic dialog.
+The **New Agent** dialog is the canonical launch point for agent creation.
 
-- The onboarding flow asks clarifying questions using repo-aware context (existing agents + preset/template options).
+When **Settings → Experimental Features → Planning-style Agent Onboarding** (`experimentalFeatures.agentOnboarding`) is enabled, step 0 of the New Agent dialog includes an **AI Interview** entry point.
+
+- The interview flow asks clarifying questions using repo-aware context (existing agents + preset/template options).
 - It generates a **draft** agent configuration summary (name/role/instructions and optional template or pattern provenance).
-- Clicking **Continue to agent form** hands that draft into the existing `NewAgentDialog` as a prefill for human review and edits.
-- The onboarding flow does **not** auto-create agents directly.
+- Clicking **Continue to agent form** applies that draft back into the same `NewAgentDialog` as a prefill for human review and edits.
+- The interview flow does **not** auto-create agents directly.
 
-When `experimentalFeatures.agentOnboarding` is disabled, the original `NewAgentDialog` behavior remains unchanged and opens immediately from **New Agent**.
+When `experimentalFeatures.agentOnboarding` is disabled, the New Agent dialog still opens normally but the **AI Interview** entry point is hidden.
 
 The dashboard provides quick-start presets for common agent roles. Each preset includes:
 

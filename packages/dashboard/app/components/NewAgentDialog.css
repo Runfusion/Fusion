@@ -115,6 +115,21 @@
   border-bottom: 1px solid var(--border);
 }
 
+.agent-dialog-step-zero-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-sm);
+}
+
+.agent-dialog-interview-btn {
+  font-weight: 600;
+}
+
+.agent-dialog-interview-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 .agent-dialog-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -646,5 +661,13 @@
   .agent-dialog-footer > .btn {
     flex: 1 1 auto;
     min-width: 0;
+  }
+
+  .agent-dialog-step-zero-actions {
+    justify-content: stretch;
+  }
+
+  .agent-dialog-interview-btn {
+    width: 100%;
   }
 }

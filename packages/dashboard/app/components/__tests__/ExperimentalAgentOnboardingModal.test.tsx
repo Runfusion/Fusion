@@ -21,9 +21,12 @@ vi.mock("../../api", () => ({
         streamHandlers?.onSummary?.({
           name: "Docs Reviewer",
           role: "reviewer",
-          instructionsText: "Review docs",
+          instructionsText: "Review docs for accuracy and clarity.",
           thinkingLevel: "medium",
           maxTurns: 20,
+          soul: "Thorough and empathetic reviewer.",
+          memory: "- Follow docs style guide\n- Call out unclear steps",
+          skills: ["docs", "review"],
           templateId: "reviewer-template",
           rationale: "Matched your request to the reviewer preset",
         }),
@@ -61,6 +64,17 @@ describe("ExperimentalAgentOnboardingModal", () => {
     expect(screen.getByText("Template:")).toBeTruthy();
     expect(screen.getByText("reviewer-template")).toBeTruthy();
     expect(screen.getByText(/Matched your request/)).toBeTruthy();
+    expect(screen.getByText("Soul / personality")).toBeTruthy();
+    expect(screen.getByText("Thorough and empathetic reviewer.")).toBeTruthy();
+    expect(screen.getByText("Core instructions")).toBeTruthy();
+    expect(screen.getByText("Review docs for accuracy and clarity.")).toBeTruthy();
+    expect(screen.getByText("Runtime hints")).toBeTruthy();
+    expect(screen.getByText("Thinking level:")).toBeTruthy();
+    expect(screen.getByText("Max turns:")).toBeTruthy();
+    expect(screen.getByText("Starter memory / playbook")).toBeTruthy();
+    expect(screen.getByText(/Follow docs style guide/)).toBeTruthy();
+    expect(screen.getByText("Skills")).toBeTruthy();
+    expect(screen.getByText("docs, review")).toBeTruthy();
     fireEvent.click(screen.getByText("Continue to agent form"));
 
     await waitFor(() => {

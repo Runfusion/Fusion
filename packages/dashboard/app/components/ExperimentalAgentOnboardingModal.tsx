@@ -148,9 +148,9 @@ export function ExperimentalAgentOnboardingModal({
 
   return (
     <div className="modal-overlay open" role="presentation">
-      <div className="modal modal-lg experimental-agent-onboarding-modal" role="dialog" aria-modal="true" aria-label="Experimental agent onboarding">
+      <div className="modal modal-lg experimental-agent-onboarding-modal" role="dialog" aria-modal="true" aria-label="AI Interview">
         <div className="modal-header">
-          <h3>Experimental Agent Onboarding</h3>
+          <h3>AI Interview</h3>
           <button className="modal-close" onClick={() => void handleClose()} aria-label="Close">×</button>
         </div>
 
@@ -182,11 +182,49 @@ export function ExperimentalAgentOnboardingModal({
           <div className="form-group">
             <label>Draft ready for review</label>
             <div className="experimental-agent-onboarding-modal__summary card">
-              <p><strong>Name:</strong> {summary.name}</p>
-              <p><strong>Role:</strong> {summary.role}</p>
-              {summary.templateId && <p><strong>Template:</strong> {summary.templateId}</p>}
-              {summary.patternAgentId && <p><strong>Pattern agent:</strong> {summary.patternAgentId}</p>}
-              {summary.rationale && <p><strong>Why:</strong> {summary.rationale}</p>}
+              <div className="experimental-agent-onboarding-modal__summary-section">
+                <h4>Profile</h4>
+                <p><strong>Name:</strong> {summary.name}</p>
+                <p><strong>Role:</strong> {summary.role}</p>
+                {summary.title && <p><strong>Title:</strong> {summary.title}</p>}
+                {summary.icon && <p><strong>Icon:</strong> {summary.icon}</p>}
+                {summary.templateId && <p><strong>Template:</strong> {summary.templateId}</p>}
+                {summary.patternAgentId && <p><strong>Pattern agent:</strong> {summary.patternAgentId}</p>}
+                {summary.reportsTo && <p><strong>Reports to:</strong> {summary.reportsTo}</p>}
+                {summary.rationale && <p><strong>Why:</strong> {summary.rationale}</p>}
+              </div>
+
+              {summary.soul && (
+                <div className="experimental-agent-onboarding-modal__summary-section">
+                  <h4>Soul / personality</h4>
+                  <p className="experimental-agent-onboarding-modal__summary-block">{summary.soul}</p>
+                </div>
+              )}
+
+              <div className="experimental-agent-onboarding-modal__summary-section">
+                <h4>Core instructions</h4>
+                <p className="experimental-agent-onboarding-modal__summary-block">{summary.instructionsText}</p>
+              </div>
+
+              <div className="experimental-agent-onboarding-modal__summary-section">
+                <h4>Runtime hints</h4>
+                <p><strong>Thinking level:</strong> {summary.thinkingLevel}</p>
+                <p><strong>Max turns:</strong> {summary.maxTurns}</p>
+              </div>
+
+              {summary.memory && (
+                <div className="experimental-agent-onboarding-modal__summary-section">
+                  <h4>Starter memory / playbook</h4>
+                  <p className="experimental-agent-onboarding-modal__summary-block">{summary.memory}</p>
+                </div>
+              )}
+
+              {summary.skills && summary.skills.length > 0 && (
+                <div className="experimental-agent-onboarding-modal__summary-section">
+                  <h4>Skills</h4>
+                  <p>{summary.skills.join(", ")}</p>
+                </div>
+              )}
             </div>
             <div className="modal-actions">
               <button className="btn" onClick={() => void handleClose()}>Cancel</button>

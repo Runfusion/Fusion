@@ -192,7 +192,7 @@ Features:
 - Run-level error indicator in **Agent detail → Runs** when a run has captured stderr; select it to open the same **Agent Error Details** modal
 - **Agent Error Details** shows full error text plus **Copy** and **Report on GitHub** actions
 - **Report on GitHub** opens a pre-filled issue draft with available context from where you launched it (surface plus agent metadata, and run/task IDs when available on that view)
-- Jump from agent activity to related task logs, and use onboarding/import flows when `experimentalFeatures.agentOnboarding` is enabled
+- Jump from agent activity to related task logs, and (when `experimentalFeatures.agentOnboarding` is enabled) launch **AI Interview** from inside the New Agent dialog
 
 For full lifecycle behavior, runtime/heartbeat settings, and budgets, see [Agents guide](./agents.md).
 

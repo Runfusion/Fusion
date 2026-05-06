@@ -1614,10 +1614,11 @@ describe("AgentsView", () => {
 
       await waitFor(() => {
         expect(screen.getByRole("dialog", { name: "Create new agent" })).toBeTruthy();
+        expect(screen.queryByRole("button", { name: "AI Interview" })).toBeNull();
       });
     });
 
-    it("opens onboarding modal and not legacy dialog when agent onboarding flag is enabled", async () => {
+    it("keeps New Agent launch on the standard dialog when agent onboarding flag is enabled", async () => {
       render(<AgentsView addToast={mockAddToast} agentOnboardingEnabled={true} />);
 
       await waitFor(() => {
@@ -1627,8 +1628,8 @@ describe("AgentsView", () => {
       fireEvent.click(screen.getByText("New Agent"));
 
       await waitFor(() => {
-        expect(screen.getByRole("dialog", { name: "Experimental agent onboarding" })).toBeTruthy();
-        expect(screen.queryByRole("dialog", { name: "Create new agent" })).toBeNull();
+        expect(screen.getByRole("dialog", { name: "Create new agent" })).toBeTruthy();
+        expect(screen.getByRole("button", { name: "AI Interview" })).toBeTruthy();
       });
     });
 

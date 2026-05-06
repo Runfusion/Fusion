@@ -11,7 +11,6 @@ import { AgentEmptyState } from "./AgentEmptyState";
 import { useAgents } from "../hooks/useAgents";
 import { useConfirm } from "../hooks/useConfirm";
 import { NewAgentDialog } from "./NewAgentDialog";
-import { ExperimentalAgentOnboardingModal } from "./ExperimentalAgentOnboardingModal";
 import { AgentImportModal } from "./AgentImportModal";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
 import { useViewportMode } from "../hooks/useViewportMode";
@@ -194,7 +193,6 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
     showSystemAgents,
   });
   const [isCreating, setIsCreating] = useState(false);
-  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [onboardingDraft, setOnboardingDraft] = useState<AgentOnboardingSummary | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -738,12 +736,8 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   const showInitialAgentsLoading = isLoading && agents.length === 0;
 
   const handleOpenNewAgent = useCallback(() => {
-    if (agentOnboardingEnabled) {
-      setIsOnboardingOpen(true);
-      return;
-    }
     setIsCreating(true);
-  }, [agentOnboardingEnabled]);
+  }, []);
 
   return (
     <div className="agents-view">
@@ -934,18 +928,9 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
         onCreated={() => { setIsCreating(false); setOnboardingDraft(null); void loadAgents(); }}
         projectId={projectId}
         prefillDraft={onboardingDraft}
-      />
-
-      <ExperimentalAgentOnboardingModal
-        isOpen={isOnboardingOpen}
-        onClose={() => setIsOnboardingOpen(false)}
-        onUseDraft={(draft) => {
-          setOnboardingDraft(draft);
-          setIsOnboardingOpen(false);
-          setIsCreating(true);
-        }}
-        projectId={projectId}
+        agentOnboardingEnabled={agentOnboardingEnabled}
         existingAgents={agents}
+        onPrefillDraft={setOnboardingDraft}
       />
 
       <AgentImportModal

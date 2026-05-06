@@ -10,6 +10,7 @@ import { AgentGenerationModal } from "./AgentGenerationModal";
 import { AGENT_PRESETS, type AgentPreset } from "./agent-presets";
 import { SkillMultiselect } from "./SkillMultiselect";
 import { AgentAvatar } from "./AgentAvatar";
+import { ExperimentalAgentOnboardingModal } from "./ExperimentalAgentOnboardingModal";
 
 export interface NewAgentDialogProps {
   isOpen: boolean;
@@ -17,6 +18,9 @@ export interface NewAgentDialogProps {
   onCreated: () => void;
   projectId?: string;
   prefillDraft?: AgentOnboardingSummary | null;
+  agentOnboardingEnabled?: boolean;
+  existingAgents?: Agent[];
+  onPrefillDraft?: (draft: AgentOnboardingSummary | null) => void;
 }
 
 const AGENT_ROLES: { value: AgentCapability; label: string; icon: string }[] = [
@@ -42,7 +46,16 @@ interface RuntimeConfig {
 
 type StepZeroTab = "presets" | "custom";
 
-export function NewAgentDialog({ isOpen, onClose, onCreated, projectId, prefillDraft = null }: NewAgentDialogProps) {
+export function NewAgentDialog({
+  isOpen,
+  onClose,
+  onCreated,
+  projectId,
+  prefillDraft = null,
+  agentOnboardingEnabled = false,
+  existingAgents = [],
+  onPrefillDraft,
+}: NewAgentDialogProps) {
   const [step, setStep] = useState(0);
   const [stepZeroTab, setStepZeroTab] = useState<StepZeroTab>("presets");
   const [name, setName] = useState("");
@@ -65,6 +78,7 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId, prefillD
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isGenerationModalOpen, setIsGenerationModalOpen] = useState(false);
+  const [isInterviewOpen, setIsInterviewOpen] = useState(false);
 
   // Model dropdown state
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
@@ -220,25 +234,29 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId, prefillD
     setStep(1);
   }, []);
 
-  useEffect(() => {
-    if (!isOpen || !prefillDraft) return;
+  const applyDraft = useCallback((draft: AgentOnboardingSummary) => {
     setStep(1);
     setStepZeroTab("custom");
-    setName(prefillDraft.name ?? "");
-    setTitle(prefillDraft.title ?? "");
-    setIcon(prefillDraft.icon ?? "");
-    setRole((VALID_CAPABILITIES.has(prefillDraft.role) ? prefillDraft.role : "custom") as AgentCapability);
-    setReportsTo(prefillDraft.reportsTo ?? "");
-    setInstructionsText(prefillDraft.instructionsText ?? "");
-    setSoul(prefillDraft.soul ?? "");
-    setMemory(prefillDraft.memory ?? "");
-    setSelectedSkills(prefillDraft.skills ?? []);
+    setName(draft.name ?? "");
+    setTitle(draft.title ?? "");
+    setIcon(draft.icon ?? "");
+    setRole((VALID_CAPABILITIES.has(draft.role) ? draft.role : "custom") as AgentCapability);
+    setReportsTo(draft.reportsTo ?? "");
+    setInstructionsText(draft.instructionsText ?? "");
+    setSoul(draft.soul ?? "");
+    setMemory(draft.memory ?? "");
+    setSelectedSkills(draft.skills ?? []);
     setRuntimeConfig((current) => ({
       ...current,
-      thinkingLevel: prefillDraft.thinkingLevel ?? current.thinkingLevel,
-      maxTurns: prefillDraft.maxTurns ?? current.maxTurns,
+      thinkingLevel: draft.thinkingLevel ?? current.thinkingLevel,
+      maxTurns: draft.maxTurns ?? current.maxTurns,
     }));
-  }, [isOpen, prefillDraft]);
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen || !prefillDraft) return;
+    applyDraft(prefillDraft);
+  }, [isOpen, prefillDraft, applyDraft]);
 
   if (!isOpen) return null;
 
@@ -262,6 +280,7 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId, prefillD
     setSelectedSkills([]);
     setError(null);
     setIsGenerationModalOpen(false);
+    setIsInterviewOpen(false);
     onClose();
   };
 
@@ -420,6 +439,17 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId, prefillD
         <div className="agent-dialog-body">
           {step === 0 && (
             <div>
+              {agentOnboardingEnabled && (
+                <div className="agent-dialog-step-zero-actions">
+                  <button
+                    type="button"
+                    className="btn agent-dialog-interview-btn"
+                    onClick={() => setIsInterviewOpen(true)}
+                  >
+                    AI Interview
+                  </button>
+                </div>
+              )}
               <div className="agent-dialog-tabs" role="tablist" aria-label="Agent setup mode">
                 <button
                   id="agent-dialog-tab-presets"
@@ -854,6 +884,18 @@ export function NewAgentDialog({ isOpen, onClose, onCreated, projectId, prefillD
         onClose={() => setIsGenerationModalOpen(false)}
         onGenerated={handleGenerated}
         projectId={projectId}
+      />
+
+      <ExperimentalAgentOnboardingModal
+        isOpen={isInterviewOpen}
+        onClose={() => setIsInterviewOpen(false)}
+        onUseDraft={(draft) => {
+          onPrefillDraft?.(draft);
+          applyDraft(draft);
+          setIsInterviewOpen(false);
+        }}
+        projectId={projectId}
+        existingAgents={existingAgents}
       />
     </div>,
     document.body,
