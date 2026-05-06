@@ -18,6 +18,7 @@ import {
   InsightLifecycleError,
   InsightStore,
   executeInsightRunLifecycle,
+  resolvePlanningSettingsModel,
   retryInsightRunLifecycle,
   type InsightCategory,
   type MemoryInsightCategory,
@@ -26,6 +27,7 @@ import {
   type InsightRunTrigger,
   type InsightRunListOptions,
   type InsightRunStatus,
+  type Settings,
 } from "@fusion/core";
 import {
   ApiError,
@@ -104,6 +106,9 @@ async function executeInsightAttempt(params: {
   runId: string;
   signal: AbortSignal;
   insightStore: InsightStore;
+  settings: Settings;
+  modelProvider?: string;
+  modelId?: string;
 }): Promise<{ summary: string; insightsCreated: number; insightsUpdated: number }> {
   const {
     readWorkingMemory,
@@ -120,10 +125,22 @@ async function executeInsightAttempt(params: {
     throw new Error("No working memory to analyze");
   }
 
+  const { provider: settingsProvider, modelId: settingsModelId } =
+    resolvePlanningSettingsModel(params.settings);
+
+  const finalProvider = params.modelProvider ?? settingsProvider;
+  const finalModelId = params.modelId ?? settingsModelId;
+  const fallbackProvider = params.modelProvider ? settingsProvider : undefined;
+  const fallbackModelId = params.modelProvider ? settingsModelId : undefined;
+
   const existingInsights = await readInsightsMemory(params.rootDir);
   let responseText = "";
   const { session } = await createFnAgent({
     cwd: params.rootDir,
+    defaultProvider: finalProvider,
+    defaultModelId: finalModelId,
+    fallbackProvider,
+    fallbackModelId,
     systemPrompt: [
       "You extract durable project insights from working memory notes.",
       "Return only valid JSON that matches the requested schema.",
@@ -309,6 +326,9 @@ export function createInsightsRouter(store: TaskStore): Router {
       const taskStore = requestContext.getStore();
       if (!taskStore) throw new ApiError(500, "Store context not available");
       const rootDir = taskStore.getRootDir();
+      const settings = await taskStore.getSettings();
+      const modelProvider = typeof req.body.modelProvider === "string" ? req.body.modelProvider : undefined;
+      const modelId = typeof req.body.modelId === "string" ? req.body.modelId : undefined;
       const controller = new AbortController();
 
       const run = await executeInsightRunLifecycle({
@@ -330,6 +350,9 @@ export function createInsightsRouter(store: TaskStore): Router {
             runId: run.id,
             signal,
             insightStore,
+            settings,
+            modelProvider,
+            modelId,
           });
         },
       });
@@ -474,6 +497,7 @@ export function createInsightsRouter(store: TaskStore): Router {
       const taskStore = requestContext.getStore();
       if (!taskStore) throw new ApiError(500, "Store context not available");
       const rootDir = taskStore.getRootDir();
+      const settings = await taskStore.getSettings();
       const controller = new AbortController();
 
       const { run } = await retryInsightRunLifecycle({
@@ -491,6 +515,7 @@ export function createInsightsRouter(store: TaskStore): Router {
             runId: run.id,
             signal,
             insightStore: store,
+            settings,
           });
         },
       });
