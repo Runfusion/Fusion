@@ -19,6 +19,7 @@ import {
   Paperclip,
   File,
   Wrench,
+  ChevronDown,
 } from "lucide-react";
 import { useChat, type ChatMessageInfo, type ToolCallInfo } from "../hooks/useChat";
 import { useViewportMode } from "./Header";
@@ -743,6 +744,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
   // Attachment state mirrors QuickEntryBox: pending files selected before send.
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isUserScrolling, setIsUserScrolling] = useState(false);
 
   // File mention state and hook
   const [, setFileMentionPopupVisible] = useState(false);
@@ -766,6 +768,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
   }, [fileMention.mentionActive]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const isUserScrollingRef = useRef(false);
   const hideSkillMenuTimeoutRef = useRef<number | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -845,14 +848,32 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     };
   }, []);
 
-  // Scroll thread container to bottom on new messages or streaming.
-  // Avoid Element.scrollIntoView() here because on mobile Safari it can
-  // scroll the page viewport instead of only the chat thread.
-  useEffect(() => {
+  const updateScrollState = useCallback(() => {
+    const messagesContainer = messagesContainerRef.current;
+    if (!messagesContainer) return;
+
+    const threshold = 50;
+    const atBottom = messagesContainer.scrollTop + messagesContainer.clientHeight >= messagesContainer.scrollHeight - threshold;
+    setIsUserScrolling(!atBottom);
+    isUserScrollingRef.current = !atBottom;
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
     const messagesContainer = messagesContainerRef.current;
     if (!messagesContainer) return;
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
-  }, [messages, streamingText, streamingThinking, isStreaming]);
+    setIsUserScrolling(false);
+    isUserScrollingRef.current = false;
+  }, []);
+
+  // Scroll thread container to bottom on new messages or streaming when user is near live tail.
+  // Avoid Element.scrollIntoView() here because on mobile Safari it can
+  // scroll the page viewport instead of only the chat thread.
+  useEffect(() => {
+    if (!isUserScrollingRef.current) {
+      scrollToBottom();
+    }
+  }, [messages, streamingText, streamingThinking, isStreaming, scrollToBottom]);
 
   useEffect(() => {
     if (keyboardOverlap <= 0) {
@@ -864,8 +885,8 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
       return;
     }
 
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-  }, [keyboardOverlap]);
+    scrollToBottom();
+  }, [keyboardOverlap, scrollToBottom]);
 
   // Lock body scroll on mobile while the keyboard is up so iOS can't shift
   // the visual viewport (offsetTop > 0). Shared hook also restores
@@ -1721,7 +1742,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
         )}
 
         {/* Messages */}
-        <div className="chat-messages" ref={messagesContainerRef}>
+        <div className="chat-messages" ref={messagesContainerRef} onScroll={updateScrollState}>
           {isStreaming ? (
             <>
               {messages.map((message) => (
@@ -1795,6 +1816,17 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
           )}
           <div ref={messagesEndRef} />
         </div>
+        {isUserScrolling && (
+          <button
+            type="button"
+            className="btn btn-sm chat-jump-to-latest"
+            data-testid="chat-jump-to-latest"
+            onClick={scrollToBottom}
+          >
+            <ChevronDown size={14} />
+            Latest
+          </button>
+        )}
 
         {/* Input */}
         {activeSession && (

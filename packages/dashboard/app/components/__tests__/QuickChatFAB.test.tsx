@@ -435,4 +435,41 @@ describe("QuickChatFAB session-first UX", () => {
     expect(saved).toContain("\"x\"");
     expect(saved).toContain("\"y\"");
   });
+
+  it("shows jump-to-latest only after leaving live tail and scrolls back on click", async () => {
+    mockFetchChatMessages.mockResolvedValueOnce({
+      messages: [
+        {
+          id: "msg-1",
+          sessionId: "session-model",
+          role: "assistant",
+          content: "First",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    const messages = await screen.findByTestId("quick-chat-messages");
+    let scrollTopValue = 0;
+    Object.defineProperty(messages, "scrollHeight", { configurable: true, get: () => 1200 });
+    Object.defineProperty(messages, "clientHeight", { configurable: true, get: () => 240 });
+    Object.defineProperty(messages, "scrollTop", {
+      configurable: true,
+      get: () => scrollTopValue,
+      set: (value: number) => {
+        scrollTopValue = value;
+      },
+    });
+
+    scrollTopValue = 700;
+    fireEvent.scroll(messages);
+    expect(screen.getByTestId("quick-chat-jump-to-latest")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("quick-chat-jump-to-latest"));
+    expect(scrollTopValue).toBe(1200);
+    expect(screen.queryByTestId("quick-chat-jump-to-latest")).toBeNull();
+  });
 });

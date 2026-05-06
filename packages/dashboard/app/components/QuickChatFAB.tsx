@@ -13,7 +13,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
-import { Eye, EyeOff, MessageSquare, Paperclip, Plus, Send, Square, Wrench, X } from "lucide-react";
+import { ChevronDown, Eye, EyeOff, MessageSquare, Paperclip, Plus, Send, Square, Wrench, X } from "lucide-react";
 import { fetchDiscoveredSkills, fetchModels, type Agent, type ModelInfo } from "../api";
 import type { DiscoveredSkill } from "@fusion/dashboard";
 import { CustomModelDropdown } from "./CustomModelDropdown";
@@ -892,6 +892,7 @@ export function QuickChatFAB({
   /** Pending attachments staged in the composer before being sent. */
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isAttachmentDragOver, setIsAttachmentDragOver] = useState(false);
+  const [isUserScrolling, setIsUserScrolling] = useState(false);
 
   // File mention state and hook
   const [, setFileMentionPopupVisible] = useState(false);
@@ -978,6 +979,7 @@ export function QuickChatFAB({
   // visually grows to full height immediately on blur and the keyboard
   // slides down on top of it.
   const suppressVvShrinkRef = useRef(false);
+  const isUserScrollingRef = useRef(false);
 
   // Pin the document at the top while the panel is open on mobile.
   // Otherwise iOS can leave window.scrollY > 0 (e.g. after the keyboard
@@ -1407,13 +1409,31 @@ export function QuickChatFAB({
     };
   }, [isOpen, setIsOpen]);
 
-  // Auto-scroll messages
-  useEffect(() => {
-    if (!isOpen) return;
+  const updateScrollState = useCallback(() => {
+    const messagesEl = messagesRef.current;
+    if (!messagesEl) return;
+
+    const threshold = 50;
+    const atBottom = messagesEl.scrollTop + messagesEl.clientHeight >= messagesEl.scrollHeight - threshold;
+    setIsUserScrolling(!atBottom);
+    isUserScrollingRef.current = !atBottom;
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
     const messagesEl = messagesRef.current;
     if (!messagesEl) return;
     messagesEl.scrollTop = messagesEl.scrollHeight;
-  }, [messages, streamingText, streamingThinking, isStreaming, isOpen]);
+    setIsUserScrolling(false);
+    isUserScrollingRef.current = false;
+  }, []);
+
+  // Auto-scroll messages when user is near the live tail.
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!isUserScrollingRef.current) {
+      scrollToBottom();
+    }
+  }, [messages, streamingText, streamingThinking, isStreaming, isOpen, scrollToBottom]);
 
   const sessionOptions = useMemo(() => {
     const agentNameById = new Map(agents.map((agent) => [agent.id, agent.name?.trim() || agent.id]));
@@ -2269,7 +2289,7 @@ export function QuickChatFAB({
             </div>
           )}
 
-          <div className="quick-chat-panel-messages" ref={messagesRef} data-testid="quick-chat-messages">
+          <div className="quick-chat-panel-messages" ref={messagesRef} data-testid="quick-chat-messages" onScroll={updateScrollState}>
             {sessionsLoading ? (
               <div className="quick-chat-panel-empty">Loading conversation…</div>
             ) : isStreaming ? (
@@ -2344,6 +2364,18 @@ export function QuickChatFAB({
               </>
             )}
           </div>
+
+          {isUserScrolling && (
+            <button
+              type="button"
+              className="btn btn-sm quick-chat-jump-to-latest"
+              data-testid="quick-chat-jump-to-latest"
+              onClick={scrollToBottom}
+            >
+              <ChevronDown size={14} />
+              Latest
+            </button>
+          )}
 
           {pendingAttachments.length > 0 && (
             <div className="quick-chat-attachment-previews" data-testid="quick-chat-attachment-previews">

@@ -196,21 +196,27 @@ function checkAgainstBaseline() {
 
   const protectedViolations = [];
   if (candidateViolations.length > 0) {
-    sleepMs(1250);
-    const resampledProtected = snapshotProtectedFusion();
-    const resampledByDir = new Map(resampledProtected.map((entry) => [entry.dir, entry]));
+    // A live local app can write in bursts (e.g. heartbeat every few seconds),
+    // so do a short mutability probe before blaming tests.
+    const postSamples = [currentProtected];
+    for (let i = 0; i < 4; i++) {
+      sleepMs(500);
+      postSamples.push(snapshotProtectedFusion());
+    }
 
     for (const dir of candidateViolations) {
-      const first = currentByDir.get(dir);
-      const second = resampledByDir.get(dir);
-      if (!first || !second) {
-        protectedViolations.push(dir);
-        continue;
+      let externallyActive = false;
+      for (let i = 1; i < postSamples.length; i++) {
+        const prev = postSamples[i - 1].find((entry) => entry.dir === dir);
+        const next = postSamples[i].find((entry) => entry.dir === dir);
+        if (!prev || !next) continue;
+        if (JSON.stringify(prev.entries) !== JSON.stringify(next.entries)) {
+          externallyActive = true;
+          break;
+        }
       }
 
-      // If the directory is still mutating across back-to-back samples,
-      // treat it as externally active noise (same as baseline unstable dirs).
-      if (JSON.stringify(first.entries) === JSON.stringify(second.entries)) {
+      if (!externallyActive) {
         protectedViolations.push(dir);
       }
     }

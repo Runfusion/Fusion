@@ -410,6 +410,14 @@
   word-break: break-word;
 }
 
+.quick-chat-jump-to-latest {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--space-xl) * 3);
+  transform: translateX(-50%);
+  z-index: 2;
+}
+
 .quick-chat-panel-message p {
   margin: 0;
   white-space: pre-wrap;
@@ -879,6 +887,14 @@
   .quick-chat-panel .chat-tool-calls-group-status {
     justify-content: flex-end;
     margin-left: auto;
+  }
+
+  .quick-chat-panel-message {
+    max-width: 90%;
+  }
+
+  .quick-chat-jump-to-latest {
+    bottom: calc(var(--space-xl) * 4 + env(safe-area-inset-bottom, 0px));
   }
 }
 

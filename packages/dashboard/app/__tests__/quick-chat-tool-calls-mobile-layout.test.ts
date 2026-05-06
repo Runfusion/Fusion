@@ -43,4 +43,9 @@ describe("quick-chat tool-call mobile layout css", () => {
     expect(scopedSummaryRules.length).toBeGreaterThan(0);
     expect(scopedSummaryRules.every((rule) => !/flex-direction:\s*column/.test(rule))).toBe(true);
   });
+
+  it("widens quick-chat message bubbles on mobile while keeping jump control above safe area", () => {
+    expect(mobileCss).toMatch(/\.quick-chat-panel-message\s*\{[^}]*max-width:\s*90%/);
+    expect(mobileCss).toMatch(/\.quick-chat-jump-to-latest\s*\{[^}]*env\(safe-area-inset-bottom,\s*0px\)/);
+  });
 });

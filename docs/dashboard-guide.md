@@ -47,6 +47,8 @@ Chat view provides project-scoped conversations with agents.
 - Entering `/clear` (exact match after trimming) in the composer starts a fresh thread for the current chat target instead of sending the literal command to the model
 - On mobile, the New Chat and Delete Conversation dialogs use a compact inset treatment (centered, viewport-bounded, internally scrollable) instead of the app's default full-height mobile modal chrome.
 - Full Chat and Quick Chat both consume the same streamed `/api/chat/sessions/:id/messages` response contract, and both now prefer the authoritative assistant `message` snapshot on `done` while still accumulating `text` chunks when present (so providers without incremental text streaming still render output immediately)
+- Chat message lists now track near-bottom scroll state: while you are reading older messages, live streaming/new replies do not force-scroll; a **Latest** jump control appears until you return to the tail.
+- On mobile (`max-width: 768px`), chat bubbles are slightly wider in full Chat for improved readability while preserving header/composer gutters.
 
 ![Chat view](./screenshots/chat-view.png)
 
@@ -67,6 +69,8 @@ Quick Chat is an optional floating panel for fast, project-scoped assistant conv
 - Tool-call summaries in the floating quick-chat panel are intentionally condensed into a single-line header row (especially on small screens) so tool name + status stay scannable without multi-line wrapping
 - On mobile viewports, opening Quick Chat auto-focuses the composer as soon as it is ready so the keyboard opens immediately
 - FAB dragging uses pointer events with document-level move/up tracking and a 5px drag threshold so Android touch drags reposition reliably while short taps still open Quick Chat
+- Quick Chat now mirrors full Chat tail behavior: if you scroll up, live updates stop auto-following and a **Latest** jump control appears until you jump back down.
+- On mobile, Quick Chat bubbles are slightly wider while keeping compact tool-call summary layout and full-screen/safe-area behavior intact.
 
 ## Mailbox View
 
