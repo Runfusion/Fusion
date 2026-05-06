@@ -332,12 +332,24 @@ export function createInsightsRouter(store: TaskStore): Router {
       const modelId = typeof req.body.modelId === "string" ? req.body.modelId : undefined;
       const controller = new AbortController();
 
+      // Stash model selection in inputMetadata.metadata so retries can recover it
+      const inputMetadata = typeof req.body.inputMetadata === "object" && req.body.inputMetadata !== null
+        ? { ...req.body.inputMetadata }
+        : {};
+      if (modelProvider || modelId) {
+        inputMetadata.metadata = {
+          ...(typeof inputMetadata.metadata === "object" && inputMetadata.metadata !== null ? inputMetadata.metadata : {}),
+          ...(modelProvider ? { modelProvider } : {}),
+          ...(modelId ? { modelId } : {}),
+        };
+      }
+
       const run = await executeInsightRunLifecycle({
         store: insightStore,
         projectId,
         input: {
           trigger,
-          inputMetadata: req.body.inputMetadata,
+          inputMetadata,
         },
         signal: controller.signal,
         timeoutMs: typeof req.body.timeoutMs === "number" ? req.body.timeoutMs : 120_000,
@@ -501,6 +513,15 @@ export function createInsightsRouter(store: TaskStore): Router {
       const settings = await taskStore.getSettings();
       const controller = new AbortController();
 
+      // Recover model selection from the original run's inputMetadata
+      const originalMetadata = existing.inputMetadata?.metadata;
+      const retryModelProvider = typeof (originalMetadata as Record<string, unknown> | undefined)?.modelProvider === "string"
+        ? (originalMetadata as Record<string, unknown>).modelProvider as string
+        : undefined;
+      const retryModelId = typeof (originalMetadata as Record<string, unknown> | undefined)?.modelId === "string"
+        ? (originalMetadata as Record<string, unknown>).modelId as string
+        : undefined;
+
       const { run } = await retryInsightRunLifecycle({
         store,
         runId: id,
@@ -517,6 +538,8 @@ export function createInsightsRouter(store: TaskStore): Router {
             signal,
             insightStore: store,
             settings,
+            modelProvider: retryModelProvider,
+            modelId: retryModelId,
           });
         },
       });
