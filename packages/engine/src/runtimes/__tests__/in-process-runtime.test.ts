@@ -55,6 +55,11 @@ vi.mock("@fusion/core", async () => {
       self.init = vi.fn().mockResolvedValue(undefined);
       self.listTasks = vi.fn().mockResolvedValue([]);
       self.getTask = mockTaskStoreGetTask;
+      // AgentStore now receives this TaskStore (passed from the runtime),
+      // so methods it calls during assign/claim/checkout flows must exist.
+      self.logEntry = vi.fn().mockResolvedValue(undefined);
+      self.updateTask = vi.fn().mockImplementation(async (taskId: string, patch: Record<string, unknown>) => ({ id: taskId, ...patch }));
+      self.moveTask = vi.fn().mockResolvedValue(undefined);
       self.getSettings = vi.fn().mockImplementation(async () => structuredClone(mockTaskStoreSettings));
       self.getMissionStore = vi.fn().mockReturnValue({
         listMissions: vi.fn().mockReturnValue([]),
@@ -473,6 +478,26 @@ describe("InProcessRuntime", () => {
       await runtime.start();
       const monitor = runtime.getHeartbeatMonitor();
       expect(monitor).toBeDefined();
+    }, 30000);
+
+    // Regression: heartbeat auto-claim path was warning
+    // "TaskStore not configured for task-claim operations" because the
+    // runtime built its AgentStore without passing taskStore through.
+    it("wires AgentStore with TaskStore so claimTaskForAgent does not throw", async () => {
+      await runtime.start();
+      const store = getAgentStore(runtime);
+      const agent = await store.createAgent({
+        name: "claim-wiring",
+        role: "executor",
+        metadata: { agentKind: "task-worker" },
+        runtimeConfig: { enabled: false },
+      });
+      // taskStore.getTask is mocked to return null in this suite, so we
+      // expect the guarded "task_not_found" path rather than the
+      // unconfigured-taskStore throw.
+      mockTaskStoreGetTask.mockResolvedValueOnce(null);
+      const result = await store.claimTaskForAgent(agent.id, "FN-DOES-NOT-EXIST");
+      expect(result).toEqual({ ok: false, reason: "task_not_found" });
     }, 30000);
 
     it("should return TriggerScheduler after start", async () => {

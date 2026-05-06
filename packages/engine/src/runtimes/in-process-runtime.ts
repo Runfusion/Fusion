@@ -321,7 +321,7 @@ export class InProcessRuntime
       let agentStoreForReflection: import("@fusion/core").AgentStore | undefined;
       try {
         const { AgentStore: AgentStoreClass } = await import("@fusion/core");
-        agentStoreForReflection = new AgentStoreClass({ rootDir: this.taskStore.getFusionDir() });
+        agentStoreForReflection = new AgentStoreClass({ rootDir: this.taskStore.getFusionDir(), taskStore: this.taskStore });
         await agentStoreForReflection.init();
         runtimeLog.log("AgentStore initialized for reflection service");
       } catch (agentErr) {
