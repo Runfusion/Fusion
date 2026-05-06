@@ -105,13 +105,17 @@ function collectFusionSignature(rootDir, out = []) {
     const fullPath = join(rootDir, entry.name);
     const relPath = fullPath.slice(rootDir.length + (rootDir.endsWith(sep) ? 0 : 1));
     if (isRuntimePath(relPath)) continue;
-    let entryStat;
     try {
-      entryStat = statSync(fullPath);
+      statSync(fullPath);
     } catch {
       continue;
     }
-    out.push(`${relPath}|${entry.isDirectory() ? "d" : "f"}|${entryStat.size}|${Math.floor(entryStat.mtimeMs)}`);
+    // Track only path + kind. Size/mtime would flip every time the live app
+    // touches an existing file (fusion.db-wal heartbeats, settings.json saves),
+    // producing false-positive "leak" failures. New files still get detected
+    // because they add a new entry to the set; tests are independently blocked
+    // from writing to the real .fusion via the fs guards in vitest-setup.ts.
+    out.push(`${relPath}|${entry.isDirectory() ? "d" : "f"}`);
     if (entry.isDirectory()) collectFusionSignature(fullPath, out);
   }
   return out;
@@ -182,7 +186,6 @@ function checkAgainstBaseline() {
   const baselineByDir = new Map((baseline.protectedFusion ?? []).map((entry) => [entry.dir, entry]));
   const unstableProtectedDirs = new Set(baseline.unstableProtectedDirs ?? []);
   const currentProtected = snapshotProtectedFusion();
-  const currentByDir = new Map(currentProtected.map((entry) => [entry.dir, entry]));
   const candidateViolations = [];
   for (const current of currentProtected) {
     if (unstableProtectedDirs.has(current.dir)) continue;
