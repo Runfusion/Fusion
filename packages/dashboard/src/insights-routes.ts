@@ -130,8 +130,9 @@ async function executeInsightAttempt(params: {
 
   const finalProvider = params.modelProvider ?? settingsProvider;
   const finalModelId = params.modelId ?? settingsModelId;
-  const fallbackProvider = params.modelProvider ? settingsProvider : undefined;
-  const fallbackModelId = params.modelProvider ? settingsModelId : undefined;
+  const hasCustomModel = params.modelProvider && params.modelId;
+  const fallbackProvider = hasCustomModel ? settingsProvider : undefined;
+  const fallbackModelId = hasCustomModel ? settingsModelId : undefined;
 
   const existingInsights = await readInsightsMemory(params.rootDir);
   let responseText = "";

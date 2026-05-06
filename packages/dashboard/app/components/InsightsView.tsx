@@ -138,8 +138,12 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
       if (selectedModel) {
         const slashIdx = selectedModel.indexOf("/");
         if (slashIdx !== -1) {
-          modelProvider = selectedModel.slice(0, slashIdx);
-          modelId = selectedModel.slice(slashIdx + 1);
+          const provider = selectedModel.slice(0, slashIdx);
+          const id = selectedModel.slice(slashIdx + 1);
+          if (provider && id) {
+            modelProvider = provider;
+            modelId = id;
+          }
         }
       }
 
