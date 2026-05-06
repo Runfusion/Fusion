@@ -663,6 +663,8 @@
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
   min-width: 140px;
+  max-height: min(400px, 70vh);
+  overflow-y: auto;
   z-index: 200;
   padding: var(--space-xs) 0;
 }
