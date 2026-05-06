@@ -65,7 +65,7 @@ import {
 import { resolveSelfExtension } from "./self-extension.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
 import { syncStartupModels } from "./startup-model-sync.js";
-import { ensureBundledDependencyGraphPluginInstalled } from "../plugins/bundled-plugin-install.js";
+import { ensureBundledDependencyGraphPluginInstalled, ensureBundledPluginInstalled, isBundledPluginId } from "../plugins/bundled-plugin-install.js";
 
 const DIAGNOSTIC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 let diagnosticIntervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -455,6 +455,30 @@ export async function runServe(
     console.warn(`[plugins] Failed to auto-install bundled Dependency Graph plugin: ${err instanceof Error ? err.message : err}`);
   }
 
+  // Lazy-install hook for bundled runtime plugins (Hermes/OpenClaw/Paperclip).
+  const ensureBundledPluginInstalledCallback = async (pluginId: string): Promise<boolean> => {
+    if (!isBundledPluginId(pluginId)) {
+      console.warn(`[plugins] ensureBundledPluginInstalled: unknown bundled plugin id "${pluginId}"`);
+      return false;
+    }
+    try {
+      const status = await ensureBundledPluginInstalled(pluginStore, pluginLoader, pluginId);
+      if (status === "missing-bundle") {
+        console.warn(`[plugins] Bundled plugin "${pluginId}" was not found in this build`);
+        return false;
+      }
+      if (status === "installed") {
+        console.log(`[plugins] Installed bundled plugin "${pluginId}"`);
+      } else if (status === "updated") {
+        console.log(`[plugins] Updated bundled plugin "${pluginId}"`);
+      }
+      return true;
+    } catch (err) {
+      console.warn(`[plugins] Failed to auto-install bundled plugin "${pluginId}": ${err instanceof Error ? err.message : err}`);
+      throw err;
+    }
+  };
+
   // Auto-load all enabled plugins so runtime UI (NewAgentDialog, AgentDetailView)
   // can discover installed runtimes like Hermes and OpenClaw.
   try {
@@ -709,6 +733,7 @@ export async function runServe(
     pluginStore,
     pluginLoader,
     pluginRunner: pluginLoader,
+    ensureBundledPluginInstalled: ensureBundledPluginInstalledCallback,
     onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
     onProjectRegistered: ({ path }) => {
       // Fire-and-forget: install the fusion Claude-skill when pi-claude-cli

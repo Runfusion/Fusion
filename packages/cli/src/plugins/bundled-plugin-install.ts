@@ -6,14 +6,33 @@ import { validatePluginManifest, type PluginInstallation, type PluginLoader, typ
 
 const DEPENDENCY_GRAPH_PLUGIN_ID = "fusion-plugin-dependency-graph";
 
-function getCandidatePluginPaths(): string[] {
+export const BUNDLED_PLUGIN_IDS = [
+  "fusion-plugin-dependency-graph",
+  "fusion-plugin-hermes-runtime",
+  "fusion-plugin-openclaw-runtime",
+  "fusion-plugin-paperclip-runtime",
+] as const;
+
+export type BundledPluginId = (typeof BUNDLED_PLUGIN_IDS)[number];
+
+export function isBundledPluginId(id: string): id is BundledPluginId {
+  return (BUNDLED_PLUGIN_IDS as readonly string[]).includes(id);
+}
+
+export type EnsureBundledResult =
+  | "installed"
+  | "updated"
+  | "already-installed"
+  | "missing-bundle";
+
+function getCandidatePluginDirs(pluginId: string): string[] {
   const moduleDir = dirname(fileURLToPath(import.meta.url));
   const cliPackageRoot = resolve(moduleDir, "..", "..");
 
   return [
-    join(cliPackageRoot, "dist", "plugins", DEPENDENCY_GRAPH_PLUGIN_ID),
-    join(cliPackageRoot, "plugins", DEPENDENCY_GRAPH_PLUGIN_ID),
-    join(cliPackageRoot, "..", "..", "plugins", DEPENDENCY_GRAPH_PLUGIN_ID),
+    join(cliPackageRoot, "dist", "plugins", pluginId),
+    join(cliPackageRoot, "plugins", pluginId),
+    join(cliPackageRoot, "..", "..", "plugins", pluginId),
   ];
 }
 
@@ -28,8 +47,8 @@ async function loadManifest(pluginDir: string): Promise<PluginManifest> {
   return manifest;
 }
 
-function resolveBundledDependencyGraphPath(): string | null {
-  for (const path of getCandidatePluginPaths()) {
+function resolveBundledPluginDir(pluginId: string): string | null {
+  for (const path of getCandidatePluginDirs(pluginId)) {
     if (existsSync(join(path, "manifest.json"))) {
       return path;
     }
@@ -37,56 +56,103 @@ function resolveBundledDependencyGraphPath(): string | null {
   return null;
 }
 
-export async function ensureBundledDependencyGraphPluginInstalled(
+/**
+ * Resolve the actual loadable entry FILE path for a plugin directory. Node ESM
+ * does not allow directory imports, so we must register the explicit file the
+ * loader will dynamic-import. Preference order:
+ *   1. ./bundled.js   (esbuild-bundled, ships in npm tarball)
+ *   2. ./dist/index.js
+ *   3. ./src/index.ts (workspace dev)
+ *   4. fall back to the directory itself
+ */
+export function resolvePluginEntryPath(pluginDir: string): string {
+  const candidates = [
+    join(pluginDir, "bundled.js"),
+    join(pluginDir, "dist", "index.js"),
+    join(pluginDir, "src", "index.ts"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return pluginDir;
+}
+
+export async function ensureBundledPluginInstalled(
   pluginStore: PluginStore,
   pluginLoader: PluginLoader,
-): Promise<"installed" | "updated" | "already-installed" | "missing-bundle"> {
+  pluginId: string,
+): Promise<EnsureBundledResult> {
   let existingPlugin: PluginInstallation | null = null;
   try {
-    existingPlugin = await pluginStore.getPlugin(DEPENDENCY_GRAPH_PLUGIN_ID);
+    existingPlugin = await pluginStore.getPlugin(pluginId);
   } catch {
     // Continue; plugin not installed yet.
   }
 
-  const bundledPath = resolveBundledDependencyGraphPath();
-  if (!bundledPath) {
+  const bundledDir = resolveBundledPluginDir(pluginId);
+  if (!bundledDir) {
     return "missing-bundle";
   }
 
-  const manifest = await loadManifest(bundledPath);
+  const manifest = await loadManifest(bundledDir);
+  const entryPath = resolvePluginEntryPath(bundledDir);
 
   if (existingPlugin) {
-    // Check if stored path or version is stale compared to the bundled copy
-    const pathChanged = existingPlugin.path !== bundledPath;
+    const pathChanged = existingPlugin.path !== entryPath;
     const versionChanged = existingPlugin.version !== manifest.version;
 
     if (!pathChanged && !versionChanged) {
+      if (existingPlugin.enabled) {
+        try {
+          await pluginLoader.loadPlugin(existingPlugin.id);
+        } catch {
+          // best-effort
+        }
+      }
       return "already-installed";
     }
 
-    // Update the stored record to match the current bundled copy
-    await pluginStore.updatePlugin(DEPENDENCY_GRAPH_PLUGIN_ID, {
-      ...(pathChanged ? { path: bundledPath } : {}),
+    await pluginStore.updatePlugin(pluginId, {
+      ...(pathChanged ? { path: entryPath } : {}),
       ...(versionChanged ? { version: manifest.version } : {}),
     });
 
-    // If the plugin is enabled, load it so it picks up the new path/version
     if (existingPlugin.enabled) {
-      await pluginLoader.loadPlugin(existingPlugin.id);
+      try {
+        await pluginLoader.loadPlugin(existingPlugin.id);
+      } catch {
+        // best-effort
+      }
     }
 
     return "updated";
   }
 
-  // Fresh install
   const plugin = await pluginStore.registerPlugin({
     manifest,
-    path: bundledPath,
+    path: entryPath,
   });
 
   if (plugin.enabled) {
-    await pluginLoader.loadPlugin(plugin.id);
+    try {
+      await pluginLoader.loadPlugin(plugin.id);
+    } catch {
+      // best-effort
+    }
   }
 
   return "installed";
+}
+
+/**
+ * @deprecated Use {@link ensureBundledPluginInstalled} with the explicit plugin id.
+ * Kept for backwards compatibility with existing call sites.
+ */
+export async function ensureBundledDependencyGraphPluginInstalled(
+  pluginStore: PluginStore,
+  pluginLoader: PluginLoader,
+): Promise<EnsureBundledResult> {
+  return ensureBundledPluginInstalled(pluginStore, pluginLoader, DEPENDENCY_GRAPH_PLUGIN_ID);
 }

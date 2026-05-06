@@ -1,7 +1,18 @@
 import { defineConfig } from "tsup";
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { build as esbuildBuild } from "esbuild";
+
+// Runtime plugin ids that ship inside the published CLI tarball. Each plugin's
+// entry is esbuild-bundled into dist/plugins/<id>/bundled.js with workspace
+// deps (@fusion/plugin-sdk) inlined, since npm publish strips node_modules
+// directories. See ensureBundledPluginInstalled for the loader-side counterpart.
+const RUNTIME_PLUGIN_IDS = [
+  "fusion-plugin-hermes-runtime",
+  "fusion-plugin-openclaw-runtime",
+  "fusion-plugin-paperclip-runtime",
+] as const;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const dashboardClientSrc = join(__dirname, "..", "dashboard", "dist", "client");
@@ -126,6 +137,66 @@ export default defineConfig({
       console.warn(
         `WARNING: Dependency graph plugin source not found at ${dependencyGraphPluginSrc}; bundled auto-install will be unavailable.`,
       );
+    }
+
+    // Bundle each runtime plugin into a self-contained ESM file so npm/npx
+    // installs can load them without the workspace `@fusion/plugin-sdk`.
+    for (const pluginId of RUNTIME_PLUGIN_IDS) {
+      const pluginSrcDir = join(__dirname, "..", "..", "plugins", pluginId);
+      const pluginDestDir = join(__dirname, "dist", "plugins", pluginId);
+
+      if (existsSync(pluginDestDir)) {
+        rmSync(pluginDestDir, { recursive: true, force: true });
+      }
+      if (!existsSync(pluginSrcDir)) {
+        console.warn(
+          `WARNING: Runtime plugin source not found at ${pluginSrcDir}; ${pluginId} will be unavailable in the published package.`,
+        );
+        continue;
+      }
+
+      mkdirSync(pluginDestDir, { recursive: true });
+
+      cpSync(join(pluginSrcDir, "manifest.json"), join(pluginDestDir, "manifest.json"));
+
+      // Stripped package.json: no dependencies (workspace SDK is inlined into
+      // bundled.js), exports point at the bundle. Keeps the published tarball
+      // self-contained without leaking workspace-only metadata.
+      const srcPkg = JSON.parse(readFileSync(join(pluginSrcDir, "package.json"), "utf-8"));
+      const destPkg = {
+        name: srcPkg.name,
+        version: srcPkg.version,
+        type: "module",
+        exports: { ".": { import: "./bundled.js" } },
+        private: true,
+      };
+      writeFileSync(join(pluginDestDir, "package.json"), JSON.stringify(destPkg, null, 2));
+
+      // Pick the best available entry: built dist/index.js if present, else
+      // raw src/index.ts (esbuild can transpile TS).
+      const builtEntry = join(pluginSrcDir, "dist", "index.js");
+      const srcEntry = join(pluginSrcDir, "src", "index.ts");
+      const entry = existsSync(builtEntry) ? builtEntry : srcEntry;
+
+      if (!existsSync(entry)) {
+        console.warn(`WARNING: No entry found for ${pluginId} (looked for dist/index.js and src/index.ts)`);
+        continue;
+      }
+
+      await esbuildBuild({
+        entryPoints: [entry],
+        bundle: true,
+        format: "esm",
+        platform: "node",
+        target: "node22",
+        outfile: join(pluginDestDir, "bundled.js"),
+        // @fusion/core and @fusion/engine are loaded by the host process at
+        // runtime; the SDK is inlined.
+        external: ["@fusion/core", "@fusion/engine"],
+        logLevel: "warning",
+      });
+
+      console.log(`Bundled runtime plugin ${pluginId} to dist/plugins/${pluginId}/bundled.js`);
     }
 
     if (existsSync(dashboardClientDest)) {

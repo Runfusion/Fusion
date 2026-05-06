@@ -259,6 +259,16 @@ export interface ServerOptions {
    */
   onUseClaudeCliToggled?: (prev: boolean, next: boolean) => void;
   /**
+   * Lazily install a bundled runtime plugin (e.g. Hermes/OpenClaw/Paperclip
+   * runtimes) the first time the user clicks Save in Settings. The dashboard
+   * has no knowledge of the on-disk bundle layout, so the host (CLI) injects
+   * this hook. Returns true if the plugin is now registered (either freshly
+   * installed or already present), false if the bundle could not be resolved
+   * (e.g. plugin id is unknown) so the route can fall through to its standard
+   * "plugin not found" error.
+   */
+  ensureBundledPluginInstalled?: (pluginId: string) => Promise<boolean>;
+  /**
    * Returns the host's last-observed resolution of the bundled
    * `@fusion/pi-claude-cli` extension. Populated by serve/daemon/dashboard
    * at startup after calling `resolveClaudeCliExtensionPaths`.

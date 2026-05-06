@@ -3470,6 +3470,30 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       throw badRequest("Request body must have a 'settings' object");
     }
 
+    // Auto-install bundled runtime plugins (Hermes/OpenClaw/Paperclip) on
+    // first save. The Settings UI surfaces these as fallback cards before
+    // they're actually registered, so the first PUT must lazily install them
+    // rather than 404. The host (CLI) injects ensureBundledPluginInstalled
+    // because dashboard doesn't know the on-disk bundle layout.
+    const isBundledFallback = BUNDLED_PLUGIN_RUNTIMES.some((r) => r.pluginId === id);
+    if (isBundledFallback && options?.ensureBundledPluginInstalled) {
+      let alreadyRegistered = true;
+      try {
+        await pluginStore.getPlugin(id);
+      } catch {
+        alreadyRegistered = false;
+      }
+      if (!alreadyRegistered) {
+        try {
+          await options.ensureBundledPluginInstalled(id);
+        } catch (installErr) {
+          throw internalError(
+            `Failed to auto-install bundled plugin "${id}": ${installErr instanceof Error ? installErr.message : String(installErr)}`,
+          );
+        }
+      }
+    }
+
     try {
       const plugin = await pluginStore.updatePluginSettings(id, settings);
       res.json(plugin);

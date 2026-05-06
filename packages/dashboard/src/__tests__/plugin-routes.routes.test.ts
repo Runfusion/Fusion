@@ -827,6 +827,106 @@ describe("PUT /plugins/:id/settings", () => {
   });
 });
 
+describe("PUT /plugins/:id/settings auto-install for bundled runtime plugins", () => {
+  let store: TaskStore;
+  let pluginStore: PluginStore;
+
+  beforeEach(() => {
+    pluginStore = createMockPluginStore();
+    store = createMockTaskStore({
+      getPluginStore: vi.fn().mockReturnValue(pluginStore),
+    });
+  });
+
+  function buildAppWithBundleHook(
+    ensureBundledPluginInstalled: (id: string) => Promise<boolean>,
+  ) {
+    const app = express();
+    app.use(express.json());
+    app.use(
+      "/api",
+      createApiRoutes(store, {
+        pluginStore,
+        pluginLoader: createMockPluginLoader(),
+        ensureBundledPluginInstalled,
+      }),
+    );
+    return app;
+  }
+
+  it("auto-installs a bundled runtime plugin on first save", async () => {
+    // Plugin not yet registered → first getPlugin throws.
+    (pluginStore.getPlugin as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("Plugin not found"),
+    );
+    (pluginStore.updatePluginSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...FAKE_PLUGIN,
+      id: "fusion-plugin-hermes-runtime",
+      settings: { apiKey: "k" },
+    });
+    const ensure = vi.fn().mockResolvedValue(true);
+
+    const res = await REQUEST(
+      buildAppWithBundleHook(ensure),
+      "PUT",
+      "/api/plugins/fusion-plugin-hermes-runtime/settings",
+      { settings: { apiKey: "k" } },
+    );
+
+    expect(res.status).toBe(200);
+    expect(ensure).toHaveBeenCalledWith("fusion-plugin-hermes-runtime");
+    expect(pluginStore.updatePluginSettings).toHaveBeenCalled();
+  });
+
+  it("skips auto-install when the plugin is already registered", async () => {
+    (pluginStore.getPlugin as ReturnType<typeof vi.fn>).mockResolvedValueOnce(FAKE_PLUGIN);
+    (pluginStore.updatePluginSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce(FAKE_PLUGIN);
+    const ensure = vi.fn().mockResolvedValue(true);
+
+    const res = await REQUEST(
+      buildAppWithBundleHook(ensure),
+      "PUT",
+      "/api/plugins/fusion-plugin-hermes-runtime/settings",
+      { settings: { apiKey: "k" } },
+    );
+
+    expect(res.status).toBe(200);
+    expect(ensure).not.toHaveBeenCalled();
+  });
+
+  it("does not invoke auto-install for non-bundled plugin ids", async () => {
+    (pluginStore.updatePluginSettings as ReturnType<typeof vi.fn>).mockResolvedValueOnce(FAKE_PLUGIN);
+    const ensure = vi.fn().mockResolvedValue(true);
+
+    const res = await REQUEST(
+      buildAppWithBundleHook(ensure),
+      "PUT",
+      "/api/plugins/some-third-party-plugin/settings",
+      { settings: { apiKey: "k" } },
+    );
+
+    expect(res.status).toBe(200);
+    expect(ensure).not.toHaveBeenCalled();
+  });
+
+  it("returns 500 when auto-install throws", async () => {
+    (pluginStore.getPlugin as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("Plugin not found"),
+    );
+    const ensure = vi.fn().mockRejectedValue(new Error("bundle missing"));
+
+    const res = await REQUEST(
+      buildAppWithBundleHook(ensure),
+      "PUT",
+      "/api/plugins/fusion-plugin-hermes-runtime/settings",
+      { settings: { apiKey: "k" } },
+    );
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain("Failed to auto-install");
+  });
+});
+
 describe("DELETE /plugins/:id", () => {
   let store: TaskStore;
   let pluginStore: PluginStore;
