@@ -393,6 +393,30 @@ describe("agent modal mobile CSS structure", () => {
     });
   });
 
+  describe("AgentErrorDetailsModal", () => {
+    it("mobile rules constrain modal to viewport height", () => {
+      const styles = readStyles();
+      const modalRuleMatch = styles.match(/@media \(max-width: 768px\)[\s\S]*?\.agent-error-modal\s*\{[^}]+\}/);
+      expect(modalRuleMatch).toBeTruthy();
+      const modalRule = modalRuleMatch![0];
+
+      expect(modalRule).toContain("height: 100dvh");
+      expect(modalRule).toContain("max-height: 100dvh");
+      expect(modalRule).toContain("width: 100%");
+      expect(modalRule).toContain("max-width: 100%");
+    });
+
+    it("keeps the error log as the scrollable surface on mobile", () => {
+      const styles = readStyles();
+      const contentRuleMatch = styles.match(/\.agent-error-modal__content\s*\{[^}]+\}/);
+      expect(contentRuleMatch).toBeTruthy();
+      expect(contentRuleMatch![0]).toContain("overflow: hidden");
+
+      expect(styles).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.agent-error-modal__error\s*\{[^}]*max-height:\s*none;[^}]*\}/);
+      expect(styles).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.agent-error-modal__error\s*\{[^}]*-webkit-overflow-scrolling:\s*touch;[^}]*\}/);
+    });
+  });
+
   describe("Cross-cutting mobile CSS", () => {
     it("agent-dialog mobile rules include safe-area inset handling", () => {
       const styles = readStyles();

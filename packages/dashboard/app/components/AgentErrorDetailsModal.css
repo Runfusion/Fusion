@@ -23,10 +23,14 @@
 
 .agent-error-modal {
   max-width: min(calc(var(--space-2xl) * 20), 100%);
+  min-height: 0;
 }
 
 .agent-error-modal__content {
   padding: 0 var(--space-lg) var(--space-md);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .agent-error-modal__error {
@@ -45,20 +49,17 @@
 }
 
 @media (max-width: 768px) {
-  .modal-overlay:has(.agent-error-modal) {
-    padding-top: var(--space-md);
-    align-items: stretch;
-  }
-
   .agent-error-modal {
-    width: calc(100% - var(--space-lg));
-    max-height: calc(100vh - var(--space-lg) * 2);
+    width: 100%;
+    max-width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
     flex: 1 1 auto;
   }
 
   .agent-error-modal__content {
-    flex: 1 1 auto;
-    min-height: 0;
     display: flex;
   }
 
@@ -67,5 +68,6 @@
     max-height: none;
     min-height: 0;
     width: 100%;
+    -webkit-overflow-scrolling: touch;
   }
 }
