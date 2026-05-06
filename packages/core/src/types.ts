@@ -226,7 +226,8 @@ export type NtfyNotificationEvent =
   | "awaiting-user-review"
   | "planning-awaiting-input"
   | "gridlock"
-  | "fallback-used";
+  | "fallback-used"
+  | "memory-dreams-processed";
 
 /** Known notification event types. Providers may support additional custom events. */
 export const NOTIFICATION_EVENTS = [
@@ -238,6 +239,7 @@ export const NOTIFICATION_EVENTS = [
   "planning-awaiting-input",
   "gridlock",
   "fallback-used",
+  "memory-dreams-processed",
 ] as const;
 
 /** Notification event type. Known events plus provider-specific custom events. */

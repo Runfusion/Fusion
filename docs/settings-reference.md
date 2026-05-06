@@ -42,7 +42,7 @@ Defaults from `DEFAULT_GLOBAL_SETTINGS`; key scope from `GLOBAL_SETTINGS_KEYS`.
 | `ntfyEnabled` | `boolean` | `false` | Enable ntfy push notifications. |
 | `ntfyTopic` | `string` | `undefined` | ntfy topic name. |
 | `ntfyBaseUrl` | `string` | `undefined` | Optional custom ntfy server base URL (must use `http://` or `https://`). If blank/unset, Fusion uses `https://ntfy.sh` for both runtime and test notifications. |
-| `ntfyEvents` | `("in-review" \| "merged" \| "failed" \| "awaiting-approval" \| "awaiting-user-review" \| "planning-awaiting-input" \| "gridlock" \| "fallback-used")[]` | `["in-review","merged","failed","awaiting-approval","awaiting-user-review","planning-awaiting-input","gridlock","fallback-used"]` | Event types that trigger ntfy notifications. `planning-awaiting-input` fires when planning mode is waiting on user input. `gridlock` fires when all schedulable todo tasks are blocked; delivery is cooldown-throttled (first alert immediately, then suppressed for 15 minutes until gridlock resolves). `fallback-used` fires when Fusion recovers from a retryable model failure by switching to a configured fallback model. |
+| `ntfyEvents` | `("in-review" \| "merged" \| "failed" \| "awaiting-approval" \| "awaiting-user-review" \| "planning-awaiting-input" \| "gridlock" \| "fallback-used" \| "memory-dreams-processed")[]` | `["in-review","merged","failed","awaiting-approval","awaiting-user-review","planning-awaiting-input","gridlock","fallback-used","memory-dreams-processed"]` | Event types that trigger ntfy notifications. `planning-awaiting-input` fires when planning mode is waiting on user input. `gridlock` fires when all schedulable todo tasks are blocked; delivery is cooldown-throttled (first alert immediately, then suppressed for 15 minutes until gridlock resolves). `fallback-used` fires when Fusion recovers from a retryable model failure by switching to a configured fallback model. `memory-dreams-processed` fires when manual dream processing writes a new `DREAMS.md` entry (project and/or agent); disable it via ntfy/webhook event filters if you want to opt out. |
 | `ntfyDashboardHost` | `string` | `undefined` | Dashboard host used to build deep links in notifications. |
 | `webhookEnabled` | `boolean` | `false` | Enable webhook notifications for task lifecycle events. Part of the legacy flat settings; prefer `notificationProviders` for new setups. |
 | `webhookUrl` | `string` | `undefined` | Webhook endpoint URL. Must be `http://` or `https://`. Part of legacy flat settings. |
@@ -130,7 +130,7 @@ When `id` is `"webhook"`, the provider `config` supports:
 |---|---|---:|---|
 | `webhookUrl` | `string` | _required_ | Must be a valid `http://` or `https://` URL. |
 | `webhookFormat` | `"slack" \| "discord" \| "generic"` | `"generic"` | Invalid/omitted values fall back to `"generic"`. |
-| `events` | `string[]` | `[]` | Event filter list. Empty/omitted means all events are sent. |
+| `events` | `string[]` | `[]` | Event filter list. Empty/omitted means all events are sent. Includes `memory-dreams-processed` for DREAMS.md updates from manual dream processing. |
 
 #### ntfy provider config
 
@@ -140,7 +140,7 @@ When `id` is `"ntfy"` in `notificationProviders`, the provider `config` supports
 |---|---|---:|---|
 | `topic` | `string` | _required_ | ntfy topic name (1–64 chars, alphanumeric + `-_`). |
 | `ntfyBaseUrl` | `string` | `"https://ntfy.sh"` | Optional custom ntfy server URL. |
-| `events` | `("in-review" \| "merged" \| "failed" \| "awaiting-approval" \| "awaiting-user-review" \| "planning-awaiting-input" \| "gridlock")[]` | `DEFAULT_NTFY_EVENTS` | Event filter list used by the provider. For `gridlock`, enabled events are still cooldown-throttled at runtime (15-minute suppression window, reset on full resolution). |
+| `events` | `("in-review" \| "merged" \| "failed" \| "awaiting-approval" \| "awaiting-user-review" \| "planning-awaiting-input" \| "gridlock" \| "fallback-used" \| "memory-dreams-processed")[]` | `DEFAULT_NTFY_EVENTS` | Event filter list used by the provider. For `gridlock`, enabled events are still cooldown-throttled at runtime (15-minute suppression window, reset on full resolution). `memory-dreams-processed` is emitted when manual dream processing appends a new project/agent `DREAMS.md` entry. |
 | `dashboardHost` | `string` | `undefined` | Dashboard host for deep links in notifications. |
 
 Disable daily update checks globally:

@@ -32,6 +32,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
     "planning-awaiting-input",
     "gridlock",
     "fallback-used",
+    "memory-dreams-processed",
   ],
   ntfyDashboardHost: undefined,
   webhookEnabled: false,

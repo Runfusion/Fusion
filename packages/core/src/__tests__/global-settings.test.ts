@@ -326,6 +326,7 @@ describe("GlobalSettingsStore", () => {
         "planning-awaiting-input",
         "gridlock",
         "fallback-used",
+        "memory-dreams-processed",
       ]);
     });
 

@@ -243,6 +243,7 @@ const DEFAULT_NTFY_EVENTS: NtfyNotificationEvent[] = [
   "planning-awaiting-input",
   "gridlock",
   "fallback-used",
+  "memory-dreams-processed",
 ];
 
 const NOTIFICATION_EVENT_OPTIONS: Array<{ event: NtfyNotificationEvent; label: string; description: string }> = [
@@ -254,6 +255,7 @@ const NOTIFICATION_EVENT_OPTIONS: Array<{ event: NtfyNotificationEvent; label: s
   { event: "planning-awaiting-input", label: "Planning needs input", description: "When planning mode is waiting for your response to continue" },
   { event: "gridlock", label: "Pipeline gridlocked", description: "When all schedulable todo tasks are blocked and work cannot advance" },
   { event: "fallback-used", label: "Fallback model used (recovered)", description: "When Fusion recovers from a retryable model failure by switching to a fallback model" },
+  { event: "memory-dreams-processed", label: "DREAMS.md entry added", description: "When manual dream processing writes a new entry to project or agent DREAMS.md" },
 ];
 
 /** Well-known experimental feature flags with display labels.

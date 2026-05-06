@@ -2578,16 +2578,18 @@ describe("SettingsModal", () => {
       expect(screen.getByRole("button", { name: /Test notification/ })).toBeInTheDocument();
     });
 
-    it("shows fallback-used event option for both providers", async () => {
+    it("shows fallback-used and dreams events for both providers", async () => {
       mockFetchSettings.mockResolvedValueOnce({ ...defaultSettings, ntfyEnabled: true, ntfyTopic: "test-topic" });
       renderModal();
       await waitForSettingsModalReady();
       await openNotificationsSection();
 
       expect(screen.getByLabelText("Fallback model used (recovered)")).toBeInTheDocument();
+      expect(screen.getByLabelText("DREAMS.md entry added")).toBeInTheDocument();
 
       await userEvent.click(screen.getByLabelText("Webhook notifications"));
       expect(screen.getAllByLabelText("Fallback model used (recovered)").length).toBeGreaterThan(0);
+      expect(screen.getAllByLabelText("DREAMS.md entry added").length).toBeGreaterThan(0);
     });
 
     it("shows webhook fields when webhook provider is enabled", async () => {
@@ -2668,10 +2670,12 @@ describe("SettingsModal", () => {
       const failed = screen.getByLabelText("Task failed") as HTMLInputElement;
       const merged = screen.getByLabelText("Task merged") as HTMLInputElement;
       const fallbackUsed = screen.getByLabelText("Fallback model used (recovered)") as HTMLInputElement;
+      const dreamsProcessed = screen.getByLabelText("DREAMS.md entry added") as HTMLInputElement;
       expect(inReview.checked).toBe(true);
       expect(failed.checked).toBe(true);
       expect(merged.checked).toBe(false);
       expect(fallbackUsed.checked).toBe(false);
+      expect(dreamsProcessed.checked).toBe(false);
     });
   });
 

@@ -138,8 +138,8 @@ describe("NotificationDispatcher", () => {
   });
 
   it("keeps ntfy defaults unchanged and adds notificationProviders default", () => {
-    const event: NtfyNotificationEvent = "in-review";
-    expect(event).toBe("in-review");
+    const event: NtfyNotificationEvent = "memory-dreams-processed";
+    expect(event).toBe("memory-dreams-processed");
 
     expect(DEFAULT_GLOBAL_SETTINGS.ntfyEnabled).toBe(false);
     expect(DEFAULT_GLOBAL_SETTINGS.ntfyTopic).toBeUndefined();
@@ -154,6 +154,7 @@ describe("NotificationDispatcher", () => {
       "planning-awaiting-input",
       "gridlock",
       "fallback-used",
+      "memory-dreams-processed",
     ]);
     expect(DEFAULT_GLOBAL_SETTINGS.notificationProviders).toEqual([]);
   });

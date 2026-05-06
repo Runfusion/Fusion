@@ -450,6 +450,7 @@ See [Memory Plugin Contract](./memory-plugin-contract.md) for the full plan.
   - Compatibility scope: `NtfyNotifier` remains responsible for gridlock-only compatibility notifications (`notifyGridlock`) and legacy helper APIs.
   - Legacy gridlock ntfy delivery is cooldown-throttled: first detection notifies immediately, subsequent detections are suppressed for 15 minutes (even if blocked-task membership changes), and the cooldown resets as soon as gridlock fully clears.
 - `NotificationService` (`notification/notification-service.ts`) — provider lifecycle + event dispatch orchestration
+  - Subscribes to task lifecycle events plus non-task memory events. Manual `POST /api/memory/dream` processing emits `store.emit("memory:dreams-processed", payload)` when new DREAMS content is written, and `NotificationService` dispatches that as the `memory-dreams-processed` notification event to ntfy/webhook providers (event-filter controlled, no task deep link required).
 - `NotificationProvider` interface (`@fusion/core` `notification/provider.ts`) — pluggable provider contract
 - Built-in providers: `NtfyNotificationProvider` (`notification/ntfy-provider.ts`), `WebhookNotificationProvider` (`notification/webhook-provider.ts`)
 - `AgentReflection` (`agent-reflection.ts`) — reflection extraction and persistence
