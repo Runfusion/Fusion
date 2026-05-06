@@ -1,7 +1,11 @@
 import {
   collectDeterministicSignals,
+  computeOverallScore,
+  normalizeCategoryScore,
   resolveValidatorSettingsModel,
+  EVAL_SCORE_CATEGORIES,
   type DeterministicSignals,
+  type EvalScoreCategory,
   type EvalTaskResultCreateInput,
   type EvaluationEvidenceRef,
   type FollowUpDraft,
@@ -28,11 +32,15 @@ export interface EvaluatorDeps {
   runPrompt?: (prompt: string, provider?: string, modelId?: string) => Promise<string>;
 }
 
-interface EvaluatorAiResponse {
-  overallScore: number;
-  categoryScores: Record<string, number>;
+interface EvaluatorAiCategoryResponse {
+  score: number;
   rationale: string;
   evidence: EvaluationEvidenceRef[];
+}
+
+interface EvaluatorAiResponse {
+  categories: Record<EvalScoreCategory, EvaluatorAiCategoryResponse>;
+  overallRationale: string;
   followUpDrafts: FollowUpDraft[];
 }
 
@@ -62,13 +70,31 @@ export class HybridEvaluatorService {
     const responseText = await this.runPrompt(prompt, model.provider, model.modelId);
     const ai = parseAiResponse(responseText);
 
+    const categoryScores = EVAL_SCORE_CATEGORIES.map((category) => {
+      const aiCategory = ai.categories[category];
+      return normalizeCategoryScore({
+        category,
+        deterministicScore: deriveDeterministicCategoryScore(category, deterministicSignals),
+        aiScore: aiCategory.score,
+        rationale: aiCategory.rationale,
+        evidence: aiCategory.evidence.map((ev) => ({
+          type: "other",
+          ref: `${ev.kind}:${ev.label}`,
+          excerpt: ev.value,
+          metadata: { source: ev.source },
+        })),
+      });
+    });
+
+    const overallScore = computeOverallScore(categoryScores);
+
     return {
       status: "scored",
-      overallScore: ai.overallScore,
-      categoryScores: Object.entries(ai.categoryScores).map(([category, score]) => ({ category, score })),
-      rationale: ai.rationale,
-      summary: ai.rationale,
-      evidence: ai.evidence.map((ev) => ({ type: "other", ref: `${ev.kind}:${ev.label}`, excerpt: ev.value })),
+      overallScore,
+      categoryScores,
+      rationale: ai.overallRationale,
+      summary: ai.overallRationale,
+      evidence: categoryScores.flatMap((categoryScore) => categoryScore.evidence),
       deterministicSignals: deterministicSignalsToEvalSignals(deterministicSignals),
       followUps: ai.followUpDrafts.map((draft) => ({
         title: draft.title,
@@ -78,7 +104,7 @@ export class HybridEvaluatorService {
       metadata: {
         runId: run.runId,
         evaluatorModel: model,
-        evaluatorRationale: ai.rationale,
+        evaluatorRationale: ai.overallRationale,
         hybridEvaluation: {
           deterministicSignals,
           ai,
@@ -117,6 +143,27 @@ export class HybridEvaluatorService {
   }
 }
 
+function deriveDeterministicCategoryScore(category: EvalScoreCategory, signals: DeterministicSignals): number {
+  const workflowPassRate = signals.workflowSummary.total > 0
+    ? (signals.workflowSummary.passed / signals.workflowSummary.total) * 100
+    : 50;
+  const errorPenalty = Math.min(signals.logSummary.errorCount * 20, 60);
+  const warningPenalty = Math.min(signals.logSummary.warningCount * 5, 25);
+  const commitScore = Math.min(signals.commitSummary.commitCount * 15, 100);
+  const reviewScore = signals.reviewStatus === "approved" ? 100 : signals.reviewStatus ? 70 : 50;
+
+  switch (category) {
+    case "agentPerformance":
+      return Math.round(Math.max(0, Math.min(100, (workflowPassRate * 0.5) + (reviewScore * 0.3) + (commitScore * 0.2) - warningPenalty)));
+    case "taskOutcomeQuality":
+      return Math.round(Math.max(0, Math.min(100, (workflowPassRate * 0.6) + (commitScore * 0.2) + (100 - errorPenalty) * 0.2)));
+    case "processCompliance":
+      return Math.round(Math.max(0, Math.min(100, (workflowPassRate * 0.5) + (reviewScore * 0.3) + ((signals.logSummary.timingEntries > 0 ? 100 : 50) * 0.2) - errorPenalty)));
+    default:
+      throw new Error(`Unsupported eval score category: ${String(category)}`);
+  }
+}
+
 function deterministicSignalsToEvalSignals(signals: DeterministicSignals): Array<{ signalId: string; kind: string; name: string; value?: string | number; passed?: boolean }> {
   return [
     {
@@ -144,13 +191,16 @@ function deterministicSignalsToEvalSignals(signals: DeterministicSignals): Array
 export function buildEvaluationPrompt(task: TaskDetail, run: EvalRunContext, deterministicSignals: DeterministicSignals): string {
   return [
     "Evaluate the completed task and respond with strict JSON.",
+    "Scores must be integers between 0 and 100.",
     `Run: ${run.runId}`,
     "Schema:",
     JSON.stringify({
-      overallScore: 0,
-      categoryScores: { quality: 0, reliability: 0, testing: 0 },
-      rationale: "",
-      evidence: [{ kind: "task", label: "", value: "", source: "" }],
+      categories: {
+        agentPerformance: { score: 0, rationale: "", evidence: [{ kind: "task", label: "", value: "", source: "" }] },
+        taskOutcomeQuality: { score: 0, rationale: "", evidence: [{ kind: "task", label: "", value: "", source: "" }] },
+        processCompliance: { score: 0, rationale: "", evidence: [{ kind: "task", label: "", value: "", source: "" }] },
+      },
+      overallRationale: "",
       followUpDrafts: [{ title: "", description: "", reason: "", evidenceRefs: [] }],
     }, null, 2),
     "Task:",
@@ -176,15 +226,28 @@ export function parseAiResponse(raw: string): EvaluatorAiResponse {
   }
 
   const record = parsed as Partial<EvaluatorAiResponse>;
-  if (typeof record.overallScore !== "number") throw new Error("Evaluator response missing numeric overallScore");
-  if (!record.categoryScores || typeof record.categoryScores !== "object") throw new Error("Evaluator response missing categoryScores");
-  if (typeof record.rationale !== "string" || !record.rationale.trim()) throw new Error("Evaluator response missing rationale");
+  if (!record.categories || typeof record.categories !== "object") throw new Error("Evaluator response missing categories");
+  if (typeof record.overallRationale !== "string" || !record.overallRationale.trim()) throw new Error("Evaluator response missing overallRationale");
+
+  const categories = {} as Record<EvalScoreCategory, EvaluatorAiCategoryResponse>;
+  for (const category of EVAL_SCORE_CATEGORIES) {
+    const entry = (record.categories as Record<string, EvaluatorAiCategoryResponse>)[category];
+    if (!entry) throw new Error(`Evaluator response missing category ${category}`);
+    if (!Number.isInteger(entry.score) || entry.score < 0 || entry.score > 100) {
+      throw new Error(`Evaluator category ${category} score must be an integer in 0..100`);
+    }
+    if (typeof entry.rationale !== "string" || !entry.rationale.trim()) {
+      throw new Error(`Evaluator category ${category} rationale is required`);
+    }
+    if (!Array.isArray(entry.evidence) || entry.evidence.length === 0) {
+      throw new Error(`Evaluator category ${category} evidence is required`);
+    }
+    categories[category] = entry;
+  }
 
   return {
-    overallScore: record.overallScore,
-    categoryScores: record.categoryScores as Record<string, number>,
-    rationale: record.rationale,
-    evidence: Array.isArray(record.evidence) ? record.evidence : [],
+    categories,
+    overallRationale: record.overallRationale,
     followUpDrafts: Array.isArray(record.followUpDrafts) ? record.followUpDrafts : [],
   };
 }

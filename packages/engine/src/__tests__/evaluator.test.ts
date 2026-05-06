@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createDatabase, EvalStore, runScheduledEvalBatch, type TaskDetail } from "@fusion/core";
+import { computeOverallScore, createDatabase, EvalStore, runScheduledEvalBatch, type TaskDetail } from "@fusion/core";
 import { HybridEvaluatorService, buildEvaluationPrompt, parseAiResponse, resolveEvaluatorModel } from "../evaluator.js";
 
 function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
@@ -18,6 +18,31 @@ function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
   } as TaskDetail;
 }
 
+function makeAiResponse(overrides: Partial<Record<string, unknown>> = {}): string {
+  return JSON.stringify({
+    categories: {
+      agentPerformance: {
+        score: 80,
+        rationale: "Strong execution decisions.",
+        evidence: [{ kind: "task", label: "status", value: "done", source: "task" }],
+      },
+      taskOutcomeQuality: {
+        score: 90,
+        rationale: "Shipped result is complete and correct.",
+        evidence: [{ kind: "workflow", label: "tests", value: "pass", source: "workflow" }],
+      },
+      processCompliance: {
+        score: 70,
+        rationale: "Workflow mostly followed.",
+        evidence: [{ kind: "review", label: "review", value: "approved", source: "review" }],
+      },
+    },
+    overallRationale: "Solid result with complete verification.",
+    followUpDrafts: [],
+    ...overrides,
+  });
+}
+
 describe("evaluator", () => {
   it("resolves explicit complete model override before validator lane", () => {
     expect(resolveEvaluatorModel({ validatorProvider: "anthropic", validatorModelId: "claude" }, { provider: "openai", modelId: "gpt-4o" }))
@@ -29,14 +54,49 @@ describe("evaluator", () => {
       .toEqual({ provider: "anthropic", modelId: "claude" });
   });
 
-  it("parses strict AI JSON response", () => {
-    const parsed = parseAiResponse('{"overallScore":0.8,"categoryScores":{"quality":0.8},"rationale":"ok","evidence":[],"followUpDrafts":[]}');
-    expect(parsed.overallScore).toBe(0.8);
-    expect(parsed.rationale).toBe("ok");
+  it("parses strict AI JSON response with canonical categories", () => {
+    const parsed = parseAiResponse(makeAiResponse());
+    expect(parsed.overallRationale).toBe("Solid result with complete verification.");
+    expect(parsed.categories.agentPerformance.score).toBe(80);
+    expect(parsed.categories.taskOutcomeQuality.score).toBe(90);
+    expect(parsed.categories.processCompliance.score).toBe(70);
   });
 
   it("throws on malformed AI JSON response", () => {
     expect(() => parseAiResponse("not-json")).toThrow(/not valid JSON/);
+  });
+
+  it("rejects invalid evaluator payloads (out of range, missing rationale/evidence, missing category)", () => {
+    expect(() => parseAiResponse(makeAiResponse({
+      categories: {
+        agentPerformance: { score: 101, rationale: "x", evidence: [{ kind: "task", label: "l" }] },
+        taskOutcomeQuality: { score: 90, rationale: "x", evidence: [{ kind: "task", label: "l" }] },
+        processCompliance: { score: 80, rationale: "x", evidence: [{ kind: "task", label: "l" }] },
+      },
+    }))).toThrow(/agentPerformance score must be an integer in 0..100/);
+
+    expect(() => parseAiResponse(makeAiResponse({
+      categories: {
+        agentPerformance: { score: 80, rationale: "", evidence: [{ kind: "task", label: "l" }] },
+        taskOutcomeQuality: { score: 90, rationale: "x", evidence: [{ kind: "task", label: "l" }] },
+        processCompliance: { score: 80, rationale: "x", evidence: [{ kind: "task", label: "l" }] },
+      },
+    }))).toThrow(/agentPerformance rationale is required/);
+
+    expect(() => parseAiResponse(makeAiResponse({
+      categories: {
+        agentPerformance: { score: 80, rationale: "x", evidence: [] },
+        taskOutcomeQuality: { score: 90, rationale: "x", evidence: [{ kind: "task", label: "l" }] },
+        processCompliance: { score: 80, rationale: "x", evidence: [{ kind: "task", label: "l" }] },
+      },
+    }))).toThrow(/agentPerformance evidence is required/);
+
+    expect(() => parseAiResponse(makeAiResponse({
+      categories: {
+        taskOutcomeQuality: { score: 90, rationale: "x", evidence: [{ kind: "task", label: "l" }] },
+        processCompliance: { score: 80, rationale: "x", evidence: [{ kind: "task", label: "l" }] },
+      },
+    }))).toThrow(/missing category agentPerformance/);
   });
 
   it("builds prompt with deterministic signal bundle", () => {
@@ -56,13 +116,19 @@ describe("evaluator", () => {
   it("returns merged evaluation payload shape for persistence", async () => {
     const service = new HybridEvaluatorService({
       cwd: process.cwd(),
-      runPrompt: async () => '{"overallScore":0.9,"categoryScores":{"quality":0.9},"rationale":"Great","evidence":[{"kind":"task","label":"done"}],"followUpDrafts":[{"title":"Add tests","description":"More tests","reason":"coverage","evidenceRefs":["task:done"]}]}'
+      runPrompt: async () => makeAiResponse(),
     });
     const result = await service.evaluateTask(makeTask(), { runId: "ER-1", startedAt: "2026-05-01T00:00:00.000Z" }, {});
     expect(result.status).toBe("scored");
-    expect(result.overallScore).toBe(0.9);
-    expect(result.categoryScores?.[0]?.category).toBe("quality");
-    expect(result.followUps?.[0]?.title).toBe("Add tests");
+    expect(result.overallScore).toBeGreaterThanOrEqual(0);
+    expect(result.overallScore).toBeLessThanOrEqual(100);
+    expect(result.categoryScores).toHaveLength(3);
+    expect(result.overallScore).toBe(computeOverallScore(result.categoryScores ?? []));
+    expect(result.categoryScores?.map((score) => score.category)).toEqual([
+      "agentPerformance",
+      "taskOutcomeQuality",
+      "processCompliance",
+    ]);
     expect((result.metadata as any).hybridEvaluation).toBeDefined();
   });
 
@@ -74,7 +140,7 @@ describe("evaluator", () => {
 
     const service = new HybridEvaluatorService({
       cwd: process.cwd(),
-      runPrompt: async () => '{"overallScore":0.7,"categoryScores":{"quality":0.7},"rationale":"Solid","evidence":[],"followUpDrafts":[]}'
+      runPrompt: async () => makeAiResponse(),
     });
 
     const mockStore = {
@@ -100,6 +166,9 @@ describe("evaluator", () => {
     expect(run2.tasksSelected).toBe(0);
     const all = evalStore.listTaskResults({ taskId: doneTask.id });
     expect(all).toHaveLength(1);
-    expect(all[0]?.overallScore).toBe(0.7);
+    expect(all[0]?.overallScore).toBeGreaterThanOrEqual(0);
+    expect(all[0]?.overallScore).toBeLessThanOrEqual(100);
+    expect(all[0]?.categoryScores).toHaveLength(3);
+    expect(all[0]?.overallScore).toBe(computeOverallScore(all[0]?.categoryScores ?? []));
   });
 });

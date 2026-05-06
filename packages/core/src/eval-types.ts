@@ -19,15 +19,25 @@ export const EVAL_RUN_TRIGGERS = ["manual", "schedule", "api", "task_completion"
 export type EvalRunTrigger = typeof EVAL_RUN_TRIGGERS[number];
 
 export const EVAL_SCORE_CATEGORIES = [
-  "correctness",
-  "completeness",
-  "quality",
-  "reliability",
-  "tests",
-  "documentation",
+  "agentPerformance",
+  "taskOutcomeQuality",
+  "processCompliance",
 ] as const;
 
 export type EvalScoreCategory = typeof EVAL_SCORE_CATEGORIES[number];
+
+export const EVAL_SCORE_SCALE_MIN = 0;
+export const EVAL_SCORE_SCALE_MAX = 100;
+
+export const EVAL_SCORE_BANDS = [
+  { id: "failing", min: 0, max: 39 },
+  { id: "weak", min: 40, max: 59 },
+  { id: "acceptable", min: 60, max: 74 },
+  { id: "strong", min: 75, max: 89 },
+  { id: "excellent", min: 90, max: 100 },
+] as const;
+
+export type EvalScoreBand = typeof EVAL_SCORE_BANDS[number]["id"];
 
 export interface EvalTaskSnapshot {
   taskId: string;
@@ -83,10 +93,14 @@ export interface EvalEvidenceReference {
 }
 
 export interface EvalCategoryScore {
-  category: EvalScoreCategory | string;
-  score: number;
-  maxScore?: number;
-  rationale?: string;
+  category: EvalScoreCategory;
+  deterministicScore: number;
+  aiScore: number;
+  finalScore: number;
+  weight: number;
+  band: EvalScoreBand;
+  rationale: string;
+  evidence: EvalEvidenceReference[];
 }
 
 export interface EvalFollowUpSuggestion {
@@ -264,7 +278,7 @@ export interface TaskEvaluation {
   taskId: string;
   deterministicSignals: DeterministicSignals;
   overallScore: number;
-  categoryScores: Record<string, number>;
+  categoryScores: EvalCategoryScore[];
   rationale: string;
   evidence: EvaluationEvidenceRef[];
   followUpDrafts: FollowUpDraft[];

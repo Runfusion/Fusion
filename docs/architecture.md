@@ -195,6 +195,12 @@ Concrete references:
 - Data model stores structured scoring/evidence/signal payloads plus durable `taskSnapshot` metadata so historical eval results remain readable even if the live task row later changes or is removed.
 - Lifecycle safeguards mirror other core stores: deterministic list ordering, transition guards, terminal immutability for run rows, and active-run conflict protection for scheduled/task-completion triggers.
 - `eval_task_results` enforces one row per `(runId, taskId)` via a unique index; store writes use upsert semantics to keep reruns idempotent.
+- Canonical scoring contract is documented in `docs/evals.md`; authoritative score computation is centralized in `packages/core/src/eval-scoring.ts`.
+
+Scoring authority boundary:
+- Authoritative fields: `categoryScores[].finalScore`, `categoryScores[].band`, `categoryScores[].weight`, and `overallScore` (derived by `computeOverallScore`).
+- Advisory/model-authored fields: category `aiScore`, category `rationale`, category `evidence`, and `overallRationale` text.
+- Evaluator code (`packages/engine/src/evaluator.ts`) may provide AI category inputs, but must route final score computation through core helpers (`normalizeCategoryScore`, `computeOverallScore`) and must not persist AI-provided overall numbers as source of truth.
 
 Hybrid evaluator pipeline (FN-3389):
 - **Batch selection:** `runScheduledEvalBatch` in core computes a deterministic completed-task window (`windowStartExclusive` → `windowEndInclusive`) from the last completed scheduled run.

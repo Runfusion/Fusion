@@ -214,7 +214,7 @@ Additional backend notes:
 | `research_exports` | Persisted export records for research runs (`runId` FK cascade). Stores format, content, and optional file path. |
 | `research_run_events` | Append-only event log for research run lifecycle tracking (`runId` FK cascade, ordered by `seq`). Records status transitions, phase changes, step lifecycle, and failure classifications. |
 | `eval_runs` | Eval run lifecycle state (status, trigger, scope, evaluation window boundaries, evaluated task IDs/counts, aggregate scores, provenance). |
-| `eval_task_results` | Per-task eval outcomes linked to runs (`runId` FK cascade), including durable task snapshots, category scores, evidence references, deterministic/AI signal payloads, rationale, and follow-up suggestions. |
+| `eval_task_results` | Per-task eval outcomes linked to runs (`runId` FK cascade), including durable task snapshots and structured score payloads. `categoryScores[]` stores canonical per-category fields (`category`, `deterministicScore`, `aiScore`, `finalScore`, `weight`, `band`, `rationale`, `evidence[]`), plus `overallScore` derived from category finals. Also stores deterministic/AI signal payloads, summary rationale, and follow-up suggestions. |
 | `eval_run_events` | Append-only eval run event trail (`runId` FK cascade, ordered by `seq`) for orchestration/debug auditing and downstream API/UI drill-down. |
 
 Scope boundary note: the `project_auth_*` tables are strictly project-database membership/auth domain data. They do **not** replace or migrate global remote-access credentials/tokens, daemon auth, or model-provider credential settings (which remain in their existing global/project settings stores).

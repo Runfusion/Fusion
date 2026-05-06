@@ -40,8 +40,35 @@ describe("EvalStore", () => {
       taskId: "FN-123",
       taskSnapshot: { taskId: "FN-123", title: "Snapshot title", status: "done", summary: "task summary" },
       status: "scored",
-      overallScore: 0.8,
-      categoryScores: [{ category: "quality", score: 0.8 }],
+      overallScore: 80,
+      categoryScores: [{
+        category: "agentPerformance",
+        deterministicScore: 78,
+        aiScore: 82,
+        finalScore: 79,
+        weight: 0.3,
+        band: "strong",
+        rationale: "handled execution well",
+        evidence: [{ type: "task_log", ref: "log:1" }],
+      }, {
+        category: "taskOutcomeQuality",
+        deterministicScore: 80,
+        aiScore: 80,
+        finalScore: 80,
+        weight: 0.45,
+        band: "strong",
+        rationale: "good",
+        evidence: [{ type: "test", ref: "test:all" }],
+      }, {
+        category: "processCompliance",
+        deterministicScore: 72,
+        aiScore: 76,
+        finalScore: 73,
+        weight: 0.25,
+        band: "acceptable",
+        rationale: "mostly compliant",
+        evidence: [{ type: "other", ref: "workflow:review" }],
+      }],
       evidence: [{ type: "task_log", ref: "log:1" }],
       deterministicSignals: [{ signalId: "s1", kind: "test", name: "tests-pass", passed: true }],
     });
@@ -51,6 +78,11 @@ describe("EvalStore", () => {
     const fetched = store.getTaskResult(result.id);
     expect(fetched?.taskSnapshot.title).toBe("Snapshot title");
     expect(fetched?.taskId).toBe("FN-123");
+    expect(fetched?.categoryScores).toHaveLength(3);
+    expect(fetched?.categoryScores[0]?.category).toBe("agentPerformance");
+    expect(fetched?.categoryScores[0]?.deterministicScore).toBe(78);
+    expect(fetched?.categoryScores[1]?.weight).toBe(0.45);
+    expect(fetched?.categoryScores[2]?.band).toBe("acceptable");
   });
 
   it("persists run window boundaries and evaluated task rollups", () => {
@@ -79,18 +111,18 @@ describe("EvalStore", () => {
       taskId: "FN-dup",
       taskSnapshot: { taskId: "FN-dup", title: "A" },
       status: "scored",
-      overallScore: 0.2,
+      overallScore: 20,
     });
     const second = store.createTaskResult(run.id, {
       taskId: "FN-dup",
       taskSnapshot: { taskId: "FN-dup", title: "B" },
       status: "scored",
-      overallScore: 0.9,
+      overallScore: 90,
     });
 
     const rows = store.listTaskResults({ runId: run.id, taskId: "FN-dup" });
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.overallScore).toBe(0.9);
+    expect(rows[0]?.overallScore).toBe(90);
     expect(rows[0]?.taskSnapshot.title).toBe("B");
     expect(second.id).toBe(first.id);
   });

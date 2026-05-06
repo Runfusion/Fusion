@@ -725,6 +725,8 @@ export type {
   EvalTaskResultCreateInput,
   EvalTaskResultUpdateInput,
   EvalTaskResultListOptions,
+  EvalScoreBand,
+  EvalScoreCategory,
   EvalCategoryScore,
   EvalEvidenceReference,
   EvalSignal,
@@ -736,7 +738,23 @@ export type {
   FollowUpDraft,
   TaskEvaluation,
 } from "./eval-types.js";
-export { EVAL_RUN_STATUSES, EVAL_RUN_TRIGGERS, EVAL_SCORE_CATEGORIES } from "./eval-types.js";
+export {
+  EVAL_RUN_STATUSES,
+  EVAL_RUN_TRIGGERS,
+  EVAL_SCORE_CATEGORIES,
+  EVAL_SCORE_BANDS,
+  EVAL_SCORE_SCALE_MIN,
+  EVAL_SCORE_SCALE_MAX,
+} from "./eval-types.js";
+export {
+  EVAL_CATEGORY_WEIGHTS,
+  assertValidScore,
+  clampScore,
+  computeCategoryFinalScore,
+  computeOverallScore,
+  normalizeCategoryScore,
+  resolveScoreBand,
+} from "./eval-scoring.js";
 export {
   TASK_EVALUATION_SCHEDULE_NAME,
   DEFAULT_TASK_EVALUATION_SCHEDULE,
