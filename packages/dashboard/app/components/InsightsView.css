@@ -44,6 +44,42 @@
   gap: var(--space-sm);
 }
 
+/* Model configuration row — collapsible, below the action bar */
+.insights-model-config {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle, var(--bg));
+}
+
+.insights-model-label {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.insights-model-config .model-combobox {
+  max-width: 320px;
+}
+
+/* Gear toggle with active indicator */
+.insights-model-toggle {
+  position: relative;
+}
+
+.insights-model-indicator {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--todo, #f59e0b);
+}
+
 .insights-view-close {
   color: var(--text-muted);
 }
@@ -577,5 +613,13 @@
 
   .insights-view-count {
     font-size: 0.75rem;
+  }
+
+  .insights-model-config {
+    padding: var(--space-xs) var(--space-md);
+  }
+
+  .insights-model-config .model-combobox {
+    max-width: 200px;
   }
 }

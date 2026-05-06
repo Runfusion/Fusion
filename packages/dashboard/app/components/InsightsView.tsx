@@ -22,7 +22,10 @@ import {
   Archive,
   ArchiveRestore,
   Clock,
+  Settings,
 } from "lucide-react";
+import { CustomModelDropdown } from "./CustomModelDropdown";
+import type { ModelInfo } from "../api";
 import { useInsights, type InsightSection } from "../hooks/useInsights";
 import type { InsightCategory } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
@@ -32,6 +35,7 @@ interface InsightsViewProps {
   addToast: (message: string, type?: ToastType) => void;
   onClose?: () => void;
   onCreateTask?: (payload: { insightId: string; title: string; description: string }) => Promise<void>;
+  models?: ModelInfo[];
 }
 
 const CATEGORY_ICONS: Record<InsightCategory, React.ComponentType<{ size?: number; className?: string }>> = {
@@ -52,7 +56,7 @@ const CATEGORY_ICONS: Record<InsightCategory, React.ComponentType<{ size?: numbe
   other: Sparkles,
 };
 
-export function InsightsView({ projectId, addToast, onClose, onCreateTask }: InsightsViewProps) {
+export function InsightsView({ projectId, addToast, onClose, onCreateTask, models = [] }: InsightsViewProps) {
   const {
     sections,
     loading,
@@ -78,6 +82,20 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
 
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusType, setStatusType] = useState<"success" | "error" | "info">("info");
+
+  const [showModelConfig, setShowModelConfig] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<string>(
+    () => localStorage.getItem("fusion-insight-model") ?? ""
+  );
+
+  const handleModelChange = useCallback((value: string) => {
+    setSelectedModel(value);
+    if (value) {
+      localStorage.setItem("fusion-insight-model", value);
+    } else {
+      localStorage.removeItem("fusion-insight-model");
+    }
+  }, []);
 
   const populatedSections = useMemo(
     () => sections.filter((section) => section.items.length > 0),
@@ -114,7 +132,18 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
     try {
       setStatusMessage("Generating insights...");
       setStatusType("info");
-      await runInsights();
+
+      let modelProvider: string | undefined;
+      let modelId: string | undefined;
+      if (selectedModel) {
+        const slashIdx = selectedModel.indexOf("/");
+        if (slashIdx !== -1) {
+          modelProvider = selectedModel.slice(0, slashIdx);
+          modelId = selectedModel.slice(slashIdx + 1);
+        }
+      }
+
+      await runInsights(modelProvider, modelId);
       setStatusMessage("Insight generation started");
       setStatusType("success");
       addToast("Insight generation started", "success");
@@ -124,7 +153,7 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
       setStatusType("error");
       addToast(message, "error");
     }
-  }, [runInsights, addToast]);
+  }, [runInsights, addToast, selectedModel]);
 
   const handleDismiss = useCallback(
     async (id: string, title: string) => {
@@ -397,6 +426,17 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
             Refresh
           </button>
           <button
+            className="btn btn-sm insights-model-toggle"
+            onClick={() => setShowModelConfig((prev) => !prev)}
+            aria-label="Configure insight generation model"
+            aria-expanded={showModelConfig}
+            data-testid="toggle-model-config"
+            title={selectedModel ? `Model: ${selectedModel}` : "Configure model"}
+          >
+            <Settings size={14} />
+            {selectedModel && <span className="insights-model-indicator" />}
+          </button>
+          <button
             className="btn btn-primary btn-sm"
             onClick={() => void handleRun()}
             disabled={isRunInFlight}
@@ -417,6 +457,23 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask }: Ins
           </button>
         </div>
       </div>
+
+      {showModelConfig && (
+        <div className="insights-model-config" data-testid="model-config">
+          <label htmlFor="insight-model-select" className="insights-model-label">
+            Model
+          </label>
+          <CustomModelDropdown
+            models={models}
+            value={selectedModel}
+            onChange={handleModelChange}
+            placeholder="Use planning default"
+            label="Insight generation model"
+            disabled={isRunInFlight}
+            id="insight-model-select"
+          />
+        </div>
+      )}
 
       <div
         className="insights-status-region"
