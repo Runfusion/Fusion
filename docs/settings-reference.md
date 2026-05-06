@@ -243,6 +243,12 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `insightExtractionEnabled` | `boolean` | `false` | Enable scheduled memory insight extraction. |
 | `insightExtractionSchedule` | `string` | `"0 2 * * *"` | Insight extraction cron schedule. |
 | `insightExtractionMinIntervalMs` | `number` | `86400000` | Minimum interval between extractions (24h). |
+| `taskEvaluationEnabled` | `boolean` | `false` | Enable scheduled completed-task evaluation batches. |
+| `taskEvaluationSchedule` | `string` | `"0 5 * * *"` | Cron schedule for the scheduled task-evaluation batch automation. |
+| `taskEvaluationProvider` | `string` | `undefined` | Optional provider override used by scheduled task-evaluation runs. |
+| `taskEvaluationModelId` | `string` | `undefined` | Optional model ID override paired with `taskEvaluationProvider`. |
+| `taskEvaluationFollowUpPolicy` | `"off" \| "suggest" \| "create"` | `"off"` | Follow-up handling policy for scheduled task-evaluation outcomes. |
+| `taskEvaluationRetention` | `number` | `undefined` | Optional retention window (days) for scheduled task-evaluation history. |
 | `memoryEnabled` | `boolean` | `true` | Enable project memory integration. |
 | `memoryBackendType` | `string` | `"qmd"` | Memory backend type. Built-ins include `qmd` (Quantized Memory Distillation, default), `file`, and `readonly`; custom backends can also be registered. |
 | `memoryAutoSummarizeEnabled` | `boolean` | `false` | Enable automatic memory summarization when memory exceeds threshold. |

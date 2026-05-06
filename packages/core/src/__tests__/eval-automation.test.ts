@@ -26,7 +26,26 @@ describe("eval-automation", () => {
     const resolved = resolveTaskEvaluationSettings({});
     expect(resolved.taskEvaluationEnabled).toBe(false);
     expect(resolved.taskEvaluationSchedule).toBe(DEFAULT_TASK_EVALUATION_SCHEDULE);
+    expect(resolved.taskEvaluationProvider).toBeUndefined();
+    expect(resolved.taskEvaluationModelId).toBeUndefined();
     expect(resolved.taskEvaluationFollowUpPolicy).toBe("off");
+    expect(resolved.taskEvaluationRetention).toBeUndefined();
+  });
+
+  it("resolves task evaluation provider/model/retention overrides", () => {
+    const resolved = resolveTaskEvaluationSettings({
+      taskEvaluationEnabled: true,
+      taskEvaluationProvider: "anthropic",
+      taskEvaluationModelId: "claude-sonnet-4-5",
+      taskEvaluationFollowUpPolicy: "create",
+      taskEvaluationRetention: 30,
+    });
+
+    expect(resolved.taskEvaluationEnabled).toBe(true);
+    expect(resolved.taskEvaluationProvider).toBe("anthropic");
+    expect(resolved.taskEvaluationModelId).toBe("claude-sonnet-4-5");
+    expect(resolved.taskEvaluationFollowUpPolicy).toBe("create");
+    expect(resolved.taskEvaluationRetention).toBe(30);
   });
 
   it("creates scheduled eval automation", () => {
