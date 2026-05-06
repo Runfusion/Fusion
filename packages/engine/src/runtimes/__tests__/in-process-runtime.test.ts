@@ -739,7 +739,7 @@ describe("InProcessRuntime", () => {
         await vi.advanceTimersByTimeAsync(5000);
 
         const updated = await store.getAgent(durable.id);
-        expect(updated?.state).toBe("terminated");
+        expect(updated?.state).toBe("active");
         expect(updated?.taskId).toBeUndefined();
         expect(deleteAgentSpy).not.toHaveBeenCalledWith(durable.id);
       } finally {
@@ -807,7 +807,7 @@ describe("InProcessRuntime", () => {
         await vi.advanceTimersByTimeAsync(5000);
 
         const updated = await store.getAgent(durable.id);
-        expect(updated?.state).toBe("terminated");
+        expect(updated?.state).toBe("error");
         expect(updated?.taskId).toBeUndefined();
         expect(deleteAgentSpy).not.toHaveBeenCalledWith(durable.id);
       } finally {
@@ -860,7 +860,7 @@ describe("InProcessRuntime", () => {
 
       const store = getAgentStore(runtime);
       const updateStateSpy = vi.spyOn(store, "updateAgentState").mockImplementation(async (_agentId, state) => {
-        if (state === "terminated") {
+        if (state === "active") {
           throw new Error("state update failed");
         }
         return {} as Agent;
@@ -885,7 +885,7 @@ describe("InProcessRuntime", () => {
         expect.stringContaining("Failed to update agent"),
       );
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("terminated (completion)"),
+        expect.stringContaining("active (completion)"),
       );
 
       warnSpy.mockRestore();
@@ -1260,7 +1260,7 @@ describe("InProcessRuntime", () => {
         expect(agents.some((a: Agent) => a.id === agent.id)).toBe(true);
 
         // Emit agent:stateChanged event to trigger termination
-        store.emit("agent:stateChanged", agent.id, "running", "terminated");
+        store.emit("agent:stateChanged", agent.id, "running", "paused");
 
         // Wait for async handler
         await vi.advanceTimersByTimeAsync(0);
@@ -1299,7 +1299,7 @@ describe("InProcessRuntime", () => {
         expect(agents.some((a: Agent) => a.id === agent.id)).toBe(true);
 
         // Emit agent:stateChanged event to trigger termination
-        store.emit("agent:stateChanged", agent.id, "active", "terminated");
+        store.emit("agent:stateChanged", agent.id, "active", "paused");
 
         // Wait for async handler
         await vi.advanceTimersByTimeAsync(0);
@@ -1339,8 +1339,8 @@ describe("InProcessRuntime", () => {
         });
 
         // Emit termination event multiple times
-        store.emit("agent:stateChanged", agent.id, "running", "terminated");
-        store.emit("agent:stateChanged", agent.id, "terminated", "terminated"); // Already terminated
+        store.emit("agent:stateChanged", agent.id, "running", "paused");
+        store.emit("agent:stateChanged", agent.id, "paused", "paused"); // Already halted
 
         // Wait for async handlers
         await vi.advanceTimersByTimeAsync(0);
@@ -1378,7 +1378,7 @@ describe("InProcessRuntime", () => {
           .mockRejectedValueOnce(new Error(`Agent ${agent.id} not found`));
 
         // Emit termination event
-        store.emit("agent:stateChanged", agent.id, "running", "terminated");
+        store.emit("agent:stateChanged", agent.id, "running", "paused");
 
         // Wait for async handler
         await vi.advanceTimersByTimeAsync(0);
@@ -1419,7 +1419,7 @@ describe("InProcessRuntime", () => {
         });
 
         // Emit termination event
-        store.emit("agent:stateChanged", agent.id, "running", "terminated");
+        store.emit("agent:stateChanged", agent.id, "running", "paused");
 
         // Wait for async handler
         await vi.advanceTimersByTimeAsync(0);
@@ -1463,7 +1463,7 @@ describe("InProcessRuntime", () => {
         });
 
         // Emit termination event
-        store.emit("agent:stateChanged", agent.id, "running", "terminated");
+        store.emit("agent:stateChanged", agent.id, "running", "paused");
 
         // Wait for async handler
         await vi.advanceTimersByTimeAsync(0);
@@ -1497,7 +1497,7 @@ describe("InProcessRuntime", () => {
         });
 
         // Emit termination event
-        store.emit("agent:stateChanged", agent.id, "running", "terminated");
+        store.emit("agent:stateChanged", agent.id, "running", "paused");
 
         // Wait for async handler
         await vi.advanceTimersByTimeAsync(0);
@@ -1535,7 +1535,7 @@ describe("InProcessRuntime", () => {
         });
 
         executorOptions.onComplete?.({ id: "FN-DUP-COMPLETE" } as Task);
-        store.emit("agent:stateChanged", worker!.id, "running", "terminated");
+        store.emit("agent:stateChanged", worker!.id, "running", "paused");
 
         await vi.waitFor(() => {
           expect(deleteAgentSpy).toHaveBeenCalledTimes(1);
@@ -1579,7 +1579,7 @@ describe("InProcessRuntime", () => {
         runtimeConfig: { enabled: false },
       });
       await preStore.updateAgentState(orphan.id, "active");
-      await preStore.updateAgentState(orphan.id, "terminated");
+      await preStore.updateAgentState(orphan.id, "paused");
 
       await runtime.start();
       const store = getAgentStore(runtime);
@@ -1621,9 +1621,9 @@ describe("InProcessRuntime", () => {
         const a1 = await preStore.createAgent({ name: "orphan-a1", role: "executor", metadata: { agentKind: "task-worker" }, runtimeConfig: { enabled: false } });
         const a2 = await preStore.createAgent({ name: "orphan-a2", role: "executor", metadata: { agentKind: "task-worker" }, runtimeConfig: { enabled: false } });
         await preStore.updateAgentState(a1.id, "active");
-        await preStore.updateAgentState(a1.id, "terminated");
+        await preStore.updateAgentState(a1.id, "paused");
         await preStore.updateAgentState(a2.id, "active");
-        await preStore.updateAgentState(a2.id, "terminated");
+        await preStore.updateAgentState(a2.id, "paused");
 
         await runtime.start();
         const store = getAgentStore(runtime);

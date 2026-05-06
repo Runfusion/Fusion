@@ -558,9 +558,39 @@ export class HeartbeatMonitor {
     if (this.messageStore) {
       this.messageStore.setMessageToAgentHook(this.handleMessageToAgent.bind(this));
     }
+    // Reconcile any agents stuck in `state="running"` with no active run.
+    // Past versions of governance-skip paths (budget/global-pause) called
+    // completeRun with skipStateTransition=true after startRun had already
+    // moved the agent to "running", leaving the row stuck. New runs no
+    // longer leak this way, but pre-existing rows need a one-shot fix.
+    void this.reconcileOrphanedRunningAgents();
     this.pollInterval = setInterval(() => {
       void this.checkMissedHeartbeats();
     }, this.pollIntervalMs);
+  }
+
+  /**
+   * Find agents in `state="running"` that have no active heartbeat run and
+   * flip them to `"active"`. Called on monitor start to clean up orphans
+   * left behind by older governance-skip code paths. Best-effort — failures
+   * are logged but do not block startup.
+   */
+  private async reconcileOrphanedRunningAgents(): Promise<void> {
+    try {
+      const runningAgents = await this.store.listAgents({ state: "running", includeEphemeral: true });
+      for (const agent of runningAgents) {
+        const activeRun = await this.store.getActiveHeartbeatRun(agent.id);
+        if (activeRun) continue;
+        try {
+          await this.store.updateAgentState(agent.id, "active");
+          heartbeatLog.log(`Reconciled orphaned running agent ${agent.id} → active (no active run)`);
+        } catch (err) {
+          heartbeatLog.warn(`Failed to reconcile orphaned running agent ${agent.id}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    } catch (err) {
+      heartbeatLog.warn(`reconcileOrphanedRunningAgents scan failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   /**

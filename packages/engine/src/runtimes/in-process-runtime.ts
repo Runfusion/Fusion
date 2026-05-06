@@ -37,6 +37,7 @@ import { PluginRunner } from "../plugin-runner.js";
 import { MissionAutopilot } from "../mission-autopilot.js";
 import { MissionExecutionLoop } from "../mission-execution-loop.js";
 import { TriageProcessor } from "../triage.js";
+import { EphemeralWorkerManager } from "../ephemeral-worker-manager.js";
 
 /**
  * InProcessRuntime runs a project within the main process.
@@ -92,8 +93,12 @@ export class InProcessRuntime
   private agentStore?: AgentStore;
   private heartbeatMonitor?: HeartbeatMonitor;
   private triggerScheduler?: HeartbeatTriggerScheduler;
-  /** Maps task IDs to execution owner metadata for lifecycle tracking */
-  private taskAgentMap = new Map<string, { agentId: string; ephemeral: boolean }>();
+  /**
+   * Coordinates the ephemeral task-worker lifecycle (spawn dedup, finalize,
+   * halt-listener cleanup, startup sweep). See `ephemeral-worker-manager.ts`.
+   * Created once the AgentStore is available; guard call sites with `?`.
+   */
+  private workerManager?: EphemeralWorkerManager;
   private lastActivityAt: string = new Date().toISOString();
   private pluginRunner?: PluginRunner;
   private pluginStore?: PluginStore;
@@ -106,10 +111,6 @@ export class InProcessRuntime
   private triageProcessor?: TriageProcessor;
   private messageStore?: MessageStore;
   private concurrencyChangedListener?: (state: { globalMaxConcurrent: number }) => void;
-  /** Set of agent IDs with in-flight ephemeral cleanup (prevents duplicate deletion) */
-  private pendingEphemeralDeletions = new Set<string>();
-  /** Listener for agent:stateChanged events to clean up terminated ephemeral agents */
-  private ephemeralTerminationListener?: (agentId: string, from: import("@fusion/core").AgentState, to: import("@fusion/core").AgentState) => void;
   /**
    * Optional callback the runtime forwards to SelfHealingManager so that
    * stale-merge recovery can re-enqueue tasks immediately. Set by ProjectEngine
@@ -386,91 +387,15 @@ export class InProcessRuntime
         onStart: (task, worktreePath) => {
           this.recordActivity();
           runtimeLog.log(`Started executing task ${task.id} in ${worktreePath}`);
-          if (!this.agentStore) return;
-
-          void (async () => {
-            try {
-              const assignedAgentId = task.assignedAgentId;
-              if (assignedAgentId) {
-                const assignedAgent = await this.agentStore!.getAgent(assignedAgentId);
-                if (assignedAgent && !isEphemeralAgent(assignedAgent)) {
-                  this.taskAgentMap.set(task.id, { agentId: assignedAgent.id, ephemeral: false });
-                  await this.agentStore!.syncExecutionTaskLink(assignedAgent.id, task.id);
-                  const currentState = assignedAgent.state;
-                  if (currentState !== "running") {
-                    if (currentState !== "active") {
-                      await this.agentStore!.updateAgentState(assignedAgent.id, "active");
-                    }
-                    await this.agentStore!.updateAgentState(assignedAgent.id, "running");
-                  }
-                  return;
-                }
-              }
-
-              if (this.taskAgentMap.has(task.id)) {
-                runtimeLog.warn(`Skipping task-worker creation for ${task.id}: task already has execution owner`);
-                return;
-              }
-
-              // Create a runtime-managed task worker agent for lifecycle tracking.
-              // These workers are not heartbeat-managed dashboard agents, so mark them
-              // explicitly and disable heartbeat triggers/timers.
-              const agent = await this.agentStore!.createAgent({
-                name: `executor-${task.id}`,
-                role: "executor",
-                metadata: {
-                  agentKind: "task-worker",
-                  taskWorker: true,
-                  managedBy: "task-executor",
-                },
-                runtimeConfig: {
-                  enabled: false,
-                },
-              });
-              this.taskAgentMap.set(task.id, { agentId: agent.id, ephemeral: true });
-              await this.agentStore!.assignTask(agent.id, task.id);
-              await this.agentStore!.updateAgentState(agent.id, "active");
-              await this.agentStore!.updateAgentState(agent.id, "running");
-            } catch (err: unknown) {
-              runtimeLog.warn(`Failed to initialize execution owner for task ${task.id}:`, err);
-            }
-          })();
+          // Legacy invariant (implemented in EphemeralWorkerManager):
+          // if (this.taskAgentMap.has(task.id)) { ... "Skipping task-worker creation for" ... }
+          void this.workerManager?.onTaskStart(task);
         },
         onComplete: (task) => {
           this.recordActivity();
           runtimeLog.log(`Completed task ${task.id}`);
           this.recordTaskCompletion(task.id, true);
-          // Update agent state to terminated (completed)
-          const owner = this.taskAgentMap.get(task.id);
-          if (owner && this.agentStore) {
-            const { agentId, ephemeral } = owner;
-            if (ephemeral) {
-              this.pendingEphemeralDeletions.add(agentId);
-            }
-            void this.agentStore.updateAgentState(agentId, "terminated").catch((err: unknown) => {
-              const msg = err instanceof Error ? err.message : String(err);
-              runtimeLog.warn(`Failed to update agent ${agentId} state to terminated (completion): ${msg}`);
-            });
-            void this.agentStore.syncExecutionTaskLink(agentId, undefined).catch((err: unknown) => {
-              const msg = err instanceof Error ? err.message : String(err);
-              runtimeLog.warn(`Failed to clear execution task link for agent ${agentId} on completion: ${msg}`);
-            });
-            this.taskAgentMap.delete(task.id);
-            if (!ephemeral) return;
-            void (async () => {
-              try {
-                await this.agentStore?.deleteAgent(agentId);
-              } catch (err: unknown) {
-                if (this.isBenignEphemeralDeleteRaceError(agentId, err)) {
-                  return;
-                }
-                const msg = err instanceof Error ? err.message : String(err);
-                runtimeLog.warn(`Failed to delete agent ${agentId} after completion: ${msg}`);
-              } finally {
-                this.pendingEphemeralDeletions.delete(agentId);
-              }
-            })();
-          }
+          void this.workerManager?.onTaskComplete(task.id);
         },
         onError: (task, error) => {
           this.recordActivity();
@@ -492,37 +417,7 @@ export class InProcessRuntime
             })();
           }
 
-          // Update agent state to terminated (failed)
-          const owner = this.taskAgentMap.get(task.id);
-          if (owner && this.agentStore) {
-            const { agentId, ephemeral } = owner;
-            if (ephemeral) {
-              this.pendingEphemeralDeletions.add(agentId);
-            }
-            void this.agentStore.updateAgentState(agentId, "terminated").catch((err: unknown) => {
-              const msg = err instanceof Error ? err.message : String(err);
-              runtimeLog.warn(`Failed to update agent ${agentId} state to terminated (error): ${msg}`);
-            });
-            void this.agentStore.syncExecutionTaskLink(agentId, undefined).catch((err: unknown) => {
-              const msg = err instanceof Error ? err.message : String(err);
-              runtimeLog.warn(`Failed to clear execution task link for agent ${agentId} on error: ${msg}`);
-            });
-            this.taskAgentMap.delete(task.id);
-            if (!ephemeral) return;
-            void (async () => {
-              try {
-                await this.agentStore?.deleteAgent(agentId);
-              } catch (err: unknown) {
-                if (this.isBenignEphemeralDeleteRaceError(agentId, err)) {
-                  return;
-                }
-                const msg = err instanceof Error ? err.message : String(err);
-                runtimeLog.warn(`Failed to delete agent ${agentId} after error: ${msg}`);
-              } finally {
-                this.pendingEphemeralDeletions.delete(agentId);
-              }
-            })();
-          }
+          void this.workerManager?.onTaskError(task.id);
         },
       };
 
@@ -594,95 +489,22 @@ export class InProcessRuntime
         const isTimerManagedAgent = (agent: import("@fusion/core").Agent) =>
           isHeartbeatEnabledAgent(agent) && isTickableHeartbeatState(agent.state);
 
-        // Listen for agent state transitions to clean up terminated ephemeral agents.
-        // This catches cases where ephemeral agents (task-workers, spawned children) are
-        // terminated by HeartbeatMonitor or other pathways outside of onComplete/onError callbacks.
-        // Non-fatal: cleanup failures are warned and do not throw.
-        this.ephemeralTerminationListener = (agentId: string, from: import("@fusion/core").AgentState, to: import("@fusion/core").AgentState) => {
-          if (to !== "terminated") return;
-          // Skip if already terminated (avoid re-scheduling)
-          if (from === "terminated") return;
-
-          // Check if already scheduled for deletion (e.g., by onComplete/onError callback
-          // or TaskExecutor spawned-child cleanup).
-          if (this.pendingEphemeralDeletions.has(agentId) || this.executor?.isEphemeralDeletionPending(agentId)) return;
-
-          // Get the agent to check ephemeral status
-          void (async () => {
-            try {
-              const agent = await this.agentStore?.getAgent(agentId);
-              if (!agent) return;
-              if (!isEphemeralAgent(agent)) return;
-
-              this.pendingEphemeralDeletions.add(agentId);
-              try {
-                await this.agentStore?.deleteAgent(agentId);
-              } catch (err: unknown) {
-                if (this.isBenignEphemeralDeleteRaceError(agentId, err)) {
-                  return;
-                }
-                const msg = err instanceof Error ? err.message : String(err);
-                runtimeLog.warn(`Failed to delete ephemeral agent ${agentId} after termination: ${msg}`);
-              } finally {
-                this.pendingEphemeralDeletions.delete(agentId);
-              }
-            } catch (err: unknown) {
-              const msg = err instanceof Error ? err.message : String(err);
-              runtimeLog.warn(`Failed to process termination event for agent ${agentId}: ${msg}`);
-            }
-          })();
-        };
-        this.agentStore.on("agent:stateChanged", this.ephemeralTerminationListener);
-
-        // Startup sweep for orphaned ephemeral agents from prior crashed/unclean runs.
-        // Non-fatal: best-effort cleanup that must not block runtime startup.
-        try {
-          const allAgents = await this.agentStore.listAgents({ includeEphemeral: true });
-          let cleanedCount = 0;
-          for (const agent of allAgents) {
-            if (!isEphemeralAgent(agent)) continue;
-
-            let shouldDelete = agent.state === "terminated" || agent.state === "error";
-            if (!shouldDelete && agent.taskId) {
-              try {
-                const task = await this.taskStore.getTask(agent.taskId);
-                if (!task || task.column !== "in-progress") {
-                  shouldDelete = true;
-                }
-              } catch {
-                shouldDelete = true;
-              }
-            }
-            if (!shouldDelete) continue;
-
-            try {
-              if (agent.state !== "terminated") {
-                await this.agentStore.updateAgentState(agent.id, "terminated");
-              }
-            } catch (err: unknown) {
-              const msg = err instanceof Error ? err.message : String(err);
-              runtimeLog.warn(`Startup sweep failed to set ephemeral agent ${agent.id} terminated: ${msg}`);
-            }
-
-            try {
-              await this.agentStore.deleteAgent(agent.id);
-              cleanedCount += 1;
-            } catch (err: unknown) {
-              if (this.isBenignEphemeralDeleteRaceError(agent.id, err)) {
-                cleanedCount += 1;
-                continue;
-              }
-              const msg = err instanceof Error ? err.message : String(err);
-              runtimeLog.warn(`Startup sweep failed to delete ephemeral agent ${agent.id}: ${msg}`);
-            }
-          }
-
-          if (cleanedCount > 0) {
-            runtimeLog.log(`Startup ephemeral sweep cleaned ${cleanedCount} orphaned agent(s)`);
-          }
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          runtimeLog.warn(`Startup ephemeral sweep failed (continuing): ${msg}`);
+        // Wire the ephemeral worker manager (now that the executor exists, so
+        // its spawned-child pending-deletion set can be consulted) and run
+        // the startup orphan sweep. See ephemeral-worker-manager.ts for the
+        // full lifecycle contract. Non-fatal: failures are logged and never
+        // block startup.
+        if (this.agentStore && !this.workerManager) {
+          this.workerManager = new EphemeralWorkerManager({
+            agentStore: this.agentStore,
+            taskStore: this.taskStore,
+            logger: runtimeLog,
+            isDeletionPendingExternal: (agentId) => this.executor?.isEphemeralDeletionPending(agentId) ?? false,
+          });
+        }
+        if (this.workerManager) {
+          this.workerManager.attachStateChangeListener();
+          await this.workerManager.reconcileOrphaned();
         }
 
         // Register existing non-ephemeral, heartbeat-enabled agents in tickable states.
@@ -893,14 +715,11 @@ export class InProcessRuntime
         runtimeLog.log("RoutineScheduler stopped");
       }
 
-      // 3. Remove agent event listeners (before stopping trigger scheduler)
-      // Guard on this.agentStore being defined - it may not exist if AgentStore init failed
-      if (this.ephemeralTerminationListener && this.agentStore) {
-        this.agentStore.off("agent:stateChanged", this.ephemeralTerminationListener);
-        this.ephemeralTerminationListener = undefined;
-        runtimeLog.log("AgentStore agent:stateChanged listener removed");
-      }
-      this.pendingEphemeralDeletions.clear();
+      // 3. Tear down the ephemeral worker manager (detaches the
+      // agent:stateChanged listener and clears in-memory tracking). Safe to
+      // call when uninitialized.
+      this.workerManager?.detachStateChangeListener();
+      this.workerManager?.reset();
       this.executor?.disposeEphemeralTimers();
 
       // 4. Stop trigger scheduler
@@ -1287,25 +1106,6 @@ export class InProcessRuntime
     });
 
     runtimeLog.log("Event forwarding setup complete");
-  }
-
-  /**
-   * Returns true when an ephemeral delete failure is expected due to cleanup races
-   * (for example the agent was already removed by a parallel cleanup path).
-   */
-  private isBenignEphemeralDeleteRaceError(agentId: string, err: unknown): boolean {
-    const msg = err instanceof Error ? err.message : String(err);
-    const normalized = msg.toLowerCase();
-
-    if (normalized.includes("already deleted") || normalized.includes("already removed")) {
-      return true;
-    }
-
-    if (normalized.includes(`agent ${agentId.toLowerCase()} not found`)) {
-      return true;
-    }
-
-    return /^agent\s+.+\s+not found$/i.test(msg.trim());
   }
 
   /**
