@@ -16,6 +16,7 @@ const mockLoginProvider = vi.fn();
 const mockLogoutProvider = vi.fn();
 const mockCancelProviderLogin = vi.fn();
 const mockSaveApiKey = vi.fn();
+const mockSubmitProviderManualCode = vi.fn();
 const mockFetchModels = vi.fn();
 const mockFetchCustomProviders = vi.fn();
 const mockCreateCustomProvider = vi.fn();
@@ -69,6 +70,7 @@ vi.mock("../../api", async (importOriginal) => {
     logoutProvider: (...args: unknown[]) => mockLogoutProvider(...args),
     cancelProviderLogin: (...args: unknown[]) => mockCancelProviderLogin(...args),
     saveApiKey: (...args: unknown[]) => mockSaveApiKey(...args),
+    submitProviderManualCode: (...args: unknown[]) => mockSubmitProviderManualCode(...args),
     fetchModels: (...args: unknown[]) => mockFetchModels(...args),
     fetchCustomProviders: (...args: unknown[]) => mockFetchCustomProviders(...args),
     createCustomProvider: (...args: unknown[]) => mockCreateCustomProvider(...args),
@@ -266,6 +268,7 @@ describe("SettingsModal", () => {
     mockDeleteCustomProvider.mockResolvedValue(undefined);
     mockCancelProviderLogin.mockResolvedValue({ success: true, cancelled: true });
     mockSaveApiKey.mockResolvedValue(undefined);
+    mockSubmitProviderManualCode.mockResolvedValue({ success: true, submitted: true });
     mockTestNotification.mockResolvedValue({ success: true });
     mockFetchBackups.mockResolvedValue({ backups: [], totalSize: 0 });
     mockFetchMemoryFiles.mockResolvedValue({
@@ -1044,6 +1047,36 @@ describe("SettingsModal", () => {
 
       await waitFor(() => {
         expect(scrollToSpy).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+      });
+      expect(openSpy).toHaveBeenCalled();
+    });
+
+    it("renders Anthropic pasted-code form when login response includes manualCode", async () => {
+      const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [{ id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" }],
+      });
+      mockLoginProvider.mockResolvedValueOnce({
+        url: "https://claude.ai/oauth/authorize",
+        manualCode: {
+          prompt: "Paste the final redirect URL or authorization code",
+          placeholder: "http://localhost:*/callback?code=...&state=... or just the code",
+          helpText: "After Claude sign-in, copy the full browser URL (or just the code) and paste it here to finish login from this dashboard host.",
+        },
+      });
+
+      renderModal();
+      await waitForSettingsModalReady();
+
+      const anthropicCard = screen.getByTestId("auth-provider-icon-anthropic").closest(".auth-provider-card") as HTMLElement;
+      await userEvent.click(within(anthropicCard).getByRole("button", { name: "Login" }));
+
+      expect(await within(anthropicCard).findByText("Paste the final redirect URL or authorization code")).toBeInTheDocument();
+      await userEvent.type(within(anthropicCard).getByRole("textbox"), "anthropic-code");
+      await userEvent.click(within(anthropicCard).getByRole("button", { name: "Submit code" }));
+
+      await waitFor(() => {
+        expect(mockSubmitProviderManualCode).toHaveBeenCalledWith("anthropic", "anthropic-code");
       });
       expect(openSpy).toHaveBeenCalled();
     });

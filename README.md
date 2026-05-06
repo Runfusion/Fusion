@@ -304,10 +304,10 @@ For Capacitor + PWA workflow, see [MOBILE.md](./MOBILE.md).
 
 ### Provider authentication
 
-Fusion supports OAuth-based authentication for AI providers configured via **Settings → Authentication**. When the dashboard is accessed via a non-localhost host (remote node, LAN host/IP, or reverse proxy), provider login URLs are automatically rewritten to route OAuth callbacks through a bridge endpoint (`/api/auth/oauth-callback`), ensuring the redirect reaches the active browser session.
+Fusion supports OAuth-based authentication for AI providers configured via **Settings → Authentication**. For most OAuth providers, when the dashboard is accessed via a non-localhost host (remote node, LAN host/IP, or reverse proxy), provider login URLs are rewritten to route OAuth callbacks through a bridge endpoint (`/api/auth/oauth-callback`) so redirects reach the active browser session.
 
-- **Anthropic (Claude)** — Authenticates via the same Settings/onboarding OAuth flow as other OAuth providers
-- **OpenAI Codex** — Authenticates via Settings OAuth flow with secure state validation
+- **Anthropic (Claude)** — Uses a pasted authorization-code flow in Settings/onboarding: sign in, then paste the final redirect URL (or code) back into Fusion to complete login
+- **OpenAI Codex** — Uses the same pasted authorization-code flow with secure state validation
 - **Factory AI — via Droid CLI** *(optional)* — requires local Droid CLI install + `droid auth login`; detection follows the effective runtime binary path (default `droid`, or plugin `droidBinaryPath` when configured), then enable in **Settings → Authentication** and restart Fusion
 - **llama.cpp — via HTTP server** *(optional)* — configure your llama.cpp server URL (default `http://127.0.0.1:8080`) and optional API key, then enable in **Settings → Authentication**
 - **Other providers** — Authenticate via API key entry in Settings (including Google/Gemini API key, Google Generative AI, Vertex, and Cloud Code aliases)

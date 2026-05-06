@@ -933,23 +933,23 @@ describe("MailboxModal", () => {
       expect(mailboxMobileSection).toContain(".mailbox-modal .mailbox-tabs::-webkit-scrollbar");
       expect(mailboxMobileSection).toContain("display: none;");
       expect(mailboxMobileSection).toContain(".mailbox-modal .mailbox-tab");
-      expect(mailboxMobileSection).toContain("padding: 8px 12px;");
+      expect(mailboxMobileSection).toContain("padding: var(--space-sm) var(--space-md);");
       expect(mailboxMobileSection).toContain("font-size: 0.8rem;");
-      expect(mailboxMobileSection).toContain("max-height: calc(100dvh - 120px);");
+      expect(mailboxMobileSection).toContain("max-height: calc(100dvh - var(--header-height) - var(--space-2xl) - var(--space-xl));");
       expect(mailboxMobileSection).toContain(".mailbox-modal .mailbox-message-detail-header");
       expect(mailboxMobileSection).toContain("flex-direction: column;");
       expect(mailboxMobileSection).toContain("align-items: flex-start;");
       expect(mailboxMobileSection).toContain(".mailbox-modal .mailbox-message-detail-actions");
       expect(mailboxMobileSection).toContain(".mailbox-modal .mailbox-message-participants");
-      expect(mailboxMobileSection).toContain("gap: 8px;");
+      expect(mailboxMobileSection).toContain("gap: var(--space-sm);");
       expect(mailboxMobileSection).toContain(".mailbox-modal .mailbox-conversation-msg");
-      expect(mailboxMobileSection).toContain("padding: 6px 10px;");
+      expect(mailboxMobileSection).toContain("padding: var(--space-xs) var(--space-md);");
       expect(mailboxMobileSection).toContain(".mailbox-modal .mailbox-agent-select");
       expect(mailboxMobileSection).toContain("max-width: 100%;");
       expect(mailboxMobileSection).toContain(".mailbox-modal .mailbox-agents");
       expect(mailboxMobileSection).toContain("min-height: 200px;");
       expect(mailboxMobileSection).toContain(".mailbox-modal .mailbox-empty");
-      expect(mailboxMobileSection).toContain("padding: 32px 12px;");
+      expect(mailboxMobileSection).toContain("padding: var(--space-2xl) var(--space-md);");
     });
 
     it("renders detail-view structural hooks targeted by mobile overrides", async () => {

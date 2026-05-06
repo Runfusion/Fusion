@@ -138,12 +138,9 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       return false;
     }
 
-    // The upstream OpenAI Codex OAuth provider is hardcoded to request and
-    // later redeem the localhost callback URI `http://localhost:1455/auth/callback`.
-    // Rewriting that authorize-time redirect_uri to the dashboard proxy causes
-    // OpenAI auth to fail with an upstream unknown_error. Keep the original
-    // localhost callback for this provider.
-    if (providerId === "openai-codex") {
+    // These providers rely on pasted-code UX with their own localhost callbacks,
+    // so redirect_uri must remain untouched.
+    if (providerId === "openai-codex" || providerId === "anthropic") {
       return false;
     }
 
@@ -151,18 +148,29 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
   }
 
   function getManualCodeConfig(providerId: string, origin: string | undefined): ManualCodeConfig | undefined {
-    if (providerId !== "openai-codex") {
-      return undefined;
+    const remoteDashboard = origin !== undefined && !isLocalhostOrigin(origin);
+
+    if (providerId === "openai-codex") {
+      return {
+        prompt: "Paste the final redirect URL or authorization code",
+        placeholder: "http://localhost:1455/auth/callback?code=...&state=... or just the code",
+        helpText: remoteDashboard
+          ? "After sign-in, OpenAI may redirect to a localhost callback that cannot open from this dashboard host. Copy the full browser URL from the address bar and paste it here."
+          : "If the browser cannot finish the localhost callback automatically, copy the full browser URL from the address bar and paste it here.",
+      };
     }
 
-    const remoteDashboard = origin !== undefined && !isLocalhostOrigin(origin);
-    return {
-      prompt: "Paste the final redirect URL or authorization code",
-      placeholder: "http://localhost:1455/auth/callback?code=...&state=... or just the code",
-      helpText: remoteDashboard
-        ? "After sign-in, OpenAI may redirect to a localhost callback that cannot open from this dashboard host. Copy the full browser URL from the address bar and paste it here."
-        : "If the browser cannot finish the localhost callback automatically, copy the full browser URL from the address bar and paste it here.",
-    };
+    if (providerId === "anthropic") {
+      return {
+        prompt: "Paste the final redirect URL or authorization code",
+        placeholder: "http://localhost:*/callback?code=...&state=... or just the code",
+        helpText: remoteDashboard
+          ? "After Claude sign-in, copy the full browser URL (or just the code) and paste it here to finish login from this dashboard host."
+          : "If Claude cannot finish the localhost callback automatically, copy the full browser URL from the address bar and paste it here.",
+      };
+    }
+
+    return undefined;
   }
 
   async function probeDroidCliWithEffectiveBinary(req?: Request) {

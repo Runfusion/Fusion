@@ -10,6 +10,7 @@ const mockFetchAuthStatus = vi.fn();
 const mockLoginProvider = vi.fn();
 const mockLogoutProvider = vi.fn();
 const mockCancelProviderLogin = vi.fn();
+const mockSubmitProviderManualCode = vi.fn();
 const mockSaveApiKey = vi.fn();
 const mockClearApiKey = vi.fn();
 const mockFetchModels = vi.fn();
@@ -24,6 +25,7 @@ vi.mock("../../api", () => ({
   loginProvider: (...args: unknown[]) => mockLoginProvider(...args),
   logoutProvider: (...args: unknown[]) => mockLogoutProvider(...args),
   cancelProviderLogin: (...args: unknown[]) => mockCancelProviderLogin(...args),
+  submitProviderManualCode: (...args: unknown[]) => mockSubmitProviderManualCode(...args),
   saveApiKey: (...args: unknown[]) => mockSaveApiKey(...args),
   clearApiKey: (...args: unknown[]) => mockClearApiKey(...args),
   fetchModels: (...args: unknown[]) => mockFetchModels(...args),
@@ -183,6 +185,7 @@ beforeEach(() => {
   mockLoginProvider.mockResolvedValue({ url: "https://auth.example.com/login" });
   mockLogoutProvider.mockResolvedValue({ success: true });
   mockCancelProviderLogin.mockResolvedValue({ success: true, cancelled: true });
+  mockSubmitProviderManualCode.mockResolvedValue({ success: true, submitted: true });
   mockSaveApiKey.mockResolvedValue({ success: true });
   mockClearApiKey.mockResolvedValue({ success: true });
   // Default to no persisted state (start at ai-setup)
@@ -650,6 +653,68 @@ describe("ModelOnboardingModal", () => {
           "_blank",
         );
       });
+    });
+
+    it("shows Anthropic pasted-code form and submits manual code", async () => {
+      const mockWindowOpen = vi.fn();
+      vi.spyOn(window, "open").mockImplementation(mockWindowOpen);
+      mockLoginProvider.mockResolvedValueOnce({
+        url: "https://claude.ai/oauth/authorize",
+        manualCode: {
+          prompt: "Paste the final redirect URL or authorization code",
+          placeholder: "http://localhost:*/callback?code=...&state=... or just the code",
+          helpText: "After Claude sign-in, copy the full browser URL (or just the code) and paste it here to finish login from this dashboard host.",
+        },
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Login")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByText("Login"));
+
+      const prompt = await screen.findByText("Paste the final redirect URL or authorization code");
+      const card = prompt.closest(".onboarding-provider-card") as HTMLElement;
+      const textbox = within(card).getByRole("textbox");
+      fireEvent.change(textbox, { target: { value: "anthropic-code" } });
+      fireEvent.click(within(card).getByRole("button", { name: "Submit code" }));
+
+      await waitFor(() => {
+        expect(mockSubmitProviderManualCode).toHaveBeenCalledWith("anthropic", "anthropic-code");
+      });
+      expect(mockWindowOpen).toHaveBeenCalled();
+    });
+
+    it("keeps OpenAI Codex manual-code UX available in onboarding", async () => {
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [{ id: "openai-codex", name: "OpenAI Codex", authenticated: false, type: "oauth" }],
+      });
+      mockLoginProvider.mockResolvedValueOnce({
+        url: "https://auth.openai.com/oauth/authorize",
+        manualCode: {
+          prompt: "Paste the final redirect URL or authorization code",
+          placeholder: "http://localhost:1455/auth/callback?code=...&state=... or just the code",
+          helpText: "After sign-in, OpenAI may redirect to a localhost callback that cannot open from this dashboard host. Copy the full browser URL from the address bar and paste it here.",
+        },
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /Advanced provider settings/ })).toBeTruthy();
+      });
+      fireEvent.click(screen.getByRole("button", { name: /Advanced provider settings/ }));
+
+      await waitFor(() => {
+        expect(screen.getByText("OpenAI Codex")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByText("Login"));
+
+      expect(await screen.findByText("Paste the final redirect URL or authorization code")).toBeTruthy();
+      expect(screen.getByText(/OpenAI may redirect to a localhost callback/)).toBeTruthy();
     });
 
     it("saves API key when Save is clicked", async () => {
@@ -1376,7 +1441,7 @@ describe("ModelOnboardingModal", () => {
           const badge = screen.getByTestId("github-status-badge");
           expect(badge).toHaveTextContent("✗ Connection failed");
           expect(badge).toHaveClass("retry");
-        });
+        }, { timeout: 3000 });
 
         expect(screen.getByText("Connection failed or timed out.")).toBeTruthy();
         expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();

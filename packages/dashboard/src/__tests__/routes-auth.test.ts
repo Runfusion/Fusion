@@ -1163,6 +1163,36 @@ describe("POST /auth/login", () => {
       helpText: "After sign-in, OpenAI may redirect to a localhost callback that cannot open from this dashboard host. Copy the full browser URL from the address bar and paste it here.",
     });
   });
+
+  it("returns manual-code flow for anthropic and skips callback rewrite on remote hosts", async () => {
+    const unchangedUrl =
+      "https://claude.ai/oauth/authorize?state=anthropic-state&redirect_uri=http%3A%2F%2Flocalhost%3A3210%2Fauth%2Fcallback";
+
+    (authStorage.getOAuthProviders as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "anthropic", name: "Anthropic" },
+    ]);
+    (authStorage.login as ReturnType<typeof vi.fn>).mockImplementation((_provider: string, callbacks: any) => {
+      callbacks.onAuth({ url: unchangedUrl, instructions: "Sign in with Claude" });
+      return Promise.resolve();
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/auth/login",
+      JSON.stringify({ provider: "anthropic", origin: "https://my-host.example.com" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.url).toBe(unchangedUrl);
+    expect(res.body.instructions).toContain("After Claude sign-in");
+    expect(res.body.manualCode).toEqual({
+      prompt: "Paste the final redirect URL or authorization code",
+      placeholder: "http://localhost:*/callback?code=...&state=... or just the code",
+      helpText: "After Claude sign-in, copy the full browser URL (or just the code) and paste it here to finish login from this dashboard host.",
+    });
+  });
   it("returns 400 when provider is missing", async () => {
     const res = await REQUEST(buildApp(), "POST", "/api/auth/login", JSON.stringify({}), {
       "Content-Type": "application/json",
@@ -1302,7 +1332,10 @@ describe("POST /auth/manual-code", () => {
   beforeEach(() => {
     store = createMockStore();
     authStorage = createMockAuthStorage({
-      getOAuthProviders: vi.fn().mockReturnValue([{ id: "openai-codex", name: "OpenAI Codex" }]),
+      getOAuthProviders: vi.fn().mockReturnValue([
+        { id: "openai-codex", name: "OpenAI Codex" },
+        { id: "anthropic", name: "Anthropic" },
+      ]),
     });
   });
 
@@ -1355,6 +1388,46 @@ describe("POST /auth/manual-code", () => {
     expect(submitRes.body).toEqual({ success: true, submitted: true });
     await vi.waitFor(() => {
       expect(submittedCode).toBe("http://localhost:1455/auth/callback?code=test-code&state=test-state");
+    });
+  });
+
+  it("submits pasted manual code for anthropic login", async () => {
+    let submittedCode: string | undefined;
+    (authStorage.login as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_provider: string, callbacks: {
+        onAuth: (info: { url: string; instructions?: string }) => void;
+        onPrompt?: () => Promise<string>;
+      }) => {
+        callbacks.onAuth({
+          url: "https://claude.ai/oauth/authorize?state=anthropic-state&redirect_uri=http%3A%2F%2Flocalhost%3A3210%2Fauth%2Fcallback",
+        });
+        submittedCode = await callbacks.onPrompt?.();
+      },
+    );
+
+    const app = buildApp();
+    const loginRes = await REQUEST(
+      app,
+      "POST",
+      "/api/auth/login",
+      JSON.stringify({ provider: "anthropic", origin: "https://remote.example.com" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(loginRes.status).toBe(200);
+
+    const submitRes = await REQUEST(
+      app,
+      "POST",
+      "/api/auth/manual-code",
+      JSON.stringify({ provider: "anthropic", code: "anthropic-manual-code" }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(submitRes.status).toBe(200);
+    expect(submitRes.body).toEqual({ success: true, submitted: true });
+    await vi.waitFor(() => {
+      expect(submittedCode).toBe("anthropic-manual-code");
     });
   });
 

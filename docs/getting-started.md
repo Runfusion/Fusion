@@ -74,7 +74,7 @@ fn dashboard
 
 On first launch, Fusion opens an onboarding wizard with three steps:
 
-1. **AI Setup** — choose a provider and authenticate (you only need one to start). Anthropic/Claude and OpenAI Codex support direct OAuth login in onboarding and Settings, while **Anthropic — via Claude CLI** remains available as a separate optional path. Deprecated Google Gemini CLI / Antigravity entries are hidden; Google/Gemini API key, Google Generative AI, Vertex, and Cloud Code options remain available.
+1. **AI Setup** — choose a provider and authenticate (you only need one to start). Anthropic/Claude and OpenAI Codex use a pasted authorization-code OAuth flow in onboarding and Settings (sign in, then paste the final redirect URL or code back into Fusion), while **Anthropic — via Claude CLI** remains available as a separate optional path. Deprecated Google Gemini CLI / Antigravity entries are hidden; Google/Gemini API key, Google Generative AI, Vertex, and Cloud Code options remain available.
 2. **GitHub (Optional)** — connect GitHub for issue import and PR workflows
 3. **First Task** — create your first task or import one from GitHub
 
