@@ -3609,6 +3609,12 @@ export interface AgentHeartbeatConfig {
   messageResponseMode?: MessageResponseMode;
   /** Per-agent budget governance configuration. When set, enables budget tracking and enforcement. */
   budgetConfig?: AgentBudgetConfig;
+  /**
+   * When true, the engine fires a catch-up heartbeat at server startup if the
+   * agent's last heartbeat is older than its interval — i.e., the server was
+   * down across a scheduled tick. Default: false.
+   */
+  runMissedHeartbeatOnStartup?: boolean;
 }
 
 /** Per-agent budget configuration, stored in agent.runtimeConfig.budgetConfig */

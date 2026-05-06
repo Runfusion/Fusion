@@ -2651,6 +2651,10 @@ function deriveAutoClaimRelevantTasksEnabled(runtimeConfig: AgentDetail["runtime
   return runtimeConfig?.autoClaimRelevantTasks !== false;
 }
 
+function deriveRunMissedHeartbeatOnStartup(runtimeConfig: AgentDetail["runtimeConfig"] | undefined): boolean {
+  return runtimeConfig?.runMissedHeartbeatOnStartup === true;
+}
+
 function deriveBudgetValues(runtimeConfig: AgentDetail["runtimeConfig"] | undefined): Record<string, string> {
   const bc = (runtimeConfig ?? {}).budgetConfig as Record<string, unknown> | undefined;
   const nextValues: Record<string, string> = {};
@@ -3011,6 +3015,9 @@ function ConfigTab({
   const [autoClaimRelevantTasksEnabled, setAutoClaimRelevantTasksEnabled] = useState<boolean>(
     () => deriveAutoClaimRelevantTasksEnabled(agent.runtimeConfig),
   );
+  const [runMissedHeartbeatOnStartup, setRunMissedHeartbeatOnStartup] = useState<boolean>(
+    () => deriveRunMissedHeartbeatOnStartup(agent.runtimeConfig),
+  );
 
   // Budget config state initialised from agent.runtimeConfig.budgetConfig
   const [budgetValues, setBudgetValues] = useState<Record<string, string>>(
@@ -3212,6 +3219,7 @@ function ConfigTab({
     const rc = agent.runtimeConfig ?? {};
     if (heartbeatEnabled !== deriveHeartbeatEnabled(agent.runtimeConfig)) return true;
     if (autoClaimRelevantTasksEnabled !== deriveAutoClaimRelevantTasksEnabled(agent.runtimeConfig)) return true;
+    if (runMissedHeartbeatOnStartup !== deriveRunMissedHeartbeatOnStartup(agent.runtimeConfig)) return true;
     for (const key of ["heartbeatIntervalMs", "heartbeatTimeoutMs", "maxConcurrentRuns", "messageResponseMode"] as const) {
       const current = heartbeatValues[key]?.trim() ?? "";
       let persisted = rc[key] !== undefined && rc[key] !== null ? String(rc[key]) : "";
@@ -3286,6 +3294,7 @@ function ConfigTab({
     setHeartbeatValues(deriveHeartbeatValues(agent.runtimeConfig));
     setHeartbeatEnabled(deriveHeartbeatEnabled(agent.runtimeConfig));
     setAutoClaimRelevantTasksEnabled(deriveAutoClaimRelevantTasksEnabled(agent.runtimeConfig));
+    setRunMissedHeartbeatOnStartup(deriveRunMissedHeartbeatOnStartup(agent.runtimeConfig));
     setBudgetValues(deriveBudgetValues(agent.runtimeConfig));
     setModelValue(initialModelValue);
     setSelectedRuntimeId(initialRuntimeHint);
@@ -3432,6 +3441,7 @@ function ConfigTab({
     const newRuntimeConfig: Record<string, unknown> = { ...agent.runtimeConfig };
     newRuntimeConfig.enabled = heartbeatEnabled;
     newRuntimeConfig.autoClaimRelevantTasks = autoClaimRelevantTasksEnabled;
+    newRuntimeConfig.runMissedHeartbeatOnStartup = runMissedHeartbeatOnStartup;
     for (const key of ["heartbeatIntervalMs", "heartbeatTimeoutMs", "maxConcurrentRuns"] as const) {
       const raw = heartbeatValues[key]?.trim();
       if (!raw) {
@@ -3527,7 +3537,7 @@ function ConfigTab({
       runtimeConfig: newRuntimeConfig,
       bundleConfig: newBundleConfig,
     };
-  }, [agent.metadata, agent.runtimeConfig, autoClaimRelevantTasksEnabled, budgetValues, bundleEntryFile, bundleExternalPath, bundleFiles, bundleMode, formValues, heartbeatEnabled, heartbeatValues, iconValue, modelValue, nameValue, reportsToValue, roleValue, runtimeMode, selectedRuntimeId, selectedSkills, titleValue, validationErrors]);
+  }, [agent.metadata, agent.runtimeConfig, autoClaimRelevantTasksEnabled, budgetValues, bundleEntryFile, bundleExternalPath, bundleFiles, bundleMode, formValues, heartbeatEnabled, heartbeatValues, iconValue, modelValue, nameValue, reportsToValue, roleValue, runMissedHeartbeatOnStartup, runtimeMode, selectedRuntimeId, selectedSkills, titleValue, validationErrors]);
 
   const persistSettings = useCallback(async (showValidationToast: boolean, source: "auto" | "manual") => {
     const payload = buildSavePayload();
@@ -3932,6 +3942,22 @@ function ConfigTab({
           </div>
 
           <div className="config-field">
+            <label className="checkbox-label" htmlFor="hb-runMissedHeartbeatOnStartup">
+              <input
+                id="hb-runMissedHeartbeatOnStartup"
+                type="checkbox"
+                checked={runMissedHeartbeatOnStartup}
+                onChange={(e) => {
+                  setRunMissedHeartbeatOnStartup(e.target.checked);
+                  void scheduleAutoSave();
+                }}
+              />
+              Run Missed Heartbeat On Startup
+            </label>
+            <span className="config-hint">When enabled, if the server was down across this agent&apos;s scheduled heartbeat tick, fire a single catch-up heartbeat at startup. Default: off.</span>
+          </div>
+
+          <div className="config-field">
             <label htmlFor="hb-heartbeatIntervalMs">Heartbeat Interval (s)</label>
             <input
               id="hb-heartbeatIntervalMs"
@@ -4320,7 +4346,7 @@ function ConfigTab({
             <span className="config-danger-note">
               {isDeletableState
                 ? "Deletion is permanent and cannot be undone."
-                : `Agent deletion is only available when state is idle, terminated, or paused (current state: ${agent.state}).`}
+                : `Agent deletion is only available when state is idle or paused (current state: ${agent.state}).`}
             </span>
           </div>
         </div>

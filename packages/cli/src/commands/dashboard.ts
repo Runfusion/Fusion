@@ -16,6 +16,7 @@ import {
   DaemonTokenManager,
   GlobalSettingsStore,
   resolveGlobalDir,
+  DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS,
 } from "@fusion/core";
 import {
   createServer,
@@ -60,7 +61,7 @@ import {
 } from "./llama-cpp-extension.js";
 import { getCachedUpdateStatus, isUpdateCheckEnabled } from "../update-cache.js";
 import { resolveSelfExtension } from "./self-extension.js";
-import { ensureBundledDependencyGraphPluginInstalled } from "../plugins/bundled-plugin-install.js";
+import { ensureBundledDependencyGraphPluginInstalled, ensureBundledPluginInstalled, isBundledPluginId } from "../plugins/bundled-plugin-install.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
 import { syncStartupModels } from "./startup-model-sync.js";
 import { DashboardTUI, DashboardLogSink, isTTYAvailable, type SystemInfo, type GitStatus, type GitCommit, type GitCommitDetail, type GitBranch, type GitWorktree, type FileEntry, type FileReadResult, type TaskStep as TUITaskStep, type TaskLogEntry as TUITaskLogEntry, type TaskDetailData, type TaskEvent } from "./dashboard-tui/index.js";
@@ -1099,6 +1100,35 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     );
   }
 
+  // Lazy-install hook for bundled runtime plugins (Hermes/OpenClaw/Paperclip).
+  // Invoked by dashboard's PUT /api/plugins/:id/settings the first time the
+  // user clicks Save in Settings. Returns true if the plugin is now registered.
+  const ensureBundledPluginInstalledCallback = async (pluginId: string): Promise<boolean> => {
+    if (!isBundledPluginId(pluginId)) {
+      logSink.log(`ensureBundledPluginInstalled: unknown bundled plugin id "${pluginId}"`, "plugins");
+      return false;
+    }
+    try {
+      const status = await ensureBundledPluginInstalled(pluginStore, pluginLoader, pluginId);
+      if (status === "missing-bundle") {
+        logSink.log(`Bundled plugin "${pluginId}" was not found in this build`, "plugins");
+        return false;
+      }
+      if (status === "installed") {
+        logSink.log(`Installed bundled plugin "${pluginId}"`, "plugins");
+      } else if (status === "updated") {
+        logSink.log(`Updated bundled plugin "${pluginId}"`, "plugins");
+      }
+      return true;
+    } catch (err) {
+      logSink.log(
+        `Failed to auto-install bundled plugin "${pluginId}": ${err instanceof Error ? err.message : err}`,
+        "plugins",
+      );
+      throw err;
+    }
+  };
+
   // Auto-load all enabled plugins so runtime UI (NewAgentDialog, AgentDetailView)
   // can discover installed runtimes like Hermes and OpenClaw.
   try {
@@ -1545,6 +1575,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       pluginStore,
       pluginLoader,
       pluginRunner: pluginLoader,
+      ensureBundledPluginInstalled: ensureBundledPluginInstalledCallback,
       onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
       onProjectRegistered: ({ path }) => {
         maybeInstallClaudeSkillForNewProject(path);
@@ -1751,6 +1782,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       triggerScheduler.start();
 
       const agents = await agentStore.listAgents();
+      const missedCatchupTargets: { agentId: string; lastHeartbeatAt: string }[] = [];
       for (const agent of agents) {
         // State is the source of truth: arm timers only for non-ephemeral
         // agents that are currently active/running. Transitions into
@@ -1759,6 +1791,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         if (isEphemeralAgent(agent)) continue;
         if (agent.state !== "active" && agent.state !== "running") continue;
         const rc = agent.runtimeConfig;
+        const intervalMs = (rc?.heartbeatIntervalMs as number | undefined) ?? DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS;
         triggerScheduler.registerAgent(
           agent.id,
           {
@@ -1767,9 +1800,42 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
           },
           { lastHeartbeatAt: agent.lastHeartbeatAt },
         );
+
+        // Per-agent opt-in: if the server was down across a scheduled tick,
+        // fire one catch-up heartbeat. We require explicit lastHeartbeatAt to
+        // avoid firing on agents that have never run.
+        if (
+          rc?.runMissedHeartbeatOnStartup === true
+          && rc?.enabled !== false
+          && typeof agent.lastHeartbeatAt === "string"
+          && agent.lastHeartbeatAt.length > 0
+        ) {
+          const lastMs = Date.parse(agent.lastHeartbeatAt);
+          if (Number.isFinite(lastMs) && Date.now() - lastMs > intervalMs) {
+            missedCatchupTargets.push({ agentId: agent.id, lastHeartbeatAt: agent.lastHeartbeatAt });
+          }
+        }
       }
       if (agents.length > 0) {
         logSink.log(`Registered ${triggerScheduler.getRegisteredAgents().length} agents for heartbeat triggers`, "engine");
+      }
+
+      for (const target of missedCatchupTargets) {
+        const monitor = heartbeatMonitorImpl;
+        if (!monitor) break;
+        logSink.log(
+          `Firing catch-up heartbeat for ${target.agentId} (lastHeartbeatAt=${target.lastHeartbeatAt})`,
+          "engine",
+        );
+        // Fire and forget; serialized per-agent inside executeHeartbeat.
+        void monitor.executeHeartbeat({
+          agentId: target.agentId,
+          source: "timer",
+          triggerDetail: "startup-missed-heartbeat-catchup",
+        }).catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          logSink.warn(`Catch-up heartbeat for ${target.agentId} failed: ${message}`, "engine");
+        });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1806,6 +1872,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       pluginStore,
       pluginLoader,
       pluginRunner: pluginLoader,
+      ensureBundledPluginInstalled: ensureBundledPluginInstalledCallback,
       onProjectRegistered: ({ path }) => {
         maybeInstallClaudeSkillForNewProject(path);
       },
