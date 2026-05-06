@@ -4,6 +4,12 @@
 
 The Fusion dashboard is the main control plane for tasks, agents, missions, settings, logs, and repository operations.
 
+## Browser Navigation
+
+The dashboard now handles browser back navigation consistently on desktop and mobile.
+Using Back will first dismiss open modals and then step back through in-app view changes (for example, task detail → board) before leaving the app.
+This behavior used to be mobile-only, and now applies across all viewports.
+
 ## Board View
 
 Board view is the kanban surface for day-to-day operation.
