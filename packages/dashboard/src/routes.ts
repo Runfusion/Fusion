@@ -3247,7 +3247,15 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       const plugin = await pluginStore.getPlugin(id);
       res.json(plugin.settings);
     } catch (err: unknown) {
-      if (err instanceof Error && (err instanceof Error ? err.message : String(err)).includes("not found")) {
+      const isNotFoundError = err instanceof Error && (err instanceof Error ? err.message : String(err)).includes("not found");
+      const isBundledFallback = BUNDLED_PLUGIN_RUNTIMES.some((r) => r.pluginId === id);
+      if (isNotFoundError && isBundledFallback) {
+        // Bundled runtime plugins can be surfaced in settings before they've
+        // been lazily installed. Return empty defaults so cards can open.
+        res.json({});
+        return;
+      }
+      if (isNotFoundError) {
         throw notFound(`Plugin "${id}" not found`);
       }
       throw internalError(err instanceof Error ? err.message : "Unknown error");
@@ -3606,8 +3614,16 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
       if (!alreadyRegistered) {
         try {
-          await options.ensureBundledPluginInstalled(id);
+          const installOk = await options.ensureBundledPluginInstalled(id);
+          if (!installOk) {
+            throw internalError(
+              `Bundled plugin "${id}" is unavailable in this build and could not be auto-installed`,
+            );
+          }
         } catch (installErr) {
+          if (installErr instanceof ApiError) {
+            throw installErr;
+          }
           throw internalError(
             `Failed to auto-install bundled plugin "${id}": ${installErr instanceof Error ? installErr.message : String(installErr)}`,
           );

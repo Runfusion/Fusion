@@ -60,16 +60,16 @@ function resolveBundledPluginDir(pluginId: string): string | null {
  * Resolve the actual loadable entry FILE path for a plugin directory. Node ESM
  * does not allow directory imports, so we must register the explicit file the
  * loader will dynamic-import. Preference order:
- *   1. ./bundled.js   (esbuild-bundled, ships in npm tarball)
- *   2. ./dist/index.js
- *   3. ./src/index.ts (workspace dev)
+ *   1. ./src/index.ts (workspace/dev source of truth)
+ *   2. ./bundled.js   (esbuild-bundled, ships in npm tarball)
+ *   3. ./dist/index.js
  *   4. fall back to the directory itself
  */
 export function resolvePluginEntryPath(pluginDir: string): string {
   const candidates = [
+    join(pluginDir, "src", "index.ts"),
     join(pluginDir, "bundled.js"),
     join(pluginDir, "dist", "index.js"),
-    join(pluginDir, "src", "index.ts"),
   ];
   for (const candidate of candidates) {
     if (existsSync(candidate)) {

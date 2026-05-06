@@ -328,7 +328,7 @@ describe("GET /plugins/:id/settings", () => {
     expect(res.body).toEqual({ apiKey: "secret", enabled: true });
   });
 
-  it("returns 404 for non-existent plugin", async () => {
+  it("returns 404 for non-existent non-bundled plugin", async () => {
     (pluginStore.getPlugin as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       Object.assign(new Error('Plugin "nonexistent" not found'), { code: "ENOENT" }),
     );
@@ -337,6 +337,17 @@ describe("GET /plugins/:id/settings", () => {
 
     expect(res.status).toBe(404);
     expect(res.body).toHaveProperty("error");
+  });
+
+  it("returns empty settings for bundled runtime plugin before first install", async () => {
+    (pluginStore.getPlugin as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      Object.assign(new Error('Plugin "fusion-plugin-hermes-runtime" not found'), { code: "ENOENT" }),
+    );
+
+    const res = await GET(buildApp(), "/api/plugins/fusion-plugin-hermes-runtime/settings");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({});
   });
 
   it("supports projectId query param scoping", async () => {
@@ -1052,6 +1063,23 @@ describe("PUT /plugins/:id/settings auto-install for bundled runtime plugins", (
 
     expect(res.status).toBe(200);
     expect(ensure).not.toHaveBeenCalled();
+  });
+
+  it("returns 500 with intentional message when bundled auto-install reports missing bundle", async () => {
+    (pluginStore.getPlugin as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("Plugin not found"),
+    );
+    const ensure = vi.fn().mockResolvedValue(false);
+
+    const res = await REQUEST(
+      buildAppWithBundleHook(ensure),
+      "PUT",
+      "/api/plugins/fusion-plugin-hermes-runtime/settings",
+      { settings: { apiKey: "k" } },
+    );
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain("is unavailable in this build");
   });
 
   it("returns 500 when auto-install throws", async () => {

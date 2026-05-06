@@ -72,6 +72,13 @@ const RUNTIME_IGNORE_PATTERNS = [
   /^activity-log\.jsonl$/,
   /^settings\.json$/,
   /^logs(?:[\/\\]|$)/,
+  /^tasks(?:[\/\\]|$)/,
+  /^memory(?:[\/\\]|$)/,
+  /^MEMORY\.md$/,
+  /^DREAMS\.md$/,
+  /^\d{4}-\d{2}-\d{2}\.md$/,
+  /^scripts\.json$/,
+  /^update-check\.json$/,
 ];
 
 function isRuntimePath(relPath) {

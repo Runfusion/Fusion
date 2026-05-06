@@ -22,13 +22,18 @@ vi.mock("@fusion/core", () => ({
 }));
 
 // Import SUT after mocks are in place
-import { ensureBundledDependencyGraphPluginInstalled } from "../bundled-plugin-install.js";
+import {
+  ensureBundledDependencyGraphPluginInstalled,
+  ensureBundledPluginInstalled,
+  resolvePluginEntryPath,
+} from "../bundled-plugin-install.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
 const BUNDLED_PLUGIN_ID = "fusion-plugin-dependency-graph";
+const HERMES_PLUGIN_ID = "fusion-plugin-hermes-runtime";
 
-function makeManifest(overrides?: Partial<{ id: string; version: string }>) {
+function makeManifest(overrides?: Partial<{ id: string; version: string; name: string }>) {
   return {
     id: BUNDLED_PLUGIN_ID,
     name: "Dependency Graph",
@@ -130,7 +135,11 @@ function makePluginLoader() {
 function setupBundleExists(manifestOverrides?: Partial<{ id: string; version: string }>) {
   const manifest = makeManifest(manifestOverrides);
   mockExistsSync.mockImplementation((p: string) => {
-    if (typeof p === "string" && p.endsWith("manifest.json") && p.includes("dist")) return true;
+    if (typeof p !== "string") return false;
+    if (p.endsWith("manifest.json") && p.includes("dist")) return true;
+    if (p.includes("dist") && (p.endsWith("/bundled.js") || p.endsWith("/src/index.ts") || p.endsWith("/dist/index.js"))) {
+      return true;
+    }
     return false;
   });
   mockReadFile.mockResolvedValue(JSON.stringify(manifest));
@@ -170,13 +179,37 @@ async function getResolvedBundledPath(): Promise<string> {
     probeLoader as unknown as import("@fusion/core").PluginLoader,
   );
   const call = probeStore.registerPlugin.mock.calls[0];
-  return (call?.[0] as { path: string })?.path ?? "";
+  const path = (call?.[0] as { path: string })?.path ?? "";
+  expect(path.endsWith(".js") || path.endsWith(".ts")).toBe(true);
+  return path;
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("resolvePluginEntryPath", () => {
+  it("prefers src/index.ts over bundled.js when both exist in workspace contexts", () => {
+    mockExistsSync.mockImplementation((p: string) => p.endsWith("/src/index.ts") || p.endsWith("/bundled.js"));
+    expect(resolvePluginEntryPath("/tmp/plugin")).toBe("/tmp/plugin/src/index.ts");
+  });
+
+  it("prefers bundled.js when source entry is unavailable", () => {
+    mockExistsSync.mockImplementation((p: string) => p.endsWith("/bundled.js"));
+    expect(resolvePluginEntryPath("/tmp/plugin")).toBe("/tmp/plugin/bundled.js");
+  });
+
+  it("prefers src/index.ts over dist/index.js in workspace contexts", () => {
+    mockExistsSync.mockImplementation((p: string) => p.endsWith("/src/index.ts") || p.endsWith("/dist/index.js"));
+    expect(resolvePluginEntryPath("/tmp/plugin")).toBe("/tmp/plugin/src/index.ts");
+  });
+
+  it("falls back to dist/index.js when source entry is unavailable", () => {
+    mockExistsSync.mockImplementation((p: string) => p.endsWith("/dist/index.js"));
+    expect(resolvePluginEntryPath("/tmp/plugin")).toBe("/tmp/plugin/dist/index.js");
+  });
 });
 
 describe("ensureBundledDependencyGraphPluginInstalled", () => {
@@ -321,5 +354,30 @@ describe("ensureBundledDependencyGraphPluginInstalled", () => {
         loader as unknown as import("@fusion/core").PluginLoader,
       ),
     ).rejects.toThrow("Invalid plugin manifest");
+  });
+
+  it("registers Hermes from source entry when both src and dist entries exist", async () => {
+    const manifest = makeManifest({ id: HERMES_PLUGIN_ID, name: "Hermes Runtime" });
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p.endsWith("manifest.json") && p.includes(HERMES_PLUGIN_ID)) return true;
+      if (p.endsWith("/src/index.ts") && p.includes(HERMES_PLUGIN_ID)) return true;
+      if (p.endsWith("/dist/index.js") && p.includes(HERMES_PLUGIN_ID)) return true;
+      return false;
+    });
+    mockReadFile.mockResolvedValue(JSON.stringify(manifest));
+    mockValidatePluginManifest.mockReturnValue({ valid: true, errors: [] });
+
+    const store = makePluginStore();
+    const loader = makePluginLoader();
+
+    const result = await ensureBundledPluginInstalled(
+      store as unknown as import("@fusion/core").PluginStore,
+      loader as unknown as import("@fusion/core").PluginLoader,
+      HERMES_PLUGIN_ID,
+    );
+
+    expect(result).toBe("installed");
+    const registerCall = store.registerPlugin.mock.calls[0]?.[0] as { path: string };
+    expect(registerCall.path).toContain(`${HERMES_PLUGIN_ID}/src/index.ts`);
   });
 });
