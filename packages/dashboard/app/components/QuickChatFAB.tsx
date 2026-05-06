@@ -954,6 +954,7 @@ export function QuickChatFAB({
     startModelChat,
     startFreshSession,
     refreshSessions,
+    skipNextSessionInitRef,
   } = useQuickChat(projectId, addToast);
 
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -1181,6 +1182,10 @@ export function QuickChatFAB({
   }, [isOpen, refreshSessions]);
 
   // Initialize/switch quick chat session whenever the selected target changes.
+  // NOTE: activeSession and sessionsLoading are in the dependency array to
+  // enable retry-when-null (see shouldRetrySessionInit), but the hook's
+  // switchSession now reads activeSession from a ref so it doesn't get a
+  // new identity on every activeSession change.
   useEffect(() => {
     if (!isOpen) {
       prevSessionTargetRef.current = "";
@@ -1189,6 +1194,15 @@ export function QuickChatFAB({
 
     if (!sessionTargetKey) {
       prevSessionTargetRef.current = "";
+      return;
+    }
+
+    // When startFreshSession is in progress, skip the automatic init to
+    // prevent racing with the explicit fresh-session creation.  Record the
+    // target key as "seen" so a later render won't re-trigger for the same
+    // target.
+    if (skipNextSessionInitRef.current) {
+      prevSessionTargetRef.current = sessionTargetKey;
       return;
     }
 
@@ -1220,6 +1234,7 @@ export function QuickChatFAB({
     sessionsLoading,
     startModelChat,
     switchSession,
+    skipNextSessionInitRef,
   ]);
 
   useEffect(() => {

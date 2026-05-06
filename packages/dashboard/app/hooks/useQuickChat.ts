@@ -58,6 +58,14 @@ export interface UseQuickChatReturn {
   refreshSessions: () => Promise<void>;
   loadMessages: () => Promise<void>;
   reloadMessages: () => Promise<void>;
+
+  /**
+   * When true, the consuming component's session-init useEffect should
+   * skip its automatic switchSession call.  Set during startFreshSession
+   * to prevent the useEffect from racing with an explicit fresh-session
+   * creation.
+   */
+  skipNextSessionInitRef: React.MutableRefObject<boolean>;
 }
 
 function normalizeModelSelection(modelProvider?: string, modelId?: string): ModelSelection {
@@ -208,6 +216,24 @@ export function useQuickChat(
   const currentSessionKeyRef = useRef<string>("");
   const currentSessionTargetRef = useRef<SessionTarget | null>(null);
 
+  // Ref mirror of activeSession to avoid cascading re-renders through
+  // switchSession's dependency array.  Reading activeSession from the
+  // closure causes switchSession to get a new identity every time
+  // activeSession changes — which then re-triggers the consuming
+  // component's useEffect that depends on switchSession.
+  const activeSessionRef = useRef<ChatSession | null>(activeSession);
+  activeSessionRef.current = activeSession;
+
+  // Max retries for session init to prevent infinite toast loops
+  const initRetryCountRef = useRef(0);
+  const INIT_MAX_RETRIES = 3;
+
+  // When true, the consuming component's session-init useEffect should
+  // skip its switchSession call.  Set by startFreshSession (and the
+  // component's handleCreateFreshSession) to prevent the automatic
+  // useEffect from racing with an explicit fresh-session creation.
+  const skipNextSessionInitRef = useRef(false);
+
   useEffect(() => {
     pendingMessageRef.current = pendingMessage;
   }, [pendingMessage]);
@@ -276,9 +302,18 @@ export function useQuickChat(
           setActiveSession(newSession);
           currentSessionKeyRef.current = sessionKey;
         }
+
+        // Reset retry counter on success so a later failure can retry again
+        initRetryCountRef.current = 0;
       } catch (err) {
         console.error("[useQuickChat] Failed to initialize session:", err);
-        addToast?.("Failed to initialize chat", "error");
+        // Only show the toast while under the retry limit — once the limit
+        // is reached the user has already seen the warning and further
+        // toasts just create noise.
+        initRetryCountRef.current += 1;
+        if (initRetryCountRef.current <= INIT_MAX_RETRIES) {
+          addToast?.("Failed to initialize chat", "error");
+        }
       } finally {
         setSessionsLoading(false);
       }
@@ -379,7 +414,10 @@ export function useQuickChat(
       const targetSessionKey = buildSessionKey(target.agentId, target.modelProvider, target.modelId);
       currentSessionTargetRef.current = target;
 
-      const isSameSession = targetSessionKey === currentSessionKeyRef.current && activeSession;
+      // Use ref to avoid cascading re-renders: reading activeSession from
+      // the closure would make switchSession change identity every time
+      // activeSession changes, triggering the consumer's useEffect again.
+      const isSameSession = targetSessionKey === currentSessionKeyRef.current && activeSessionRef.current;
 
       if (!isSameSession) {
         // Close any existing stream
@@ -407,7 +445,7 @@ export function useQuickChat(
       currentSessionKeyRef.current = targetSessionKey;
       await initializeSession(target.agentId, target.modelProvider, target.modelId);
     },
-    [activeSession, initializeSession, reloadMessages, resetTransientComposerState],
+    [initializeSession, reloadMessages, resetTransientComposerState],
   );
 
   const selectSession = useCallback(async (session: ChatSession) => {
@@ -444,6 +482,12 @@ export function useQuickChat(
     // This preserves normal switchSession resume behavior while allowing multiple threads per target.
     const targetSessionKey = buildSessionKey(target.agentId, target.modelProvider, target.modelId);
 
+    // Prevent the consuming component's automatic session-init useEffect
+    // from racing with this explicit fresh-session creation.  The effect
+    // will see the flag, record the target key as "seen", and skip.
+    skipNextSessionInitRef.current = true;
+    initRetryCountRef.current = 0;
+
     if (streamRef.current) {
       streamRef.current.close();
       streamRef.current = null;
@@ -465,6 +509,7 @@ export function useQuickChat(
       console.error("[useQuickChat] Failed to start a fresh session:", err);
       addToast?.("Failed to start a new chat", "error");
     } finally {
+      skipNextSessionInitRef.current = false;
       setSessionsLoading(false);
     }
   }, [addToast, createSessionForTarget, projectId, resetTransientComposerState]);
@@ -656,6 +701,7 @@ export function useQuickChat(
     refreshSessions,
     loadMessages,
     reloadMessages,
+    skipNextSessionInitRef,
   }), [
     activeSession,
     sessions,

@@ -856,6 +856,204 @@ describe("useQuickChat", () => {
     });
   });
 
+  describe("regression: init retry limit prevents infinite toast spam", () => {
+    it("stops showing error toasts after 3 consecutive initialization failures", async () => {
+      const addToast = vi.fn();
+      mockFetchResumeChatSession.mockRejectedValue(new Error("API down"));
+
+      const { result } = renderHook(() => useQuickChat("proj-123", addToast));
+
+      // Attempt 1
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+      // Attempt 2
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+      // Attempt 3
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+      // Attempt 4 — should be silently dropped
+      await act(async () => {
+        await result.current.switchSession("agent-002");
+      });
+
+      // Should have exactly 3 toast calls (one per unique target up to the limit)
+      // Each new target resets the retry counter, so agent-001 gets 3 toasts
+      // and agent-002 starts fresh. But agent-001 only has 3 switchSession calls
+      // each with a different internal retry.
+      //
+      // Actually: switchSession clears the session each time, so each call
+      // goes through initializeSession which increments the counter.
+      // The counter resets on success or when startFreshSession is called.
+      // With 3 calls for agent-001, that's 3 failures = 3 toasts.
+      // Then agent-002 starts a new sequence — retry counter continues
+      // because it's the same hook instance.
+      expect(addToast).toHaveBeenCalledTimes(3);
+      expect(addToast).toHaveBeenNthCalledWith(1, "Failed to initialize chat", "error");
+      expect(addToast).toHaveBeenNthCalledWith(2, "Failed to initialize chat", "error");
+      expect(addToast).toHaveBeenNthCalledWith(3, "Failed to initialize chat", "error");
+    });
+
+    it("resets retry counter after a successful initialization", async () => {
+      const addToast = vi.fn();
+
+      const session = makeSession({ id: "session-001", agentId: "agent-001" });
+      mockFetchResumeChatSession
+        .mockRejectedValueOnce(new Error("API down"))
+        .mockResolvedValueOnce({ session });
+
+      const { result } = renderHook(() => useQuickChat("proj-123", addToast));
+
+      // Fail once
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+      expect(addToast).toHaveBeenCalledTimes(1);
+
+      // Succeed — resets counter
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+      expect(result.current.activeSession?.id).toBe("session-001");
+
+      // Fail again — counter was reset, so toast shows again
+      mockFetchResumeChatSession.mockRejectedValue(new Error("API down again"));
+      await act(async () => {
+        await result.current.switchSession("agent-002");
+      });
+      expect(addToast).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("regression: startFreshSession skip flag prevents useEffect race", () => {
+    it("sets skipNextSessionInitRef during startFreshSession and clears it after", async () => {
+      const existingSession = makeSession({ id: "session-existing", agentId: "agent-001" });
+      const freshSession = makeSession({ id: "session-fresh", agentId: "agent-001" });
+
+      mockFetchResumeChatSession.mockResolvedValueOnce({ session: existingSession });
+      mockCreateChatSession.mockResolvedValueOnce({ session: freshSession });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+      const { result } = renderHook(() => useQuickChat("proj-123"));
+
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+
+      // Before startFreshSession — flag should be false
+      expect(result.current.skipNextSessionInitRef.current).toBe(false);
+
+      // During startFreshSession — the flag is set then cleared in finally
+      await act(async () => {
+        await result.current.startFreshSession();
+      });
+
+      // After startFreshSession — flag should be cleared
+      expect(result.current.skipNextSessionInitRef.current).toBe(false);
+      expect(result.current.activeSession?.id).toBe("session-fresh");
+    });
+
+    it("startFreshSession creates a new session even when an existing one exists for the same agent", async () => {
+      const existingSession = makeSession({ id: "session-old", agentId: "agent-001" });
+      const freshSession = makeSession({ id: "session-new", agentId: "agent-001" });
+
+      mockFetchResumeChatSession.mockResolvedValueOnce({ session: existingSession });
+      mockCreateChatSession.mockResolvedValueOnce({ session: freshSession });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+      const { result } = renderHook(() => useQuickChat("proj-123"));
+
+      // First switchSession resumes existing session
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+      expect(result.current.activeSession?.id).toBe("session-old");
+
+      // startFreshSession should bypass resume and create a new one
+      await act(async () => {
+        await result.current.startFreshSession();
+      });
+
+      await waitFor(() => {
+        expect(result.current.activeSession?.id).toBe("session-new");
+      });
+
+      // createSession was called (not resume)
+      expect(mockCreateChatSession).toHaveBeenCalledWith(
+        { agentId: "agent-001" },
+        "proj-123",
+      );
+    });
+  });
+
+  describe("regression: switchSession uses activeSessionRef to avoid cascading re-renders", () => {
+    it("switchSession does not re-initialize when activeSession changes", async () => {
+      const sessionA = makeSession({ id: "session-a", agentId: "agent-001" });
+
+      mockFetchResumeChatSession.mockResolvedValue({ session: sessionA });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+      const { result } = renderHook(() => useQuickChat("proj-123"));
+
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+
+      expect(result.current.activeSession).not.toBeNull();
+
+      // Calling switchSession again with the same target should NOT
+      // go through initializeSession again — it should just reload
+      // messages (because activeSessionRef.current is set, making
+      // isSameSession = true). This is the key behavioral fix:
+      // even though switchSession gets a new identity from other deps,
+      // it reads activeSession from a ref so it correctly detects
+      // "same session" and skips re-initialization.
+      const resumeCallCount = mockFetchResumeChatSession.mock.calls.length;
+      const createCallCount = mockCreateChatSession.mock.calls.length;
+
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+
+      // No additional API calls for session lookup or creation
+      expect(mockFetchResumeChatSession.mock.calls.length).toBe(resumeCallCount);
+      expect(mockCreateChatSession.mock.calls.length).toBe(createCallCount);
+
+      // Messages were reloaded though
+      expect(mockFetchChatMessages).toHaveBeenCalled();
+    });
+
+    it("switchSession with same target after activeSession change just reloads messages", async () => {
+      const sessionA = makeSession({ id: "session-a", agentId: "agent-001" });
+
+      mockFetchResumeChatSession.mockResolvedValue({ session: sessionA });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+      const { result } = renderHook(() => useQuickChat("proj-123"));
+
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+
+      expect(result.current.activeSession?.id).toBe("session-a");
+
+      // Calling switchSession again with same target should reload messages,
+      // not call fetchResumeChatSession again
+      const initialResumeCallCount = mockFetchResumeChatSession.mock.calls.length;
+
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+
+      // No additional resume lookup — just message reload
+      expect(mockFetchResumeChatSession.mock.calls.length).toBe(initialResumeCallCount);
+      expect(mockFetchChatMessages).toHaveBeenCalled();
+    });
+  });
+
   describe("FN-3336: streaming state recovery on reload", () => {
     it("sets isStreaming=true when initializing a session with isGenerating=true", async () => {
       const session = { ...makeSession({ id: "session-001", agentId: "agent-001" }), isGenerating: true };
