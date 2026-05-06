@@ -2878,6 +2878,163 @@ describe("Mission API", () => {
         lockedByTab: "other-tab",
       });
     });
+
+    it("POST /api/missions/interview/start resolves default model from settings when no override provided", async () => {
+      // Configure scoped store with default model settings
+      scopedStore = {
+        getRootDir: vi.fn().mockReturnValue(scopedRootDir),
+        getSettings: vi.fn().mockResolvedValue({
+          promptOverrides: {},
+          defaultProvider: "zai",
+          defaultModelId: "glm-5.1",
+        }),
+        getMissionStore: vi.fn().mockReturnValue(createMockMissionStore()),
+      } as unknown as TaskStore;
+      vi.spyOn(projectStoreResolver, "getOrCreateProjectStore").mockResolvedValue(scopedStore);
+
+      const createSpy = vi
+        .spyOn(missionInterviewModule, "createMissionInterviewSession")
+        .mockResolvedValueOnce("resolved-model-session-id");
+
+      const { app } = buildApp();
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/interview/start?projectId=${projectId}`,
+        JSON.stringify({ missionTitle: "Default Model Mission" }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(201);
+      // The route should resolve the default model from settings and pass it through
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        "Default Model Mission",
+        scopedRootDir,
+        {},
+        "zai",
+        "glm-5.1",
+      );
+    });
+
+    it("POST /api/missions/interview/start uses planning-specific model over global default", async () => {
+      // Configure scoped store with both planning-specific and global defaults
+      scopedStore = {
+        getRootDir: vi.fn().mockReturnValue(scopedRootDir),
+        getSettings: vi.fn().mockResolvedValue({
+          promptOverrides: {},
+          planningProvider: "anthropic",
+          planningModelId: "claude-sonnet-4-5",
+          defaultProvider: "zai",
+          defaultModelId: "glm-5.1",
+        }),
+        getMissionStore: vi.fn().mockReturnValue(createMockMissionStore()),
+      } as unknown as TaskStore;
+      vi.spyOn(projectStoreResolver, "getOrCreateProjectStore").mockResolvedValue(scopedStore);
+
+      const createSpy = vi
+        .spyOn(missionInterviewModule, "createMissionInterviewSession")
+        .mockResolvedValueOnce("planning-model-session-id");
+
+      const { app } = buildApp();
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/interview/start?projectId=${projectId}`,
+        JSON.stringify({ missionTitle: "Planning Model Mission" }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(201);
+      // Planning-specific model should take priority over global default
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        "Planning Model Mission",
+        scopedRootDir,
+        {},
+        "anthropic",
+        "claude-sonnet-4-5",
+      );
+    });
+
+    it("POST /api/missions/interview/start explicit model override takes precedence over settings defaults", async () => {
+      // Configure scoped store with default model settings
+      scopedStore = {
+        getRootDir: vi.fn().mockReturnValue(scopedRootDir),
+        getSettings: vi.fn().mockResolvedValue({
+          promptOverrides: {},
+          defaultProvider: "zai",
+          defaultModelId: "glm-5.1",
+        }),
+        getMissionStore: vi.fn().mockReturnValue(createMockMissionStore()),
+      } as unknown as TaskStore;
+      vi.spyOn(projectStoreResolver, "getOrCreateProjectStore").mockResolvedValue(scopedStore);
+
+      const createSpy = vi
+        .spyOn(missionInterviewModule, "createMissionInterviewSession")
+        .mockResolvedValueOnce("override-session-id");
+
+      const { app } = buildApp();
+      // Send explicit model override in request body
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/interview/start?projectId=${projectId}`,
+        JSON.stringify({
+          missionTitle: "Override Mission",
+          modelProvider: "openai",
+          modelId: "gpt-4o",
+        }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(201);
+      // Explicit override should win over settings defaults
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        "Override Mission",
+        scopedRootDir,
+        {},
+        "openai",
+        "gpt-4o",
+      );
+    });
+
+    it("POST /api/missions/interview/start passes undefined model when no defaults configured", async () => {
+      // Settings with no model configuration at all (the "no defaults" case)
+      scopedStore = {
+        getRootDir: vi.fn().mockReturnValue(scopedRootDir),
+        getSettings: vi.fn().mockResolvedValue({
+          promptOverrides: {},
+        }),
+        getMissionStore: vi.fn().mockReturnValue(createMockMissionStore()),
+      } as unknown as TaskStore;
+      vi.spyOn(projectStoreResolver, "getOrCreateProjectStore").mockResolvedValue(scopedStore);
+
+      const createSpy = vi
+        .spyOn(missionInterviewModule, "createMissionInterviewSession")
+        .mockResolvedValueOnce("no-defaults-session-id");
+
+      const { app } = buildApp();
+      const res = await request(
+        app,
+        "POST",
+        `/api/missions/interview/start?projectId=${projectId}`,
+        JSON.stringify({ missionTitle: "No Defaults Mission" }),
+        { "content-type": "application/json" }
+      );
+
+      expect(res.status).toBe(201);
+      // When no defaults are configured, provider/model should be undefined
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        "No Defaults Mission",
+        scopedRootDir,
+        {},
+        undefined,
+        undefined,
+      );
+    });
   });
 
   // ── Regression: Generated ID format acceptance ─────────────────────────

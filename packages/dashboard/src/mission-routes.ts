@@ -14,7 +14,7 @@
 
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { TaskStore } from "@fusion/core";
+import { TaskStore, resolvePlanningSettingsModel } from "@fusion/core";
 import { getOrCreateProjectStore } from "./project-store-resolver.js";
 import type {
   Mission,
@@ -411,13 +411,19 @@ export function createMissionRouter(
 
         const { createMissionInterviewSession } = await import("./mission-interview.js");
 
+        // Resolve effective model: explicit override wins, then fall back to
+        // planning settings chain (planning-specific → project defaults → global defaults).
+        const effectiveModel = resolvePlanningSettingsModel(settings);
+        const resolvedProvider = modelProvider ?? effectiveModel.provider;
+        const resolvedModelId = modelId ?? effectiveModel.modelId;
+
         const sessionId = await createMissionInterviewSession(
           ip,
           missionTitle.trim(),
           rootDir,
           settings.promptOverrides,
-          modelProvider,
-          modelId,
+          resolvedProvider,
+          resolvedModelId,
         );
         res.status(201).json({ sessionId });
       } catch (err: unknown) {
