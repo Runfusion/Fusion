@@ -27,8 +27,37 @@ describe("NativeShellOnboardingModal", () => {
     expect(screen.getByText("Remote Server")).toBeInTheDocument();
   });
 
+  it("applies QR scan results", async () => {
+    const startQrScan = vi.fn(async () => ({ serverUrl: "https://qr.example.com", authToken: "token-1" }));
+    render(
+      <NativeShellOnboardingModal
+        open={true}
+        shellApi={{
+          getState: vi.fn(),
+          listProfiles: vi.fn(),
+          saveProfile: vi.fn(),
+          deleteProfile: vi.fn(),
+          setActiveProfile: vi.fn(),
+          setDesktopMode: vi.fn(),
+          startQrScan,
+          openConnectionManager: vi.fn(),
+          subscribe: vi.fn(() => () => undefined),
+        }}
+        shellState={{ host: "mobile-shell", activeProfileId: null, profiles: [] }}
+        onComplete={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Scan QR"));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("https://qr.example.com")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("token-1")).toBeInTheDocument();
+    });
+  });
+
   it("saves remote profile and redirects to remote dashboard", async () => {
-    const saveProfile = vi.fn(async () => ({ id: "p1", serverUrl: "https://fusion.example.com", authToken: null }));
+    const saveProfile = vi.fn(async () => ({ id: "p1", serverUrl: "https://fusion.example.com", authToken: "abc" }));
     const setActiveProfile = vi.fn(async () => ({ host: "mobile-shell", activeProfileId: "p1", profiles: [] }));
     const onComplete = vi.fn();
     const originalLocation = window.location;
@@ -63,6 +92,7 @@ describe("NativeShellOnboardingModal", () => {
       expect(saveProfile).toHaveBeenCalled();
       expect(setActiveProfile).toHaveBeenCalledWith("p1");
       expect(window.location.href).toContain("https://fusion.example.com");
+      expect(window.location.href).toContain("rt=abc");
     });
 
     Object.defineProperty(window, "location", { configurable: true, value: originalLocation });

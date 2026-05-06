@@ -1,3 +1,5 @@
+import "./BackendConnectionErrorPage.css";
+
 interface BackendConnectionErrorPageProps {
   errorMessage: string;
   isRetrying: boolean;

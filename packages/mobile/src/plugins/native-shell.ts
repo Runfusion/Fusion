@@ -69,7 +69,9 @@ export class MobileNativeShellBridge implements FusionShellApi {
   }
 
   async openConnectionManager(): Promise<void> {
-    // Handled by dashboard shell context state.
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shell:open-connection-manager"));
+    }
   }
 
   subscribe(listener: Listener): () => void {

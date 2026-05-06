@@ -31,6 +31,17 @@ describe("connection-profiles", () => {
     });
   });
 
+  it("rejects invalid server URLs", async () => {
+    const { saveShellProfile } = await import("../plugins/connection-profiles.js");
+
+    await expect(saveShellProfile({ name: "Prod", serverUrl: "not-a-url" })).rejects.toThrow(
+      "Server URL must be a valid absolute URL",
+    );
+    await expect(saveShellProfile({ name: "Prod", serverUrl: "ftp://fusion.example.com" })).rejects.toThrow(
+      "Server URL must use http or https",
+    );
+  });
+
   it("clears active profile when deleted", async () => {
     const { saveShellProfile, setActiveShellProfile, loadShellProfiles, deleteShellProfile } = await import("../plugins/connection-profiles.js");
 

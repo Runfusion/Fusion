@@ -12,6 +12,11 @@ describe("qr-scanner", () => {
     expect(parsed).toEqual({ serverUrl: "https://fusion.example.com", authToken: "abc" });
   });
 
+  it("parses remote-login rt token payload", () => {
+    const parsed = parseQrConnectionPayload("https://fusion.example.com/remote-login?rt=abc");
+    expect(parsed).toEqual({ serverUrl: "https://fusion.example.com", authToken: "abc" });
+  });
+
   it("uses adapter scanning", async () => {
     const scanner = new QrScanner({ scan: vi.fn(async () => "https://fusion.example.com") });
     await expect(scanner.scanConnection()).resolves.toEqual({ serverUrl: "https://fusion.example.com", authToken: null });

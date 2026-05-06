@@ -5,7 +5,7 @@ import "./NativeShellOnboardingModal.css";
 function buildRemoteDashboardUrl(serverUrl: string, authToken?: string | null): string {
   const url = new URL(serverUrl);
   if (authToken) {
-    url.searchParams.set("token", authToken);
+    url.searchParams.set("rt", authToken);
   }
   return url.toString();
 }
@@ -23,6 +23,8 @@ export function NativeShellOnboardingModal({ open, shellApi, shellState, onCompl
   const [serverUrl, setServerUrl] = useState("");
   const [authToken, setAuthToken] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const isDesktop = shellState.host === "desktop-shell";
 
@@ -61,34 +63,39 @@ export function NativeShellOnboardingModal({ open, shellApi, shellState, onCompl
                 className="btn"
                 onClick={async () => {
                   setError(null);
+                  setScanning(true);
                   try {
                     const result = await shellApi.startQrScan();
                     setServerUrl(result.serverUrl);
                     setAuthToken(result.authToken ?? "");
                   } catch (scanError) {
                     setError((scanError as Error).message);
+                  } finally {
+                    setScanning(false);
                   }
                 }}
+                disabled={scanning}
               >
-                Scan QR
+                {scanning ? "Scanning…" : "Scan QR"}
               </button>
               <label className="native-shell-onboarding-label" htmlFor="native-shell-onboarding-profile-name">Profile name</label>
               <input id="native-shell-onboarding-profile-name" className="input" value={name} onChange={(event) => setName(event.target.value)} />
               <label className="native-shell-onboarding-label" htmlFor="native-shell-onboarding-server-url">Server URL</label>
               <input id="native-shell-onboarding-server-url" className="input" value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} placeholder="https://your-fusion-host" />
               <label className="native-shell-onboarding-label" htmlFor="native-shell-onboarding-auth-token">Auth token (optional)</label>
-              <input id="native-shell-onboarding-auth-token" className="input" value={authToken} onChange={(event) => setAuthToken(event.target.value)} />
+              <input id="native-shell-onboarding-auth-token" className="input" type="password" value={authToken} onChange={(event) => setAuthToken(event.target.value)} />
             </>
           )}
-          {error && <p className="form-error">{error}</p>}
+          {error && <p className="form-error" role="alert">{error}</p>}
         </div>
         <div className="modal-actions">
           <button
             type="button"
             className="btn btn-primary"
-            disabled={!canSubmit}
+            disabled={!canSubmit || submitting}
             onClick={async () => {
               setError(null);
+              setSubmitting(true);
               try {
                 if (isDesktop && mode === "local") {
                   await shellApi.setDesktopMode("local");
@@ -115,10 +122,12 @@ export function NativeShellOnboardingModal({ open, shellApi, shellState, onCompl
                 onComplete();
               } catch (submitError) {
                 setError((submitError as Error).message);
+              } finally {
+                setSubmitting(false);
               }
             }}
           >
-            Continue
+            {submitting ? "Saving…" : "Continue"}
           </button>
         </div>
       </div>

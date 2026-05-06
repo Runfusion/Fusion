@@ -1,6 +1,5 @@
 import "./MobileNavBar.css";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
 import {
   Activity,
   Bot,
@@ -86,7 +85,6 @@ export interface MobileNavBarProps {
   };
   onOpenNodes?: () => void;
   pluginDashboardViews?: PluginDashboardViewEntry[];
-  shellConnectionControl?: ReactNode;
 }
 
 function GitHubLogo({ size = 20 }: { size?: number }) {
@@ -138,10 +136,8 @@ export function MobileNavBar({
   experimentalFeatures,
   onOpenNodes,
   pluginDashboardViews = [],
-  shellConnectionControl,
 }: MobileNavBarProps) {
   const mode = useViewportMode();
-  void shellConnectionControl;
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isScriptsSubmenuOpen, setIsScriptsSubmenuOpen] = useState(false);
   const [scripts, setScripts] = useState<Record<string, string>>({});

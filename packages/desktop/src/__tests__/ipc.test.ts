@@ -127,4 +127,16 @@ describe("ipc handlers", () => {
     expect(onDesktopModeChange).toHaveBeenCalledWith("local");
     expect(window.webContents.send).toHaveBeenCalledWith("shell:state", expect.any(Object));
   });
+
+  it("shell:saveProfile rejects invalid URLs", async () => {
+    await registerHandlers();
+    const handler = mocks.ipcHandlers.get("shell:saveProfile");
+
+    await expect(handler?.({}, { name: "Prod", serverUrl: "not-a-url" })).rejects.toThrow(
+      "Server URL must be a valid absolute URL",
+    );
+    await expect(handler?.({}, { name: "Prod", serverUrl: "ftp://fusion.example.com" })).rejects.toThrow(
+      "Server URL must use http or https",
+    );
+  });
 });

@@ -12,6 +12,16 @@ describe("App shell onboarding gating", () => {
     ).toBe(true);
   });
 
+  it("requires onboarding for desktop remote mode without active profile", () => {
+    expect(
+      requiresNativeShellOnboarding(
+        { host: "desktop-shell", desktopMode: "remote", activeProfileId: null },
+        true,
+        false,
+      ),
+    ).toBe(true);
+  });
+
   it("skips onboarding for desktop local mode", () => {
     expect(
       requiresNativeShellOnboarding(

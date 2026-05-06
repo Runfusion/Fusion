@@ -27,7 +27,7 @@ function parsePayload(raw: string): QrScanResult {
 
   try {
     const url = new URL(trimmed);
-    const authToken = url.searchParams.get("authToken");
+    const authToken = url.searchParams.get("authToken") ?? url.searchParams.get("rt");
     return {
       serverUrl: `${url.protocol}//${url.host}`,
       authToken,

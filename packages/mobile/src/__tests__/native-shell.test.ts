@@ -53,6 +53,21 @@ describe("MobileNativeShellBridge", () => {
     unsubscribe();
   });
 
+  it("dispatches shell open manager event", async () => {
+    const { MobileNativeShellBridge } = await import("../plugins/native-shell.js");
+    const bridge = new MobileNativeShellBridge(scanner as never);
+    const listener = vi.fn();
+    const originalWindow = (globalThis as { window?: Window }).window;
+    const mockWindow = new EventTarget() as Window;
+    (globalThis as { window?: Window }).window = mockWindow;
+    mockWindow.addEventListener("shell:open-connection-manager", listener as EventListener);
+
+    await bridge.openConnectionManager();
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    (globalThis as { window?: Window }).window = originalWindow;
+  });
+
   it("rejects desktop mode switch", async () => {
     const { MobileNativeShellBridge } = await import("../plugins/native-shell.js");
     const bridge = new MobileNativeShellBridge(scanner as never);

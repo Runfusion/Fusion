@@ -116,6 +116,14 @@ function prefetchLazyViews() {
 
 const SETUP_WARNING_DISMISSED_KEY = "kb-setup-warning-dismissed";
 
+function buildRemoteDashboardUrl(serverUrl: string, authToken?: string | null): string {
+  const url = new URL(serverUrl);
+  if (authToken) {
+    url.searchParams.set("rt", authToken);
+  }
+  return url.toString();
+}
+
 export function requiresNativeShellOnboarding(
   shellState: { host: "web" | "mobile-shell" | "desktop-shell"; desktopMode?: "local" | "remote"; activeProfileId: string | null },
   shellReady: boolean,
@@ -138,7 +146,7 @@ export function requiresNativeShellOnboarding(
 
 function AppInner() {
   const { toasts, addToast, removeToast } = useToast();
-  const { shellApi, state: shellState, ready: shellReady } = useShellConnection();
+  const { shellApi, state: shellState, ready: shellReady, openConnectionManagerSignal } = useShellConnection();
   const isElectron = typeof window !== "undefined" && Boolean((window as Window & { electronAPI?: unknown }).electronAPI);
 
   // Warm lazy view chunks during browser idle so first navigation is instant.
@@ -795,6 +803,13 @@ function AppInner() {
   const requiresShellOnboarding = requiresNativeShellOnboarding(shellState, shellReady, shellOnboardingComplete);
 
   useEffect(() => {
+    if (!shellApi || openConnectionManagerSignal === 0) {
+      return;
+    }
+    setShellConnectionManagerOpen(true);
+  }, [shellApi, openConnectionManagerSignal]);
+
+  useEffect(() => {
     if (shellState.host !== "desktop-shell") {
       return;
     }
@@ -812,6 +827,22 @@ function AppInner() {
     }
 
     window.location.href = `http://localhost:${shellState.localServer.port}`;
+  }, [shellState]);
+
+  useEffect(() => {
+    if (shellState.host !== "desktop-shell" || shellState.desktopMode !== "remote") {
+      return;
+    }
+
+    const activeProfile = shellState.profiles.find((profile) => profile.id === shellState.activeProfileId);
+    if (!activeProfile || typeof window === "undefined") {
+      return;
+    }
+
+    const nextUrl = buildRemoteDashboardUrl(activeProfile.serverUrl, activeProfile.authToken ?? null);
+    if (window.location.href !== nextUrl) {
+      window.location.href = nextUrl;
+    }
   }, [shellState]);
 
   const showBackendConnectionErrorPage =
@@ -1314,9 +1345,6 @@ function AppInner() {
           nodesView: nodesEnabled,
         }}
         pluginDashboardViews={pluginDashboardViews}
-        shellConnectionControl={shellApi && shellState.host !== "web" ? (
-          <NativeShellConnectionStatus state={shellState} onManage={() => setShellConnectionManagerOpen(true)} />
-        ) : undefined}
       />
       {viewMode === "project" && currentProject && taskView !== "chat" && taskView !== "mailbox" && taskView !== "insights" && taskView !== "devserver" && taskView !== "dev-server" && !isPluginViewId(taskView) && (
         <QuickChatFAB

@@ -26,6 +26,11 @@ export function NativeShellConnectionManager({ open, shellApi, shellState, onClo
   const saveCurrent = async () => {
     setError(null);
     try {
+      // Early validation for user feedback before bridge persistence rejects.
+      const parsed = new URL(workingUrl.trim());
+      if (!/^https?:$/.test(parsed.protocol)) {
+        throw new Error("Server URL must use http or https");
+      }
       const saved = await shellApi.saveProfile({
         id: activeProfile?.id,
         name: workingName || "Remote Server",
@@ -64,9 +69,9 @@ export function NativeShellConnectionManager({ open, shellApi, shellState, onClo
                 <div className="settings-muted">{profile.serverUrl}</div>
               </div>
               <div className="native-shell-connection-manager__profile-actions">
-                <button type="button" className="btn btn-sm" onClick={() => setDraft(profile)}>Edit</button>
-                <button type="button" className="btn btn-sm" onClick={() => void shellApi.setActiveProfile(profile.id)}>Use</button>
-                <button type="button" className="btn btn-sm btn-danger" onClick={() => void shellApi.deleteProfile(profile.id)}>Delete</button>
+                <button type="button" className="btn btn-sm" aria-label={`Edit ${profile.name}`} onClick={() => setDraft(profile)}>Edit</button>
+                <button type="button" className="btn btn-sm" aria-label={`Use ${profile.name}`} onClick={() => void shellApi.setActiveProfile(profile.id)}>Use</button>
+                <button type="button" className="btn btn-sm btn-danger" aria-label={`Delete ${profile.name}`} onClick={() => void shellApi.deleteProfile(profile.id)}>Delete</button>
               </div>
             </div>
           ))}
@@ -78,8 +83,8 @@ export function NativeShellConnectionManager({ open, shellApi, shellState, onClo
           <label htmlFor="native-shell-connection-manager-url">Server URL</label>
           <input id="native-shell-connection-manager-url" className="input" value={workingUrl} onChange={(event) => setDraft((value) => ({ ...value, serverUrl: event.target.value }))} />
           <label htmlFor="native-shell-connection-manager-token">Auth token (optional)</label>
-          <input id="native-shell-connection-manager-token" className="input" value={workingToken ?? ""} onChange={(event) => setDraft((value) => ({ ...value, authToken: event.target.value }))} />
-          {error && <p className="form-error">{error}</p>}
+          <input id="native-shell-connection-manager-token" className="input" type="password" value={workingToken ?? ""} onChange={(event) => setDraft((value) => ({ ...value, authToken: event.target.value }))} />
+          {error && <p className="form-error" role="alert">{error}</p>}
         </div>
 
         <div className="modal-actions">

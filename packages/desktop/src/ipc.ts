@@ -43,6 +43,20 @@ function createProfileId(): string {
   return `profile_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function normalizeServerUrl(serverUrl: string): string {
+  const normalized = serverUrl.trim().replace(/\/$/, "");
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error("Server URL must be a valid absolute URL");
+  }
+  if (!parsed.protocol || !/^https?:$/.test(parsed.protocol)) {
+    throw new Error("Server URL must use http or https");
+  }
+  return normalized;
+}
+
 function toShellState(
   settings: Awaited<ReturnType<typeof readShellSettings>>,
   localServerState?: DesktopLocalServerState,
@@ -113,7 +127,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow, tray: Tray, optio
     const nextProfile: ShellConnectionProfile = {
       id: existing?.id ?? profile.id ?? createProfileId(),
       name: profile.name.trim(),
-      serverUrl: profile.serverUrl.trim().replace(/\/$/, ""),
+      serverUrl: normalizeServerUrl(profile.serverUrl),
       authToken: profile.authToken ?? null,
       createdAt: existing?.createdAt ?? timestamp,
       updatedAt: timestamp,

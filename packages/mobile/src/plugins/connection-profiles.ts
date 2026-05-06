@@ -17,7 +17,17 @@ function createId(): string {
 }
 
 function normalizeUrl(serverUrl: string): string {
-  return serverUrl.trim().replace(/\/$/, "");
+  const normalized = serverUrl.trim().replace(/\/$/, "");
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error("Server URL must be a valid absolute URL");
+  }
+  if (!parsed.protocol || !/^https?:$/.test(parsed.protocol)) {
+    throw new Error("Server URL must use http or https");
+  }
+  return normalized;
 }
 
 function toPersisted(input: unknown): PersistedShellState {

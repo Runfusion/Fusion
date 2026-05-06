@@ -32,6 +32,26 @@ describe("NativeShellConnectionManager", () => {
     await waitFor(() => expect(shellApi.setDesktopMode).toHaveBeenCalledWith("local"));
   });
 
+  it("activates and deletes profiles", async () => {
+    const shellApi = createShellApi();
+    render(
+      <NativeShellConnectionManager
+        open={true}
+        shellApi={shellApi}
+        shellState={{ host: "mobile-shell", activeProfileId: null, profiles: [{ id: "p1", name: "Prod", serverUrl: "https://fusion.example.com", authToken: null, createdAt: "", updatedAt: "" }] }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Use Prod"));
+    fireEvent.click(screen.getByLabelText("Delete Prod"));
+
+    await waitFor(() => {
+      expect(shellApi.setActiveProfile).toHaveBeenCalledWith("p1");
+      expect(shellApi.deleteProfile).toHaveBeenCalledWith("p1");
+    });
+  });
+
   it("edits and saves active profile", async () => {
     const shellApi = createShellApi();
     render(
