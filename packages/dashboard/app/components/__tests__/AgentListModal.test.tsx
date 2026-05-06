@@ -318,7 +318,7 @@ describe("AgentListModal", () => {
       });
     });
 
-    it("renders collapsible error display for error agents in list view", async () => {
+    it("renders compact error indicator and opens modal with actions for error agents", async () => {
       mockFetchAgents.mockResolvedValueOnce([
         {
           ...mockAgents[0],
@@ -338,17 +338,26 @@ describe("AgentListModal", () => {
       );
 
       await waitFor(() => {
-        expect(screen.getAllByText("modal failure").length).toBeGreaterThan(0);
+        expect(screen.getByRole("button", { name: "Open error details" })).toBeTruthy();
       });
 
-      fireEvent.click(screen.getByRole("button", { name: "Expand error" }));
-      expect(screen.getByRole("button", { name: "Collapse error" })).toBeTruthy();
+      expect(screen.queryByText("modal failure")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Open error details" }));
+      expect(screen.getByLabelText("Agent error details")).toBeTruthy();
 
       fireEvent.click(screen.getByRole("button", { name: "Copy error to clipboard" }));
       await waitFor(() => {
         expect(mockClipboardWriteText).toHaveBeenCalledWith("modal failure");
       });
-      expect(screen.getByRole("button", { name: "Copied error to clipboard" })).toBeTruthy();
+
+      const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+      fireEvent.click(screen.getByRole("link", { name: "Report on GitHub" }));
+      expect(openSpy).toHaveBeenCalledWith(
+        expect.stringContaining("https://github.com/Runfusion/Fusion/issues/new?"),
+        "_blank",
+        "noopener,noreferrer",
+      );
+      openSpy.mockRestore();
     });
 
     it("renders health badges via data attributes instead of inline color styles", async () => {

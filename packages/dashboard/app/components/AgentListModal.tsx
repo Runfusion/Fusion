@@ -12,8 +12,8 @@ import { getAgentHealthStatus } from "../utils/agentHealth";
 import { getErrorMessage } from "@fusion/core";
 import type { AgentHealthStatus } from "../utils/agentHealth";
 import { useConfirm } from "../hooks/useConfirm";
-import { CollapsibleErrorDisplay } from "./AgentsView";
 import { AgentAvatar } from "./AgentAvatar";
+import { AgentErrorIndicator } from "./AgentErrorDetailsModal";
 
 interface AgentListModalProps {
   isOpen: boolean;
@@ -223,6 +223,17 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
     return "muted";
   };
 
+  const getHealthSummary = (agent: Agent, health: AgentHealthStatus): { title: string | undefined; label: string | null } => {
+    if (agent.state === "error") {
+      return { title: undefined, label: "Error" };
+    }
+
+    return {
+      title: health.reason ?? health.label,
+      label: health.stateDerived ? null : health.label,
+    };
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -339,6 +350,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
               // Board view: compact grid layout
               displayAgents.map(agent => {
                 const health = getHealthStatus(agent);
+                const healthSummary = getHealthSummary(agent, health);
                 const healthTone = getHealthTone(health);
                 return (
                   <div key={agent.id} className="agent-board-card" data-state={agent.state}>
@@ -350,7 +362,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                       >
                         {agent.state}
                       </span>
-                      <span className="agent-board-health" data-health={healthTone} title={health.reason ?? health.label}>
+                      <span className="agent-board-health" data-health={healthTone} title={healthSummary.title}>
                         {health.icon}
                       </span>
                     </div>
@@ -482,6 +494,7 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
               // List view: detailed card layout
               displayAgents.map(agent => {
                 const health = getHealthStatus(agent);
+                const healthSummary = getHealthSummary(agent, health);
                 const healthTone = getHealthTone(health);
                 return (
                   <div key={agent.id} className="agent-card" data-state={agent.state}>
@@ -531,8 +544,8 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
                         >
                           {agent.state}
                         </span>
-                        <span className="badge agent-list-health-badge" data-health={healthTone} title={health.reason ?? health.label}>
-                          {health.icon}{!health.stateDerived && ` ${health.label}`}
+                        <span className="badge agent-list-health-badge" data-health={healthTone} title={healthSummary.title}>
+                          {health.icon}{healthSummary.label ? ` ${healthSummary.label}` : ""}
                         </span>
                         <span className="badge text-secondary">
                           {getRoleLabel(agent.role)}
@@ -542,7 +555,16 @@ export function AgentListModal({ isOpen, onClose, addToast, projectId }: AgentLi
 
                     <div className="agent-card-body">
                       {agent.state === "error" && agent.lastError ? (
-                        <CollapsibleErrorDisplay errorText={agent.lastError} />
+                        <AgentErrorIndicator
+                          errorText={agent.lastError}
+                          issueContext={{
+                            surface: "AgentListModal list",
+                            agentId: agent.id,
+                            agentName: agent.name,
+                            agentState: agent.state,
+                            taskId: agent.taskId,
+                          }}
+                        />
                       ) : null}
                       {agent.taskId && (
                         <div className="agent-task">

@@ -1297,6 +1297,58 @@ describe("AgentDetailView", () => {
     });
   });
 
+  it("shows run error in modal and launches prefilled GitHub issue", async () => {
+    const runId = "run-error";
+    mockFetchAgentRuns.mockResolvedValueOnce([
+      {
+        id: runId,
+        agentId: "agent-001",
+        startedAt: "2024-01-01T00:00:00.000Z",
+        endedAt: "2024-01-01T00:01:00.000Z",
+        status: "failed",
+      } as AgentHeartbeatRun,
+    ]);
+    mockFetchAgentRunLogs.mockResolvedValueOnce([]);
+    mockFetchAgentRunDetail.mockResolvedValueOnce({
+      id: runId,
+      agentId: "agent-001",
+      startedAt: "2024-01-01T00:00:00.000Z",
+      endedAt: "2024-01-01T00:01:00.000Z",
+      status: "failed",
+      stderrExcerpt: "fatal: exploded",
+    } as AgentHeartbeatRun);
+
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+        initialTab="runs"
+        initialRunId={runId}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Open error details" })).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("fatal: exploded")).toBeNull();
+    expect(screen.queryByLabelText("Agent error details")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open error details" }));
+    expect(screen.getByLabelText("Agent error details")).toBeInTheDocument();
+    expect(screen.getByText("fatal: exploded")).toBeInTheDocument();
+
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    fireEvent.click(screen.getByRole("link", { name: "Report on GitHub" }));
+    expect(openSpy).toHaveBeenCalledWith(
+      expect.stringContaining("https://github.com/Runfusion/Fusion/issues/new?"),
+      "_blank",
+      "noopener,noreferrer",
+    );
+    expect(openSpy.mock.calls[0]?.[0]).toContain("run-error");
+    openSpy.mockRestore();
+  });
+
   it("auto-expands the active run when opened from running control context", async () => {
     const activeRunId = "run-001";
     mockFetchAgentRunLogs.mockResolvedValueOnce([
@@ -1333,8 +1385,9 @@ describe("AgentDetailView", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Active run log line")).toBeInTheDocument();
       expect(screen.getByText("System Prompt")).toBeInTheDocument();
+      const viewer = screen.getByTestId("agent-log-viewer");
+      expect(viewer.textContent).toContain("Active run log line");
     });
   });
 
@@ -1382,8 +1435,9 @@ describe("AgentDetailView", () => {
 
       expect(screen.getByText("Latest run · run-1001")).toBeInTheDocument();
       await waitFor(() => {
-        expect(screen.getByText("First entry")).toBeInTheDocument();
-        expect(screen.getByText("Second entry")).toBeInTheDocument();
+        const viewer = screen.getByTestId("agent-log-viewer");
+        expect(viewer.textContent).toContain("First entry");
+        expect(viewer.textContent).toContain("Second entry");
       });
     });
 

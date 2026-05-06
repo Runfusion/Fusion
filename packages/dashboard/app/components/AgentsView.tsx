@@ -1,6 +1,6 @@
 import "./AgentsView.css";
 import { useState, useEffect, useCallback, useRef, useMemo, useId, lazy, Suspense, type CSSProperties } from "react";
-import { Plus, Play, Pause, Activity, Trash2, RefreshCw, Bot, List, ChevronRight, ChevronDown, ChevronUp, Filter, Upload, Network, SlidersHorizontal, Copy, Check, ZoomIn, ZoomOut, Minimize2 } from "lucide-react";
+import { Plus, Play, Pause, Activity, Trash2, RefreshCw, Bot, List, ChevronRight, Filter, Upload, Network, SlidersHorizontal, ZoomIn, ZoomOut, Minimize2 } from "lucide-react";
 import type { Agent, AgentCapability, AgentOnboardingSummary, AgentState, OrgTreeNode } from "../api";
 import { updateAgent, updateAgentState, deleteAgent, startAgentRun, fetchOrgTree, fetchSettings, updateSettings } from "../api";
 
@@ -28,6 +28,7 @@ import { isEphemeralAgent, getErrorMessage } from "@fusion/core";
 import { formatAgentSkillBadgeLabel } from "../utils/agentSkills";
 import { resolveOrgChartLayoutMode, type OrgChartLayoutMode } from "./agentsOrgChartLayout";
 import { AgentAvatar } from "./AgentAvatar";
+import { AgentErrorIndicator } from "./AgentErrorDetailsModal";
 
 export interface AgentsViewProps {
   addToast: (message: string, type?: "success" | "error") => void;
@@ -89,58 +90,6 @@ function getStateCardClass(
   }
 }
 
-export function CollapsibleErrorDisplay({
-  errorText,
-  className,
-}: {
-  errorText: string;
-  className?: string;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(errorText);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Ignore clipboard errors
-    }
-  }, [errorText]);
-
-  return (
-    <div className={`agent-card-error${className ? ` ${className}` : ""}`}>
-      <div className="agent-card-error-header">
-        <span className="agent-card-error-preview" title={errorText}>
-          {errorText}
-        </span>
-        <div className="agent-card-error-actions">
-          <button
-            type="button"
-            className="btn-icon touch-target agent-card-error-copy-btn"
-            onClick={() => void handleCopy()}
-            title={copied ? "Copied" : "Copy error"}
-            aria-label={copied ? "Copied error to clipboard" : "Copy error to clipboard"}
-          >
-            {copied ? <Check size={14} /> : <Copy size={14} />}
-          </button>
-          <button
-            type="button"
-            className="btn-icon touch-target agent-card-error-toggle"
-            onClick={() => setExpanded((value) => !value)}
-            title={expanded ? "Collapse error" : "Expand error"}
-            aria-label={expanded ? "Collapse error" : "Expand error"}
-            aria-expanded={expanded}
-          >
-            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          </button>
-        </div>
-      </div>
-      {expanded ? <pre className="agent-card-error-full">{errorText}</pre> : null}
-    </div>
-  );
-}
 
 function getOrgChartLeafCount(node: OrgTreeNode): number {
   if (node.children.length === 0) {
@@ -148,6 +97,17 @@ function getOrgChartLeafCount(node: OrgTreeNode): number {
   }
 
   return node.children.reduce((sum, child) => sum + getOrgChartLeafCount(child), 0);
+}
+
+function getHealthSummary(agent: Agent, health: AgentHealthStatus): { title: string | undefined; label: string | null } {
+  if (agent.state === "error") {
+    return { title: undefined, label: "Error" };
+  }
+
+  return {
+    title: health.reason ?? health.label,
+    label: health.stateDerived ? null : health.label,
+  };
 }
 
 function OrgChartNode({
@@ -165,6 +125,7 @@ function OrgChartNode({
 }) {
   const { agent, children } = node;
   const health = getHealthStatus(agent);
+  const healthSummary = getHealthSummary(agent, health);
   const stateBadgeClass = getStateBadgeClass(agent.state);
   const stateNodeClass = getStateCardClass("org-chart-node-card", agent.state);
   const subtreeLeafCount = getOrgChartLeafCount(node);
@@ -199,9 +160,9 @@ function OrgChartNode({
           >
             {agent.state}
           </span>
-          <span className="org-chart-node__health" style={{ color: health.color }} title={health.reason ?? health.label}>
+          <span className="org-chart-node__health" style={{ color: health.color }} title={healthSummary.title}>
             {health.icon}
-            {!health.stateDerived && <span className="text-secondary">{health.label}</span>}
+            {healthSummary.label && <span className="text-secondary">{healthSummary.label}</span>}
           </span>
         </div>
       </div>
@@ -1109,6 +1070,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
             ) : (
               displayAgents.map((agent) => {
                 const health = getHealthStatus(agent);
+                const healthSummary = getHealthSummary(agent, health);
                 const stateBadgeClass = getStateBadgeClass(agent.state);
                 const stateCardClass = getStateCardClass("agent-board-card", agent.state);
                 return (
@@ -1134,8 +1096,8 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                       </div>
                       <div className="agent-board-name">{agent.name}</div>
                       <div className="agent-board-id">{agent.id}</div>
-                      <div className="agent-board-health" style={{ color: health.color }} title={health.reason ?? health.label}>
-                        {health.icon}{!health.stateDerived && ` ${health.label}`}
+                      <div className="agent-board-health" style={{ color: health.color }} title={healthSummary.title}>
+                        {health.icon}{healthSummary.label ? ` ${healthSummary.label}` : ""}
                       </div>
                     </div>
                   </div>
@@ -1151,6 +1113,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
             // List view: detailed card layout
             displayAgents.map(agent => {
               const health = getHealthStatus(agent);
+              const healthSummary = getHealthSummary(agent, health);
               const stateBadgeClass = getStateBadgeClass(agent.state);
               const stateCardClass = getStateCardClass("agent-card", agent.state);
               const configuredIntervalMs = resolveHeartbeatIntervalMs(agent.runtimeConfig?.heartbeatIntervalMs);
@@ -1221,8 +1184,8 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                       >
                         {agent.state}
                       </span>
-                      <span className="badge" style={{ color: health.color }} title={health.reason ?? health.label}>
-                        {health.icon}{!health.stateDerived && ` ${health.label}`}
+                      <span className="badge" style={{ color: health.color }} title={healthSummary.title}>
+                        {health.icon}{healthSummary.label ? ` ${healthSummary.label}` : ""}
                       </span>
                       <span className="badge text-secondary">
                         {getRoleLabel(agent.role)}
@@ -1247,7 +1210,16 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
 
                   <div className="agent-card-body">
                     {agent.state === "error" && agent.lastError ? (
-                      <CollapsibleErrorDisplay errorText={agent.lastError} />
+                      <AgentErrorIndicator
+                        errorText={agent.lastError}
+                        issueContext={{
+                          surface: "AgentsView list",
+                          agentId: agent.id,
+                          agentName: agent.name,
+                          agentState: agent.state,
+                          taskId: agent.taskId,
+                        }}
+                      />
                     ) : null}
                     {agent.taskId && (
                       <div className="agent-task">

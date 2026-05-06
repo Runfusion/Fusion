@@ -27,6 +27,7 @@ import { useConfirm } from "../hooks/useConfirm";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { AgentImportModal } from "./AgentImportModal";
 import { AgentAvatar } from "./AgentAvatar";
+import { AgentErrorIndicator } from "./AgentErrorDetailsModal";
 
 /**
  * Simple className utility - joins class names conditionally
@@ -1511,7 +1512,19 @@ function RunsTab({
                 {detailRun.stderrExcerpt && (
                   <div className="run-output-section">
                     <div className="run-output-label run-output-label--error">Errors</div>
-                    <pre className="run-output-panel run-output-panel--error">{detailRun.stderrExcerpt}</pre>
+                    <AgentErrorIndicator
+                      errorText={detailRun.stderrExcerpt}
+                      summaryPrefix="Run error"
+                      issueContext={{
+                        surface: "AgentDetailView runs",
+                        agentId,
+                        agentName,
+                        agentState,
+                        runId: detailRun.id,
+                        taskId: undefined,
+                        timestamp: detailRun.startedAt,
+                      }}
+                    />
                   </div>
                 )}
 

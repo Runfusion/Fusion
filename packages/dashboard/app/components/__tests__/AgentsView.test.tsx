@@ -1010,7 +1010,7 @@ describe("AgentsView", () => {
       );
     });
 
-    it("renders collapsible error display and supports expand/copy", async () => {
+    it("renders compact error indicator and opens modal with copy/github actions", async () => {
       const errorAgent: Agent = {
         ...mockAgents[0],
         id: "agent-error",
@@ -1024,20 +1024,30 @@ describe("AgentsView", () => {
       render(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
-        expect(screen.getAllByText("something broke").length).toBeGreaterThan(0);
+        expect(screen.getByRole("button", { name: "Open error details" })).toBeTruthy();
       });
 
-      const expandButton = screen.getByRole("button", { name: "Expand error" });
-      fireEvent.click(expandButton);
-      expect(screen.getByRole("button", { name: "Collapse error" })).toBeTruthy();
-      fireEvent.click(screen.getByRole("button", { name: "Collapse error" }));
-      expect(screen.getByRole("button", { name: "Expand error" })).toBeTruthy();
+      expect(screen.queryByText("something broke")).toBeNull();
+      expect(screen.queryByLabelText("Agent error details")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Open error details" }));
+
+      expect(screen.getByLabelText("Agent error details")).toBeTruthy();
+      expect(screen.getAllByText("something broke").length).toBeGreaterThan(0);
 
       fireEvent.click(screen.getByRole("button", { name: "Copy error to clipboard" }));
       await waitFor(() => {
         expect(mockClipboardWriteText).toHaveBeenCalledWith("something broke");
       });
-      expect(screen.getByRole("button", { name: "Copied error to clipboard" })).toBeTruthy();
+
+      const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+      fireEvent.click(screen.getByRole("link", { name: "Report on GitHub" }));
+      expect(openSpy).toHaveBeenCalledWith(
+        expect.stringContaining("https://github.com/Runfusion/Fusion/issues/new?"),
+        "_blank",
+        "noopener,noreferrer",
+      );
+      expect(openSpy.mock.calls[0]?.[0]).toContain("Surface%3A+AgentsView+list");
+      openSpy.mockRestore();
     });
 
     it("does not render error display without error state and lastError", async () => {
@@ -1055,7 +1065,7 @@ describe("AgentsView", () => {
       });
 
       expect(screen.queryByText("should not show")).toBeNull();
-      expect(screen.queryByRole("button", { name: "Copy error to clipboard" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Open error details" })).toBeNull();
     });
 
     it("shows refresh button", async () => {
