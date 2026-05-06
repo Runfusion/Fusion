@@ -164,13 +164,44 @@
 }
 
 .mission-manager__sidebar {
-  width: calc((var(--space-xl) * 11) + var(--space-md) + var(--space-xs));
+  width: 300px;
+  min-width: 0;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   border-right: var(--btn-border-width) solid var(--border);
   background: var(--surface);
   overflow: hidden;
+}
+
+.mission-manager__sidebar-resize-handle {
+  position: relative;
+  width: var(--space-sm);
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+  transition: background var(--transition-fast);
+}
+
+.mission-manager__sidebar-resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: var(--space-xs);
+  transform: translateX(-50%);
+}
+
+.mission-manager__sidebar-resize-handle:hover::before,
+.mission-manager__sidebar-resize-handle:active::before {
+  background: color-mix(in srgb, var(--todo) 30%, transparent);
+}
+
+.mission-manager__sidebar-resize-handle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
 }
 
 /* Desktop split-only sidebar header layout for mission quick actions. */
@@ -662,6 +693,15 @@
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  min-width: 0;
+}
+
+.mission-list__item-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
 }
 
 .mission-list__item-icon {
@@ -670,6 +710,8 @@
 }
 
 .mission-list__item-title {
+  flex: 1;
+  min-width: 0;
   font-size: 14px;
   font-weight: 500;
   color: var(--text);
@@ -780,12 +822,6 @@
 .mission-relative-time {
   font-size: 11px;
   color: var(--text-dim);
-}
-
-.mission-list__item-active-slice {
-  margin: var(--space-xs) 0 0;
-  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
-  color: var(--text-muted);
 }
 
 /* ================================================================

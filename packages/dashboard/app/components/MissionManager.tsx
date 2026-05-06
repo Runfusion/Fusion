@@ -97,6 +97,11 @@ import {
 } from "../api";
 import type { AutopilotState } from "./mission-types";
 
+const MISSION_SIDEBAR_DEFAULT_WIDTH = 300;
+const MISSION_SIDEBAR_MIN_WIDTH = 220;
+const MISSION_SIDEBAR_MAX_WIDTH = 560;
+const MISSION_SIDEBAR_STORAGE_KEY = "fusion:mission-sidebar-width";
+
 interface MissionManagerProps {
   isOpen: boolean;
   isInline?: boolean;
@@ -439,6 +444,72 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const isMobile = useViewportMode() === "mobile";
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return MISSION_SIDEBAR_DEFAULT_WIDTH;
+    const stored = window.localStorage.getItem(MISSION_SIDEBAR_STORAGE_KEY);
+    const parsed = stored ? Number(stored) : NaN;
+    if (!Number.isFinite(parsed)) return MISSION_SIDEBAR_DEFAULT_WIDTH;
+    return Math.max(MISSION_SIDEBAR_MIN_WIDTH, Math.min(MISSION_SIDEBAR_MAX_WIDTH, parsed));
+  });
+
+  const persistSidebarWidth = useCallback((width: number) => {
+    try {
+      window.localStorage.setItem(MISSION_SIDEBAR_STORAGE_KEY, String(width));
+    } catch {
+      // Ignore storage errors.
+    }
+  }, []);
+
+  const handleSidebarResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (isMobile) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    if (typeof handle.setPointerCapture === "function") {
+      handle.setPointerCapture(event.pointerId);
+    }
+    const startX = event.clientX;
+    const startWidth = sidebarWidth;
+    let latestWidth = startWidth;
+    document.body.style.userSelect = "none";
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      const nextWidth = Math.max(
+        MISSION_SIDEBAR_MIN_WIDTH,
+        Math.min(MISSION_SIDEBAR_MAX_WIDTH, startWidth + deltaX),
+      );
+      latestWidth = nextWidth;
+      setSidebarWidth(nextWidth);
+    };
+
+    const onPointerUp = (upEvent: PointerEvent) => {
+      if (typeof handle.releasePointerCapture === "function") {
+        handle.releasePointerCapture(upEvent.pointerId);
+      }
+      document.body.style.userSelect = "";
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", onPointerUp);
+      persistSidebarWidth(latestWidth);
+    };
+
+    document.addEventListener("pointermove", onPointerMove);
+    document.addEventListener("pointerup", onPointerUp);
+  }, [isMobile, persistSidebarWidth, sidebarWidth]);
+
+  const handleSidebarResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (isMobile) return;
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const step = event.shiftKey ? 50 : 10;
+    const delta = event.key === "ArrowLeft" ? -step : step;
+    const nextWidth = Math.max(
+      MISSION_SIDEBAR_MIN_WIDTH,
+      Math.min(MISSION_SIDEBAR_MAX_WIDTH, sidebarWidth + delta),
+    );
+    setSidebarWidth(nextWidth);
+    persistSidebarWidth(nextWidth);
+  }, [isMobile, persistSidebarWidth, sidebarWidth]);
 
   // Form states
   const [isCreatingMission, setIsCreatingMission] = useState(false);
@@ -1116,12 +1187,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   ]);
 
   // Mission handlers
-  const handleCreateMission = useCallback(() => {
-    setIsCreatingMission(true);
-    setEditingMissionId(null);
-    setMissionForm(EMPTY_MISSION_FORM);
-  }, []);
-
   const handleEditMission = useCallback((mission: Mission) => {
     setEditingMissionId(mission.id);
     setIsCreatingMission(false);
@@ -3394,10 +3459,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
     const progressPercent = health?.estimatedCompletionPercent ?? summary?.progressPercent ?? 0;
     const showSummaryBlock = hasContent || totalTasks > 0 || tasksFailed > 0 || Boolean(health?.lastActivityAt);
 
-    const activeSliceLabel = m.status === "active" && (health?.currentMilestoneId || health?.currentSliceId)
-      ? "Current milestone/slice in progress"
-      : null;
-
     return (
       <div
         key={m.id}
@@ -3408,6 +3469,8 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
           <div className="mission-list__item-header">
             <Target size={16} className="mission-list__item-icon" />
             <span className="mission-list__item-title">{m.title}</span>
+          </div>
+          <div className="mission-list__item-tags">
             {mission.autopilotEnabled && (
               <span title="Autopilot enabled"><Zap size={12} className="mission-list__item-autopilot-icon" /></span>
             )}
@@ -3428,9 +3491,6 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
           </div>
           {m.description && (
             <p className="mission-list__item-description">{m.description}</p>
-          )}
-          {activeSliceLabel && (
-            <p className="mission-list__item-active-slice">Active: {activeSliceLabel}</p>
           )}
           {showSummaryBlock && (
             <div className="mission-list__item-summary">
@@ -3641,11 +3701,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                     <div className="mission-list__footer-actions">
                       <button className="mission-add-btn" onClick={() => setShowInterviewModal(true)}>
                         <Sparkles size={16} />
-                        Plan with AI
-                      </button>
-                      <button className="mission-add-btn" onClick={handleCreateMission}>
-                        <Plus size={16} />
-                        New Mission
+                        Create New Mission
                       </button>
                     </div>
                   )}
@@ -3790,25 +3846,22 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         </div>
       ) : (
         <div className="mission-manager__split">
-          <aside className="mission-manager__sidebar" data-testid="mission-sidebar" aria-label="Mission list">
+          <aside
+            className="mission-manager__sidebar"
+            data-testid="mission-sidebar"
+            aria-label="Mission list"
+            style={isMobile ? undefined : { width: `${sidebarWidth}px` }}
+          >
             <div className="mission-manager__sidebar-header">
               <span className="mission-manager__sidebar-title">Missions</span>
               <div className="mission-manager__sidebar-actions">
                 <button
                   className="mission-add-btn mission-add-btn--sm"
                   onClick={() => setShowInterviewModal(true)}
-                  title="Plan with AI"
-                  aria-label="Plan with AI"
+                  title="Create New Mission"
+                  aria-label="Create New Mission"
                 >
                   <Sparkles size={14} />
-                </button>
-                <button
-                  className="mission-add-btn mission-add-btn--sm"
-                  onClick={handleCreateMission}
-                  title="New Mission"
-                  aria-label="New Mission"
-                >
-                  <Plus size={14} />
                 </button>
               </div>
             </div>
@@ -3823,6 +3876,21 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
               )}
             </div>
           </aside>
+
+          {!isMobile && (
+            <div
+              className="mission-manager__sidebar-resize-handle"
+              role="separator"
+              aria-orientation="vertical"
+              aria-valuemin={MISSION_SIDEBAR_MIN_WIDTH}
+              aria-valuemax={MISSION_SIDEBAR_MAX_WIDTH}
+              aria-valuenow={sidebarWidth}
+              aria-label="Resize mission sidebar"
+              tabIndex={0}
+              onPointerDown={handleSidebarResizeStart}
+              onKeyDown={handleSidebarResizeKeyDown}
+            />
+          )}
 
           <div className="mission-manager__detail-pane">
             {detailLoading ? (
