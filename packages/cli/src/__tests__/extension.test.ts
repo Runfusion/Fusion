@@ -562,6 +562,30 @@ describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("fn pi extension", () => {
       expect(result.details.count).toBe(2);
     });
 
+    it("includes concise provenance in list rows", async () => {
+      const store = new TaskStore(tmpDir);
+      await store.init();
+
+      await store.createTask({
+        description: "Created by dashboard",
+        source: { sourceType: "dashboard_ui" },
+      });
+      await store.createTask({
+        description: "Created by agent",
+        source: {
+          sourceType: "agent_heartbeat",
+          sourceAgentId: "agent-123",
+          sourceMetadata: { agentName: "Reviewer Bot" },
+        },
+      });
+
+      const listTool = api.tools.get("fn_task_list")!;
+      const result = await listTool.execute("call-2", {}, undefined, undefined, makeCtx(tmpDir));
+
+      expect(result.content[0].text).toContain("FN-001  Created by dashboard [via: Dashboard]");
+      expect(result.content[0].text).toContain("FN-002  Created by agent [via: Agent (Reviewer Bot)]");
+    });
+
     it("filters by column", async () => {
       const createTool = api.tools.get("fn_task_create")!;
       await createTool.execute(
@@ -645,8 +669,36 @@ describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("fn pi extension", () => {
       expect(result.content[0].text).toContain("FN-001");
       expect(result.content[0].text).toContain("Implement caching layer");
       expect(result.content[0].text).toContain("Planning");
+      expect(result.content[0].text).toContain("Created via: API");
       expect(result.details.task).toBeDefined();
       expect(result.details.task.id).toBe("FN-001");
+    });
+
+    it("shows agent and dashboard provenance", async () => {
+      const store = new TaskStore(tmpDir);
+      await store.init();
+
+      await store.createTask({
+        description: "Agent created",
+        source: {
+          sourceType: "agent_heartbeat",
+          sourceAgentId: "agent-999",
+          sourceMetadata: { agentName: "Scout" },
+        },
+      });
+      await store.createTask({
+        description: "UI created",
+        source: { sourceType: "dashboard_ui" },
+      });
+
+      const showTool = api.tools.get("fn_task_show")!;
+      const agentResult = await showTool.execute("call-2", { id: "FN-001" }, undefined, undefined, makeCtx(tmpDir));
+      const dashboardResult = await showTool.execute("call-3", { id: "FN-002" }, undefined, undefined, makeCtx(tmpDir));
+
+      expect(agentResult.content[0].text).toContain("Created via: Agent (Scout)");
+      expect(dashboardResult.content[0].text).toContain("Created via: Dashboard");
+      expect(agentResult.details.task.sourceMetadata?.agentName).toBe("Scout");
+      expect(agentResult.details.task.sourceAgentId).toBe("agent-999");
     });
   });
 

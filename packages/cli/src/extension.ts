@@ -124,12 +124,78 @@ const INSIGHT_STATUSES: InsightStatus[] = ["generated", "confirmed", "stale", "d
 const INSIGHT_RUN_STATUSES: InsightRunStatus[] = ["pending", "running", "completed", "failed", "cancelled"];
 const INSIGHT_RUN_TRIGGERS: InsightRunTrigger[] = ["schedule", "manual", "task_completion", "merge_event", "api"];
 
+function getTaskSourceAgentLabel(task: Pick<Task, "sourceMetadata" | "sourceAgentId">): string | undefined {
+  const metadataAgentName = task.sourceMetadata?.agentName;
+  if (typeof metadataAgentName === "string" && metadataAgentName.trim().length > 0) {
+    return metadataAgentName.trim();
+  }
+
+  if (typeof task.sourceAgentId === "string" && task.sourceAgentId.trim().length > 0) {
+    return task.sourceAgentId.trim();
+  }
+
+  return undefined;
+}
+
+function getTaskSourceLabel(task: Pick<Task, "sourceType" | "sourceMetadata" | "sourceAgentId" | "sourceParentTaskId">): string | undefined {
+  switch (task.sourceType) {
+    case "dashboard_ui":
+      return "Dashboard";
+    case "quick_chat":
+      return "Quick Chat";
+    case "chat_session":
+      return "Chat Session";
+    case "agent_heartbeat": {
+      const sourceAgent = getTaskSourceAgentLabel(task);
+      return sourceAgent ? `Agent (${sourceAgent})` : "Agent";
+    }
+    case "automation": {
+      const sourceAgent = getTaskSourceAgentLabel(task);
+      return sourceAgent ? `Automation (${sourceAgent})` : "Automation";
+    }
+    case "cron":
+      return "Scheduled Task";
+    case "workflow_step":
+      return "Workflow Step";
+    case "github_import": {
+      const issueUrl = task.sourceMetadata?.issueUrl;
+      return typeof issueUrl === "string" && issueUrl.length > 0
+        ? `GitHub Import (${issueUrl})`
+        : "GitHub Import";
+    }
+    case "research": {
+      const findingLabel = task.sourceMetadata?.findingLabel;
+      if (typeof findingLabel === "string" && findingLabel.length > 0) {
+        return `Research (${findingLabel})`;
+      }
+      const runId = task.sourceMetadata?.runId;
+      return typeof runId === "string" && runId.length > 0
+        ? `Research (${runId})`
+        : "Research";
+    }
+    case "task" + "_refine":
+      return task.sourceParentTaskId ? `Refinement of ${task.sourceParentTaskId}` : "Refinement";
+    case "task" + "_duplicate":
+      return task.sourceParentTaskId ? `Duplicate of ${task.sourceParentTaskId}` : "Duplicate";
+    case "cli":
+      return "CLI";
+    case "api":
+      return "API";
+    case "recovery":
+      return "Recovery";
+    default:
+      return undefined;
+  }
+}
+
 function formatTaskLine(t: Task): string {
   const label =
     t.title || t.description.slice(0, 60) + (t.description.length > 60 ? "…" : "");
+  const source = getTaskSourceLabel(t);
+  const sourceSuffix = source ? ` [via: ${source}]` : "";
   const deps = t.dependencies.length ? ` [deps: ${t.dependencies.join(", ")}]` : "";
   const paused = t.paused ? " (paused)" : "";
-  return `${t.id}  ${label}${deps}${paused}`;
+  return `${t.id}  ${label}${sourceSuffix}${deps}${paused}`;
 }
 
 async function getResearchAvailability(store: TaskStore): Promise<{ ok: boolean; code?: string; message?: string }> {
@@ -563,6 +629,10 @@ export default function kbExtension(pi: ExtensionAPI) {
       );
       if (task.dependencies.length) {
         lines.push(`Dependencies: ${task.dependencies.join(", ")}`);
+      }
+      const sourceLabel = getTaskSourceLabel(task);
+      if (sourceLabel) {
+        lines.push(`Created via: ${sourceLabel}`);
       }
       if (task.paused) lines.push("Status: PAUSED");
       lines.push("");
