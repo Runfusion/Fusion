@@ -44,7 +44,16 @@ function run(command, commandArgs, options = {}) {
 function runIsolationCheck(before = false, env = process.env) {
   const args = [checkIsolationScript];
   if (before) args.push("--before");
-  run(process.execPath, args, { env });
+  // Inject the names of every isolated HOME this script created so the check
+  // never reports them as a leak even if the rm-rf in cleanup silently failed
+  // or the baseline file got rotated mid-run. Without this, a transient EBUSY
+  // on /var/folders (SQLite WAL still mmap'd, orphan child holding an fd)
+  // leaks a `fusion-test-home-root-*` dir and trips the guard.
+  const ignoreNames = [...knownIsolatedHomeBasenames].join(",");
+  const checkEnv = ignoreNames
+    ? { ...env, FUSION_TEST_ISOLATION_IGNORE_NAMES: ignoreNames }
+    : env;
+  run(process.execPath, args, { env: checkEnv });
 }
 
 export function shouldRunIsolationGuard(env = process.env) {
@@ -70,8 +79,9 @@ function pruneFusionTestHomes() {
     }
     try {
       rmSync(rawPath, { recursive: true, force: true });
-    } catch {
-      // Best-effort pruning only.
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[test-changed] failed to prune leftover ${rawPath}: ${message}`);
     }
   }
 }
@@ -620,12 +630,17 @@ export function defaultTestWorkerBudget(env = process.env) {
 const { totalWorkers, concurrency } = defaultTestWorkerBudget(process.env);
 
 const isolatedHomesToCleanup = new Set();
+// Basenames of every fusion-test-home-root-* dir this process has minted.
+// Passed to check-test-isolation.mjs via env so it allow-lists them
+// unconditionally, even if cleanup's rm silently failed.
+const knownIsolatedHomeBasenames = new Set();
 
 function cleanupIsolatedHomePath(homePath) {
   try {
     rmSync(homePath, { recursive: true, force: true });
-  } catch {
-    // Best-effort cleanup only.
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[test-changed] failed to remove isolated HOME ${homePath}: ${message}`);
   }
   isolatedHomesToCleanup.delete(homePath);
 }
@@ -651,6 +666,8 @@ export function createIsolatedHomeEnv(env = process.env) {
   const isolatedHome = realpathSync(rawIsolatedHome);
   isolatedHomesToCleanup.add(rawIsolatedHome);
   isolatedHomesToCleanup.add(isolatedHome);
+  knownIsolatedHomeBasenames.add(path.basename(rawIsolatedHome));
+  knownIsolatedHomeBasenames.add(path.basename(isolatedHome));
 
   const nextEnv = {
     ...env,

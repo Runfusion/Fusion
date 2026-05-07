@@ -49,6 +49,34 @@ test("fails when a tracked temp leak appears after baseline", () => {
   });
 });
 
+test("ignores leaked temp dirs whose basenames appear in FUSION_TEST_ISOLATION_IGNORE_NAMES", () => {
+  withFixture(({ cwd, home }) => {
+    const before = runScript(["--before"], { cwd, home });
+    assert.equal(before.status, 0);
+
+    // Simulate a fusion-test-home-root-* dir that survived cleanup. Without the
+    // env allow-list this would trip the leak guard; with it, the check passes.
+    const leakedName = `fusion-test-home-root-flake-${process.pid}`;
+    const leakedPath = path.join(tmpdir(), leakedName);
+    mkdirSync(leakedPath, { recursive: true });
+    try {
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd,
+        env: {
+          ...process.env,
+          HOME: home,
+          USERPROFILE: home,
+          FUSION_TEST_ISOLATION_IGNORE_NAMES: leakedName,
+        },
+        encoding: "utf8",
+      });
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+    } finally {
+      rmSync(leakedPath, { recursive: true, force: true });
+    }
+  });
+});
+
 test("fails when protected repo .fusion data changes after baseline", () => {
   withFixture(({ cwd, home }) => {
     const before = runScript(["--before"], { cwd, home });
