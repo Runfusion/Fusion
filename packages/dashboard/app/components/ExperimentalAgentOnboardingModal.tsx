@@ -111,6 +111,27 @@ export function ExperimentalAgentOnboardingModal({
 
   if (!isOpen) return null;
 
+  const instructionsExcerpt = summary?.instructionsText
+    ? summary.instructionsText.length > 220
+      ? `${summary.instructionsText.slice(0, 220)}…`
+      : summary.instructionsText
+    : "";
+
+  const heartbeatSummary = summary
+    ? [
+      summary.heartbeatProcedurePath ? `Procedure: ${summary.heartbeatProcedurePath}` : null,
+      summary.heartbeatIntervalMs ? `Interval: ${summary.heartbeatIntervalMs}ms` : null,
+      summary.heartbeatEnabled !== undefined ? `Enabled: ${summary.heartbeatEnabled ? "yes" : "no"}` : null,
+    ].filter((value): value is string => Boolean(value)).join(" • ")
+    : "";
+
+  const runtimeSummary = summary
+    ? [
+      summary.modelHint ? `Model hint: ${summary.modelHint}` : null,
+      summary.runtimeHint ? `Runtime hint: ${summary.runtimeHint}` : null,
+    ].filter((value): value is string => Boolean(value)).join(" • ")
+    : "";
+
   const start = async () => {
     setViewState("loading");
     setError(null);
@@ -210,14 +231,22 @@ export function ExperimentalAgentOnboardingModal({
 
               <div className="experimental-agent-onboarding-modal__summary-section">
                 <h4>Core instructions</h4>
-                <p className="experimental-agent-onboarding-modal__summary-block">{summary.instructionsText}</p>
+                <p className="experimental-agent-onboarding-modal__summary-block">{instructionsExcerpt}</p>
               </div>
 
-              <div className="experimental-agent-onboarding-modal__summary-section">
-                <h4>Runtime hints</h4>
-                <p><strong>Thinking level:</strong> {summary.thinkingLevel}</p>
-                <p><strong>Max turns:</strong> {summary.maxTurns}</p>
-              </div>
+              {heartbeatSummary && (
+                <div className="experimental-agent-onboarding-modal__summary-section">
+                  <h4>Heartbeat summary</h4>
+                  <p>{heartbeatSummary}</p>
+                </div>
+              )}
+
+              {runtimeSummary && (
+                <div className="experimental-agent-onboarding-modal__summary-section">
+                  <h4>Runtime summary</h4>
+                  <p>{runtimeSummary}</p>
+                </div>
+              )}
 
               {summary.memory && (
                 <div className="experimental-agent-onboarding-modal__summary-section">

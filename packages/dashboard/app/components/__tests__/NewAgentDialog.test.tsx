@@ -1853,7 +1853,7 @@ describe("NewAgentDialog", () => {
       expect(createCall.metadata).toBeUndefined();
     });
 
-    it("prefills fields from onboarding draft", async () => {
+    it("prefills rich onboarding draft fields", async () => {
       render(
         <NewAgentDialog
           isOpen={true}
@@ -1867,7 +1867,15 @@ describe("NewAgentDialog", () => {
             maxTurns: 25,
             title: "Draft title",
             icon: "🧪",
+            reportsTo: "agent-manager-1",
             soul: "Patient",
+            memory: "Remember docs style",
+            skills: ["docs", "review"],
+            heartbeatProcedurePath: ".fusion/agents/draft-agent/HEARTBEAT.md",
+            modelHint: "anthropic/claude-sonnet-4-5",
+            runtimeHint: "openclaw",
+            heartbeatIntervalMs: 60000,
+            heartbeatEnabled: true,
           }}
         />,
       );
@@ -1879,7 +1887,14 @@ describe("NewAgentDialog", () => {
       expect((getStepZeroField(/Name/) as HTMLInputElement).value).toBe("Draft Agent");
       expect((getStepZeroField(/Title/) as HTMLInputElement).value).toBe("Draft title");
       expect((getStepZeroField(/Icon/) as HTMLInputElement).value).toBe("🧪");
+      expect((getStepZeroField(/Reports To/) as HTMLSelectElement).value).toBe("agent-manager-1");
+      expect((getStepZeroField(/Soul/) as HTMLTextAreaElement).value).toBe("Patient");
+      expect((getStepZeroField(/Agent Memory/) as HTMLTextAreaElement).value).toBe("Remember docs style");
+      expect((getStepZeroField(/Heartbeat Procedure Path/) as HTMLInputElement).value).toBe(".fusion/agents/draft-agent/HEARTBEAT.md");
       expect((getStepZeroField(/^Inline Instructions/) as HTMLTextAreaElement).value).toContain("Review with care");
+
+      fireEvent.click(screen.getByText("Next"));
+      expect(screen.getByTestId("skill-multiselect-value")).toHaveTextContent('["docs","review"]');
     });
   });
 });

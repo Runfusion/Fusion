@@ -21,7 +21,13 @@ export interface AgentOnboardingSummary {
   patternAgentId?: string;
   rationale?: string;
   model?: string;
+  /** Draft-only AI suggestion for eventual runtimeConfig.model selection. */
+  modelHint?: string;
+  /** Draft-only AI suggestion for eventual runtimeConfig.runtimeHint plugin runtime selection. */
   runtimeHint?: string;
+  heartbeatProcedurePath?: string;
+  heartbeatIntervalMs?: number;
+  heartbeatEnabled?: boolean;
 }
 
 export type OnboardingMode = "create" | "edit";
@@ -68,13 +74,15 @@ Ask targeted questions using this JSON format:
 {"type":"question","data":{"id":"q1","type":"text|single_select|multi_select|confirm","question":"...","description":"...","options":[{"id":"x","label":"X","description":"..."}]}}
 
 When ready, return a final summary JSON in this exact format:
-{"type":"complete","data":{"name":"...","role":"executor","instructionsText":"...","thinkingLevel":"medium","maxTurns":25,"title":"...","icon":"🤖","reportsTo":"...","soul":"...","memory":"...","skills":["..."],"templateId":"...","patternAgentId":"...","rationale":"..."}}
+{"type":"complete","data":{"name":"...","role":"executor","instructionsText":"...","thinkingLevel":"medium","maxTurns":25,"title":"...","icon":"🤖","reportsTo":"...","soul":"...","memory":"...","skills":["..."],"templateId":"...","patternAgentId":"...","rationale":"...","heartbeatProcedurePath":"...","heartbeatIntervalMs":30000,"heartbeatEnabled":true,"modelHint":"...","runtimeHint":"..."}}
 
 Rules:
 - role must be one of triage|executor|reviewer|merger|scheduler|engineer|custom
 - thinkingLevel must be off|minimal|low|medium|high
 - maxTurns must be a positive integer
-- Do not include runtimeMode/model/runtimeHint; those are user review-time choices.`;
+- Use instructionsText for starter operating guidance/playbook content; do not create a separate playbook field
+- modelHint and runtimeHint are optional draft suggestions only (not final runtime selection)
+- heartbeatProcedurePath, heartbeatIntervalMs, and heartbeatEnabled are optional draft hints only.`;
 
 type OnboardingAgent = Awaited<ReturnType<typeof engineCreateFnAgent>>;
 
@@ -174,14 +182,49 @@ export function parseAgentOnboardingResponse(text: string): { type: "question"; 
   }
 
   if (typed.type === "complete") {
-    const data = (typed.data ?? {}) as { name?: unknown; instructionsText?: unknown; maxTurns?: unknown };
+    const data = (typed.data ?? {}) as AgentOnboardingSummary & {
+      name?: unknown;
+      instructionsText?: unknown;
+      maxTurns?: unknown;
+      heartbeatProcedurePath?: unknown;
+      heartbeatIntervalMs?: unknown;
+      heartbeatEnabled?: unknown;
+      modelHint?: unknown;
+      runtimeHint?: unknown;
+    };
     if (typeof data.name !== "string" || !data.name.trim()) throw new Error("Invalid summary.name");
     if (typeof data.instructionsText !== "string" || !data.instructionsText.trim()) throw new Error("Invalid summary.instructionsText");
     const maxTurns = data.maxTurns;
     if (typeof maxTurns !== "number" || !Number.isInteger(maxTurns) || maxTurns <= 0) {
       throw new Error("Invalid summary.maxTurns");
     }
-    return { type: "complete", data: typed.data as AgentOnboardingSummary };
+
+    if (data.heartbeatProcedurePath !== undefined) {
+      if (typeof data.heartbeatProcedurePath !== "string" || !data.heartbeatProcedurePath.trim()) {
+        throw new Error("Invalid summary.heartbeatProcedurePath");
+      }
+      data.heartbeatProcedurePath = data.heartbeatProcedurePath.trim();
+    }
+
+    if (data.heartbeatIntervalMs !== undefined) {
+      if (typeof data.heartbeatIntervalMs !== "number" || !Number.isInteger(data.heartbeatIntervalMs) || data.heartbeatIntervalMs <= 0) {
+        throw new Error("Invalid summary.heartbeatIntervalMs");
+      }
+    }
+
+    if (data.heartbeatEnabled !== undefined && typeof data.heartbeatEnabled !== "boolean") {
+      throw new Error("Invalid summary.heartbeatEnabled");
+    }
+
+    if (data.modelHint !== undefined && typeof data.modelHint !== "string") {
+      throw new Error("Invalid summary.modelHint");
+    }
+
+    if (data.runtimeHint !== undefined && typeof data.runtimeHint !== "string") {
+      throw new Error("Invalid summary.runtimeHint");
+    }
+
+    return { type: "complete", data: data as AgentOnboardingSummary };
   }
 
   return { type: "question", data: typed.data as PlanningQuestion };

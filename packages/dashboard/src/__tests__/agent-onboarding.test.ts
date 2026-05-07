@@ -74,7 +74,7 @@ describe("agent-onboarding", () => {
     }
   });
 
-  it("parses complete summary responses", () => {
+  it("parses complete summary responses with rich optional draft fields", () => {
     const parsed = parseAgentOnboardingResponse(
       JSON.stringify({
         type: "complete",
@@ -84,6 +84,13 @@ describe("agent-onboarding", () => {
           instructionsText: "Review docs for clarity and accuracy.",
           thinkingLevel: "medium",
           maxTurns: 20,
+          soul: "Calm and thorough",
+          memory: "Remember docs conventions",
+          heartbeatProcedurePath: "  .fusion/agents/docs-reviewer/HEARTBEAT.md  ",
+          heartbeatIntervalMs: 30000,
+          heartbeatEnabled: true,
+          modelHint: "anthropic/claude-sonnet-4-5",
+          runtimeHint: "openclaw",
         },
       }),
     );
@@ -92,6 +99,34 @@ describe("agent-onboarding", () => {
     if (parsed.type === "complete") {
       expect(parsed.data.name).toBe("Docs Reviewer");
       expect(parsed.data.maxTurns).toBe(20);
+      expect(parsed.data.heartbeatProcedurePath).toBe(".fusion/agents/docs-reviewer/HEARTBEAT.md");
+      expect(parsed.data.heartbeatIntervalMs).toBe(30000);
+      expect(parsed.data.heartbeatEnabled).toBe(true);
+      expect(parsed.data.modelHint).toBe("anthropic/claude-sonnet-4-5");
+      expect(parsed.data.runtimeHint).toBe("openclaw");
+    }
+  });
+
+  it("parses legacy complete summaries without rich draft fields", () => {
+    const parsed = parseAgentOnboardingResponse(
+      JSON.stringify({
+        type: "complete",
+        data: {
+          name: "Legacy Reviewer",
+          role: "reviewer",
+          instructionsText: "Review old style drafts",
+          thinkingLevel: "low",
+          maxTurns: 10,
+        },
+      }),
+    );
+
+    expect(parsed.type).toBe("complete");
+    if (parsed.type === "complete") {
+      expect(parsed.data.name).toBe("Legacy Reviewer");
+      expect(parsed.data.heartbeatProcedurePath).toBeUndefined();
+      expect(parsed.data.modelHint).toBeUndefined();
+      expect(parsed.data.runtimeHint).toBeUndefined();
     }
   });
 
@@ -110,6 +145,58 @@ describe("agent-onboarding", () => {
         }),
       ),
     ).toThrow(/Invalid summary/);
+  });
+
+  it("rejects malformed rich draft fields", () => {
+    expect(() =>
+      parseAgentOnboardingResponse(
+        JSON.stringify({
+          type: "complete",
+          data: {
+            name: "Malformed",
+            role: "reviewer",
+            instructionsText: "Valid instructions",
+            thinkingLevel: "medium",
+            maxTurns: 20,
+            heartbeatProcedurePath: "",
+          },
+        }),
+      ),
+    ).toThrow("Invalid summary.heartbeatProcedurePath");
+
+    expect(() =>
+      parseAgentOnboardingResponse(
+        JSON.stringify({
+          type: "complete",
+          data: {
+            name: "Malformed",
+            role: "reviewer",
+            instructionsText: "Valid instructions",
+            thinkingLevel: "medium",
+            maxTurns: 20,
+            heartbeatIntervalMs: 0,
+          },
+        }),
+      ),
+    ).toThrow("Invalid summary.heartbeatIntervalMs");
+
+    expect(() =>
+      parseAgentOnboardingResponse(
+        JSON.stringify({
+          type: "complete",
+          data: {
+            name: "Malformed",
+            role: "reviewer",
+            instructionsText: "Valid instructions",
+            thinkingLevel: "medium",
+            maxTurns: 20,
+            heartbeatEnabled: "yes",
+            modelHint: 10,
+            runtimeHint: { runtime: "openclaw" },
+          },
+        }),
+      ),
+    ).toThrow(/Invalid summary\.(heartbeatEnabled|modelHint|runtimeHint)/);
   });
 
   it("builds compact onboarding context prompt for create mode", () => {

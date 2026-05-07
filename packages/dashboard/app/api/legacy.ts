@@ -2684,7 +2684,13 @@ export interface AgentOnboardingSummary {
   patternAgentId?: string;
   rationale?: string;
   model?: string;
+  /** Draft-only AI suggestion for eventual runtimeConfig.model selection. */
+  modelHint?: string;
+  /** Draft-only AI suggestion for eventual runtimeConfig.runtimeHint plugin runtime selection. */
   runtimeHint?: string;
+  heartbeatProcedurePath?: string;
+  heartbeatIntervalMs?: number;
+  heartbeatEnabled?: boolean;
 }
 
 export type OnboardingMode = "create" | "edit";
