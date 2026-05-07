@@ -196,11 +196,18 @@ export type PluginRouteMethod = "GET" | "POST" | "PUT" | "DELETE";
 /**
  * Custom dashboard API route definition.
  */
+export interface PluginRouteResponse {
+  status: number;
+  body?: unknown;
+}
+
+export type PluginRouteResult = unknown | PluginRouteResponse;
+
 export interface PluginRouteDefinition {
   method: PluginRouteMethod;
   /** Relative path under /api/plugins/:pluginId/ */
   path: string;
-  handler: (req: unknown, ctx: PluginContext) => Promise<unknown>;
+  handler: (req: unknown, ctx: PluginContext) => Promise<PluginRouteResult>;
   description?: string;
 }
 

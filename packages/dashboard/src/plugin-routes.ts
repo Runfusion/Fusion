@@ -31,8 +31,17 @@ import {
   internalError,
   notFound,
 } from "./api-error.js";
+import { getOrCreateProjectStore } from "./project-store-resolver.js";
 
 // PluginRunner interface for optional plugin runner
+function isPluginRouteResponse(result: unknown): result is import("@fusion/core").PluginRouteResponse {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return false;
+  }
+  const candidate = result as { status?: unknown };
+  return typeof candidate.status === "number";
+}
+
 interface PluginRunner {
   reloadPlugin?(pluginId: string): Promise<void>;
   checkPluginSetup?(pluginId: string): Promise<import("@fusion/core").PluginSetupCheckResult>;
@@ -193,6 +202,7 @@ export function createPluginRouter(
   pluginStore: PluginStore,
   pluginLoader: PluginLoader,
   pluginRunner?: PluginRunner,
+  defaultTaskStore?: import("@fusion/core").TaskStore,
 ): Router {
   const router = Router();
 
@@ -529,10 +539,17 @@ export function createPluginRouter(
           throw notFound(`Plugin "${pluginId}" not loaded`);
         }
 
+        const projectId = typeof req.query.projectId === "string" && req.query.projectId.trim()
+          ? req.query.projectId
+          : (req.body && typeof req.body === "object" && typeof (req.body as { projectId?: unknown }).projectId === "string" && (req.body as { projectId: string }).projectId.trim()
+            ? (req.body as { projectId: string }).projectId
+            : undefined);
+        const scopedStore = projectId ? await getOrCreateProjectStore(projectId) : null;
+
         // Create a minimal context for the handler
         const ctx: PluginContext = {
           pluginId,
-          taskStore: {} as import("@fusion/core").TaskStore, // TaskStore is provided by the plugin loader
+          taskStore: scopedStore ?? defaultTaskStore ?? ({} as import("@fusion/core").TaskStore),
           settings: {},
           logger: {
             info: (...args: unknown[]) => console.log(`[plugin:${pluginId}]`, ...args),
@@ -549,7 +566,21 @@ export function createPluginRouter(
 
         // Call the route handler with Express Request cast to unknown
         const result = await route.handler(req as unknown, ctx);
-        res.json(result);
+
+        if (isPluginRouteResponse(result)) {
+          if (result.status === 204) {
+            res.status(204).send();
+            return;
+          }
+          if (result.body === undefined) {
+            res.status(result.status).send();
+            return;
+          }
+          res.status(result.status).json(result.body);
+          return;
+        }
+
+        res.status(200).json(result);
       });
 
       switch (route.method) {

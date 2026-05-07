@@ -9,21 +9,21 @@
 
 ## Exported roadmap domain surface
 
-The package root exports:
+The package root exports (re-exported from `@fusion/core`):
 
-- Roadmap domain types from `src/roadmap-types.ts`
-- Ordering helpers from `src/store/roadmap-ordering.ts`
+- Roadmap domain types
+- Ordering helpers
   - `normalizeRoadmapMilestoneOrder`
   - `applyRoadmapMilestoneReorder`
   - `normalizeRoadmapFeatureOrder`
   - `applyRoadmapFeatureReorder`
   - `moveRoadmapFeature`
-- Handoff mappers from `src/store/roadmap-handoff.ts`
+- Handoff mappers
   - `mapFeatureToTaskHandoff`
   - `mapRoadmapToMissionHandoff`
   - `mapRoadmapWithHierarchyToMissionHandoff`
   - `mapAllFeaturesToTaskHandoffs`
-- Store exports from `src/store/roadmap-store.ts`
+- Store exports
   - `RoadmapStore`
   - `RoadmapStoreEvents`
 

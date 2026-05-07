@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { RoadmapStore as CoreRoadmapStore } from "@fusion/core";
 import plugin, {
   RoadmapStore,
   applyRoadmapFeatureReorder,
@@ -18,6 +19,7 @@ describe("fusion-plugin-roadmap package surface", () => {
   });
 
   it("re-exports roadmap domain symbols", () => {
+    expect(RoadmapStore).toBe(CoreRoadmapStore);
     expect(typeof normalizeRoadmapMilestoneOrder).toBe("function");
     expect(typeof applyRoadmapMilestoneReorder).toBe("function");
     expect(typeof normalizeRoadmapFeatureOrder).toBe("function");

@@ -1,4 +1,5 @@
 import { definePlugin } from "@fusion/plugin-sdk";
+import { createRoadmapPluginRoutes } from "./roadmap-routes.js";
 
 const plugin = definePlugin({
   manifest: {
@@ -9,6 +10,7 @@ const plugin = definePlugin({
   },
   state: "installed",
   hooks: {},
+  routes: createRoadmapPluginRoutes(),
 });
 
 export default plugin;
@@ -34,7 +36,8 @@ export type {
   RoadmapFeatureTaskPlanningHandoff,
   RoadmapMissionPlanningMilestoneHandoff,
   RoadmapMissionPlanningHandoff,
-} from "./roadmap-types.js";
+  RoadmapStoreEvents,
+} from "@fusion/core";
 
 export {
   normalizeRoadmapMilestoneOrder,
@@ -42,14 +45,9 @@ export {
   normalizeRoadmapFeatureOrder,
   applyRoadmapFeatureReorder,
   moveRoadmapFeature,
-} from "./store/roadmap-ordering.js";
-
-export {
   mapFeatureToTaskHandoff,
   mapRoadmapToMissionHandoff,
   mapRoadmapWithHierarchyToMissionHandoff,
   mapAllFeaturesToTaskHandoffs,
-} from "./store/roadmap-handoff.js";
-
-export { RoadmapStore } from "./store/roadmap-store.js";
-export type { RoadmapStoreEvents } from "./store/roadmap-store.js";
+  RoadmapStore,
+} from "@fusion/core";

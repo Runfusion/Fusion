@@ -1171,6 +1171,124 @@ describe("createPluginRouter plugin setup routes", () => {
   });
 });
 
+describe("createPluginRouter plugin-defined route responses", () => {
+  it("injects request-scoped taskStore and supports explicit status/body responses", async () => {
+    const defaultTaskStore = createMockTaskStore();
+    const scopedTaskStore = createMockTaskStore({ getRootDir: vi.fn().mockReturnValue("/scoped") });
+    mockGetOrCreateProjectStore.mockResolvedValue(scopedTaskStore);
+
+    const pluginStore = createMockPluginStore();
+    const pluginLoader = createMockPluginLoader({
+      getPlugin: vi.fn().mockReturnValue({ manifest: { id: "demo" } }),
+    });
+    const pluginRunner = {
+      getPluginRoutes: vi.fn().mockReturnValue([
+        {
+          pluginId: "demo",
+          route: {
+            method: "POST",
+            path: "/status",
+            handler: vi.fn(async (_req: unknown, ctx: import("@fusion/core").PluginContext) => ({
+              status: 201,
+              body: { scoped: ctx.taskStore.getRootDir() },
+            })),
+          },
+        },
+      ]),
+    };
+
+    const app = express();
+    app.use(express.json());
+    app.use("/plugins", createPluginRouter(pluginStore, pluginLoader, pluginRunner, defaultTaskStore));
+
+    const res = await REQUEST(app, "POST", "/plugins/demo/status?projectId=p1", { projectId: "p1" });
+    expect(res.status).toBe(201);
+    expect(res.body).toEqual({ scoped: "/scoped" });
+  });
+
+  it("maps plugin-defined non-2xx status responses", async () => {
+    const pluginStore = createMockPluginStore();
+    const pluginLoader = createMockPluginLoader({
+      getPlugin: vi.fn().mockReturnValue({ manifest: { id: "demo" } }),
+    });
+    const pluginRunner = {
+      getPluginRoutes: vi.fn().mockReturnValue([
+        {
+          pluginId: "demo",
+          route: {
+            method: "GET",
+            path: "/error",
+            handler: vi.fn(async () => ({ status: 422, body: { error: "invalid" } })),
+          },
+        },
+      ]),
+    };
+
+    const app = express();
+    app.use(express.json());
+    app.use("/plugins", createPluginRouter(pluginStore, pluginLoader, pluginRunner));
+
+    const res = await REQUEST(app, "GET", "/plugins/demo/error");
+    expect(res.status).toBe(422);
+    expect(res.body).toEqual({ error: "invalid" });
+  });
+
+  it("propagates thrown handler errors via catchHandler", async () => {
+    const pluginStore = createMockPluginStore();
+    const pluginLoader = createMockPluginLoader({
+      getPlugin: vi.fn().mockReturnValue({ manifest: { id: "demo" } }),
+    });
+    const pluginRunner = {
+      getPluginRoutes: vi.fn().mockReturnValue([
+        {
+          pluginId: "demo",
+          route: {
+            method: "GET",
+            path: "/throws",
+            handler: vi.fn(async () => {
+              throw new Error("boom");
+            }),
+          },
+        },
+      ]),
+    };
+
+    const app = express();
+    app.use(express.json());
+    app.use("/plugins", createPluginRouter(pluginStore, pluginLoader, pluginRunner));
+
+    const res = await REQUEST(app, "GET", "/plugins/demo/throws");
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain("boom");
+  });
+
+  it("supports 204 empty responses for plugin routes", async () => {
+    const pluginStore = createMockPluginStore();
+    const pluginLoader = createMockPluginLoader({
+      getPlugin: vi.fn().mockReturnValue({ manifest: { id: "demo" } }),
+    });
+    const pluginRunner = {
+      getPluginRoutes: vi.fn().mockReturnValue([
+        {
+          pluginId: "demo",
+          route: {
+            method: "DELETE",
+            path: "/resource",
+            handler: vi.fn(async () => ({ status: 204 })),
+          },
+        },
+      ]),
+    };
+
+    const app = express();
+    app.use(express.json());
+    app.use("/plugins", createPluginRouter(pluginStore, pluginLoader, pluginRunner));
+
+    const res = await REQUEST(app, "DELETE", "/plugins/demo/resource");
+    expect(res.status).toBe(204);
+  });
+});
+
 describe("GET /api/plugins/runtimes", () => {
   let pluginStore: PluginStore;
   let pluginLoader: PluginLoader;

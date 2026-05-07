@@ -746,9 +746,15 @@ importers:
       '@fusion/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@fusion/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
       '@fusion/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
+      express:
+        specifier: ^5.1.0
+        version: 5.2.1
     devDependencies:
       '@types/node':
         specifier: ^25.5.2

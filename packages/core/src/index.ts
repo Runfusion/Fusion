@@ -150,6 +150,8 @@ export type {
   PluginToolResult,
   PluginRouteDefinition,
   PluginRouteMethod,
+  PluginRouteResponse,
+  PluginRouteResult,
   PluginUiSurface,
   PluginUiSlotDefinition,
   PluginUiContributionSurface,
