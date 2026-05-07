@@ -420,6 +420,35 @@ describe("GitManagerModal", () => {
     });
   });
 
+  it("keeps separate scroll containers for unstaged and staged file lists", async () => {
+    (fetchFileChanges as any).mockResolvedValue([
+      ...Array.from({ length: 30 }, (_, index) => ({
+        file: `src/unstaged-${index}.ts`,
+        status: "modified",
+        staged: false,
+      })),
+      { file: "src/staged.ts", status: "added", staged: true },
+    ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /changes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Unstaged Changes (30)")).toBeInTheDocument();
+      expect(screen.getByText("Staged Changes (1)")).toBeInTheDocument();
+    });
+
+    const unstagedList = screen.getByTestId("gm-file-list-unstaged");
+    const stagedList = screen.getByTestId("gm-file-list-staged");
+
+    expect(unstagedList).toHaveClass("gm-file-list", "gm-file-list-unstaged");
+    expect(stagedList).toHaveClass("gm-file-list", "gm-file-list-staged");
+    expect(within(unstagedList).getAllByRole("button").length).toBeGreaterThan(10);
+    expect(within(stagedList).getAllByRole("button").length).toBeGreaterThan(0);
+  });
+
   it("stages all files when Stage All is clicked", async () => {
     const user = userEvent.setup();
     render(
