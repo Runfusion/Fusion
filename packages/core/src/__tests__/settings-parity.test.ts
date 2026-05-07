@@ -121,24 +121,20 @@ describe("research global key parity regression (FN-3313)", () => {
 
 // ── Model Lane Key Parity Regression Tests (FN-1729) ────────────────────────
 
-describe("task evaluation key parity regression (FN-3514)", () => {
-  const taskEvaluationDefaults = {
-    taskEvaluationEnabled: false,
-    taskEvaluationSchedule: "0 5 * * *",
-    taskEvaluationProvider: undefined,
-    taskEvaluationModelId: undefined,
-    taskEvaluationFollowUpPolicy: "off",
-    taskEvaluationRetention: undefined,
-  } as const;
+describe("eval settings parity regression (FN-3393)", () => {
+  it("keeps evalSettings project-scoped with expected defaults", () => {
+    expect(isProjectSettingsKey("evalSettings")).toBe(true);
+    expect(isGlobalSettingsKey("evalSettings")).toBe(false);
 
-  it.each(Object.entries(taskEvaluationDefaults))(
-    "%s is project-scoped with expected default",
-    (key, expectedDefault) => {
-      expect(isProjectSettingsKey(key)).toBe(true);
-      expect(isGlobalSettingsKey(key)).toBe(false);
-      expect((DEFAULT_PROJECT_SETTINGS as Record<string, unknown>)[key]).toBe(expectedDefault);
-    },
-  );
+    expect(DEFAULT_PROJECT_SETTINGS.evalSettings).toEqual({
+      enabled: false,
+      intervalMs: 86_400_000,
+      evaluatorProvider: undefined,
+      evaluatorModelId: undefined,
+      followUpPolicy: "suggest-only",
+      retentionDays: 30,
+    });
+  });
 });
 
 describe("model lane key parity regression (FN-1729)", () => {

@@ -243,12 +243,13 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `insightExtractionEnabled` | `boolean` | `false` | Enable scheduled memory insight extraction. |
 | `insightExtractionSchedule` | `string` | `"0 2 * * *"` | Insight extraction cron schedule. |
 | `insightExtractionMinIntervalMs` | `number` | `86400000` | Minimum interval between extractions (24h). |
-| `taskEvaluationEnabled` | `boolean` | `false` | Enable scheduled completed-task evaluation batches. |
-| `taskEvaluationSchedule` | `string` | `"0 5 * * *"` | Cron schedule for the scheduled task-evaluation batch automation. |
-| `taskEvaluationProvider` | `string` | `undefined` | Optional provider override used by scheduled task-evaluation runs. |
-| `taskEvaluationModelId` | `string` | `undefined` | Optional model ID override paired with `taskEvaluationProvider`. |
-| `taskEvaluationFollowUpPolicy` | `"off" \| "suggest" \| "create"` | `"off"` | Follow-up handling policy for scheduled task-evaluation outcomes. |
-| `taskEvaluationRetention` | `number` | `undefined` | Optional retention window (days) for scheduled task-evaluation history. |
+| `evalSettings` | `EvalProjectSettings` | `{ enabled: false, intervalMs: 86400000, evaluatorProvider: undefined, evaluatorModelId: undefined, followUpPolicy: "suggest-only", retentionDays: 30 }` | Project-scoped scheduled eval configuration (enablement, interval, evaluator model override, follow-up policy, retention). |
+| `taskEvaluationEnabled` | `boolean` | `false` | Legacy flat eval key. Prefer `evalSettings.enabled`. |
+| `taskEvaluationSchedule` | `string` | `"0 5 * * *"` | Legacy flat eval key for cron-based automation compatibility. |
+| `taskEvaluationProvider` | `string` | `undefined` | Legacy flat eval key. Prefer `evalSettings.evaluatorProvider`. |
+| `taskEvaluationModelId` | `string` | `undefined` | Legacy flat eval key. Prefer `evalSettings.evaluatorModelId`. |
+| `taskEvaluationFollowUpPolicy` | `"off" \| "suggest" \| "create"` | `"off"` | Legacy flat eval key. Prefer `evalSettings.followUpPolicy`. |
+| `taskEvaluationRetention` | `number` | `undefined` | Legacy flat eval key. Prefer `evalSettings.retentionDays`. |
 | `memoryEnabled` | `boolean` | `true` | Enable project memory integration. |
 | `memoryBackendType` | `string` | `"qmd"` | Memory backend type. Built-ins include `qmd` (Quantized Memory Distillation, default), `file`, and `readonly`; custom backends can also be registered. |
 | `memoryAutoSummarizeEnabled` | `boolean` | `false` | Enable automatic memory summarization when memory exceeds threshold. |
@@ -304,6 +305,27 @@ Recovery entrypoints in the dashboard:
 - **Settings → Experimental Features**: enable `researchView` when the standalone Research route/surfaces are hidden.
 
 **Credential storage rule:** API keys for Research providers are not stored in settings JSON. They are managed through the existing auth storage pipeline (`/api/auth/status`, `POST /api/auth/api-key`, `DELETE /api/auth/api-key`) and persisted in auth credential storage with masked hints in API responses.
+
+### Scheduled eval settings (project scope)
+
+`evalSettings` is project-scoped and validated on `PUT /api/settings` with these rules:
+
+- `intervalMs`: integer in `[60000, 604800000]`
+- `retentionDays`: integer in `[1, 365]`
+- `followUpPolicy`: one of `"disabled" | "suggest-only" | "auto-create"`
+- `evaluatorProvider` and `evaluatorModelId` must be provided together or both omitted
+
+Model resolution for scheduled eval execution uses `resolveEvalSettings(settings)`:
+
+1. `evalSettings.evaluatorProvider` + `evalSettings.evaluatorModelId` when both are set
+2. Validator lane fallback from `resolveValidatorSettingsModel(settings)` when unset
+3. Non-model defaults: `enabled=false`, `intervalMs=86400000`, `followUpPolicy="suggest-only"`, `retentionDays=30`
+
+Follow-up policy meanings:
+
+- `disabled`: do not emit follow-up suggestions/tasks
+- `suggest-only`: emit suggestions without automatic task creation
+- `auto-create`: permit automatic task creation for qualifying follow-ups
 
 ### Node Routing settings (project scope)
 

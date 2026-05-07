@@ -2766,6 +2766,108 @@ describe("SettingsModal", () => {
     });
   });
 
+  describe("scheduled eval settings section", () => {
+    const openScheduledEvalsSection = async () => {
+      await userEvent.click(await screen.findByRole("button", { name: /Scheduled Evals/i }));
+    };
+
+    it("renders controls and disables interval controls when evals are disabled", async () => {
+      mockFetchSettings.mockResolvedValueOnce({
+        ...defaultSettings,
+        evalSettings: {
+          enabled: false,
+          intervalMs: 86_400_000,
+          followUpPolicy: "suggest-only",
+          retentionDays: 30,
+        },
+      });
+
+      renderModal();
+      await waitForSettingsModalReady();
+      await openScheduledEvalsSection();
+
+      expect(await screen.findByRole("heading", { name: "Scheduled Evals" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Enable scheduled eval runs for this project")).toBeInTheDocument();
+      expect(screen.getByLabelText("Interval (ms)")).toBeDisabled();
+      expect(screen.getByLabelText("Follow-up Policy")).toBeDisabled();
+      expect(screen.getByLabelText("Retention (days)")).toBeDisabled();
+      expect(screen.getByText(/inherit the project validator lane model settings/i)).toBeInTheDocument();
+    });
+
+    it("saves edited project eval settings payload", async () => {
+      mockFetchSettings.mockResolvedValueOnce({
+        ...defaultSettings,
+        evalSettings: {
+          enabled: true,
+          intervalMs: 86_400_000,
+          followUpPolicy: "suggest-only",
+          retentionDays: 30,
+        },
+      });
+
+      renderModal();
+      await waitForSettingsModalReady();
+      await openScheduledEvalsSection();
+
+      fireEvent.change(screen.getByLabelText("Interval (ms)"), { target: { value: "120000" } });
+      await userEvent.type(screen.getByLabelText("Evaluator Provider"), "openai");
+      await userEvent.type(screen.getByLabelText("Evaluator Model"), "gpt-5");
+      await userEvent.selectOptions(screen.getByLabelText("Follow-up Policy"), "auto-create");
+      fireEvent.change(screen.getByLabelText("Retention (days)"), { target: { value: "14" } });
+      await userEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(mockUpdateSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            evalSettings: expect.objectContaining({
+              enabled: true,
+              intervalMs: 120000,
+              evaluatorProvider: "openai",
+              evaluatorModelId: "gpt-5",
+              followUpPolicy: "auto-create",
+              retentionDays: 14,
+            }),
+          }),
+          undefined,
+        );
+      });
+    });
+
+    it("clears evaluator provider and model as unset when left blank", async () => {
+      mockFetchSettings.mockResolvedValueOnce({
+        ...defaultSettings,
+        evalSettings: {
+          enabled: true,
+          intervalMs: 86_400_000,
+          evaluatorProvider: "openai",
+          evaluatorModelId: "gpt-5",
+          followUpPolicy: "suggest-only",
+          retentionDays: 30,
+        },
+      });
+
+      renderModal();
+      await waitForSettingsModalReady();
+      await openScheduledEvalsSection();
+
+      await userEvent.clear(screen.getByLabelText("Evaluator Provider"));
+      await userEvent.clear(screen.getByLabelText("Evaluator Model"));
+      await userEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(mockUpdateSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            evalSettings: expect.objectContaining({
+              evaluatorProvider: undefined,
+              evaluatorModelId: undefined,
+            }),
+          }),
+          undefined,
+        );
+      });
+    });
+  });
+
   describe("research settings sections", () => {
     beforeEach(() => {
       mockFetchSettings.mockResolvedValue({

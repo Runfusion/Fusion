@@ -439,6 +439,39 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
         clientSettings.unavailableNodePolicy = validatedUnavailableNodePolicy;
       }
 
+      const evalSettings = clientSettings.evalSettings as Record<string, unknown> | null | undefined;
+      if (evalSettings !== undefined && evalSettings !== null) {
+        if (typeof evalSettings !== "object" || Array.isArray(evalSettings)) {
+          throw badRequest("evalSettings must be an object");
+        }
+
+        const allowedFollowUpPolicies = ["disabled", "suggest-only", "auto-create"];
+        const intervalMs = evalSettings.intervalMs;
+        if (intervalMs !== undefined && intervalMs !== null) {
+          if (typeof intervalMs !== "number" || !Number.isInteger(intervalMs) || intervalMs < 60_000 || intervalMs > 604_800_000) {
+            throw badRequest("evalSettings.intervalMs must be an integer between 60000 and 604800000");
+          }
+        }
+
+        const retentionDays = evalSettings.retentionDays;
+        if (retentionDays !== undefined && retentionDays !== null) {
+          if (typeof retentionDays !== "number" || !Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 365) {
+            throw badRequest("evalSettings.retentionDays must be an integer between 1 and 365");
+          }
+        }
+
+        const followUpPolicy = evalSettings.followUpPolicy;
+        if (followUpPolicy !== undefined && !allowedFollowUpPolicies.includes(String(followUpPolicy))) {
+          throw badRequest("evalSettings.followUpPolicy must be one of: disabled, suggest-only, auto-create");
+        }
+
+        const hasEvaluatorProvider = evalSettings.evaluatorProvider !== undefined && evalSettings.evaluatorProvider !== null && String(evalSettings.evaluatorProvider).trim() !== "";
+        const hasEvaluatorModelId = evalSettings.evaluatorModelId !== undefined && evalSettings.evaluatorModelId !== null && String(evalSettings.evaluatorModelId).trim() !== "";
+        if (hasEvaluatorProvider !== hasEvaluatorModelId) {
+          throw badRequest("evalSettings.evaluatorProvider and evalSettings.evaluatorModelId must be provided together or both omitted");
+        }
+      }
+
       // Validate memoryBackendType if provided - must be string or null (for explicit clear)
       // Unknown backend IDs are accepted and persisted verbatim (for custom backend compatibility)
       // Fallback-to-file is runtime resolution behavior only
