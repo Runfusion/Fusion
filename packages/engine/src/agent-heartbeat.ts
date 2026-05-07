@@ -904,8 +904,9 @@ export class HeartbeatMonitor {
         } else if (completionResult.status === "terminated") {
           await this.store.updateAgentState(agentId, "paused");
         } else {
-          // Completed successfully - back to active
+          // Completed successfully - back to active and clear any stale failure marker.
           await this.store.updateAgentState(agentId, "active");
+          await this.store.updateAgent(agentId, { lastError: undefined });
         }
       } catch (stateTransErr) {
         heartbeatLog.warn(`Agent ${agentId} state transition failed: ${stateTransErr instanceof Error ? stateTransErr.message : String(stateTransErr)} — continuing`);

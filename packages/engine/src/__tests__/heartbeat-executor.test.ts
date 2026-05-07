@@ -325,6 +325,27 @@ describe("executeHeartbeat", () => {
       expect(store.endHeartbeatRun).toHaveBeenCalledWith(run.id, "terminated");
     });
 
+    it("clears stale lastError after a subsequent successful heartbeat run", async () => {
+      const store = createStoreWithAgentForExec({ state: "running" });
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+      const failedRun = await monitor.startRun("agent-001", { source: "on_demand" });
+      await monitor.completeRun("agent-001", failedRun.id, {
+        status: "failed",
+        stderrExcerpt: "Prompt failed",
+      });
+
+      const successfulRun = await monitor.startRun("agent-001", { source: "on_demand" });
+      await monitor.completeRun("agent-001", successfulRun.id, {
+        status: "completed",
+      });
+
+      expect(store.updateAgentState).toHaveBeenCalledWith("agent-001", "error");
+      expect(store.updateAgent).toHaveBeenCalledWith("agent-001", { lastError: "Prompt failed" });
+      expect(store.updateAgentState).toHaveBeenCalledWith("agent-001", "active");
+      expect(store.updateAgent).toHaveBeenCalledWith("agent-001", { lastError: undefined });
+    });
+
     it("completes as failed when agent not found in store", async () => {
       const store = createStoreWithAgentForExec();
       (store.getAgent as ReturnType<typeof vi.fn>).mockResolvedValue(null);

@@ -49,7 +49,7 @@ These fields are managed by the engine and cannot be directly edited:
 - `taskId` — Current working task (managed by scheduler)
 - `totalInputTokens` / `totalOutputTokens` — Token usage totals (managed by engine)
 - `createdAt` / `updatedAt` / `lastHeartbeatAt` — Timestamps (managed by system)
-- `lastError` — Last error message (managed by engine)
+- `lastError` — Last error message (managed by engine; cleared after successful recovery runs)
 - `pauseReason` — Reason for paused state (managed by engine)
 
 ### Stale Task Link Sanitization
@@ -80,7 +80,7 @@ The `taskId` field is suppressed in API responses when the linked task is in a t
 These fields can only be set during update (not on create):
 
 - `pauseReason` — Why the agent is paused
-- `lastError` — Last error message
+- `lastError` — Last error message (cleared when the agent successfully recovers)
 - `totalInputTokens` — Accumulated input token count
 - `totalOutputTokens` — Accumulated output token count
 
