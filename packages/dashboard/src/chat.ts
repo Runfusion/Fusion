@@ -20,6 +20,7 @@ import type {
   ChatStore,
   ChatSession,
   ChatSessionCreateInput,
+  MessageStore,
   Settings,
 } from "@fusion/core";
 import { summarizeTitle } from "@fusion/core";
@@ -35,6 +36,8 @@ import {
   promptWithFallback as enginePromptWithFallback,
   extractRuntimeHint,
   extractRuntimeModel,
+  createSendMessageTool,
+  createReadMessagesTool,
 } from "@fusion/engine";
 import * as engineModule from "@fusion/engine";
 
@@ -500,6 +503,7 @@ export class ChatManager {
       createRuntimeContext?(pluginId: string): Promise<unknown>;
     },
     private getSettings?: () => Promise<Pick<Settings, "fallbackProvider" | "fallbackModelId" | "defaultProvider" | "defaultModelId"> | undefined> | Pick<Settings, "fallbackProvider" | "fallbackModelId" | "defaultProvider" | "defaultModelId"> | undefined,
+    private messageStore?: MessageStore,
   ) {}
 
   private async getChatModelSettings(): Promise<{
@@ -946,10 +950,18 @@ export class ChatManager {
           || usesConfiguredDefaultModel
         );
 
+      const messagingTools = agent?.id && this.messageStore
+        ? [
+            createSendMessageTool(this.messageStore, agent.id),
+            createReadMessagesTool(this.messageStore, agent.id),
+          ]
+        : undefined;
+
       const sessionOptions = {
         cwd: this.rootDir,
         systemPrompt,
         tools: "coding" as const,
+        ...(messagingTools ? { customTools: messagingTools } : {}),
         sessionManager,
         ...(effectiveModelProvider && effectiveModelId
           ? {

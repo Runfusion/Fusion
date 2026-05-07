@@ -4,6 +4,8 @@ export {
   createTaskDocumentReadTool,
   createTaskDocumentWriteTool,
   createTaskLogTool,
+  createSendMessageTool,
+  createReadMessagesTool,
   taskCreateParams,
   taskDocumentReadParams,
   taskDocumentWriteParams,

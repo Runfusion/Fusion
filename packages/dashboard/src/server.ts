@@ -942,6 +942,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     chatAgentStore,
     options?.pluginRunner,
     () => store.getSettings(),
+    options?.engine?.getMessageStore(),
   );
 
   const runAiSessionCleanup = (maxAgeMs: number, source: "initial" | "scheduled") => {

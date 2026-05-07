@@ -24,6 +24,14 @@ const { mockSummarizeTitle } = vi.hoisted(() => ({
 
 vi.mock("@fusion/core", () => ({
   summarizeTitle: mockSummarizeTitle,
+  DASHBOARD_USER_ID: "dashboard",
+  normalizeMessageParticipant: (id: string, type: "user" | "agent" | "system") => {
+    const normalized = id.trim();
+    if (type === "user" && ["dashboard", "user:dashboard", "User: user:dashboard"].includes(normalized)) {
+      return { id: "dashboard", type: "user" as const };
+    }
+    return { id: normalized, type };
+  },
 }));
 
 // SessionManager is constructed per-chat for CLI session continuity. We don't
@@ -63,8 +71,8 @@ const mockAgentStore = {
   listAgents: vi.fn(),
 };
 
-function createChatManager(pluginRunner?: Record<string, unknown>): ChatManager {
-  return new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, pluginRunner as any);
+function createChatManager(pluginRunner?: Record<string, unknown>, messageStore?: Record<string, unknown>): ChatManager {
+  return new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, pluginRunner as any, undefined, messageStore as any);
 }
 
 function createChatManagerWithSettings(settings: {
@@ -652,7 +660,13 @@ describe("ChatManager.sendMessage", () => {
       getRuntimeById: vi.fn(),
       createRuntimeContext: vi.fn(),
     };
-    const chatManager = createChatManager(pluginRunner);
+    const messageStore = {
+      sendMessage: vi.fn(),
+      getInbox: vi.fn(),
+      markAsRead: vi.fn(),
+      markAllAsRead: vi.fn(),
+    };
+    const chatManager = createChatManager(pluginRunner, messageStore);
 
     await chatManager.sendMessage("chat-001", "Hello");
 
@@ -660,6 +674,99 @@ describe("ChatManager.sendMessage", () => {
       sessionPurpose: "executor",
       runtimeHint: "openclaw",
       pluginRunner,
+    }));
+    expect(createResolvedSession).toHaveBeenCalledWith(expect.objectContaining({
+      customTools: expect.arrayContaining([
+        expect.objectContaining({ name: "fn_send_message" }),
+        expect.objectContaining({ name: "fn_read_messages" }),
+      ]),
+    }));
+  });
+
+  it("routes Hermes mailbox sends from agent to canonical dashboard user", async () => {
+    const createResolvedSession = vi.fn(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        state: {
+          messages: [{ role: "assistant", content: "Runtime response" }],
+        },
+      },
+    }));
+    __setCreateResolvedAgentSession(createResolvedSession as any);
+
+    mockAgentStore.getAgent.mockResolvedValue({
+      id: "agent-001",
+      name: "Avery",
+      role: "executor",
+      soul: "Be calm and precise.",
+      memory: "Remember to keep test coverage high.",
+      instructionsText: "Keep replies focused.",
+      runtimeConfig: {
+        runtimeHint: "hermes-runtime",
+      },
+    });
+
+    const messageStore = {
+      sendMessage: vi.fn().mockReturnValue({ id: "msg-123" }),
+      getInbox: vi.fn().mockReturnValue([]),
+      markAsRead: vi.fn(),
+      markAllAsRead: vi.fn(),
+    };
+    const chatManager = createChatManager(undefined, messageStore);
+
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    const customTools = createResolvedSession.mock.calls[0]?.[0]?.customTools ?? [];
+    const sendTool = customTools.find((tool: { name: string }) => tool.name === "fn_send_message");
+    expect(sendTool).toBeDefined();
+
+    const sendResult = await sendTool.execute("call-1", {
+      to_id: "User: user:dashboard",
+      content: "status",
+      type: "agent-to-user",
+    }, undefined, undefined, undefined);
+
+    expect(sendResult.content[0]?.type === "text" ? sendResult.content[0].text : "").toContain("Message sent to dashboard");
+    expect(messageStore.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      fromId: "agent-001",
+      fromType: "agent",
+      toId: "dashboard",
+      toType: "user",
+      type: "agent-to-user",
+    }));
+  });
+
+  it("does not inject mailbox tools for non-agent chat sessions", async () => {
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: null,
+      status: "active",
+    });
+
+    const createResolvedSession = vi.fn(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        state: {
+          messages: [{ role: "assistant", content: "Runtime response" }],
+        },
+      },
+    }));
+    __setCreateResolvedAgentSession(createResolvedSession as any);
+
+    const messageStore = {
+      sendMessage: vi.fn(),
+      getInbox: vi.fn(),
+      markAsRead: vi.fn(),
+      markAllAsRead: vi.fn(),
+    };
+    const chatManager = createChatManager(undefined, messageStore);
+
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    expect(createResolvedSession).toHaveBeenCalledWith(expect.not.objectContaining({
+      customTools: expect.anything(),
     }));
   });
 

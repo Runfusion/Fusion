@@ -256,7 +256,7 @@
   min-height: calc(var(--space-md) * 3);
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   background: transparent;
   cursor: pointer;
@@ -267,6 +267,11 @@
 .chat-thread-header-render-toggle:hover {
   background: var(--bg-hover, var(--bg-secondary));
   color: var(--text);
+}
+
+.chat-thread-header-render-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
 }
 
 .chat-thread-header-render-toggle--plain {

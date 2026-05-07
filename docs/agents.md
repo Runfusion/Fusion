@@ -628,6 +628,8 @@ To clear a specific override, click the **Reset** button in the UI. This sends `
 
 Messaging is available in dashboard mailbox UI and CLI.
 
+Agent-backed dashboard chat sessions (including plugin-runtime agents such as Hermes/OpenClaw/Paperclip) also expose mailbox tools (`fn_send_message`, `fn_read_messages`) when a `MessageStore` is wired for that project. Model-only chats without an attached agent do not expose these tools.
+
 ```bash
 fn message inbox
 fn message outbox
