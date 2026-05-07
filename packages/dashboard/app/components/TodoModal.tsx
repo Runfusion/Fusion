@@ -1,11 +1,11 @@
 import "./TodoModal.css";
-import { useEffect } from "react";
+import { Suspense, lazy, useEffect } from "react";
 import { ListChecks, X } from "lucide-react";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useViewportMode } from "./Header";
-import { TodoView } from "./TodoView";
+const TodoView = lazy(() => import("./TodoView").then((module) => ({ default: module.TodoView })));
 
 interface TodoModalProps {
   isOpen?: boolean;
@@ -61,13 +61,15 @@ export function TodoModal({ onClose, projectId, addToast, onPlanningMode }: Todo
         </div>
 
         <div className="todo-modal-body">
-          <TodoView
-            projectId={projectId}
-            addToast={addToast}
-            onPlanningMode={onPlanningMode}
-            onClose={onClose}
-            mobileKeyboardActive={isMobile && keyboardOpen}
-          />
+          <Suspense fallback={null}>
+            <TodoView
+              projectId={projectId}
+              addToast={addToast}
+              onPlanningMode={onPlanningMode}
+              onClose={onClose}
+              mobileKeyboardActive={isMobile && keyboardOpen}
+            />
+          </Suspense>
         </div>
       </div>
     </div>
