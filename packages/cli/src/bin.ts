@@ -132,7 +132,7 @@ async function loadCommandHandlers() {
   const { runAgentImport } = await import("./commands/agent-import.js");
   const { runAgentExport } = await import("./commands/agent-export.js");
   const { runMessageInbox, runMessageOutbox, runMessageSend, runMessageRead, runMessageDelete, runAgentMailbox } = await import("./commands/message.js");
-  const { runPluginList, runPluginInstall, runPluginUninstall, runPluginEnable, runPluginDisable, runPluginSetupStatus, runPluginSetup } = await import("./commands/plugin.js");
+  const { runPluginList, runPluginInstall, runPluginUninstall, runPluginEnable, runPluginDisable, runPluginSetupStatus, runPluginSetup, runPluginAvailable, runPluginSettings } = await import("./commands/plugin.js");
   const { runPluginCreate } = await import("./commands/plugin-scaffold.js");
   const { runSkillsSearch, runSkillsInstall } = await import("./commands/skills.js");
   const { runResearchCreate, runResearchList, runResearchShow, runResearchExport, runResearchCancel, runResearchRetry } = await import("./commands/research.js");
@@ -216,6 +216,8 @@ async function loadCommandHandlers() {
     runPluginDisable,
     runPluginSetupStatus,
     runPluginSetup,
+    runPluginAvailable,
+    runPluginSettings,
     runPluginCreate,
     runSkillsSearch,
     runSkillsInstall,
@@ -342,6 +344,9 @@ Usage:
   fn plugin uninstall <id> [--force] Uninstall a plugin
   fn plugin enable <id>             Enable a plugin
   fn plugin disable <id>             Disable a plugin
+  fn plugin available                List built-in plugin catalog entries
+  fn plugin settings <id> [key] [value]
+                                      Read/update installed plugin settings
   fn plugin setup-status <id>        Check plugin setup binary/runtime status
   fn plugin setup <id> [--action install|uninstall]
                                       Install or uninstall plugin setup binaries/runtimes
@@ -560,6 +565,8 @@ async function main() {
     runPluginDisable,
     runPluginSetupStatus,
     runPluginSetup,
+    runPluginAvailable,
+    runPluginSettings,
     runPluginCreate,
     runSkillsSearch,
     runSkillsInstall,
@@ -1450,6 +1457,16 @@ async function main() {
             await runPluginDisable(id, { projectName });
             break;
           }
+          case "available": {
+            await runPluginAvailable();
+            break;
+          }
+          case "settings": {
+            const id = args[2];
+            if (!id) { console.error("Usage: fn plugin settings <id> [key] [value]"); process.exit(1); }
+            await runPluginSettings(id, args[3], args[4], { projectName });
+            break;
+          }
           case "setup-status": {
             const id = args[2];
             if (!id) { console.error("Usage: fn plugin setup-status <id>"); process.exit(1); }
@@ -1476,7 +1493,7 @@ async function main() {
           }
           default:
             console.error(`Unknown subcommand: plugin ${sub || ""}`);
-            console.log("Try: fn plugin list | install | add (alias for install) | uninstall | enable | disable | setup-status | setup | create");
+            console.log("Try: fn plugin list | install | add (alias for install) | uninstall | enable | disable | available | settings | setup-status | setup | create");
             process.exit(1);
         }
         break;

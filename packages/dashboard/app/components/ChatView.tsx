@@ -1097,6 +1097,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     sendMessage,
   ]);
 
+
   const handleSkillSelect = useCallback(
     (skill: DiscoveredSkill) => {
       setMessageInput((currentInput) => {

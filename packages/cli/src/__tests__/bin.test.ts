@@ -93,6 +93,8 @@ const commandMocks = vi.hoisted(() => ({
   runPluginDisable: vi.fn(),
   runPluginSetupStatus: vi.fn(),
   runPluginSetup: vi.fn(),
+  runPluginAvailable: vi.fn(),
+  runPluginSettings: vi.fn(),
   runPluginCreate: vi.fn(),
 
   runResearchCreate: vi.fn(),
@@ -215,6 +217,8 @@ vi.mock("../commands/plugin.js", () => ({
   runPluginDisable: commandMocks.runPluginDisable,
   runPluginSetupStatus: commandMocks.runPluginSetupStatus,
   runPluginSetup: commandMocks.runPluginSetup,
+  runPluginAvailable: commandMocks.runPluginAvailable,
+  runPluginSettings: commandMocks.runPluginSettings,
 }));
 
 vi.mock("../commands/plugin-scaffold.js", () => ({
@@ -425,6 +429,19 @@ describe("bin command routing and fallbacks", () => {
     });
   });
 
+  it("routes plugin available and settings", async () => {
+    await runBin(["plugin", "available"]);
+    await runBin(["plugin", "settings", "fusion-plugin-hermes-runtime", "enabled", "true", "-P", "demo"]);
+
+    expect(commandMocks.runPluginAvailable).toHaveBeenCalledWith();
+    expect(commandMocks.runPluginSettings).toHaveBeenCalledWith(
+      "fusion-plugin-hermes-runtime",
+      "enabled",
+      "true",
+      { projectName: "demo" },
+    );
+  });
+
   it("errors when plugin install source is missing", async () => {
     await expect(runBin(["plugin", "add"])).rejects.toThrow("process.exit:1");
     expect(errorSpy).toHaveBeenCalledWith(
@@ -436,7 +453,7 @@ describe("bin command routing and fallbacks", () => {
     await expect(runBin(["plugin", "oops"])).rejects.toThrow("process.exit:1");
     expect(errorSpy).toHaveBeenCalledWith("Unknown subcommand: plugin oops");
     expect(logSpy).toHaveBeenCalledWith(
-      "Try: fn plugin list | install | add (alias for install) | uninstall | enable | disable | setup-status | setup | create",
+      "Try: fn plugin list | install | add (alias for install) | uninstall | enable | disable | available | settings | setup-status | setup | create",
     );
   });
 

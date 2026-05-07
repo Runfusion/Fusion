@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => {
     registerPlugin: ReturnType<typeof vi.fn>;
     listPlugins: ReturnType<typeof vi.fn>;
     getPlugin: ReturnType<typeof vi.fn>;
+    updatePluginSettings: ReturnType<typeof vi.fn>;
   }> = [];
 
   let loaderTaskStore: { getRootDir?: () => string } | undefined;
@@ -20,6 +21,7 @@ const mocks = vi.hoisted(() => {
       }),
       listPlugins: vi.fn().mockResolvedValue([]),
       getPlugin: vi.fn(),
+      updatePluginSettings: vi.fn().mockResolvedValue(undefined),
     };
     pluginStoreInstances.push(instance);
     return instance;
@@ -74,11 +76,13 @@ vi.mock("node:fs/promises", () => ({
   ),
 }));
 
-import { runPluginInstall } from "../plugin.js";
+import { runPluginAvailable, runPluginInstall, runPluginSettings } from "../plugin.js";
+import { resolveProject } from "../../project-context.js";
 
-describe("runPluginInstall", () => {
+describe("plugin commands", () => {
   beforeEach(() => {
     mocks.reset();
+    vi.mocked(resolveProject).mockResolvedValue({ projectPath: "/tmp/fn-project" } as never);
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
@@ -95,5 +99,35 @@ describe("runPluginInstall", () => {
     expect(taskStore?.getRootDir).toBeTypeOf("function");
     expect(taskStore?.getRootDir?.()).toBe("/tmp/fn-project");
     expect(mocks.getLoaderRootDir()).toBe("/tmp/fn-project");
+  });
+
+  it("prints built-in plugin catalog", async () => {
+    await expect(runPluginAvailable()).resolves.toBeUndefined();
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining("Installable"));
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining("fusion-plugin-agent-browser"));
+  });
+
+  it("reads and updates plugin settings", async () => {
+    const storeInstance = {
+      init: vi.fn().mockResolvedValue(undefined),
+      registerPlugin: vi.fn(),
+      listPlugins: vi.fn(),
+      getPlugin: vi.fn().mockResolvedValue({
+        id: "paperclip-runtime",
+        settings: { enabled: true, retries: 2 },
+      }),
+      updatePluginSettings: vi.fn().mockResolvedValue(undefined),
+    };
+    mocks.PluginStore.mockImplementationOnce(() => storeInstance as never);
+    await runPluginSettings("paperclip-runtime", undefined, undefined, { projectName: "demo" });
+
+    mocks.PluginStore.mockImplementationOnce(() => storeInstance as never);
+    await runPluginSettings("paperclip-runtime", "enabled", undefined, { projectName: "demo" });
+
+    mocks.PluginStore.mockImplementationOnce(() => storeInstance as never);
+    await runPluginSettings("paperclip-runtime", "enabled", "false", { projectName: "demo" });
+
+    expect(storeInstance.getPlugin).toHaveBeenCalledTimes(3);
+    expect(storeInstance.updatePluginSettings).toHaveBeenCalledWith("paperclip-runtime", { enabled: false });
   });
 });

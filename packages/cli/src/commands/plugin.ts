@@ -16,6 +16,62 @@ import * as readline from "node:readline";
 import { PluginStore, PluginLoader, validatePluginManifest } from "@fusion/core";
 import { resolveProject } from "../project-context.js";
 
+export interface BuiltinPluginCatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  category: "runtime" | "integration";
+  path?: string;
+  experimental?: boolean;
+}
+
+export const BUILTIN_PLUGINS: BuiltinPluginCatalogEntry[] = [
+  {
+    id: "fusion-plugin-hermes-runtime",
+    name: "Hermes Runtime",
+    description: "Runtime provider for Hermes CLI-backed execution.",
+    category: "runtime",
+    path: "./plugins/fusion-plugin-hermes-runtime",
+    experimental: true,
+  },
+  {
+    id: "fusion-plugin-paperclip-runtime",
+    name: "Paperclip Runtime",
+    description: "Runtime provider for Paperclip agent connections.",
+    category: "runtime",
+    path: "./plugins/fusion-plugin-paperclip-runtime",
+  },
+  {
+    id: "fusion-plugin-openclaw-runtime",
+    name: "OpenClaw Runtime",
+    description: "Runtime provider for OpenClaw execution.",
+    category: "runtime",
+    path: "./plugins/fusion-plugin-openclaw-runtime",
+    experimental: true,
+  },
+  {
+    id: "fusion-plugin-droid-runtime",
+    name: "Droid Runtime",
+    description: "Runtime provider for Droid CLI execution.",
+    category: "runtime",
+    path: "./plugins/fusion-plugin-droid-runtime",
+    experimental: true,
+  },
+  {
+    id: "fusion-plugin-dependency-graph",
+    name: "Dependency Graph",
+    description: "Dashboard plugin for task dependency graph visualization.",
+    category: "integration",
+    path: "./plugins/fusion-plugin-dependency-graph",
+  },
+  {
+    id: "fusion-plugin-agent-browser",
+    name: "Agent Browser",
+    description: "Built-in integration metadata. Package install support lands in FN-3101.",
+    category: "integration",
+  },
+];
+
 /**
  * Get the project path for plugin operations.
  */
@@ -358,6 +414,52 @@ export async function runPluginSetupStatus(
   if (result.version) console.log(`version: ${result.version}`);
   if (result.binaryPath) console.log(`binaryPath: ${result.binaryPath}`);
   if (result.error) console.log(`error: ${result.error}`);
+}
+
+export async function runPluginAvailable(): Promise<void> {
+  console.log();
+  console.log("  ID                             Name                 Category      Installable");
+  console.log("  ──────────────────────────────────────────────────────────────────────────────");
+  for (const plugin of BUILTIN_PLUGINS) {
+    const id = plugin.id.padEnd(30);
+    const name = plugin.name.padEnd(20);
+    const category = plugin.category.padEnd(13);
+    const installable = plugin.path ? "yes" : "metadata-only";
+    console.log(`  ${id} ${name} ${category} ${installable}`);
+  }
+  console.log();
+}
+
+export async function runPluginSettings(
+  id: string,
+  key?: string,
+  value?: string,
+  options?: { projectName?: string },
+): Promise<void> {
+  const pluginStore = await createPluginStore(options?.projectName);
+  const plugin = await pluginStore.getPlugin(id);
+
+  if (!key) {
+    console.log(JSON.stringify(plugin.settings ?? {}, null, 2));
+    return;
+  }
+
+  if (value === undefined) {
+    const currentValue = (plugin.settings ?? {})[key];
+    console.log(currentValue === undefined ? "undefined" : JSON.stringify(currentValue, null, 2));
+    return;
+  }
+
+  const parsedValue = (() => {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  })();
+
+  await pluginStore.updatePluginSettings(id, { [key]: parsedValue });
+  console.log(`✓ Updated ${id}.${key}`);
 }
 
 export async function runPluginSetup(

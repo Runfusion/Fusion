@@ -110,7 +110,6 @@ vi.mock("../../hooks/useConfirm", () => ({
 import {
   AGENT_BROWSER_SETTINGS_SCHEMA,
   BUILTIN_AGENT_BROWSER_PLUGIN_ID,
-  DEFAULT_AGENT_BROWSER_PLUGIN_ID,
   PluginManager,
   STATE_COLORS,
 } from "../PluginManager";
@@ -256,7 +255,7 @@ describe("PluginManager", () => {
     });
 
     expect(screen.getByText("No plugins installed.")).toBeTruthy();
-    expect(screen.getByText("Agent Browser Runtime")).toBeTruthy();
+    expect(screen.getByText("Agent Browser")).toBeTruthy();
     expect(screen.getByText("Hermes Runtime")).toBeTruthy();
     expect(screen.getByText("Paperclip Runtime")).toBeTruthy();
     expect(screen.getByText("OpenClaw Runtime")).toBeTruthy();
@@ -264,7 +263,7 @@ describe("PluginManager", () => {
     expect(screen.getByText("Dependency Graph")).toBeTruthy();
   });
 
-  it("renders built-in agent browser entry with install action when uninstalled", async () => {
+  it("renders built-in agent browser metadata-only entry when uninstalled", async () => {
     render(<PluginManager addToast={addToast} />);
 
     await waitFor(() => {
@@ -273,7 +272,7 @@ describe("PluginManager", () => {
 
     const builtInCard = screen.getAllByText("Agent Browser").find((node) => node.closest(".plugin-builtins-item"))?.closest(".plugin-builtins-item");
     expect(builtInCard).toBeTruthy();
-    expect(within(builtInCard as HTMLElement).getByRole("button", { name: /Install Agent Browser/i })).toBeTruthy();
+    expect(within(builtInCard as HTMLElement).getByText("Built-in metadata only")).toBeTruthy();
   });
 
   it("shows setup-required action for installed built-in agent browser", async () => {
@@ -308,6 +307,7 @@ describe("PluginManager", () => {
         ...mockPlugins[0],
         id: BUILTIN_AGENT_BROWSER_PLUGIN_ID,
         name: "Agent Browser",
+        settingsSchema: {},
       },
     ]);
     vi.mocked(fetchPluginSetupStatus).mockResolvedValueOnce({ hasSetup: true, status: "installed", version: "1.0.0" });
@@ -326,9 +326,12 @@ describe("PluginManager", () => {
     await waitFor(() => {
       expect(fetchPluginSettings).toHaveBeenCalledWith(BUILTIN_AGENT_BROWSER_PLUGIN_ID, undefined);
     });
+    expect(screen.getByText("Enable Agent Browser")).toBeTruthy();
+    expect(screen.getByLabelText("Install Channel")).toBeTruthy();
+    expect(screen.getByLabelText("Command Timeout (ms)")).toBeTruthy();
   });
 
-  it("installs bundled plugins from the bundled plugin section", async () => {
+  it("installs built-in runtime plugins from the built-in section", async () => {
     render(<PluginManager addToast={addToast} />);
 
     await waitFor(() => {
@@ -336,7 +339,7 @@ describe("PluginManager", () => {
     });
 
     const hermesLabel = await screen.findByText("Hermes Runtime");
-    const hermesCard = hermesLabel.closest(".plugin-bundled-runtime-item");
+    const hermesCard = hermesLabel.closest(".plugin-builtins-item");
     expect(hermesCard).toBeTruthy();
 
     const installButton = within(hermesCard as HTMLElement).getByRole("button", { name: /Install Hermes Runtime/i });
@@ -348,7 +351,7 @@ describe("PluginManager", () => {
     });
   });
 
-  it("installs dependency graph from the bundled plugin section", async () => {
+  it("installs dependency graph from the built-in section", async () => {
     render(<PluginManager addToast={addToast} />);
 
     await waitFor(() => {
@@ -356,7 +359,7 @@ describe("PluginManager", () => {
     });
 
     const graphLabel = await screen.findByText("Dependency Graph");
-    const graphCard = graphLabel.closest(".plugin-bundled-runtime-item");
+    const graphCard = graphLabel.closest(".plugin-builtins-item");
     expect(graphCard).toBeTruthy();
 
     const installButton = within(graphCard as HTMLElement).getByRole("button", { name: /Install Dependency Graph/i });
@@ -380,7 +383,6 @@ describe("PluginManager", () => {
     expect(screen.getByText("Test Plugin B")).toBeTruthy();
     expect(screen.getByText("v1.0.0")).toBeTruthy();
     expect(screen.getByText("v2.0.0")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Bundled Plugins" })).toBeTruthy();
     expect(screen.getByText("Dependency Graph")).toBeTruthy();
     expect(screen.getAllByText("Not installed").length).toBeGreaterThan(0);
   });
@@ -621,33 +623,20 @@ describe("PluginManager", () => {
     });
   });
 
-  it("shows Manage for bundled agent browser runtime when already installed", async () => {
-    vi.mocked(fetchPlugins).mockResolvedValueOnce([
-      {
-        ...mockPlugins[0],
-        id: DEFAULT_AGENT_BROWSER_PLUGIN_ID,
-        name: "Agent Browser Runtime",
-      },
-    ]);
-
+  it("shows built-in metadata only state for agent browser when not installed", async () => {
+    vi.mocked(fetchPlugins).mockResolvedValueOnce([]);
     render(<PluginManager addToast={addToast} />);
 
     await waitFor(() => {
-      expect(screen.getAllByText("Agent Browser Runtime").length).toBeGreaterThanOrEqual(2);
+      expect(screen.getByText("Agent Browser")).toBeTruthy();
     });
 
-    const runtimeCard = screen.getAllByText("Agent Browser Runtime")[1]?.closest(".plugin-bundled-runtime-item");
-    expect(runtimeCard).toBeTruthy();
-
-    const manageButton = within(runtimeCard as HTMLElement).getByRole("button", { name: /^Manage$/i });
-    await userEvent.click(manageButton);
-
-    await waitFor(() => {
-      expect(fetchPluginSettings).toHaveBeenCalledWith(DEFAULT_AGENT_BROWSER_PLUGIN_ID, undefined);
-    });
+    const agentBrowserCard = screen.getByText("Agent Browser").closest(".plugin-builtins-item");
+    expect(agentBrowserCard).toBeTruthy();
+    expect(within(agentBrowserCard as HTMLElement).getByText("Built-in metadata only")).toBeTruthy();
   });
 
-  it("shows Manage for bundled dependency graph when already installed", async () => {
+  it("shows Manage for installed dependency graph in built-in section", async () => {
     vi.mocked(fetchPlugins).mockResolvedValueOnce([
       {
         ...mockPlugins[0],
@@ -662,7 +651,7 @@ describe("PluginManager", () => {
       expect(screen.getAllByText("Dependency Graph").length).toBeGreaterThanOrEqual(2);
     });
 
-    const graphCard = screen.getAllByText("Dependency Graph")[1]?.closest(".plugin-bundled-runtime-item");
+    const graphCard = screen.getAllByText("Dependency Graph")[1]?.closest(".plugin-builtins-item");
     expect(graphCard).toBeTruthy();
 
     const manageButton = within(graphCard as HTMLElement).getByRole("button", { name: /^Manage$/i });

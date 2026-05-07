@@ -151,7 +151,7 @@ const settingsSchema: Record<string, PluginSettingSchema> = {
 
 Common optional fields on all setting types:
 
-- `group?: string` — Optional heading used by the dashboard to render settings in grouped sections (for example: `"General"`, `"Browser"`, `"Prompt Contributions"`, `"Skills"`).
+- `group?: string` — Optional heading used by the dashboard to render settings in grouped sections (for example: `"General"`, `"Browser"`, `"Prompt Contributions"`, `"Skills"`). Ungrouped settings still render first in their existing flat order, then grouped sections render under stable headings.
 - `description?: string` — Helper text shown below the setting label.
 - `required?: boolean` — Marks the field as required.
 - `defaultValue?: unknown` — Default value used when no user value is provided.

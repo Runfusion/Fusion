@@ -314,6 +314,18 @@
   font-weight: 500;
 }
 
+.plugin-builtins-runtime-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--btn-border-width) var(--space-xs);
+  border-radius: var(--radius-pill);
+  background: var(--status-in-review-bg);
+  color: var(--in-review);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
 .plugin-builtins-status {
   display: inline-flex;
   align-items: center;
@@ -357,6 +369,19 @@
 .plugin-builtins-setup-status--pending {
   background: var(--status-todo-bg);
   color: var(--color-warning);
+}
+
+.plugin-builtins-description-text {
+  flex: 1 1 100%;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.plugin-builtins-metadata-only {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
 }
 
 .plugin-bundled-runtime-list {
