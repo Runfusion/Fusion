@@ -713,6 +713,69 @@ describe("PUT /settings", () => {
     expect(store.updateSettings).toHaveBeenCalledWith({ maxConcurrent: 8, autoMerge: false });
   });
 
+  it("accepts valid nested evalSettings payload", async () => {
+    (store.updateSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      evalSettings: {
+        enabled: true,
+        intervalMs: 300000,
+        evaluatorProvider: "openai",
+        evaluatorModelId: "gpt-5",
+        followUpPolicy: "suggest-only",
+        retentionDays: 45,
+      },
+    });
+
+    const payload = {
+      evalSettings: {
+        enabled: true,
+        intervalMs: 300000,
+        evaluatorProvider: "openai",
+        evaluatorModelId: "gpt-5",
+        followUpPolicy: "suggest-only",
+        retentionDays: 45,
+      },
+    };
+
+    const res = await REQUEST(buildApp(), "PUT", "/api/settings", JSON.stringify(payload), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateSettings).toHaveBeenCalledWith(payload);
+  });
+
+  it("rejects invalid evalSettings payloads", async () => {
+    const invalidPayloads = [
+      {
+        payload: { evalSettings: { intervalMs: 59_999 } },
+        message: "evalSettings.intervalMs",
+      },
+      {
+        payload: { evalSettings: { retentionDays: 0 } },
+        message: "evalSettings.retentionDays",
+      },
+      {
+        payload: { evalSettings: { followUpPolicy: "create" } },
+        message: "evalSettings.followUpPolicy",
+      },
+      {
+        payload: { evalSettings: { evaluatorProvider: "openai" } },
+        message: "evalSettings.evaluatorProvider and evalSettings.evaluatorModelId",
+      },
+    ];
+
+    for (const { payload, message } of invalidPayloads) {
+      const res = await REQUEST(buildApp(), "PUT", "/api/settings", JSON.stringify(payload), {
+        "Content-Type": "application/json",
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain(message);
+    }
+
+    expect(store.updateSettings).not.toHaveBeenCalled();
+  });
+
   it("accepts partial remoteAccess patches and GET /settings returns merged sibling branches", async () => {
     const mergedRemoteAccess = {
       enabled: true,
@@ -1249,6 +1312,31 @@ describe("GET /settings/scopes", () => {
     expect(res.body.project.planningModelId).toBe("claude-sonnet-4-5");
     expect(res.body.project.titleSummarizerProvider).toBe("google");
     expect(res.body.project.titleSummarizerModelId).toBe("gemini-2.5-pro");
+  });
+
+  it("returns evalSettings in project scope only", async () => {
+    (store.getSettingsByScope as ReturnType<typeof vi.fn>).mockResolvedValue({
+      global: { themeMode: "dark" },
+      project: {
+        evalSettings: {
+          enabled: true,
+          intervalMs: 300000,
+          followUpPolicy: "auto-create",
+          retentionDays: 14,
+        },
+      },
+    });
+
+    const res = await GET(buildApp(), "/api/settings/scopes");
+
+    expect(res.status).toBe(200);
+    expect(res.body.project.evalSettings).toEqual({
+      enabled: true,
+      intervalMs: 300000,
+      followUpPolicy: "auto-create",
+      retentionDays: 14,
+    });
+    expect(res.body.global.evalSettings).toBeUndefined();
   });
 
   it("returns remoteAccess only under project scope", async () => {

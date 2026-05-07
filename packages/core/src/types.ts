@@ -1366,6 +1366,26 @@ export interface ResearchProjectSettings {
   limits?: ResearchProjectLimits;
 }
 
+export type EvalFollowUpPolicy = "disabled" | "suggest-only" | "auto-create";
+
+export interface EvalProjectSettings {
+  enabled?: boolean;
+  intervalMs?: number;
+  evaluatorProvider?: string;
+  evaluatorModelId?: string;
+  followUpPolicy?: EvalFollowUpPolicy;
+  retentionDays?: number;
+}
+
+export interface ResolvedEvalSettings {
+  enabled: boolean;
+  intervalMs: number;
+  evaluatorProvider?: string;
+  evaluatorModelId?: string;
+  followUpPolicy: EvalFollowUpPolicy;
+  retentionDays: number;
+}
+
 export interface GlobalSettings {
   /** Theme mode preference: dark, light, or system (follows OS). Default: "dark". */
   themeMode?: ThemeMode;
@@ -1793,6 +1813,8 @@ export interface ProjectSettings {
   unavailableNodePolicy?: UnavailableNodePolicy;
   /** Project-level research configuration overrides. */
   researchSettings?: ResearchProjectSettings;
+  /** Project-level scheduled eval configuration overrides. */
+  evalSettings?: EvalProjectSettings;
   /** Enable scheduled evaluation batches for recently completed tasks. */
   taskEvaluationEnabled?: boolean;
   /** Cron expression for scheduled task-evaluation batches. */
