@@ -1443,7 +1443,15 @@ export default function kbExtension(pi: ExtensionAPI) {
       if (!run) {
         return {
           content: [{ type: "text", text: `Research run ${params.id} not found.` }],
-          details: { runId: params.id, status: "missing", summary: null, findings: [], citations: [], error: "not found", setup: null },
+          details: {
+            runId: params.id,
+            status: "missing",
+            summary: null,
+            findings: [],
+            citations: [],
+            error: "not found",
+            setup: { code: "NOT_FOUND", message: `Research run ${params.id} not found.` },
+          },
         };
       }
       return { content: [{ type: "text", text: `Research run ${run.id} is ${run.status}.` }], details: toResearchRunDetails(run) };
@@ -1462,7 +1470,16 @@ export default function kbExtension(pi: ExtensionAPI) {
       if (!run) {
         return {
           content: [{ type: "text", text: `Research run ${params.id} not found.` }],
-          details: { runId: params.id, status: "missing", summary: null, findings: [], citations: [], error: "not found", setup: null },
+          isError: true,
+          details: {
+            runId: params.id,
+            status: "missing",
+            summary: null,
+            findings: [],
+            citations: [],
+            error: "not found",
+            setup: { code: "NOT_FOUND", message: `Research run ${params.id} not found.` },
+          },
         };
       }
 
@@ -1499,7 +1516,15 @@ export default function kbExtension(pi: ExtensionAPI) {
         return {
           content: [{ type: "text", text: `Research run ${params.id} not found.` }],
           isError: true,
-          details: { runId: params.id, status: "missing", summary: null, findings: [], citations: [], error: "not found", setup: null },
+          details: {
+            runId: params.id,
+            status: "missing",
+            summary: null,
+            findings: [],
+            citations: [],
+            error: "not found",
+            setup: { code: "NOT_FOUND", message: `Research run ${params.id} not found.` },
+          },
         };
       }
       const isRetryExhausted = run.status === "retry_exhausted" || run.lifecycle?.errorCode === "RETRY_EXHAUSTED";

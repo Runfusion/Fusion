@@ -113,6 +113,77 @@ describe("research extension tools", () => {
     expect(retryBlocked.isError).toBe(true);
   });
 
+  it("returns structured missing-run details for get and cancel", async () => {
+    const store = new TaskStore(tmpDir);
+    await store.init();
+
+    const getTool = api.tools.get("fn_research_get")!;
+    const getResult = await getTool.execute("call-missing-get", { id: "RR-404" }, undefined, undefined, makeCtx(tmpDir));
+    expect(getResult.details.runId).toBe("RR-404");
+    expect(getResult.details.status).toBe("missing");
+    expect(getResult.details.setup.code).toBe("NOT_FOUND");
+
+    const cancelTool = api.tools.get("fn_research_cancel")!;
+    const cancelResult = await cancelTool.execute("call-missing-cancel", { id: "RR-404" }, undefined, undefined, makeCtx(tmpDir));
+    expect(cancelResult.isError).toBe(true);
+    expect(cancelResult.details.runId).toBe("RR-404");
+    expect(cancelResult.details.setup.code).toBe("NOT_FOUND");
+  });
+
+  it("returns completed-run structured findings and citations", async () => {
+    const store = new TaskStore(tmpDir);
+    await store.init();
+
+    const run = store.getResearchStore().createRun({ query: "fusion", topic: "fusion" });
+    store.getResearchStore().setResults(run.id, {
+      summary: "Summary text",
+      findings: [{ heading: "Finding A", content: "Detail A", sources: ["https://example.com/a"] }],
+      citations: [{ title: "Source A", url: "https://example.com/a" }],
+    } as any);
+    store.getResearchStore().updateStatus(run.id, "running");
+    store.getResearchStore().updateStatus(run.id, "completed");
+
+    const getTool = api.tools.get("fn_research_get")!;
+    const result = await getTool.execute("call-complete", { id: run.id }, undefined, undefined, makeCtx(tmpDir));
+    expect(result.details.runId).toBe(run.id);
+    expect(result.details.status).toBe("completed");
+    expect(result.details.summary).toBe("Summary text");
+    expect(result.details.findings).toHaveLength(1);
+    expect(result.details.findings[0]).toMatchObject({ heading: "Finding A", content: "Detail A" });
+    expect(result.details.citations).toHaveLength(1);
+    expect(result.details.citations[0]).toMatchObject({ title: "Source A", url: "https://example.com/a" });
+  });
+
+  it("retries failed run and returns retry linkage metadata", async () => {
+    const store = new TaskStore(tmpDir);
+    await store.init();
+
+    const run = store.getResearchStore().createRun({
+      query: "fusion",
+      topic: "fusion",
+      lifecycle: { retryable: true, attempt: 1, maxAttempts: 3, failureClass: "retryable_transient" },
+    });
+    store.getResearchStore().updateStatus(run.id, "running", {
+      lifecycle: { retryable: true, attempt: 1, maxAttempts: 3, failureClass: "retryable_transient" },
+    });
+    store.getResearchStore().updateStatus(run.id, "failed", {
+      lifecycle: { retryable: true, attempt: 1, maxAttempts: 3, failureClass: "retryable_transient" },
+    });
+
+    const retryTool = api.tools.get("fn_research_retry")!;
+    const retryResult = await retryTool.execute("call-retry", { id: run.id }, undefined, undefined, makeCtx(tmpDir));
+
+    expect(retryResult.isError).not.toBe(true);
+    expect(["queued", "retry_waiting"]).toContain(retryResult.details.status);
+    expect(retryResult.details.runId).not.toBe(run.id);
+
+    const retried = store.getResearchStore().getRun(retryResult.details.runId);
+    expect(retried?.status).toBe("retry_waiting");
+    expect(retried?.lifecycle?.retryOfRunId).toBe(run.id);
+    expect(retried?.lifecycle?.rootRunId).toBe(run.id);
+    expect(retried?.lifecycle?.attempt).toBe(2);
+  });
+
   it("returns INVALID_TRANSITION for cancel on terminal run", async () => {
     const store = new TaskStore(tmpDir);
     await store.init();

@@ -208,7 +208,7 @@ See [CLI Reference → `fn research`](./cli-reference.md) for the full command r
 
 ## API Reference
 
-All research endpoints are under `/api/research`. The router is registered in `packages/dashboard/src/routes/register-integrated-routes.ts`.
+All research endpoints are under `/api/research`. The router is registered in `packages/dashboard/src/routes/register-integrated-routers.ts`.
 
 ### Runs
 
@@ -234,7 +234,9 @@ All research endpoints are under `/api/research`. The router is registered in `p
 | `GET` | `/research/runs/:id/export` | Export run (query param: `format` = `markdown`, `json`, `html`) |
 | `POST` | `/research/runs/:id/exports` | Create an export record |
 | `GET` | `/research/runs/:id/exports` | List exports for a run |
-| `GET` | `/research/exports/:exportId` | Get a specific export |
+| `GET` | `/research/exports/:exportId` | Download/get a specific persisted export |
+
+> Note: CLI/core export formats and server export endpoint formats are intentionally not identical today. CLI/core accept `pdf`, while the server run export endpoint documents `markdown`, `json`, and `html`.
 
 ### Task Integration
 
@@ -280,6 +282,7 @@ AI agents (triage, executor, and custom roles) can use research tools during pla
 | `fn_research_list` | List recent runs. Parameters: `status`, `limit` |
 | `fn_research_get` | Get a run's structured findings. Parameters: `id` |
 | `fn_research_cancel` | Cancel an active run. Parameters: `id` |
+| `fn_research_retry` | Retry a failed/timed-out run when retryable. Parameters: `id` |
 
 ### Tool responses
 

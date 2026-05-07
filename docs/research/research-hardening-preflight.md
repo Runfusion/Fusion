@@ -170,7 +170,13 @@ Key endpoints:
 - Route regression tests explicitly cover finding-to-task create/enrich provenance metadata, task-document writes, duplicate-attachment skip behavior, archived/missing target guards, and payload validation.
 - There is no placeholder/optional assumption that research dashboard files or `/api/research` routes are absent.
 
-## 12) Validation references used for this baseline
+## 12) FN-3369/FN-3599 verification lock note
+
+- Extension research tool contracts are now explicitly locked for missing-run errors and completed-run structured details (`summary`, `findings`, `citations`) across `fn_research_get` / `fn_research_cancel` / `fn_research_retry` behavior.
+- Server-level `/api/research` integration assertions are locked through `createServer` coverage for cancel/retry success paths, structured `400`/`404`/`409` envelopes, and export response contract checks.
+- CLI routing + docs alignment are locked to shipped behavior, including intentional CLI/core vs server export-format asymmetry documentation (no forced unification).
+
+## 13) Validation references used for this baseline
 
 - `packages/dashboard/src/__tests__/research-routes.test.ts`
 - `packages/core/src/__tests__/research-store.test.ts`

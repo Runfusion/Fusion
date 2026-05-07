@@ -93,13 +93,32 @@ fn research retry RR-001 --json
 | `fn research cancel <run-id> [--json]` | Request cancellation for an active run. |
 | `fn research retry <run-id> [--json]` | Create a new retry run from a `failed`/`timed_out` run when lifecycle marks it retryable. |
 
-Disabled/setup behavior mirrors dashboard and agent surfaces:
-- Feature disabled → `FEATURE_DISABLED` (enable project/global research settings)
-- Missing credentials → `MISSING_CREDENTIALS` (configure provider auth)
-- Provider unavailable or cooldown/rate limit → `PROVIDER_UNAVAILABLE` / `RATE_LIMITED` with retry metadata
-- Invalid cancel/retry transitions are reported explicitly (`INVALID_TRANSITION`) with current status context
-- Retry budget exhaustion and non-retryable failures are reported explicitly (`RETRY_EXHAUSTED`, `NON_RETRYABLE_PROVIDER_ERROR`)
-- Non-retryable failures and invalid state transitions are surfaced as structured errors instead of generic failures
+### Research error behavior (`fn research`)
+
+`fn research` returns structured failures with machine-readable codes. The extension/tool-side equivalents are lowercase aliases in payload metadata (`feature-disabled`, `missing-credentials`, `provider-unavailable`, `invalid-transition`, `retry-exhausted`, `non-retryable-provider-error`).
+
+- Feature disabled → `FEATURE_DISABLED` / `feature-disabled`
+- Missing credentials → `MISSING_CREDENTIALS` / `missing-credentials`
+- Provider unavailable/cooldown → `PROVIDER_UNAVAILABLE` / `provider-unavailable`
+- Invalid cancel/retry transition → `INVALID_TRANSITION` / `invalid-transition`
+- Retry budget exhausted → `RETRY_EXHAUSTED` / `retry-exhausted`
+- Non-retryable provider failure → `NON_RETRYABLE_PROVIDER_ERROR` / `non-retryable-provider-error`
+
+Examples:
+
+```bash
+# Feature disabled / setup guard
+fn research create --query "compare x y" --json
+
+# Missing credentials / provider unavailable
+fn research create --query "latest node lts" --json
+
+# Invalid transition (run already terminal)
+fn research cancel RR-001 --json
+
+# Retry exhausted / non-retryable provider error
+fn research retry RR-001 --json
+```
 
 ---
 

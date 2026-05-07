@@ -218,6 +218,7 @@ export function createResearchRouter(store: TaskStore): Router {
       if (["completed", "failed", "cancelled", "timed_out", "retry_exhausted"].includes(existing.status)) {
         res.status(409).json({
           error: `Run ${req.params.id} cannot be cancelled from status ${existing.status}`,
+          code: "INVALID_TRANSITION",
           details: { code: "INVALID_TRANSITION", retryable: false },
         });
         return;
@@ -239,10 +240,12 @@ export function createResearchRouter(store: TaskStore): Router {
       if (error instanceof ResearchLifecycleError && error.code === "not_retryable") {
         const run = getStore().getRun(req.params.id);
         const exhausted = run?.status === "retry_exhausted" || run?.lifecycle?.errorCode === "RETRY_EXHAUSTED";
+        const code = exhausted ? "RETRY_EXHAUSTED" : "NON_RETRYABLE_PROVIDER_ERROR";
         res.status(409).json({
           error: error.message,
+          code,
           details: {
-            code: exhausted ? "RETRY_EXHAUSTED" : "NON_RETRYABLE_PROVIDER_ERROR",
+            code,
             retryable: false,
           },
         });
@@ -251,6 +254,7 @@ export function createResearchRouter(store: TaskStore): Router {
       if (error instanceof ResearchLifecycleError && error.code === "invalid_transition") {
         res.status(409).json({
           error: error.message,
+          code: "INVALID_TRANSITION",
           details: { code: "INVALID_TRANSITION", retryable: false },
         });
         return;
