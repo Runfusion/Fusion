@@ -4380,6 +4380,14 @@ export function DashboardApp({ controller }: DashboardAppProps) {
       return;
     }
     if (key.leftArrow || input === "p" || input === "P") {
+      // While sub-focus is on the narrow log strip, ← returns to the main
+      // pane (System / Stats / Utilities / Settings) instead of cycling
+      // sections — so the user can jump back to System to drag-select the
+      // auth token without losing their place. p/P still cycle sections.
+      if (key.leftArrow && narrowSplitActive && state.narrowLogSplitFocused) {
+        controller.setNarrowLogSplitFocused(false);
+        return;
+      }
       if (state.activeSection !== "logs" || !state.logsExpandedMode) {
         controller.cycleSection(-1);
       }
