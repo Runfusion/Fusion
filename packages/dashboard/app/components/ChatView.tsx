@@ -905,6 +905,26 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     }
   }, [contextMenu]);
 
+  // Lock the composer textarea against drag-pan on mobile. React's onTouchMove
+  // is registered as a passive listener so preventDefault() inside a JSX
+  // handler is a no-op — we attach a non-passive listener directly to the
+  // textarea element. touchmove cancellation blocks drags but tap (touchstart
+  // + touchend without touchmove in between) is unaffected, so first-tap
+  // focus still works.
+  useEffect(() => {
+    if (!isMobile) return;
+    const ta = inputRef.current;
+    if (!ta) return;
+    const onTouchMove = (event: TouchEvent) => {
+      if (typeof window === "undefined" || window.innerWidth > 768) return;
+      event.preventDefault();
+    };
+    ta.addEventListener("touchmove", onTouchMove, { passive: false });
+    return () => {
+      ta.removeEventListener("touchmove", onTouchMove);
+    };
+  }, [isMobile]);
+
   // On mount and on visibility/page restore, if iOS thinks the keyboard is
   // up but the textarea isn't actually focused (or vice versa), the
   // visualViewport metrics get stuck in a half-state — composer pushed up
@@ -1956,16 +1976,6 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                     if (document.activeElement === event.currentTarget) return;
                     event.preventDefault();
                     event.currentTarget.focus({ preventScroll: true });
-                  }}
-                  onTouchMove={(event) => {
-                    // Lock the composer in place. touch-action: manipulation
-                    // is required for first-tap focus to register on iOS,
-                    // but it also permits pan-y, which lets the user drag
-                    // the input box up off-screen. Cancelling touchmove
-                    // blocks the drag without affecting tap (a tap fires
-                    // touchstart + touchend with no touchmove in between).
-                    if (typeof window === "undefined" || window.innerWidth > 768) return;
-                    event.preventDefault();
                   }}
                   rows={1}
                   data-testid="chat-input"
