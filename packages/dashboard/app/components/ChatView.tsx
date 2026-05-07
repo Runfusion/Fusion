@@ -1957,6 +1957,16 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                     event.preventDefault();
                     event.currentTarget.focus({ preventScroll: true });
                   }}
+                  onTouchMove={(event) => {
+                    // Lock the composer in place. touch-action: manipulation
+                    // is required for first-tap focus to register on iOS,
+                    // but it also permits pan-y, which lets the user drag
+                    // the input box up off-screen. Cancelling touchmove
+                    // blocks the drag without affecting tap (a tap fires
+                    // touchstart + touchend with no touchmove in between).
+                    if (typeof window === "undefined" || window.innerWidth > 768) return;
+                    event.preventDefault();
+                  }}
                   rows={1}
                   data-testid="chat-input"
                 />
