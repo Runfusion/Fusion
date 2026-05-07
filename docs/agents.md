@@ -587,10 +587,14 @@ The dashboard mailbox UI also uses the same metadata contract when users click *
 
 For dashboard user messaging, agents should target the canonical user recipient ID `dashboard`.
 
+When an agent is sending to the dashboard user through `fn_send_message`, the message must be stored as `agent-to-user` (agent → dashboard user), not as a user/CLI → agent mailbox message.
+
 Runtime safeguards defensively normalize the legacy alias forms below to the same logical dashboard user:
 - `dashboard` (canonical)
 - `user:dashboard`
 - `User: user:dashboard`
+
+If the message type is omitted but the recipient normalizes to the dashboard user alias, routing defaults to the `agent-to-user` direction to preserve correct inbox semantics.
 
 This normalization applies on send and mailbox reads, so replies from agents still land in the dashboard inbox even when older alias-like recipient strings appear.
 

@@ -981,6 +981,8 @@ describe("ChatManager.sendMessage", () => {
     expect(mockAgentStore.init).toHaveBeenCalledTimes(1);
     expect(mockAgentStore.getAgent).toHaveBeenCalledWith("agent-001");
     expect(createOptions.systemPrompt).toContain("Be calm and precise.");
+    expect(createOptions.systemPrompt).toContain("type: \"agent-to-user\"");
+    expect(createOptions.systemPrompt).toContain("to_id: \"dashboard\"");
   });
 
   it("passes enriched system prompt with agent memory when agent context is available", async () => {

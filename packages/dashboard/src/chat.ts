@@ -122,6 +122,8 @@ async function ensureEngineReady(): Promise<void> {
 /** Chat system prompt for the AI agent */
 const CHAT_SYSTEM_PROMPT = `You are a helpful AI assistant integrated into the fn task board system. You help users with questions about their project, code, architecture, and tasks. You have access to project files and can read them to provide informed responses. Be concise, accurate, and helpful. When referencing files or code, provide specific paths and line numbers when possible.`;
 
+const CHAT_AGENT_MESSAGE_ROUTING_GUIDANCE = `## Messaging Semantics\n\nWhen this chat is bound to an agent and you need to send a mailbox message to the dashboard user, use \`fn_send_message\` with \`type: "agent-to-user"\` and target the dashboard user alias (\`to_id: "dashboard"\` is preferred). Never route that as a user/CLI → agent message.`;
+
 /** Rate limiting window in milliseconds (1 minute) */
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 
@@ -862,6 +864,7 @@ export class ChatManager {
             basePrompt: CHAT_SYSTEM_PROMPT,
             includeProjectMemory: true,
           });
+          systemPrompt = `${systemPrompt}\n\n${CHAT_AGENT_MESSAGE_ROUTING_GUIDANCE}`;
         } catch (promptBuildError) {
           const message = promptBuildError instanceof Error ? promptBuildError.message : String(promptBuildError);
           diagnostics.warn(`Failed to build enriched system prompt for ${agent.id}: ${message}`);

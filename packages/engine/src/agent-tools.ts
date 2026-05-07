@@ -1431,7 +1431,9 @@ export function createSendMessageTool(messageStore: MessageStore, fromAgentId: s
       }
 
       try {
-        const messageType = params.type ?? "agent-to-agent";
+        const inferredDashboardRecipient = normalizeMessageParticipant(params.to_id, "user");
+        const messageType = params.type
+          ?? (inferredDashboardRecipient.id === DASHBOARD_USER_ID ? "agent-to-user" : "agent-to-agent");
         const recipientType: "user" | "agent" = messageType === "agent-to-user" ? "user" : "agent";
         const recipient = recipientType === "user"
           ? normalizeMessageParticipant(params.to_id, recipientType)

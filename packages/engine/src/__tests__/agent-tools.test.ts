@@ -716,6 +716,23 @@ describe("createSendMessageTool", () => {
     );
   });
 
+  it.each(["dashboard", "user:dashboard", "User: user:dashboard"])(
+    "infers agent-to-user when type is omitted for dashboard alias '%s'",
+    async (dashboardAlias) => {
+      const mockMessage = createMessage({ toId: "dashboard", toType: "user", type: "agent-to-user" });
+      vi.mocked(messageStore.sendMessage).mockReturnValue(mockMessage);
+
+      await executeTool(tool, {
+        to_id: dashboardAlias,
+        content: "Test",
+      });
+
+      expect(messageStore.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ toId: "dashboard", toType: "user", type: "agent-to-user" }),
+      );
+    },
+  );
+
   it("uses provided type when specified and maps recipient type for agent-to-user", async () => {
     const mockMessage = createMessage({ toType: "user", type: "agent-to-user" });
     vi.mocked(messageStore.sendMessage).mockReturnValue(mockMessage);
