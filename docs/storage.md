@@ -177,6 +177,8 @@ Additional backend notes:
 | `automations` | Scheduled automation definitions, run state, and run history. |
 | `agents` | Agent registry/state/task assignment metadata. |
 | `agentHeartbeats` | Heartbeat run events linked to agents (`agentId` FK cascade). |
+| `approval_requests` | Durable approval request records: requester actor snapshot, target action payload (category/action/resource/context), lifecycle status (`pending`/`approved`/`denied`/`completed`), optional task/run context, and requested/decided/completed timestamps. |
+| `approval_request_audit_events` | Append-only audit trail for approval requests. Each row stores event type (`created`/`approved`/`denied`/`completed`), immutable actor snapshot, optional note, and deterministic per-request ordering by `(createdAt, rowid)`. |
 | `task_documents` | Task-scoped document metadata/content keyed by `(taskId, key)` with current revision pointer. |
 | `task_document_revisions` | Immutable revision history for task documents (content snapshots by revision). |
 | `__meta` | Schema version + monotonic `lastModified` change detector. |

@@ -88,7 +88,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 67;
+const SCHEMA_VERSION = 68;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -2680,6 +2680,51 @@ export class Database {
         this.db.exec(`DROP TABLE IF EXISTS project_auth_providers`);
         this.db.exec(`DROP TABLE IF EXISTS project_auth_memberships`);
         this.db.exec(`DROP TABLE IF EXISTS project_auth_users`);
+      });
+    }
+
+    if (version < 68) {
+      this.applyMigration(68, () => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS approval_requests (
+            id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            requesterActorId TEXT NOT NULL,
+            requesterActorType TEXT NOT NULL,
+            requesterActorName TEXT NOT NULL,
+            targetActionCategory TEXT NOT NULL,
+            targetActionOperation TEXT NOT NULL,
+            targetActionSummary TEXT NOT NULL,
+            targetResourceType TEXT NOT NULL,
+            targetResourceId TEXT NOT NULL,
+            targetContext TEXT,
+            taskId TEXT,
+            runId TEXT,
+            requestedAt TEXT NOT NULL,
+            decidedAt TEXT,
+            completedAt TEXT,
+            createdAt TEXT NOT NULL,
+            updatedAt TEXT NOT NULL
+          )
+        `);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxApprovalRequestsStatusCreatedAt ON approval_requests(status, createdAt)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxApprovalRequestsRequesterCreatedAt ON approval_requests(requesterActorId, createdAt)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxApprovalRequestsTaskCreatedAt ON approval_requests(taskId, createdAt)`);
+
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS approval_request_audit_events (
+            id TEXT PRIMARY KEY,
+            requestId TEXT NOT NULL,
+            eventType TEXT NOT NULL,
+            actorId TEXT NOT NULL,
+            actorType TEXT NOT NULL,
+            actorName TEXT NOT NULL,
+            note TEXT,
+            createdAt TEXT NOT NULL,
+            FOREIGN KEY (requestId) REFERENCES approval_requests(id) ON DELETE CASCADE
+          )
+        `);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idxApprovalRequestAuditRequestCreatedAt ON approval_request_audit_events(requestId, createdAt, id)`);
       });
     }
 

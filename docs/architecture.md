@@ -152,7 +152,7 @@ Concrete references:
 - **Database adapter**: `packages/core/src/db.ts`
   - SQLite (`node:sqlite`) with WAL mode + foreign keys
   - JSON helpers: `toJson`, `toJsonNullable`, `fromJson`
-  - Core schema tables include: `tasks`, `config`, `workflow_steps`, `activityLog`, `archivedTasks`, `automations`, `agents`, `agentHeartbeats`, `task_documents`, `task_document_revisions`, mission hierarchy tables (`missions`, `milestones`, `slices`, `mission_features`, `mission_events`), plugin/routine tables (`plugins`, `routines`), roadmap tables (`roadmaps`, `roadmap_milestones`, `roadmap_features`), insight tables (`project_insights`, `project_insight_runs`), research tables (`research_runs`, `research_exports`, `research_run_events`), eval tables (`eval_runs`, `eval_task_results`, `eval_run_events`), todo tables (`todo_lists`, `todo_items`), `__meta`
+  - Core schema tables include: `tasks`, `config`, `workflow_steps`, `activityLog`, `archivedTasks`, `automations`, `agents`, `agentHeartbeats`, approval tables (`approval_requests`, `approval_request_audit_events`), `task_documents`, `task_document_revisions`, mission hierarchy tables (`missions`, `milestones`, `slices`, `mission_features`, `mission_events`), plugin/routine tables (`plugins`, `routines`), roadmap tables (`roadmaps`, `roadmap_milestones`, `roadmap_features`), insight tables (`project_insights`, `project_insight_runs`), research tables (`research_runs`, `research_exports`, `research_run_events`), eval tables (`eval_runs`, `eval_task_results`, `eval_run_events`), todo tables (`todo_lists`, `todo_items`), `__meta`
   - Migration-created tables include: `ai_sessions`, `messages`, `agentRatings`, `chat_sessions`, `chat_messages`, `runAuditEvents`, `mission_contract_assertions`, `mission_feature_assertions`, `mission_validator_runs`, `mission_validator_failures`, `mission_fix_feature_lineage`
   - `ai_sessions.status` lifecycle includes `draft` (pre-start planning session), then `generating`, `awaiting_input`, terminal `complete` / `error`
 - **Standalone roadmap model**: `packages/core/src/roadmap-types.ts`, `roadmap-ordering.ts`, `roadmap-store.ts`
@@ -168,7 +168,8 @@ Concrete references:
   - `AgentStore` (`agent-store.ts`) — filesystem-based agent metadata + heartbeat run history
   - `MissionStore` (`mission-store.ts`) — mission/milestone/slice/feature hierarchy
   - `AutomationStore` (`automation-store.ts`) — scheduled jobs with global/project scope isolation
-  - `MessageStore` (`message-store.ts`) — mailbox/inbox/outbox messaging
+  - `MessageStore` (`message-store.ts`) — SQLite-backed mailbox/inbox/outbox messaging
+  - `ApprovalRequestStore` (`approval-request-store.ts`) — durable approval request lifecycle + append-only audit events
   - `ChatStore` (`chat-store.ts`) — session/message persistence for agent chat
   - `InsightStore` (`insight-store.ts`) — project insight persistence + dedupe/run tracking
   - `ReflectionStore` (`reflection-store.ts`) — agent reflection records and performance snapshots
@@ -814,8 +815,9 @@ SQLite schema is initialized in `packages/core/src/db.ts` and uses:
 
 ### File-based side stores
 Some data remains intentionally filesystem-based:
-- Agents: `.fusion/agents/*` (`AgentStore`)
-- Messages: `.fusion/messages/*` (`MessageStore`)
+- Agent instruction bundles and heartbeat markdown: `.fusion/agents/*` (`AgentStore`)
+
+Agent/message/approval metadata and history now persist in SQLite tables.
 
 ### Migration from legacy file storage
 - Detection + migration: `packages/core/src/db-migrate.ts`

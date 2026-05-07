@@ -3708,6 +3708,112 @@ export interface AgentPermissionPolicy {
   rules: AgentPermissionPolicyRules;
 }
 
+/** Approval request lifecycle statuses. */
+export const APPROVAL_REQUEST_STATUSES = ["pending", "approved", "denied", "completed"] as const;
+
+/** A single approval request lifecycle status. */
+export type ApprovalRequestStatus = (typeof APPROVAL_REQUEST_STATUSES)[number];
+
+/** Append-only audit event types for approval requests. */
+export const APPROVAL_REQUEST_AUDIT_EVENT_TYPES = [
+  "created",
+  "approved",
+  "denied",
+  "completed",
+] as const;
+
+/** A single append-only audit event type for approval requests. */
+export type ApprovalRequestAuditEventType = (typeof APPROVAL_REQUEST_AUDIT_EVENT_TYPES)[number];
+
+/** Immutable actor identity snapshot captured at request/audit event time. */
+export interface ApprovalRequestActorSnapshot {
+  actorId: string;
+  actorType: "agent" | "user" | "system";
+  actorName: string;
+}
+
+/** Action payload gated by an approval request. */
+export interface ApprovalRequestTargetAction {
+  category: AgentPermissionPolicyActionCategory;
+  action: string;
+  summary: string;
+  resourceType: string;
+  resourceId: string;
+  context?: Record<string, unknown>;
+}
+
+/** Append-only audit event row for approval request history. */
+export interface ApprovalRequestAuditEvent {
+  id: string;
+  requestId: string;
+  eventType: ApprovalRequestAuditEventType;
+  actor: ApprovalRequestActorSnapshot;
+  note?: string;
+  createdAt: string;
+}
+
+/** Durable approval request record used by engine and dashboard surfaces. */
+export interface ApprovalRequest {
+  id: string;
+  status: ApprovalRequestStatus;
+  requester: ApprovalRequestActorSnapshot;
+  targetAction: ApprovalRequestTargetAction;
+  taskId?: string;
+  runId?: string;
+  requestedAt: string;
+  decidedAt?: string;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Create input for a new pending approval request. */
+export interface ApprovalRequestCreateInput {
+  requester: ApprovalRequestActorSnapshot;
+  targetAction: ApprovalRequestTargetAction;
+  taskId?: string;
+  runId?: string;
+}
+
+/** Input for pending->approved / pending->denied decisions. */
+export interface ApprovalRequestDecisionInput {
+  actor: ApprovalRequestActorSnapshot;
+  note?: string;
+}
+
+/** Input for approved->completed transition. */
+export interface ApprovalRequestCompletionInput {
+  actor: ApprovalRequestActorSnapshot;
+  note?: string;
+}
+
+/** Query filters for approval request listings. */
+export interface ApprovalRequestListInput {
+  status?: ApprovalRequestStatus;
+  requesterActorId?: string;
+  taskId?: string;
+  runId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/** True when a transition is valid for approval request lifecycle rules. */
+export function isValidApprovalRequestTransition(
+  from: ApprovalRequestStatus,
+  to: ApprovalRequestStatus,
+): boolean {
+  if (from === to) {
+    return true;
+  }
+  if (from === "pending") {
+    return to === "approved" || to === "denied";
+  }
+  if (from === "approved") {
+    return to === "completed";
+  }
+  return false;
+}
+
 /** Describes how an agent's task assignment capability was determined. */
 export type TaskAssignSource =
   | "role_default" // Granted automatically by role (e.g., scheduler gets tasks:assign)
