@@ -328,8 +328,11 @@ export function createInsightsRouter(store: TaskStore): Router {
       if (!taskStore) throw new ApiError(500, "Store context not available");
       const rootDir = taskStore.getRootDir();
       const settings = await taskStore.getSettings();
-      const modelProvider = typeof req.body.modelProvider === "string" ? req.body.modelProvider : undefined;
-      const modelId = typeof req.body.modelId === "string" ? req.body.modelId : undefined;
+      const rawProvider = typeof req.body.modelProvider === "string" ? req.body.modelProvider.trim() : undefined;
+      const rawModelId = typeof req.body.modelId === "string" ? req.body.modelId.trim() : undefined;
+      // Require both provider and model ID together — partial values are discarded
+      const modelProvider = rawProvider && rawModelId ? rawProvider : undefined;
+      const modelId = rawProvider && rawModelId ? rawModelId : undefined;
       const controller = new AbortController();
 
       // Stash model selection in inputMetadata.metadata so retries can recover it

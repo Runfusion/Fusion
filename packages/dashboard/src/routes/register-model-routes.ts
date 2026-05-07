@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { resolvePlanningSettingsModel } from "@fusion/core";
@@ -11,7 +11,7 @@ import type { ApiRouteRegistrar } from "./types.js";
  * as opposed to supplemental credentials inherited from Codex CLI,
  * Claude Code, or environment variables.
  */
-function getConfiguredProviderNames(): Set<string> {
+async function getConfiguredProviderNames(): Promise<Set<string>> {
   const home = process.env.HOME || process.env.USERPROFILE || homedir();
   const providers = new Set<string>();
 
@@ -23,14 +23,14 @@ function getConfiguredProviderNames(): Set<string> {
   ];
 
   for (const authPath of authPaths) {
-    if (!existsSync(authPath)) continue;
     try {
-      const parsed = JSON.parse(readFileSync(authPath, "utf-8")) as Record<string, unknown>;
+      await access(authPath);
+      const parsed = JSON.parse(await readFile(authPath, "utf-8")) as Record<string, unknown>;
       for (const key of Object.keys(parsed)) {
         providers.add(key);
       }
     } catch {
-      // Ignore invalid auth files
+      // Ignore missing or invalid auth files
     }
   }
 
@@ -41,9 +41,9 @@ function getConfiguredProviderNames(): Set<string> {
     join(home, ".pi", "models.json"),
   ];
   for (const modelsPath of modelsPaths) {
-    if (!existsSync(modelsPath)) continue;
     try {
-      const parsed = JSON.parse(readFileSync(modelsPath, "utf-8")) as {
+      await access(modelsPath);
+      const parsed = JSON.parse(await readFile(modelsPath, "utf-8")) as {
         providers?: Record<string, { apiKey?: string }>;
       };
       const provs = parsed?.providers;
@@ -55,7 +55,7 @@ function getConfiguredProviderNames(): Set<string> {
         }
       }
     } catch {
-      // Ignore invalid models.json
+      // Ignore missing or invalid models.json
     }
   }
 
@@ -159,13 +159,11 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
       // have set up in Fusion. We restrict to providers with credentials
       // in Fusion's own auth stores (primary + legacy .pi + models.json),
       // plus any providers enabled via settings toggles (Claude CLI, etc.).
-      const configuredProviders = getConfiguredProviderNames();
+      const configuredProviders = await getConfiguredProviderNames();
       if (useClaudeCli) configuredProviders.add("pi-claude-cli");
       if (useDroidCli) configuredProviders.add("droid-cli");
       if (useLlamaCpp) configuredProviders.add("llama-server");
-      if (configuredProviders.size > 0) {
-        models = models.filter((m) => configuredProviders.has(m.provider));
-      }
+      models = models.filter((m) => configuredProviders.has(m.provider));
 
       res.json({
         models,

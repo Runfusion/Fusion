@@ -101,6 +101,16 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
         setFavoriteProviders(res.favoriteProviders);
         setFavoriteModels(res.favoriteModels);
         setResolvedPlanningProvider(res.resolvedPlanningProvider);
+
+        // Clear persisted model override if the model is no longer available
+        const savedModel = localStorage.getItem("fusion-insight-model");
+        if (savedModel) {
+          const available = res.models.some((m) => `${m.provider}/${m.id}` === savedModel);
+          if (!available) {
+            localStorage.removeItem("fusion-insight-model");
+            setSelectedModel("");
+          }
+        }
       })
       .catch(() => {});
   }, [modelsProp]);
