@@ -18,6 +18,8 @@ import { getPluginNavIcon } from "./pluginNavIcon";
 
 export { useViewportMode };
 
+const NO_BRANCH_FILTER_VALUE = "__none__";
+
 // Status icon config for project selector dropdown
 const PROJECT_STATUS_CONFIG: Record<ProjectStatus, { color: string }> = {
   active: { color: "var(--success)" },
@@ -210,6 +212,12 @@ export interface HeaderProps {
   showAgentsTab?: boolean;
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
+  branchFilter?: string | null;
+  baseBranchFilter?: string | null;
+  branchOptions?: string[];
+  baseBranchOptions?: string[];
+  onBranchFilterChange?: (value: string | null) => void;
+  onBaseBranchFilterChange?: (value: string | null) => void;
   /** Multi-project props */
   projects?: ProjectInfo[];
   currentProject?: ProjectInfo | null;
@@ -268,6 +276,12 @@ export function Header({
   showAgentsTab,
   searchQuery = "",
   onSearchChange,
+  branchFilter = null,
+  baseBranchFilter = null,
+  branchOptions = [],
+  baseBranchOptions = [],
+  onBranchFilterChange,
+  onBaseBranchFilterChange,
   projects = [],
   currentProject,
   onSelectProject,
@@ -647,6 +661,7 @@ export function Header({
   // Show toggle when search is available, NOT currently shown, NOT explicitly closed, AND query is empty
   const canShowNonMobileSearchToggle = (view === "board" || view === "list") && !isMobile && onSearchChange && !isNonMobileSearchExplicitlyClosed && searchQuery.length === 0;
   const canShowNonMobileSearch = (view === "board" || view === "list") && !isMobile && onSearchChange;
+  const showBoardBranchFilters = view === "board";
 
   // Reset explicit close flag when query becomes empty (so toggle reappears)
   useEffect(() => {
@@ -1881,6 +1896,44 @@ export function Header({
             <X size={14} />
           </button>
         </div>
+        {showBoardBranchFilters && (
+          <div className="header-branch-filters" data-testid="header-branch-filters-desktop">
+            <label className="header-branch-filter-label">
+              <span>Working branch</span>
+              <select
+                className="header-branch-filter-select"
+                value={branchFilter ?? ""}
+                onChange={(event) => onBranchFilterChange?.(event.target.value || null)}
+                data-testid="working-branch-filter"
+              >
+                <option value="">All working branches</option>
+                <option value={NO_BRANCH_FILTER_VALUE}>No working branch</option>
+                {branchOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="header-branch-filter-label">
+              <span>Target branch</span>
+              <select
+                className="header-branch-filter-select"
+                value={baseBranchFilter ?? ""}
+                onChange={(event) => onBaseBranchFilterChange?.(event.target.value || null)}
+                data-testid="target-branch-filter"
+              >
+                <option value="">All target branches</option>
+                <option value={NO_BRANCH_FILTER_VALUE}>No target branch</option>
+                {baseBranchOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
       </div>
     )}
 
@@ -1909,6 +1962,44 @@ export function Header({
             <X size={14} />
           </button>
         </div>
+        {showBoardBranchFilters && (
+          <div className="header-branch-filters" data-testid="header-branch-filters-mobile">
+            <label className="header-branch-filter-label">
+              <span>Working branch</span>
+              <select
+                className="header-branch-filter-select"
+                value={branchFilter ?? ""}
+                onChange={(event) => onBranchFilterChange?.(event.target.value || null)}
+                data-testid="working-branch-filter-mobile"
+              >
+                <option value="">All working branches</option>
+                <option value={NO_BRANCH_FILTER_VALUE}>No working branch</option>
+                {branchOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="header-branch-filter-label">
+              <span>Target branch</span>
+              <select
+                className="header-branch-filter-select"
+                value={baseBranchFilter ?? ""}
+                onChange={(event) => onBaseBranchFilterChange?.(event.target.value || null)}
+                data-testid="target-branch-filter-mobile"
+              >
+                <option value="">All target branches</option>
+                <option value={NO_BRANCH_FILTER_VALUE}>No target branch</option>
+                {baseBranchOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
       </div>
     )}
   </div>

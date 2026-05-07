@@ -1052,6 +1052,62 @@ describe("Header", () => {
       fireEvent.click(screen.getByLabelText("Close search"));
       expect(onSearchChange).toHaveBeenCalledWith("");
     });
+
+    it("renders branch filters in desktop board search panel only", () => {
+      renderHeader({
+        onSearchChange: vi.fn(),
+        view: "board",
+        branchOptions: ["feature/a"],
+        baseBranchOptions: ["main"],
+      });
+      fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+      expect(screen.getByTestId("header-branch-filters-desktop")).toBeInTheDocument();
+      expect(screen.getByTestId("working-branch-filter")).toBeInTheDocument();
+      expect(screen.getByTestId("target-branch-filter")).toBeInTheDocument();
+    });
+
+    it("does not render branch filters in list view", () => {
+      renderHeader({ onSearchChange: vi.fn(), view: "list" });
+      fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+      expect(screen.queryByTestId("header-branch-filters-desktop")).toBeNull();
+    });
+
+    it("calls branch filter callbacks with selected values, unassigned sentinel, and reset", () => {
+      const onBranchFilterChange = vi.fn();
+      const onBaseBranchFilterChange = vi.fn();
+      renderHeader({
+        onSearchChange: vi.fn(),
+        view: "board",
+        branchOptions: ["feature/a"],
+        baseBranchOptions: ["release"],
+        onBranchFilterChange,
+        onBaseBranchFilterChange,
+      });
+      fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+      fireEvent.change(screen.getByTestId("working-branch-filter"), { target: { value: "feature/a" } });
+      fireEvent.change(screen.getByTestId("working-branch-filter"), { target: { value: "__none__" } });
+      fireEvent.change(screen.getByTestId("target-branch-filter"), { target: { value: "release" } });
+      fireEvent.change(screen.getByTestId("target-branch-filter"), { target: { value: "__none__" } });
+      fireEvent.change(screen.getByTestId("working-branch-filter"), { target: { value: "" } });
+      expect(onBranchFilterChange).toHaveBeenCalledWith("feature/a");
+      expect(onBranchFilterChange).toHaveBeenCalledWith("__none__");
+      expect(onBranchFilterChange).toHaveBeenCalledWith(null);
+      expect(onBaseBranchFilterChange).toHaveBeenCalledWith("release");
+      expect(onBaseBranchFilterChange).toHaveBeenCalledWith("__none__");
+    });
+
+    it("renders branch filters in mobile expanded search for board view", () => {
+      renderHeader({
+        onSearchChange: vi.fn(),
+        view: "board",
+        branchOptions: ["feature/mobile"],
+        baseBranchOptions: ["main"],
+      }, "mobile");
+      fireEvent.click(screen.getByTestId("mobile-header-search-btn"));
+      expect(screen.getByTestId("header-branch-filters-mobile")).toBeInTheDocument();
+      expect(screen.getByTestId("working-branch-filter-mobile")).toBeInTheDocument();
+      expect(screen.getByTestId("target-branch-filter-mobile")).toBeInTheDocument();
+    });
   });
 
   describe("automation button", () => {

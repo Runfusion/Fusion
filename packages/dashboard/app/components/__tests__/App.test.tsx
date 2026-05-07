@@ -3258,3 +3258,142 @@ describe("FN-3290: modal keyboard isolation for mobile dashboard layout", () => 
     });
   });
 });
+
+describe("App board branch filters", () => {
+  function makeTask(id: string, title: string, branch?: string, baseBranch?: string) {
+    return {
+      id,
+      title,
+      description: title,
+      column: "todo",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      ...(branch ? { branch } : {}),
+      ...(baseBranch ? { baseBranch } : {}),
+    };
+  }
+
+  it("filters board tasks by working and target branch in local mode", async () => {
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [
+        makeTask("FN-1", "Task Alpha", "feature/a", "main"),
+        makeTask("FN-2", "Task Beta", "feature/b", "release"),
+      ],
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(),
+    }));
+
+    render(<App />);
+    await waitForAppShell();
+
+    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+    fireEvent.change(screen.getByTestId("working-branch-filter"), { target: { value: "feature/a" } });
+    fireEvent.change(screen.getByTestId("target-branch-filter"), { target: { value: "main" } });
+
+    await waitFor(() => {
+      expect(screen.getByText("Task Alpha")).toBeTruthy();
+      expect(screen.queryByText("Task Beta")).toBeNull();
+    });
+  });
+
+  it("supports filtering for tasks without branch values", async () => {
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [
+        makeTask("FN-1", "Unassigned Task"),
+        makeTask("FN-2", "Assigned Task", "feature/a", "main"),
+      ],
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(),
+    }));
+
+    render(<App />);
+    await waitForAppShell();
+
+    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+    fireEvent.change(screen.getByTestId("working-branch-filter"), { target: { value: "__none__" } });
+
+    await waitFor(() => {
+      expect(screen.getByText("Unassigned Task")).toBeTruthy();
+      expect(screen.queryByText("Assigned Task")).toBeNull();
+    });
+  });
+
+  it("derives branch filter options from remote task data in remote mode", async () => {
+    mockNodeContextValue.isRemote = true;
+    mockNodeContextValue.currentNodeId = "node-1";
+
+    const remoteSpy = vi.spyOn(apiNodeModule, "useRemoteNodeData").mockReturnValue({
+      projects: [],
+      tasks: [makeTask("FN-3", "Remote Task", "feature/remote", "develop")],
+      health: null,
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+    });
+
+    render(<App />);
+    await waitForAppShell();
+
+    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+    expect(screen.getByRole("option", { name: "feature/remote" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "develop" })).toBeTruthy();
+    remoteSpy.mockRestore();
+  });
+
+  it("composes with search and does not affect list view tasks", async () => {
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [
+        makeTask("FN-4", "Alpha Search", "feature/a", "main"),
+        makeTask("FN-5", "Beta Search", "feature/b", "main"),
+      ],
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(),
+    }));
+
+    render(<App />);
+    await waitForAppShell();
+
+    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+    fireEvent.change(screen.getByPlaceholderText("Search tasks..."), { target: { value: "Search" } });
+    fireEvent.change(screen.getByTestId("working-branch-filter"), { target: { value: "feature/a" } });
+
+    await waitFor(() => {
+      expect(screen.getByText("Alpha Search")).toBeTruthy();
+      expect(screen.queryByText("Beta Search")).toBeNull();
+    });
+
+    fireEvent.click(screen.getByTitle("List view"));
+    await waitFor(() => {
+      expect(screen.getByText("Alpha Search")).toBeTruthy();
+      expect(screen.getByText("Beta Search")).toBeTruthy();
+    });
+  });
+});

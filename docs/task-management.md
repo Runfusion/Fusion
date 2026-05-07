@@ -112,6 +112,12 @@ fn task unarchive FN-001
 
 Task cards on the board surface branch metadata when present so users can scan both the working branch and merge target without opening task details.
 
+The board header search panel now includes two **board-only** branch filters:
+- **Working branch** filters by `task.branch`
+- **Target branch** filters by `task.baseBranch`
+
+These filters apply only to board rendering (not list view). Each filter supports concrete branch values plus a **No branch** option that matches tasks where `branch` or `baseBranch` is unset. Persisted filter state remains intentionally deferred to follow-up task FN-3426.
+
 Task branch fields are intentionally distinct:
 
 - `task.branch` — the actual working branch used for the task worktree (for example `fusion/fn-1234` or a conflict-suffixed variant).

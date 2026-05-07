@@ -116,6 +116,7 @@ function prefetchLazyViews() {
 
 const SETUP_WARNING_DISMISSED_KEY = "kb-setup-warning-dismissed";
 const ACTIVE_CHAT_SESSION_STORAGE_KEY = "kb-chat-active-session";
+const NO_BRANCH_FILTER_VALUE = "__none__";
 
 function buildRemoteDashboardUrl(serverUrl: string, authToken?: string | null): string {
   const url = new URL(serverUrl);
@@ -206,6 +207,8 @@ function AppInner() {
   
   // Search query state - must be defined before useTasks
   const [searchQuery, setSearchQuery] = useState("");
+  const [branchFilter, setBranchFilter] = useState<string | null>(null);
+  const [baseBranchFilter, setBaseBranchFilter] = useState<string | null>(null);
   
   // Remote node data and events when in remote mode (pass searchQuery for server-side filtering)
   const remoteData = useRemoteNodeData(currentNodeId, { projectId: currentProject?.id, searchQuery: searchQuery || undefined });
@@ -278,6 +281,8 @@ function AppInner() {
       sseEnabled: taskSseEnabled,
     }
   );
+
+  const boardSourceTasks = isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks;
 
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [researchReadinessVersion, setResearchReadinessVersion] = useState(0);
@@ -412,6 +417,48 @@ function AppInner() {
       },
     });
   }, [currentProject?.id, taskView]);
+
+  const branchOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        boardSourceTasks
+          .map((task) => task.branch?.trim())
+          .filter((branch): branch is string => Boolean(branch && branch.length > 0)),
+      ),
+    ).sort((a, b) => a.localeCompare(b));
+  }, [boardSourceTasks]);
+
+  const baseBranchOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        boardSourceTasks
+          .map((task) => task.baseBranch?.trim())
+          .filter((baseBranch): baseBranch is string => Boolean(baseBranch && baseBranch.length > 0)),
+      ),
+    ).sort((a, b) => a.localeCompare(b));
+  }, [boardSourceTasks]);
+
+  const filteredBoardTasks = useMemo(() => {
+    return boardSourceTasks.filter((task) => {
+      const taskBranch = task.branch?.trim() ?? null;
+      const taskBaseBranch = task.baseBranch?.trim() ?? null;
+      if (branchFilter === NO_BRANCH_FILTER_VALUE) {
+        if (taskBranch) {
+          return false;
+        }
+      } else if (branchFilter && taskBranch !== branchFilter) {
+        return false;
+      }
+      if (baseBranchFilter === NO_BRANCH_FILTER_VALUE) {
+        if (taskBaseBranch) {
+          return false;
+        }
+      } else if (baseBranchFilter && taskBaseBranch !== baseBranchFilter) {
+        return false;
+      }
+      return true;
+    });
+  }, [boardSourceTasks, branchFilter, baseBranchFilter]);
 
   // Nodes management is an overlay view (not a modal), so it stays local to App.
   const [nodesOpen, setNodesOpen] = useState(false);
@@ -1129,7 +1176,7 @@ function AppInner() {
       return (
         <PageErrorBoundary>
           <Board
-            tasks={isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks}
+            tasks={filteredBoardTasks}
             projectId={currentProject?.id}
             maxConcurrent={maxConcurrent}
             onMoveTask={moveTask}
@@ -1252,6 +1299,12 @@ function AppInner() {
         showAgentsTab={agentsEnabled}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
+        branchFilter={branchFilter}
+        baseBranchFilter={baseBranchFilter}
+        branchOptions={branchOptions}
+        baseBranchOptions={baseBranchOptions}
+        onBranchFilterChange={setBranchFilter}
+        onBaseBranchFilterChange={setBaseBranchFilter}
         projects={effectiveProjects}
         currentProject={currentProject}
         onSelectProject={handleSelectProject}
