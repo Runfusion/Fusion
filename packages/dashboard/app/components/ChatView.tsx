@@ -1998,6 +1998,15 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                     if (typeof window === "undefined" || window.innerWidth > 768) return;
                     event.preventDefault();
                     if (event.pointerType && event.pointerType !== "mouse") {
+                      // On mobile, both onPointerDown and onTouchStart fire
+                      // for a quick tap. Without this guard handleSend runs
+                      // twice — the second call closes the first's stream
+                      // (useChat.ts: streamRef.current.close()) and the
+                      // server-side beginGeneration aborts the in-flight
+                      // generation, leaving the chat with no output. A
+                      // long-press doesn't fire both events the same way,
+                      // which is why holding the button "fixes" sending.
+                      if (handledMobileSendRef.current) return;
                       handledMobileSendRef.current = true;
                       markPreserveComposerFocus();
                       focusComposerInput();
@@ -2010,6 +2019,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                   onTouchStart={(event) => {
                     if (typeof window === "undefined" || window.innerWidth > 768) return;
                     event.preventDefault();
+                    if (handledMobileSendRef.current) return;
                     handledMobileSendRef.current = true;
                     markPreserveComposerFocus();
                     focusComposerInput();

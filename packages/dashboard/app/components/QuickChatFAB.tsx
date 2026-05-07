@@ -2471,6 +2471,7 @@ export function QuickChatFAB({
                       if (typeof window === "undefined" || window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT) return;
                       event.preventDefault();
                       if (event.pointerType && event.pointerType !== "mouse") {
+                        if (handledMobileActionRef.current) return;
                         handledMobileActionRef.current = true;
                         stopStreaming();
                       }
@@ -2478,6 +2479,7 @@ export function QuickChatFAB({
                     onTouchStart={(event) => {
                       if (typeof window === "undefined" || window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT) return;
                       event.preventDefault();
+                      if (handledMobileActionRef.current) return;
                       handledMobileActionRef.current = true;
                       stopStreaming();
                     }}
@@ -2505,6 +2507,13 @@ export function QuickChatFAB({
                       if (typeof window === "undefined" || window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT) return;
                       event.preventDefault();
                       if (event.pointerType && event.pointerType !== "mouse") {
+                        // Guard against the same touch firing both
+                        // onPointerDown and onTouchStart, which would call
+                        // handleSendMessage twice — the second call closes
+                        // the first's stream and the server-side
+                        // beginGeneration aborts the in-flight generation,
+                        // producing no output. (See ChatView send button.)
+                        if (handledMobileActionRef.current) return;
                         handledMobileActionRef.current = true;
                         markPreserveComposerFocus();
                         focusComposerInput();
@@ -2514,6 +2523,7 @@ export function QuickChatFAB({
                     onTouchStart={(event) => {
                       if (typeof window === "undefined" || window.innerWidth > QUICK_CHAT_DESKTOP_BREAKPOINT) return;
                       event.preventDefault();
+                      if (handledMobileActionRef.current) return;
                       handledMobileActionRef.current = true;
                       markPreserveComposerFocus();
                       focusComposerInput();

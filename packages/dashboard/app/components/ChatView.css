@@ -856,6 +856,25 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  /* Disable double-tap zoom delay on mobile so the click handler fires
+     immediately on tap, and ignore other gestures the browser would
+     otherwise speculate on. Without this, quick taps can land in the
+     ambiguity window where the browser dismisses the keyboard (textarea
+     blur) before deciding whether to register a click on the button. */
+  touch-action: manipulation;
+}
+
+/* Expand the effective tap target without changing the visual size, so
+   slightly-off taps still land on the button instead of falling through
+   to the surrounding textarea (which would dismiss the mobile keyboard
+   without sending). */
+.chat-input-send::before {
+  content: "";
+  position: absolute;
+  inset: -8px;
+}
+.chat-input-send {
+  position: relative;
 }
 
 .chat-input-send:disabled {
