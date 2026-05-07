@@ -1167,7 +1167,8 @@
     display: inline-flex;
     align-items: center;
     gap: var(--space-sm);
-    padding: 6px 12px;
+    min-height: calc(var(--space-2xl) + var(--space-xs));
+    padding: 0 var(--space-md);
     background: transparent;
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
@@ -1175,16 +1176,16 @@
     font-size: 13px;
     cursor: pointer;
     transition: background var(--transition-fast);
-    margin-right: 8px;
+    margin-right: var(--space-sm);
   }
 
   .changed-files-back-button:hover {
     background: var(--card-hover);
   }
 
-  .changed-files-back-button:focus {
+  .changed-files-back-button:focus-visible {
     outline: none;
-    box-shadow: var(--focus-ring);
+    box-shadow: var(--focus-ring-strong);
   }
 
   .detail-section--spec {
