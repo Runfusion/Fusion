@@ -212,16 +212,7 @@ export function registerMessagingScriptRoutes(ctx: ApiRoutesContext): void {
       const storeRoot = resolve(scopedStore.getRootDir());
       for (const engine of engineManager.getAllEngines().values()) {
         if (resolve(engine.getWorkingDirectory()) === storeRoot) {
-          const monitor = engine.getHeartbeatMonitor();
-          if (!monitor) {
-            return undefined;
-          }
-          return {
-            rootDir: engine.getWorkingDirectory(),
-            startRun: monitor.startRun.bind(monitor),
-            executeHeartbeat: monitor.executeHeartbeat.bind(monitor),
-            stopRun: monitor.stopRun.bind(monitor),
-          };
+          return (engine.getHeartbeatMonitor() ?? undefined) as HeartbeatMonitorHandle | undefined;
         }
       }
     } catch {

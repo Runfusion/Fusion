@@ -233,7 +233,12 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
         }
         setBuiltinSetupStatusById((prev) => ({
           ...prev,
-          [builtinPlugin.id]: { hasSetup: true, status: "error", error: "Failed to check setup status" },
+          [builtinPlugin.id]: {
+            hasSetup: true,
+            setupCheckDeferred: true,
+            deferredReason: "plugin-not-started",
+            pluginState: "installed",
+          },
         }));
       }
     }));
@@ -772,12 +777,20 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
           const installedPlugin = installedPluginsById.get(builtinPlugin.id);
           const isInstalled = Boolean(installedPlugin);
           const setupStatus = builtinSetupStatusById[builtinPlugin.id];
+          const setupStatusDeferred = Boolean(
+            setupStatus
+            && "setupCheckDeferred" in setupStatus
+            && setupStatus.setupCheckDeferred,
+          );
+          const pluginSetupState = setupStatus && "status" in setupStatus ? setupStatus.status : undefined;
           const requiresSetupAction =
             isInstalled
             && builtinPlugin.hasSetup
             && setupStatus?.hasSetup
-            && (setupStatus.status === "not-installed" || setupStatus.status === "error");
-          const setupReady = isInstalled && setupStatus?.hasSetup && setupStatus.status === "installed";
+            && !setupStatusDeferred
+            && installedPlugin?.state === "started"
+            && (pluginSetupState === "not-installed" || pluginSetupState === "error");
+          const setupReady = isInstalled && setupStatus?.hasSetup && pluginSetupState === "installed";
           const setupCheckInFlight = loadingBuiltinSetupId === builtinPlugin.id;
           const metadataOnly = !builtinPlugin.path;
 
@@ -798,6 +811,9 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
                 )}
                 {setupCheckInFlight && (
                   <span className="plugin-builtins-setup-status plugin-builtins-setup-status--pending">Checking setup...</span>
+                )}
+                {setupStatusDeferred && (
+                  <span className="plugin-builtins-setup-status plugin-builtins-setup-status--deferred">Start plugin to check setup</span>
                 )}
                 <span className="plugin-builtins-description-text">{builtinPlugin.description}</span>
               </div>

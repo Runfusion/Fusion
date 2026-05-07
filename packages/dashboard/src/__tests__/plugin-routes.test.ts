@@ -1102,7 +1102,7 @@ describe("createPluginRouter plugin setup routes", () => {
     expect(res.body).toEqual({ hasSetup: false });
   });
 
-  it("returns plugin not loaded status when setup metadata exists but plugin is stopped", async () => {
+  it("returns deferred setup status when setup metadata exists but plugin is not started", async () => {
     (pluginStore.getPlugin as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ...INSTALLED_PLUGIN, state: "installed" });
     pluginRunner.getPluginSetupInfo.mockReturnValueOnce([
       {
@@ -1116,9 +1116,12 @@ describe("createPluginRouter plugin setup routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
-      hasSetup: false,
-      status: { status: "error", error: "Plugin not loaded" },
+      hasSetup: true,
+      setupCheckDeferred: true,
+      deferredReason: "plugin-not-started",
+      pluginState: "installed",
     });
+    expect(pluginRunner.checkPluginSetup).not.toHaveBeenCalled();
   });
 
   it("returns setup status when setup metadata exists and plugin is started", async () => {

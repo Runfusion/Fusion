@@ -337,6 +337,52 @@ describe("PluginManager", () => {
     expect(screen.getByLabelText("Command Timeout (ms)")).toBeTruthy();
   });
 
+  it("does not show setup-required state when built-in setup check is deferred for non-started plugin", async () => {
+    vi.mocked(fetchPlugins).mockResolvedValueOnce([
+      {
+        ...mockPlugins[0],
+        id: BUILTIN_AGENT_BROWSER_PLUGIN_ID,
+        name: "Agent Browser",
+        state: "installed",
+      },
+    ]);
+    vi.mocked(fetchPluginSetupStatus).mockResolvedValueOnce({
+      hasSetup: true,
+      setupCheckDeferred: true,
+      deferredReason: "plugin-not-started",
+      pluginState: "installed",
+    });
+
+    render(<PluginManager addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Start plugin to check setup")).toBeTruthy();
+    });
+    expect(screen.queryByText("Setup required")).toBeNull();
+  });
+
+  it("keeps setup-required state for true setup errors on started built-in plugins", async () => {
+    vi.mocked(fetchPlugins).mockResolvedValueOnce([
+      {
+        ...mockPlugins[0],
+        id: BUILTIN_AGENT_BROWSER_PLUGIN_ID,
+        name: "Agent Browser",
+        state: "started",
+      },
+    ]);
+    vi.mocked(fetchPluginSetupStatus).mockResolvedValueOnce({
+      hasSetup: true,
+      status: "error",
+      error: "Binary missing",
+    });
+
+    render(<PluginManager addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Setup required")).toBeTruthy();
+    });
+  });
+
   it("installs built-in runtime plugins from the built-in section", async () => {
     render(<PluginManager addToast={addToast} />);
 

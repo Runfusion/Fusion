@@ -24,6 +24,14 @@ These are related but different systems; do not treat Pi Extensions as Fusion Pl
 | `stopped` | Disabled/stopped |
 | `error` | Failed to load or failed at runtime |
 
+### Setup status vs lifecycle state (Settings behavior)
+
+Setup-capable plugins (for example **Agent Browser**) expose an additional **setup** check that is separate from lifecycle state.
+
+- A plugin may be `installed`/`stopped` without being broken.
+- When a plugin is not `started`, Settings shows setup check as deferred ("Start plugin to check setup") instead of treating it as an error.
+- Error styling is reserved for true plugin lifecycle failures (`state = error`) or true setup-check failures returned while the plugin is running.
+
 ### Common locations
 
 | Location | Purpose |

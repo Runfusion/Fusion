@@ -3590,8 +3590,10 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
     if (plugin.state !== "started") {
       res.json({
-        hasSetup: false,
-        status: { status: "error", error: "Plugin not loaded" },
+        hasSetup: true,
+        setupCheckDeferred: true,
+        deferredReason: "plugin-not-started",
+        pluginState: plugin.state,
       });
       return;
     }

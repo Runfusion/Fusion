@@ -841,6 +841,27 @@ describe("plugin setup routes", () => {
     expect(res.body).toEqual({ hasSetup: false });
   });
 
+  it("GET /plugins/:id/setup-status returns deferred status when plugin is not started", async () => {
+    (pluginStore.getPlugin as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ...FAKE_PLUGIN, state: "installed" });
+    pluginRunner.getPluginSetupInfo.mockReturnValueOnce([
+      {
+        pluginId: "test-plugin",
+        manifest: { binaryName: "agent-browser", description: "Binary" },
+        hooks: { checkSetup: vi.fn() },
+      },
+    ]);
+
+    const res = await REQUEST(buildApp(), "GET", "/api/plugins/test-plugin/setup-status");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      hasSetup: true,
+      setupCheckDeferred: true,
+      deferredReason: "plugin-not-started",
+      pluginState: "installed",
+    });
+    expect(pluginRunner.checkPluginSetup).not.toHaveBeenCalled();
+  });
+
   it("GET /plugins/:id/setup-status returns 404 for nonexistent plugin", async () => {
     (pluginStore.getPlugin as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('Plugin "missing" not found'));
 

@@ -7844,8 +7844,13 @@ export async function updatePluginSettings(
 
 export type PluginSetupStatusResponse =
   | { hasSetup: false }
-  | { hasSetup: false; status: Extract<PluginSetupCheckResult, { status: "error" }> }
-  | ({ hasSetup: true } & PluginSetupCheckResult);
+  | ({ hasSetup: true } & PluginSetupCheckResult)
+  | {
+    hasSetup: true;
+    setupCheckDeferred: true;
+    deferredReason: "plugin-not-started";
+    pluginState: PluginInstallation["state"];
+  };
 
 /** Fetch plugin setup status */
 export async function fetchPluginSetupStatus(id: string, projectId?: string): Promise<PluginSetupStatusResponse> {
