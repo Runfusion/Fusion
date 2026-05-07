@@ -3184,7 +3184,11 @@ describe("Messaging Routes", () => {
           "project-1",
           {
             getWorkingDirectory: () => rootDir,
-            getHeartbeatMonitor: () => ({ executeHeartbeat: projectExecuteHeartbeat }),
+            getHeartbeatMonitor: () => ({
+              executeHeartbeat: projectExecuteHeartbeat,
+              startRun: vi.fn(),
+              stopRun: vi.fn(),
+            }),
           },
         ],
       ])),

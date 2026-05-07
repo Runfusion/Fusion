@@ -187,6 +187,10 @@ QR hand-off behavior in TUI:
 On startup, the TUI opens on the **System** section by default so you can
 immediately see host/port and access-token details.
 
+Mouse reporting auto-toggles with focus on the main screen: selecting
+**Logs** enables wheel scrolling, while selecting **System** turns mouse
+reporting back off so native click-drag text selection works.
+
 **Keyboard Navigation:**
 
 | Key | Action |

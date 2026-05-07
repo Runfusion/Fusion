@@ -728,6 +728,38 @@ describe("StatsPanel memory row", () => {
   });
 });
 
+describe("Narrow status-mode mouse policy", () => {
+  it("enables mouse mode on Logs and disables it again on System", async () => {
+    const controller = newController();
+    controller.setSystemInfo(makeSystemInfo());
+    controller.log("entry", "scope");
+
+    const rendered = render(renderDashboardAppNode(controller));
+    setTerminalSize(rendered, 60, 24);
+    rendered.rerender(renderDashboardAppNode(controller));
+
+    await vi.waitFor(() => {
+      expect(controller.getSnapshot().mouseEnabled).toBe(false);
+    });
+
+    rendered.stdin.write("2");
+    await vi.waitFor(() => {
+      const snapshot = controller.getSnapshot();
+      expect(snapshot.activeSection).toBe("logs");
+      expect(snapshot.mouseEnabled).toBe(true);
+    });
+
+    rendered.stdin.write("1");
+    await vi.waitFor(() => {
+      const snapshot = controller.getSnapshot();
+      expect(snapshot.activeSection).toBe("system");
+      expect(snapshot.mouseEnabled).toBe(false);
+    });
+
+    rendered.unmount();
+  });
+});
+
 describe("LogsPanel narrow formatting", () => {
   it("shows a compact index instead of full timestamp in narrow terminals", async () => {
     const controller = newController();

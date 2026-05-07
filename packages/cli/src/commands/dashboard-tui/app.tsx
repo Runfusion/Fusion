@@ -4141,13 +4141,15 @@ export function DashboardApp({ controller }: DashboardAppProps) {
   // When a log entry is expanded, disable mouse reporting so the user can
   // click-drag to select the message text natively. Esc/Enter closes the
   // expanded view and the policy reapplies, restoring wheel scrolling.
+  const statusLogsFocused = state.activeSection === "logs"
+    // Narrow-mode split keeps wheel scrolling for the bottom log strip,
+    // except when System is selected (preserve native text selection).
+    || (state.narrowLogSplitFocused && state.activeSection !== "system");
   const wantsMouse = state.mode === "interactive"
     ? (state.interactiveView === "files"
        || state.interactiveView === "git"
        || state.interactiveView === "board")
-    : ((state.activeSection === "logs"
-        || (state.narrowLogSplitFocused && state.activeSection !== "system"))
-        && !state.logsExpandedMode);
+    : (statusLogsFocused && !state.logsExpandedMode);
   useEffect(() => {
     if (state.mouseEnabled !== wantsMouse) {
       controller.setMouseEnabled(wantsMouse);
