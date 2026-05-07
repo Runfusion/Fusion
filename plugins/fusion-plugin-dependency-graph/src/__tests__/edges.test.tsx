@@ -68,6 +68,8 @@ describe("GraphEdges", () => {
     const dimmed = all.find((edge) => edge.getAttribute("data-edge-id") === "A->C");
 
     expect(highlighted?.getAttribute("opacity")).toBe("1");
-    expect(dimmed?.getAttribute("opacity")).toBe("0.2");
+    expect(highlighted?.getAttribute("class") ?? "").toContain("graph-edge--highlighted");
+    expect(dimmed?.getAttribute("opacity")).toBe("0.15");
+    expect(dimmed?.getAttribute("class") ?? "").toContain("graph-edge--dimmed");
   });
 });

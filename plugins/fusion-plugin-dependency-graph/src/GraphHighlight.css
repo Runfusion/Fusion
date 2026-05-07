@@ -1,0 +1,27 @@
+.graph-node--highlighted {
+  opacity: 1;
+  box-shadow: var(--shadow-glow);
+}
+
+.graph-node--dimmed {
+  opacity: 0.25;
+  transition: opacity var(--transition-fast);
+}
+
+.graph-edge--highlighted {
+  opacity: 1;
+  stroke: var(--todo);
+  stroke-width: var(--space-xs);
+}
+
+.graph-edge--dimmed {
+  opacity: 0.15;
+  transition: opacity var(--transition-fast);
+}
+
+@media (max-width: 768px) {
+  .graph-node--dimmed,
+  .graph-edge--dimmed {
+    transition: opacity var(--transition-fast);
+  }
+}

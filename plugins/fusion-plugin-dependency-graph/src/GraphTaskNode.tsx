@@ -1,7 +1,8 @@
-import type { CSSProperties, ComponentProps } from "react";
+import type { CSSProperties, ComponentProps, HTMLAttributes } from "react";
 import { TaskCard } from "@fusion/dashboard/app/components/TaskCard";
 import { isTaskStuck } from "@fusion/dashboard/app/utils/taskStuck";
 import "./GraphTaskNode.css";
+import "./GraphHighlight.css";
 
 type TaskCardComponentProps = ComponentProps<typeof TaskCard>;
 
@@ -25,9 +26,10 @@ type TaskCardBridgeProps = Pick<
   | "workflowStepNameLookup"
 >;
 
-export interface GraphTaskNodeProps extends TaskCardBridgeProps {
+export interface GraphTaskNodeProps extends TaskCardBridgeProps, Pick<HTMLAttributes<HTMLDivElement>, "onMouseEnter" | "onMouseLeave" | "onClick"> {
   style?: CSSProperties;
   isHighlighted?: boolean;
+  isDimmed?: boolean;
 }
 
 const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "merging-fix"]);
@@ -40,7 +42,15 @@ function getStatusLabel(status?: string): string {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-export function GraphTaskNode({ style, isHighlighted = false, ...taskCardProps }: GraphTaskNodeProps) {
+export function GraphTaskNode({
+  style,
+  isHighlighted = false,
+  isDimmed = false,
+  onMouseEnter,
+  onMouseLeave,
+  onClick,
+  ...taskCardProps
+}: GraphTaskNodeProps) {
   const { task, globalPaused, taskStuckTimeoutMs, lastFetchTimeMs } = taskCardProps;
   const isFailed = task.status === "failed";
   const isPaused = task.paused === true;
@@ -63,11 +73,14 @@ export function GraphTaskNode({ style, isHighlighted = false, ...taskCardProps }
 
   return (
     <div
-      className={`graph-task-node${isHighlighted ? " graph-task-node--highlighted" : ""}${isActive ? " graph-task-node--active" : ""}${isInReview ? " graph-task-node--in-review" : ""}`}
+      className={`graph-task-node${isHighlighted ? " graph-task-node--highlighted graph-node--highlighted" : ""}${isDimmed ? " graph-task-node--dimmed graph-node--dimmed" : ""}${isActive ? " graph-task-node--active" : ""}${isInReview ? " graph-task-node--in-review" : ""}`}
       style={style}
       draggable={false}
       data-testid={`graph-task-node-${task.id}`}
       data-current-step={isActive && hasValidCurrentStep ? String(task.currentStep) : undefined}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      onClick={onClick}
     >
       {isActive ? (
         <div className="graph-task-active-indicator">

@@ -19,8 +19,18 @@ Plugin-provided top-level **Graph** dashboard view for Fusion.
 - **Current-step highlighting**: active nodes set `data-current-step` for valid native step indices so CSS selectors highlight the currently executing `.card-step-item` and pulse its step dot
 - **Zoom-out differentiation**: `.graph-task-node--active` adds amplified glow and subtle scale/border tint so active nodes remain distinguishable at reduced zoom levels
 - **In-review visual treatment**: `in-review` nodes get a static `.graph-task-node--in-review` left accent in `--in-review` to distinguish waiting-review work from active execution nodes
-- **Graph node classes**: `.graph-task-node`, `.graph-task-node--active`, `.graph-task-node--in-review`, `.graph-task-node--highlighted`, and `.graph-task-node--dimmed` are available for graph-specific layering/highlight states while card internals remain owned by `TaskCard.css`
+- **Graph node classes**: `.graph-task-node`, `.graph-task-node--active`, `.graph-task-node--in-review`, `.graph-task-node--highlighted`, `.graph-task-node--dimmed`, `.graph-node--highlighted`, and `.graph-node--dimmed` are available for graph-specific layering/highlight states while card internals remain owned by `TaskCard.css`
+- **Graph edge classes**: `.graph-edge--highlighted` and `.graph-edge--dimmed` are applied during dependency-chain emphasis states
 - **Drag behavior**: graph nodes pass `disableDrag={true}` to `TaskCard` so card-level HTML5 drag does not conflict with canvas pan/zoom
+
+## Dependency chain highlighting
+
+- **Hover** a node to highlight the full transitive upstream + downstream chain for that task.
+- **Click** a node to persist selection highlighting until the same node is clicked again or the canvas pane is clicked.
+- **Priority**: hover state overrides selected state; when hover leaves, selected highlighting reappears.
+- **Dimming**: when a chain is active, unrelated nodes and edges are dimmed.
+- **Neutral state**: when nothing is hovered/selected, no highlight/dim classes are applied.
+- **Edge rule**: an edge is highlighted only when both its source and target nodes are in the active chain.
 
 ## Controls
 

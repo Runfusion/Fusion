@@ -1,4 +1,5 @@
 import type { GraphEdge, GraphPosition } from "./types";
+import "./GraphHighlight.css";
 
 interface GraphEdgesProps {
   edges: GraphEdge[];
@@ -53,14 +54,14 @@ export function GraphEdges({
             key={edgeId}
             data-testid="dependency-edge"
             data-edge-id={edgeId}
-            className={`dependency-graph-edge${isActiveHighlight ? " is-related" : ""}${hasHighlights && !isActiveHighlight ? " is-dimmed" : ""}`}
+            className={`dependency-graph-edge${isActiveHighlight ? " graph-edge--highlighted" : ""}${hasHighlights && !isActiveHighlight ? " graph-edge--dimmed" : ""}`}
             d={`M ${x1} ${y1} C ${x1} ${controlY}, ${x2} ${controlY}, ${x2} ${y2}`}
             fill="none"
-            stroke={isActiveHighlight ? "var(--text-muted)" : "var(--border)"}
-            strokeWidth="1"
-            opacity={hasHighlights && !isActiveHighlight ? 0.2 : 1}
+            stroke={isActiveHighlight ? "var(--todo)" : "var(--border)"}
+            strokeWidth={isActiveHighlight ? "var(--space-xs)" : "var(--btn-border-width)"}
+            opacity={hasHighlights && !isActiveHighlight ? 0.15 : 1}
             markerEnd="url(#dependency-graph-arrowhead)"
-            style={{ transition: "opacity var(--transition-fast), stroke var(--transition-fast)" }}
+            style={{ transition: "opacity var(--transition-fast), stroke var(--transition-fast), stroke-width var(--transition-fast)" }}
           />
         );
       })}

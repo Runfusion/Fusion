@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Task } from "@fusion/core";
 import { GraphTaskNode } from "./GraphTaskNode";
 import { GraphToolbar } from "./GraphToolbar";
@@ -7,6 +7,7 @@ import { filterGraphTasks } from "./filters";
 import { computeAutoLayout } from "./layout";
 import { useGraphData } from "./useGraphData";
 import { useGraphInteraction } from "./useGraphInteraction";
+import { useDependencyChain } from "./hooks/useDependencyChain";
 import "./DependencyGraph.css";
 
 const NODE_WIDTH = 280;
@@ -40,6 +41,8 @@ export interface DependencyGraphProps {
   workflowStepNameLookup?: ReadonlyMap<string, string>;
 }
 
+const POINTER_MOVE_THRESHOLD = 4;
+
 export function DependencyGraph({
   tasks,
   projectId,
@@ -61,8 +64,16 @@ export function DependencyGraph({
 }: DependencyGraphProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const initialFitDoneRef = useRef(false);
+  const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
+  const pointerDraggedRef = useRef(false);
+  const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const filteredTasks = useMemo(() => filterGraphTasks(tasks), [tasks]);
   const graphData = useGraphData(filteredTasks);
+  const { getChain } = useDependencyChain(filteredTasks);
+  const activeTaskId = hoveredTaskId ?? selectedTaskId;
+  const highlightedTaskIds = useMemo(() => (activeTaskId ? getChain(activeTaskId) : new Set<string>()), [activeTaskId, getChain]);
+
   const positions = useMemo(
     () => computeAutoLayout(graphData, { nodeWidth: NODE_WIDTH, nodeHeight: NODE_HEIGHT, horizontalGap: 40, verticalGap: 80 }),
     [graphData],
@@ -113,14 +124,33 @@ export function DependencyGraph({
       <div
         ref={viewportRef}
         className="dependency-graph__viewport"
-        onPointerDown={(event) => onPointerDown(event.pointerId, { x: event.clientX, y: event.clientY })}
+        onPointerDown={(event) => {
+          pointerDownRef.current = { x: event.clientX, y: event.clientY };
+          pointerDraggedRef.current = false;
+          onPointerDown(event.pointerId, { x: event.clientX, y: event.clientY });
+        }}
         onPointerMove={(event) => {
           const viewport = viewportRef.current;
           if (!viewport) return;
+          const pointerDown = pointerDownRef.current;
+          if (pointerDown) {
+            const deltaX = Math.abs(event.clientX - pointerDown.x);
+            const deltaY = Math.abs(event.clientY - pointerDown.y);
+            if (deltaX > POINTER_MOVE_THRESHOLD || deltaY > POINTER_MOVE_THRESHOLD) {
+              pointerDraggedRef.current = true;
+            }
+          }
           onPointerMove(event.pointerId, { x: event.clientX, y: event.clientY }, viewport.clientWidth, viewport.clientHeight);
         }}
-        onPointerUp={(event) => onPointerUp(event.pointerId)}
-        onPointerCancel={(event) => onPointerUp(event.pointerId)}
+        onPointerUp={(event) => {
+          onPointerUp(event.pointerId);
+          pointerDownRef.current = null;
+        }}
+        onPointerCancel={(event) => {
+          onPointerUp(event.pointerId);
+          pointerDownRef.current = null;
+          pointerDraggedRef.current = false;
+        }}
         onWheel={(event) => {
           event.preventDefault();
           const viewport = viewportRef.current;
@@ -135,12 +165,30 @@ export function DependencyGraph({
         }}
         tabIndex={0}
         style={{ outline: "none" }}
+        onClick={() => {
+          if (pointerDraggedRef.current) return;
+          setSelectedTaskId(null);
+        }}
       >
         {filteredTasks.length === 0 ? (
           <div className="dependency-graph__empty">No active tasks to display in graph view.</div>
         ) : (
           <div className={`graph-canvas-transform${transitioning ? " graph-canvas-transform--animate" : ""}`} style={{ transform, width: `${bounds.width}px`, height: `${bounds.height}px` }}>
-            <GraphEdges edges={graphData.edges} positions={positions} nodeWidth={NODE_WIDTH} nodeHeight={NODE_HEIGHT} />
+            <GraphEdges
+              edges={graphData.edges}
+              positions={positions}
+              nodeWidth={NODE_WIDTH}
+              nodeHeight={NODE_HEIGHT}
+              highlightedEdgeIds={
+                highlightedTaskIds.size > 0
+                  ? new Set(
+                      graphData.edges
+                        .filter((edge) => highlightedTaskIds.has(edge.source) && highlightedTaskIds.has(edge.target))
+                        .map((edge) => `${edge.source}->${edge.target}`),
+                    )
+                  : undefined
+              }
+            />
             <div className="dependency-graph__nodes-layer">
               {graphData.nodes.map((node) => {
                 const position = positions.get(node.task.id);
@@ -152,6 +200,8 @@ export function DependencyGraph({
                     task={node.task}
                     projectId={projectId}
                     style={{ minHeight: `${NODE_HEIGHT}px`, left: `${position.x}px`, top: `${position.y}px` }}
+                    isHighlighted={highlightedTaskIds.size > 0 && highlightedTaskIds.has(node.task.id)}
+                    isDimmed={highlightedTaskIds.size > 0 && !highlightedTaskIds.has(node.task.id)}
                     onOpenDetail={onOpenDetail ?? ((task) => onOpenTaskDetail?.(task.id))}
                     addToast={addToast ?? (() => {})}
                     globalPaused={globalPaused}
@@ -166,6 +216,13 @@ export function DependencyGraph({
                     onMoveTask={onMoveTask}
                     lastFetchTimeMs={lastFetchTimeMs}
                     workflowStepNameLookup={workflowStepNameLookup}
+                    onMouseEnter={() => setHoveredTaskId(node.task.id)}
+                    onMouseLeave={() => setHoveredTaskId(null)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      pointerDraggedRef.current = false;
+                      setSelectedTaskId((current) => (current === node.task.id ? null : node.task.id));
+                    }}
                   />
                 );
               })}
