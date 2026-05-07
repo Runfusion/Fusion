@@ -74,10 +74,22 @@ export function DependencyGraph({
   const activeTaskId = hoveredTaskId ?? selectedTaskId;
   const highlightedTaskIds = useMemo(() => (activeTaskId ? getChain(activeTaskId) : new Set<string>()), [activeTaskId, getChain]);
 
-  const positions = useMemo(
+  const autoLayoutPositions = useMemo(
     () => computeAutoLayout(graphData, { nodeWidth: NODE_WIDTH, nodeHeight: NODE_HEIGHT, horizontalGap: 40, verticalGap: 80 }),
     [graphData],
   );
+  const [positions, setPositions] = useState<Map<string, { x: number; y: number }>>(autoLayoutPositions);
+  const [isNodeDragging, setIsNodeDragging] = useState(false);
+
+  useEffect(() => {
+    setPositions((current) => {
+      const next = new Map<string, { x: number; y: number }>();
+      for (const [taskId, layoutPosition] of autoLayoutPositions.entries()) {
+        next.set(taskId, current.get(taskId) ?? layoutPosition);
+      }
+      return next;
+    });
+  }, [autoLayoutPositions]);
 
   const {
     transform,
@@ -125,11 +137,13 @@ export function DependencyGraph({
         ref={viewportRef}
         className="dependency-graph__viewport"
         onPointerDown={(event) => {
+          if (isNodeDragging) return;
           pointerDownRef.current = { x: event.clientX, y: event.clientY };
           pointerDraggedRef.current = false;
           onPointerDown(event.pointerId, { x: event.clientX, y: event.clientY });
         }}
         onPointerMove={(event) => {
+          if (isNodeDragging) return;
           const viewport = viewportRef.current;
           if (!viewport) return;
           const pointerDown = pointerDownRef.current;
@@ -143,11 +157,15 @@ export function DependencyGraph({
           onPointerMove(event.pointerId, { x: event.clientX, y: event.clientY }, viewport.clientWidth, viewport.clientHeight);
         }}
         onPointerUp={(event) => {
-          onPointerUp(event.pointerId);
+          if (!isNodeDragging) {
+            onPointerUp(event.pointerId);
+          }
           pointerDownRef.current = null;
         }}
         onPointerCancel={(event) => {
-          onPointerUp(event.pointerId);
+          if (!isNodeDragging) {
+            onPointerUp(event.pointerId);
+          }
           pointerDownRef.current = null;
           pointerDraggedRef.current = false;
         }}
@@ -166,7 +184,7 @@ export function DependencyGraph({
         tabIndex={0}
         style={{ outline: "none" }}
         onClick={() => {
-          if (pointerDraggedRef.current) return;
+          if (pointerDraggedRef.current || isNodeDragging) return;
           setSelectedTaskId(null);
         }}
       >
@@ -200,6 +218,18 @@ export function DependencyGraph({
                     task={node.task}
                     projectId={projectId}
                     style={{ minHeight: `${NODE_HEIGHT}px`, left: `${position.x}px`, top: `${position.y}px` }}
+                    position={position}
+                    scale={zoom}
+                    onNodePositionChange={(taskId, nextPosition) => {
+                      setPositions((current) => {
+                        const existing = current.get(taskId);
+                        if (existing && existing.x === nextPosition.x && existing.y === nextPosition.y) return current;
+                        const next = new Map(current);
+                        next.set(taskId, nextPosition);
+                        return next;
+                      });
+                    }}
+                    onNodeDragStateChange={setIsNodeDragging}
                     isHighlighted={highlightedTaskIds.size > 0 && highlightedTaskIds.has(node.task.id)}
                     isDimmed={highlightedTaskIds.size > 0 && !highlightedTaskIds.has(node.task.id)}
                     onOpenDetail={onOpenDetail ?? ((task) => onOpenTaskDetail?.(task.id))}

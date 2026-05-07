@@ -20,6 +20,10 @@ function createTask(overrides: Partial<Task> = {}): Task {
 function createProps(task: Task) {
   return {
     task,
+    position: { x: 0, y: 0 },
+    scale: 1,
+    onNodePositionChange: vi.fn(),
+    onNodeDragStateChange: vi.fn(),
     projectId: "proj-1",
     onOpenDetail: vi.fn(),
     addToast: vi.fn(),
