@@ -4,6 +4,7 @@ import { mkdir, readdir, readFile, writeFile, rename, unlink } from "node:fs/pro
 import { join } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
 import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType, WorkflowStepTemplate } from "./types.js";
+import { createActivityLogSnapshot, createRunAuditSnapshot, createTaskMetadataSnapshot, toTaskMetadataRecord, validateSnapshotEnvelope, type ActivityLogSnapshot, type RunAuditSnapshot, type TaskMetadataSnapshot } from "./shared-mesh-state.js";
 import { VALID_TRANSITIONS, DEFAULT_SETTINGS, isGlobalSettingsKey, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { normalizeTaskPriority } from "./task-priority.js";
 import { GlobalSettingsStore } from "./global-settings.js";
@@ -6904,6 +6905,108 @@ ${notificationsSection}`;
          VALUES (?, ?, ?, ?, ?)`,
       )
       .run(treeSha, normalizedTest, normalizedBuild, recordedAt, taskId);
+  }
+
+  // ── Shared mesh state export/apply helpers ───────────────────────────────
+
+  async getTaskMetadataSnapshot(): Promise<TaskMetadataSnapshot> {
+    const tasks = await this.listTasks({ slim: false, includeArchived: true });
+    return createTaskMetadataSnapshot(tasks as unknown as TaskMetadataSnapshot["payload"]["tasks"]);
+  }
+
+  async applyTaskMetadataSnapshot(snapshot: TaskMetadataSnapshot): Promise<{ applied: number; skipped: number }> {
+    validateSnapshotEnvelope(snapshot);
+    const existingTasks = new Map((await this.listTasks({ slim: false, includeArchived: true })).map((task) => [task.id, task]));
+    let applied = 0;
+    let skipped = 0;
+
+    for (const incoming of snapshot.payload.tasks) {
+      const current = existingTasks.get(incoming.id);
+      const currentMetadata = current ? toTaskMetadataRecord(current) : undefined;
+      if (currentMetadata && JSON.stringify(currentMetadata) === JSON.stringify(incoming)) {
+        skipped++;
+        continue;
+      }
+      const toUpsert: Task = {
+        ...(incoming as unknown as Task),
+        worktree: current?.worktree,
+        executionStartBranch: current?.executionStartBranch,
+        sessionFile: current?.sessionFile,
+      };
+      this.upsertTaskWithFtsRecovery(toUpsert);
+      applied++;
+    }
+
+    return { applied, skipped };
+  }
+
+  async getActivityLogSnapshot(limit = 10_000): Promise<ActivityLogSnapshot> {
+    const entries = await this.getActivityLog({ limit });
+    return createActivityLogSnapshot([...entries].reverse());
+  }
+
+  applyActivityLogSnapshot(snapshot: ActivityLogSnapshot): { applied: number; skipped: number } {
+    validateSnapshotEnvelope(snapshot);
+    let applied = 0;
+    let skipped = 0;
+
+    for (const entry of snapshot.payload.entries) {
+      const exists = this.db.prepare("SELECT 1 FROM activityLog WHERE id = ?").get(entry.id);
+      if (exists) {
+        skipped++;
+        continue;
+      }
+      this.db.prepare(
+        `INSERT INTO activityLog (id, timestamp, type, taskId, taskTitle, details, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        entry.id,
+        entry.timestamp,
+        entry.type,
+        entry.taskId ?? null,
+        entry.taskTitle ?? null,
+        entry.details,
+        entry.metadata ? JSON.stringify(entry.metadata) : null,
+      );
+      applied++;
+    }
+
+    return { applied, skipped };
+  }
+
+  getRunAuditSnapshot(filter: RunAuditEventFilter = {}): RunAuditSnapshot {
+    return createRunAuditSnapshot(this.getRunAuditEvents({ ...filter, limit: filter.limit ?? 10_000 }).reverse());
+  }
+
+  applyRunAuditSnapshot(snapshot: RunAuditSnapshot): { applied: number; skipped: number } {
+    validateSnapshotEnvelope(snapshot);
+    let applied = 0;
+    let skipped = 0;
+
+    for (const entry of snapshot.payload.entries) {
+      const exists = this.db.prepare("SELECT 1 FROM runAuditEvents WHERE id = ?").get(entry.id);
+      if (exists) {
+        skipped++;
+        continue;
+      }
+      this.db.prepare(`
+        INSERT INTO runAuditEvents (id, timestamp, taskId, agentId, runId, domain, mutationType, target, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        entry.id,
+        entry.timestamp,
+        entry.taskId ?? null,
+        entry.agentId,
+        entry.runId,
+        entry.domain,
+        entry.mutationType,
+        entry.target,
+        entry.metadata ? JSON.stringify(entry.metadata) : null,
+      );
+      applied++;
+    }
+
+    return { applied, skipped };
   }
 
   // ── Backward Compatibility (Multi-Project Support) ────────────────────────

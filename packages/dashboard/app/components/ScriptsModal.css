@@ -5,7 +5,7 @@
 }
 
 .scripts-modal-body {
-  padding: 16px;
+  padding: var(--space-lg);
   max-height: 70vh;
   overflow-y: auto;
 }
@@ -94,10 +94,10 @@
 .modal.automation-modal {
   width: min(95vw, 720px);
   max-width: 95vw;
-  min-width: 480px;
+  min-width: 0;
   height: 80vh;
-  min-height: 480px;
-  max-height: calc(100dvh - var(--overlay-padding-top, 10vh) - 16px);
+  min-height: calc(var(--space-2xl) * 15);
+  max-height: calc(100dvh - var(--overlay-padding-top, 10vh) - var(--space-lg));
   overflow: hidden;
   resize: both;
 }
@@ -154,19 +154,19 @@
 .schedule-scope-toggle {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: calc(var(--space-xs) / 2);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 2px;
+  padding: calc(var(--space-xs) / 2);
   width: fit-content;
 }
 
 .schedule-scope-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-md);
   font-size: 12px;
   font-weight: 500;
   border: none;
@@ -174,7 +174,7 @@
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background-color 0.15s, color 0.15s;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
 .schedule-scope-btn:hover:not(:disabled) {
@@ -184,7 +184,7 @@
 
 .schedule-scope-btn.active {
   background: var(--todo);
-  color: white;
+  color: var(--cta-text);
 }
 
 .schedule-scope-btn:disabled {
@@ -201,19 +201,19 @@
 .routine-scope-toggle {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: calc(var(--space-xs) / 2);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 2px;
+  padding: calc(var(--space-xs) / 2);
   width: fit-content;
 }
 
 .routine-scope-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-md);
   font-size: 12px;
   font-weight: 500;
   border: none;
@@ -221,7 +221,7 @@
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background-color 0.15s, color 0.15s;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
 .routine-scope-btn:hover:not(:disabled) {
@@ -231,7 +231,7 @@
 
 .routine-scope-btn.active {
   background: var(--todo);
-  color: white;
+  color: var(--cta-text);
 }
 
 .routine-scope-btn:disabled {
@@ -250,7 +250,7 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-md);
-  padding: 48px 24px;
+  padding: calc(var(--space-2xl) * 1.5) var(--space-xl);
   color: var(--text-muted);
   text-align: center;
 }
@@ -269,7 +269,7 @@
 .schedule-empty-state .btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(var(--space-sm) - var(--space-xs) / 2);
   margin-top: var(--space-sm);
 }
 
@@ -282,9 +282,9 @@
 .schedule-card {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 14px 16px;
+  padding: calc(var(--space-md) + var(--space-xs) / 2) var(--space-lg);
   background: var(--card-bg);
-  transition: border-color 0.15s;
+  transition: border-color var(--transition-fast);
 }
 
 .schedule-card:hover {
@@ -373,7 +373,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-md);
-  margin-top: 10px;
+  margin-top: var(--space-md);
   font-size: 12px;
   color: var(--text-muted);
 }
@@ -421,7 +421,7 @@
 
 /* Run History */
 .schedule-card-history {
-  margin-top: 10px;
+  margin-top: var(--space-md);
   border-top: 1px solid var(--border);
   padding-top: 8px;
 }
@@ -429,7 +429,7 @@
 .schedule-history-toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(var(--space-sm) - var(--space-xs) / 2);
   font-size: 12px;
   color: var(--text-muted);
   background: none;
@@ -578,7 +578,7 @@
 .schedule-step-result {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(var(--space-sm) - var(--space-xs) / 2);
   font-size: 11px;
 }
 
@@ -659,7 +659,7 @@
 .steps-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: calc(var(--space-sm) - var(--space-xs) / 2);
   margin-bottom: var(--space-sm);
 }
 
@@ -673,7 +673,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  padding: 8px 10px;
+  padding: var(--space-sm) var(--space-md);
 }
 
 .step-card-drag {
@@ -707,7 +707,7 @@
 
 .step-card-actions {
   display: flex;
-  gap: 2px;
+  gap: calc(var(--space-xs) / 2);
   align-items: center;
 }
 
@@ -757,7 +757,7 @@
   background: var(--bg-secondary);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .schedule-mode-btn:hover {
@@ -766,7 +766,7 @@
 
 .schedule-mode-btn.active {
   background: var(--ws-pre-merge);
-  color: white;
+  color: var(--cta-text);
 }
 
 .form-group-row {
@@ -784,7 +784,7 @@
 }
 
 .schedule-form .modal-actions {
-  padding: 16px 0 0;
+  padding: var(--space-lg) 0 0;
   border-top: 1px solid var(--border);
   margin-top: var(--space-lg);
   position: sticky;
@@ -857,7 +857,7 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-md);
-  padding: 48px 24px;
+  padding: calc(var(--space-2xl) * 1.5) var(--space-xl);
   color: var(--text-muted);
   text-align: center;
 }
@@ -876,7 +876,7 @@
 .routine-empty-state .btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(var(--space-sm) - var(--space-xs) / 2);
   margin-top: var(--space-sm);
 }
 
@@ -889,7 +889,7 @@
 .routine-card {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 14px 16px;
+  padding: calc(var(--space-md) + var(--space-xs) / 2) var(--space-lg);
   background: var(--card);
   transition: border-color var(--transition-fast);
 }
@@ -940,7 +940,7 @@
 .routine-trigger-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-xs);
   font-size: 11px;
   font-weight: 500;
   padding: 1px 7px;
@@ -993,7 +993,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-md);
-  margin-top: 10px;
+  margin-top: var(--space-md);
   font-size: 12px;
   color: var(--text-muted);
 }
@@ -1058,7 +1058,7 @@
 }
 
 .routine-card-history {
-  margin-top: 10px;
+  margin-top: var(--space-md);
   border-top: 1px solid var(--border);
   padding-top: 8px;
 }
@@ -1078,7 +1078,7 @@
 }
 
 .routine-form .modal-actions {
-  padding: 16px 0 0;
+  padding: var(--space-lg) 0 0;
   border-top: 1px solid var(--border);
   margin-top: var(--space-lg);
   position: sticky;
@@ -1095,7 +1095,7 @@
 .routine-trigger-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: calc(var(--space-sm) - var(--space-xs) / 2);
   padding: 8px 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -1105,9 +1105,9 @@
   font-weight: 500;
   cursor: pointer;
   transition:
-    border-color 0.15s,
-    background 0.15s,
-    color 0.15s;
+    border-color var(--transition-fast),
+    background var(--transition-fast),
+    color var(--transition-fast);
 }
 
 .routine-trigger-btn:hover {
@@ -1193,7 +1193,7 @@
 .activity-log-title {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-md);
   font-size: 16px;
   font-weight: 600;
   color: var(--text);
@@ -1208,8 +1208,8 @@
 .activity-log-filter {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
+  gap: calc(var(--space-sm) - var(--space-xs) / 2);
+  padding: calc(var(--space-sm) - var(--space-xs) / 2) var(--space-md);
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1249,7 +1249,7 @@
 .activity-log-content {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-lg) 20px;
+  padding: var(--space-lg) var(--space-xl);
   min-height: 300px;
 }
 
@@ -1258,7 +1258,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 60px 20px;
+  padding: calc(var(--space-2xl) * 2 - var(--space-xs)) var(--space-xl);
   color: var(--text-muted);
   text-align: center;
 }
@@ -1449,7 +1449,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: var(--space-xl);
 }
 
 .activity-log-loading .spin {
@@ -1470,7 +1470,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  padding: var(--space-sm) 20px;
+  padding: var(--space-sm) var(--space-xl);
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
   flex-wrap: wrap;
@@ -1485,7 +1485,7 @@
 .activity-log-filter-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-xs);
   padding: 2px 8px;
   background: var(--card);
   border: 1px solid var(--border);
@@ -1498,7 +1498,7 @@
 .activity-log-clear-filters {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-xs);
   padding: 2px 8px;
   margin-left: auto;
   background: none;
@@ -1546,14 +1546,14 @@
 }
 
 .activity-log-confirm-dialog h3 {
-  margin: 0 0 8px;
+  margin: 0 0 var(--space-sm);
   font-size: 16px;
   font-weight: 600;
   color: var(--text);
 }
 
 .activity-log-confirm-dialog p {
-  margin: 0 0 20px;
+  margin: 0 0 var(--space-xl);
   font-size: 13px;
   color: var(--text-muted);
 }
@@ -1566,7 +1566,7 @@
 
 .activity-log-confirm-cancel,
 .activity-log-confirm-clear {
-  padding: 10px 20px;
+  padding: var(--space-md) var(--space-xl);
   border-radius: var(--radius-md);
   font-size: 13px;
   font-weight: 500;
@@ -1644,8 +1644,8 @@
   /* Action buttons stay inline but shrink */
   .activity-log-refresh,
   .activity-log-clear {
-    width: 28px;
-    height: 28px;
+    width: 44px;
+    height: 44px;
     flex-shrink: 0;
   }
 
@@ -1723,10 +1723,10 @@
 .modal.gm-modal {
   width: min(95vw, 1400px);
   max-width: 95vw;
-  min-width: 480px;
+  min-width: 0;
   height: 92vh;
-  min-height: 480px;
-  max-height: calc(100dvh - var(--overlay-padding-top, 10vh) - 16px);
+  min-height: calc(var(--space-2xl) * 15);
+  max-height: calc(100dvh - var(--overlay-padding-top, 10vh) - var(--space-lg));
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1931,7 +1931,7 @@
 .gm-ahead {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: calc(var(--space-xs) / 2);
   color: var(--color-success);
   font-size: 13px;
   font-weight: 500;
@@ -1940,7 +1940,7 @@
 .gm-behind {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: calc(var(--space-xs) / 2);
   color: var(--color-error);
   font-size: 13px;
   font-weight: 500;
@@ -2514,7 +2514,7 @@
 .gm-commit-header {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(var(--space-xs) / 2);
   width: 100%;
   background: none;
   border: none;
@@ -2610,7 +2610,7 @@
 .gm-create-form select {
   flex: 1;
   min-width: 0;
-  padding: 6px 10px;
+  padding: calc(var(--space-sm) - var(--space-xs) / 2) var(--space-md);
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -2755,7 +2755,7 @@
 .gm-branch-commit-row {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(var(--space-xs) / 2);
   width: 100%;
   padding: var(--space-xs) var(--space-sm);
   background: none;
@@ -2894,7 +2894,7 @@
 .gm-stash-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(var(--space-xs) / 2);
   min-width: 0;
   flex: 1;
 }
@@ -2925,7 +2925,7 @@
 .gm-stash-branch {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: calc(var(--space-xs) / 2);
 }
 
 .gm-stash-actions {
@@ -3298,7 +3298,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(var(--space-xs) / 2);
 }
 
 .gm-commit-compact-info .gm-commit-message {
@@ -3527,7 +3527,7 @@
 
   .gm-nav-item {
     flex-direction: column;
-    gap: 2px;
+    gap: calc(var(--space-xs) / 2);
     padding: var(--space-xs) var(--space-sm);
     border-left: none;
     border-bottom: 2px solid transparent;
@@ -3786,7 +3786,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  padding: 10px 12px;
+  padding: var(--space-md) var(--space-lg);
   background: none;
   border: none;
   width: 100%;
@@ -3794,7 +3794,7 @@
   cursor: pointer;
   color: var(--text);
   font-size: 13px;
-  transition: background 0.15s;
+  transition: background var(--transition-fast);
 }
 
 .changes-file-header:hover {

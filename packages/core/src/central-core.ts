@@ -74,7 +74,7 @@ import { NodeConnection } from "./node-connection.js";
 import { NodeDiscovery } from "./node-discovery.js";
 import { collectSystemMetrics } from "./system-metrics.js";
 import type { ConnectionOptions, ConnectionResult } from "./node-connection.js";
-
+import { createAuthMaterialSnapshot, createProjectSettingsSnapshot, validateSnapshotEnvelope, type AuthMaterialSnapshot, type ProjectSettingsSnapshot } from "./shared-mesh-state.js";
 // ── Event Types ───────────────────────────────────────────────────────────
 
 export interface CentralCoreEvents {
@@ -2848,6 +2848,41 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       status: "compatible",
       message: `Patch version difference only: local ${local} vs remote ${remote}`,
     };
+  }
+
+  getProjectSettingsSnapshot(globalSettings: GlobalSettings): Promise<ProjectSettingsSnapshot> {
+    return (async () => {
+      const payload = await this.getSettingsForSync(globalSettings);
+      return createProjectSettingsSnapshot({
+        global: payload.global ?? {},
+        projects: payload.projects,
+      }, payload.exportedAt);
+    })();
+  }
+
+  async applyProjectSettingsSnapshot(snapshot: ProjectSettingsSnapshot): Promise<SettingsSyncResult> {
+    validateSnapshotEnvelope(snapshot);
+    const payloadWithoutChecksum: Omit<SettingsSyncPayload, "checksum"> = {
+      version: 1,
+      exportedAt: snapshot.exportedAt,
+      global: snapshot.payload.global,
+      projects: snapshot.payload.projects,
+      providerAuth: undefined,
+    };
+    const checksum = createHash("sha256")
+      .update(JSON.stringify(payloadWithoutChecksum))
+      .digest("hex");
+
+    return this.applyRemoteSettings({ ...payloadWithoutChecksum, checksum });
+  }
+
+  getAuthMaterialSnapshot(providerAuth?: Record<string, ProviderAuthEntry>): AuthMaterialSnapshot {
+    return createAuthMaterialSnapshot(providerAuth);
+  }
+
+  applyAuthMaterialSnapshot(snapshot: AuthMaterialSnapshot): Record<string, ProviderAuthEntry> {
+    validateSnapshotEnvelope(snapshot);
+    return { ...(snapshot.payload.providerAuth ?? {}) };
   }
 
   // ── Settings Sync API ─────────────────────────────────────────────────

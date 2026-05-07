@@ -178,6 +178,26 @@ Concrete references:
   - `TodoStore` (`todo-store.ts`) — project-scoped todo lists/items with completion, reorder, and composite list+items queries
   - `EvalStore` (`eval-store.ts`) — eval run persistence, per-task eval results with durable snapshots, and append-only run event trails
 
+### Shared mesh-state snapshot helpers
+
+`packages/core/src/shared-mesh-state.ts` defines a common snapshot envelope for non-task mesh state export/apply:
+- Envelope fields: `version`, `exportedAt`, `checksum`, `payload`
+- Checksum rule: `sha256(JSON.stringify(payloadWithoutChecksum))`
+- Payload families:
+  - `TaskMetadataSnapshot` (`tasks` structured metadata only)
+  - `MissionHierarchySnapshot` (`missions`, `milestones`, `slices`, `features`, `missionEvents`, `assertions`, `featureAssertionLinks`)
+  - `AgentSnapshot` (`agents`, `blockedStates`)
+  - `AgentRunSnapshot` (`runs`)
+  - `ActivityLogSnapshot` (`entries`)
+  - `RunAuditSnapshot` (`entries`)
+  - `ProjectSettingsSnapshot` (`global`, `projects`)
+  - `AuthMaterialSnapshot` (`providerAuth`)
+
+Intentional exclusions from shared snapshots:
+- Task/agent blob contents (`PROMPT.md`, task document bodies, attachment bytes, JSONL run logs)
+- Instruction-bundle file contents
+- Node-local runtime handles and paths (for example worktree/session-file handles)
+
 ### Chat System
 
 - `ChatStore` (`packages/core/src/chat-store.ts`) and `chat-types.ts` provide session-oriented chat state (`chat_sessions`, `chat_messages` tables)

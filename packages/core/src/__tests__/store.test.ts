@@ -11573,4 +11573,35 @@ describe("RunMutationContext", () => {
       expect(reloaded?.email).toBe("persist@example.com");
     });
   });
+
+  describe("shared mesh snapshots", () => {
+    it("exports and reapplies task/activity/audit snapshots deterministically", async () => {
+      const task = await store.createTask({ description: "snapshot task" });
+      await store.updateTask(task.id, { worktree: "/tmp/fn-worktree", executionStartBranch: "fn/base" });
+      await store.recordActivity({ type: "task:created", taskId: task.id, details: "created" });
+
+      const taskSnapshot = await store.getTaskMetadataSnapshot();
+      const activitySnapshot = await store.getActivityLogSnapshot();
+      const auditSnapshot = store.getRunAuditSnapshot();
+
+      const taskResult = await store.applyTaskMetadataSnapshot(taskSnapshot);
+      const activityResult = store.applyActivityLogSnapshot(activitySnapshot);
+      const auditResult = store.applyRunAuditSnapshot(auditSnapshot);
+
+      const taskSnapshot2 = await store.getTaskMetadataSnapshot();
+      const activitySnapshot2 = await store.getActivityLogSnapshot();
+      const auditSnapshot2 = store.getRunAuditSnapshot();
+
+      expect(taskResult.applied + taskResult.skipped).toBeGreaterThan(0);
+      expect(taskSnapshot2.payload).toEqual(taskSnapshot.payload);
+      expect(activitySnapshot2.payload).toEqual(activitySnapshot.payload);
+      expect(auditSnapshot2.payload).toEqual(auditSnapshot.payload);
+      expect(activityResult.skipped).toBeGreaterThanOrEqual(1);
+      expect(auditResult.skipped).toBeGreaterThanOrEqual(0);
+
+      const persisted = await store.getTask(task.id);
+      expect(persisted?.worktree).toBe("/tmp/fn-worktree");
+      expect(persisted?.executionStartBranch).toBe("fn/base");
+    });
+  });
 });

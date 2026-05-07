@@ -55,6 +55,7 @@ import type { RunMutationContext } from "./types.js";
 import type { TaskStore } from "./store.js";
 import { computeAccessState } from "./agent-permissions.js";
 import { Database } from "./db.js";
+import { createAgentRunSnapshot, createAgentSnapshot, validateSnapshotEnvelope, type AgentRunSnapshot, type AgentSnapshot } from "./shared-mesh-state.js";
 
 /** Database row shape returned by SELECT on agentRatings. */
 interface AgentRatingRow {
@@ -2123,6 +2124,81 @@ export class AgentStore extends EventEmitter {
       this.db.prepare("DELETE FROM agentBlockedStates WHERE agentId = ?").run(agentId);
       this.db.bumpLastModified();
     });
+  }
+
+  getAgentSnapshot(): Promise<AgentSnapshot> {
+    return (async () => {
+      const agents = await this.listAgents({ includeEphemeral: true });
+      const blockedRows = this.db.prepare("SELECT agentId, data FROM agentBlockedStates ORDER BY updatedAt ASC").all() as Array<{ agentId: string; data: string }>;
+      const blockedStates = blockedRows
+        .map((row) => ({ agentId: row.agentId, state: this.parseJson<BlockedStateSnapshot | null>(row.data, null) }))
+        .filter((row): row is { agentId: string; state: BlockedStateSnapshot } => row.state !== null);
+      return createAgentSnapshot({ agents, blockedStates });
+    })();
+  }
+
+  async applyAgentSnapshot(snapshot: AgentSnapshot): Promise<{ appliedAgents: number; appliedBlockedStates: number }> {
+    validateSnapshotEnvelope(snapshot);
+    let appliedAgents = 0;
+    let appliedBlockedStates = 0;
+
+    for (const agent of snapshot.payload.agents) {
+      this.db.prepare(`INSERT INTO agents (id, name, role, state, taskId, createdAt, updatedAt, lastHeartbeatAt, metadata, data)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name=excluded.name, role=excluded.role, state=excluded.state, taskId=excluded.taskId, updatedAt=excluded.updatedAt,
+          lastHeartbeatAt=excluded.lastHeartbeatAt, metadata=excluded.metadata, data=excluded.data`)
+        .run(
+          agent.id,
+          agent.name,
+          agent.role,
+          agent.state,
+          agent.taskId ?? null,
+          agent.createdAt,
+          agent.updatedAt,
+          agent.lastHeartbeatAt ?? null,
+          JSON.stringify(agent.metadata ?? {}),
+          JSON.stringify(agent),
+        );
+      appliedAgents++;
+    }
+
+    for (const blocked of snapshot.payload.blockedStates) {
+      this.db.prepare(`INSERT INTO agentBlockedStates (agentId, data, updatedAt)
+        VALUES (?, ?, ?)
+        ON CONFLICT(agentId) DO UPDATE SET data=excluded.data, updatedAt=excluded.updatedAt`)
+        .run(blocked.agentId, JSON.stringify(blocked.state), blocked.state.recordedAt);
+      appliedBlockedStates++;
+    }
+
+    this.db.bumpLastModified();
+    return { appliedAgents, appliedBlockedStates };
+  }
+
+  getAgentRunSnapshot(): AgentRunSnapshot {
+    const runs = this.db.prepare("SELECT data FROM agentRuns ORDER BY startedAt ASC").all() as Array<{ data: string }>;
+    const parsed = runs
+      .map((row) => this.parseJson<AgentHeartbeatRun | null>(row.data, null))
+      .filter((run): run is AgentHeartbeatRun => run !== null);
+    return createAgentRunSnapshot(parsed);
+  }
+
+  async applyAgentRunSnapshot(snapshot: AgentRunSnapshot): Promise<{ applied: number; skipped: number }> {
+    validateSnapshotEnvelope(snapshot);
+    let applied = 0;
+    let skipped = 0;
+
+    for (const run of snapshot.payload.runs) {
+      const exists = this.db.prepare("SELECT 1 FROM agentRuns WHERE id = ?").get(run.id);
+      if (exists) {
+        skipped++;
+        continue;
+      }
+      await this.saveRun(run);
+      applied++;
+    }
+
+    return { applied, skipped };
   }
 
   // ─────────────────────────────────────────────────────────────────────────

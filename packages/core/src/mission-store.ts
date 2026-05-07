@@ -48,7 +48,11 @@ import type {
   ValidatorRunStatus,
   FeatureLoopState,
 } from "./mission-types.js";
-
+import {
+  createMissionHierarchySnapshot,
+  validateSnapshotEnvelope,
+  type MissionHierarchySnapshot,
+} from "./shared-mesh-state.js";
 // ── Constants ────────────────────────────────────────────────────────
 
 /**
@@ -3262,6 +3266,106 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
   // ── ID Generators ───────────────────────────────────────────────────
 
   private idSequence = 0;
+
+  getMissionHierarchySnapshot(): MissionHierarchySnapshot {
+    const missions = this.listMissions();
+    const milestones = missions.flatMap((mission) => this.listMilestones(mission.id));
+    const slices = milestones.flatMap((milestone) => this.listSlices(milestone.id));
+    const features = slices.flatMap((slice) => this.listFeatures(slice.id));
+    const missionEvents = missions.flatMap((mission) => this.getMissionEvents(mission.id, { limit: 10_000 }).events);
+    const assertions = milestones.flatMap((milestone) => this.listContractAssertions(milestone.id));
+    const featureAssertionLinks = this.db.prepare("SELECT featureId, assertionId, createdAt FROM mission_feature_assertions ORDER BY createdAt ASC").all() as Array<{ featureId: string; assertionId: string; createdAt: string }>;
+
+    return createMissionHierarchySnapshot({
+      missions,
+      milestones,
+      slices,
+      features,
+      missionEvents,
+      assertions,
+      featureAssertionLinks,
+    });
+  }
+
+  applyMissionHierarchySnapshot(snapshot: MissionHierarchySnapshot): { applied: number } {
+    validateSnapshotEnvelope(snapshot);
+    let applied = 0;
+
+    for (const mission of snapshot.payload.missions) {
+      this.db.prepare(`INSERT INTO missions (id, title, description, status, interviewState, autoAdvance, autopilotEnabled, autopilotState, lastAutopilotActivityAt, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          title=excluded.title, description=excluded.description, status=excluded.status, interviewState=excluded.interviewState,
+          autoAdvance=excluded.autoAdvance, autopilotEnabled=excluded.autopilotEnabled, autopilotState=excluded.autopilotState,
+          lastAutopilotActivityAt=excluded.lastAutopilotActivityAt, updatedAt=excluded.updatedAt`).run(
+        mission.id, mission.title, mission.description ?? null, mission.status, mission.interviewState, mission.autoAdvance ? 1 : 0,
+        mission.autopilotEnabled ? 1 : 0, mission.autopilotState, mission.lastAutopilotActivityAt ?? null, mission.createdAt, mission.updatedAt,
+      );
+      applied++;
+    }
+
+    for (const milestone of snapshot.payload.milestones) {
+      this.db.prepare(`INSERT INTO milestones (id, missionId, title, description, status, orderIndex, interviewState, dependencies, planningNotes, verification, validationState, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET title=excluded.title, description=excluded.description, status=excluded.status, orderIndex=excluded.orderIndex,
+          interviewState=excluded.interviewState, dependencies=excluded.dependencies, planningNotes=excluded.planningNotes, verification=excluded.verification,
+          validationState=excluded.validationState, updatedAt=excluded.updatedAt`).run(
+        milestone.id, milestone.missionId, milestone.title, milestone.description ?? null, milestone.status, milestone.orderIndex,
+        milestone.interviewState, toJsonNullable(milestone.dependencies), milestone.planningNotes ?? null, milestone.verification ?? null,
+        milestone.validationState ?? null, milestone.createdAt, milestone.updatedAt,
+      );
+      applied++;
+    }
+
+    for (const slice of snapshot.payload.slices) {
+      this.db.prepare(`INSERT INTO slices (id, milestoneId, title, description, status, orderIndex, activatedAt, planState, planningNotes, verification, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET title=excluded.title, description=excluded.description, status=excluded.status, orderIndex=excluded.orderIndex,
+          activatedAt=excluded.activatedAt, planState=excluded.planState, planningNotes=excluded.planningNotes, verification=excluded.verification, updatedAt=excluded.updatedAt`).run(
+        slice.id, slice.milestoneId, slice.title, slice.description ?? null, slice.status, slice.orderIndex, slice.activatedAt ?? null,
+        slice.planState ?? null, slice.planningNotes ?? null, slice.verification ?? null, slice.createdAt, slice.updatedAt,
+      );
+      applied++;
+    }
+
+    for (const feature of snapshot.payload.features) {
+      this.db.prepare(`INSERT INTO mission_features (id, sliceId, taskId, title, description, acceptanceCriteria, status, createdAt, updatedAt, loopState, implementationAttemptCount, validatorAttemptCount, lastValidatorRunId, lastValidatorStatus, generatedFromFeatureId, generatedFromRunId)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET taskId=excluded.taskId, title=excluded.title, description=excluded.description, acceptanceCriteria=excluded.acceptanceCriteria,
+          status=excluded.status, updatedAt=excluded.updatedAt, loopState=excluded.loopState, implementationAttemptCount=excluded.implementationAttemptCount,
+          validatorAttemptCount=excluded.validatorAttemptCount, lastValidatorRunId=excluded.lastValidatorRunId, lastValidatorStatus=excluded.lastValidatorStatus,
+          generatedFromFeatureId=excluded.generatedFromFeatureId, generatedFromRunId=excluded.generatedFromRunId`).run(
+        feature.id, feature.sliceId, feature.taskId ?? null, feature.title, feature.description ?? null, feature.acceptanceCriteria ?? null,
+        feature.status, feature.createdAt, feature.updatedAt, feature.loopState ?? null, feature.implementationAttemptCount ?? null,
+        feature.validatorAttemptCount ?? null, feature.lastValidatorRunId ?? null, feature.lastValidatorStatus ?? null,
+        feature.generatedFromFeatureId ?? null, feature.generatedFromRunId ?? null,
+      );
+      applied++;
+    }
+
+    for (const event of snapshot.payload.missionEvents) {
+      if (!event.id || !event.missionId) continue;
+      this.db.prepare(`INSERT OR IGNORE INTO mission_events (id, missionId, eventType, description, metadata, timestamp, seq)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run(event.id, event.missionId, event.eventType, event.description, toJsonNullable(event.metadata), event.timestamp, event.seq ?? null);
+    }
+
+    for (const assertion of snapshot.payload.assertions) {
+      if (!assertion.id || !assertion.milestoneId) continue;
+      this.db.prepare(`INSERT INTO mission_contract_assertions (id, milestoneId, title, assertion, status, orderIndex, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET title=excluded.title, assertion=excluded.assertion, status=excluded.status, orderIndex=excluded.orderIndex, updatedAt=excluded.updatedAt`)
+        .run(assertion.id, assertion.milestoneId, assertion.title, assertion.assertion, assertion.status, assertion.orderIndex, assertion.createdAt, assertion.updatedAt);
+    }
+
+    for (const link of snapshot.payload.featureAssertionLinks) {
+      if (!link.featureId || !link.assertionId) continue;
+      this.db.prepare(`INSERT OR IGNORE INTO mission_feature_assertions (featureId, assertionId, createdAt) VALUES (?, ?, ?)`)
+        .run(link.featureId, link.assertionId, link.createdAt);
+    }
+
+    return { applied };
+  }
 
   private generateId(prefix: string): string {
     const timestamp = Date.now().toString(36).toUpperCase();

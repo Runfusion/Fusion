@@ -1170,6 +1170,9 @@ export interface MeshReplicatedTaskApplyResult {
   applied: boolean;
 }
 
+/** Canonical version for shared-state snapshots exchanged across mesh nodes. */
+export const SHARED_STATE_SNAPSHOT_VERSION = 1 as const;
+
 export interface TodoList {
   id: string;
   projectId: string;

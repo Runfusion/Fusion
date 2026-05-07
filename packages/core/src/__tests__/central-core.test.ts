@@ -2758,4 +2758,23 @@ describe("CentralCore", () => {
       rmSync(tempDir + "-v5-migrate", { recursive: true, force: true });
     });
   });
+
+  it("exports and applies settings/auth snapshots", async () => {
+    const syncCentral = new CentralCore(tempDir + "-snapshot");
+    await syncCentral.init();
+    try {
+      const legacy = await syncCentral.getSettingsForSync({});
+      const snapshot = await syncCentral.getProjectSettingsSnapshot({});
+      const result = await syncCentral.applyProjectSettingsSnapshot(snapshot);
+      const authSnapshot = syncCentral.getAuthMaterialSnapshot({ foo: { providerId: "foo", accountLabel: "acct" } as any });
+
+      expect(snapshot.payload.global).toEqual(legacy.global);
+      expect(snapshot.payload.projects).toEqual(legacy.projects);
+      expect(typeof result.success).toBe("boolean");
+      expect(syncCentral.applyAuthMaterialSnapshot(authSnapshot).foo.providerId).toBe("foo");
+    } finally {
+      await syncCentral.close();
+      rmSync(tempDir + "-snapshot", { recursive: true, force: true });
+    }
+  });
 });

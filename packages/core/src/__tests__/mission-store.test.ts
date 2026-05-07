@@ -3035,6 +3035,20 @@ describe("MissionStore", () => {
       store.off("validator-run:completed", eventListener);
     });
   });
+
+  it("exports and applies mission hierarchy snapshots", () => {
+    const mission = store.createMission({ title: "Snapshot Mission" });
+    const milestone = store.addMilestone(mission.id, { title: "MS" });
+    const slice = store.addSlice(milestone.id, { title: "SL" });
+    store.addFeature(slice.id, { title: "F" });
+
+    const snapshot = store.getMissionHierarchySnapshot();
+    const result = store.applyMissionHierarchySnapshot(snapshot);
+    const snapshot2 = store.getMissionHierarchySnapshot();
+
+    expect(result.applied).toBeGreaterThan(0);
+    expect(snapshot2.payload).toEqual(snapshot.payload);
+  });
 });
 
 // vi import for vitest mocking

@@ -2825,4 +2825,22 @@ describe("AgentStore", () => {
       }
     });
   });
+
+  it("exports and applies agent and run snapshots", async () => {
+    const agent = await store.createAgent({ name: "Snapshot Agent", role: "executor" });
+    await store.setLastBlockedState(agent.id, { taskId: "FN-1", blockedBy: "dep", recordedAt: new Date().toISOString(), contextHash: "h" });
+
+    const agentSnapshot = await store.getAgentSnapshot();
+    const runSnapshot = store.getAgentRunSnapshot();
+
+    const applyAgent = await store.applyAgentSnapshot(agentSnapshot);
+    const applyRun = await store.applyAgentRunSnapshot(runSnapshot);
+    const agentSnapshot2 = await store.getAgentSnapshot();
+    const runSnapshot2 = store.getAgentRunSnapshot();
+
+    expect(applyAgent.appliedAgents).toBeGreaterThan(0);
+    expect(agentSnapshot2.payload).toEqual(agentSnapshot.payload);
+    expect(runSnapshot2.payload).toEqual(runSnapshot.payload);
+    expect(applyRun.applied + applyRun.skipped).toBeGreaterThanOrEqual(0);
+  });
 });
