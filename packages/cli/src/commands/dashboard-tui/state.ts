@@ -342,6 +342,10 @@ export interface DashboardState {
   logsExpandedMode: boolean;
   selectedLogIndex: number;
   logsViewportStart: number;
+  // When the narrow single-pane main view is split horizontally to show a
+  // log strip at the bottom, this flag indicates whether the bottom log
+  // pane has key focus (vs. the top main panel).
+  narrowLogSplitFocused: boolean;
   loadingStatus: string;
   mode: AppMode;
   interactiveData: InteractiveData | null;
@@ -386,6 +390,7 @@ export function createInitialState(): DashboardState {
     logsExpandedMode: false,
     selectedLogIndex: 0,
     logsViewportStart: 0,
+    narrowLogSplitFocused: false,
     loadingStatus: "Starting…",
     mode: "status",
     interactiveData: null,

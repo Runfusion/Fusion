@@ -61,6 +61,7 @@ import type {
   TaskDetailData,
   TaskEvent,
   UpdateStatus,
+  SystemInfo,
 } from "./state.js";
 import type { LogEntry } from "./log-ring-buffer.js";
 import { FUSION_LOGO_LINES, FUSION_LOGO_LARGE_LINES, FUSION_TAGLINE, FUSION_URL, FUSION_VERSION } from "./logo.js";
@@ -129,6 +130,73 @@ function AnimatedFusionLogo({ lines }: { lines: readonly string[] }) {
 // Narrow-mode threshold: below this column count each multi-pane view collapses
 // to a single pane so content doesn't overflow or overlap on small terminals.
 const NARROW_THRESHOLD = 80;
+
+// In narrow single-pane mode, when there is enough vertical room we
+// horizontally split the screen so log activity stays visible while the
+// user is on a non-logs section. The split is dynamic: the top pane gets
+// exactly the rows it needs to render the active section without
+// truncating, and the bottom log strip absorbs the rest. We only enable
+// the split when the log strip would have at least this many rows.
+const NARROW_SPLIT_MIN_LOG_ROWS = 6;
+
+// Rough upper bound on how many rows each non-System panel needs once
+// rendered — used to size the top pane when the active section is not
+// System. System is computed dynamically from the chip wrap.
+const STATIC_SECTION_CONTENT_ROWS: Record<string, number> = {
+  stats: 4,
+  utilities: 7,
+  settings: 9,
+};
+
+// Estimate the System panel's content row count given the current column
+// count and focus state. Mirrors the chip layout in SystemPanel so the
+// split sizing stays in lockstep with what's actually rendered.
+function estimateSystemContentRows(
+  info: SystemInfo | null,
+  cols: number,
+  isFocused: boolean,
+): number {
+  if (!info) return 1;
+  // Panel content area: terminal cols minus border (2) minus paddingX (2).
+  const inner = Math.max(20, cols - 4);
+  const chipGap = 2;
+  const chips: number[] = [];
+  // Each chip = "<label> <value>" with an internal gap=1.
+  chips.push(1 + 1 + FUSION_VERSION.length);
+  chips.push(3 + 1 + (info.baseUrl?.length ?? 0));
+  if (info.authToken) chips.push(5 + 1 + info.authToken.length);
+  chips.push(6 + 1 + 6); // Engine + worst-case state ("active"/"paused")
+  chips.push(4 + 1 + 6); // Auth + "bearer"
+  if (cols >= 100) chips.push(7 + 1 + 8); // Watcher + "inactive"
+  chips.push(6 + 1 + 14); // Uptime + worst-case "Xd Yh Zm Ws"
+
+  let rows = 1;
+  let used = 0;
+  for (const c of chips) {
+    const next = used === 0 ? c : used + chipGap + c;
+    if (next > inner && used > 0) {
+      rows++;
+      used = c;
+    } else {
+      used = next;
+    }
+  }
+  if (isFocused) rows++; // inline hint row
+  return rows;
+}
+
+function estimateSectionPanelHeight(
+  section: SectionId,
+  state: DashboardState,
+  cols: number,
+  isFocused: boolean,
+): number {
+  const contentRows = section === "system"
+    ? estimateSystemContentRows(state.systemInfo, cols, isFocused)
+    : STATIC_SECTION_CONTENT_ROWS[section] ?? 6;
+  // Panel chrome: top border (1) + title row (1) + bottom border (1).
+  return contentRows + 3;
+}
 
 // Logo width thresholds. Below SPLASH_MIN_COLS we fall back to the plain
 // "FUSION" word; otherwise we pick the largest variant that fits.
@@ -872,29 +940,60 @@ function StatusModeSingle({
   const { stdout } = useStdout();
   const rows = stdout?.rows ?? 24;
   const cols = stdout?.columns ?? 80;
-  // LogsPanel's row budget — explicit cap so it doesn't render more
-  // entries than fit. Chrome=6:
+  // LogsPanel's row budget when it owns the whole single-pane view. Chrome=6:
   //   header(1) + statusbar(1) +
   //   panel border top(1) + panel title(1) + panel border bottom(1) +
   //   filter row(1) = 6.
-  const logsAvailableRows = Math.max(1, rows - 6);
-  tuiDebug("StatusModeSingle", { cols, rows, logsAvailableRows, focused });
+  const logsAvailableRowsFull = Math.max(1, rows - 6);
 
-  const activePanel = () => {
+  // Dynamic split: give the top pane exactly the rows it needs to render
+  // the active section without truncating, and let the log strip absorb
+  // everything else. We only enable the split when the leftover would still
+  // give the log strip enough rows to be useful.
+  const contentRows = Math.max(1, rows - 2); // rows minus header + statusbar
+  const topNeededRows =
+    focused === "logs"
+      ? contentRows
+      : estimateSectionPanelHeight(focused, state, cols, !state.narrowLogSplitFocused);
+  const candidateSplitHeight = contentRows - topNeededRows;
+  const showLogSplit =
+    focused !== "logs" && candidateSplitHeight >= NARROW_SPLIT_MIN_LOG_ROWS;
+  const splitHeight = showLogSplit ? candidateSplitHeight : 0;
+  // Bottom log pane has its own border + title + filter chrome (4), so the
+  // visible-entries budget is splitHeight - 4.
+  const splitLogRows = Math.max(1, splitHeight - 4);
+  const splitFocused = showLogSplit && state.narrowLogSplitFocused;
+
+  tuiDebug("StatusModeSingle", {
+    cols,
+    rows,
+    logsAvailableRowsFull,
+    focused,
+    showLogSplit,
+    splitHeight,
+    splitFocused,
+  });
+
+  const topPanel = () => {
     switch (focused) {
-      case "system": return <SystemPanel state={state} isFocused />;
-      case "logs": return <LogsPanel state={state} isFocused availableRows={logsAvailableRows} />;
-      case "utilities": return <UtilitiesPanel state={state} isFocused />;
-      case "stats": return <StatsPanel state={state} isFocused />;
-      case "settings": return <SettingsPanel state={state} isFocused />;
+      case "system": return <SystemPanel state={state} isFocused={!splitFocused} />;
+      case "logs": return <LogsPanel state={state} isFocused availableRows={logsAvailableRowsFull} />;
+      case "utilities": return <UtilitiesPanel state={state} isFocused={!splitFocused} />;
+      case "stats": return <StatsPanel state={state} isFocused={!splitFocused} />;
+      case "settings": return <SettingsPanel state={state} isFocused={!splitFocused} />;
     }
   };
 
   return (
     <Box flexDirection="column" flexGrow={1}>
       <Box flexGrow={1} flexDirection="column" overflow="hidden">
-        {activePanel()}
+        {topPanel()}
       </Box>
+      {showLogSplit && (
+        <Box flexShrink={0} flexDirection="column" height={splitHeight} overflow="hidden">
+          <LogsPanel state={state} isFocused={splitFocused} availableRows={splitLogRows} />
+        </Box>
+      )}
       <Box flexShrink={0}>
         <StatusBar state={state} controller={controller} />
       </Box>
@@ -4001,7 +4100,7 @@ export function DashboardApp({ controller }: DashboardAppProps) {
   useEffect(() => {
     return controller.onWheel((dir) => {
       const s = wheelStateRef.current;
-      if (s.activeSection !== "logs") return;
+      if (s.activeSection !== "logs" && !s.narrowLogSplitFocused) return;
       const filtered = controller.getFilteredLogEntries();
       if (filtered.length === 0) return;
       const WHEEL_STEP = 3;
@@ -4030,7 +4129,7 @@ export function DashboardApp({ controller }: DashboardAppProps) {
     ? (state.interactiveView === "files"
        || state.interactiveView === "git"
        || state.interactiveView === "board")
-    : (state.activeSection === "logs" && !state.logsExpandedMode);
+    : ((state.activeSection === "logs" || state.narrowLogSplitFocused) && !state.logsExpandedMode);
   useEffect(() => {
     if (state.mouseEnabled !== wantsMouse) {
       controller.setMouseEnabled(wantsMouse);
@@ -4098,6 +4197,27 @@ export function DashboardApp({ controller }: DashboardAppProps) {
       return;
     }
 
+    // Narrow single-pane mode shows a bottom log strip when the terminal has
+    // enough rows after the top pane is given everything it needs. Down-arrow
+    // shifts sub-focus into that strip; once focused it gets the same key
+    // bindings as the dedicated logs section. Mirrors the showLogSplit logic
+    // in StatusModeSingle.
+    const narrowSplitActive = (() => {
+      if (state.mode !== "status") return false;
+      if (!(cols < NARROW_THRESHOLD || rows < 20)) return false;
+      if (state.activeSection === "logs") return false;
+      const topNeeded = estimateSectionPanelHeight(
+        state.activeSection,
+        state,
+        cols,
+        !state.narrowLogSplitFocused,
+      );
+      return rows - 2 - topNeeded >= NARROW_SPLIT_MIN_LOG_ROWS;
+    })();
+    const logsFocused =
+      state.mode === "status" &&
+      (state.activeSection === "logs" || (narrowSplitActive && state.narrowLogSplitFocused));
+
     // View switching shortcuts — b/a/g enter interactive + set view
     if (input === "b" || input === "B") {
       controller.setMode("interactive");
@@ -4120,7 +4240,7 @@ export function DashboardApp({ controller }: DashboardAppProps) {
     //   * status mode + Logs panel focused → cycle severity filter
     //   * everywhere else → switch to Files view (interactive)
     if (input === "f" || input === "F") {
-      if (state.mode === "status" && state.activeSection === "logs") {
+      if (logsFocused) {
         controller.cycleSeverityFilter();
         return;
       }
@@ -4232,7 +4352,9 @@ export function DashboardApp({ controller }: DashboardAppProps) {
       return;
     }
 
-    // Arrow/n/p navigation (skip when logs expanded)
+    // Arrow/n/p navigation (skip when logs expanded). cycleSection clears
+    // any narrow-split sub-focus via setActiveSection — left/right always
+    // cycle sections, including reaching the dedicated logs section.
     if (key.rightArrow || input === "n" || input === "N") {
       if (state.activeSection !== "logs" || !state.logsExpandedMode) {
         controller.cycleSection(1);
@@ -4246,24 +4368,47 @@ export function DashboardApp({ controller }: DashboardAppProps) {
       return;
     }
 
-    // Up/Down also cycle sections, except on Logs where they navigate entries.
+    // Down arrow:
+    //   * dedicated logs section → handled below as log entry navigation
+    //   * narrow split active, top focused → drop sub-focus into the log strip
+    //   * narrow split active, strip focused → handled below as log navigation
+    //   * otherwise → cycleSection
     if (key.downArrow && state.activeSection !== "logs") {
-      controller.cycleSection(1);
-      return;
+      if (narrowSplitActive && !state.narrowLogSplitFocused) {
+        controller.setNarrowLogSplitFocused(true);
+        return;
+      }
+      if (!(narrowSplitActive && state.narrowLogSplitFocused)) {
+        controller.cycleSection(1);
+        return;
+      }
+      // fall through to log navigation
     }
+    // Up arrow: when the split strip is focused and the cursor is at the
+    // top, return focus to the main pane instead of navigating further up.
     if (key.upArrow && state.activeSection !== "logs") {
-      controller.cycleSection(-1);
-      return;
+      if (narrowSplitActive && state.narrowLogSplitFocused) {
+        if (state.selectedLogIndex <= 0) {
+          controller.setNarrowLogSplitFocused(false);
+          return;
+        }
+        // fall through to log navigation
+      } else {
+        controller.cycleSection(-1);
+        return;
+      }
     }
 
-    // Utilities actions
-    if (state.activeSection === "utilities") {
+    // Utilities actions — skipped when sub-focus has moved to the log strip
+    // so j/k/G/Home/etc. don't get swallowed by utility shortcuts.
+    if (state.activeSection === "utilities" && !logsFocused) {
       void controller.handleUtilityAction(input);
       return;
     }
 
-    // Logs-specific keys
-    if (state.activeSection === "logs") {
+    // Logs-specific keys (apply to dedicated logs section AND the narrow
+    // bottom split when it has sub-focus).
+    if (logsFocused) {
       const filteredEntries = controller.getFilteredLogEntries();
 
       if (key.escape) {
@@ -4272,6 +4417,9 @@ export function DashboardApp({ controller }: DashboardAppProps) {
           controller.setShowHelp(false);
         } else if (state.showHelp) {
           controller.setShowHelp(false);
+        } else if (state.narrowLogSplitFocused) {
+          // Esc out of the bottom log strip back to the main pane.
+          controller.setNarrowLogSplitFocused(false);
         }
         return;
       }

@@ -80,6 +80,10 @@ export class DashboardTUI {
   logsExpandedMode = false;
   selectedLogIndex = 0;
   logsViewportStart = 0;
+  // True when the narrow single-pane view is split and the bottom log
+  // strip currently owns the keyboard. Cleared whenever the active section
+  // changes or the split is no longer rendered.
+  narrowLogSplitFocused = false;
   loadingStatus = "Starting…";
   mode: "status" | "interactive" = "status";
   // When true, sampleSystemStats() kills any running vitest processes if
@@ -189,6 +193,7 @@ export class DashboardTUI {
       logsExpandedMode: this.logsExpandedMode,
       selectedLogIndex: this.selectedLogIndex,
       logsViewportStart: this.logsViewportStart,
+      narrowLogSplitFocused: this.narrowLogSplitFocused,
       loadingStatus: this.loadingStatus,
       mode: this.mode,
       interactiveData: this.interactiveData,
@@ -503,6 +508,8 @@ export class DashboardTUI {
   setActiveSection(section: SectionId): void {
     this.activeSection = section;
     this.showHelp = false;
+    // Section change supersedes any sub-focus on the narrow log split.
+    this.narrowLogSplitFocused = false;
     this.notify();
   }
 
@@ -537,6 +544,12 @@ export class DashboardTUI {
 
   setLogsExpandedMode(expanded: boolean): void {
     this.logsExpandedMode = expanded;
+    this.notify();
+  }
+
+  setNarrowLogSplitFocused(focused: boolean): void {
+    if (this.narrowLogSplitFocused === focused) return;
+    this.narrowLogSplitFocused = focused;
     this.notify();
   }
 
