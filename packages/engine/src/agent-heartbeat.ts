@@ -22,7 +22,7 @@ import { ApprovalRequestStore, buildExecutionMemoryInstructions, isEphemeralAgen
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import { createHash } from "node:crypto";
-import { createTaskCreateTool, createTaskLogToolWithContext, createTaskDocumentWriteTool, createTaskDocumentReadTool, createListAgentsTool, createDelegateTaskTool, createGetAgentConfigTool, createUpdateAgentConfigTool, createSendMessageTool, createReadMessagesTool, createMemoryTools, createReadEvaluationsTool, createUpdateIdentityTool, createReflectOnPerformanceTool, taskCreateParams } from "./agent-tools.js";
+import { createTaskCreateTool, createTaskLogToolWithContext, createTaskDocumentWriteTool, createTaskDocumentReadTool, createListAgentsTool, createDelegateTaskTool, createGetAgentConfigTool, createUpdateAgentConfigTool, createSendMessageTool, createReadMessagesTool, createMemoryTools, createReadEvaluationsTool, createUpdateIdentityTool, createReflectOnPerformanceTool, readAgentMemoryWorkspaceLongTerm, taskCreateParams } from "./agent-tools.js";
 import { AgentLogger } from "./agent-logger.js";
 import {
   resolveAgentInstructionsWithRatings,
@@ -490,16 +490,21 @@ function shortContentHash(value: string): string {
 function buildIdentitySnapshot(args: {
   agent: Agent;
   resolvedInstructions: string;
+  workspaceMemory: string;
 }): string {
-  const { agent, resolvedInstructions } = args;
+  const { agent, resolvedInstructions, workspaceMemory } = args;
 
   const soulTrimmed = typeof agent.soul === "string" ? agent.soul.trim() : "";
   const instrTrimmed = resolvedInstructions.trim();
-  const memTrimmed = typeof agent.memory === "string" ? agent.memory.trim() : "";
+  const inlineMemoryTrimmed = typeof agent.memory === "string" ? agent.memory.trim() : "";
+  const workspaceMemoryTrimmed = workspaceMemory.trim();
+  const memorySource = inlineMemoryTrimmed ? "inline" : workspaceMemoryTrimmed ? "workspace" : null;
+  const memTrimmed = inlineMemoryTrimmed || workspaceMemoryTrimmed;
 
-  const formatField = (trimmed: string): string => {
+  const formatField = (trimmed: string, source?: "inline" | "workspace"): string => {
     if (!trimmed) return "absent";
-    return `loaded (${trimmed.length} chars, sha256:${shortContentHash(trimmed)})`;
+    const sourceLabel = source ? `, source: ${source}` : "";
+    return `loaded (${trimmed.length} chars, sha256:${shortContentHash(trimmed)}${sourceLabel})`;
   };
 
   return [
@@ -512,7 +517,7 @@ function buildIdentitySnapshot(args: {
     `- role: ${agent.role}`,
     `- soul: ${formatField(soulTrimmed)}`,
     `- instructions: ${formatField(instrTrimmed)}`,
-    `- memory: ${formatField(memTrimmed)}`,
+    `- memory: ${formatField(memTrimmed, memorySource ?? undefined)}`,
   ].join("\n");
 }
 
@@ -1721,11 +1726,19 @@ export class HeartbeatMonitor {
           ? HEARTBEAT_NO_TASK_SYSTEM_PROMPT
           : HEARTBEAT_SYSTEM_PROMPT;
         let resolvedInstructionsForIdentity = "";
+        let workspaceMemoryForIdentity = "";
         try {
           resolvedInstructionsForIdentity = await resolveAgentInstructionsWithRatings(agent, rootDir, this.store);
         } catch (instructionError) {
           const message = instructionError instanceof Error ? instructionError.message : String(instructionError);
           heartbeatLog.warn(`Failed to resolve agent instructions for heartbeat ${agentId}: ${message}`);
+        }
+
+        try {
+          workspaceMemoryForIdentity = await readAgentMemoryWorkspaceLongTerm(rootDir, agent.id);
+        } catch (memoryReadErr) {
+          const message = memoryReadErr instanceof Error ? memoryReadErr.message : String(memoryReadErr);
+          heartbeatLog.warn(`Failed to resolve workspace memory for heartbeat ${agentId}: ${message}`);
         }
 
         let memoryInstructions = "";
@@ -1895,7 +1908,11 @@ export class HeartbeatMonitor {
               `Heartbeat execution for agent "${agent.name}" (ID: ${agent.id})`,
               `Source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
               "",
-              buildIdentitySnapshot({ agent, resolvedInstructions: resolvedInstructionsForIdentity }),
+              buildIdentitySnapshot({
+                agent,
+                resolvedInstructions: resolvedInstructionsForIdentity,
+                workspaceMemory: workspaceMemoryForIdentity,
+              }),
               "",
               "## Wake Delta",
               `- source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
@@ -2003,7 +2020,11 @@ export class HeartbeatMonitor {
               `Source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,
               `Assigned task: ${taskId} — ${taskTitle}`,
               "",
-              buildIdentitySnapshot({ agent, resolvedInstructions: resolvedInstructionsForIdentity }),
+              buildIdentitySnapshot({
+                agent,
+                resolvedInstructions: resolvedInstructionsForIdentity,
+                workspaceMemory: workspaceMemoryForIdentity,
+              }),
               "",
               "## Wake Delta",
               `- source: ${source}${triggerDetail ? ` (${triggerDetail})` : ""}`,

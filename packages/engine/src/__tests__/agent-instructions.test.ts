@@ -103,6 +103,60 @@ describe("resolveAgentInstructions", () => {
     expect(result).not.toContain("## Agent Memory");
   });
 
+  it("uses workspace MEMORY.md when inline memory is empty", async () => {
+    await mkdir(join(testDir, ".fusion", "agent-memory", "agent-test"), { recursive: true });
+    await writeFile(
+      join(testDir, ".fusion", "agent-memory", "agent-test", "MEMORY.md"),
+      "\nworkspace memory content\n",
+      "utf-8",
+    );
+
+    const result = await resolveAgentInstructions(makeAgent({ memory: "" }), testDir);
+    expect(result).toContain("## Agent Memory");
+    expect(result).toContain("workspace memory content");
+    expect(result).toContain("_Source: .fusion/agent-memory/agent-test/MEMORY.md_");
+  });
+
+  it("renders both inline and workspace memory when both exist", async () => {
+    await mkdir(join(testDir, ".fusion", "agent-memory", "agent-test"), { recursive: true });
+    await writeFile(
+      join(testDir, ".fusion", "agent-memory", "agent-test", "MEMORY.md"),
+      "workspace memory content",
+      "utf-8",
+    );
+
+    const result = await resolveAgentInstructions(makeAgent({ memory: "inline memory content" }), testDir);
+    expect(result).toContain("inline memory content");
+    expect(result).toContain("### Long-term Workspace Memory");
+    expect(result).toContain("workspace memory content");
+  });
+
+  it("reads workspace memory using sanitized agent id", async () => {
+    const weirdId = "Agent X/1";
+    await mkdir(join(testDir, ".fusion", "agent-memory", "Agent-X-1"), { recursive: true });
+    await writeFile(
+      join(testDir, ".fusion", "agent-memory", "Agent-X-1", "MEMORY.md"),
+      "sanitized workspace memory",
+      "utf-8",
+    );
+
+    const result = await resolveAgentInstructions(makeAgent({ id: weirdId, memory: "" }), testDir);
+    expect(result).toContain("sanitized workspace memory");
+    expect(result).toContain("_Source: .fusion/agent-memory/Agent-X-1/MEMORY.md_");
+  });
+
+  it("clamps oversized workspace memory", async () => {
+    await mkdir(join(testDir, ".fusion", "agent-memory", "agent-test"), { recursive: true });
+    await writeFile(
+      join(testDir, ".fusion", "agent-memory", "agent-test", "MEMORY.md"),
+      "x".repeat(60000),
+      "utf-8",
+    );
+
+    const result = await resolveAgentInstructions(makeAgent({ memory: "" }), testDir);
+    expect(result).toContain("x".repeat(50000));
+  });
+
   it("returns instructionsText when set", async () => {
     const agent = makeAgent({ instructionsText: "Always write tests." });
     const result = await resolveAgentInstructions(agent, testDir);

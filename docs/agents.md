@@ -285,7 +285,11 @@ Runtime behavior:
   - `.fusion/agent-memory/{agentId}/DREAMS.md` (synthesized patterns)
   - `.fusion/agent-memory/{agentId}/YYYY-MM-DD.md` (daily notes)
 - `fn_memory_get` is intentionally bounded to those same files only.
-- Empty inline `agent.memory` does **not** disable search/read of existing dreams/daily files once the agent-memory workspace exists.
+- Agent memory resolution order is:
+  1. Inline `agent.memory` (highest priority)
+  2. `.fusion/agent-memory/{agentId}/MEMORY.md` (fallback when inline is empty, and supplemental long-term section when inline is present)
+  3. Additional `.fusion/agent-memory/{agentId}/DREAMS.md` and daily files surfaced via `fn_memory_search`/`fn_memory_get`
+- Empty inline `agent.memory` does **not** disable search/read of existing workspace files once the agent-memory workspace exists.
 
 This layered behavior is shared by heartbeat agents and task-scoped sessions that inherit agent identity.
 
@@ -648,10 +652,10 @@ Heartbeat runs are composed from multiple prompt layers so each wake has full id
    - Inline instructions (`instructionsText`)
    - File-backed instructions (`instructionsPath`)
    - Soul/personality (`soul`)
-   - Agent memory (`memory`)
+   - Agent memory resolved from inline `agent.memory` first, then `.fusion/agent-memory/{agentId}/MEMORY.md` as fallback/supplement
    - Optional project memory guidance (when memory is enabled)
 3. **Execution prompt framing**
-   - `Identity Snapshot` block (agent ID/role + loaded soul/instructions/memory preview)
+   - `Identity Snapshot` block (agent ID/role + loaded soul/instructions/memory preview; `memory: loaded` when either inline memory or workspace `MEMORY.md` is present)
    - `Wake Delta` block (source, trigger detail, wake reason, assignment/comments/messages)
    - Heartbeat procedure block (task-scoped or no-task variant, plus optional per-agent procedure override file)
 

@@ -10,6 +10,7 @@ import {
 } from "@fusion/core";
 import type { PluginRunner } from "./plugin-runner.js";
 import { createLogger } from "./logger.js";
+import { readAgentMemoryWorkspaceLongTerm } from "./agent-tools.js";
 
 const log = createLogger("agent-instructions");
 
@@ -182,18 +183,39 @@ function formatSoulSection(soul: string, agentId: string): string {
   return `## Soul\n\n${trimmed}`;
 }
 
-function formatMemorySection(memory: string, agentId: string): string {
-  const trimmed = trimAndClamp(memory, MAX_MEMORY_LENGTH, "memory", agentId);
-  if (!trimmed) {
+function memoryWorkspaceDisplayPath(agentId: string): string {
+  const safeAgentId = agentId.trim().replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "agent";
+  return `.fusion/agent-memory/${safeAgentId}/MEMORY.md`;
+}
+
+function formatMemorySection(memory: string, workspaceMemory: string, agentId: string): string {
+  const inlineTrimmed = trimAndClamp(memory, MAX_MEMORY_LENGTH, "memory", agentId);
+  const workspaceTrimmed = trimAndClamp(workspaceMemory, MAX_MEMORY_LENGTH, "workspace memory", agentId);
+  if (!inlineTrimmed && !workspaceTrimmed) {
     return "";
   }
-  return [
+
+  const lines = [
     "## Agent Memory",
     "",
     "This is memory for this agent only. Keep it separate from workspace Project Memory; use it for durable preferences, operating habits, and context that should follow this agent across tasks.",
+    "Additional daily/dream files under .fusion/agent-memory/{agentId}/ are searchable with fn_memory_search.",
     "",
-    trimmed,
-  ].join("\n");
+  ];
+
+  if (inlineTrimmed) {
+    lines.push(inlineTrimmed);
+  }
+
+  if (workspaceTrimmed) {
+    if (!inlineTrimmed) {
+      lines.push(`_Source: ${memoryWorkspaceDisplayPath(agentId)}_`, "", workspaceTrimmed);
+    } else {
+      lines.push("", "### Long-term Workspace Memory", "", workspaceTrimmed);
+    }
+  }
+
+  return lines.join("\n");
 }
 
 function formatPerformanceFeedbackSection(ratingSummary: AgentRatingSummary): string {
@@ -293,11 +315,10 @@ export async function resolveAgentInstructions(
     }
   }
 
-  if (agent.memory?.trim()) {
-    const memorySection = formatMemorySection(agent.memory, agent.id);
-    if (memorySection) {
-      parts.push(memorySection);
-    }
+  const workspaceMemory = await readAgentMemoryWorkspaceLongTerm(rootDir, agent.id);
+  const memorySection = formatMemorySection(agent.memory ?? "", workspaceMemory, agent.id);
+  if (memorySection) {
+    parts.push(memorySection);
   }
 
   if (ratingSummary && ratingSummary.totalRatings > 0) {

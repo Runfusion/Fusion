@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -1879,6 +1879,41 @@ describe("executeHeartbeat", () => {
       expect(callArgs.customTools![12]!.name).toBe("fn_memory_append");
       // fn_heartbeat_done is last (terminal tool)
       expect(callArgs.customTools![13]!.name).toBe("fn_heartbeat_done");
+    });
+
+    it("loads workspace memory into system prompt and identity snapshot when inline memory is empty", async () => {
+      const rootDir = mkdtempSync(join(tmpdir(), "heartbeat-workspace-memory-"));
+      mkdirSync(join(rootDir, ".fusion", "agent-memory", "agent-001"), { recursive: true });
+      writeFileSync(
+        join(rootDir, ".fusion", "agent-memory", "agent-001", "MEMORY.md"),
+        "workspace memory for heartbeat",
+        "utf-8",
+      );
+
+      try {
+        const store = createStoreWithAgentForExec({
+          memory: "",
+          instructionsText: undefined,
+          instructionsPath: undefined,
+        });
+        const mockSession = createMockAgentSession();
+        mockedCreateFnAgent.mockResolvedValue({
+          session: mockSession as any,
+        });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir });
+
+        await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+        const callArgs = mockedCreateFnAgent.mock.calls[0]![0];
+        expect(callArgs.systemPrompt).toContain("## Agent Memory");
+        expect(callArgs.systemPrompt).toContain("workspace memory for heartbeat");
+
+        const executionPrompt = mockSession.prompt.mock.calls.at(-1)?.[0] as string;
+        expect(executionPrompt).toMatch(/- memory: loaded \(\d+ chars, sha256:[a-f0-9]{8}, source: workspace\)/);
+      } finally {
+        rmSync(rootDir, { recursive: true, force: true });
+      }
     });
 
     it("includes memory instructions even when agent has no custom instructions", async () => {

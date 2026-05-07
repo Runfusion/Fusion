@@ -637,7 +637,7 @@ describe("HeartbeatMonitor observability — prompt persistence + run-scoped log
     expect(exec).toContain("## Identity Snapshot");
     expect(exec).toContain("- agentId: agent-001");
     expect(exec).toMatch(/- soul: loaded \(\d+ chars, sha256:[0-9a-f]{8}\)/);
-    expect(exec).toMatch(/- memory: loaded \(\d+ chars, sha256:[0-9a-f]{8}\)/);
+    expect(exec).toMatch(/- memory: loaded \(\d+ chars, sha256:[0-9a-f]{8}(, source: (inline|workspace))?\)/);
     // Snapshot must NOT contain full preview content (that lives in the system prompt)
     expect(exec).not.toContain("I keep momentum across stalled tasks.");
 

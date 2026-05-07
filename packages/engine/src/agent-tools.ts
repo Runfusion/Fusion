@@ -19,7 +19,6 @@ import { ResearchStepRunner } from "./research-step-runner.js";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import type { AgentReflectionService } from "./agent-reflection.js";
-import { MAX_INSTRUCTIONS_TEXT_LENGTH, MAX_MEMORY_LENGTH, MAX_SOUL_LENGTH } from "./agent-instructions.js";
 import { createLogger } from "./logger.js";
 
 // ── Tool parameter schemas (canonical definitions) ────────────────────────
@@ -194,6 +193,10 @@ type MemorySearchHit = {
 
 const log = createLogger("agent-tools");
 
+const MAX_INSTRUCTIONS_TEXT_LENGTH = 50_000;
+const MAX_MEMORY_LENGTH = 50_000;
+const MAX_SOUL_LENGTH = 10_000;
+
 const AGENT_MEMORY_ROOT = ".fusion/agent-memory";
 const AGENT_MEMORY_FILENAME = "MEMORY.md";
 const AGENT_DREAMS_FILENAME = "DREAMS.md";
@@ -201,11 +204,11 @@ const agentQmdRefreshState = new Map<string, { lastStartedAt: number; inFlight?:
 const AGENT_QMD_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const DAILY_AGENT_MEMORY_RE = /^\d{4}-\d{2}-\d{2}\.md$/;
 
-function sanitizeAgentMemoryId(agentId: string): string {
+export function sanitizeAgentMemoryId(agentId: string): string {
   return agentId.trim().replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "agent";
 }
 
-function agentMemoryDisplayPath(agentId: string): string {
+export function agentMemoryDisplayPath(agentId: string): string {
   return `${AGENT_MEMORY_ROOT}/${sanitizeAgentMemoryId(agentId)}/${AGENT_MEMORY_FILENAME}`;
 }
 
@@ -217,7 +220,7 @@ function agentMemoryDirectory(rootDir: string, agentId: string): string {
   return join(rootDir, AGENT_MEMORY_ROOT, sanitizeAgentMemoryId(agentId));
 }
 
-function agentMemoryFilePath(rootDir: string, agentId: string): string {
+export function agentMemoryFilePath(rootDir: string, agentId: string): string {
   return join(agentMemoryDirectory(rootDir, agentId), AGENT_MEMORY_FILENAME);
 }
 
@@ -227,6 +230,26 @@ function agentDreamsFilePath(rootDir: string, agentId: string): string {
 
 function agentDailyFilePath(rootDir: string, agentId: string, date = new Date()): string {
   return join(agentMemoryDirectory(rootDir, agentId), `${date.toISOString().slice(0, 10)}.md`);
+}
+
+export async function readAgentMemoryWorkspaceLongTerm(rootDir: string, agentId: string): Promise<string> {
+  const safeRoot = typeof rootDir === "string" ? rootDir.trim() : "";
+  const safeAgentId = typeof agentId === "string" ? agentId.trim() : "";
+  if (!safeRoot || !safeAgentId) {
+    return "";
+  }
+
+  const filePath = agentMemoryFilePath(safeRoot, safeAgentId);
+  try {
+    const fileStat = await stat(filePath);
+    if (!fileStat.isFile()) {
+      return "";
+    }
+    const content = await readFile(filePath, "utf-8");
+    return typeof content === "string" ? content.trim() : "";
+  } catch {
+    return "";
+  }
 }
 
 export function qmdAgentMemoryCollectionName(rootDir: string, agentId: string): string {
