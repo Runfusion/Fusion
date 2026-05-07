@@ -1060,6 +1060,7 @@ Git dashboard routes are registered in `register-git-github.ts`.
 | POST | `/api/git/pull` | Pull the current branch and return structured conflict metadata on merge conflicts. |
 | POST | `/api/git/push` | Push the current branch. |
 | GET | `/api/git/stashes` | List stash entries. |
+| GET | `/api/git/stashes/:index/diff` | Return stash stat + patch for a validated stash index (404 when missing). |
 | POST | `/api/git/stashes` | Create a stash with an optional message. |
 | POST | `/api/git/stashes/:index/apply` | Apply a stash by index (optionally drop after apply via `drop: true`). |
 | DELETE | `/api/git/stashes/:index` | Drop a stash by index. |

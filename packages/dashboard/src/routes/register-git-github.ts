@@ -705,6 +705,23 @@ export async function dropGitStash(index: number, cwd?: string): Promise<string>
   return output || "Stash dropped";
 }
 
+export async function getGitStashDiff(index: number, cwd?: string): Promise<{ stat: string; patch: string } | null> {
+  if (index < 0 || !Number.isInteger(index)) {
+    throw new Error("Invalid stash index");
+  }
+
+  const stashRef = `stash@{${index}}`;
+  try {
+    await runGitCommand(["rev-parse", "--verify", stashRef], cwd, 5000);
+  } catch {
+    return null;
+  }
+
+  const stat = (await runGitCommand(["stash", "show", "--stat", stashRef], cwd, 10000)).trim();
+  const patch = await runGitCommand(["stash", "show", "-p", stashRef], cwd, 10000);
+  return { stat, patch };
+}
+
 export async function getGitFileChanges(cwd?: string): Promise<GitFileChange[]> {
   try {
     const output = await runGitCommand(["status", "--porcelain=v1"], cwd, 5000);
@@ -1747,6 +1764,37 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       const { drop } = req.body;
       const result = await applyGitStash(index, drop === true, rootDir);
       res.json({ message: result });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /**
+   * GET /api/git/stashes/:index/diff
+   * Returns stash diff (stat + patch) for a stash entry.
+   */
+  router.get("/git/stashes/:index/diff", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const rootDir = scopedStore.getRootDir();
+      if (!(await isGitRepo(rootDir))) {
+        throw badRequest("Not a git repository");
+      }
+
+      const index = parseInt(req.params.index, 10);
+      if (isNaN(index) || index < 0) {
+        throw badRequest("Invalid stash index");
+      }
+
+      const diff = await getGitStashDiff(index, rootDir);
+      if (!diff) {
+        throw notFound("Stash not found");
+      }
+
+      res.json(diff);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

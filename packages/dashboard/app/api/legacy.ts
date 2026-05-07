@@ -2398,6 +2398,11 @@ export function dropStash(index: number, projectId?: string): Promise<{ message:
   });
 }
 
+/** Fetch stash diff (stat + patch) */
+export function fetchStashDiff(index: number, projectId?: string): Promise<{ stat: string; patch: string }> {
+  return api<{ stat: string; patch: string }>(withProjectId(`/git/stashes/${index}/diff`, projectId));
+}
+
 /** Fetch unstaged diff (working directory changes) */
 export function fetchUnstagedDiff(projectId?: string): Promise<{ stat: string; patch: string }> {
   return api<{ stat: string; patch: string }>(withProjectId("/git/diff", projectId));

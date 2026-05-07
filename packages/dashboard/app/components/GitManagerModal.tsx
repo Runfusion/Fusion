@@ -38,6 +38,7 @@ import {
   createStash,
   applyStash,
   dropStash,
+  fetchStashDiff,
   fetchFileChanges,
   stageFiles,
   unstageFiles,
@@ -253,6 +254,11 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   const [stashes, setStashes] = useState<GitStash[]>([]);
   const [stashMessage, setStashMessage] = useState("");
   const [stashLoading, setStashLoading] = useState<string | null>(null);
+  const [expandedStashIndex, setExpandedStashIndex] = useState<number | null>(null);
+  const [stashDiff, setStashDiff] = useState<{ stat: string; patch: string } | null>(null);
+  const [loadingStashDiff, setLoadingStashDiff] = useState(false);
+  const [stashDiffError, setStashDiffError] = useState<string | null>(null);
+  const stashDiffRequestIdRef = useRef(0);
 
   // ── Remotes state
   const [remoteLoading, setRemoteLoading] = useState<string | null>(null);
@@ -300,6 +306,10 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
         case "stashes": {
           const stashesData = await fetchGitStashList(projectId);
           setStashes(stashesData);
+          setExpandedStashIndex(null);
+          setStashDiff(null);
+          setStashDiffError(null);
+          stashDiffRequestIdRef.current += 1;
           break;
         }
         case "remotes": {
@@ -658,9 +668,18 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
 
   // ── Stash Handlers ──────────────────────────────────────────────
 
+  const resetStashDiffState = useCallback(() => {
+    stashDiffRequestIdRef.current += 1;
+    setExpandedStashIndex(null);
+    setStashDiff(null);
+    setStashDiffError(null);
+    setLoadingStashDiff(false);
+  }, []);
+
   const handleCreateStash = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     setStashLoading("create");
+    resetStashDiffState();
     try {
       await createStash(stashMessage.trim() || undefined, projectId);
       addToast("Changes stashed", "success");
@@ -672,10 +691,11 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     } finally {
       setStashLoading(null);
     }
-  }, [stashMessage, addToast, projectId]);
+  }, [stashMessage, addToast, projectId, resetStashDiffState]);
 
   const handleApplyStash = useCallback(async (index: number, drop: boolean = false) => {
     setStashLoading(`apply-${index}`);
+    resetStashDiffState();
     try {
       await applyStash(index, drop, projectId);
       addToast(drop ? "Stash popped" : "Stash applied", "success");
@@ -686,7 +706,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     } finally {
       setStashLoading(null);
     }
-  }, [addToast, projectId]);
+  }, [addToast, projectId, resetStashDiffState]);
 
   const handleDropStash = useCallback(async (index: number) => {
     const shouldDrop = await confirmContext.confirm({
@@ -696,6 +716,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     });
     if (!shouldDrop) return;
     setStashLoading(`drop-${index}`);
+    resetStashDiffState();
     try {
       await dropStash(index, projectId);
       addToast("Stash dropped", "success");
@@ -706,7 +727,38 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     } finally {
       setStashLoading(null);
     }
-  }, [addToast, projectId, confirmContext]);
+  }, [addToast, projectId, confirmContext, resetStashDiffState]);
+
+  const handleToggleStashDiff = useCallback(async (index: number) => {
+    if (expandedStashIndex === index) {
+      resetStashDiffState();
+      return;
+    }
+
+    const requestId = stashDiffRequestIdRef.current + 1;
+    stashDiffRequestIdRef.current = requestId;
+    setExpandedStashIndex(index);
+    setStashDiff(null);
+    setStashDiffError(null);
+    setLoadingStashDiff(true);
+    try {
+      const diff = await fetchStashDiff(index, projectId);
+      if (stashDiffRequestIdRef.current !== requestId) {
+        return;
+      }
+      setStashDiff(diff);
+    } catch (err) {
+      if (stashDiffRequestIdRef.current !== requestId) {
+        return;
+      }
+      setStashDiff(null);
+      setStashDiffError(getErrorMessage(err) || "Failed to load stash diff");
+    } finally {
+      if (stashDiffRequestIdRef.current === requestId) {
+        setLoadingStashDiff(false);
+      }
+    }
+  }, [expandedStashIndex, projectId, resetStashDiffState]);
 
   // ── Remote Handlers ─────────────────────────────────────────────
 
@@ -918,7 +970,12 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
                 onCreateStash={handleCreateStash}
                 onApplyStash={handleApplyStash}
                 onDropStash={handleDropStash}
+                onToggleStashDiff={handleToggleStashDiff}
                 stashLoading={stashLoading}
+                expandedStashIndex={expandedStashIndex}
+                stashDiff={stashDiff}
+                loadingStashDiff={loadingStashDiff}
+                stashDiffError={stashDiffError}
               />
             )}
 
@@ -1698,7 +1755,12 @@ function StashesPanel({
   onCreateStash,
   onApplyStash,
   onDropStash,
+  onToggleStashDiff,
   stashLoading,
+  expandedStashIndex,
+  stashDiff,
+  loadingStashDiff,
+  stashDiffError,
 }: {
   stashes: GitStash[];
   stashMessage: string;
@@ -1706,7 +1768,12 @@ function StashesPanel({
   onCreateStash: (e: React.FormEvent) => void;
   onApplyStash: (index: number, drop?: boolean) => void;
   onDropStash: (index: number) => void;
+  onToggleStashDiff: (index: number) => void;
   stashLoading: string | null;
+  expandedStashIndex: number | null;
+  stashDiff: { stat: string; patch: string } | null;
+  loadingStashDiff: boolean;
+  stashDiffError: string | null;
 }) {
   return (
     <div className="gm-panel" data-testid="stashes-panel">
@@ -1744,53 +1811,80 @@ function StashesPanel({
         ) : (
           stashes.map((stash) => (
             <div key={stash.index} className="gm-stash-item">
-              <div className="gm-stash-info">
-                <span className="gm-stash-ref">stash@{`{${stash.index}}`}</span>
-                <span className="gm-stash-message">{stash.message}</span>
-                <div className="gm-stash-meta">
-                  {stash.branch && (
-                    <span className="gm-stash-branch">
-                      <GitBranchIcon size={12} />
-                      {stash.branch}
-                    </span>
-                  )}
-                  <span>{relativeDate(stash.date)}</span>
+              <div className="gm-stash-header">
+                <div className="gm-stash-info">
+                  <span className="gm-stash-ref">stash@{`{${stash.index}}`}</span>
+                  <span className="gm-stash-message">{stash.message}</span>
+                  <div className="gm-stash-meta">
+                    {stash.branch && (
+                      <span className="gm-stash-branch">
+                        <GitBranchIcon size={12} />
+                        {stash.branch}
+                      </span>
+                    )}
+                    <span>{relativeDate(stash.date)}</span>
+                  </div>
+                </div>
+                <div className="gm-stash-actions">
+                  <button
+                    className="btn btn-sm"
+                    onClick={() => onToggleStashDiff(stash.index)}
+                    disabled={stashLoading !== null}
+                  >
+                    {expandedStashIndex === stash.index ? "Hide" : "View"}
+                  </button>
+                  <button
+                    className="btn btn-sm btn-primary"
+                    onClick={() => onApplyStash(stash.index, false)}
+                    disabled={stashLoading !== null}
+                    title="Apply stash (keep)"
+                  >
+                    {stashLoading === `apply-${stash.index}` ? (
+                      <Loader2 size={14} className="spin" />
+                    ) : (
+                      "Apply"
+                    )}
+                  </button>
+                  <button
+                    className="btn btn-sm"
+                    onClick={() => onApplyStash(stash.index, true)}
+                    disabled={stashLoading !== null}
+                    title="Pop stash (apply and drop)"
+                  >
+                    Pop
+                  </button>
+                  <button
+                    className="btn btn-sm btn-danger"
+                    onClick={() => onDropStash(stash.index)}
+                    disabled={stashLoading !== null}
+                    title="Drop stash"
+                  >
+                    {stashLoading === `drop-${stash.index}` ? (
+                      <Loader2 size={14} className="spin" />
+                    ) : (
+                      <Trash2 size={14} />
+                    )}
+                  </button>
                 </div>
               </div>
-              <div className="gm-stash-actions">
-                <button
-                  className="btn btn-sm btn-primary"
-                  onClick={() => onApplyStash(stash.index, false)}
-                  disabled={stashLoading !== null}
-                  title="Apply stash (keep)"
-                >
-                  {stashLoading === `apply-${stash.index}` ? (
-                    <Loader2 size={14} className="spin" />
-                  ) : (
-                    "Apply"
-                  )}
-                </button>
-                <button
-                  className="btn btn-sm"
-                  onClick={() => onApplyStash(stash.index, true)}
-                  disabled={stashLoading !== null}
-                  title="Pop stash (apply and drop)"
-                >
-                  Pop
-                </button>
-                <button
-                  className="btn btn-sm btn-danger"
-                  onClick={() => onDropStash(stash.index)}
-                  disabled={stashLoading !== null}
-                  title="Drop stash"
-                >
-                  {stashLoading === `drop-${stash.index}` ? (
-                    <Loader2 size={14} className="spin" />
-                  ) : (
-                    <Trash2 size={14} />
-                  )}
-                </button>
-              </div>
+
+              {expandedStashIndex === stash.index && (
+                <div className="gm-stash-diff">
+                  {loadingStashDiff ? (
+                    <div className="gm-diff-loading">
+                      <Loader2 size={14} className="spin" />
+                      Loading stash diff…
+                    </div>
+                  ) : stashDiffError ? (
+                    <div className="gm-diff-error">{stashDiffError}</div>
+                  ) : stashDiff ? (
+                    <div className="gm-diff-viewer">
+                      {stashDiff.stat && <pre className="gm-diff-stat">{stashDiff.stat}</pre>}
+                      <pre className="gm-diff-patch">{stashDiff.patch}</pre>
+                    </div>
+                  ) : null}
+                </div>
+              )}
             </div>
           ))
         )}

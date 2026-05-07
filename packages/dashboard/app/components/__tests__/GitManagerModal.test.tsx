@@ -43,6 +43,7 @@ vi.mock("../../api", async () => {
     createStash: vi.fn(),
     applyStash: vi.fn(),
     dropStash: vi.fn(),
+    fetchStashDiff: vi.fn(),
     fetchFileChanges: vi.fn(),
     fetchGitFileDiff: vi.fn(),
     stageFiles: vi.fn(),
@@ -82,6 +83,7 @@ import {
   createStash,
   applyStash,
   dropStash,
+  fetchStashDiff,
   fetchFileChanges,
   fetchGitFileDiff,
   stageFiles,
@@ -203,6 +205,10 @@ describe("GitManagerModal", () => {
     (createStash as any).mockResolvedValue({ message: "Stash created" });
     (applyStash as any).mockResolvedValue({ message: "Stash applied" });
     (dropStash as any).mockResolvedValue({ message: "Stash dropped" });
+    (fetchStashDiff as any).mockResolvedValue({
+      stat: " README.md | 2 ++",
+      patch: "diff --git a/README.md b/README.md\n+stash diff",
+    });
     (discardChanges as any).mockResolvedValue({ discarded: ["src/app.ts"] });
     (createBranch as any).mockResolvedValue(undefined);
     (checkoutBranch as any).mockResolvedValue(undefined);
@@ -1157,6 +1163,77 @@ describe("GitManagerModal", () => {
     await waitFor(() => {
       expect(screen.getByText("stash@{0}")).toBeInTheDocument();
       expect(screen.getByText("WIP on main: abc1234 Test commit")).toBeInTheDocument();
+    });
+  });
+
+  it("views stash contents", async () => {
+    const user = userEvent.setup();
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /stashes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "View" })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "View" }));
+
+    await waitFor(() => {
+      expectLatestCallStartsWith(fetchStashDiff as any, 0);
+      expect(screen.getByText("Hide")).toBeInTheDocument();
+      expect(screen.getByText("README.md | 2 ++")).toBeInTheDocument();
+      expect(screen.getByText(/\+stash diff/)).toBeInTheDocument();
+    });
+  });
+
+  it("shows stash diff loading and error states", async () => {
+    const user = userEvent.setup();
+    let resolveDiff: ((value: { stat: string; patch: string }) => void) | null = null;
+    (fetchStashDiff as any).mockImplementationOnce(
+      () =>
+        new Promise<{ stat: string; patch: string }>((resolve) => {
+          resolveDiff = resolve;
+        })
+    );
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /stashes/i }));
+
+    await user.click(await screen.findByRole("button", { name: "View" }));
+    expect(screen.getByText("Loading stash diff…")).toBeInTheDocument();
+
+    resolveDiff?.({ stat: " README.md | 1 +", patch: "diff --git a/README.md b/README.md\n+ok" });
+    await waitFor(() => {
+      expect(screen.getByText("README.md | 1 +")).toBeInTheDocument();
+    });
+
+    (fetchStashDiff as any).mockRejectedValueOnce(new Error("stash diff failed"));
+    await user.click(screen.getByRole("button", { name: "Hide" }));
+    await user.click(screen.getByRole("button", { name: "View" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("stash diff failed")).toBeInTheDocument();
+    });
+  });
+
+  it("keeps stash actions available when viewing stash contents", async () => {
+    const user = userEvent.setup();
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /stashes/i }));
+
+    await user.click(await screen.findByRole("button", { name: "View" }));
+    await user.click(screen.getByText("Apply"));
+    await user.click(screen.getByText("Pop"));
+
+    await waitFor(() => {
+      expect((applyStash as any).mock.calls).toContainEqual([0, false, undefined]);
+      expect((applyStash as any).mock.calls).toContainEqual([0, true, undefined]);
+      expect(screen.getByTitle("Drop stash")).toBeInTheDocument();
     });
   });
 

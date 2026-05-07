@@ -126,6 +126,7 @@ Features:
 - Commit and diff browsing
 - Push/pull/fetch actions
 - Remote editing controls
+- Stash inspection (view stat + patch) before apply/pop/drop actions
 - Remotes tab keeps "Recent commits on {remote}" in sync immediately after successful push/pull actions
 
 ![Git manager](./screenshots/git-manager.png)

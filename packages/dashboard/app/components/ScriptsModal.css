@@ -2876,13 +2876,19 @@
 
 .gm-stash-item {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-md);
+  flex-direction: column;
+  gap: var(--space-sm);
   padding: var(--space-sm) var(--space-md);
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+}
+
+.gm-stash-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
 }
 
 .gm-stash-info {
@@ -2924,8 +2930,14 @@
 
 .gm-stash-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-xs);
   flex-shrink: 0;
+}
+
+.gm-stash-diff {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-sm);
 }
 
 /* ── Remote Panel ── */
@@ -3559,8 +3571,13 @@
     gap: var(--space-sm);
   }
 
-  .gm-stash-item {
+  .gm-stash-header {
     flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .gm-stash-actions {
+    width: 100%;
   }
 
   .gm-remote-actions {
