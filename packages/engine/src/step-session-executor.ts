@@ -25,6 +25,7 @@ import {
   promptWithAutoRetry,
   resolveExecutorSessionModel,
 } from "./agent-session-helpers.js";
+import type { AgentActionGateContext } from "./agent-action-gate.js";
 import type { SkillSelectionContext } from "./skill-resolver.js";
 import { generateWorktreeName } from "./worktree-names.js";
 import { AgentSemaphore } from "./concurrency.js";
@@ -109,6 +110,8 @@ export interface StepSessionExecutorOptions {
   agentStore?: AgentStore;
   /** Optional message store for messaging tools. */
   messageStore?: MessageStore;
+  /** Optional action-gate context for permanent assigned agents. */
+  actionGateContext?: AgentActionGateContext;
 }
 
 // ── File Scope Extraction ─────────────────────────────────────────────
@@ -983,6 +986,7 @@ Follow instructions precisely and avoid unrelated changes.`,
             },
             // Skill selection from step-session executor options
             ...(this.options.skillSelection ? { skillSelection: this.options.skillSelection } : {}),
+            actionGateContext: this.options.actionGateContext,
             taskId: taskDetail.id,
             taskTitle: taskDetail.title,
             onFallbackModelUsed: createFallbackModelObserver({

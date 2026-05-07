@@ -250,6 +250,19 @@ describe("executeHeartbeat", () => {
     });
   });
 
+  it("passes action gate context for permanent heartbeat agents", async () => {
+    const store = createStoreWithAgentForExec({ taskId: "FN-001" });
+    const mockSession = createMockAgentSession();
+    mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
+    const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+
+    await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
+
+    const args = mockedCreateFnAgent.mock.calls[0]?.[0] as { actionGateContext?: { agentId: string; isEphemeral: boolean } };
+    expect(args.actionGateContext?.agentId).toBe("agent-001");
+    expect(args.actionGateContext?.isEphemeral).toBe(false);
+  });
+
   describe("dependency validation", () => {
     it("throws when taskStore is not configured", async () => {
       const store = createStoreWithAgentForExec();

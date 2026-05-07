@@ -385,6 +385,90 @@ describe("worktree path boundary helpers", () => {
   });
 });
 
+describe("wrapToolsWithActionGate", () => {
+  it("blocks disallowed actions and skips underlying tool", async () => {
+    const tool = { name: "write", label: "Write", description: "", parameters: {}, execute: vi.fn() };
+    const { wrapToolsWithActionGate } = await import("../pi.js");
+    const wrapped = wrapToolsWithActionGate([tool as any], {
+      agentId: "agent-1",
+      agentName: "Agent",
+      isEphemeral: false,
+      taskId: "FN-1",
+      permissionPolicy: {
+        presetId: "locked-down",
+        rules: {
+          "git-write": "block",
+          "file-write-delete": "block",
+          "shell-command": "block",
+          "network-api": "block",
+          "task-agent-management": "block",
+        },
+      },
+      createApprovalRequest: vi.fn(),
+      findPendingApprovalByDedupeKey: vi.fn(),
+    });
+
+    const result = await (wrapped[0] as any).execute("t1", { path: "a.ts" });
+    expect((result as any).isError).toBe(true);
+    expect(tool.execute).not.toHaveBeenCalled();
+  });
+
+  it("skips gating wrapper for ephemeral contexts", async () => {
+    const tool = { name: "write", label: "Write", description: "", parameters: {}, execute: vi.fn().mockResolvedValue({ ok: true }) };
+    const { wrapToolsWithActionGate } = await import("../pi.js");
+    const wrapped = wrapToolsWithActionGate([tool as any], {
+      agentId: "agent-1",
+      agentName: "Agent",
+      isEphemeral: true,
+      permissionPolicy: {
+        presetId: "locked-down",
+        rules: {
+          "git-write": "block",
+          "file-write-delete": "block",
+          "shell-command": "block",
+          "network-api": "block",
+          "task-agent-management": "block",
+        },
+      },
+      createApprovalRequest: vi.fn(),
+      findPendingApprovalByDedupeKey: vi.fn(),
+    });
+
+    await (wrapped[0] as any).execute("t1", { path: "a.ts" });
+    expect(tool.execute).toHaveBeenCalled();
+  });
+
+  it("creates approval request once for require-approval", async () => {
+    const tool = { name: "write", label: "Write", description: "", parameters: {}, execute: vi.fn() };
+    const createApprovalRequest = vi.fn().mockResolvedValue({ id: "apr-1" });
+    const findPendingApprovalByDedupeKey = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "apr-1" });
+    const { wrapToolsWithActionGate } = await import("../pi.js");
+    const wrapped = wrapToolsWithActionGate([tool as any], {
+      agentId: "agent-1",
+      agentName: "Agent",
+      isEphemeral: false,
+      taskId: "FN-1",
+      permissionPolicy: {
+        presetId: "approval-required",
+        rules: {
+          "git-write": "require-approval",
+          "file-write-delete": "require-approval",
+          "shell-command": "require-approval",
+          "network-api": "require-approval",
+          "task-agent-management": "require-approval",
+        },
+      },
+      createApprovalRequest,
+      findPendingApprovalByDedupeKey,
+    });
+
+    await (wrapped[0] as any).execute("t1", { path: "a.ts" });
+    await (wrapped[0] as any).execute("t2", { path: "a.ts" });
+    expect(createApprovalRequest).toHaveBeenCalledTimes(1);
+    expect(tool.execute).not.toHaveBeenCalled();
+  });
+});
+
 describe("createFnAgent", () => {
   beforeEach(() => {
     vi.clearAllMocks();

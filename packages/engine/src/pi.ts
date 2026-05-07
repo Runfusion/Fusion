@@ -44,6 +44,11 @@ import { isContextLimitError } from "./context-limit-detector.js";
 import { createFusionAuthStorage, getModelRegistryModelsPath } from "./auth-storage.js";
 import { piLog, extensionsLog } from "./logger.js";
 import { readCustomProviders } from "./custom-providers.js";
+import {
+  buildGateRejection,
+  evaluateAgentActionGate,
+  type AgentActionGateContext,
+} from "./agent-action-gate.js";
 
 export interface AgentResult {
   session: AgentSession;
@@ -474,6 +479,7 @@ export interface AgentOptions {
   /** Optional task context for fallback notifications. */
   taskId?: string;
   taskTitle?: string;
+  actionGateContext?: AgentActionGateContext;
 }
 
 function resolveConfiguredModel(
@@ -1066,6 +1072,53 @@ export function wrapToolsWithBoundary(
   });
 }
 
+export function wrapToolsWithActionGate(
+  tools: ToolDefinition[],
+  gateContext: AgentActionGateContext | undefined,
+): ToolDefinition[] {
+  if (!gateContext || gateContext.isEphemeral) {
+    return tools;
+  }
+
+  return tools.map((tool) => {
+    const originalExecute = tool.execute as any;
+    return {
+      ...tool,
+      execute: async (...args: any[]) => {
+        const params = (args[1] ?? {}) as Record<string, unknown>;
+        const decision = evaluateAgentActionGate({
+          agentId: gateContext.agentId,
+          taskId: gateContext.taskId,
+          toolName: tool.name,
+          args: params,
+          permissionPolicy: gateContext.permissionPolicy,
+        });
+
+        if (decision.disposition === "allow") {
+          return originalExecute(...args);
+        }
+
+        if (decision.disposition === "block") {
+          return buildGateRejection(
+            decision,
+            `Action blocked by permission policy (${decision.category}) for ${gateContext.agentName}`,
+          );
+        }
+
+        const existing = await gateContext.findPendingApprovalByDedupeKey(decision.approvalDedupeKey);
+        if (!existing) {
+          await gateContext.createApprovalRequest(decision, params);
+        }
+
+        return buildGateRejection(
+          decision,
+          `Action requires approval (${decision.category}). Approval request queued.`,
+        );
+      },
+    };
+  });
+}
+
 /**
  * Create a pi agent session configured for fn.
  * Reuses the user's existing pi auth and model configuration.
@@ -1235,10 +1288,10 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     // suppress the defaults with `noTools: "builtin"` and register our wrapped
     // tools through `customTools` instead. The wrapped tools preserve the same
     // names (`read`, `bash`, ...) as the built-ins they replace.
-    const customToolList: ToolDefinition[] = [
+    const customToolList: ToolDefinition[] = wrapToolsWithActionGate([
       ...(wrappedTools as ToolDefinition[]),
       ...(options.customTools ?? []),
-    ];
+    ], options.actionGateContext);
     // Last-chance abort hook. Fires *here* — after every awaited setup step
     // in createFnAgent (provider registration, worktree validation, resource
     // loader reload) and immediately before the actual LLM session spawn.

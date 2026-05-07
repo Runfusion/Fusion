@@ -59,6 +59,36 @@ V1 runtime action categories:
 - `network-api`
 - `task-agent-management`
 
+### Runtime gate v1 mapping (per tool invocation, permanent agents only)
+
+The engine classifies each tool call with this precedence order (first match wins):
+
+1. `git-write`
+2. `file-write-delete`
+3. `task-agent-management`
+4. `network-api`
+5. `shell-command`
+6. exempt/read-only (`allow`)
+
+Current v1 mapping:
+
+- `file-write-delete`: `write`, `edit`
+- `task-agent-management`: `fn_task_create`, `fn_task_add_dep`, `fn_delegate_task`, `fn_update_agent_config`, `fn_update_identity`, `fn_spawn_agent`
+- `network-api`: `fn_research_run` (explicit tool-owned network/API surface only)
+- `shell-command`: non-git `bash`, and read-only git shell commands
+- `git-write`: mutating `bash` git commands
+
+`bash` git-write heuristic in v1:
+
+- Mutating git operations include: `git add`, `commit`, `merge`, `rebase`, `cherry-pick`, `am`, `apply`, `stash`, `tag`, `push`, `reset`, `rm`, `mv`, `clean`, `worktree add/remove`, `checkout -b`, `switch -c`, `pull --rebase`, `restore --staged`, and branch/remote mutation forms.
+- Read-only git operations include: `git status`, `diff`, `log`, `show`, `rev-parse`, `branch --show-current`, `branch` listing, and `remote -v`.
+
+Intentionally exempt in v1 (remain normal execution plumbing):
+
+- `fn_task_update`, `fn_task_log`, `fn_task_done`, `fn_task_document_write`, mailbox reads, memory reads, and other routine read-only inspection tools.
+
+For `require-approval` dispositions, execution is intercepted before side effects; the engine creates/reuses a pending approval request keyed by a deterministic dedupe key (`agentId + taskId + toolName + category + resourceType + resourceId + operation`).
+
 Default and legacy fallback behavior:
 
 - New **non-ephemeral/permanent** agents persist a normalized `permissionPolicy` using preset `unrestricted` when not explicitly provided.

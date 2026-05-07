@@ -5,13 +5,15 @@ const execAsync = promisify(exec);
 import { isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig } from "@fusion/core";
+import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent } from "@fusion/core";
 import {
+  ApprovalRequestStore,
   buildExecutionMemoryInstructions,
   getTaskMergeBlocker,
   isEphemeralAgent,
   isResearchExperimentalEnabled,
   resolveAgentPrompt,
+  resolveEffectiveAgentPermissionPolicy,
   resolveProjectDefaultModel,
   type RunCommandResult,
 } from "@fusion/core";
@@ -74,6 +76,7 @@ import { getTaskCompletionBlockerForStore } from "./task-completion.js";
 import { createFusionAuthStorage, getModelRegistryModelsPath } from "./auth-storage.js";
 import { createRunVerificationTool } from "./run-verification-tool.js";
 import { createFallbackModelObserver } from "./fallback-model-observer.js";
+import type { AgentActionGateContext } from "./agent-action-gate.js";
 
 // Re-export for backward compatibility (tests import from executor.ts)
 export { summarizeToolArgs } from "./agent-logger.js";
@@ -690,6 +693,7 @@ export class TaskExecutor {
   /** Token cap detector for proactive context compaction. */
   private tokenCapDetector = new TokenCapDetector();
   private _modelRegistry?: ModelRegistry;
+  private _approvalRequestStore?: ApprovalRequestStore;
   /** Current run context for mutation correlation. Set at execute() start, cleared in finally. */
   private currentRunContext: RunMutationContext | undefined;
 
@@ -700,6 +704,54 @@ export class TaskExecutor {
       this._modelRegistry.refresh();
     }
     return this._modelRegistry;
+  }
+
+  private get approvalRequestStore(): ApprovalRequestStore {
+    if (!this._approvalRequestStore) {
+      this._approvalRequestStore = new ApprovalRequestStore(this.store.getDatabase());
+    }
+    return this._approvalRequestStore;
+  }
+
+  private buildActionGateContext(taskId: string | undefined, agent: Agent | null | undefined): AgentActionGateContext | undefined {
+    if (!agent || isEphemeralAgent(agent)) {
+      return undefined;
+    }
+    const policy = resolveEffectiveAgentPermissionPolicy(agent.permissionPolicy);
+    return {
+      agentId: agent.id,
+      agentName: agent.name,
+      isEphemeral: false,
+      taskId,
+      runId: this.currentRunContext?.runId,
+      permissionPolicy: policy,
+      createApprovalRequest: async (decision, args) => this.approvalRequestStore.create({
+        requester: {
+          actorId: agent.id,
+          actorType: "agent",
+          actorName: agent.name,
+        },
+        taskId,
+        runId: this.currentRunContext?.runId,
+        targetAction: {
+          category: decision.category === "exempt" ? "shell-command" : decision.category,
+          action: decision.operation,
+          summary: decision.summary,
+          resourceType: decision.resourceType,
+          resourceId: decision.resourceId ?? "",
+          context: {
+            ...decision.metadata,
+            approvalDedupeKey: decision.approvalDedupeKey,
+            toolName: decision.toolName,
+            toolArgs: args,
+          },
+        },
+      }),
+      findPendingApprovalByDedupeKey: async (dedupeKey) => {
+        const pending = this.approvalRequestStore.list({ status: "pending", requesterActorId: agent.id, taskId, limit: 100 });
+        return pending.find((request) => request.targetAction.context?.approvalDedupeKey === dedupeKey) ?? null;
+      },
+    };
   }
 
   /** Returns the set of task IDs currently being executed. */
@@ -2393,6 +2445,7 @@ export class TaskExecutor {
           pluginRunner: this.options.pluginRunner,
           runtimeHint: stepSessionRuntimeHint,
           assignedAgentRuntimeConfig: (stepSessionAgent?.runtimeConfig ?? undefined) as Record<string, unknown> | undefined,
+          actionGateContext: this.buildActionGateContext(task.id, stepSessionAgent),
           // Pass skill selection context from the main executor session
           skillSelection: skillContext.skillSelectionContext,
           // Pass agentStore and messageStore for delegation and messaging tools
@@ -2949,6 +3002,7 @@ export class TaskExecutor {
           sessionManager,
           // Skill selection: use assigned agent skills if available, otherwise role fallback
           ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
+          actionGateContext: this.buildActionGateContext(task.id, assignedAgent),
           taskId: task.id,
           taskTitle: detail.title,
           onFallbackModelUsed: createFallbackModelObserver({
@@ -3265,6 +3319,7 @@ export class TaskExecutor {
                 sessionManager: SessionManager.create(worktreePath),
                 // Skill selection: use assigned agent skills if available, otherwise role fallback
                 ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
+                actionGateContext: this.buildActionGateContext(task.id, assignedAgent),
               });
               if (retrySessionFile) {
                 this.store.updateTask(task.id, { sessionFile: retrySessionFile }).catch((err: unknown) => {

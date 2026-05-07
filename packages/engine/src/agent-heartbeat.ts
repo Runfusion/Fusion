@@ -18,7 +18,7 @@
  */
 
 import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask, RunMutationContext, Settings, AgentConfigRevision, ReflectionStore } from "@fusion/core";
-import { buildExecutionMemoryInstructions, isEphemeralAgent, hasAgentIdentity } from "@fusion/core";
+import { ApprovalRequestStore, buildExecutionMemoryInstructions, isEphemeralAgent, hasAgentIdentity, resolveEffectiveAgentPermissionPolicy } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import { createHash } from "node:crypto";
@@ -34,6 +34,7 @@ import { heartbeatLog, formatError } from "./logger.js";
 import { createRunAuditor, type EngineRunContext } from "./run-audit.js";
 import { promptWithFallback } from "./pi.js";
 import { createResolvedAgentSession, extractRuntimeHint, extractRuntimeModel } from "./agent-session-helpers.js";
+import type { AgentActionGateContext } from "./agent-action-gate.js";
 import { buildSessionSkillContextSync } from "./session-skill-context.js";
 import type { AgentReflectionService } from "./agent-reflection.js";
 
@@ -546,6 +547,7 @@ export class HeartbeatMonitor {
   private reflectionStore?: ReflectionStore;
   private reflectionService?: AgentReflectionService;
   private selfImproveService?: SelfImproveServiceLike;
+  private approvalRequestStore?: ApprovalRequestStore;
 
   private trackedAgents: Map<string, TrackedAgent> = new Map();
   private agentStartLocks: Map<string, Promise<unknown>> = new Map();
@@ -573,6 +575,48 @@ export class HeartbeatMonitor {
     this.reflectionStore = options.reflectionStore;
     this.reflectionService = options.reflectionService;
     this.selfImproveService = options.selfImproveService;
+  }
+
+  private getApprovalRequestStore(): ApprovalRequestStore {
+    if (!this.approvalRequestStore) {
+      if (!this.taskStore) {
+        throw new Error("HeartbeatMonitor missing taskStore for approval request persistence");
+      }
+      this.approvalRequestStore = new ApprovalRequestStore(this.taskStore.getDatabase());
+    }
+    return this.approvalRequestStore;
+  }
+
+  private buildActionGateContext(agent: Agent, taskId?: string, runId?: string): AgentActionGateContext | undefined {
+    if (isEphemeralAgent(agent)) {
+      return undefined;
+    }
+    const policy = resolveEffectiveAgentPermissionPolicy(agent.permissionPolicy);
+    return {
+      agentId: agent.id,
+      agentName: agent.name,
+      isEphemeral: false,
+      taskId,
+      runId,
+      permissionPolicy: policy,
+      createApprovalRequest: async (decision, args) => this.getApprovalRequestStore().create({
+        requester: { actorId: agent.id, actorType: "agent", actorName: agent.name },
+        taskId,
+        runId,
+        targetAction: {
+          category: decision.category === "exempt" ? "shell-command" : decision.category,
+          action: decision.operation,
+          summary: decision.summary,
+          resourceType: decision.resourceType,
+          resourceId: decision.resourceId ?? "",
+          context: { ...decision.metadata, approvalDedupeKey: decision.approvalDedupeKey, toolName: decision.toolName, toolArgs: args },
+        },
+      }),
+      findPendingApprovalByDedupeKey: async (dedupeKey) => {
+        const pending = this.getApprovalRequestStore().list({ status: "pending", requesterActorId: agent.id, taskId, limit: 100 });
+        return pending.find((request) => request.targetAction.context?.approvalDedupeKey === dedupeKey) ?? null;
+      },
+    };
   }
 
   /**
@@ -1777,6 +1821,7 @@ export class HeartbeatMonitor {
           },
           // Skill selection: use waking agent's skills (heartbeat has no role fallback)
           ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
+          actionGateContext: this.buildActionGateContext(agent, taskId, run.id),
         });
 
         // Track for monitoring
