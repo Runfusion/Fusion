@@ -379,6 +379,12 @@ Click the chevron next to the status indicator to open the node selector dropdow
 
 The selected node persists across browser sessions via localStorage. If the selected remote node is unregistered, the dashboard automatically falls back to local mode.
 
+## Native shell connection flow
+
+If you use Fusion from a native shell (mobile app or desktop shell in remote mode), dashboard startup is gated by shell onboarding until a connection is selected.
+
+For the canonical workflow (first-run onboarding, QR/manual setup, saved profiles, and desktop local/remote handoff), see [Native Shell Connection Guide](./native-shell.md).
+
 ## Remote Access (Settings)
 
 Dashboard remote controls live in **Settings → Remote Access**.

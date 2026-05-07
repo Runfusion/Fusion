@@ -21,6 +21,38 @@ At a high level, Fusion is split into:
 
 Native shells expose a shared host-neutral bridge at `window.fusionShell` for first-run shell onboarding, connection profile persistence, and active shell mode/profile state. The dashboard consumes `window.fusionShell` when present and degrades cleanly in plain web/PWA mode.
 
+### `window.fusionShell` bridge contract
+
+Canonical dashboard-side types live in `packages/dashboard/app/types/native-shell.d.ts`.
+
+Shared bridge methods used by dashboard/mobile/desktop flows:
+- `getState()`
+- `listProfiles()`
+- `saveProfile(profile)`
+- `deleteProfile(profileId)`
+- `setActiveProfile(profileId)`
+- `setDesktopMode(mode)`
+- `startQrScan()`
+- `openConnectionManager()`
+- `subscribe(listener)`
+
+Shared shell state contract (`ShellConnectionState`):
+- `host` (`"web" | "mobile-shell" | "desktop-shell"`)
+- `desktopMode` (`"local" | "remote"`, optional)
+- `activeProfileId`
+- `profiles`
+- `localServer` (`status`, optional `port`, optional `error`)
+
+Desktop-specific bootstrap extension:
+- Electron preload also exposes `getDesktopModeState()` for first-run desktop mode selection (`{ isFirstRun, desktopMode }`).
+- The dashboard itself does **not** depend on that preload-only helper for steady-state rendering; it consumes shared shell state via `ShellContext` (`packages/dashboard/app/context/ShellContext.tsx`).
+
+Persistence ownership by host:
+- **Mobile shell** persists connection profiles + active profile with Capacitor Preferences (`packages/mobile/src/plugins/connection-profiles.ts`).
+- **Desktop shell** persists shell settings in app-owned JSON at `app.getPath("userData")/shell-connections.json` (`packages/desktop/src/shell-settings.ts`).
+
+These are shell-owned persistence layers, intentionally separate from Fusion project/global settings.
+
 ### High-level runtime diagram
 
 ```text

@@ -79,10 +79,13 @@ Install from browser:
 
 ### Native shell onboarding and connection profiles
 
-- First launch in the mobile shell enters a shell-level remote connection onboarding flow before dashboard model onboarding.
-- Connection setup supports QR scan and manual URL entry, with optional auth token.
-- Saved remote profiles are persisted in shell-local mobile storage and managed through `window.fusionShell` connection APIs.
-- Shell connection persistence is intentionally separate from Fusion project/global settings.
+First launch in the mobile shell enters a shell-level remote connection onboarding flow before dashboard model onboarding.
+
+For the canonical flow (QR/manual setup, saved profiles, active-profile behavior, and security caveats), see [Native Shell Connection Guide](./docs/native-shell.md).
+
+Implementation notes:
+- Mobile shell profiles are persisted in shell-local storage (Capacitor Preferences), separate from Fusion project/global settings.
+- The dashboard consumes this through the shared `window.fusionShell` connection APIs.
 
 ### Planning Mode
 
