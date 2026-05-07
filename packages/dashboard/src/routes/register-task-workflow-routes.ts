@@ -390,16 +390,47 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw badRequest(`Task is not in a retryable state (current status: ${task.status || 'none'})`);
       }
 
-      // In-review retry: keep the task in in-review, clear only error/retry state
-      // so the auto-merge system re-attempts on its next sweep.
+      // In-review retry: distinguish between execution failures (incomplete steps)
+      // and merge failures (all steps done). Execution failures need to re-enter
+      // the executor queue via todo; merge failures stay in in-review for the
+      // auto-merge system to re-attempt.
       if (isInReviewRetry) {
+        // A task that failed during execution has at least one step still in
+        // "pending" or "in-progress" status. A task that completed execution
+        // successfully has all steps in "done" status before entering in-review.
+        const hasIncompleteSteps =
+          task.steps.length > 0 &&
+          task.steps.some((s: { status: string }) => s.status === "pending" || s.status === "in-progress");
+
+        if (hasIncompleteSteps) {
+          // Execution failure path: task failed mid-run (e.g. 429, stream-ended).
+          // Clear per-run failure state and move back to todo so the executor
+          // can resume where it left off. Worktree/branch are preserved by
+          // moveTask({ preserveProgress: true }) so the executor can reattach.
+          await scopedStore.updateTask(req.params.id, {
+            status: null,
+            error: null,
+            stuckKillCount: 0,
+          });
+          await scopedStore.logEntry(
+            req.params.id,
+            "Retry requested from dashboard (execution failure in-review → todo, preserving progress)",
+          );
+          const updated = await scopedStore.moveTask(req.params.id, "todo", { preserveProgress: true });
+          res.json(updated);
+          return;
+        }
+
+        // Merge failure path: task completed execution (all steps done) but
+        // failed during the merge/review phase. Stay in in-review and reset
+        // merge retry state so the auto-merge system re-attempts on its next sweep.
         await scopedStore.updateTask(req.params.id, {
           status: null,
           error: null,
           stuckKillCount: 0,
           mergeRetries: 0,
         });
-        await scopedStore.logEntry(req.params.id, "Retry requested from dashboard (in-review retry, mergeRetries reset)");
+        await scopedStore.logEntry(req.params.id, "Retry requested from dashboard (in-review merge retry, mergeRetries reset)");
         const updated = await scopedStore.getTask(req.params.id);
         res.json(updated);
         return;

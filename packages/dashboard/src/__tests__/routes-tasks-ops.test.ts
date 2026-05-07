@@ -427,7 +427,7 @@ describe("POST /tasks/:id/retry", () => {
       mergeRetries: 0,
     });
     expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledWith("KB-001", "Retry requested from dashboard (in-review retry, mergeRetries reset)");
+    expect(store.logEntry).toHaveBeenCalledWith("KB-001", "Retry requested from dashboard (in-review merge retry, mergeRetries reset)");
   });
 
   it("retries a stuck-killed in-review task without moving columns", async () => {
@@ -449,7 +449,7 @@ describe("POST /tasks/:id/retry", () => {
       mergeRetries: 0,
     });
     expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.logEntry).toHaveBeenCalledWith("KB-001", "Retry requested from dashboard (in-review retry, mergeRetries reset)");
+    expect(store.logEntry).toHaveBeenCalledWith("KB-001", "Retry requested from dashboard (in-review merge retry, mergeRetries reset)");
   });
 
   it("preserves worktree/branch when retrying in-review task", async () => {
