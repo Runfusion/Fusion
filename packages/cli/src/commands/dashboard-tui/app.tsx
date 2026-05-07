@@ -149,40 +149,53 @@ const STATIC_SECTION_CONTENT_ROWS: Record<string, number> = {
 };
 
 // Estimate the System panel's content row count given the current column
-// count and focus state. Mirrors the chip layout in SystemPanel so the
-// split sizing stays in lockstep with what's actually rendered.
+// count. Mirrors the SystemPanel layout: a wrap-row of small status chips
+// (v / Engine / Auth / [Watcher] / Uptime), then full-width rows for URL
+// and Token (each may wrap onto multiple lines), then an always-on hint
+// row. The hint and token must always be visible, so we never collapse
+// those rows regardless of focus.
 function estimateSystemContentRows(
   info: SystemInfo | null,
   cols: number,
-  isFocused: boolean,
+  _isFocused: boolean,
 ): number {
   if (!info) return 1;
   // Panel content area: terminal cols minus border (2) minus paddingX (2).
   const inner = Math.max(20, cols - 4);
   const chipGap = 2;
-  const chips: number[] = [];
-  // Each chip = "<label> <value>" with an internal gap=1.
-  chips.push(1 + 1 + FUSION_VERSION.length);
-  chips.push(3 + 1 + (info.baseUrl?.length ?? 0));
-  if (info.authToken) chips.push(5 + 1 + info.authToken.length);
-  chips.push(6 + 1 + 6); // Engine + worst-case state ("active"/"paused")
-  chips.push(4 + 1 + 6); // Auth + "bearer"
-  if (cols >= 100) chips.push(7 + 1 + 8); // Watcher + "inactive"
-  chips.push(6 + 1 + 14); // Uptime + worst-case "Xd Yh Zm Ws"
+  const statusChips: number[] = [];
+  statusChips.push(1 + 1 + FUSION_VERSION.length);
+  statusChips.push(6 + 1 + 6); // Engine + worst-case state
+  statusChips.push(4 + 1 + 6); // Auth + "bearer"
+  if (cols >= 100) statusChips.push(7 + 1 + 8); // Watcher + "inactive"
+  statusChips.push(6 + 1 + 14); // Uptime + worst-case "Xd Yh Zm Ws"
 
-  let rows = 1;
+  // Greedy pack of the wrap-row.
+  let chipRows = 1;
   let used = 0;
-  for (const c of chips) {
+  for (const c of statusChips) {
     const next = used === 0 ? c : used + chipGap + c;
     if (next > inner && used > 0) {
-      rows++;
+      chipRows++;
       used = c;
     } else {
       used = next;
     }
   }
-  if (isFocused) rows++; // inline hint row
-  return rows;
+
+  // URL and Token are each on their own full-width row. Long values wrap
+  // onto multiple lines: total width = label + 1 (gap) + value, divided
+  // by inner width, rounded up.
+  const urlRows = Math.max(
+    1,
+    Math.ceil((3 + 1 + (info.baseUrl?.length ?? 0)) / inner),
+  );
+  const tokenRows = info.authToken
+    ? Math.max(1, Math.ceil((5 + 1 + info.authToken.length) / inner))
+    : 0;
+
+  // +1 for the always-on hint row.
+  return chipRows + urlRows + tokenRows + 1;
 }
 
 function estimateSectionPanelHeight(
@@ -295,63 +308,66 @@ function SystemPanel({ state, isFocused }: { state: DashboardState; isFocused: b
       {!info ? (
         <Text dimColor>System information not available.</Text>
       ) : (
-        <Box flexDirection="row" gap={2} flexWrap="wrap">
-          <Box flexDirection="row" gap={1} flexShrink={0}>
-            <Text dimColor>v</Text>
-            <Text>{FUSION_VERSION}</Text>
+        <Box flexDirection="column" flexShrink={0}>
+          {/* Status chips wrap to multiple rows at narrow widths. */}
+          <Box flexDirection="row" gap={2} flexWrap="wrap">
+            <Box flexDirection="row" gap={1} flexShrink={0}>
+              <Text dimColor>v</Text>
+              <Text>{FUSION_VERSION}</Text>
+            </Box>
+            <Box flexDirection="row" gap={1} flexShrink={0}>
+              <Text dimColor>Engine</Text>
+              {info.engineMode === "dev" && <Text color="yellow">dev</Text>}
+              {info.engineMode === "paused" && <Text color="yellow">paused</Text>}
+              {info.engineMode === "active" && <Text color="green">active</Text>}
+            </Box>
+            <Box flexDirection="row" gap={1} flexShrink={0}>
+              <Text dimColor>Auth</Text>
+              {info.authEnabled
+                ? <Text color="yellow">bearer</Text>
+                : <Text color="yellow">none</Text>}
+            </Box>
+            {showWatcher && (
+              <Box flexDirection="row" gap={1} flexShrink={0}>
+                <Text dimColor>Watcher</Text>
+                {info.fileWatcher ? <Text color="green">active</Text> : <Text color="red">inactive</Text>}
+              </Box>
+            )}
+            <Box flexDirection="row" gap={1} flexShrink={0}>
+              <Text dimColor>Uptime</Text>
+              <Text>{formatUptime(Date.now() - info.startTimeMs)}</Text>
+            </Box>
           </Box>
+          {/* URL and Token each get their own full-width row so long values
+              wrap onto multiple lines instead of being truncated or pushed
+              off-panel. The token in particular MUST always render in
+              full so users can copy it (via [c]) or click-drag select it. */}
           <Box flexDirection="row" gap={1} flexShrink={0}>
             <Text dimColor>URL</Text>
-            <Text color="cyanBright" wrap="truncate-end">{info.baseUrl}</Text>
+            <Text color="cyanBright">{info.baseUrl}</Text>
           </Box>
           {info.authToken && (
-            // Pinned right after URL so the token is part of the primary
-            // identity row and wraps to a new line at narrow widths instead
-            // of being pushed off-panel.
             <Box flexDirection="row" gap={1} flexShrink={0}>
               <Text dimColor>Token</Text>
-              <Text color="yellow" wrap="truncate-end">{info.authToken}</Text>
+              <Text color="yellow">{info.authToken}</Text>
             </Box>
           )}
-          <Box flexDirection="row" gap={1} flexShrink={0}>
-            <Text dimColor>Engine</Text>
-            {info.engineMode === "dev" && <Text color="yellow">dev</Text>}
-            {info.engineMode === "paused" && <Text color="yellow">paused</Text>}
-            {info.engineMode === "active" && <Text color="green">active</Text>}
+          {/* Inline hint row — always shown so the [Enter] / [c] shortcuts
+              stay discoverable even when the panel doesn't currently own
+              keyboard focus (e.g. when the narrow-mode log strip below has
+              sub-focus). Mouse reporting is auto-off when System is the
+              active section so users can still click-drag to select the
+              token, regardless of split focus. */}
+          <Box flexShrink={0}>
+            <Text dimColor wrap="truncate-end">
+              <Text color="cyanBright">[Enter]</Text> open URL
+              {info.authToken ? (
+                <Text> · <Text color="cyanBright">[c]</Text> copy token · drag to select</Text>
+              ) : (
+                <Text> · drag to select</Text>
+              )}
+            </Text>
           </Box>
-          <Box flexDirection="row" gap={1} flexShrink={0}>
-            <Text dimColor>Auth</Text>
-            {info.authEnabled
-              ? <Text color="yellow">bearer</Text>
-              : <Text color="yellow">none</Text>}
-          </Box>
-          {showWatcher && (
-            <Box flexDirection="row" gap={1} flexShrink={0}>
-              <Text dimColor>Watcher</Text>
-              {info.fileWatcher ? <Text color="green">active</Text> : <Text color="red">inactive</Text>}
-            </Box>
-          )}
-          <Box flexDirection="row" gap={1} flexShrink={0}>
-            <Text dimColor>Uptime</Text>
-            <Text>{formatUptime(Date.now() - info.startTimeMs)}</Text>
-          </Box>
-          {isFocused && (
-            // Inline hint row — only shown when the System panel is focused.
-            // Mouse reporting is auto-off here so users can click-drag to
-            // select the token; it auto-toggles on when they focus Logs /
-            // Files / Git / Board for wheel scrolling. [c] is the keyboard
-            // shortcut to copy the token in one keystroke.
-            <Box flexShrink={0}>
-              <Text dimColor wrap="truncate-end">
-                <Text color="cyanBright">[Enter]</Text> open URL
-                {info.authToken ? (
-                  <Text> · <Text color="cyanBright">[c]</Text> copy token · drag to select</Text>
-                ) : (
-                  <Text> · drag to select</Text>
-                )}
-              </Text>
-            </Box>
-          )}
         </Box>
       )}
     </Panel>
@@ -956,15 +972,8 @@ function StatusModeSingle({
       ? contentRows
       : estimateSectionPanelHeight(focused, state, cols, !state.narrowLogSplitFocused);
   const candidateSplitHeight = contentRows - topNeededRows;
-  // Skip the split on the System panel — it has interactive UI (Enter to
-  // open URL, [c] to copy token, click-drag to select the token text)
-  // whose hint row only renders when the panel itself has focus. Auto-
-  // shifting focus into a bottom log strip would hide that hint and
-  // remove a clear visual path back. Logs section already shows the
-  // dedicated full-screen logs view.
-  const sectionAllowsSplit = focused !== "logs" && focused !== "system";
   const showLogSplit =
-    sectionAllowsSplit && candidateSplitHeight >= NARROW_SPLIT_MIN_LOG_ROWS;
+    focused !== "logs" && candidateSplitHeight >= NARROW_SPLIT_MIN_LOG_ROWS;
   const splitHeight = showLogSplit ? candidateSplitHeight : 0;
   // Bottom log pane has its own border + title + filter chrome (4), so the
   // visible-entries budget is splitHeight - 4.
@@ -4136,7 +4145,9 @@ export function DashboardApp({ controller }: DashboardAppProps) {
     ? (state.interactiveView === "files"
        || state.interactiveView === "git"
        || state.interactiveView === "board")
-    : ((state.activeSection === "logs" || state.narrowLogSplitFocused) && !state.logsExpandedMode);
+    : ((state.activeSection === "logs"
+        || (state.narrowLogSplitFocused && state.activeSection !== "system"))
+        && !state.logsExpandedMode);
   useEffect(() => {
     if (state.mouseEnabled !== wantsMouse) {
       controller.setMouseEnabled(wantsMouse);
@@ -4212,10 +4223,7 @@ export function DashboardApp({ controller }: DashboardAppProps) {
     const narrowSplitActive = (() => {
       if (state.mode !== "status") return false;
       if (!(cols < NARROW_THRESHOLD || rows < 20)) return false;
-      // System and Logs sections never get the split (see StatusModeSingle).
-      if (state.activeSection === "logs" || state.activeSection === "system") {
-        return false;
-      }
+      if (state.activeSection === "logs") return false;
       const topNeeded = estimateSectionPanelHeight(
         state.activeSection,
         state,
