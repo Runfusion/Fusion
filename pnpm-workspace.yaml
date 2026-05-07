@@ -8,3 +8,4 @@ packages:
   - "plugins/fusion-plugin-droid-runtime"
   - "plugins/fusion-plugin-cursor-runtime"
   - "plugins/fusion-plugin-agent-browser"
+  - "plugins/fusion-plugin-roadmap"

@@ -1,0 +1,26 @@
+{
+  "name": "@fusion-plugin-examples/roadmap",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Roadmap domain and plugin manifest package for Fusion",
+  "private": true,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run --silent=passed-only --reporter=dot"
+  },
+  "dependencies": {
+    "@fusion/core": "workspace:*",
+    "@fusion/plugin-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.4"
+  }
+}
