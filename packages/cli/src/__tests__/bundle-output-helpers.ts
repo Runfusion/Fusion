@@ -11,7 +11,7 @@ export const dashboardClientStubMarker = "Dashboard assets not built";
 
 function runBuildCommand(command: string, cwd: string) {
   const npmExecPath = process.env.npm_execpath;
-  if (npmExecPath) {
+  if (npmExecPath && existsSync(npmExecPath)) {
     execFileSync(process.execPath, [npmExecPath, ...command.split(" ")], {
       cwd,
       stdio: "pipe",
