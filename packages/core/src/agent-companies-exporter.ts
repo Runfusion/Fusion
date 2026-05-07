@@ -119,6 +119,7 @@ export function agentToCompaniesManifest(
     description,
     schema: "agentcompanies/v1",
     instructionBody: trimToUndefined(agent.instructionsText) ?? "",
+    memory: trimToUndefined(agent.memory),
   };
 }
 
@@ -163,6 +164,7 @@ export function generateAgentMd(agent: Agent): string {
     skills: manifest.skills,
     description: manifest.description,
     schema: manifest.schema,
+    memory: manifest.memory,
   };
 
   return toFrontmatterMarkdown(frontmatter, manifest.instructionBody ?? "");
@@ -274,6 +276,7 @@ export async function exportAgentsToDirectory(
         skills: manifest.skills,
         description: manifest.description,
         schema: manifest.schema,
+        memory: manifest.memory,
       };
       const content = toFrontmatterMarkdown(frontmatter, manifest.instructionBody ?? "");
 

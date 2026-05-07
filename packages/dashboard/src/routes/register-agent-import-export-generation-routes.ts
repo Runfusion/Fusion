@@ -690,6 +690,9 @@ async function persistImportedSkills(
           instructionsText: typeof item.input.instructionsText === "string"
             ? item.input.instructionsText.slice(0, 200) + (item.input.instructionsText.length > 200 ? "..." : "")
             : undefined,
+          memory: typeof item.input.memory === "string"
+            ? item.input.memory.slice(0, 200) + (item.input.memory.length > 200 ? "..." : "")
+            : undefined,
           skills: Array.isArray(item.input.metadata?.skills)
             ? item.input.metadata.skills.filter((skill: unknown): skill is string => typeof skill === "string")
             : undefined,

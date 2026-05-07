@@ -546,6 +546,9 @@ export function agentManifestToAgentCreateInput(agent: AgentManifest): AgentCrea
     ...(typeof agent.instructionBody === "string" && agent.instructionBody.trim().length > 0
       ? { instructionsText: agent.instructionBody.trim() }
       : {}),
+    ...(typeof agent.memory === "string" && agent.memory.trim().length > 0
+      ? { memory: agent.memory.trim() }
+      : {}),
     ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
   };
 }

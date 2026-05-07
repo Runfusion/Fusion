@@ -24,7 +24,7 @@ Every first-class editable agent field has a defined create/edit/import/template
 | `instructionsPath` | ✓ | ✓ | ✗ | File-backed instructions path |
 | `instructionsText` | ✓ | ✓ | ✓ (from manifest `instructionBody`) | Inline instructions |
 | `soul` | ✓ | ✓ | ✗ | Personality/identity description |
-| `memory` | ✓ | ✓ | ✗ | Per-agent accumulated knowledge |
+| `memory` | ✓ | ✓ | ✓ (from manifest) | Per-agent accumulated knowledge |
 | `bundleConfig` | ✓ | ✓ | ✗ | Structured instruction bundle |
 
 ### Agent Companies Manifest Fields
@@ -37,6 +37,7 @@ Every first-class editable agent field has a defined create/edit/import/template
 | `role` | `role` (mapped to AgentCapability) | `custom` |
 | `reportsTo` | `reportsTo` | — |
 | `instructionBody` | `instructionsText` | — |
+| `memory` | `memory` | — |
 | `skills` | `metadata.skills` | — |
 
 ### System-Managed Fields (Not User-Editable)

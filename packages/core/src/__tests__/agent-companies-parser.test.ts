@@ -183,6 +183,7 @@ reportsTo: null
 skills:
   - plan-ceo-review
   - review
+memory: Preserve architecture rationale between incidents.
 ---
 Agent instructions.`);
 
@@ -190,6 +191,7 @@ Agent instructions.`);
       expect(manifest.title).toBe("Chief Executive Officer");
       expect(manifest.reportsTo).toBeNull();
       expect(manifest.skills).toEqual(["plan-ceo-review", "review"]);
+      expect(manifest.memory).toBe("Preserve architecture rationale between incidents.");
       expect(manifest.instructionBody).toBe("Agent instructions.");
     });
 
@@ -517,6 +519,7 @@ name: Nested Archive CEO
         name: "CEO",
         title: "Chief Executive Officer",
         instructionBody: "Lead strategy",
+        memory: "Track strategic assumptions each quarter.",
         skills: ["review"],
         reportsTo: null,
         metadata: {
@@ -529,6 +532,7 @@ name: Nested Archive CEO
         role: "custom",
         title: "Chief Executive Officer",
         instructionsText: "Lead strategy",
+        memory: "Track strategic assumptions each quarter.",
         metadata: {
           skills: ["review"],
           sources: [{ kind: "git", repo: "acme/repo" }],
@@ -676,6 +680,19 @@ name: Nested Archive CEO
         name: "Worker",
         role: "custom",
         reportsTo: "manager-001",
+      });
+    });
+
+    it("maps manifest memory to first-class field", () => {
+      const input = agentManifestToAgentCreateInput({
+        name: "Researcher",
+        memory: "Keep a running list of unresolved assumptions.",
+      });
+
+      expect(input).toEqual({
+        name: "Researcher",
+        role: "custom",
+        memory: "Keep a running list of unresolved assumptions.",
       });
     });
 

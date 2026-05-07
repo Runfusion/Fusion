@@ -366,6 +366,70 @@ describe("POST /api/agents/import", () => {
     expect(mockCreateAgent).not.toHaveBeenCalled();
   });
 
+  it("includes manifest memory in dry-run preview", async () => {
+    const memory = "Capture operational constraints and open risks before each handoff.";
+    mockPrepareAgentCompaniesImport.mockReturnValue({
+      items: [{
+        manifestKey: "memory-preview-agent",
+        aliases: ["memory-preview-agent"],
+        index: 0,
+        input: { name: "Memory Preview Agent", role: "custom", memory },
+      }],
+      result: {
+        created: ["Memory Preview Agent"],
+        skipped: [],
+        errors: [],
+      },
+    });
+
+    const response = await postImport(app, {
+      manifest: "---\nname: Memory Preview Agent\nmemory: Capture operational constraints and open risks before each handoff.\n---\nInstructions",
+      dryRun: true,
+    });
+
+    expect(response.status).toBe(200);
+    const body = response.body as any;
+    expect(body.agents).toEqual([
+      expect.objectContaining({
+        name: "Memory Preview Agent",
+        memory,
+      }),
+    ]);
+    expect(mockCreateAgent).not.toHaveBeenCalled();
+  });
+
+  it("preserves manifest memory on live import", async () => {
+    mockPrepareAgentCompaniesImport.mockReturnValue({
+      items: [{
+        manifestKey: "memory-agent",
+        aliases: ["memory-agent"],
+        index: 0,
+        input: {
+          name: "Memory Agent",
+          role: "custom",
+          memory: "Capture failed deployment patterns and mitigations.",
+        },
+      }],
+      result: {
+        created: ["Memory Agent"],
+        skipped: [],
+        errors: [],
+      },
+    });
+
+    const response = await postImport(app, {
+      manifest: "---\nname: Memory Agent\nmemory: Capture failed deployment patterns and mitigations.\n---\nInstructions",
+    });
+
+    expect(response.status).toBe(200);
+    expect(mockCreateAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Memory Agent",
+        memory: "Capture failed deployment patterns and mitigations.",
+      }),
+    );
+  });
+
   it("maps store-level duplicate errors to skipped results", async () => {
     mockPrepareAgentCompaniesImport.mockReturnValue({
       items: [{

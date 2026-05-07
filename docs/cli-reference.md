@@ -653,6 +653,7 @@ Export Fusion agents to an Agent Companies package directory.
 **Behavior notes:**
 - Usage: `fn agent export <dir> [--company-name <name>] [--company-slug <slug>]`.
 - If no agents exist in the selected project, the command exits with `No agents found to export`.
+- Exported `AGENTS.md` manifests include inline `memory` for each agent so memory round-trips across package export/import.
 - Successful runs print a summary including output directory, agents exported, skills exported, files written, and per-agent errors (if any).
 - Output directory paths are resolved to absolute paths before export.
 
@@ -680,6 +681,9 @@ Import agents from [companies.sh](https://companies.sh) packages. Supports singl
 
 **Team hierarchy:**
 When importing a companies.sh package with team structure, the importer preserves manager/report relationships for both fresh and partial imports. Manifest-style manager references such as `ceo`, `../ceo/AGENTS.md`, and already-valid Fusion agent IDs are resolved to actual Fusion `reportsTo` agent IDs before agents are created, and `--skip-existing` reuses matching existing managers when available instead of flattening the org tree.
+
+**Memory import/export parity:**
+Manifest-provided inline `memory` is preserved during `fn agent import` (including `--dry-run` previews) and restored onto created agents, matching export behavior so operator-authored memory is not dropped.
 
 **Skill imports:**
 When importing from a package directory or archive, the importer also imports any package skill manifests (`skills/*/SKILL.md`). Skills are written to `{project}/skills/imported/{company-slug}/{skill-slug}/SKILL.md`. Existing skill files at the target path are skipped (not overwritten). Single `AGENTS.md` file imports do not include package skills.

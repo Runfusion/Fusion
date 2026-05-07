@@ -38,6 +38,7 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     ...(overrides.instructionsText !== undefined
       ? { instructionsText: overrides.instructionsText }
       : {}),
+    ...(overrides.memory !== undefined ? { memory: overrides.memory } : {}),
   };
 }
 
@@ -60,6 +61,7 @@ describe("agent-companies-exporter", () => {
       role: "reviewer",
       reportsTo: "agent-root",
       instructionsText: "Lead strategy and review architecture.",
+      memory: "Prefer concise updates and explicit risk tracking.",
       metadata: {
         description: "Company lead",
         skills: ["review", { name: "architecture" }],
@@ -78,6 +80,7 @@ describe("agent-companies-exporter", () => {
       description: "Company lead",
       schema: "agentcompanies/v1",
       instructionBody: "Lead strategy and review architecture.",
+      memory: "Prefer concise updates and explicit risk tracking.",
     });
   });
 
@@ -106,6 +109,7 @@ describe("agent-companies-exporter", () => {
         icon: "shield",
         role: "reviewer",
         instructionsText: "Always verify tests and edge-cases.",
+        memory: "Track flaky-test patterns across reviews.",
         metadata: {
           description: "Ensures quality",
           skills: ["qa"],
@@ -123,6 +127,7 @@ describe("agent-companies-exporter", () => {
       skills: ["qa"],
       description: "Ensures quality",
       schema: "agentcompanies/v1",
+      memory: "Track flaky-test patterns across reviews.",
     });
     expect(parsed.body).toBe("Always verify tests and edge-cases.");
   });
@@ -168,6 +173,7 @@ describe("agent-companies-exporter", () => {
 
     const reviewerManifest = parseYamlFrontmatter(readFileSync(reviewerPath, "utf-8"));
     expect(reviewerManifest.frontmatter.reportsTo).toBe("../ceo/AGENTS.md");
+    expect(reviewerManifest.frontmatter.memory).toBeUndefined();
 
     expect(readFileSync(strategySkillPath, "utf-8")).toContain("kind: skill");
     expect(result.filesWritten).toEqual(
@@ -208,6 +214,7 @@ describe("agent-companies-exporter", () => {
       readFileSync(join(outputDir, "agents", "solo", "AGENTS.md"), "utf-8"),
     );
     expect(parsed.frontmatter.reportsTo).toBeNull();
+    expect(parsed.frontmatter.memory).toBeUndefined();
     expect(parsed.frontmatter.skills).toEqual([]);
     expect(parsed.body).toBe("");
   });
@@ -229,6 +236,22 @@ describe("agent-companies-exporter", () => {
     expect(readFileSync(join(outputDir, "agents", "valid-agent", "AGENTS.md"), "utf-8")).toContain(
       "name: Valid Agent",
     );
+  });
+
+  it("exports memory in AGENTS.md frontmatter when present", async () => {
+    const outputDir = createTempDir();
+    const agent = makeAgent({
+      id: "agent-memory",
+      name: "Memory Keeper",
+      memory: "Remember to include rollback plans for risky changes.",
+    });
+
+    await exportAgentsToDirectory([agent], outputDir);
+
+    const parsed = parseYamlFrontmatter(
+      readFileSync(join(outputDir, "agents", "memory-keeper", "AGENTS.md"), "utf-8"),
+    );
+    expect(parsed.frontmatter.memory).toBe("Remember to include rollback plans for risky changes.");
   });
 
   it("captures per-agent write errors", async () => {

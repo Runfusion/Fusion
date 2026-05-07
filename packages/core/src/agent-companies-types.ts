@@ -57,6 +57,7 @@ export interface AgentManifest extends AgentCompaniesFrontmatter {
   reportsTo?: string | null;
   skills?: string[];
   instructionBody?: string;
+  memory?: string;
 }
 
 export type ProjectManifest = AgentCompaniesFrontmatter;
