@@ -982,6 +982,7 @@ describe("SettingsModal", () => {
         providers: [
           { id: "github", name: "GitHub", authenticated: true, type: "oauth" },
           { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
+          { id: "cloudflare", name: "Cloudflare", authenticated: false, type: "api_key" },
         ],
       });
 
@@ -990,6 +991,8 @@ describe("SettingsModal", () => {
 
       expect(screen.getByTestId("auth-provider-icon-github")).toBeInTheDocument();
       expect(screen.getByTestId("auth-provider-icon-openai")).toBeInTheDocument();
+      expect(screen.getByTestId("auth-provider-icon-cloudflare")).toBeInTheDocument();
+      expect(within(screen.getByTestId("auth-provider-icon-cloudflare")).getByTestId("cloudflare-icon")).toBeInTheDocument();
       expect(screen.getByTestId("auth-status-github")).toHaveTextContent("✓ Active");
       expect(screen.getByTestId("auth-status-openai")).toHaveTextContent("✗ Not connected");
     });
@@ -2287,6 +2290,15 @@ describe("SettingsModal", () => {
 
       expect(await screen.findByText("cloudflared is installed")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Install cloudflared" })).not.toBeInTheDocument();
+    });
+
+    it("renders branded Cloudflare icon in Remote provider selector", async () => {
+      renderModal();
+      await waitForSettingsModalReady();
+      await openRemoteSection();
+
+      const cloudflareSlot = screen.getByTestId("remote-provider-icon-cloudflare");
+      expect(within(cloudflareSlot).getByTestId("remote-cloudflare-option-icon")).toBeInTheDocument();
     });
 
     it("shows install button when Cloudflare is selected and cloudflared is not available", async () => {

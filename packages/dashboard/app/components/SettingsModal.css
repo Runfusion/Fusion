@@ -585,6 +585,12 @@
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
 
+.remote-provider-option-content {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
 .remote-provider-option input:checked + span {
   background: var(--card);
   color: var(--text);

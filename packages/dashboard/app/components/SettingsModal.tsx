@@ -4693,11 +4693,25 @@ export function SettingsModal({
               <div className="remote-provider-selector" role="radiogroup" aria-label="Remote provider">
                 <label className="remote-provider-option">
                   <input type="radio" name="remoteProvider" value="tailscale" checked={activeProvider === "tailscale"} onChange={() => setForm((f) => ({ ...f, remoteActiveProvider: "tailscale" } as SettingsFormState))} />
-                  <span>Tailscale</span>
+                  <span>
+                    <span className="remote-provider-option-content">
+                      <span data-testid="remote-provider-icon-tailscale" aria-hidden="true"><Globe size={16} /></span>
+                      <span>Tailscale</span>
+                    </span>
+                  </span>
                 </label>
                 <label className="remote-provider-option">
                   <input type="radio" name="remoteProvider" value="cloudflare" checked={activeProvider === "cloudflare"} onChange={() => setForm((f) => ({ ...f, remoteActiveProvider: "cloudflare" } as SettingsFormState))} />
-                  <span>Cloudflare</span>
+                  <span>
+                    <span className="remote-provider-option-content">
+                      <span data-testid="remote-provider-icon-cloudflare" aria-hidden="true" className="remote-provider-option-icon">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" data-testid="remote-cloudflare-option-icon">
+                          <path d="M7 16.5h10.8a2.9 2.9 0 0 0 .3-5.8 4.9 4.9 0 0 0-9.3-1.6A3.6 3.6 0 0 0 7 16.5m-1.9 0h3.2a2.5 2.5 0 0 0 .2-5 3.4 3.4 0 0 0-3.4 3.4c0 .6 0 1 .2 1.6" fill="var(--provider-cloudflare)" />
+                        </svg>
+                      </span>
+                      <span>Cloudflare</span>
+                    </span>
+                  </span>
                 </label>
               </div>
               {!activeProvider && <small>Select a provider above to configure remote access.</small>}

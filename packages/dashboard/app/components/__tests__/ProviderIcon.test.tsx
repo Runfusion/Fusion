@@ -632,4 +632,24 @@ describe("ProviderIcon", () => {
     render(<ProviderIcon provider="opencode-go" />);
     expect(screen.getByTestId("opencode-icon")).toBeInTheDocument();
   });
+
+  it("renders DeepSeek icon for deepseek aliases", () => {
+    for (const provider of ["deepseek", "deepseek-ai", "deep-seek"]) {
+      const { unmount } = render(<ProviderIcon provider={provider} />);
+      expect(screen.getByTestId("deepseek-icon")).toBeInTheDocument();
+      expect(screen.getByLabelText("DeepSeek")).toBeInTheDocument();
+      expect(screen.getByTestId("deepseek-icon").parentElement).toHaveStyle({ color: "var(--provider-deepseek)" });
+      unmount();
+    }
+  });
+
+  it("renders Cloudflare icon for cloudflare aliases", () => {
+    for (const provider of ["cloudflare", "cloudflared"]) {
+      const { unmount } = render(<ProviderIcon provider={provider} />);
+      expect(screen.getByTestId("cloudflare-icon")).toBeInTheDocument();
+      expect(screen.getByLabelText("Cloudflare")).toBeInTheDocument();
+      expect(screen.getByTestId("cloudflare-icon").parentElement).toHaveStyle({ color: "var(--provider-cloudflare)" });
+      unmount();
+    }
+  });
 });

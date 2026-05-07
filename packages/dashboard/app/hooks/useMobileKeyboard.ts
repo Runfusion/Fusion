@@ -157,15 +157,26 @@ export function useMobileKeyboard(
       setKeyboardOpen(metrics.open);
     };
 
+    const timeoutIds: ReturnType<typeof setTimeout>[] = [];
+
+    const scheduleUpdate = (delayMs: number) => {
+      if (typeof window === "undefined") return;
+      const timeoutId = window.setTimeout(() => {
+        if (typeof window === "undefined") return;
+        update();
+      }, delayMs);
+      timeoutIds.push(timeoutId);
+    };
+
     // Re-snapshot once iOS has settled. focusin/page-restore frequently
     // fire while the visualViewport is still mid-transition; the
     // synchronous read captures stale offsetTop and the chat-thread
     // anchors wrong. A short tail of updates catches the settled value.
     const updateWithTail = () => {
       update();
-      window.setTimeout(update, 50);
-      window.setTimeout(update, 200);
-      window.setTimeout(update, 500);
+      scheduleUpdate(50);
+      scheduleUpdate(200);
+      scheduleUpdate(500);
     };
 
     updateWithTail();
@@ -186,6 +197,9 @@ export function useMobileKeyboard(
       document.removeEventListener("focusout", update);
       document.removeEventListener("visibilitychange", updateWithTail);
       window.removeEventListener("pageshow", updateWithTail);
+      for (const timeoutId of timeoutIds) {
+        clearTimeout(timeoutId);
+      }
       setKeyboardOverlap(0);
       setViewportHeight(null);
       setViewportOffsetTop(0);

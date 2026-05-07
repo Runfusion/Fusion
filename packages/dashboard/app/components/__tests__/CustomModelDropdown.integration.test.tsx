@@ -11,6 +11,7 @@ const MOCK_MODELS: ModelInfo[] = [
   { provider: "ollama", id: "llama3", name: "Llama 3", reasoning: false, contextWindow: 4096 },
   { provider: "kimi", id: "moonshot-v1-8k", name: "Moonshot V1 8K", reasoning: false, contextWindow: 8192 },
   { provider: "moonshot", id: "moonshot-v1-32k", name: "Moonshot V1 32K", reasoning: false, contextWindow: 32768 },
+  { provider: "deepseek", id: "deepseek-chat", name: "DeepSeek Chat", reasoning: false, contextWindow: 64000 },
 ];
 
 const defaultProps = {
@@ -189,5 +190,21 @@ describe("CustomModelDropdown ProviderIcon Integration", () => {
     expect(kimiIcon).toBeInTheDocument();
     expect(kimiIcon).toHaveAttribute("aria-label", "Kimi");
     expect(kimiIcon.querySelector("path")).toHaveAttribute("fill", "var(--provider-kimi)");
+  });
+
+  it("renders DeepSeek icon in trigger and dropdown group header", async () => {
+    const user = userEvent.setup();
+    render(<CustomModelDropdown {...defaultProps} value="deepseek/deepseek-chat" />);
+
+    expect(screen.getByTestId("deepseek-icon")).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("Test Model"));
+
+    const deepseekIcons = screen.getAllByTestId("deepseek-icon");
+    expect(deepseekIcons.length).toBeGreaterThanOrEqual(2);
+    deepseekIcons.forEach((icon) => {
+      expect(icon).toHaveAttribute("aria-label", "DeepSeek");
+      expect(icon.querySelector("path")).toHaveAttribute("fill", "var(--provider-deepseek)");
+    });
   });
 });

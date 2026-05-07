@@ -216,6 +216,38 @@ function OpencodeIcon({ size, color, label = "Opencode" }: { size: number; color
   );
 }
 
+function DeepSeekIcon({ size, color, label = "DeepSeek" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="deepseek-icon"
+      aria-label={label}
+    >
+      <path d="M4 12a8 8 0 1 1 12.7 6.4L12 16h4a4 4 0 1 0-1.6 3.2L12 22l7-1-1.2-3.6A10 10 0 1 0 2 12z" fill={color} />
+    </svg>
+  );
+}
+
+function CloudflareIcon({ size, color, label = "Cloudflare" }: { size: number; color: string; label?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      data-testid="cloudflare-icon"
+      aria-label={label}
+    >
+      <path d="M7 16.5h10.8a2.9 2.9 0 0 0 .3-5.8 4.9 4.9 0 0 0-9.3-1.6A3.6 3.6 0 0 0 7 16.5m-1.9 0h3.2a2.5 2.5 0 0 0 .2-5 3.4 3.4 0 0 0-3.4 3.4c0 .6 0 1 .2 1.6" fill={color} />
+    </svg>
+  );
+}
+
 // Qwen / Tongyi Qianwen monogram — stylized "Q" with the tail piercing
 // the ring, a recognizable simplification of the official mark.
 function QwenIcon({ size, color, label = "Qwen" }: { size: number; color: string; label?: string }) {
@@ -700,6 +732,13 @@ const providerConfig: Record<
 
   opencode: { component: OpencodeIcon, color: "var(--provider-opencode)" },
   "opencode-go": { component: OpencodeIcon, color: "var(--provider-opencode)", label: "Opencode (Go)" },
+
+  deepseek: { component: DeepSeekIcon, color: "var(--provider-deepseek)", label: "DeepSeek" },
+  "deepseek-ai": { component: DeepSeekIcon, color: "var(--provider-deepseek)", label: "DeepSeek" },
+  "deep-seek": { component: DeepSeekIcon, color: "var(--provider-deepseek)", label: "DeepSeek" },
+
+  cloudflare: { component: CloudflareIcon, color: "var(--provider-cloudflare)", label: "Cloudflare" },
+  cloudflared: { component: CloudflareIcon, color: "var(--provider-cloudflare)", label: "Cloudflare" },
 
   qwen: { component: QwenIcon, color: "var(--provider-qwen)" },
   "qwen-ai": { component: QwenIcon, color: "var(--provider-qwen)", label: "Qwen" },
