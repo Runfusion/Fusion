@@ -505,6 +505,7 @@ async function waitForAppShell(): Promise<void> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   mockSubscribeSse.mockReset();
   mockSubscribeSse.mockReturnValue(vi.fn());
   mockCreateTask.mockReset();
@@ -3260,6 +3261,13 @@ describe("FN-3290: modal keyboard isolation for mobile dashboard layout", () => 
 });
 
 describe("App board branch filters", () => {
+  const WORKING_BRANCH_FILTER_STORAGE_KEY = "kb-dashboard-working-branch-filter";
+  const BASE_BRANCH_FILTER_STORAGE_KEY = "kb-dashboard-base-branch-filter";
+
+  function scopedProjectKey(baseKey: string, projectId: string) {
+    return `kb:${projectId}:${baseKey}`;
+  }
+
   function makeTask(id: string, title: string, branch?: string, baseBranch?: string) {
     return {
       id,
@@ -3388,6 +3396,109 @@ describe("App board branch filters", () => {
     expect(screen.getByRole("option", { name: "feature/remote" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "develop" })).toBeTruthy();
     remoteSpy.mockRestore();
+  });
+
+  it("restores saved branch filter selections per project", async () => {
+    const projectId = "project-restore";
+    mockCurrentProjectState.currentProject = {
+      id: projectId,
+      name: "Restore Project",
+      path: "/restore",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: "",
+      updatedAt: "",
+    };
+    localStorage.setItem(scopedProjectKey(WORKING_BRANCH_FILTER_STORAGE_KEY, projectId), "feature/a");
+    localStorage.setItem(scopedProjectKey(BASE_BRANCH_FILTER_STORAGE_KEY, projectId), "__fusion:no-branch__");
+
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [
+        makeTask("FN-1", "Restore Candidate", "feature/a"),
+        makeTask("FN-2", "Filtered Out", "feature/b", "main"),
+      ],
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(),
+    }));
+
+    render(<App />);
+    await waitForAppShell();
+
+    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+
+    expect((screen.getByTestId("working-branch-filter") as HTMLSelectElement).value).toBe("feature/a");
+    expect((screen.getByTestId("target-branch-filter") as HTMLSelectElement).value).toBe("__fusion:no-branch__");
+
+    await waitFor(() => {
+      expect(screen.getByText("Restore Candidate")).toBeTruthy();
+      expect(screen.queryByText("Filtered Out")).toBeNull();
+    });
+  });
+
+  it("writes updated filter values to project-scoped storage and isolates between projects", async () => {
+    const projectOneId = "project-one";
+    const projectTwoId = "project-two";
+    mockCurrentProjectState.currentProject = {
+      id: projectOneId,
+      name: "Project One",
+      path: "/one",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: "",
+      updatedAt: "",
+    };
+
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [makeTask("FN-1", "Alpha Search", "feature/a", "main")],
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(),
+    }));
+
+    const { rerender } = render(<App />);
+    await waitForAppShell();
+
+    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+    fireEvent.change(screen.getByTestId("working-branch-filter"), { target: { value: "feature/a" } });
+    fireEvent.change(screen.getByTestId("target-branch-filter"), { target: { value: "main" } });
+
+    expect(localStorage.getItem(scopedProjectKey(WORKING_BRANCH_FILTER_STORAGE_KEY, projectOneId))).toBe("feature/a");
+    expect(localStorage.getItem(scopedProjectKey(BASE_BRANCH_FILTER_STORAGE_KEY, projectOneId))).toBe("main");
+
+    mockCurrentProjectState.currentProject = {
+      id: projectTwoId,
+      name: "Project Two",
+      path: "/two",
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: "",
+      updatedAt: "",
+    };
+
+    rerender(<App />);
+    await waitForAppShell();
+
+    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
+
+    expect((screen.getByTestId("working-branch-filter") as HTMLSelectElement).value).toBe("");
+    expect((screen.getByTestId("target-branch-filter") as HTMLSelectElement).value).toBe("");
+    expect(localStorage.getItem(scopedProjectKey(WORKING_BRANCH_FILTER_STORAGE_KEY, projectTwoId))).toBeNull();
+    expect(localStorage.getItem(scopedProjectKey(BASE_BRANCH_FILTER_STORAGE_KEY, projectTwoId))).toBeNull();
   });
 
   it("composes with search and does not affect list view tasks", async () => {

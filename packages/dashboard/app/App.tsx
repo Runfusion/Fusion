@@ -116,6 +116,8 @@ function prefetchLazyViews() {
 
 const SETUP_WARNING_DISMISSED_KEY = "kb-setup-warning-dismissed";
 const ACTIVE_CHAT_SESSION_STORAGE_KEY = "kb-chat-active-session";
+const WORKING_BRANCH_FILTER_STORAGE_KEY = "kb-dashboard-working-branch-filter";
+const BASE_BRANCH_FILTER_STORAGE_KEY = "kb-dashboard-base-branch-filter";
 const NO_BRANCH_FILTER_VALUE = "__fusion:no-branch__";
 
 function buildRemoteDashboardUrl(serverUrl: string, authToken?: string | null): string {
@@ -209,6 +211,21 @@ function AppInner() {
   const [searchQuery, setSearchQuery] = useState("");
   const [branchFilter, setBranchFilter] = useState("");
   const [baseBranchFilter, setBaseBranchFilter] = useState("");
+
+  useEffect(() => {
+    setBranchFilter(getScopedItem(WORKING_BRANCH_FILTER_STORAGE_KEY, currentProject?.id) ?? "");
+    setBaseBranchFilter(getScopedItem(BASE_BRANCH_FILTER_STORAGE_KEY, currentProject?.id) ?? "");
+  }, [currentProject?.id]);
+
+  const handleBranchFilterChange = useCallback((value: string) => {
+    setBranchFilter(value);
+    setScopedItem(WORKING_BRANCH_FILTER_STORAGE_KEY, value, currentProject?.id);
+  }, [currentProject?.id]);
+
+  const handleBaseBranchFilterChange = useCallback((value: string) => {
+    setBaseBranchFilter(value);
+    setScopedItem(BASE_BRANCH_FILTER_STORAGE_KEY, value, currentProject?.id);
+  }, [currentProject?.id]);
   
   // Remote node data and events when in remote mode (pass searchQuery for server-side filtering)
   const remoteData = useRemoteNodeData(currentNodeId, { projectId: currentProject?.id, searchQuery: searchQuery || undefined });
@@ -1316,8 +1333,8 @@ function AppInner() {
         baseBranchFilter={baseBranchFilter}
         branchOptions={branchOptions}
         baseBranchOptions={baseBranchOptions}
-        onBranchFilterChange={setBranchFilter}
-        onBaseBranchFilterChange={setBaseBranchFilter}
+        onBranchFilterChange={handleBranchFilterChange}
+        onBaseBranchFilterChange={handleBaseBranchFilterChange}
         projects={effectiveProjects}
         currentProject={currentProject}
         onSelectProject={handleSelectProject}

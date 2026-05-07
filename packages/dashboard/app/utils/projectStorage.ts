@@ -28,6 +28,8 @@ export const PROJECT_STORAGE_KEYS: string[] = [
   "kb-usage-modal-size",
   "kb-usage-provider-order",
   "kb-chat-active-session",
+  "kb-dashboard-working-branch-filter",
+  "kb-dashboard-base-branch-filter",
   "kb-files-line-numbers",
   "fusion-plugin-dependency-graph:positions",
 ];

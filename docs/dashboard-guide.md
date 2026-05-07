@@ -18,6 +18,7 @@ Features:
 
 - Drag-and-drop between lifecycle columns
 - Search/filter tasks (including working-branch and base-branch dropdown filters with explicit **No working branch** / **No base branch** options)
+- Working-branch and base-branch filter selections are persisted per project and restored across refresh/navigation
 - Column visibility controls
 - Inline quick entry creation
 - PR/issue badges with live updates
