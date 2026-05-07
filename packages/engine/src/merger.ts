@@ -1292,26 +1292,106 @@ async function listOrphanedAutostashes(
  * old behavior. We do NOT want a stash failure to block the merge entirely
  * (that would be a strictly worse regression than the current state).
  */
+/**
+ * Inspect every leftover `fusion-merger-autostash:*` from prior runs. For
+ * each, classify:
+ *
+ *  - **Subsumed** — `git diff HEAD <stashSha> -- <stashFiles>` produces no
+ *    output, meaning every path in the stash is already byte-identical to
+ *    HEAD. The dev's work either landed in HEAD via the merge itself or
+ *    was committed independently; the stash is redundant. Drop it.
+ *  - **Live** — at least one path still differs from HEAD. The stash is
+ *    real lost work; warn loudly so the dev can recover it manually.
+ *
+ *  Without this sweep, every silent restore failure (apply hard-fails on
+ *  untracked-overwrite, ref already gone, transient git error) leaves a
+ *  permanent stash entry. They pile up indefinitely — we observed 50+
+ *  orphans on a single working tree — and the warn-only behavior means
+ *  developers stop reading the warnings entirely, defeating the safety
+ *  net.
+ */
+async function sweepAutostashOrphans(
+  rootDir: string,
+  taskId: string,
+  store: TaskStore,
+): Promise<void> {
+  let orphans: Array<{ sha: string; ref: string; label: string }> = [];
+  try {
+    orphans = await listOrphanedAutostashes(rootDir);
+  } catch {
+    return;
+  }
+  if (orphans.length === 0) return;
+
+  const subsumed: Array<{ sha: string; ref: string; label: string }> = [];
+  const live: Array<{ sha: string; ref: string; label: string }> = [];
+
+  for (const orphan of orphans) {
+    try {
+      const stashFiles = await listStashChangedPaths(rootDir, orphan.sha);
+      if (stashFiles.size === 0) {
+        // Empty stash — nothing to lose by dropping.
+        subsumed.push(orphan);
+        continue;
+      }
+      const pathsArg = [...stashFiles].map(quoteArg).join(" ");
+      const { stdout } = await execAsync(
+        `git diff --name-only HEAD ${quoteArg(orphan.sha)} -- ${pathsArg}`,
+        { cwd: rootDir, encoding: "utf-8" },
+      );
+      if (stdout.trim() === "") {
+        subsumed.push(orphan);
+      } else {
+        live.push(orphan);
+      }
+    } catch {
+      // If we can't classify, treat as live — better to leave a real stash
+      // sitting around than to drop one that still contains lost work.
+      live.push(orphan);
+    }
+  }
+
+  for (const orphan of subsumed) {
+    await dropAutostashBySha(rootDir, taskId, orphan.sha);
+    mergerLog.log(
+      `${taskId}: dropped subsumed autostash ${orphan.sha.slice(0, 7)} (${orphan.label}) — content already present on HEAD`,
+    );
+  }
+
+  if (subsumed.length > 0) {
+    await store
+      .logEntry(
+        taskId,
+        `Cleaned up ${subsumed.length} subsumed autostash orphan(s) — their content already on HEAD`,
+        subsumed.map((o) => `${o.ref}@${o.sha.slice(0, 7)} (${o.label})`).join("\n"),
+      )
+      .catch(() => undefined);
+  }
+
+  if (live.length > 0) {
+    const refs = live.map((o) => `${o.ref}@${o.sha.slice(0, 7)}`).join(", ");
+    mergerLog.warn(
+      `${taskId}: ${live.length} live fusion-merger-autostash entry(ies) in stash list (${refs}) — uncommitted dev changes from prior merges whose restore failed. Recover with: cd ${rootDir} && git stash list && git stash apply <sha>`,
+    );
+    await store
+      .logEntry(
+        taskId,
+        `${live.length} autostash orphan(s) still hold uncommitted dev work — recover manually`,
+        live
+          .map(
+            (o) =>
+              `${o.ref}@${o.sha.slice(0, 7)} (${o.label})\n  recover: git stash apply ${o.sha}`,
+          )
+          .join("\n\n"),
+      )
+      .catch(() => undefined);
+  }
+}
+
 async function stashUnrelatedRootDirChanges(
   rootDir: string,
   taskId: string,
 ): Promise<AutostashHandle | null> {
-  // Defensive: surface orphaned autostashes from prior runs whose restore
-  // failed silently. The fix in restoreUnrelatedRootDirChanges should make
-  // this rare going forward, but a louder warning at merge entry guards
-  // against repeated burial of dev work across multiple merges.
-  try {
-    const orphans = await listOrphanedAutostashes(rootDir);
-    if (orphans.length > 0) {
-      const refs = orphans.map((o) => `${o.ref}@${o.sha.slice(0, 7)}`).join(", ");
-      mergerLog.warn(
-        `${taskId}: ${orphans.length} orphaned fusion-merger-autostash entry(ies) in stash list (${refs}) — these are uncommitted dev changes from prior merges whose restore failed. Recover with: cd ${rootDir} && git stash list && git stash apply <sha>`,
-      );
-    }
-  } catch {
-    // Orphan detection is purely advisory.
-  }
-
   try {
     const dirty = await snapshotDirtyFiles(rootDir);
     if (dirty.size === 0) return null;
@@ -1702,6 +1782,13 @@ async function restoreUnrelatedRootDirChanges(
       mergerLog.warn(
         `${taskId}: failed to apply autostash ${sha.slice(0, 7)} (${msg}) — stash left intact; recover with: cd ${rootDir} && git stash apply ${sha}`,
       );
+      await ctx.store
+        .logEntry(
+          taskId,
+          `Autostash apply failed — stash ${sha.slice(0, 7)} left intact for manual recovery`,
+          `${msg}\n\nRecover with:\n  cd ${rootDir} && git stash apply ${sha}`,
+        )
+        .catch(() => undefined);
       return { status: "failed", stashSha: sha, errorMessage: msg };
     }
     applyConflicted = true;
@@ -1714,6 +1801,12 @@ async function restoreUnrelatedRootDirChanges(
     // Clean apply — drop the stash and we're done.
     mergerLog.log(`${taskId}: restored autostash ${sha.slice(0, 7)} cleanly`);
     await dropAutostashBySha(rootDir, taskId, sha);
+    await ctx.store
+      .logEntry(
+        taskId,
+        `Restored pre-merge autostash ${sha.slice(0, 7)} cleanly`,
+      )
+      .catch(() => undefined);
     return { status: "restored", stashSha: sha };
   }
 
@@ -1725,6 +1818,13 @@ async function restoreUnrelatedRootDirChanges(
   if (!smartConflictResolution) {
     const message = `Autostash apply conflicted in ${conflictedFiles.length} file(s) and smartConflictResolution is disabled. Stash ${sha.slice(0, 7)} left intact; resolve manually with: cd ${rootDir} && # edit files, then git stash drop <ref>`;
     mergerLog.warn(`${taskId}: ${message}`);
+    await ctx.store
+      .logEntry(
+        taskId,
+        `Autostash apply conflicted in ${conflictedFiles.length} file(s) — manual resolution required (smart resolution disabled)`,
+        message,
+      )
+      .catch(() => undefined);
     return {
       status: "conflict-needs-manual",
       stashSha: sha,
@@ -1751,6 +1851,9 @@ async function restoreUnrelatedRootDirChanges(
   if (!aiResult.success) {
     const message = `Autostash apply conflict, AI resolution failed (${aiResult.error ?? "unknown error"}). Stash ${sha.slice(0, 7)} left intact; recover with: cd ${rootDir} && git status (conflicts in working tree) && # resolve, then git stash drop <ref>`;
     mergerLog.warn(`${taskId}: ${message}`);
+    await ctx.store
+      .logEntry(taskId, `Autostash AI conflict resolution failed — manual recovery required`, message)
+      .catch(() => undefined);
     return {
       status: "conflict-needs-manual",
       stashSha: sha,
@@ -1764,6 +1867,9 @@ async function restoreUnrelatedRootDirChanges(
   if (stillConflicted.length > 0) {
     const message = `AI agent reported success but conflict markers remain in: ${stillConflicted.join(", ")}. Stash ${sha.slice(0, 7)} left intact; recover manually.`;
     mergerLog.warn(`${taskId}: ${message}`);
+    await ctx.store
+      .logEntry(taskId, `Autostash AI conflict resolution incomplete — manual recovery required`, message)
+      .catch(() => undefined);
     return {
       status: "conflict-needs-manual",
       stashSha: sha,
@@ -3493,6 +3599,11 @@ export async function aiMergeTask(
   // devs that edits made now may end up in a race-rescue stash. Not a lock —
   // we explicitly do NOT block dev edits, just make the timing risk legible.
   const activeStatusPath = writeActiveMergerStatus(rootDir, taskId);
+
+  // Sweep autostash orphans from prior merges before creating a new one.
+  // Subsumed orphans (content fully on HEAD) get dropped; live orphans get
+  // surfaced on the task feed so the developer notices them.
+  await sweepAutostashOrphans(rootDir, taskId, store);
 
   // Pre-merge guard against the common single-checkout setup where rootDir
   // is the developer's working tree. The merge flow below issues several
