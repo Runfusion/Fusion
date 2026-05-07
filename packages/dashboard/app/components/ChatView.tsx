@@ -1713,9 +1713,11 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
                 <ChevronLeft size={16} />
               </button>
             )}
-            {activeModelProvider ? <ProviderIcon provider={activeModelProvider} size="md" /> : <Bot size={16} />}
-            <span className="chat-thread-header-title">{threadHeaderTitle}</span>
-            {showThreadHeaderModelTag && <span className="chat-model-tag">{activeModelTag}</span>}
+            <div className="chat-thread-header-identity" data-testid="chat-thread-header-identity">
+              {activeModelProvider ? <ProviderIcon provider={activeModelProvider} size="md" /> : <Bot size={16} />}
+              <span className="chat-thread-header-title">{threadHeaderTitle}</span>
+              {showThreadHeaderModelTag && <span className="chat-model-tag">{activeModelTag}</span>}
+            </div>
             {hasThreadInView && (
               <button
                 type="button"

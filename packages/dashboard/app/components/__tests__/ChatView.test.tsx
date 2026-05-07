@@ -1845,6 +1845,40 @@ describe("ChatView", () => {
     expect(headerModelTag).toBeNull();
   });
 
+  it("keeps provider identity text grouped in header while render toggle stays on the same row", () => {
+    setupMockChat({
+      activeSession: {
+        id: "session-001",
+        agentId: "agent-001",
+        status: "active",
+        title: "Agent Chat",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z",
+      },
+      messages: [
+        { id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hi!", createdAt: "2026-04-08T00:00:00.000Z" },
+      ],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const header = document.querySelector(".chat-thread-header") as HTMLElement | null;
+    const identity = screen.getByTestId("chat-thread-header-identity");
+    const toggle = screen.getByTestId("chat-thread-render-toggle");
+    const providerIcon = identity.querySelector(".provider-icon");
+    const modelTag = identity.querySelector(".chat-model-tag");
+
+    expect(header).toBeInTheDocument();
+    expect(providerIcon).toBeInTheDocument();
+    expect(within(identity).getByText("Agent Chat")).toBeInTheDocument();
+    expect(modelTag).toBeInTheDocument();
+    expect(modelTag).toHaveTextContent("Claude Sonnet 4.5");
+    expect(toggle).toBeInTheDocument();
+    expect(header?.children[header.children.length - 1]).toBe(toggle);
+    expect(document.querySelectorAll(".chat-thread-header .chat-model-tag")).toHaveLength(1);
+  });
+
   it("does not show model tag when session has no model", () => {
     setupMockChat({
       activeSession: {
@@ -3067,5 +3101,11 @@ describe("ChatView mobile CSS contract", () => {
 
   it("mobile widens chat bubbles for readability", () => {
     expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.chat-message\s*\{[\s\S]*?max-width:\s*82%/);
+  });
+
+  it("mobile keeps thread-header identity and render toggle inline", () => {
+    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.chat-thread-header\s*\{[^}]*flex-wrap:\s*nowrap/);
+    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.chat-thread-header-identity\s*\{[^}]*flex:\s*1\s+1\s+auto[^}]*white-space:\s*nowrap/);
+    expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.chat-thread-header-render-toggle\s*\{[^}]*flex-shrink:\s*0/);
   });
 });
