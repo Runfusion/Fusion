@@ -25,7 +25,7 @@ import {
   Settings,
 } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
-import { fetchModels, type ModelInfo } from "../api";
+import { fetchModels, updateGlobalSettings, type ModelInfo } from "../api";
 import { useInsights, type InsightSection } from "../hooks/useInsights";
 import type { InsightCategory } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
@@ -90,11 +90,56 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
 
   // Fetch models internally if not provided via prop
   const [fetchedModels, setFetchedModels] = useState<ModelInfo[]>([]);
+  const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
+  const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
+  const [resolvedPlanningProvider, setResolvedPlanningProvider] = useState<string | undefined>();
   useEffect(() => {
     if (modelsProp) return;
-    fetchModels().then((res) => setFetchedModels(res.models)).catch(() => {});
+    fetchModels()
+      .then((res) => {
+        setFetchedModels(res.models);
+        setFavoriteProviders(res.favoriteProviders);
+        setFavoriteModels(res.favoriteModels);
+        setResolvedPlanningProvider(res.resolvedPlanningProvider);
+      })
+      .catch(() => {});
   }, [modelsProp]);
   const models = modelsProp ?? fetchedModels;
+
+  // Auto-promote the resolved planning provider as a favorite when the user
+  // hasn't explicitly starred any providers. This ensures the provider they
+  // actively use always appears at the top of the dropdown.
+  const effectiveFavoriteProviders = useMemo(() => {
+    if (favoriteProviders.length > 0) return favoriteProviders;
+    if (resolvedPlanningProvider) return [resolvedPlanningProvider];
+    return [];
+  }, [favoriteProviders, resolvedPlanningProvider]);
+
+  const handleToggleProviderFavorite = useCallback(async (provider: string) => {
+    const isFavorite = favoriteProviders.includes(provider);
+    const next = isFavorite
+      ? favoriteProviders.filter((p) => p !== provider)
+      : [provider, ...favoriteProviders];
+    setFavoriteProviders(next);
+    try {
+      await updateGlobalSettings({ favoriteProviders: next, favoriteModels });
+    } catch {
+      setFavoriteProviders(favoriteProviders);
+    }
+  }, [favoriteProviders, favoriteModels]);
+
+  const handleToggleModelFavorite = useCallback(async (modelId: string) => {
+    const isFavorite = favoriteModels.includes(modelId);
+    const next = isFavorite
+      ? favoriteModels.filter((m) => m !== modelId)
+      : [modelId, ...favoriteModels];
+    setFavoriteModels(next);
+    try {
+      await updateGlobalSettings({ favoriteProviders, favoriteModels: next });
+    } catch {
+      setFavoriteModels(favoriteModels);
+    }
+  }, [favoriteModels, favoriteProviders]);
 
   const handleModelChange = useCallback((value: string) => {
     setSelectedModel(value);
@@ -483,6 +528,10 @@ export function InsightsView({ projectId, addToast, onClose, onCreateTask, model
             label="Insight generation model"
             disabled={isRunInFlight}
             id="insight-model-select"
+            favoriteProviders={effectiveFavoriteProviders}
+            favoriteModels={favoriteModels}
+            onToggleFavorite={handleToggleProviderFavorite}
+            onToggleModelFavorite={handleToggleModelFavorite}
           />
         </div>
       )}
