@@ -1,4 +1,3 @@
-import Docker from "dockerode";
 import { exec } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -9,6 +8,26 @@ import type {
   DockerHostConfig,
   DockerVolumeMount,
 } from "./types.js";
+
+// dockerode is a native module (depends on ssh2/cpu-features) and is
+// externalized from the CLI bundle.  Lazy-import so the CLI can start
+// even when the package isn't installed; Docker features will surface a
+// clear error instead of crashing at import time.
+type Docker = import("dockerode");
+let _Docker: (new (opts?: Record<string, unknown>) => Docker) | undefined;
+async function getDockerClass(): Promise<new (opts?: Record<string, unknown>) => Docker> {
+  if (_Docker) return _Docker;
+  try {
+    const mod = await import("dockerode");
+    _Docker = (mod.default ?? mod) as unknown as new (opts?: Record<string, unknown>) => Docker;
+    return _Docker;
+  } catch {
+    throw new Error(
+      "The 'dockerode' package is required for Docker features but is not installed. " +
+      "Install it with: npm install dockerode",
+    );
+  }
+}
 
 const EXEC_OPTIONS = {
   timeout: 15_000,
@@ -53,7 +72,8 @@ export class DockerClientService {
       const parsed = JSON.parse(stdout) as Array<{ Endpoints?: { docker?: { Host?: string } } }>;
       const dockerHost = parsed[0]?.Endpoints?.docker?.Host;
       if (!dockerHost) throw new Error(`Docker context "${contextName}" does not define a Docker endpoint host`);
-      return new Docker({ host: dockerHost });
+      const DockerCtor = await getDockerClass();
+      return new DockerCtor({ host: dockerHost });
     }
 
     if (hostConfig?.host) {
@@ -72,10 +92,12 @@ export class DockerClientService {
       if (hostConfig.tlsKeyPath) options.key = await readFile(hostConfig.tlsKeyPath);
       if (hostConfig.tlsVerify === false) options.rejectUnauthorized = false;
 
-      return new Docker(options);
+      const DockerCtor = await getDockerClass();
+      return new DockerCtor(options);
     }
 
-    return new Docker();
+    const DockerCtor = await getDockerClass();
+    return new DockerCtor();
   }
 
   async testConnection(hostConfig?: DockerHostConfig): Promise<DockerConnectivityResult> {

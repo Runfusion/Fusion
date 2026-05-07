@@ -56,6 +56,7 @@
   },
   "dependencies": {
     "@mariozechner/pi-ai": "^0.73.0",
+    "node-pty": "npm:@homebridge/node-pty-prebuilt-multiarch@^0.13.1",
     "@mariozechner/pi-coding-agent": "^0.73.0",
     "dockerode": "^4.0.12",
     "express": "^5.1.0",
@@ -64,7 +65,6 @@
     "ink-text-input": "^6.0.0",
     "ioredis": "^5.6.0",
     "multer": "^2.1.1",
-    "node-pty": "npm:@homebridge/node-pty-prebuilt-multiarch@^0.13.1",
     "react": "^19.0.0"
   },
   "peerDependencies": {
