@@ -962,6 +962,72 @@ describe("aiMergeTask — task.branch field", () => {
   });
 });
 
+describe("aiMergeTask — merge-target branch resolution", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedExistsSync.mockReturnValue(true);
+    setupHappyPathExecSync();
+    mockedCreateFnAgent.mockResolvedValue({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+      },
+    } as any);
+  });
+
+  it("uses task.baseBranch as merge-target context when provided", async () => {
+    const store = createMockStore({
+      id: "FN-050",
+      branch: "feature/fn-050-work",
+      baseBranch: "release/2026-05",
+      worktree: "/tmp/root/.worktrees/KB-050",
+    });
+
+    await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(
+      mockedExecSync.mock.calls.some(([cmd]) =>
+        String(cmd).includes('git merge-base "feature/fn-050-work" "release/2026-05"'),
+      ),
+    ).toBe(true);
+
+    expect(
+      mockedExecSync.mock.calls.some(([cmd]) =>
+        String(cmd).includes('git merge-base "feature/fn-050-work" "main"'),
+      ),
+    ).toBe(false);
+
+    expect(
+      mockedExecSync.mock.calls.some(([cmd]) =>
+        String(cmd).includes('rev-parse --verify "feature/fn-050-work"'),
+      ),
+    ).toBe(true);
+  });
+
+  it("defaults merge-target context to main when task.baseBranch is missing", async () => {
+    const store = createMockStore({
+      id: "FN-050",
+      branch: "feature/fn-050-work",
+      baseBranch: undefined,
+      worktree: "/tmp/root/.worktrees/KB-050",
+    });
+
+    await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(
+      mockedExecSync.mock.calls.some(([cmd]) =>
+        String(cmd).includes('git merge-base "feature/fn-050-work" "main"'),
+      ),
+    ).toBe(true);
+
+    expect(
+      mockedExecSync.mock.calls.some(([cmd]) =>
+        String(cmd).includes('rev-parse --verify "feature/fn-050-work"'),
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("aiMergeTask — empty squash merge (branch already merged via dep)", () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -546,26 +546,35 @@ describe("TaskStore", () => {
       expect(detail.branch).toBe("fusion/fn-001-custom");
     });
 
-    it("updates and clears branch fields via null patch semantics", async () => {
+    it("preserves branch/baseBranch independently and clears with null without disturbing unrelated fields", async () => {
       const task = await store.createTask({
         description: "Branch field update",
+        title: "Keep this title",
         baseBranch: "main",
         branch: "fusion/fn-001-initial",
       });
 
-      const updated = await store.updateTask(task.id, {
-        baseBranch: "release/2026.05",
+      const updatedBranchOnly = await store.updateTask(task.id, {
         branch: "fusion/fn-001-updated",
       });
-      expect(updated.baseBranch).toBe("release/2026.05");
-      expect(updated.branch).toBe("fusion/fn-001-updated");
+      expect(updatedBranchOnly.branch).toBe("fusion/fn-001-updated");
+      expect(updatedBranchOnly.baseBranch).toBe("main");
 
-      const cleared = await store.updateTask(task.id, {
-        baseBranch: null,
-        branch: null,
+      const updatedBaseOnly = await store.updateTask(task.id, {
+        baseBranch: "release/2026.05",
       });
-      expect(cleared.baseBranch).toBeUndefined();
-      expect(cleared.branch).toBeUndefined();
+      expect(updatedBaseOnly.baseBranch).toBe("release/2026.05");
+      expect(updatedBaseOnly.branch).toBe("fusion/fn-001-updated");
+
+      const clearedBranch = await store.updateTask(task.id, { branch: null });
+      expect(clearedBranch.branch).toBeUndefined();
+      expect(clearedBranch.baseBranch).toBe("release/2026.05");
+      expect(clearedBranch.title).toBe("Keep this title");
+
+      const clearedBaseBranch = await store.updateTask(task.id, { baseBranch: null });
+      expect(clearedBaseBranch.baseBranch).toBeUndefined();
+      expect(clearedBaseBranch.branch).toBeUndefined();
+      expect(clearedBaseBranch.title).toBe("Keep this title");
     });
 
     it("round-trips branch fields through listTasks and reload", async () => {

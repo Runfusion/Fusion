@@ -457,6 +457,17 @@ describe("updateTask", () => {
     });
   });
 
+  it("omits branch and baseBranch from update payload when unset", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { ...FAKE_TASK, title: "Updated" }));
+
+    await updateTask("FN-001", { title: "Updated" });
+
+    const call = vi.mocked(globalThis.fetch).mock.calls[0];
+    const body = JSON.parse((call[1] as RequestInit).body as string);
+    expect(body).not.toHaveProperty("branch");
+    expect(body).not.toHaveProperty("baseBranch");
+  });
+
   it("sends sourceIssue object when source metadata is provided", async () => {
     const sourceIssue = {
       provider: "github",
@@ -586,6 +597,17 @@ describe("createTask", () => {
     const body = JSON.parse((call[1] as RequestInit).body as string);
     expect(body.branch).toBe("fusion/fn-branch");
     expect(body.baseBranch).toBe("main");
+  });
+
+  it("omits branch and baseBranch in create payload when unset", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, FAKE_CREATED_TASK));
+
+    await createTask({ description: "Task without branch fields" });
+
+    const call = vi.mocked(globalThis.fetch).mock.calls[0];
+    const body = JSON.parse((call[1] as RequestInit).body as string);
+    expect(body).not.toHaveProperty("branch");
+    expect(body).not.toHaveProperty("baseBranch");
   });
 
   it("serializes nodeId in create payload when execution target is specified", async () => {

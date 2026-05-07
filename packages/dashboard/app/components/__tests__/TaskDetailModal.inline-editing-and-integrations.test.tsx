@@ -1113,6 +1113,32 @@ describe("TaskDetailModal", () => {
       });
     });
 
+    it("saves changed baseBranch independently of branch", async () => {
+      const { updateTask } = await import("../../api");
+      const mockUpdate = vi.mocked(updateTask);
+      mockUpdate.mockResolvedValueOnce({ id: "FN-001" } as Task);
+
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ id: "FN-001", column: "todo", branch: "feature/fn-3422", baseBranch: "develop" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.change(container.querySelector("#task-base-branch") as HTMLInputElement, { target: { value: "release/2026-05" } });
+      fireEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(mockUpdate).toHaveBeenCalledWith("FN-001", { baseBranch: "release/2026-05" }, undefined);
+      });
+    });
+
     it("sends null branch fields when working/base branches are cleared", async () => {
       const { updateTask } = await import("../../api");
       const mockUpdate = vi.mocked(updateTask);

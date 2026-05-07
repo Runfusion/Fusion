@@ -235,6 +235,32 @@ describe("TaskCard", () => {
     expect(screen.queryByText("Branch")).toBeNull();
   });
 
+  it("renders merge target from task.baseBranch, not prInfo.baseBranch metadata", () => {
+    render(
+      <TaskCard
+        task={makeTask({
+          branch: "fusion/fn-001",
+          baseBranch: "release/task-target",
+          prInfo: {
+            url: "https://github.com/runfusion/fusion/pull/10",
+            number: 10,
+            status: "open",
+            title: "PR title",
+            headBranch: "feature/pr-head",
+            baseBranch: "main",
+            commentCount: 0,
+          },
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("Base")).toBeDefined();
+    expect(screen.getByText("release/task-target")).toBeDefined();
+    expect(screen.queryByText("main")).toBeNull();
+  });
+
   it("shows both chips when branch and base branch are both non-default", () => {
     const { container } = render(
       <TaskCard

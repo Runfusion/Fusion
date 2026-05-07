@@ -664,6 +664,27 @@ describe("Board", () => {
       expect(todoTasks.map((t: Task) => t.id).sort()).toEqual(["FN-999", "SEARCH-123"]);
     });
 
+    it("renders server-filtered branch-target results without additional client filtering", () => {
+      const branchFilteredTasks: Task[] = [
+        createTask({
+          id: "FN-3428",
+          description: "Task targeting release branch",
+          column: "todo",
+          branch: "feature/fn-3428",
+          baseBranch: "release/2026-05",
+        }),
+      ];
+
+      renderBoard({ tasks: branchFilteredTasks, searchQuery: "release/2026-05" });
+
+      const todoColumn = screen.getByTestId("column-todo");
+      const todoTasks = JSON.parse(todoColumn.getAttribute("data-tasks") || "[]") as Task[];
+      expect(todoTasks).toHaveLength(1);
+      expect(todoTasks[0]?.id).toBe("FN-3428");
+      expect(todoTasks[0]?.branch).toBe("feature/fn-3428");
+      expect(todoTasks[0]?.baseBranch).toBe("release/2026-05");
+    });
+
     it("shows all tasks for whitespace-only search query (server treats as empty)", () => {
       const tasks: Task[] = [
         createTask({ id: "FN-001", description: "First task", column: "todo" }),
