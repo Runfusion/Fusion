@@ -243,6 +243,7 @@ export function NewAgentDialog({
     setRole((VALID_CAPABILITIES.has(draft.role) ? draft.role : "custom") as AgentCapability);
     setReportsTo(draft.reportsTo ?? "");
     setInstructionsText(draft.instructionsText ?? "");
+    setHeartbeatProcedurePath(draft.heartbeatProcedurePath ?? "");
     setSoul(draft.soul ?? "");
     setMemory(draft.memory ?? "");
     setSelectedSkills(draft.skills ?? []);

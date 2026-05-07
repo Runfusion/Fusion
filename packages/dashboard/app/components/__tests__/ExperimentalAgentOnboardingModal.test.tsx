@@ -22,7 +22,7 @@ vi.mock("../../api", () => ({
         streamHandlers?.onSummary?.({
           name: "Docs Reviewer",
           role: "reviewer",
-          instructionsText: "Review docs for accuracy and clarity.",
+          instructionsText: "Review docs for accuracy and clarity. Focus on sequencing, examples, and edge cases.",
           thinkingLevel: "medium",
           maxTurns: 20,
           soul: "Thorough and empathetic reviewer.",
@@ -30,6 +30,11 @@ vi.mock("../../api", () => ({
           skills: ["docs", "review"],
           templateId: "reviewer-template",
           rationale: "Matched your request to the reviewer preset",
+          heartbeatProcedurePath: ".fusion/agents/docs-reviewer/HEARTBEAT.md",
+          heartbeatIntervalMs: 45000,
+          heartbeatEnabled: true,
+          modelHint: "anthropic/claude-sonnet-4-5",
+          runtimeHint: "openclaw",
         }),
       0,
     );
@@ -78,10 +83,14 @@ describe("ExperimentalAgentOnboardingModal", () => {
     expect(screen.getByText("Soul / personality")).toBeTruthy();
     expect(screen.getByText("Thorough and empathetic reviewer.")).toBeTruthy();
     expect(screen.getByText("Core instructions")).toBeTruthy();
-    expect(screen.getByText("Review docs for accuracy and clarity.")).toBeTruthy();
-    expect(screen.getByText("Runtime hints")).toBeTruthy();
-    expect(screen.getByText("Thinking level:")).toBeTruthy();
-    expect(screen.getByText("Max turns:")).toBeTruthy();
+    expect(screen.getByText(/Review docs for accuracy and clarity\./)).toBeTruthy();
+    expect(screen.getByText("Heartbeat summary")).toBeTruthy();
+    expect(screen.getByText(/Procedure: \.fusion\/agents\/docs-reviewer\/HEARTBEAT\.md/)).toBeTruthy();
+    expect(screen.getByText(/Interval: 45000ms/)).toBeTruthy();
+    expect(screen.getByText(/Enabled: yes/)).toBeTruthy();
+    expect(screen.getByText("Runtime summary")).toBeTruthy();
+    expect(screen.getByText(/Model hint: anthropic\/claude-sonnet-4-5/)).toBeTruthy();
+    expect(screen.getByText(/Runtime hint: openclaw/)).toBeTruthy();
     expect(screen.getByText("Starter memory / playbook")).toBeTruthy();
     expect(screen.getByText(/Follow docs style guide/)).toBeTruthy();
     expect(screen.getByText("Skills")).toBeTruthy();
