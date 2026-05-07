@@ -157,7 +157,7 @@ export function useMobileKeyboard(
       setKeyboardOpen(metrics.open);
     };
 
-    const timeoutIds: ReturnType<typeof setTimeout>[] = [];
+    const timeoutIds: number[] = [];
 
     const scheduleUpdate = (delayMs: number) => {
       if (typeof window === "undefined") return;
@@ -171,12 +171,55 @@ export function useMobileKeyboard(
     // Re-snapshot once iOS has settled. focusin/page-restore frequently
     // fire while the visualViewport is still mid-transition; the
     // synchronous read captures stale offsetTop and the chat-thread
-    // anchors wrong. A short tail of updates catches the settled value.
+    // anchors wrong. We combine two strategies:
+    //   1. A short tail of timed updates (50/200/500/1000/1500 ms) for
+    //      cases where settlement is on a fixed schedule.
+    //   2. A rAF poll that stops once offsetTop is stable across two
+    //      frames, capped at 1.5s. Catches slow / variable settles
+    //      (e.g. switching tabs back with the keyboard up) where the
+    //      timed reads miss the right window.
+    let rafId: number | null = null;
+    let pollDeadline = 0;
+    let lastOffsetTop = -1;
+    let stableFrames = 0;
+    const cancelPoll = () => {
+      if (rafId !== null && typeof window !== "undefined") {
+        window.cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+    };
+    const pollFrame = () => {
+      if (typeof window === "undefined") return;
+      update();
+      const currentOffsetTop = window.visualViewport?.offsetTop ?? 0;
+      if (currentOffsetTop === lastOffsetTop) {
+        stableFrames += 1;
+      } else {
+        stableFrames = 0;
+        lastOffsetTop = currentOffsetTop;
+      }
+      if (stableFrames >= 2 || performance.now() > pollDeadline) {
+        rafId = null;
+        return;
+      }
+      rafId = window.requestAnimationFrame(pollFrame);
+    };
+    const startStabilityPoll = () => {
+      if (typeof window === "undefined") return;
+      cancelPoll();
+      pollDeadline = performance.now() + 1500;
+      lastOffsetTop = -1;
+      stableFrames = 0;
+      rafId = window.requestAnimationFrame(pollFrame);
+    };
     const updateWithTail = () => {
       update();
       scheduleUpdate(50);
       scheduleUpdate(200);
       scheduleUpdate(500);
+      scheduleUpdate(1000);
+      scheduleUpdate(1500);
+      startStabilityPoll();
     };
 
     updateWithTail();
@@ -200,6 +243,7 @@ export function useMobileKeyboard(
       for (const timeoutId of timeoutIds) {
         clearTimeout(timeoutId);
       }
+      cancelPoll();
       setKeyboardOverlap(0);
       setViewportHeight(null);
       setViewportOffsetTop(0);
