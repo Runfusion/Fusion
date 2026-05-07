@@ -17,6 +17,7 @@ vi.mock("../../api", () => ({
   deleteAgent: vi.fn(),
   fetchAgentLogs: vi.fn(),
   fetchAgentLogsWithMeta: vi.fn(),
+  fetchAgentMailbox: vi.fn(),
   fetchAgentRunLogs: vi.fn(),
   fetchAgentChildren: vi.fn(),
   fetchAgentRuns: vi.fn(),
@@ -159,7 +160,7 @@ vi.mock("../../hooks/useConfirm", () => ({
   useConfirm: () => ({ confirm: mockConfirm }),
 }));
 
-import { fetchAgent, fetchAgents, updateAgent, updateAgentState, deleteAgent, fetchAgentChildren, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchDiscoveredSkills, fetchSkillContent, fetchModels, fetchPluginRuntimes, fetchAgentLogsWithMeta, upgradeAgentHeartbeatProcedure, updateGlobalSettings, fetchCompanies } from "../../api";
+import { fetchAgent, fetchAgents, updateAgent, updateAgentState, deleteAgent, fetchAgentChildren, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchDiscoveredSkills, fetchSkillContent, fetchModels, fetchPluginRuntimes, fetchAgentLogsWithMeta, fetchAgentMailbox, upgradeAgentHeartbeatProcedure, updateGlobalSettings, fetchCompanies } from "../../api";
 import { subscribeSse } from "../../sse-bus";
 
 const mockFetchAgent = vi.mocked(fetchAgent);
@@ -188,6 +189,7 @@ const mockFetchSkillContent = vi.mocked(fetchSkillContent);
 const mockFetchModels = vi.mocked(fetchModels);
 const mockFetchPluginRuntimes = vi.mocked(fetchPluginRuntimes);
 const mockFetchAgentLogsWithMeta = vi.mocked(fetchAgentLogsWithMeta);
+const mockFetchAgentMailbox = vi.mocked(fetchAgentMailbox);
 const mockUpgradeAgentHeartbeatProcedure = vi.mocked(upgradeAgentHeartbeatProcedure);
 const mockUpdateGlobalSettings = vi.mocked(updateGlobalSettings);
 const mockFetchCompanies = vi.mocked(fetchCompanies);
@@ -257,6 +259,14 @@ describe("AgentDetailView", () => {
     mockFetchAgentTasks.mockResolvedValue([]);
     mockFetchChainOfCommand.mockResolvedValue([mockAgent]);
     mockFetchAgentLogsWithMeta.mockResolvedValue({ entries: [], total: 0, hasMore: false });
+    mockFetchAgentMailbox.mockResolvedValue({
+      ownerId: "agent-001",
+      ownerType: "agent",
+      unreadCount: 0,
+      messages: [],
+      inbox: [],
+      outbox: [],
+    });
     // Default: no budget limit configured
     mockFetchAgentBudgetStatus.mockResolvedValue({
       agentId: "agent-001",
@@ -681,6 +691,7 @@ describe("AgentDetailView", () => {
     await waitFor(() => {
       expect(screen.getByText("Dashboard")).toBeInTheDocument();
       expect(screen.getByText("Logs")).toBeInTheDocument();
+      expect(screen.getByText("Mail")).toBeInTheDocument();
       expect(screen.getByText("Runs")).toBeInTheDocument();
       expect(screen.getByText("Tasks")).toBeInTheDocument();
       expect(screen.getByText("Employees")).toBeInTheDocument();
@@ -688,6 +699,97 @@ describe("AgentDetailView", () => {
       expect(screen.getByText("Instructions")).toBeInTheDocument();
       expect(screen.getByText("Agent Memory")).toBeInTheDocument();
       expect(screen.getByText("Settings")).toBeInTheDocument();
+    });
+  });
+
+  it("loads mailbox only when Mail tab is opened", async () => {
+    const user = userEvent.setup();
+    mockFetchAgentMailbox.mockResolvedValue({
+      ownerId: "agent-001",
+      ownerType: "agent",
+      unreadCount: 1,
+      messages: [],
+      inbox: [
+        {
+          id: "msg-1",
+          fromId: "dashboard",
+          fromType: "user",
+          toId: "agent-001",
+          toType: "agent",
+          content: "Inbox message",
+          type: "user-to-agent",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+          read: false,
+        },
+      ],
+      outbox: [],
+    } as any);
+
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Dashboard")).toBeInTheDocument();
+    });
+
+    expect(mockFetchAgentMailbox).not.toHaveBeenCalled();
+
+    await user.click(screen.getByText("Mail"));
+
+    await waitFor(() => {
+      expect(mockFetchAgentMailbox).toHaveBeenCalledWith("agent-001", undefined);
+      expect(screen.getByText("Inbox message")).toBeInTheDocument();
+    });
+  });
+
+  it("switches Mail tab between inbox and outbox", async () => {
+    const user = userEvent.setup();
+    mockFetchAgentMailbox.mockResolvedValue({
+      ownerId: "agent-001",
+      ownerType: "agent",
+      unreadCount: 0,
+      messages: [],
+      inbox: [],
+      outbox: [
+        {
+          id: "msg-2",
+          fromId: "agent-001",
+          fromType: "agent",
+          toId: "dashboard",
+          toType: "user",
+          content: "Sent message",
+          type: "agent-to-user",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+          read: true,
+        },
+      ],
+    } as any);
+
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />,
+    );
+
+    await user.click(await screen.findByText("Mail"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("agent-detail-mail-empty")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Outbox" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Sent message")).toBeInTheDocument();
     });
   });
 

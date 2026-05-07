@@ -183,6 +183,7 @@ The agents surface provides:
 - A compact **Controls** popup for secondary actions (state filter, Show system agents toggle, Import, and global Heartbeat Speed)
 - Agent import can also be launched from the selected **Agent Detail** header; this entry opens the import modal directly in the companies.sh browse flow so operators can discover and import packages without leaving the detail context
 - Detail/config panels
+- Agent Detail includes a **Mail** tab for read-only inspection of that agent’s inbox/outbox without marking messages read or mutating mailbox state
 - Split-view synchronization: successful saves and lifecycle actions from the right-side Agent Detail pane immediately refresh the left-side list/selection state (no wait for background polling)
 - A per-agent **Token Usage** panel that summarizes cumulative token consumption for the currently displayed agents
 - Run history

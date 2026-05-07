@@ -217,7 +217,7 @@ Features:
 - Switch between **List**, **Board**, and **Org chart** layouts
 - Filter by role/state, include/exclude system agents, and inspect health/status
 - Start, pause, stop, and trigger agent runs from the view and from detail panels
-- Open agent detail tabs for runs, logs, settings/config, tasks, memory, and chain-of-command relationships
+- Open agent detail tabs for runs, logs, read-only mail (agent inbox/outbox), settings/config, tasks, memory, and chain-of-command relationships
 - Error indicator on agent list cards when an agent is in the `error` state and has a captured error (`lastError`); select it to open **Agent Error Details**
 - Run-level error indicator in **Agent detail → Runs** when a run has captured stderr; select it to open the same **Agent Error Details** modal
 - **Agent Error Details** shows full error text plus **Copy** and **Report on GitHub** actions

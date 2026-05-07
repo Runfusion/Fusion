@@ -572,6 +572,38 @@
   margin: var(--space-sm) 0 0 0;
 }
 
+/* --- Mail Tab --- */
+.agent-mail-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.agent-mail-tab-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.agent-mail-tab-header h3 {
+  margin: 0;
+  font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
+}
+
+.agent-mail-tab-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--color-error);
+}
+
+.agent-detail-loading--inline {
+  flex-direction: row;
+  justify-content: flex-start;
+  padding: var(--space-md) 0;
+}
+
 /* --- Runs Tab --- */
 .runs-tab {
   display: flex;
@@ -1630,6 +1662,20 @@
   /* Logs Tab mobile */
   .logs-empty {
     padding: var(--space-2xl) var(--space-lg);
+  }
+
+  /* Mail Tab mobile */
+  .agent-mail-tab-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .agent-mail-tab .mailbox-agent-subtabs {
+    width: 100%;
+  }
+
+  .agent-mail-tab .mailbox-agent-subtab {
+    flex: 1;
   }
 
   /* Runs Tab mobile */
