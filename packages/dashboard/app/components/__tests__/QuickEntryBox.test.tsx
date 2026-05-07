@@ -724,42 +724,24 @@ describe("QuickEntryBox", () => {
       });
     });
 
-    it("includes branch and baseBranch when provided", async () => {
+    it("does not render branch fields and does not include branch payload keys", async () => {
       const { props } = renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
-      fireEvent.change(textarea, { target: { value: "Task with quick-entry branches" } });
-      fireEvent.change(screen.getByTestId("quick-entry-working-branch"), { target: { value: " feature/quick " } });
-      fireEvent.change(screen.getByTestId("quick-entry-base-branch"), { target: { value: " main " } });
+      expect(screen.queryByTestId("quick-entry-working-branch")).toBeNull();
+      expect(screen.queryByTestId("quick-entry-base-branch")).toBeNull();
+
+      fireEvent.change(textarea, { target: { value: "Task without quick-entry branch controls" } });
       fireEvent.keyDown(textarea, { key: "Enter" });
 
       await waitFor(() => {
-        expect(props.onCreate).toHaveBeenCalledWith(
-          expect.objectContaining({
-            branch: "feature/quick",
-            baseBranch: "main",
-          }),
-        );
+        expect(props.onCreate).toHaveBeenCalled();
       });
-    });
 
-    it("omits branch and baseBranch when branch fields are blank", async () => {
-      const { props } = renderQuickEntryBox({});
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
-
-      fireEvent.change(textarea, { target: { value: "Task without quick-entry branches" } });
-      fireEvent.keyDown(textarea, { key: "Enter" });
-
-      await waitFor(() => {
-        expect(props.onCreate).toHaveBeenCalledWith(
-          expect.objectContaining({
-            branch: undefined,
-            baseBranch: undefined,
-          }),
-        );
-      });
+      const payload = props.onCreate.mock.calls[0]?.[0];
+      expect(payload).not.toHaveProperty("branch");
+      expect(payload).not.toHaveProperty("baseBranch");
     });
 
     it("toggles Fast pressed state", () => {

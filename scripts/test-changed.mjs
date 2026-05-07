@@ -77,10 +77,14 @@ function pruneFusionTestHomes() {
 function runMaybeIsolated(command, commandArgs, options = {}) {
   const enabled = shouldRunIsolationGuard();
   const env = options.env ?? process.env;
+  const { onBeforeAfterCheck, ...spawnOptions } = options;
   if (enabled) runIsolationCheck(true, env);
   try {
-    run(command, commandArgs, options);
+    run(command, commandArgs, spawnOptions);
   } finally {
+    if (typeof onBeforeAfterCheck === "function") {
+      onBeforeAfterCheck();
+    }
     pruneFusionTestHomes();
     if (enabled) runIsolationCheck(false, env);
   }
@@ -608,6 +612,11 @@ export function main(argv = process.argv.slice(2)) {
 
   const { env: isolatedHomeEnv, isolatedHome } = createIsolatedHomeEnv(fullSuiteEnv);
 
+  const cleanupIsolatedHome = () => {
+    rmSync(isolatedHome, { recursive: true, force: true });
+    isolatedHomesToCleanup.delete(isolatedHome);
+  };
+
   try {
 
   const baseBranch = getBaseBranch();
@@ -641,7 +650,10 @@ export function main(argv = process.argv.slice(2)) {
       console.log("[test-changed] no affected workspace package resolved; running full suite.");
     }
 
-    runMaybeIsolated("pnpm", [`-r`, `--workspace-concurrency=${workspaceConcurrency}`, "test", ...forwardedArgs], { env: isolatedHomeEnv });
+    runMaybeIsolated("pnpm", [`-r`, `--workspace-concurrency=${workspaceConcurrency}`, "test", ...forwardedArgs], {
+      env: isolatedHomeEnv,
+      onBeforeAfterCheck: cleanupIsolatedHome,
+    });
     return;
   }
 
@@ -657,6 +669,7 @@ export function main(argv = process.argv.slice(2)) {
     );
     if (shouldRunIsolationGuard()) {
       runIsolationCheck(true, isolatedHomeEnv);
+      cleanupIsolatedHome();
       runIsolationCheck(false, isolatedHomeEnv);
     }
     return;
@@ -668,13 +681,15 @@ export function main(argv = process.argv.slice(2)) {
     console.log(`[test-changed] skipping cached packages: ${cachedPackages.join(", ")}`);
   }
 
-  runMaybeIsolated("pnpm", [...filterArgs, `--workspace-concurrency=${workspaceConcurrency}`, "test", ...forwardedArgs], { env: isolatedHomeEnv });
+  runMaybeIsolated("pnpm", [...filterArgs, `--workspace-concurrency=${workspaceConcurrency}`, "test", ...forwardedArgs], {
+    env: isolatedHomeEnv,
+    onBeforeAfterCheck: cleanupIsolatedHome,
+  });
 
   // Tests passed — record in cache (never cache failures; process.exit on failure above).
   recordCachePass(activePackages, packageDirByName, { noCache });
   } finally {
-    rmSync(isolatedHome, { recursive: true, force: true });
-    isolatedHomesToCleanup.delete(isolatedHome);
+    cleanupIsolatedHome();
   }
 }
 

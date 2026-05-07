@@ -113,26 +113,6 @@
   flex: 1 1 auto;
 }
 
-.quick-entry-branch-fields {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-  width: 100%;
-}
-
-.quick-entry-branch-fields label {
-  display: flex;
-  flex: 1 1 calc(50% - var(--space-sm));
-  flex-direction: column;
-  gap: var(--space-xs);
-  min-width: min(100%, calc(var(--space-xl) * 12));
-}
-
-.quick-entry-branch-fields span {
-  color: var(--text-muted);
-  font-size: 0.75rem;
-}
-
 .quick-entry-model-wrap {
   position: relative;
 }
@@ -452,11 +432,6 @@
 @media (max-width: 768px) {
   .quick-entry-actions .btn {
     min-height: 36px;
-  }
-
-  .quick-entry-branch-fields label {
-    flex: 1 1 100%;
-    min-width: 100%;
   }
 
   .quick-entry-box .dep-dropdown {

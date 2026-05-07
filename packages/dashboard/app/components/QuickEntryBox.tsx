@@ -159,8 +159,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [isFastMode, setIsFastMode] = useState(false);
   const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
   const [nodeId, setNodeId] = useState<string | undefined>(undefined);
-  const [branch, setBranch] = useState("");
-  const [baseBranch, setBaseBranch] = useState("");
   const { nodes } = useNodes();
 
   // AI Refinement state
@@ -439,8 +437,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setIsFastMode(false);
     setPriority(DEFAULT_TASK_PRIORITY);
     setNodeId(undefined);
-    setBranch("");
-    setBaseBranch("");
     setShowDeps(false);
     setIsModelMenuOpen(false);
     setModelMenuPosition(null);
@@ -514,8 +510,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         ...(isFastMode ? { executionMode: "fast" } : {}),
         priority,
         nodeId,
-        branch: branch.trim() === "" ? undefined : branch.trim(),
-        baseBranch: baseBranch.trim() === "" ? undefined : baseBranch.trim(),
       });
       if (createdTask && pendingImages.length > 0) {
         const failures: string[] = [];
@@ -563,8 +557,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     isFastMode,
     priority,
     nodeId,
-    branch,
-    baseBranch,
   ]);
 
   const handleKeyDown = useCallback(
@@ -1855,33 +1847,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               <Save size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
               Save
             </button>
-          </div>
-        )}
-
-        {showExpandedControls && (
-          <div className="quick-entry-branch-fields" data-testid="quick-entry-branch-fields">
-            <label>
-              <span>Working branch</span>
-              <input
-                className="input"
-                value={branch}
-                onChange={(e) => setBranch(e.target.value)}
-                placeholder="e.g. feature/my-task"
-                data-testid="quick-entry-working-branch"
-                disabled={isSubmitting || isDisabled}
-              />
-            </label>
-            <label>
-              <span>Merge target / base branch</span>
-              <input
-                className="input"
-                value={baseBranch}
-                onChange={(e) => setBaseBranch(e.target.value)}
-                placeholder="e.g. main"
-                data-testid="quick-entry-base-branch"
-                disabled={isSubmitting || isDisabled}
-              />
-            </label>
           </div>
         )}
 
