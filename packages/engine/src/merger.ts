@@ -1034,6 +1034,43 @@ interface AutostashHandle {
 
 const AUTOSTASH_LABEL_PREFIX = "fusion-merger-autostash:";
 
+/** Return the set of paths a stash commit recorded as changed against its
+ *  parent (HEAD-at-stash-time). Used to compare a new dirty snapshot against
+ *  the primary autostash and avoid producing duplicate race-rescue stashes
+ *  for the same paths the primary already captured. */
+async function listStashChangedPaths(rootDir: string, stashSha: string): Promise<Set<string>> {
+  const out = new Set<string>();
+  try {
+    const { stdout } = await execAsync(
+      `git stash show -z --name-only ${quoteArg(stashSha)}`,
+      { cwd: rootDir, encoding: "utf-8" },
+    );
+    for (const entry of stdout.split("\0")) {
+      const p = entry.trim();
+      if (p) out.add(p);
+    }
+  } catch {
+    // Best-effort: an empty set means we'll be slightly more aggressive
+    // about rescuing (everything dirty gets rescued), which is the safe
+    // direction — false positives are noise, false negatives are data loss.
+  }
+  return out;
+}
+
+/** True iff two stash commits point to the exact same tree object. Cheap
+ *  way to detect "stash create produced a duplicate" without diffing files. */
+async function stashTreesEqual(rootDir: string, aSha: string, bSha: string): Promise<boolean> {
+  try {
+    const [a, b] = await Promise.all([
+      execAsync(`git rev-parse ${quoteArg(aSha)}^{tree}`, { cwd: rootDir, encoding: "utf-8" }),
+      execAsync(`git rev-parse ${quoteArg(bSha)}^{tree}`, { cwd: rootDir, encoding: "utf-8" }),
+    ]);
+    return a.stdout.trim() === b.stdout.trim();
+  } catch {
+    return false;
+  }
+}
+
 /** Filename of the advisory "merger active" status file. Lives at
  *  `<rootDir>/.git/<this filename>` so it travels with the repo and is
  *  automatically scoped to the right working tree. Not a lock — purely
@@ -1291,15 +1328,21 @@ async function stashUnrelatedRootDirChanges(
     // destructive `git reset --hard` below. If any new dirty paths showed up
     // between our initial `git add -A` and now — concurrent dev edits, a
     // parallel merger run interleaving its own ops, or test/build artifacts
-    // landing late — capture them in a SEPARATE rescue stash so they survive
-    // the wipe. Without this loop, late writers lose their work because the
-    // primary stash already snapshotted the earlier state. We loop a few
-    // times because each rescue stash creation itself races with new writes;
-    // bounded so a runaway writer can't pin us forever.
+    // landing late — capture ONLY those new paths in a separate rescue stash
+    // so they survive the wipe.
+    //
+    // Subtlety: `git add -A && git stash create` does NOT clean the working
+    // tree. Files stay dirty post-stash. So a naive "snapshot dirty again"
+    // sees the SAME files as the primary stash and produces duplicate rescues
+    // every run. We instead diff the post-stash dirty set against the SET OF
+    // PATHS ALREADY CAPTURED BY THE PRIMARY STASH and only rescue paths that
+    // were not in the primary — those are the genuine late-dirty writes.
+    const primaryStashPaths = await listStashChangedPaths(rootDir, sha);
     const rescueShas: { sha: string; label: string }[] = [];
     for (let attempt = 0; attempt < 3; attempt++) {
-      const stillDirty = await snapshotDirtyFiles(rootDir);
-      if (stillDirty.size === 0) break;
+      const currentDirty = await snapshotDirtyFiles(rootDir);
+      const newlyDirty = [...currentDirty].filter((p) => !primaryStashPaths.has(p));
+      if (newlyDirty.length === 0) break;
       const rescueLabel = `${AUTOSTASH_LABEL_PREFIX}${taskId}:race-rescue-${attempt}:${Date.now()}`;
       await execAsync("git add -A", { cwd: rootDir });
       const { stdout: rescueOut } = await execAsync("git stash create", {
@@ -1308,14 +1351,24 @@ async function stashUnrelatedRootDirChanges(
       });
       const rescueSha = String(rescueOut).trim();
       if (!rescueSha) break;
+      // Defensive check: if `git stash create` produced an SHA whose tree
+      // exactly matches the primary stash, drop it — same race that motivates
+      // the path-set check above can land us with an identical SHA when the
+      // working tree didn't change between primary and rescue (e.g. git's own
+      // internal index dedup). Don't pollute the stash list.
+      const rescueTreeSame = await stashTreesEqual(rootDir, sha, rescueSha);
+      if (rescueTreeSame) break;
       await execAsync(
         `git stash store -m ${quoteArg(rescueLabel)} ${rescueSha}`,
         { cwd: rootDir },
       );
       rescueShas.push({ sha: rescueSha, label: rescueLabel });
       mergerLog.warn(
-        `${taskId}: race-rescue stash ${rescueSha.slice(0, 7)} captured ${stillDirty.size} late-dirty path(s) (${rescueLabel}) — recover with: cd ${rootDir} && git stash apply ${rescueSha}`,
+        `${taskId}: race-rescue stash ${rescueSha.slice(0, 7)} captured ${newlyDirty.length} late-dirty path(s) not in primary stash (${rescueLabel}) — recover with: cd ${rootDir} && git stash apply ${rescueSha}`,
       );
+      // Track them in primaryStashPaths so subsequent loop iterations don't
+      // re-rescue the same set if writes are still landing.
+      for (const p of newlyDirty) primaryStashPaths.add(p);
     }
 
     // Bring working tree back to HEAD so the merge can proceed. Reset
