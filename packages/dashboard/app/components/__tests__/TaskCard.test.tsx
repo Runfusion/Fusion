@@ -171,27 +171,34 @@ describe("TaskCard", () => {
     expect(screen.queryByText("paused by agent")).toBeNull();
   });
 
-  it("renders branch and base branch metadata when both are present", () => {
+  it("hides default working branch and default base branch metadata", () => {
     const { container } = render(
       <TaskCard
-        task={makeTask({ branch: "feature/fn-3423-card-branches", baseBranch: "main" })}
+        task={makeTask({ branch: "fusion/fn-001", baseBranch: "main" })}
         onOpenDetail={noop}
         addToast={noop}
       />,
     );
 
-    const branchRow = container.querySelector(".card-branch-row");
-    expect(branchRow).not.toBeNull();
-    expect(screen.getByText("Branch")).toBeDefined();
-    expect(screen.getByText("feature/fn-3423-card-branches")).toBeDefined();
-    expect(screen.getByText("Base")).toBeDefined();
-    expect(screen.getByText("main")).toBeDefined();
+    expect(container.querySelector(".card-branch-row")).toBeNull();
   });
 
-  it("renders only working branch metadata when baseBranch is absent", () => {
+  it("hides auto-generated suffixed default working branches", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({ branch: "fusion/fn-001-2", baseBranch: "main" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card-branch-row")).toBeNull();
+  });
+
+  it("shows only custom working branch metadata when base branch is default", () => {
     render(
       <TaskCard
-        task={makeTask({ branch: "feature/working-only", baseBranch: undefined })}
+        task={makeTask({ branch: "feature/working-only", baseBranch: "main" })}
         onOpenDetail={noop}
         addToast={noop}
       />,
@@ -202,10 +209,10 @@ describe("TaskCard", () => {
     expect(screen.queryByText("Base")).toBeNull();
   });
 
-  it("renders only base branch metadata when branch is absent", () => {
+  it("shows only non-default base branch metadata when working branch is default", () => {
     render(
       <TaskCard
-        task={makeTask({ branch: undefined, baseBranch: "release/2026-05" })}
+        task={makeTask({ branch: "fusion/fn-001", baseBranch: "release/2026-05" })}
         onOpenDetail={noop}
         addToast={noop}
       />,
@@ -216,19 +223,24 @@ describe("TaskCard", () => {
     expect(screen.queryByText("Branch")).toBeNull();
   });
 
-  it("does not render branch metadata row when both branch fields are absent", () => {
+  it("shows both chips when branch and base branch are both non-default", () => {
     const { container } = render(
       <TaskCard
-        task={makeTask({ branch: undefined, baseBranch: undefined })}
+        task={makeTask({ branch: "feature/fn-3423-card-branches", baseBranch: "develop" })}
         onOpenDetail={noop}
         addToast={noop}
       />,
     );
 
-    expect(container.querySelector(".card-branch-row")).toBeNull();
+    const branchRow = container.querySelector(".card-branch-row");
+    expect(branchRow).not.toBeNull();
+    expect(screen.getByText("Branch")).toBeDefined();
+    expect(screen.getByText("feature/fn-3423-card-branches")).toBeDefined();
+    expect(screen.getByText("Base")).toBeDefined();
+    expect(screen.getByText("develop")).toBeDefined();
   });
 
-  it("keeps long branch names readable via text and title semantics", () => {
+  it("keeps long non-default branch names readable via text and title semantics", () => {
     const longBranch = "feature/fn-3423-display-very-long-working-branch-name-for-card-metadata";
     const { container } = render(
       <TaskCard
@@ -1412,6 +1424,18 @@ describe("TaskCard memo comparator provenance behavior", () => {
   it("returns false when branch changes", () => {
     const previousTask = makeTask({ branch: "feature/old", baseBranch: "main" });
     const nextTask = makeTask({ branch: "feature/new", baseBranch: "main" });
+
+    expect(
+      __test_areTaskCardPropsEqual(
+        { task: previousTask, onOpenDetail: noop, addToast: noop } as any,
+        { task: nextTask, onOpenDetail: noop, addToast: noop } as any,
+      ),
+    ).toBe(false);
+  });
+
+  it("returns false when baseBranch changes", () => {
+    const previousTask = makeTask({ branch: "fusion/fn-001", baseBranch: "main" });
+    const nextTask = makeTask({ branch: "fusion/fn-001", baseBranch: "release/2026-05" });
 
     expect(
       __test_areTaskCardPropsEqual(

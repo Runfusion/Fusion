@@ -110,7 +110,7 @@ fn task unarchive FN-001
 
 ### Branch metadata semantics
 
-Task cards on the board surface branch metadata when present so users can scan both the working branch and merge target without opening task details.
+Task cards on the board only surface branch metadata when it is non-default/user-meaningful: they hide the conventional auto-generated working branch (`fusion/<task-id>` and suffixed variants) and hide the default merge target (`main`), while still showing custom working branches and non-default merge targets.
 
 The board header search panel now includes two **board-only** branch filters:
 - **Working branch** filters by `task.branch`

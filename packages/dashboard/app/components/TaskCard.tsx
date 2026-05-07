@@ -209,6 +209,30 @@ function formatElapsedDuration(elapsedMs: number): string {
   return `${elapsedDays}d`;
 }
 
+function normalizeBranchValue(value: string | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function getVisibleTaskCardBranches(task: Task): { branch: string | null; baseBranch: string | null } {
+  const branch = normalizeBranchValue(task.branch);
+  const baseBranch = normalizeBranchValue(task.baseBranch);
+  const defaultBranchPrefix = `fusion/${task.id.toLowerCase()}`;
+
+  const visibleBranch =
+    branch && (branch === defaultBranchPrefix || branch.startsWith(`${defaultBranchPrefix}-`))
+      ? null
+      : branch;
+
+  const visibleBaseBranch = baseBranch?.toLowerCase() === "main" ? null : baseBranch;
+
+  return {
+    branch: visibleBranch,
+    baseBranch: visibleBaseBranch ?? null,
+  };
+}
+
 export function formatElapsedDurationDone(elapsedMs: number): string {
   if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return "";
   if (elapsedMs === 0) return "";
@@ -710,7 +734,8 @@ function TaskCardComponent({
   const canEdit = EDITABLE_COLUMNS.has(task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
   const hasGitHubBadge = Boolean(task.prInfo || task.issueInfo);
   const isGitHubImportedTask = task.sourceType === "github_import";
-  const hasBranchMetadata = Boolean(task.branch || task.baseBranch);
+  const branchMetadata = useMemo(() => getVisibleTaskCardBranches(task), [task.id, task.branch, task.baseBranch]);
+  const hasBranchMetadata = Boolean(branchMetadata.branch || branchMetadata.baseBranch);
   const sourceIssueUrl = getIssueUrlFromMetadata(task.sourceMetadata);
   const isAgentCreated = isAgentCreatedTask(task);
   const sourceAgentName = getSourceAgentName(task);
@@ -1498,16 +1523,16 @@ function TaskCardComponent({
       </div>
       {hasBranchMetadata && (
         <div className="card-branch-row" aria-label="Branch metadata">
-          {task.branch && (
-            <span className="card-branch-chip" title={task.branch}>
+          {branchMetadata.branch && (
+            <span className="card-branch-chip" title={branchMetadata.branch}>
               <span className="card-branch-label">Branch</span>
-              <span className="card-branch-value">{task.branch}</span>
+              <span className="card-branch-value">{branchMetadata.branch}</span>
             </span>
           )}
-          {task.baseBranch && (
-            <span className="card-branch-chip" title={task.baseBranch}>
+          {branchMetadata.baseBranch && (
+            <span className="card-branch-chip" title={branchMetadata.baseBranch}>
               <span className="card-branch-label">Base</span>
-              <span className="card-branch-value">{task.baseBranch}</span>
+              <span className="card-branch-value">{branchMetadata.baseBranch}</span>
             </span>
           )}
         </div>
