@@ -193,6 +193,22 @@ describe("core modals mobile css coverage", () => {
     expect(fileSectionRule![0]).toContain("max-width: 100%");
   });
 
+  it("GitManagerModal: file sections and file lists keep independent scrolling constraints", () => {
+    const css = loadAllAppCss();
+
+    const fileSectionRule = css.match(/\.gm-file-section\s*\{[^}]+\}/s);
+    expect(fileSectionRule).not.toBeNull();
+    expect(fileSectionRule![0]).toContain("display: flex");
+    expect(fileSectionRule![0]).toContain("flex-direction: column");
+    expect(fileSectionRule![0]).toContain("min-height: 0");
+
+    const fileListRule = css.match(/\.gm-file-list\s*\{[^}]+\}/s);
+    expect(fileListRule).not.toBeNull();
+    expect(fileListRule![0]).toContain("overflow-y: auto");
+    expect(fileListRule![0]).toContain("overscroll-behavior: contain");
+    expect(fileListRule![0]).toContain("-webkit-overflow-scrolling: touch");
+  });
+
   it("GitManagerModal: modal uses full-screen viewport sizing on mobile (641-768px range)", () => {
     const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);

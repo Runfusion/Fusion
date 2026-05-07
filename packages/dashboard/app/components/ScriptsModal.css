@@ -2058,6 +2058,7 @@
   position: sticky;
   top: 0;
   align-self: start;
+  min-height: 0;
   /* Cap the sticky column so its internal lists never push past the viewport
    * — without this, two long lists at max-height 200px each + headers can
    * exceed the available scroll-port height and the column visually clips. */
@@ -2118,6 +2119,9 @@
 /* ── File Section ── */
 
 .gm-file-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   overflow: hidden;
@@ -2149,8 +2153,11 @@
 /* ── File List ── */
 
 .gm-file-list {
-  max-height: 200px;
+  min-height: 0;
+  max-height: calc(var(--space-2xl) * 6 + var(--space-md));
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .gm-file-item {

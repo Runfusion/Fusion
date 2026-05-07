@@ -1117,7 +1117,7 @@ function ChangesPanel({
             )}
           </div>
         </div>
-        <div className="gm-file-list">
+        <div className="gm-file-list gm-file-list-unstaged" data-testid="gm-file-list-unstaged">
           {unstagedFiles.length === 0 ? (
             <div className="gm-empty">No unstaged changes</div>
           ) : (
@@ -1189,7 +1189,7 @@ function ChangesPanel({
             )}
           </div>
         </div>
-        <div className="gm-file-list">
+        <div className="gm-file-list gm-file-list-staged" data-testid="gm-file-list-staged">
           {stagedFiles.length === 0 ? (
             <div className="gm-empty">No staged changes</div>
           ) : (
