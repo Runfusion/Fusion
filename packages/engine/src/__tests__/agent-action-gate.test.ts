@@ -3,9 +3,30 @@ import {
   addToExemptTools,
   computeApprovalDedupeKey,
   evaluateAgentActionGate,
+  getExemptToolNames,
   reloadExemptTools,
 } from "../agent-action-gate.js";
 import type { AgentPermissionPolicy } from "@fusion/core";
+
+const FN_3548_COORDINATION_TOOLS = [
+  "fn_heartbeat_done",
+  "fn_task_create",
+  "fn_task_log",
+  "fn_task_document_write",
+  "fn_task_document_read",
+  "fn_delegate_task",
+  "fn_list_agents",
+  "fn_agent_show",
+  "fn_agent_org_chart",
+  "fn_send_message",
+  "fn_read_messages",
+  "fn_memory_search",
+  "fn_memory_get",
+  "fn_memory_append",
+  "fn_read_evaluations",
+  "fn_update_identity",
+  "fn_reflect_on_performance",
+] as const;
 
 const unrestrictedPolicy: AgentPermissionPolicy = {
   presetId: "unrestricted",
@@ -103,18 +124,14 @@ describe("agent-action-gate", () => {
     expect(evaluateAgentActionGate({ agentId: "a1", toolName: "fn_task_update", args: {}, permissionPolicy: approvalPolicy }).disposition).toBe("allow");
   });
 
-  it.each([
-    "fn_heartbeat_done",
-    "fn_task_create",
-    "fn_delegate_task",
-    "fn_send_message",
-    "fn_memory_append",
-    "fn_update_identity",
-    "fn_reflect_on_performance",
-  ])("always allows newly exempt internal tool %s under locked-down policies", (toolName) => {
+  it.each(FN_3548_COORDINATION_TOOLS)("always allows newly exempt internal tool %s under locked-down policies", (toolName) => {
     const decision = evaluateAgentActionGate({ agentId: "a1", toolName, args: {}, permissionPolicy: lockedDownPolicy });
     expect(decision.disposition).toBe("allow");
     expect(decision.category).toBe("exempt");
+  });
+
+  it("keeps FN-3548 coordination tool list in exempt registry", () => {
+    expect(getExemptToolNames()).toEqual(expect.arrayContaining([...FN_3548_COORDINATION_TOOLS]));
   });
 
   it("keeps bash and write blocked under locked-down policy", () => {

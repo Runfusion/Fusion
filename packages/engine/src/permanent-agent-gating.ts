@@ -19,8 +19,9 @@ export interface PermanentAgentToolDecision extends PermanentAgentToolClassifica
 const READONLY_BUILTIN_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_WRITE_TOOLS = new Set(["write", "edit"]);
 
+// FN-3724 / FN-3548: heartbeat-completion and internal coordination tools must remain
+// category "none" so restrictive permanent-agent policies cannot deadlock heartbeats.
 const TASK_AGENT_MUTATION_TOOLS = new Set([
-  "fn_task_create",
   "fn_task_add_dep",
   "fn_task_pause",
   "fn_task_unpause",
@@ -42,16 +43,12 @@ const TASK_AGENT_MUTATION_TOOLS = new Set([
   "fn_feature_link_task",
   "fn_agent_stop",
   "fn_agent_start",
-  "fn_delegate_task",
   "fn_update_agent_config",
-  "fn_update_identity",
   "fn_spawn_agent",
   "fn_task_add_dep",
 ]);
 
 const FILE_WRITE_DELETE_TOOLS = new Set([
-  "fn_task_document_write",
-  "fn_memory_append",
   "fn_task_attach",
 ]);
 
@@ -64,7 +61,10 @@ const NETWORK_API_TOOLS = new Set([
 const READONLY_FN_TOOLS = new Set([
   "fn_task_list",
   "fn_task_show",
+  "fn_task_create",
+  "fn_task_document_write",
   "fn_task_document_read",
+  "fn_delegate_task",
   "fn_research_list",
   "fn_research_get",
   "fn_insight_list",
@@ -83,8 +83,12 @@ const READONLY_FN_TOOLS = new Set([
   "fn_task_log",
   "fn_task_done",
   "fn_heartbeat_done",
+  "fn_memory_append",
   "fn_send_message",
   "fn_read_messages",
+  "fn_update_identity",
+  "fn_reflect_on_performance",
+  "fn_read_evaluations",
 ]);
 
 const MUTATING_GIT_SUBCOMMANDS = new Set([

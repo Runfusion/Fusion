@@ -445,8 +445,8 @@ describe("wrapToolsWithPermanentAgentGating", () => {
     expect(tool.execute).not.toHaveBeenCalled();
   });
 
-  it("requires approval for mutating fn_* tools and never executes mutation", async () => {
-    const tool = { name: "fn_task_create", label: "Task Create", description: "", parameters: {}, execute: vi.fn() };
+  it("allows exempt internal coordination fn_* tools without approval", async () => {
+    const tool = { name: "fn_task_create", label: "Task Create", description: "", parameters: {}, execute: vi.fn().mockResolvedValue({ ok: true }) };
     const createApprovalRequest = vi.fn().mockResolvedValue({ id: "apr-fn-1" });
     const { wrapToolsWithPermanentAgentGating } = await import("../pi.js");
     const wrapped = wrapToolsWithPermanentAgentGating([tool as any], {
@@ -467,15 +467,9 @@ describe("wrapToolsWithPermanentAgentGating", () => {
     });
 
     const result = await (wrapped[0] as any).execute("t1", { description: "create" });
-    expect((result as any).isError).toBe(true);
-    expect((result as any).details).toEqual(expect.objectContaining({
-      disposition: "require-approval",
-      category: "task_agent_mutation",
-      toolName: "fn_task_create",
-      approvalRequestId: "apr-fn-1",
-    }));
-    expect(createApprovalRequest).toHaveBeenCalledTimes(1);
-    expect(tool.execute).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: true });
+    expect(createApprovalRequest).not.toHaveBeenCalled();
+    expect(tool.execute).toHaveBeenCalledTimes(1);
   });
 
   it("keeps read-only tools allowed without approval-request creation", async () => {

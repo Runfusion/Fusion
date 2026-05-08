@@ -4,6 +4,26 @@ import {
   resolvePermanentAgentToolDecision,
 } from "../permanent-agent-gating.js";
 
+const FN_3548_COORDINATION_TOOLS = [
+  "fn_heartbeat_done",
+  "fn_task_create",
+  "fn_task_log",
+  "fn_task_document_write",
+  "fn_task_document_read",
+  "fn_delegate_task",
+  "fn_list_agents",
+  "fn_agent_show",
+  "fn_agent_org_chart",
+  "fn_send_message",
+  "fn_read_messages",
+  "fn_memory_search",
+  "fn_memory_get",
+  "fn_memory_append",
+  "fn_read_evaluations",
+  "fn_update_identity",
+  "fn_reflect_on_performance",
+] as const;
+
 describe("permanent-agent-gating", () => {
   it("classifies builtin coding tools", () => {
     expect(classifyPermanentAgentToolCall("write").category).toBe("file_write_delete");
@@ -15,12 +35,12 @@ describe("permanent-agent-gating", () => {
   });
 
   it("classifies shared fn tools by behavior", () => {
-    expect(classifyPermanentAgentToolCall("fn_task_create").category).toBe("task_agent_mutation");
-    expect(classifyPermanentAgentToolCall("fn_delegate_task").category).toBe("task_agent_mutation");
+    expect(classifyPermanentAgentToolCall("fn_task_create").category).toBe("none");
+    expect(classifyPermanentAgentToolCall("fn_delegate_task").category).toBe("none");
     expect(classifyPermanentAgentToolCall("fn_update_agent_config").category).toBe("task_agent_mutation");
-    expect(classifyPermanentAgentToolCall("fn_update_identity").category).toBe("task_agent_mutation");
-    expect(classifyPermanentAgentToolCall("fn_task_document_write").category).toBe("file_write_delete");
-    expect(classifyPermanentAgentToolCall("fn_memory_append").category).toBe("file_write_delete");
+    expect(classifyPermanentAgentToolCall("fn_update_identity").category).toBe("none");
+    expect(classifyPermanentAgentToolCall("fn_task_document_write").category).toBe("none");
+    expect(classifyPermanentAgentToolCall("fn_memory_append").category).toBe("none");
     expect(classifyPermanentAgentToolCall("fn_research_run").category).toBe("network_api");
     expect(classifyPermanentAgentToolCall("fn_task_show").category).toBe("none");
     expect(classifyPermanentAgentToolCall("fn_research_get").category).toBe("none");
@@ -35,7 +55,7 @@ describe("permanent-agent-gating", () => {
       classifyPermanentAgentToolCall("write").category,
       classifyPermanentAgentToolCall("bash", { command: "echo hi" }).category,
       classifyPermanentAgentToolCall("fn_research_run").category,
-      classifyPermanentAgentToolCall("fn_task_create").category,
+      classifyPermanentAgentToolCall("fn_update_agent_config").category,
       classifyPermanentAgentToolCall("read").category,
     ];
 
@@ -74,6 +94,32 @@ describe("permanent-agent-gating", () => {
     expect(decision.disposition).toBe("allow");
   });
 
+  it.each(FN_3548_COORDINATION_TOOLS)("classifies FN-3548 coordination tool %s as recognized none", (toolName) => {
+    expect(classifyPermanentAgentToolCall(toolName)).toEqual({ category: "none", recognized: true });
+  });
+
+  it.each(FN_3548_COORDINATION_TOOLS)("allows FN-3548 coordination tool %s under locked-down policy", (toolName) => {
+    const decision = resolvePermanentAgentToolDecision({
+      toolName,
+      gating: {
+        permissionPolicy: {
+          presetId: "locked-down",
+          rules: {
+            git_write: "block",
+            file_write_delete: "block",
+            command_execution: "block",
+            network_api: "block",
+            task_agent_mutation: "block",
+          },
+        },
+      },
+    });
+
+    expect(decision.disposition).toBe("allow");
+    expect(decision.category).toBe("none");
+    expect(decision.recognized).toBe(true);
+  });
+
   it("resolves disposition from policy for sensitive categories", () => {
     const blockDecision = resolvePermanentAgentToolDecision({
       toolName: "write",
@@ -89,7 +135,7 @@ describe("permanent-agent-gating", () => {
     expect(blockDecision.disposition).toBe("block");
 
     const approvalDecision = resolvePermanentAgentToolDecision({
-      toolName: "fn_task_create",
+      toolName: "fn_update_agent_config",
       gating: {
         permissionPolicy: {
           presetId: "approval-required",
