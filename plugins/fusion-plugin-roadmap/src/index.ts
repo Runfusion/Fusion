@@ -1,16 +1,69 @@
+import type { Database } from "@fusion/core";
 import { definePlugin } from "@fusion/plugin-sdk";
 import { createRoadmapPluginRoutes } from "./roadmap-routes.js";
+
+export function ensureRoadmapSchema(db: Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS roadmaps (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS roadmap_milestones (
+      id TEXT PRIMARY KEY,
+      roadmapId TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      orderIndex INTEGER NOT NULL,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL,
+      FOREIGN KEY (roadmapId) REFERENCES roadmaps(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS roadmap_features (
+      id TEXT PRIMARY KEY,
+      milestoneId TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      orderIndex INTEGER NOT NULL,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL,
+      FOREIGN KEY (milestoneId) REFERENCES roadmap_milestones(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idxRoadmapMilestonesRoadmapOrder
+      ON roadmap_milestones(roadmapId, orderIndex, createdAt, id);
+
+    CREATE INDEX IF NOT EXISTS idxRoadmapFeaturesMilestoneOrder
+      ON roadmap_features(milestoneId, orderIndex, createdAt, id);
+  `);
+}
 
 const plugin = definePlugin({
   manifest: {
     id: "fusion-plugin-roadmap",
-    name: "Roadmap",
+    name: "Roadmaps",
     version: "0.1.0",
-    description: "Roadmap domain package for plugin-owned roadmap migration",
+    description: "Standalone roadmap planning plugin",
   },
   state: "installed",
-  hooks: {},
+  hooks: {
+    onSchemaInit: ensureRoadmapSchema,
+  },
   routes: createRoadmapPluginRoutes(),
+  dashboardViews: [
+    {
+      viewId: "roadmaps",
+      label: "Roadmaps",
+      componentPath: "./dashboard-view",
+      icon: "Map",
+      placement: "primary",
+      order: 30,
+    },
+  ],
 });
 
 export default plugin;
@@ -36,8 +89,7 @@ export type {
   RoadmapFeatureTaskPlanningHandoff,
   RoadmapMissionPlanningMilestoneHandoff,
   RoadmapMissionPlanningHandoff,
-  RoadmapStoreEvents,
-} from "@fusion/core";
+} from "./roadmap-types.js";
 
 export {
   normalizeRoadmapMilestoneOrder,
@@ -45,9 +97,17 @@ export {
   normalizeRoadmapFeatureOrder,
   applyRoadmapFeatureReorder,
   moveRoadmapFeature,
+} from "./store/roadmap-ordering.js";
+
+export {
   mapFeatureToTaskHandoff,
   mapRoadmapToMissionHandoff,
   mapRoadmapWithHierarchyToMissionHandoff,
   mapAllFeaturesToTaskHandoffs,
-  RoadmapStore,
-} from "@fusion/core";
+} from "./store/roadmap-handoff.js";
+
+export { RoadmapStore } from "./store/roadmap-store.js";
+export type { RoadmapStoreEvents } from "./store/roadmap-store.js";
+
+export { RoadmapDashboardView } from "./dashboard-view.js";
+export * from "./server/index.js";

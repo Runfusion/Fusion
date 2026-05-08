@@ -6,7 +6,7 @@ import {
   normalizeRoadmapFeatureOrder,
   normalizeRoadmapMilestoneOrder,
 } from "../roadmap-ordering.js";
-import type { RoadmapFeature, RoadmapMilestone } from "../roadmap-types.js";
+import type { RoadmapFeature, RoadmapMilestone } from "../../roadmap-types.js";
 
 function createMilestone(
   id: string,

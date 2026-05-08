@@ -23,6 +23,7 @@ vi.mock("@fusion/core", () => ({
 
 // Import SUT after mocks are in place
 import {
+  BUNDLED_PLUGIN_IDS,
   ensureBundledDependencyGraphPluginInstalled,
   ensureBundledCursorRuntimePluginInstalled,
   ensureBundledPluginInstalled,
@@ -34,6 +35,7 @@ import {
 const BUNDLED_PLUGIN_ID = "fusion-plugin-dependency-graph";
 const HERMES_PLUGIN_ID = "fusion-plugin-hermes-runtime";
 const CURSOR_PLUGIN_ID = "fusion-plugin-cursor-runtime";
+const ROADMAP_PLUGIN_ID = "fusion-plugin-roadmap";
 
 function makeManifest(overrides?: Partial<{ id: string; version: string; name: string }>) {
   return {
@@ -215,6 +217,9 @@ describe("resolvePluginEntryPath", () => {
 });
 
 describe("ensureBundledDependencyGraphPluginInstalled", () => {
+  it("includes roadmap plugin in bundled plugin ids", () => {
+    expect(BUNDLED_PLUGIN_IDS).toContain(ROADMAP_PLUGIN_ID);
+  });
   it("fresh install: registers and loads the plugin when not in DB", async () => {
     setupBundleExists();
     const store = makePluginStore();
@@ -379,6 +384,31 @@ describe("ensureBundledDependencyGraphPluginInstalled", () => {
     expect(result).toBe("installed");
     expect(store.registerPlugin).toHaveBeenCalledWith(
       expect.objectContaining({ manifest: expect.objectContaining({ id: CURSOR_PLUGIN_ID }) }),
+    );
+  });
+
+  it("registers roadmap plugin via generic bundled installer", async () => {
+    const manifest = makeManifest({ id: ROADMAP_PLUGIN_ID, name: "Roadmaps" });
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p.endsWith("manifest.json") && p.includes(ROADMAP_PLUGIN_ID)) return true;
+      if (p.endsWith("/src/index.ts") && p.includes(ROADMAP_PLUGIN_ID)) return true;
+      return false;
+    });
+    mockReadFile.mockResolvedValue(JSON.stringify(manifest));
+    mockValidatePluginManifest.mockReturnValue({ valid: true, errors: [] });
+
+    const store = makePluginStore();
+    const loader = makePluginLoader();
+
+    const result = await ensureBundledPluginInstalled(
+      store as unknown as import("@fusion/core").PluginStore,
+      loader as unknown as import("@fusion/core").PluginLoader,
+      ROADMAP_PLUGIN_ID,
+    );
+
+    expect(result).toBe("installed");
+    expect(store.registerPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ manifest: expect.objectContaining({ id: ROADMAP_PLUGIN_ID }) }),
     );
   });
 

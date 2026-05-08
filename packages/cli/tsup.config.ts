@@ -34,6 +34,8 @@ const dependencyGraphPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-
 const dependencyGraphPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-dependency-graph");
 const whatsappChatPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-whatsapp-chat");
 const whatsappChatPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-whatsapp-chat");
+const roadmapPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-roadmap");
+const roadmapPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-roadmap");
 const dashboardClientStub = `<!doctype html>
 <html lang="en">
   <head>
@@ -160,6 +162,21 @@ export default defineConfig({
     } else {
       console.warn(
         `WARNING: WhatsApp chat plugin source not found at ${whatsappChatPluginSrc}; bundled auto-install will be unavailable.`,
+      );
+    }
+
+    if (existsSync(roadmapPluginDest)) {
+      rmSync(roadmapPluginDest, { recursive: true, force: true });
+    }
+    if (existsSync(roadmapPluginSrc)) {
+      mkdirSync(roadmapPluginDest, { recursive: true });
+      cpSync(join(roadmapPluginSrc, "manifest.json"), join(roadmapPluginDest, "manifest.json"));
+      cpSync(join(roadmapPluginSrc, "package.json"), join(roadmapPluginDest, "package.json"));
+      cpSync(join(roadmapPluginSrc, "src"), join(roadmapPluginDest, "src"), { recursive: true });
+      console.log("Copied roadmap plugin to dist/plugins/fusion-plugin-roadmap/");
+    } else {
+      console.warn(
+        `WARNING: Roadmap plugin source not found at ${roadmapPluginSrc}; bundled auto-install will be unavailable.`,
       );
     }
 

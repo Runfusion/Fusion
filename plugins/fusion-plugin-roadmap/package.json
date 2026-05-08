@@ -2,12 +2,20 @@
   "name": "@fusion-plugin-examples/roadmap",
   "version": "0.1.0",
   "type": "module",
-  "description": "Roadmap backend plugin for Fusion",
+  "description": "Roadmap plugin package for Fusion",
   "private": true,
   "exports": {
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./server": {
+      "types": "./src/server/index.ts",
+      "import": "./src/server/index.ts"
+    },
+    "./dashboard-view": {
+      "types": "./src/dashboard-view.ts",
+      "import": "./src/dashboard-view.ts"
     }
   },
   "scripts": {
@@ -16,6 +24,7 @@
   },
   "dependencies": {
     "@fusion/core": "workspace:*",
+    "@fusion/dashboard": "workspace:*",
     "@fusion/plugin-sdk": "workspace:*",
     "express": "^5.1.0"
   },

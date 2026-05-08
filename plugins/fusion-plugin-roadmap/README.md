@@ -1,32 +1,27 @@
 # fusion-plugin-roadmap
 
-`@fusion-plugin-examples/roadmap` is the workspace package that owns the roadmap plugin boundary used by the roadmap migration.
+`@fusion-plugin-examples/roadmap` is the workspace package for the bundled `fusion-plugin-roadmap` plugin.
 
 ## Plugin identity
 
 - Manifest id: `fusion-plugin-roadmap`
-- Package default export: `definePlugin(...)` manifest object
+- Route namespace: `/api/plugins/fusion-plugin-roadmap/*`
+- Dashboard view id: `plugin:fusion-plugin-roadmap:roadmaps`
 
-## Exported roadmap domain surface
+## Package layout
 
-The package root exports (re-exported from `@fusion/core`):
+- `manifest.json` — plugin metadata and dashboard view declaration
+- `src/index.ts` — plugin definition (`onSchemaInit`, routes, dashboard view metadata)
+- `src/server/index.ts` — backend server exports
+- `src/dashboard-view.tsx` — dashboard view entry export
+- `src/roadmap-types.ts` + `src/store/*` — roadmap domain ownership target (migrated in follow-up steps)
 
-- Roadmap domain types
-- Ordering helpers
-  - `normalizeRoadmapMilestoneOrder`
-  - `applyRoadmapMilestoneReorder`
-  - `normalizeRoadmapFeatureOrder`
-  - `applyRoadmapFeatureReorder`
-  - `moveRoadmapFeature`
-- Handoff mappers
-  - `mapFeatureToTaskHandoff`
-  - `mapRoadmapToMissionHandoff`
-  - `mapRoadmapWithHierarchyToMissionHandoff`
-  - `mapAllFeaturesToTaskHandoffs`
-- Store exports
-  - `RoadmapStore`
-  - `RoadmapStoreEvents`
+## Exported surfaces
 
-## Compatibility boundary
+- Root export: plugin default + roadmap domain helpers/types
+- `./server`: roadmap route + AI suggestion service exports
+- `./dashboard-view`: Roadmaps dashboard view export for host registry wiring
 
-This task only backfills the package and export surface expected by migration work. Existing `@fusion/core` and dashboard roadmap consumers intentionally remain in place for now; consumer switchover is deferred to later roadmap-plugin migration tasks.
+## Notes
+
+The plugin keeps a single canonical ID/path (`fusion-plugin-roadmap`). Do not introduce alternate route namespaces or plugin IDs for this feature.

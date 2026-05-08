@@ -17,7 +17,7 @@ import type {
   RoadmapWithHierarchy,
   RoadmapFeatureTaskPlanningHandoff,
   RoadmapMissionPlanningHandoff,
-} from "../roadmap-types.js";
+} from "../../roadmap-types.js";
 
 // ── Test Fixtures ─────────────────────────────────────────────────────────────
 

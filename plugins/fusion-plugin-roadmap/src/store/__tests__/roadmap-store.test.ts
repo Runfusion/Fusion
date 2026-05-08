@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { Database, createDatabase } from "../db.js";
+import { Database, createDatabase } from "@fusion/core";
 import { RoadmapStore } from "../roadmap-store.js";
 import type {
   RoadmapCreateInput,
@@ -11,7 +11,7 @@ import type {
   RoadmapMilestoneReorderInput,
   RoadmapFeatureReorderInput,
   RoadmapFeatureMoveInput,
-} from "../roadmap-types.js";
+} from "../../roadmap-types.js";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
