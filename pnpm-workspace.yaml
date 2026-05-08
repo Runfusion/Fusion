@@ -11,3 +11,4 @@ packages:
   - "plugins/fusion-plugin-whatsapp-chat"
   - "plugins/fusion-plugin-roadmap"
   - "plugins/fusion-plugin-even-realities-glasses"
+  - "plugins/fusion-plugin-even-cards"

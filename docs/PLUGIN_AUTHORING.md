@@ -1143,6 +1143,13 @@ Example plugin demonstrating settings schema and runtime configuration with all 
 - Features: Configurable greeting message, tag limit, logging toggle, log level selector
 - **Install from Settings**: Designed to be installed via the dashboard Settings → Plugins UI
 
+### [Even Cards Plugin](../../plugins/fusion-plugin-even-cards/)
+
+Read-only board/task card projection plugin for Even Realities companion flows.
+
+- Demonstrates: plugin routes protected with API-key auth, store reads via `ctx.taskStore`, and card-deck projection helpers
+- Features: `GET /board/cards`, `GET /board`, and `GET /tasks/:id/cards` endpoints with compact card payloads
+
 ### Installing Example Plugins from Settings
 
 All example plugins can be installed via the dashboard Settings → Plugins UI:
