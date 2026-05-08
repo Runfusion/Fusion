@@ -697,6 +697,7 @@ Semantic status colors:
 | `--color-warning` | Warning amber |
 | `--color-info` | Info blue |
 | `--color-muted` | Muted gray |
+| `--accent-text` | Foreground text/icon color on `--accent` surfaces |
 
 **Rule:** Never use raw hex or `rgba(...)` for colors in component styles. Use `var(--token)` or `color-mix(in srgb, var(--color) X%, transparent)` for translucent backgrounds. The only place hardcoded colors are acceptable is inside `:root` theme blocks defining tokens.
 

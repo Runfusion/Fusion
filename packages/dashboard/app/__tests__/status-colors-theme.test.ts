@@ -339,10 +339,12 @@ describe("CSS modifier classes for status colors", () => {
 describe("Accent color per color theme", () => {
   // Theme blocks are in theme-data.css and intentionally outside loadAllAppCss().
   let css: string;
+  let stylesCss: string;
   let themeData: string;
 
   beforeAll(() => {
     css = loadAllAppCss();
+    stylesCss = loadStylesCss();
     themeData = fs.readFileSync(themeDataPath, "utf-8");
   });
 
@@ -442,6 +444,50 @@ describe("Accent color per color theme", () => {
 
     expect(darkAccentCount).toBe(darkBlocks.size);
     expect(lightAccentCount).toBe(lightBlocks.size);
+  });
+
+  it("every dark color theme block defines --accent-text", () => {
+    const blocks = getDarkColorThemeBlocks();
+    expect(blocks.size).toBeGreaterThanOrEqual(34);
+
+    const missing: string[] = [];
+    for (const [theme, block] of blocks) {
+      if (!block.includes("--accent-text:")) {
+        missing.push(theme);
+      }
+    }
+
+    expect(missing, `Dark themes missing --accent-text: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("every light color theme block defines --accent-text", () => {
+    const blocks = getLightColorThemeBlocks();
+    expect(blocks.size).toBeGreaterThanOrEqual(34);
+
+    const missing: string[] = [];
+    for (const [theme, block] of blocks) {
+      if (!block.includes("--accent-text:")) {
+        missing.push(theme);
+      }
+    }
+
+    expect(missing, `Light themes missing --accent-text: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("dark and light accent-text counts match color theme counts", () => {
+    const darkBlocks = getDarkColorThemeBlocks();
+    const lightBlocks = getLightColorThemeBlocks();
+
+    const darkAccentTextCount = Array.from(darkBlocks.values()).filter(b => b.includes("--accent-text:")).length;
+    const lightAccentTextCount = Array.from(lightBlocks.values()).filter(b => b.includes("--accent-text:")).length;
+
+    expect(darkAccentTextCount).toBe(darkBlocks.size);
+    expect(lightAccentTextCount).toBe(lightBlocks.size);
+  });
+
+  it(":root in styles.css defines --accent-text", () => {
+    const rootBlock = extractRootBlock(stylesCss);
+    expect(rootBlock).toContain("--accent-text:");
   });
 
   it("every dark color theme block defines --surface-hover using tokenized color-mix", () => {

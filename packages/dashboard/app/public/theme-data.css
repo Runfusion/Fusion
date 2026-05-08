@@ -26,6 +26,7 @@
   --logo-accent: var(--todo);
   --color-info: #0288d1;
   --accent: #00b8d4;
+  --accent-text: #fff;
 }
 
 [data-color-theme="ocean"][data-theme="light"] {
@@ -48,6 +49,7 @@
   --logo-accent: var(--todo);
   --color-info: #0277bd;
   --accent: #0097a7;
+  --accent-text: #fff;
 }
 
 /* FOREST - Deep greens and emeralds */
@@ -71,6 +73,7 @@
   --logo-accent: var(--todo);
   --color-info: #29b6f6;
   --accent: #16a34a;
+  --accent-text: #fff;
 }
 
 [data-color-theme="forest"][data-theme="light"] {
@@ -93,6 +96,7 @@
   --logo-accent: var(--todo);
   --color-info: #0288d1;
   --accent: #15803d;
+  --accent-text: #fff;
 }
 
 /* SUNSET - Warm oranges and reds */
@@ -116,6 +120,7 @@
   --logo-accent: var(--todo);
   --color-info: #2196f3;
   --accent: #ff6d00;
+  --accent-text: #fff;
 }
 
 [data-color-theme="sunset"][data-theme="light"] {
@@ -138,6 +143,7 @@
   --logo-accent: var(--todo);
   --color-info: #1565c0;
   --accent: #e65100;
+  --accent-text: #fff;
 }
 
 /* BERRY - Purple/pink tones */
@@ -161,6 +167,7 @@
   --logo-accent: var(--todo);
   --color-info: #7c4dff;
   --accent: #9c27b0;
+  --accent-text: #fff;
 }
 
 [data-color-theme="berry"][data-theme="light"] {
@@ -183,6 +190,7 @@
   --logo-accent: var(--todo);
   --color-info: #6200ea;
   --accent: #7b1fa2;
+  --accent-text: #fff;
 }
 
 /* MONOCHROME - Pure grays */
@@ -206,6 +214,7 @@
   --logo-accent: var(--todo);
   --color-info: #64b5f6;
   --accent: #b0b0b0;
+  --accent-text: #fff;
 }
 
 [data-color-theme="monochrome"][data-theme="light"] {
@@ -228,6 +237,7 @@
   --logo-accent: var(--todo);
   --color-info: #1976d2;
   --accent: #616161;
+  --accent-text: #fff;
 }
 
 /* SLATE - Cool blue-gray tones */
@@ -250,6 +260,7 @@
   --logo-accent: var(--todo);
   --color-info: #60a5fa;
   --accent: #64748b;
+  --accent-text: #fff;
 }
 
 [data-color-theme="slate"][data-theme="light"] {
@@ -271,6 +282,7 @@
   --logo-accent: var(--todo);
   --color-info: #3b82f6;
   --accent: #475569;
+  --accent-text: #fff;
 }
 
 /* ASH - Warm medium grays */
@@ -293,6 +305,7 @@
   --logo-accent: var(--todo);
   --color-info: #93c5fd;
   --accent: #a1887f;
+  --accent-text: #fff;
 }
 
 [data-color-theme="ash"][data-theme="light"] {
@@ -314,6 +327,7 @@
   --logo-accent: var(--todo);
   --color-info: #3b82f6;
   --accent: #6d5d53;
+  --accent-text: #fff;
 }
 
 /* GRAPHITE - Dark graphite blacks */
@@ -336,6 +350,7 @@
   --logo-accent: var(--todo);
   --color-info: #7ab8ff;
   --accent: #a0a0a0;
+  --accent-text: #fff;
 }
 
 [data-color-theme="graphite"][data-theme="light"] {
@@ -357,6 +372,7 @@
   --logo-accent: var(--todo);
   --color-info: #2563eb;
   --accent: #606060;
+  --accent-text: #fff;
 }
 
 /* EMBER - Dark graphite with orange accent */
@@ -379,6 +395,7 @@
   --logo-accent: #e8773a;
   --color-info: #e8773a;
   --accent: #e8773a;
+  --accent-text: #fff;
 }
 
 [data-color-theme="ember"][data-theme="light"] {
@@ -400,6 +417,7 @@
   --logo-accent: #d4622a;
   --color-info: #c05820;
   --accent: #d4622a;
+  --accent-text: #fff;
 }
 
 /* SILVER - Light silvery grays */
@@ -422,6 +440,7 @@
   --logo-accent: var(--todo);
   --color-info: #90c0ff;
   --accent: #b8b8b8;
+  --accent-text: #fff;
 }
 
 [data-color-theme="silver"][data-theme="light"] {
@@ -443,6 +462,7 @@
   --logo-accent: var(--todo);
   --color-info: #2563eb;
   --accent: #707070;
+  --accent-text: #fff;
 }
 
 /* ZEN - Minimal, clean monochrome with subtle accents */
@@ -483,6 +503,7 @@
   --glow-danger: none;
   --focus-ring: 0 0 0 1px var(--border);
   --accent: #7da88e;
+  --accent-text: #fff;
 }
 
 [data-color-theme="zen"][data-theme="light"] {
@@ -522,6 +543,7 @@
   --glow-danger: none;
   --focus-ring: 0 0 0 1px var(--border);
   --accent: #4a6b56;
+  --accent-text: #fff;
 }
 
 /* HIGH CONTRAST - Extreme contrast for accessibility */
@@ -554,6 +576,7 @@
   --logo-accent: var(--todo);
   --color-info: #00ccff;
   --accent: #00ff00;
+  --accent-text: #000000;
 }
 
 [data-color-theme="high-contrast"][data-theme="light"] {
@@ -585,6 +608,7 @@
   --logo-accent: var(--todo);
   --color-info: #0055cc;
   --accent: #00cc00;
+  --accent-text: #ffffff;
 }
 
 /* INDUSTRIAL - Technical engineering spec sheet aesthetic */
@@ -617,6 +641,7 @@
   --logo-accent: var(--todo);
   --color-info: #42a5f5;
   --accent: #ff6d00;
+  --accent-text: #fff;
 }
 
 [data-color-theme="industrial"][data-theme="light"] {
@@ -648,6 +673,7 @@
   --logo-accent: var(--todo);
   --color-info: #1565c0;
   --accent: #bf360c;
+  --accent-text: #fff;
 }
 
 /* SOLARIZED - Classic solarized palette */
@@ -680,6 +706,7 @@
   --logo-accent: var(--todo);
   --color-info: #2aa198;
   --accent: #859900;
+  --accent-text: #002b36;
 }
 
 [data-color-theme="solarized"][data-theme="light"] {
@@ -711,6 +738,7 @@
   --logo-accent: var(--todo);
   --color-info: #2aa198;
   --accent: #637b00;
+  --accent-text: #fdf6e3;
 }
 
 /* FACTORY - Industrial Mission Control Theme
@@ -789,6 +817,7 @@
   --logo-accent: var(--todo);
   --color-info: #2563eb;
   --accent: #d97706;
+  --accent-text: #0a0a0a;
 }
 
 [data-color-theme="factory"][data-theme="light"] {
@@ -834,6 +863,7 @@
   --logo-accent: var(--todo);
   --color-info: #1d4ed8;
   --accent: #b45309;
+  --accent-text: #fff;
 }
 
 [data-color-theme="factory"] .card.agent-active {
@@ -949,6 +979,7 @@
   --logo-accent: var(--todo);
   --color-info: #39bae6;
   --accent: #5cb85c;
+  --accent-text: #0f1419;
 }
 
 [data-color-theme="ayu"][data-theme="light"] {
@@ -982,6 +1013,7 @@
   --logo-accent: var(--todo);
   --color-info: #007acc;
   --accent: #3a8a3a;
+  --accent-text: #fff;
 }
 
 /* ONE DARK - Atom's iconic dark theme */
@@ -1016,6 +1048,7 @@
   --logo-accent: var(--todo);
   --color-info: #61afef;
   --accent: #7ec77a;
+  --accent-text: #282c34;
 }
 
 /* ONE DARK - Light variant */
@@ -1050,6 +1083,7 @@
   --logo-accent: var(--todo);
   --color-info: #4078f2;
   --accent: #4a9e46;
+  --accent-text: #ffffff;
 }
 
 /* NORD - Arctic blue palette inspired by the Nord color scheme */
@@ -1084,6 +1118,7 @@
   --logo-accent: var(--todo);
   --color-info: #81a1c1;
   --accent: #88c0d0;
+  --accent-text: #2e3440;
 }
 
 [data-color-theme="nord"][data-theme="light"] {
@@ -1117,6 +1152,7 @@
   --logo-accent: var(--todo);
   --color-info: #5e81ac;
   --accent: #5e81ac;
+  --accent-text: #fff;
 }
 
 /* DRACULA - Popular dark theme with deep purples and vivid accents */
@@ -1151,6 +1187,7 @@
   --logo-accent: var(--todo);
   --color-info: #8be9fd;
   --accent: #bd93f9;
+  --accent-text: #282a36;
 }
 
 [data-color-theme="dracula"][data-theme="light"] {
@@ -1184,6 +1221,7 @@
   --logo-accent: var(--todo);
   --color-info: #00838f;
   --accent: #8662c7;
+  --accent-text: #fff;
 }
 
 /* GRUVBOX - Warm, retro earth-tone palette */
@@ -1218,6 +1256,7 @@
   --logo-accent: var(--todo);
   --color-info: #83a598;
   --accent: #d4a017;
+  --accent-text: #282828;
 }
 
 [data-color-theme="gruvbox"][data-theme="light"] {
@@ -1251,6 +1290,7 @@
   --logo-accent: var(--todo);
   --color-info: #076678;
   --accent: #a08010;
+  --accent-text: #fbf1c7;
 }
 
 /* TOKYO NIGHT - Deep blues and soft purples inspired by the VS Code theme */
@@ -1285,6 +1325,7 @@
   --logo-accent: var(--todo);
   --color-info: #7aa2f7;
   --accent: #7aa2f7;
+  --accent-text: #1a1b26;
 }
 
 [data-color-theme="tokyo-night"][data-theme="light"] {
@@ -1318,6 +1359,7 @@
   --logo-accent: var(--todo);
   --color-info: #3b5ea5;
   --accent: #5b7ec7;
+  --accent-text: #fff;
 }
 
 /* CATPPUCCIN MOCHA - Popular pastel dark theme */
@@ -1352,6 +1394,7 @@
   --logo-accent: var(--todo);
   --color-info: #89b4fa;
   --accent: #cba6f7;
+  --accent-text: #1e1e2e;
 }
 
 [data-color-theme="catppuccin-mocha"][data-theme="light"] {
@@ -1385,6 +1428,7 @@
   --logo-accent: var(--todo);
   --color-info: #1e66f5;
   --accent: #9a6fd9;
+  --accent-text: #fff;
 }
 
 /* GITHUB DARK - GitHub's dark theme */
@@ -1419,6 +1463,7 @@
   --logo-accent: var(--todo);
   --color-info: #58a6ff;
   --accent: #58a6ff;
+  --accent-text: #fff;
 }
 
 [data-color-theme="github-dark"][data-theme="light"] {
@@ -1452,6 +1497,7 @@
   --logo-accent: var(--todo);
   --color-info: #0969da;
   --accent: #0969da;
+  --accent-text: #fff;
 }
 
 /* EVERFOREST - Green-focused dark theme */
@@ -1486,6 +1532,7 @@
   --logo-accent: var(--todo);
   --color-info: #7fbbb3;
   --accent: #a7c080;
+  --accent-text: #2d353b;
 }
 
 [data-color-theme="everforest"][data-theme="light"] {
@@ -1519,6 +1566,7 @@
   --logo-accent: var(--todo);
   --color-info: #3a94a5;
   --accent: #6b8f55;
+  --accent-text: #fff;
 }
 
 /* ROSÉ PINE - Soft purple/pink tones */
@@ -1553,6 +1601,7 @@
   --logo-accent: var(--todo);
   --color-info: #c4a7e7;
   --accent: #c4a7e7;
+  --accent-text: #191724;
 }
 
 [data-color-theme="rose-pine"][data-theme="light"] {
@@ -1586,6 +1635,7 @@
   --logo-accent: var(--todo);
   --color-info: #907aa9;
   --accent: #907aac;
+  --accent-text: #fff;
 }
 
 /* KANAGAWA - Japanese-inspired wave theme */
@@ -1620,6 +1670,7 @@
   --logo-accent: var(--todo);
   --color-info: #7e9cd8;
   --accent: #957fb8;
+  --accent-text: #1f1f28;
 }
 
 [data-color-theme="kanagawa"][data-theme="light"] {
@@ -1653,6 +1704,7 @@
   --logo-accent: var(--todo);
   --color-info: #4e76b5;
   --accent: #7560a0;
+  --accent-text: #fff;
 }
 
 /* NIGHT OWL - Blue/cyan with warm yellow accents (Sarah Drasner) */
@@ -1687,6 +1739,7 @@
   --logo-accent: var(--todo);
   --color-info: #82aaff;
   --accent: #82aaff;
+  --accent-text: #011627;
 }
 
 [data-color-theme="night-owl"][data-theme="light"] {
@@ -1720,6 +1773,7 @@
   --logo-accent: var(--todo);
   --color-info: #2563eb;
   --accent: #5a7fd4;
+  --accent-text: #fff;
 }
 
 /* PALENIGHT - Warm purple-free dark blue palette */
@@ -1754,6 +1808,7 @@
   --logo-accent: var(--todo);
   --color-info: #82aaff;
   --accent: #c792ea;
+  --accent-text: #292d3e;
 }
 
 [data-color-theme="palenight"][data-theme="light"] {
@@ -1787,6 +1842,7 @@
   --logo-accent: var(--todo);
   --color-info: #3b6fcf;
   --accent: #9a60c0;
+  --accent-text: #fff;
 }
 
 /* MONOKAI PRO - Warm oranges and greens */
@@ -1821,6 +1877,7 @@
   --logo-accent: var(--todo);
   --color-info: #78dce8;
   --accent: #ffd866;
+  --accent-text: #2d2a2e;
 }
 
 [data-color-theme="monokai-pro"][data-theme="light"] {
@@ -1854,6 +1911,7 @@
   --logo-accent: var(--todo);
   --color-info: #2d8fa0;
   --accent: #d4a830;
+  --accent-text: #fff;
 }
 
 /* SLIME - Retro lime green theme */
@@ -1888,6 +1946,7 @@
   --logo-accent: var(--todo);
   --color-info: #60d8a0;
   --accent: #78d840;
+  --accent-text: #0a0e09;
 }
 
 [data-color-theme="slime"][data-theme="light"] {
@@ -1921,6 +1980,7 @@
   --logo-accent: var(--todo);
   --color-info: #1a7a5a;
   --accent: #5ab030;
+  --accent-text: #fff;
 }
 
 /* BRUTALIST - Concrete and signage inspired harsh UI */
@@ -1991,6 +2051,7 @@
   --logo-accent: var(--todo);
   --color-info: #ffd100;
   --accent: #ff6a00;
+  --accent-text: #0f0f0f;
 }
 
 [data-color-theme="brutalist"][data-theme="light"] {
@@ -2024,6 +2085,7 @@
   --logo-accent: var(--todo);
   --color-info: #b8860b;
   --accent: #c2410c;
+  --accent-text: #ffffff;
 }
 
 [data-color-theme="brutalist"] .btn {
@@ -2133,6 +2195,7 @@
   --logo-accent: var(--todo);
   --color-info: #00f0ff;
   --accent: #ff2d95;
+  --accent-text: #0d0d15;
 }
 
 [data-color-theme="neon-city"][data-theme="light"] {
@@ -2173,6 +2236,7 @@
   --logo-accent: var(--todo);
   --color-info: #008e9b;
   --accent: #d63384;
+  --accent-text: #ffffff;
 }
 
 [data-color-theme="neon-city"] .btn {
@@ -2309,6 +2373,7 @@
   --logo-accent: var(--todo);
   --color-info: #d08a4b;
   --accent: #d08a4b;
+  --accent-text: #f8eedf;
 }
 
 [data-color-theme="parchment"][data-theme="light"] {
@@ -2347,6 +2412,7 @@
   --logo-accent: var(--todo);
   --color-info: #8f4e2a;
   --accent: #a66b35;
+  --accent-text: #fff9f2;
 }
 
 [data-color-theme="parchment"] .btn {
@@ -2449,6 +2515,7 @@
   --logo-accent: var(--todo);
   --color-info: #8fff38;
   --accent: #33ff00;
+  --accent-text: #061004;
 }
 
 [data-color-theme="terminal"][data-theme="light"] {
@@ -2487,6 +2554,7 @@
   --logo-accent: var(--todo);
   --color-info: #4c8f25;
   --accent: #2d6b14;
+  --accent-text: #f4fbef;
 }
 
 [data-color-theme="terminal"] .btn,
@@ -2622,6 +2690,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #ff7aa8;
   --accent: #c86bff;
+  --accent-text: #f8f5ff;
 }
 
 [data-color-theme="glass"][data-theme="light"] {
@@ -2660,6 +2729,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #c74b7a;
   --accent: #9d40cf;
+  --accent-text: #2f2448;
 }
 
 [data-color-theme="glass"] .card,
@@ -2737,6 +2807,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #f8c967;
   --accent: #e59371;
+  --accent-text: #1c1e26;
 }
 
 [data-color-theme="horizon"][data-theme="light"] {
@@ -2770,6 +2841,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #d88030;
   --accent: #e8646a;
+  --accent-text: #fff;
 }
 
 /* VITEsse - Warm natural tones with teal accents */
@@ -2804,6 +2876,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #dca561;
   --accent: #4c9a91;
+  --accent-text: #0d1210;
 }
 
 [data-color-theme="vitesse"][data-theme="light"] {
@@ -2837,6 +2910,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #c08040;
   --accent: #3a8578;
+  --accent-text: #fff;
 }
 
 /* OUTRUN - Retrowave/synthwave aesthetic */
@@ -2871,6 +2945,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #00e5ff;
   --accent: #b537f2;
+  --accent-text: #fff;
 }
 
 [data-color-theme="outrun"][data-theme="light"] {
@@ -2904,6 +2979,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #00a8b8;
   --accent: #9030c8;
+  --accent-text: #fff;
 }
 
 /* SNazzy - Bright playful colors */
@@ -2938,6 +3014,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #f3f99d;
   --accent: #ff6f91;
+  --accent-text: #282a36;
 }
 
 [data-color-theme="snazzy"][data-theme="light"] {
@@ -2971,6 +3048,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #a0a030;
   --accent: #d06070;
+  --accent-text: #fff;
 }
 
 /* PORPLE - Rich purple with gold accents */
@@ -3005,6 +3083,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #ffcb6b;
   --accent: #c792ea;
+  --accent-text: #1e2030;
 }
 
 [data-color-theme="porple"][data-theme="light"] {
@@ -3038,6 +3117,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #d0a030;
   --accent: #9060d8;
+  --accent-text: #fff;
 }
 
 /* ESPRESSO - Deep coffee browns */
@@ -3072,6 +3152,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #8f6552;
   --accent: #d4a574;
+  --accent-text: #231813;
 }
 
 [data-color-theme="espresso"][data-theme="light"] {
@@ -3105,6 +3186,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #806040;
   --accent: #a07050;
+  --accent-text: #fff;
 }
 
 /* MARS - Red planet inspired */
@@ -3139,6 +3221,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #d4874d;
   --accent: #c1440e;
+  --accent-text: #fff;
 }
 
 [data-color-theme="mars"][data-theme="light"] {
@@ -3172,6 +3255,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #b07040;
   --accent: #a03010;
+  --accent-text: #fff;
 }
 
 /* POIMANDRES - Pastel blue/purple with teal accents */
@@ -3206,6 +3290,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #b4bcff;
   --accent: #89ddff;
+  --accent-text: #14151f;
 }
 
 [data-color-theme="poimandres"][data-theme="light"] {
@@ -3239,6 +3324,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #8070c0;
   --accent: #4090c0;
+  --accent-text: #fff;
 }
 
 /* RUST - Deep oxidized red-brown with warm rust accents */
@@ -3271,6 +3357,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #58a8d0;
   --accent: #c75b2a;
+  --accent-text: #fff;
 }
 
 [data-color-theme="rust"][data-theme="light"] {
@@ -3302,6 +3389,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #2878a0;
   --accent: #a04520;
+  --accent-text: #fff;
 }
 
 /* COPPER - Warm metallic copper tones */
@@ -3334,6 +3422,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #60a8d8;
   --accent: #d4854a;
+  --accent-text: #fff;
 }
 
 [data-color-theme="copper"][data-theme="light"] {
@@ -3365,6 +3454,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #306090;
   --accent: #b06830;
+  --accent-text: #fff;
 }
 
 /* FOUNDRY - Molten metal with orange-yellow glows */
@@ -3397,6 +3487,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #60b0e0;
   --accent: #f0960a;
+  --accent-text: #1a1008;
 }
 
 [data-color-theme="foundry"][data-theme="light"] {
@@ -3428,6 +3519,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #3070a0;
   --accent: #c07808;
+  --accent-text: #fff;
 }
 
 /* CARBON - Graphite-like carbon fiber aesthetic */
@@ -3460,6 +3552,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #6090c0;
   --accent: #5a8abf;
+  --accent-text: #fff;
 }
 
 [data-color-theme="carbon"][data-theme="light"] {
@@ -3491,6 +3584,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #306090;
   --accent: #3a6a9f;
+  --accent-text: #fff;
 }
 
 /* SANDSTONE - Warm desert sandstone */
@@ -3523,6 +3617,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #90a8c0;
   --accent: #c4905a;
+  --accent-text: #fff;
 }
 
 [data-color-theme="sandstone"][data-theme="light"] {
@@ -3554,6 +3649,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #5888a8;
   --accent: #a07040;
+  --accent-text: #fff;
 }
 
 /* LAGOON - Deep tropical lagoon */
@@ -3586,6 +3682,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #50a8c0;
   --accent: #40c8b0;
+  --accent-text: #fff;
 }
 
 [data-color-theme="lagoon"][data-theme="light"] {
@@ -3617,6 +3714,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #2880a0;
   --accent: #2a9080;
+  --accent-text: #fff;
 }
 
 /* FROST - Cool icy blue-white */
@@ -3649,6 +3747,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #60a0c8;
   --accent: #7ab8e8;
+  --accent-text: #fff;
 }
 
 [data-color-theme="frost"][data-theme="light"] {
@@ -3680,6 +3779,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #2080a8;
   --accent: #4a90c0;
+  --accent-text: #fff;
 }
 
 /* LAVENDER - Soft purple-lavender tones */
@@ -3712,6 +3812,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #9090c0;
   --accent: #b890d8;
+  --accent-text: #fff;
 }
 
 [data-color-theme="lavender"][data-theme="light"] {
@@ -3743,6 +3844,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #6868a0;
   --accent: #8060a8;
+  --accent-text: #fff;
 }
 
 /* NEON-BLOOM - Vibrant neon pastels */
@@ -3775,6 +3877,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #b090d0;
   --accent: #e870c0;
+  --accent-text: #fff;
 }
 
 [data-color-theme="neon-bloom"][data-theme="light"] {
@@ -3806,6 +3909,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #7878c0;
   --accent: #c040a0;
+  --accent-text: #fff;
 }
 
 /* SEPIA - Warm vintage sepia photography aesthetic */
@@ -3838,6 +3942,7 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #a8a0b0;
   --accent: #c8a868;
+  --accent-text: #fff;
 }
 
 [data-color-theme="sepia"][data-theme="light"] {
@@ -3869,5 +3974,6 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --logo-accent: var(--todo);
   --color-info: #888098;
   --accent: #9a8050;
+  --accent-text: #fff;
 }
 

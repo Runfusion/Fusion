@@ -379,6 +379,8 @@ html {
 
   /* === Accent Color === */
   --accent: #7c5cbf;
+  /* Foreground for content rendered on `--accent` (e.g., user chat bubble, primary FAB icon). Choose a value with WCAG AA contrast against the paired `--accent` in the same block. */
+  --accent-text: #ffffff;
 
   /* === Log Entry Background Tokens === */
   --log-tool-bg: color-mix(in srgb, var(--accent) 8%, transparent);
