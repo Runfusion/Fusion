@@ -80,6 +80,18 @@ Central health tracking keeps mutable project metrics, including:
 
 A singleton central record enforces system-wide limits so one project cannot monopolize all execution slots.
 
+## Plugin Scope in Multi-Project Mode
+
+Plugin persistence is split across global and project scopes:
+
+- Global installation metadata is shared across projects in `~/.fusion/fusion-central.db` (`plugin_installs`)
+- Per-project activation/runtime state is tracked separately per normalized project path (`project_plugin_states`)
+
+Operationally:
+- `install` / `uninstall` are global actions
+- `enable` / `disable` and runtime state/error are project-scoped
+- A single global plugin install can be enabled in one project and disabled in another
+
 ## Isolation Modes
 
 Projects can run with:

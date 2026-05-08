@@ -401,7 +401,7 @@ describe("PluginManager", () => {
 
     await waitFor(() => {
       expect(installPlugin).toHaveBeenCalledWith({ path: "./plugins/fusion-plugin-hermes-runtime" }, undefined);
-      expect(addToast).toHaveBeenCalledWith("Hermes Runtime installed successfully", "success");
+      expect(addToast).toHaveBeenCalledWith("Hermes Runtime installed globally", "success");
     });
   });
 
@@ -421,7 +421,7 @@ describe("PluginManager", () => {
 
     await waitFor(() => {
       expect(installPlugin).toHaveBeenCalledWith({ path: "./plugins/fusion-plugin-dependency-graph" }, undefined);
-      expect(addToast).toHaveBeenCalledWith("Dependency Graph installed successfully", "success");
+      expect(addToast).toHaveBeenCalledWith("Dependency Graph installed globally", "success");
     });
   });
 
@@ -571,8 +571,8 @@ describe("PluginManager", () => {
     await userEvent.click(uninstallButtons[0]);
 
     expect(mockConfirm).toHaveBeenCalledWith({
-      title: "Uninstall Plugin",
-      message: 'Are you sure you want to uninstall "Test Plugin A"?',
+      title: "Uninstall Plugin Globally",
+      message: 'Are you sure you want to uninstall "Test Plugin A" globally (all projects)?',
       danger: true,
     });
     expect(uninstallPlugin).not.toHaveBeenCalled();

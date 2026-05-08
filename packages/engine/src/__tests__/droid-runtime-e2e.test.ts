@@ -74,7 +74,7 @@ describe("Droid runtime E2E pipeline", () => {
   });
 
   it("loads Droid plugin and creates sessions through Droid runtime without createFnAgent", async () => {
-    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true });
+    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true, centralGlobalDir: testRoot });
     await pluginStore.init();
 
     await pluginStore.registerPlugin({
@@ -133,7 +133,7 @@ describe("Droid runtime E2E pipeline", () => {
   });
 
   it("falls back to default pi runtime when Droid plugin is not installed", async () => {
-    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true });
+    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true, centralGlobalDir: testRoot });
     await pluginStore.init();
 
     const taskStore = createTaskStoreMock(testRoot);

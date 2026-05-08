@@ -105,7 +105,7 @@ describe("Hermes runtime E2E pipeline", () => {
   });
 
   it("loads Hermes plugin and executes through Hermes runtime without createFnAgent", async () => {
-    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true });
+    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true, centralGlobalDir: testRoot });
     await pluginStore.init();
 
     await pluginStore.registerPlugin({
@@ -170,7 +170,7 @@ describe("Hermes runtime E2E pipeline", () => {
   });
 
   it("reuses Hermes adapter instance without compatibility wrapping when runtime is AgentRuntime-shaped", async () => {
-    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true });
+    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true, centralGlobalDir: testRoot });
     await pluginStore.init();
 
     await pluginStore.registerPlugin({
@@ -218,7 +218,7 @@ describe("Hermes runtime E2E pipeline", () => {
   });
 
   it("falls back to default pi runtime when Hermes plugin is not installed", async () => {
-    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true });
+    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true, centralGlobalDir: testRoot });
     await pluginStore.init();
 
     const taskStore = createTaskStoreMock(testRoot);
@@ -253,7 +253,7 @@ describe("Hermes runtime E2E pipeline", () => {
     // attach the resolved runtime's promptWithFallback onto the session object.
     // Without the fix, pi.promptWithFallback (pi.ts:175) would fall through to
     // pi's own session.prompt() instead of dispatching to HermesRuntimeAdapter.
-    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true });
+    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true, centralGlobalDir: testRoot });
     await pluginStore.init();
 
     await pluginStore.registerPlugin({

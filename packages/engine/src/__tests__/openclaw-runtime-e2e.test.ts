@@ -153,7 +153,7 @@ describe("OpenClaw runtime E2E pipeline", () => {
   });
 
   it("loads OpenClaw plugin and executes through OpenClaw runtime", async () => {
-    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true });
+    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true, centralGlobalDir: testRoot });
     await pluginStore.init();
 
     await pluginStore.registerPlugin({
@@ -240,7 +240,7 @@ describe("OpenClaw runtime E2E pipeline", () => {
   });
 
   it("falls back to default pi runtime when OpenClaw plugin is not installed", async () => {
-    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true });
+    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true, centralGlobalDir: testRoot });
     await pluginStore.init();
 
     const taskStore = createTaskStoreMock(testRoot);

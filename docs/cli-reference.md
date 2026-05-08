@@ -828,6 +828,11 @@ fn plugin create <name>
 
 Subcommands: `list|ls`, `install`, `rescan`, `uninstall`, `enable`, `disable`, `create`.
 
+Scope semantics:
+- `fn plugin install` / `fn plugin uninstall` are **global** operations
+- `fn plugin enable` / `fn plugin disable` are **project-scoped** operations (`--project` selects the project context)
+- `fn plugin list` shows globally installed plugins plus enabled/disabled state for the current project context
+
 `fn plugin install --ai-scan` enables AI security scanning on plugin load. `fn plugin rescan <id>` runs a fresh scan/reload cycle and prints plugin name, verdict, summary, and finding count. It exits non-zero for `blocked`, `error`, or `unavailable` verdicts.
 
 ---

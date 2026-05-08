@@ -23,8 +23,9 @@ import { subscribeSse } from "../sse-bus";
 
 /** Normalized plugin lifecycle payload from SSE plugin:lifecycle events */
 interface PluginLifecyclePayload {
+  scope: "global" | "project";
   pluginId: string;
-  transition: "installing" | "enabled" | "disabled" | "error" | "uninstalled" | "settings-updated";
+  transition: "installing" | "enabled" | "disabled" | "error" | "state-changed" | "uninstalled" | "settings-updated";
   sourceEvent: string;
   timestamp: string;
   projectId?: string;
@@ -266,9 +267,10 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
       try {
         const payload: PluginLifecyclePayload = JSON.parse(e.data);
         
-        // Filter by projectId if in project-scoped mode
-        if (projectId && payload.projectId && payload.projectId !== projectId) {
-          return;
+        if (payload.scope === "project") {
+          if ((payload.projectId ?? projectId) !== projectId) {
+            return;
+          }
         }
 
         switch (payload.transition) {
@@ -295,6 +297,22 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
                 void loadPlugins();
                 return prev;
               }
+            });
+            break;
+
+          case "state-changed":
+            setPlugins((prev) => {
+              const existingIndex = prev.findIndex((p) => p.id === payload.pluginId);
+              if (existingIndex >= 0) {
+                const updated = [...prev];
+                updated[existingIndex] = {
+                  ...updated[existingIndex],
+                  state: payload.state,
+                  error: payload.error,
+                };
+                return updated;
+              }
+              return prev;
             });
             break;
 
@@ -344,7 +362,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
     try {
       setInstalling(true);
       await installPlugin({ path: installPath, ...(installAiScanOnLoad ? { aiScanOnLoad: true } : {}) }, projectId);
-      addToast("Plugin installed successfully", "success");
+      addToast("Plugin installed globally", "success");
       setShowInstall(false);
       setInstallPath("");
       setInstallAiScanOnLoad(false);
@@ -365,7 +383,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
     try {
       setInstallingBuiltinPluginId(plugin.id);
       await installPlugin({ path: plugin.path }, projectId);
-      addToast(`${plugin.name} installed successfully`, "success");
+      addToast(`${plugin.name} installed globally`, "success");
       await loadPlugins();
     } catch (err) {
       addToast(`Failed to install ${plugin.name}: ${err instanceof Error ? err.message : String(err)}`, "error");
@@ -397,7 +415,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
   const handleEnable = async (plugin: PluginInstallation) => {
     try {
       await enablePlugin(plugin.id, projectId);
-      addToast(`${plugin.name} enabled`, "success");
+      addToast(`${plugin.name} enabled for this project`, "success");
       await loadPlugins();
     } catch (err) {
       addToast(`Failed to enable plugin: ${err instanceof Error ? err.message : String(err)}`, "error");
@@ -407,7 +425,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
   const handleDisable = async (plugin: PluginInstallation) => {
     try {
       await disablePlugin(plugin.id, projectId);
-      addToast(`${plugin.name} disabled`, "success");
+      addToast(`${plugin.name} disabled for this project`, "success");
       await loadPlugins();
     } catch (err) {
       addToast(`Failed to disable plugin: ${err instanceof Error ? err.message : String(err)}`, "error");
@@ -429,8 +447,8 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
 
   const handleUninstall = async (plugin: PluginInstallation) => {
     const shouldUninstall = await confirm({
-      title: "Uninstall Plugin",
-      message: `Are you sure you want to uninstall "${plugin.name}"?`,
+      title: "Uninstall Plugin Globally",
+      message: `Are you sure you want to uninstall "${plugin.name}" globally (all projects)?`,
       danger: true,
     });
     if (!shouldUninstall) {
@@ -439,7 +457,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
 
     try {
       await uninstallPlugin(plugin.id, projectId);
-      addToast(`${plugin.name} uninstalled`, "success");
+      addToast(`${plugin.name} uninstalled globally`, "success");
       await loadPlugins();
       setSelectedPlugin(null);
     } catch (err) {
@@ -752,15 +770,15 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
             )}
             {selectedPlugin.enabled ? (
               <button className="btn btn-secondary" onClick={() => handleDisable(selectedPlugin)}>
-                Disable
+                Disable in Project
               </button>
             ) : (
               <button className="btn btn-primary" onClick={() => handleEnable(selectedPlugin)}>
-                Enable
+                Enable in Project
               </button>
             )}
             <button className="btn btn-danger" onClick={() => handleUninstall(selectedPlugin)}>
-              <Trash2 size={14} /> Uninstall
+              <Trash2 size={14} /> Uninstall Globally
             </button>
           </div>
         </div>
@@ -920,7 +938,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
           </label>
           <div className="plugin-install-actions">
             <button className="btn btn-primary" onClick={handleInstall} disabled={installing || !installPath.trim()}>
-              {installing ? "Installing..." : "Install Plugin"}
+              {installing ? "Installing..." : "Install Plugin Globally"}
             </button>
             <button className="btn btn-secondary" onClick={() => { setShowInstall(false); setInstallPath(""); }}>
               Cancel
@@ -979,7 +997,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
                     <button
                       className="btn-icon"
                       onClick={() => handleUninstall(plugin)}
-                      title="Uninstall"
+                      title="Uninstall globally"
                     >
                       <Trash2 size={14} />
                     </button>

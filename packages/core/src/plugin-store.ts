@@ -1,12 +1,14 @@
 /**
  * SQLite-backed PluginStore for managing plugin installations.
  *
- * Provides CRUD operations for plugins with event emission for state changes.
+ * Global install metadata is persisted in central DB, while per-project
+ * enablement/runtime state is persisted per project path.
  */
 
 import { EventEmitter } from "node:events";
-import { join } from "node:path";
-import { Database, toJson, fromJson } from "./db.js";
+import { join, resolve } from "node:path";
+import { Database, fromJson, toJson } from "./db.js";
+import { CentralDatabase } from "./central-db.js";
 import type {
   PluginInstallation,
   PluginManifest,
@@ -26,7 +28,6 @@ export interface PluginStoreEvents {
   "plugin:stateChanged": [plugin: PluginInstallation, oldState: PluginState, newState: PluginState];
 }
 
-/** Input for registering a new plugin */
 export interface PluginRegistrationInput {
   manifest: PluginManifest;
   path: string;
@@ -34,7 +35,6 @@ export interface PluginRegistrationInput {
   aiScanOnLoad?: boolean;
 }
 
-/** Partial update input for a plugin */
 export interface PluginUpdateInput {
   name?: string;
   version?: string;
@@ -47,8 +47,7 @@ export interface PluginUpdateInput {
   lastSecurityScan?: PluginSecurityScanResult;
 }
 
-/** Database row shape for the plugins table. */
-interface PluginRow {
+interface LegacyPluginRow {
   id: string;
   name: string;
   version: string;
@@ -68,64 +67,75 @@ interface PluginRow {
   updatedAt: string;
 }
 
+interface InstallRow {
+  id: string;
+  name: string;
+  version: string;
+  description: string | null;
+  author: string | null;
+  homepage: string | null;
+  path: string;
+  settings: string | null;
+  settingsSchema: string | null;
+  dependencies: string | null;
+  aiScanOnLoad: number;
+  lastSecurityScan: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ProjectStateRow {
+  projectPath: string;
+  pluginId: string;
+  enabled: number;
+  state: string;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export class PluginStore extends EventEmitter<PluginStoreEvents> {
-  /** SQLite database instance */
-  private _db: Database | null = null;
-
+  private _localDb: Database | null = null;
+  private _centralDb: CentralDatabase | null = null;
   private readonly inMemoryDb: boolean;
+  private readonly normalizedProjectPath: string;
+  private readonly centralGlobalDir?: string;
 
-  constructor(private rootDir: string, options?: { inMemoryDb?: boolean }) {
+  constructor(
+    private rootDir: string,
+    options?: { inMemoryDb?: boolean; centralGlobalDir?: string },
+  ) {
     super();
     assertProjectRootDir(rootDir, "PluginStore");
     this.inMemoryDb = options?.inMemoryDb === true;
+    this.normalizedProjectPath = resolve(rootDir);
+    this.centralGlobalDir = options?.centralGlobalDir;
   }
 
-  /**
-   * Get the SQLite database, initializing it on first access.
-   */
-  private get db(): Database {
-    if (!this._db) {
+  private get localDb(): Database {
+    if (!this._localDb) {
       const fusionDir = join(this.rootDir, ".fusion");
-      this._db = new Database(fusionDir, { inMemory: this.inMemoryDb });
-      this._db.init();
+      this._localDb = new Database(fusionDir, { inMemory: this.inMemoryDb });
+      this._localDb.init();
     }
-    return this._db;
+    return this._localDb;
   }
 
-  /** Initialize the store. */
+  private get centralDb(): CentralDatabase {
+    if (!this._centralDb) {
+      this._centralDb = new CentralDatabase(this.centralGlobalDir);
+      this._centralDb.init();
+    }
+    return this._centralDb;
+  }
+
   async init(): Promise<void> {
-    // Ensure DB is initialized (triggers table creation)
-    const _ = this.db;
+    const _ = this.localDb;
+    const __ = this.centralDb;
+    this.migrateLegacyProjectRows();
   }
-
-  // ── Row Conversion ─────────────────────────────────────────────────
-
-  private rowToPlugin(row: PluginRow): PluginInstallation {
-    return {
-      id: row.id,
-      name: row.name,
-      version: row.version,
-      description: row.description || undefined,
-      author: row.author || undefined,
-      homepage: row.homepage || undefined,
-      path: row.path,
-      enabled: row.enabled === 1,
-      state: row.state as PluginState,
-      settings: fromJson<Record<string, unknown>>(row.settings) || {},
-      settingsSchema: fromJson<Record<string, PluginSettingSchema>>(row.settingsSchema),
-      error: row.error || undefined,
-      dependencies: fromJson<string[]>(row.dependencies) || [],
-      aiScanOnLoad: row.aiScanOnLoad === 1,
-      lastSecurityScan: fromJson<PluginSecurityScanResult>(row.lastSecurityScan ?? null) ?? undefined,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    };
-  }
-
-  // ── Validation Helpers ───────────────────────────────────────────────
 
   private validateIdFormat(id: string): boolean {
-    // Valid slug: lowercase alphanumeric, hyphens, cannot start/end with hyphen
     return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(id);
   }
 
@@ -138,17 +148,12 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
     const errors: string[] = [];
     for (const [key, settingSchema] of Object.entries(schema)) {
       const value = settings[key];
-
-      // Check required
       if (settingSchema.required && !(key in settings)) {
         errors.push(`Setting "${key}" is required`);
         continue;
       }
-
-      // Skip validation if not provided and not required
       if (!(key in settings)) continue;
 
-      // Check type
       const expectedType = settingSchema.type;
       if (expectedType === "string" && typeof value !== "string") {
         errors.push(`Setting "${key}" must be a string`);
@@ -160,15 +165,12 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
         errors.push(`Setting "${key}" must be a boolean`);
       } else if (expectedType === "enum") {
         if (typeof value !== "string" || !settingSchema.enumValues?.includes(value)) {
-          errors.push(
-            `Setting "${key}" must be one of: ${settingSchema.enumValues?.join(", ")}`,
-          );
+          errors.push(`Setting "${key}" must be one of: ${settingSchema.enumValues?.join(", ")}`);
         }
       } else if (expectedType === "array") {
         if (!Array.isArray(value)) {
           errors.push(`Setting "${key}" must be an array`);
         } else {
-          // Validate item types
           const itemType = settingSchema.itemType;
           for (const item of value) {
             if (itemType === "string" && typeof item !== "string") {
@@ -186,35 +188,187 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
     return errors;
   }
 
-  // ── CRUD Operations ────────────────────────────────────────────────
+  private rowToPlugin(install: InstallRow, state?: ProjectStateRow): PluginInstallation {
+    return {
+      id: install.id,
+      name: install.name,
+      version: install.version,
+      description: install.description || undefined,
+      author: install.author || undefined,
+      homepage: install.homepage || undefined,
+      path: install.path,
+      enabled: state?.enabled === 1,
+      state: (state?.state ?? "installed") as PluginState,
+      settings: fromJson<Record<string, unknown>>(install.settings) || {},
+      settingsSchema: fromJson<Record<string, PluginSettingSchema>>(install.settingsSchema),
+      error: state?.error || undefined,
+      dependencies: fromJson<string[]>(install.dependencies) || [],
+      aiScanOnLoad: install.aiScanOnLoad === 1,
+      lastSecurityScan: fromJson<PluginSecurityScanResult>(install.lastSecurityScan ?? null) ?? undefined,
+      createdAt: install.createdAt,
+      updatedAt: state?.updatedAt ?? install.updatedAt,
+    };
+  }
 
-  /**
-   * Register a new plugin.
-   */
+  private getProjectState(pluginId: string): ProjectStateRow | undefined {
+    return this.centralDb
+      .prepare("SELECT * FROM project_plugin_states WHERE projectPath = ? AND pluginId = ?")
+      .get(this.normalizedProjectPath, pluginId) as ProjectStateRow | undefined;
+  }
+
+  private upsertProjectState(
+    pluginId: string,
+    updates: { enabled?: boolean; state?: PluginState; error?: string | null },
+  ): ProjectStateRow {
+    const existing = this.getProjectState(pluginId);
+    const now = new Date().toISOString();
+
+    const row: ProjectStateRow = {
+      projectPath: this.normalizedProjectPath,
+      pluginId,
+      enabled: updates.enabled === undefined ? (existing?.enabled ?? 0) : updates.enabled ? 1 : 0,
+      state: updates.state ?? existing?.state ?? "installed",
+      error: updates.error === undefined ? (existing?.error ?? null) : updates.error,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+
+    this.centralDb
+      .prepare(`
+      INSERT INTO project_plugin_states (projectPath, pluginId, enabled, state, error, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(projectPath, pluginId) DO UPDATE SET
+        enabled = excluded.enabled,
+        state = excluded.state,
+        error = excluded.error,
+        updatedAt = excluded.updatedAt
+    `)
+      .run(
+        row.projectPath,
+        row.pluginId,
+        row.enabled,
+        row.state,
+        row.error,
+        row.createdAt,
+        row.updatedAt,
+      );
+
+    return row;
+  }
+
+  private migrateLegacyProjectRows(): void {
+    const marker = this.localDb
+      .prepare("SELECT value FROM __meta WHERE key = 'pluginCentralMigrationV1'")
+      .get() as { value: string } | undefined;
+    if (marker?.value === "done") return;
+
+    const hasPluginsTable = this.localDb
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'plugins'")
+      .get() as { name?: string } | undefined;
+    if (!hasPluginsTable?.name) {
+      this.localDb
+        .prepare("INSERT INTO __meta (key, value) VALUES ('pluginCentralMigrationV1', 'done') ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .run();
+      return;
+    }
+
+    const rows = this.localDb
+      .prepare("SELECT * FROM plugins ORDER BY updatedAt ASC")
+      .all() as LegacyPluginRow[];
+
+    this.centralDb.transaction(() => {
+      for (const row of rows) {
+        const existingInstall = this.centralDb
+          .prepare("SELECT * FROM plugin_installs WHERE id = ?")
+          .get(row.id) as InstallRow | undefined;
+
+        const takeLegacy = !existingInstall || new Date(row.updatedAt).getTime() >= new Date(existingInstall.updatedAt).getTime();
+        if (takeLegacy) {
+          this.centralDb
+            .prepare(`
+            INSERT INTO plugin_installs (
+              id, name, version, description, author, homepage, path,
+              settings, settingsSchema, dependencies, aiScanOnLoad, lastSecurityScan, createdAt, updatedAt
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              name = excluded.name,
+              version = excluded.version,
+              description = excluded.description,
+              author = excluded.author,
+              homepage = excluded.homepage,
+              path = excluded.path,
+              settings = excluded.settings,
+              settingsSchema = excluded.settingsSchema,
+              dependencies = excluded.dependencies,
+              aiScanOnLoad = excluded.aiScanOnLoad,
+              lastSecurityScan = excluded.lastSecurityScan,
+              updatedAt = excluded.updatedAt
+          `)
+            .run(
+              row.id,
+              row.name,
+              row.version,
+              row.description,
+              row.author,
+              row.homepage,
+              row.path,
+              row.settings ?? "{}",
+              row.settingsSchema,
+              row.dependencies ?? "[]",
+              row.aiScanOnLoad === 1 ? 1 : 0,
+              row.lastSecurityScan ?? null,
+              existingInstall?.createdAt ?? row.createdAt,
+              row.updatedAt,
+            );
+        }
+
+        this.centralDb
+          .prepare(`
+            INSERT INTO project_plugin_states (projectPath, pluginId, enabled, state, error, createdAt, updatedAt)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(projectPath, pluginId) DO UPDATE SET
+              enabled = excluded.enabled,
+              state = excluded.state,
+              error = excluded.error,
+              updatedAt = excluded.updatedAt
+          `)
+          .run(
+            this.normalizedProjectPath,
+            row.id,
+            row.enabled === 1 ? 1 : 0,
+            row.state,
+            row.error,
+            row.createdAt,
+            row.updatedAt,
+          );
+      }
+
+      this.localDb
+        .prepare("INSERT INTO __meta (key, value) VALUES ('pluginCentralMigrationV1', 'done') ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .run();
+    });
+  }
+
   async registerPlugin(input: PluginRegistrationInput): Promise<PluginInstallation> {
     const { manifest, path, settings = {}, aiScanOnLoad = false } = input;
 
-    // Validate manifest
     const manifestValidation = validatePluginManifest(manifest);
     if (!manifestValidation.valid) {
       throw new Error(`Invalid plugin manifest: ${manifestValidation.errors.join(", ")}`);
     }
 
-    // Validate required fields
     if (!path?.trim()) {
       throw new Error("Plugin path is required and cannot be empty");
     }
 
-    // Validate id format
     if (!this.validateIdFormat(manifest.id)) {
       throw new Error(
         "Plugin id must be a valid slug (lowercase, alphanumeric, hyphens only, cannot start or end with hyphen)",
       );
     }
 
-    // Check for duplicate
-    const existing = this.db
-      .prepare("SELECT id FROM plugins WHERE id = ?")
+    const existing = this.centralDb
+      .prepare("SELECT id FROM plugin_installs WHERE id = ?")
       .get(manifest.id);
     if (existing) {
       throw Object.assign(new Error(`Plugin "${manifest.id}" is already registered`), {
@@ -222,7 +376,6 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
       });
     }
 
-    // Compute defaults from settingsSchema and merge with provided settings
     const defaultSettings: Record<string, unknown> = {};
     if (manifest.settingsSchema) {
       for (const [key, schema] of Object.entries(manifest.settingsSchema)) {
@@ -234,159 +387,106 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
     const mergedSettings = { ...defaultSettings, ...settings };
 
     const now = new Date().toISOString();
-    const plugin: PluginInstallation = {
-      id: manifest.id,
-      name: manifest.name,
-      version: manifest.version,
-      description: manifest.description,
-      author: manifest.author,
-      homepage: manifest.homepage,
-      path: path.trim(),
-      enabled: true,
-      state: "installed",
-      settings: mergedSettings,
-      settingsSchema: manifest.settingsSchema,
-      dependencies: manifest.dependencies || [],
-      aiScanOnLoad,
-      createdAt: now,
-      updatedAt: now,
-    };
 
-    // Insert into database
-    this.db.prepare(`
-      INSERT INTO plugins (
+    this.centralDb
+      .prepare(`
+      INSERT INTO plugin_installs (
         id, name, version, description, author, homepage, path,
-        enabled, state, settings, settingsSchema, dependencies, aiScanOnLoad, lastSecurityScan, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      plugin.id,
-      plugin.name,
-      plugin.version,
-      plugin.description ?? null,
-      plugin.author ?? null,
-      plugin.homepage ?? null,
-      plugin.path,
-      plugin.enabled ? 1 : 0,
-      plugin.state,
-      toJson(plugin.settings),
-      plugin.settingsSchema ? toJson(plugin.settingsSchema) : null,
-      toJson(plugin.dependencies),
-      plugin.aiScanOnLoad ? 1 : 0,
-      null,
-      plugin.createdAt,
-      plugin.updatedAt,
-    );
+        settings, settingsSchema, dependencies, aiScanOnLoad, lastSecurityScan, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+      .run(
+        manifest.id,
+        manifest.name,
+        manifest.version,
+        manifest.description ?? null,
+        manifest.author ?? null,
+        manifest.homepage ?? null,
+        path.trim(),
+        toJson(mergedSettings),
+        manifest.settingsSchema ? toJson(manifest.settingsSchema) : null,
+        toJson(manifest.dependencies || []),
+        aiScanOnLoad ? 1 : 0,
+        null,
+        now,
+        now,
+      );
 
-    this.db.bumpLastModified();
+    this.upsertProjectState(manifest.id, { enabled: true, state: "installed", error: null });
+    this.centralDb.bumpLastModified();
+
+    const plugin = await this.getPlugin(manifest.id);
     this.emit("plugin:registered", plugin);
     return plugin;
   }
 
-  /**
-   * Unregister (delete) a plugin.
-   */
   async unregisterPlugin(id: string): Promise<PluginInstallation> {
     const plugin = await this.getPlugin(id);
-
-    this.db.prepare("DELETE FROM plugins WHERE id = ?").run(id);
-    this.db.bumpLastModified();
+    this.centralDb.prepare("DELETE FROM plugin_installs WHERE id = ?").run(id);
+    this.centralDb.bumpLastModified();
     this.emit("plugin:unregistered", plugin);
     return plugin;
   }
 
-  /**
-   * Get a plugin by id.
-   */
   async getPlugin(id: string): Promise<PluginInstallation> {
-    const row = this.db.prepare("SELECT * FROM plugins WHERE id = ?").get(id) as unknown as PluginRow | undefined;
-    if (!row) {
+    const install = this.centralDb
+      .prepare("SELECT * FROM plugin_installs WHERE id = ?")
+      .get(id) as InstallRow | undefined;
+    if (!install) {
       throw Object.assign(new Error(`Plugin "${id}" not found`), { code: "ENOENT" });
     }
-    return this.rowToPlugin(row);
+    return this.rowToPlugin(install, this.getProjectState(id));
   }
 
-  /**
-   * List all plugins, optionally filtered.
-   */
-  async listPlugins(
-    filter?: { enabled?: boolean; state?: PluginState },
-  ): Promise<PluginInstallation[]> {
-    let sql = "SELECT * FROM plugins";
-    const conditions: string[] = [];
-    const params: (string | number)[] = [];
+  async listPlugins(filter?: { enabled?: boolean; state?: PluginState }): Promise<PluginInstallation[]> {
+    const installs = this.centralDb
+      .prepare("SELECT * FROM plugin_installs ORDER BY createdAt ASC")
+      .all() as InstallRow[];
 
-    if (filter?.enabled !== undefined) {
-      conditions.push("enabled = ?");
-      params.push(filter.enabled ? 1 : 0);
-    }
-    if (filter?.state) {
-      conditions.push("state = ?");
-      params.push(filter.state);
-    }
+    const results = installs.map((install) => this.rowToPlugin(install, this.getProjectState(install.id)));
 
-    if (conditions.length > 0) {
-      sql += " WHERE " + conditions.join(" AND ");
-    }
-    sql += " ORDER BY createdAt ASC";
-
-    const rows = this.db.prepare(sql).all(...params) as unknown as PluginRow[];
-    return rows.map((row) => this.rowToPlugin(row));
+    return results.filter((plugin) => {
+      if (filter?.enabled !== undefined && plugin.enabled !== filter.enabled) {
+        return false;
+      }
+      if (filter?.state && plugin.state !== filter.state) {
+        return false;
+      }
+      return true;
+    });
   }
 
-  /**
-   * Enable a plugin.
-   */
   async enablePlugin(id: string): Promise<PluginInstallation> {
-    const plugin = await this.getPlugin(id);
+    await this.getPlugin(id);
+    this.upsertProjectState(id, { enabled: true });
+    this.centralDb.bumpLastModified();
 
-    this.db.prepare("UPDATE plugins SET enabled = 1, updatedAt = ? WHERE id = ?").run(
-      new Date().toISOString(),
-      id,
-    );
-    this.db.bumpLastModified();
-
-    const updated = { ...plugin, enabled: true };
+    const updated = await this.getPlugin(id);
     this.emit("plugin:enabled", updated);
     this.emit("plugin:updated", updated);
     return updated;
   }
 
-  /**
-   * Disable a plugin.
-   */
   async disablePlugin(id: string): Promise<PluginInstallation> {
-    const plugin = await this.getPlugin(id);
+    await this.getPlugin(id);
+    this.upsertProjectState(id, { enabled: false });
+    this.centralDb.bumpLastModified();
 
-    this.db.prepare("UPDATE plugins SET enabled = 0, updatedAt = ? WHERE id = ?").run(
-      new Date().toISOString(),
-      id,
-    );
-    this.db.bumpLastModified();
-
-    const updated = { ...plugin, enabled: false };
+    const updated = await this.getPlugin(id);
     this.emit("plugin:disabled", updated);
     this.emit("plugin:updated", updated);
     return updated;
   }
 
-  /**
-   * Update plugin state.
-   */
-  async updatePluginState(
-    id: string,
-    state: PluginState,
-    error?: string,
-  ): Promise<PluginInstallation> {
+  async updatePluginState(id: string, state: PluginState, error?: string): Promise<PluginInstallation> {
     const plugin = await this.getPlugin(id);
     const oldState = plugin.state;
 
-    // Validate state transitions
     const validStates: PluginState[] = ["installed", "started", "stopped", "error"];
     if (!validStates.includes(state)) {
       throw new Error(`Invalid state: ${state}`);
     }
 
-    // Validate transitions (any state can go to error)
     if (state !== "error") {
       const validTransitions: Record<PluginState, PluginState[]> = {
         installed: ["started", "stopped", "error"],
@@ -395,71 +495,45 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
         error: ["installed", "started", "stopped"],
       };
       if (!validTransitions[oldState]?.includes(state)) {
-        throw new Error(
-          `Invalid state transition from "${oldState}" to "${state}"`,
-        );
+        throw new Error(`Invalid state transition from "${oldState}" to "${state}"`);
       }
     }
 
-    this.db.prepare("UPDATE plugins SET state = ?, error = ?, updatedAt = ? WHERE id = ?").run(
-      state,
-      error ?? null,
-      new Date().toISOString(),
-      id,
-    );
-    this.db.bumpLastModified();
+    this.upsertProjectState(id, { state, error: error ?? null });
+    this.centralDb.bumpLastModified();
 
-    const updated = { ...plugin, state, error };
+    const updated = await this.getPlugin(id);
     this.emit("plugin:stateChanged", updated, oldState, state);
     this.emit("plugin:updated", updated);
     return updated;
   }
 
-  /**
-   * Update plugin settings.
-   */
-  async updatePluginSettings(
-    id: string,
-    settings: Record<string, unknown>,
-  ): Promise<PluginInstallation> {
+  async updatePluginSettings(id: string, settings: Record<string, unknown>): Promise<PluginInstallation> {
     const plugin = await this.getPlugin(id);
 
-    // Validate settings against schema
-    const validationErrors = this.validateSettingsAgainstSchema(
-      settings,
-      plugin.settingsSchema,
-    );
+    const validationErrors = this.validateSettingsAgainstSchema(settings, plugin.settingsSchema);
     if (validationErrors.length > 0) {
       throw new Error(`Settings validation failed: ${validationErrors.join(", ")}`);
     }
 
-    // Merge settings
     const mergedSettings = { ...plugin.settings, ...settings };
 
-    this.db.prepare("UPDATE plugins SET settings = ?, updatedAt = ? WHERE id = ?").run(
-      toJson(mergedSettings),
-      new Date().toISOString(),
-      id,
-    );
-    this.db.bumpLastModified();
+    this.centralDb
+      .prepare("UPDATE plugin_installs SET settings = ?, updatedAt = ? WHERE id = ?")
+      .run(toJson(mergedSettings), new Date().toISOString(), id);
+    this.centralDb.bumpLastModified();
 
-    const updated = { ...plugin, settings: mergedSettings };
+    const updated = await this.getPlugin(id);
     this.emit("plugin:updated", updated);
     return updated;
   }
 
-  /**
-   * Generic update for plugin metadata.
-   */
-  async updatePlugin(
-    id: string,
-    updates: PluginUpdateInput,
-  ): Promise<PluginInstallation> {
+  async updatePlugin(id: string, updates: PluginUpdateInput): Promise<PluginInstallation> {
     await this.getPlugin(id);
     const now = new Date().toISOString();
 
     const setClauses: string[] = ["updatedAt = ?"];
-    const params: (string | null)[] = [now];
+    const params: (string | null | number)[] = [now];
 
     if (updates.name !== undefined) {
       setClauses.push("name = ?");
@@ -491,7 +565,7 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
     }
     if (updates.aiScanOnLoad !== undefined) {
       setClauses.push("aiScanOnLoad = ?");
-      params.push(updates.aiScanOnLoad ? "1" : "0");
+      params.push(updates.aiScanOnLoad ? 1 : 0);
     }
     if (updates.lastSecurityScan !== undefined) {
       setClauses.push("lastSecurityScan = ?");
@@ -499,8 +573,8 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
     }
 
     params.push(id);
-    this.db.prepare(`UPDATE plugins SET ${setClauses.join(", ")} WHERE id = ?`).run(...params);
-    this.db.bumpLastModified();
+    this.centralDb.prepare(`UPDATE plugin_installs SET ${setClauses.join(", ")} WHERE id = ?`).run(...params);
+    this.centralDb.bumpLastModified();
 
     const updated = await this.getPlugin(id);
     this.emit("plugin:updated", updated);

@@ -38,7 +38,7 @@ describe.skipIf(!hasContributionApis)("PluginLoader contribution loading", () =>
 
   beforeEach(() => {
     rootDir = mkdtempSync(join(tmpdir(), "kb-plugin-loader-contrib-"));
-    pluginStore = new PluginStore(rootDir, { inMemoryDb: true });
+    pluginStore = new PluginStore(rootDir, { inMemoryDb: true, centralGlobalDir: rootDir });
     loader = new PluginLoader({ pluginStore, taskStore: { logActivity: vi.fn() } as any });
   });
 

@@ -39,7 +39,7 @@ describe("CentralDatabase", () => {
 
     it("should initialize schema version", () => {
       db.init();
-      expect(db.getSchemaVersion()).toBe(8);
+      expect(db.getSchemaVersion()).toBe(9);
     });
 
     it("should seed lastModified on init", () => {
@@ -217,7 +217,7 @@ describe("CentralDatabase", () => {
 
       db.init();
 
-      expect(db.getSchemaVersion()).toBe(8);
+      expect(db.getSchemaVersion()).toBe(9);
 
       const nodeColumns = db.prepare("PRAGMA table_info(nodes)").all() as Array<{ name: string }>;
       const nodeColumnNames = nodeColumns.map((column) => column.name);
@@ -282,7 +282,7 @@ describe("CentralDatabase", () => {
 
       db.init();
 
-      expect(db.getSchemaVersion()).toBe(8);
+      expect(db.getSchemaVersion()).toBe(9);
 
       const nodeColumns = db.prepare("PRAGMA table_info(nodes)").all() as Array<{ name: string }>;
       const nodeColumnNames = nodeColumns.map((column) => column.name);
@@ -370,7 +370,7 @@ describe("CentralDatabase", () => {
 
       db.init();
 
-      expect(db.getSchemaVersion()).toBe(8);
+      expect(db.getSchemaVersion()).toBe(9);
 
       const nodeColumns = db.prepare("PRAGMA table_info(nodes)").all() as Array<{ name: string }>;
       expect(nodeColumns.map((column) => column.name)).toContain("dockerConfig");
@@ -520,7 +520,7 @@ describe("CentralDatabase", () => {
 
       db.init();
 
-      expect(db.getSchemaVersion()).toBe(8);
+      expect(db.getSchemaVersion()).toBe(9);
 
       const mappings = db
         .prepare("SELECT projectId, nodeId, path FROM projectNodePathMappings ORDER BY projectId")

@@ -165,7 +165,7 @@ describe("PluginLoader", () => {
 
   beforeEach(() => {
     rootDir = makeTmpDir();
-    pluginStore = new PluginStore(rootDir, { inMemoryDb: true });
+    pluginStore = new PluginStore(rootDir, { inMemoryDb: true, centralGlobalDir: rootDir });
     setCreateAiSessionFactory(undefined);
   });
 

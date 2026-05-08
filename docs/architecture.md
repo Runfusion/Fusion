@@ -301,8 +301,11 @@ Hybrid evaluator pipeline (FN-3389/FN-3391):
 
 ### Plugin System
 
-- `PluginStore` (`plugin-store.ts`) stores plugin installation state and settings (`plugins` table)
-- `PluginLoader` (`plugin-loader.ts`) loads/unloads plugin modules and emits lifecycle events
+- `PluginStore` (`plugin-store.ts`) is a facade over two persistence scopes:
+  - **Global install metadata** in central DB table `plugin_installs` (`~/.fusion/fusion-central.db`) including manifest/path/settings/schema/dependencies
+  - **Per-project runtime state** in central DB table `project_plugin_states` keyed by normalized project path (`enabled`, `state`, `error`)
+- Legacy project-local `plugins` rows in `.fusion/fusion.db` are migrated lazily on plugin-store init/read; migration is idempotent and keeps newest `updatedAt` install metadata as global canonical data while preserving per-project enablement rows
+- `PluginLoader` (`plugin-loader.ts`) loads/unloads plugin modules using the effective per-project plugin state
 - Plugin contributions now include both embedded `uiSlots` and top-level `dashboardViews`
 - Discovery endpoints:
   - `GET /api/plugins/ui-slots`

@@ -23,7 +23,7 @@ export { toJson, toJsonNullable, fromJson };
 
 // ── Schema Definition ───────────────────────────────────────────────────
 
-const CENTRAL_SCHEMA_VERSION = 8;
+const CENTRAL_SCHEMA_VERSION = 9;
 
 const CENTRAL_SCHEMA_SQL = `
 -- Projects table (project registry)
@@ -177,6 +177,39 @@ CREATE TABLE IF NOT EXISTS managedDockerNodes (
 CREATE INDEX IF NOT EXISTS idxManagedDockerNodesStatus ON managedDockerNodes(status);
 CREATE INDEX IF NOT EXISTS idxManagedDockerNodesNodeId ON managedDockerNodes(nodeId);
 
+-- Global plugin install registry
+CREATE TABLE IF NOT EXISTS plugin_installs (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  version TEXT NOT NULL,
+  description TEXT,
+  author TEXT,
+  homepage TEXT,
+  path TEXT NOT NULL,
+  settings TEXT DEFAULT '{}',
+  settingsSchema TEXT,
+  dependencies TEXT DEFAULT '[]',
+  aiScanOnLoad INTEGER NOT NULL DEFAULT 0,
+  lastSecurityScan TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+
+-- Per-project plugin state
+CREATE TABLE IF NOT EXISTS project_plugin_states (
+  projectPath TEXT NOT NULL,
+  pluginId TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  state TEXT NOT NULL DEFAULT 'installed',
+  error TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  PRIMARY KEY (projectPath, pluginId),
+  FOREIGN KEY (pluginId) REFERENCES plugin_installs(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idxProjectPluginStatesProjectPath ON project_plugin_states(projectPath);
+CREATE INDEX IF NOT EXISTS idxProjectPluginStatesPluginId ON project_plugin_states(pluginId);
+
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS __meta (
   key TEXT PRIMARY KEY,
@@ -283,6 +316,39 @@ CREATE TABLE IF NOT EXISTS projectNodePathMappings (
 );
 CREATE INDEX IF NOT EXISTS idxProjectNodePathMappingsProjectId ON projectNodePathMappings(projectId);
 CREATE INDEX IF NOT EXISTS idxProjectNodePathMappingsNodeId ON projectNodePathMappings(nodeId);
+`;
+
+const CENTRAL_SCHEMA_V9_MIGRATION_SQL = `
+CREATE TABLE IF NOT EXISTS plugin_installs (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  version TEXT NOT NULL,
+  description TEXT,
+  author TEXT,
+  homepage TEXT,
+  path TEXT NOT NULL,
+  settings TEXT DEFAULT '{}',
+  settingsSchema TEXT,
+  dependencies TEXT DEFAULT '[]',
+  aiScanOnLoad INTEGER NOT NULL DEFAULT 0,
+  lastSecurityScan TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_plugin_states (
+  projectPath TEXT NOT NULL,
+  pluginId TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  state TEXT NOT NULL DEFAULT 'installed',
+  error TEXT,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  PRIMARY KEY (projectPath, pluginId),
+  FOREIGN KEY (pluginId) REFERENCES plugin_installs(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idxProjectPluginStatesProjectPath ON project_plugin_states(projectPath);
+CREATE INDEX IF NOT EXISTS idxProjectPluginStatesPluginId ON project_plugin_states(pluginId);
 `;
 
 // ── Central Database Class ────────────────────────────────────────────────
@@ -404,6 +470,11 @@ export class CentralDatabase {
         ).run(localNodeRow.id);
       }
 
+      migrated = true;
+    }
+
+    if (currentVersion < 9) {
+      this.db.exec(CENTRAL_SCHEMA_V9_MIGRATION_SQL);
       migrated = true;
     }
 

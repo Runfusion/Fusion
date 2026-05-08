@@ -125,7 +125,7 @@ describe("Paperclip runtime E2E pipeline", () => {
   });
 
   it("loads Paperclip plugin and executes through Paperclip runtime", async () => {
-    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true });
+    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true, centralGlobalDir: testRoot });
     await pluginStore.init();
 
     await pluginStore.registerPlugin({
@@ -187,7 +187,7 @@ describe("Paperclip runtime E2E pipeline", () => {
   });
 
   it("falls back to default pi runtime when Paperclip plugin is not installed", async () => {
-    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true });
+    const pluginStore = new PluginStore(testRoot, { inMemoryDb: true, centralGlobalDir: testRoot });
     await pluginStore.init();
 
     const taskStore = createTaskStoreMock(testRoot);

@@ -178,7 +178,7 @@ export async function runPluginList(projectName?: string): Promise<void> {
   }
 
   console.log();
-  console.log("  ID                  Name                    Version  State     Enabled");
+  console.log("  ID                  Name                    Version  State     Project Enabled");
   console.log("  ─────────────────────────────────────────────────────────────────────");
 
   for (const plugin of plugins) {
@@ -221,7 +221,7 @@ export async function runPluginInstall(
     const { manifest, path } = await loadManifestFromPath(source);
 
     console.log();
-    console.log(`  Installing ${manifest.name} v${manifest.version}...`);
+    console.log(`  Installing ${manifest.name} v${manifest.version} globally...`);
 
     // Register the plugin
     const plugin = await store.registerPlugin({
@@ -234,12 +234,12 @@ export async function runPluginInstall(
     if (plugin.enabled) {
       try {
         await loader.loadPlugin(plugin.id);
-        console.log(`  ✓ ${manifest.name} installed and loaded`);
+        console.log(`  ✓ ${manifest.name} installed globally and enabled for this project`);
       } catch (loadErr) {
         console.log(`  ⚠ ${manifest.name} installed but failed to load: ${loadErr instanceof Error ? loadErr.message : String(loadErr)}`);
       }
     } else {
-      console.log(`  ✓ ${manifest.name} installed (disabled)`);
+      console.log(`  ✓ ${manifest.name} installed globally (disabled for this project)`);
     }
     console.log();
   } catch (err) {
@@ -272,8 +272,8 @@ export async function runPluginUninstall(
   // Confirm unless force
   if (!options?.force) {
     console.log();
-    console.log(`  Uninstall "${plugin.name}"?`);
-    console.log(`  This will stop and remove the plugin.`);
+    console.log(`  Uninstall "${plugin.name}" globally?`);
+    console.log("  This removes it for all projects.");
     console.log();
 
     const response = await new Promise<string>((resolve) => {
@@ -304,7 +304,7 @@ export async function runPluginUninstall(
   await store.unregisterPlugin(id);
 
   console.log();
-  console.log(`  ✓ ${plugin.name} uninstalled`);
+  console.log(`  ✓ ${plugin.name} uninstalled globally`);
   console.log();
 }
 
@@ -346,7 +346,7 @@ export async function runPluginEnable(
   }
 
   console.log();
-  console.log(`  ✓ ${plugin.name} enabled and started`);
+  console.log(`  ✓ ${plugin.name} enabled for this project and started`);
   console.log();
 }
 
@@ -381,7 +381,7 @@ export async function runPluginDisable(
   await store.disablePlugin(id);
 
   console.log();
-  console.log(`  ✓ ${plugin.name} disabled and stopped`);
+  console.log(`  ✓ ${plugin.name} disabled for this project and stopped`);
   console.log();
 }
 

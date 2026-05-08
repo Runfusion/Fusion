@@ -204,6 +204,7 @@ export type PluginLifecycleTransition =
   | "enabled"
   | "disabled"
   | "error"
+  | "state-changed"
   | "uninstalled"
   | "settings-updated";
 
@@ -219,6 +220,8 @@ export type MessageSseEventType =
  * This is the stable contract the UI can reconcile.
  */
 export interface PluginLifecyclePayload {
+  /** Global install metadata event vs project runtime-state event */
+  scope: "global" | "project";
   /** Plugin identifier */
   pluginId: string;
   /** Normalized transition type */
@@ -261,13 +264,10 @@ function mapSourceEventToTransition(
       return "disabled";
 
     case "plugin:stateChanged":
-      // If the new state is "error", emit the "error" transition
       if (plugin.state === "error") {
         return "error";
       }
-      // For other state changes (started, stopped), we don't emit a dedicated transition
-      // but still emit the lifecycle event for observability
-      return "error"; // Map to "error" as a fallback for non-standard state transitions
+      return "state-changed";
 
     case "plugin:unregistered":
       return "uninstalled";
@@ -291,12 +291,15 @@ function createPluginLifecyclePayload(
   plugin: PluginInstallation,
   projectId?: string,
 ): PluginLifecyclePayload {
+  const transition = mapSourceEventToTransition(sourceEvent, plugin);
+  const scope = transition === "installing" || transition === "uninstalled" ? "global" : "project";
   return {
+    scope,
     pluginId: plugin.id,
-    transition: mapSourceEventToTransition(sourceEvent, plugin),
+    transition,
     sourceEvent,
     timestamp: new Date().toISOString(),
-    projectId,
+    projectId: scope === "project" ? projectId : undefined,
     enabled: plugin.enabled,
     state: plugin.state,
     version: plugin.version,

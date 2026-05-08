@@ -573,6 +573,8 @@ The fallback ensures tasks continue executing even if the configured runtime plu
 
 To use plugin-provided runtimes like Paperclip, Hermes, or OpenClaw:
 
+> Scope model: plugin installation + plugin settings are global (shared across projects), while plugin enabled/disabled state and runtime status are project-scoped.
+
 1. Install one or more runtime plugins:
 
 ```bash

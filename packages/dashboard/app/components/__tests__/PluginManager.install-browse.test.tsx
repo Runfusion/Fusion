@@ -284,7 +284,7 @@ describe("PluginManager – browse-driven install workflow", () => {
 
     await waitFor(() => {
       expect(addToast).toHaveBeenCalledWith(
-        "Plugin installed successfully",
+        "Plugin installed globally",
         "success",
       );
     });
