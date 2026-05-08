@@ -87,6 +87,7 @@ Unknown/unclassified tool fallback:
 - In permanent-agent sessions, unknown tools default to `require-approval` (fail-safe).
 - Category `none` only yields `allow` when the tool is positively recognized as read-only.
 - Internal Fusion runtime coordination tools (heartbeat completion, task/agent coordination, messaging, evaluations, identity reflection, memory bookkeeping) are exempt by design and always allowed so permanent-agent heartbeats can complete.
+- Operators can reload the in-memory exempt-tool registry at runtime via `POST /api/action-gate/reload` (optional body `{ "tools": string[] }`) to apply exemption-list updates without restarting the engine process.
 
 Interim enforcement behavior (persistence-integrated, pre-resume lifecycle):
 

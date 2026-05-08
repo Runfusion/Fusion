@@ -44,11 +44,20 @@ const mockCentralListProjects = vi.fn().mockResolvedValue([]);
 const mockCentralInit = vi.fn().mockResolvedValue(undefined);
 const mockCentralClose = vi.fn().mockResolvedValue(undefined);
 const mockCentralReconcileProjectStatuses = vi.fn().mockResolvedValue(undefined);
-const { mockPerformUpdateCheck, mockClearUpdateCheckCache, mockExecSync, mockExecFile } = vi.hoisted(() => ({
+const {
+  mockPerformUpdateCheck,
+  mockClearUpdateCheckCache,
+  mockExecSync,
+  mockExecFile,
+  mockReloadExemptTools,
+  mockGetExemptToolNames,
+} = vi.hoisted(() => ({
   mockPerformUpdateCheck: vi.fn(),
   mockClearUpdateCheckCache: vi.fn(),
   mockExecSync: vi.fn(),
   mockExecFile: vi.fn(),
+  mockReloadExemptTools: vi.fn(),
+  mockGetExemptToolNames: vi.fn().mockReturnValue(["read", "find"]),
 }));
 
 vi.mock("../update-check.js", async () => {
@@ -111,6 +120,8 @@ vi.mock("@fusion/core", async (importOriginal) => {
 vi.mock("@fusion/engine", async () => {
   const { createEngineMock } = await import("../test/mockCoreEngine.js");
   return createEngineMock({
+  reloadExemptTools: mockReloadExemptTools,
+  getExemptToolNames: mockGetExemptToolNames,
   createFnAgent: vi.fn(async (options?: { onText?: (delta: string) => void }) => ({
     session: {
       state: {
@@ -307,6 +318,54 @@ describe("route registrar ordering invariants", () => {
 
     expect(indexOf("GET /mesh/state")).toBeLessThan(indexOf("POST /mesh/sync"));
     expect(indexOf("GET /discovery/status")).toBeGreaterThan(indexOf("POST /mesh/sync"));
+  });
+});
+
+describe("POST /api/action-gate/reload", () => {
+  function buildApp(store: TaskStore, options?: Parameters<typeof createApiRoutes>[1]) {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, options));
+    return app;
+  }
+
+  beforeEach(() => {
+    mockReloadExemptTools.mockReset();
+    mockGetExemptToolNames.mockReset();
+    mockGetExemptToolNames.mockReturnValue(["read", "find"]);
+  });
+
+  it("reloads defaults when no tools body is provided", async () => {
+    const store = createMockStore();
+    const res = await REQUEST(buildApp(store), "POST", "/api/action-gate/reload", JSON.stringify({}), {
+      "content-type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockReloadExemptTools).toHaveBeenCalledWith();
+    expect(res.body).toEqual({ ok: true, tools: ["read", "find"] });
+  });
+
+  it("reloads explicit tool list when tools are provided", async () => {
+    const store = createMockStore();
+    mockGetExemptToolNames.mockReturnValue(["custom_tool"]);
+    const res = await REQUEST(buildApp(store), "POST", "/api/action-gate/reload", JSON.stringify({ tools: ["custom_tool"] }), {
+      "content-type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockReloadExemptTools).toHaveBeenCalledWith(["custom_tool"]);
+    expect(res.body).toEqual({ ok: true, tools: ["custom_tool"] });
+  });
+
+  it("returns bad request when tools is not a string array", async () => {
+    const store = createMockStore();
+    const res = await REQUEST(buildApp(store), "POST", "/api/action-gate/reload", JSON.stringify({ tools: ["ok", 1] }), {
+      "content-type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(mockReloadExemptTools).not.toHaveBeenCalled();
   });
 });
 

@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { evaluateAgentActionGate, computeApprovalDedupeKey } from "../agent-action-gate.js";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  addToExemptTools,
+  computeApprovalDedupeKey,
+  evaluateAgentActionGate,
+  reloadExemptTools,
+} from "../agent-action-gate.js";
 import type { AgentPermissionPolicy } from "@fusion/core";
 
 const unrestrictedPolicy: AgentPermissionPolicy = {
@@ -10,6 +15,17 @@ const unrestrictedPolicy: AgentPermissionPolicy = {
     "command_execution": "allow",
     "network_api": "allow",
     "task_agent_mutation": "allow",
+  },
+};
+
+const lockedDownPolicy: AgentPermissionPolicy = {
+  presetId: "locked-down",
+  rules: {
+    "git_write": "block",
+    "file_write_delete": "block",
+    "command_execution": "block",
+    "network_api": "block",
+    "task_agent_mutation": "block",
   },
 };
 
@@ -26,6 +42,9 @@ const approvalPolicy: AgentPermissionPolicy = {
 };
 
 describe("agent-action-gate", () => {
+  beforeEach(() => {
+    reloadExemptTools();
+  });
   it("classifies write/edit as file_write_delete", () => {
     const write = evaluateAgentActionGate({ agentId: "a1", toolName: "write", args: { path: "a.ts" }, permissionPolicy: unrestrictedPolicy });
     const edit = evaluateAgentActionGate({ agentId: "a1", toolName: "edit", args: { path: "a.ts" }, permissionPolicy: unrestrictedPolicy });
@@ -93,34 +112,12 @@ describe("agent-action-gate", () => {
     "fn_update_identity",
     "fn_reflect_on_performance",
   ])("always allows newly exempt internal tool %s under locked-down policies", (toolName) => {
-    const lockedDownPolicy: AgentPermissionPolicy = {
-      presetId: "locked-down",
-      rules: {
-        "git_write": "block",
-        "file_write_delete": "block",
-        "command_execution": "block",
-        "network_api": "block",
-        "task_agent_mutation": "block",
-      },
-    };
-
     const decision = evaluateAgentActionGate({ agentId: "a1", toolName, args: {}, permissionPolicy: lockedDownPolicy });
     expect(decision.disposition).toBe("allow");
     expect(decision.category).toBe("exempt");
   });
 
   it("keeps bash and write blocked under locked-down policy", () => {
-    const lockedDownPolicy: AgentPermissionPolicy = {
-      presetId: "locked-down",
-      rules: {
-        "git_write": "block",
-        "file_write_delete": "block",
-        "command_execution": "block",
-        "network_api": "block",
-        "task_agent_mutation": "block",
-      },
-    };
-
     const bashDecision = evaluateAgentActionGate({
       agentId: "a1",
       toolName: "bash",
@@ -136,6 +133,64 @@ describe("agent-action-gate", () => {
 
     expect(bashDecision.disposition).toBe("block");
     expect(writeDecision.disposition).toBe("block");
+  });
+
+  it("uses default exemptions without reload", () => {
+    const decision = evaluateAgentActionGate({
+      agentId: "a1",
+      toolName: "read",
+      args: {},
+      permissionPolicy: lockedDownPolicy,
+    });
+
+    expect(decision.category).toBe("exempt");
+    expect(decision.disposition).toBe("allow");
+  });
+
+  it("reloadExemptTools can replace and restore exemptions", () => {
+    reloadExemptTools(["custom_tool"]);
+    const customDecision = evaluateAgentActionGate({
+      agentId: "a1",
+      toolName: "custom_tool",
+      args: {},
+      permissionPolicy: lockedDownPolicy,
+    });
+    expect(customDecision.category).toBe("exempt");
+    expect(customDecision.disposition).toBe("allow");
+
+    reloadExemptTools([]);
+    const readBlocked = evaluateAgentActionGate({
+      agentId: "a1",
+      toolName: "read",
+      args: {},
+      permissionPolicy: lockedDownPolicy,
+    });
+    expect(readBlocked.category).toBe("command_execution");
+    expect(readBlocked.disposition).toBe("block");
+
+    reloadExemptTools();
+    const readRestored = evaluateAgentActionGate({
+      agentId: "a1",
+      toolName: "read",
+      args: {},
+      permissionPolicy: lockedDownPolicy,
+    });
+    expect(readRestored.category).toBe("exempt");
+    expect(readRestored.disposition).toBe("allow");
+  });
+
+  it("addToExemptTools exempts a custom tool", () => {
+    addToExemptTools("my_new_tool");
+
+    const decision = evaluateAgentActionGate({
+      agentId: "a1",
+      toolName: "my_new_tool",
+      args: {},
+      permissionPolicy: lockedDownPolicy,
+    });
+
+    expect(decision.category).toBe("exempt");
+    expect(decision.disposition).toBe("allow");
   });
 
   it("resolves disposition from policy", () => {

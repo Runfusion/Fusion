@@ -295,7 +295,12 @@ async function discoverDashboardPiExtensions(cwd: string): Promise<PiExtensionSe
   };
 }
 
-import { createFnAgent as engineCreateFnAgentForRefine, promptWithFallback as enginePromptWithFallback } from "@fusion/engine";
+import {
+  createFnAgent as engineCreateFnAgentForRefine,
+  getExemptToolNames as engineGetExemptToolNames,
+  promptWithFallback as enginePromptWithFallback,
+  reloadExemptTools as engineReloadExemptTools,
+} from "@fusion/engine";
 
 // Test-injectable override; defaults to the statically imported engine binding.
 let createFnAgentForRefine: typeof import("@fusion/engine").createFnAgent | undefined = engineCreateFnAgentForRefine;
@@ -1261,6 +1266,33 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       res.json({ success: true, source });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /**
+   * POST /api/action-gate/reload
+   * Reloads action-gate exempt tools from defaults or a provided override list.
+   */
+  router.post("/action-gate/reload", async (req, res) => {
+    try {
+      const body = (req.body && typeof req.body === "object") ? (req.body as Record<string, unknown>) : {};
+      const hasTools = Object.hasOwn(body, "tools");
+      if (hasTools) {
+        const tools = body.tools;
+        if (!Array.isArray(tools) || tools.some((tool) => typeof tool !== "string")) {
+          throw badRequest("Request body must provide tools as string[] when present");
+        }
+        engineReloadExemptTools(tools);
+      } else {
+        engineReloadExemptTools();
+      }
+
+      res.json({ ok: true, tools: engineGetExemptToolNames() });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

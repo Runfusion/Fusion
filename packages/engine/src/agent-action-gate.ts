@@ -3,6 +3,7 @@ import type {
   AgentPermissionPolicyActionCategory,
   AgentPermissionPolicyDisposition,
 } from "@fusion/core";
+import { runtimeLog } from "./logger.js";
 
 export type AgentActionGateResourceType = "file" | "git" | "task" | "agent" | "research" | "command" | "other";
 
@@ -31,7 +32,7 @@ export interface AgentActionGateContext {
 
 // FN-3724: Internal Fusion runtime/coordinator tools never perform external mutations.
 // They must bypass user-configurable approval/block policies so permanent-agent heartbeats cannot deadlock.
-const EXEMPT_TOOLS = new Set([
+const DEFAULT_EXEMPT_TOOLS = [
   "read",
   "find",
   "grep",
@@ -55,7 +56,44 @@ const EXEMPT_TOOLS = new Set([
   "fn_read_evaluations",
   "fn_update_identity",
   "fn_reflect_on_performance",
-]);
+] as const;
+
+let _exemptTools: Set<string> | null = null;
+
+function getExemptTools(): Set<string> {
+  if (!_exemptTools) {
+    _exemptTools = new Set(DEFAULT_EXEMPT_TOOLS);
+  }
+  return _exemptTools;
+}
+
+/**
+ * Reloads the exempt-tools registry used by the action gate.
+ * If no tool list is provided, the canonical default exemption set is restored.
+ */
+export function reloadExemptTools(newTools?: string[]): string[] {
+  const nextTools = newTools ?? [...DEFAULT_EXEMPT_TOOLS];
+  _exemptTools = new Set(nextTools);
+  const toolNames = [..._exemptTools];
+  runtimeLog.log(`[action-gate] Reloaded exempt tools (${toolNames.length})`);
+  return toolNames;
+}
+
+/**
+ * Adds a tool to the exempt-tools registry at runtime.
+ */
+export function addToExemptTools(toolName: string): string[] {
+  const nextTools = new Set(getExemptTools());
+  nextTools.add(toolName);
+  _exemptTools = new Set(nextTools);
+  const toolNames = [..._exemptTools];
+  runtimeLog.log(`[action-gate] Added exempt tool: ${toolName}`);
+  return toolNames;
+}
+
+export function getExemptToolNames(): string[] {
+  return [...getExemptTools()];
+}
 
 const TASK_AGENT_MANAGEMENT_TOOLS = new Set([
   "fn_task_create",
@@ -67,6 +105,8 @@ const TASK_AGENT_MANAGEMENT_TOOLS = new Set([
 ]);
 
 const NETWORK_API_TOOLS = new Set(["fn_research_run"]);
+
+const READONLY_DISCOVERY_TOOLS = new Set(["read", "find", "grep", "ls"]);
 
 const GIT_WRITE_SUBCOMMANDS = new Set([
   "add",
@@ -209,9 +249,13 @@ export function evaluateAgentActionGate(params: {
     operation = params.toolName;
     resourceType = "file";
     resourceId = typeof args.path === "string" ? args.path : undefined;
-  } else if (EXEMPT_TOOLS.has(params.toolName)) {
+  } else if (getExemptTools().has(params.toolName)) {
     category = "exempt";
     operation = params.toolName;
+  } else if (READONLY_DISCOVERY_TOOLS.has(params.toolName)) {
+    category = "command_execution";
+    operation = params.toolName;
+    resourceType = "file";
   } else if (TASK_AGENT_MANAGEMENT_TOOLS.has(params.toolName)) {
     category = "task_agent_mutation";
     operation = params.toolName;
