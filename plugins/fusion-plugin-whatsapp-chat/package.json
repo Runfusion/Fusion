@@ -2,7 +2,7 @@
   "name": "@fusion-plugin-examples/whatsapp-chat",
   "version": "0.1.0",
   "type": "module",
-  "description": "WhatsApp Cloud webhook bridge for Fusion agents",
+  "description": "WhatsApp Web (Baileys) chat bridge for Fusion agents",
   "keywords": [
     "fusion-plugin",
     "whatsapp",
@@ -21,7 +21,10 @@
     "test": "vitest run --silent=passed-only --reporter=dot"
   },
   "dependencies": {
-    "@fusion/plugin-sdk": "workspace:*"
+    "@fusion/plugin-sdk": "workspace:*",
+    "@whiskeysockets/baileys": "^6.7.21",
+    "pino": "^9.9.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",

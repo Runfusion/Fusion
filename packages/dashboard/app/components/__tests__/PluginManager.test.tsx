@@ -268,6 +268,7 @@ describe("PluginManager", () => {
     expect(screen.getByText("Droid Runtime")).toBeTruthy();
     expect(screen.getByText("Dependency Graph")).toBeTruthy();
     expect(screen.getByText("WhatsApp Chat")).toBeTruthy();
+    expect(screen.getByText(/Pairs to WhatsApp Web \(multi-device\) with QR or pairing code/i)).toBeTruthy();
   });
 
   it("renders built-in agent browser metadata-only entry when uninstalled", async () => {

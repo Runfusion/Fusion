@@ -125,7 +125,7 @@ const BUILTIN_PLUGINS: BuiltinPlugin[] = [
   {
     id: "fusion-plugin-whatsapp-chat",
     name: "WhatsApp Chat",
-    description: "Connects WhatsApp Cloud webhooks to a Fusion agent conversation; requires Meta webhook and API credentials.",
+    description: "Pairs to WhatsApp Web (multi-device) with QR or pairing code, then bridges direct chats to a Fusion agent.",
     category: "integration",
     path: "./plugins/fusion-plugin-whatsapp-chat",
   },

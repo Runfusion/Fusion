@@ -71,7 +71,7 @@ Expected outcome: You have a terminal view of installed plugins for scripting/re
 
 Expected outcome: Plugin is registered and appears with an initial state (typically `installed` then `started` when enabled/loaded).
 
-> WhatsApp Chat plugin note: You must configure Meta WhatsApp Cloud credentials (`verifyToken`, `appSecret`, `accessToken`, `phoneNumberId`) and point Meta webhooks at `/api/plugins/fusion-plugin-whatsapp-chat/webhook`. Only configured/allowed senders will receive agent replies, and message IDs are deduplicated for webhook retry safety.
+> WhatsApp Chat plugin note: Pair it directly to WhatsApp Web (multi-device) via QR (`/api/plugins/fusion-plugin-whatsapp-chat/qr`) or pairing code (`/api/plugins/fusion-plugin-whatsapp-chat/pair-code`). No public webhook endpoint or Meta Cloud credentials are required. Keep `allowedSenders` populated (empty list blocks all inbound messages), and use `/logout` to force re-pairing.
 
 ### Install from local path (dashboard)
 
