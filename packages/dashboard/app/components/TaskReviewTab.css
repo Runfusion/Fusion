@@ -114,6 +114,16 @@
   color: var(--text-muted);
 }
 
+.task-review-tab__refresh-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.task-review-tab__refresh-meta .status-dot {
+  flex-shrink: 0;
+}
+
 .task-review-tab__error {
   color: var(--color-error);
 }
@@ -144,5 +154,9 @@
 
   .task-review-tab__actions .btn {
     flex: 1;
+  }
+
+  .task-review-tab__refresh-meta {
+    align-items: flex-start;
   }
 }

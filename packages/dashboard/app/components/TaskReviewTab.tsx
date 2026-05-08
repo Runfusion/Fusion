@@ -20,6 +20,12 @@ function formatTimestamp(value?: string): string {
   return new Date(value).toLocaleString();
 }
 
+function formatRefreshSource(source?: "manual" | "auto" | "initial-load"): string {
+  if (source === "manual") return "Manual";
+  if (source === "auto") return "Background";
+  return "Initial load";
+}
+
 type ReviewItem = NonNullable<TaskDetail["reviewState"]>["items"][number];
 
 function getItemStatus(item: ReviewItem): "queued" | "in-progress" | "addressed" | "failed" {
@@ -84,6 +90,20 @@ export function TaskReviewTab({ task, projectId, onTaskUpdated, addToast }: Prop
       ? (review.summary as { reviewDecision?: string } | undefined)?.reviewDecision
       : (review.summary as { verdict?: string } | undefined)?.verdict;
 
+  const refreshStatus = refreshing ? "refreshing" : (review?.refreshStatus ?? "ready");
+  const refreshToneClass =
+    refreshStatus === "error"
+      ? "status-dot status-dot--error"
+      : refreshStatus === "refreshing"
+        ? "status-dot status-dot--pending"
+        : "status-dot status-dot--online";
+  const refreshLabel =
+    refreshStatus === "error"
+      ? "Refresh failed"
+      : refreshStatus === "refreshing"
+        ? "Refreshing"
+        : "Up to date";
+
   const toggleSelected = (id: string) => {
     setSelected((prev) => (prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id]));
   };
@@ -94,11 +114,19 @@ export function TaskReviewTab({ task, projectId, onTaskUpdated, addToast }: Prop
       setRefreshing(true);
       const result = await refreshTaskReview(task.id, projectId);
       setReview(result.reviewState);
-      onTaskUpdated?.({ ...task, reviewState: result.reviewState } as Task);
+      onTaskUpdated?.({ ...task, reviewState: result.reviewState, prInfo: result.prInfo ?? task.prInfo } as Task);
+      if (result.reviewState.refreshStatus === "error") {
+        const refreshMessage = result.reviewState.refreshError ?? "Failed to refresh review data.";
+        setError(refreshMessage);
+        addToast(refreshMessage, "error");
+        return;
+      }
+      setError(null);
       addToast("Review refreshed", "success");
-    } catch {
-      setError(REVIEW_LOAD_ERROR_MESSAGE);
-      addToast(REVIEW_LOAD_ERROR_MESSAGE, "error");
+    } catch (refreshError) {
+      const message = refreshError instanceof Error ? refreshError.message : REVIEW_LOAD_ERROR_MESSAGE;
+      setError(message);
+      addToast(message, "error");
     } finally {
       setRefreshing(false);
     }
@@ -132,11 +160,14 @@ export function TaskReviewTab({ task, projectId, onTaskUpdated, addToast }: Prop
           ) : null}
         </div>
         <div className="task-review-tab__actions">
-          <button className="btn btn-sm" onClick={onRefresh} disabled={refreshing || !isPrMode}>{refreshing ? "Refreshing…" : "Refresh"}</button>
+          <button className="btn btn-sm" onClick={onRefresh} disabled={refreshing || loading}>{refreshing ? "Refreshing…" : "Refresh"}</button>
           <button className="btn btn-primary btn-sm" disabled={!canRevise || !isPrMode} onClick={onRevise}>{revising ? "Queueing…" : "Request revision"}</button>
         </div>
       </div>
-      <div className="task-review-tab__meta">Last refreshed: {formatTimestamp(review?.lastRefreshedAt)}</div>
+      <div className="task-review-tab__meta task-review-tab__refresh-meta" aria-live="polite">
+        <span className={refreshToneClass} aria-hidden="true" />
+        <span>{refreshLabel} · Last refreshed: {formatTimestamp(review?.lastRefreshedAt)} · {formatRefreshSource(review?.refreshSource)}</span>
+      </div>
       {loading ? <div className="task-review-tab__meta">Loading review data…</div> : null}
       {!loading && error ? <div className="task-review-tab__error">{error}</div> : null}
       {!loading && !error && !isPrMode && review?.items?.length === 0 ? (

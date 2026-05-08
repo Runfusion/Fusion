@@ -2137,6 +2137,16 @@ describe("POST /tasks/:id/review/refresh", () => {
     vi.spyOn(GitHubClient.prototype, "getPrReviewSnapshot").mockResolvedValue({
       decision: "CHANGES_REQUESTED",
       checks: [],
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open",
+        title: "PR",
+        headBranch: "fusion/fn-1",
+        baseBranch: "main",
+        commentCount: 1,
+      },
+      commentCount: 1,
       summary: {
         reviewDecision: "CHANGES_REQUESTED",
         reviewers: [],
@@ -2153,8 +2163,40 @@ describe("POST /tasks/:id/review/refresh", () => {
     expect(res.status).toBe(200);
     expect((store.updateTask as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
       "FN-001",
-      expect.objectContaining({ reviewState: expect.objectContaining({ source: "pull-request" }) }),
+      expect.objectContaining({
+        reviewState: expect.objectContaining({
+          source: "pull-request",
+          refreshSource: "manual",
+          refreshStatus: "ready",
+          lastRefreshedAt: expect.any(String),
+        }),
+      }),
     );
+  });
+
+  it("returns scoped refresh error payload in PR mode when GitHub refresh fails", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      prInfo: {
+        url: "https://github.com/owner/repo/pull/42",
+        number: 42,
+        status: "open",
+        title: "PR",
+        headBranch: "fusion/fn-1",
+        baseBranch: "main",
+        commentCount: 0,
+      },
+      reviewState: { source: "pull-request", items: [], addressing: [] },
+    });
+    vi.spyOn(GitHubClient.prototype, "getPrReviewSnapshot").mockRejectedValue(new Error("GitHub outage"));
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/refresh", JSON.stringify({}), {
+      "content-type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.reviewState.refreshStatus).toBe("error");
+    expect(res.body.reviewState.refreshError).toContain("GitHub outage");
   });
 
   it("refreshes direct-mode review payload without PR", async () => {
@@ -2167,13 +2209,34 @@ describe("POST /tasks/:id/review/refresh", () => {
       },
     });
 
+    const getSnapshotSpy = vi.spyOn(GitHubClient.prototype, "getPrReviewSnapshot");
+
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/refresh", JSON.stringify({}), {
       "content-type": "application/json",
     });
 
     expect(res.status).toBe(200);
-    expect((store.updateTask as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
+    expect((store.updateTask as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      "FN-001",
+      expect.objectContaining({
+        reviewState: expect.objectContaining({
+          source: "reviewer-agent",
+          refreshSource: "manual",
+          refreshStatus: "ready",
+          lastRefreshedAt: expect.any(String),
+        }),
+      }),
+    );
     expect(res.body.reviewState.source).toBe("reviewer-agent");
+    expect(getSnapshotSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when task is missing", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValue(Object.assign(new Error("not found"), { code: "ENOENT" }));
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-404/review/refresh", JSON.stringify({}), {
+      "content-type": "application/json",
+    });
+    expect(res.status).toBe(404);
   });
 });
 

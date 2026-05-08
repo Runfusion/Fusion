@@ -3241,10 +3241,13 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
           items: [],
           addressing: [],
         };
+      reviewState.refreshStatus = reviewState.refreshStatus ?? "ready";
+      reviewState.refreshSource = reviewState.refreshSource ?? "initial-load";
       res.json({
         reviewState,
         automationStatus: task.status ?? null,
         emptyMessage: !hasPrReview && reviewState.items.length === 0 ? DIRECT_REVIEW_EMPTY_MESSAGE : null,
+        prInfo: task.prInfo,
       });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -3265,6 +3268,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       const task = await scopedStore.getTask(req.params.id);
 
       let reviewState = task.reviewState;
+      let nextPrInfo = task.prInfo;
       const now = new Date().toISOString();
 
       if (task.prInfo) {
@@ -3275,26 +3279,59 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
           throw badRequest("Could not determine GitHub repository for PR review refresh");
         }
 
-        const client = new GitHubClient();
-        const snapshot = await client.getPrReviewSnapshot(owner, repo, task.prInfo.number);
-        const previousAddressing = task.reviewState?.addressing ?? [];
-        const availableIds = new Set(snapshot.items.map((item) => item.id));
-        const addressing = previousAddressing.map((record) => availableIds.has(record.itemId) ? record : { ...record, stale: true });
+        const client = new GitHubClient(githubToken);
+        try {
+          const snapshot = await client.getPrReviewSnapshot(owner, repo, task.prInfo.number);
+          const previousAddressing = task.reviewState?.addressing ?? [];
+          const availableIds = new Set(snapshot.items.map((item) => item.id));
+          const addressing = previousAddressing.map((record) => availableIds.has(record.itemId) ? record : { ...record, stale: true });
 
-        reviewState = {
-          source: "pull-request",
-          lastRefreshedAt: now,
-          summary: snapshot.summary,
-          items: snapshot.items,
-          addressing,
-        };
+          reviewState = {
+            source: "pull-request",
+            lastRefreshedAt: now,
+            refreshSource: "manual",
+            refreshStatus: "ready",
+            refreshError: undefined,
+            summary: snapshot.summary,
+            items: snapshot.items,
+            addressing,
+          };
+
+          nextPrInfo = {
+            ...task.prInfo,
+            ...snapshot.prInfo,
+            commentCount: snapshot.commentCount,
+            lastCheckedAt: now,
+          };
+        } catch (refreshError) {
+          const message = refreshError instanceof Error ? refreshError.message : "Failed to refresh GitHub review data";
+          reviewState = {
+            source: "pull-request",
+            lastRefreshedAt: now,
+            refreshSource: "manual",
+            refreshStatus: "error",
+            refreshError: message,
+            summary: task.reviewState?.summary,
+            items: task.reviewState?.items ?? [],
+            addressing: task.reviewState?.addressing ?? [],
+          };
+          await scopedStore.updateTask(task.id, { reviewState });
+          res.json({ reviewState, automationStatus: task.status ?? null, prInfo: task.prInfo });
+          return;
+        }
       } else {
         reviewState = await buildDirectReviewState(task, scopedStore);
         reviewState.lastRefreshedAt = now;
+        reviewState.refreshSource = "manual";
+        reviewState.refreshStatus = "ready";
+        reviewState.refreshError = undefined;
       }
 
       await scopedStore.updateTask(task.id, { reviewState });
-      res.json({ reviewState, automationStatus: task.status ?? null });
+      if (nextPrInfo) {
+        await scopedStore.updatePrInfo(task.id, nextPrInfo);
+      }
+      res.json({ reviewState, automationStatus: task.status ?? null, prInfo: nextPrInfo });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {

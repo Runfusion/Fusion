@@ -325,6 +325,60 @@ describe("TaskDetailModal", () => {
     expect(await screen.findByText("No reviewer feedback yet — this task has not produced reviewer-agent feedback in direct mode.")).toBeTruthy();
   });
 
+  it("keeps Comments tab available after Review refresh", async () => {
+    vi.mocked(dashboardApi.fetchTaskReview).mockResolvedValueOnce({
+      reviewState: {
+        source: "pull-request",
+        summary: {
+          reviewDecision: "REVIEW_REQUIRED",
+          reviewers: [],
+          blockingReasons: [],
+          checks: [],
+        },
+        items: [],
+        addressing: [],
+      },
+      automationStatus: null,
+      emptyMessage: null,
+    });
+    vi.mocked(dashboardApi.refreshTaskReview).mockResolvedValueOnce({
+      reviewState: {
+        source: "pull-request",
+        summary: {
+          reviewDecision: "APPROVED",
+          reviewers: [{ login: "octocat", state: "APPROVED" }],
+          blockingReasons: [],
+          checks: [],
+        },
+        items: [],
+        addressing: [],
+        refreshStatus: "ready",
+      },
+      automationStatus: null,
+    });
+
+    render(
+      <TaskDetailModal
+        task={makeTask({ reviewState: { source: "pull-request", summary: { reviewDecision: "REVIEW_REQUIRED", reviewers: [], blockingReasons: [], checks: [] }, items: [], addressing: [] } })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Refresh" }));
+    expect(await screen.findByText("APPROVED")).toBeTruthy();
+
+    const commentsTab = screen.getByRole("button", { name: "Comments" });
+    expect(commentsTab).toBeInTheDocument();
+    fireEvent.click(commentsTab);
+    expect(screen.getByRole("heading", { name: "Comments" })).toBeInTheDocument();
+  });
+
   it("shows PR review decision details in Review tab", async () => {
     vi.mocked(dashboardApi.fetchTaskReview).mockResolvedValueOnce({
       reviewState: {

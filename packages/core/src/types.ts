@@ -1,3 +1,4 @@
+
 /** Valid thinking effort levels for AI agent sessions, controlling the cost/quality tradeoff of reasoning. */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
@@ -578,6 +579,105 @@ export interface IssueInfo {
  * This contract stores source identity so the originating issue can be
  * re-associated even when live status is unavailable.
  */
+export interface RoadmapFeature {
+  id: string;
+  roadmapId: string;
+  milestoneId: string;
+  title: string;
+  description?: string;
+  status: "planned" | "in-progress" | "done";
+  priority?: "low" | "medium" | "high";
+  notes?: string;
+  owner?: string;
+  targetDate?: string;
+  effort?: string;
+  orderIndex?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RoadmapMilestone {
+  id: string;
+  roadmapId: string;
+  title: string;
+  description?: string;
+  status: "planned" | "in-progress" | "done";
+  targetDate?: string;
+  orderIndex?: number;
+  createdAt: string;
+  updatedAt: string;
+  features?: RoadmapFeature[];
+}
+
+export interface Roadmap {
+  id: string;
+  title: string;
+  description?: string;
+  status: "planned" | "in-progress" | "done";
+  targetDate?: string;
+  owner?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RoadmapCreateInput {
+  title: string;
+  description?: string;
+  status?: Roadmap["status"];
+  targetDate?: string;
+  owner?: string;
+}
+
+export type RoadmapUpdateInput = Partial<RoadmapCreateInput>;
+
+export interface RoadmapMilestoneCreateInput {
+  title: string;
+  description?: string;
+  status?: RoadmapMilestone["status"];
+  targetDate?: string;
+}
+
+export type RoadmapMilestoneUpdateInput = Partial<RoadmapMilestoneCreateInput>;
+
+export interface RoadmapFeatureCreateInput {
+  title: string;
+  description?: string;
+  status?: RoadmapFeature["status"];
+  priority?: RoadmapFeature["priority"];
+  notes?: string;
+  owner?: string;
+  targetDate?: string;
+  effort?: string;
+}
+
+export type RoadmapFeatureUpdateInput = Partial<RoadmapFeatureCreateInput>;
+
+export interface RoadmapWithHierarchy extends Roadmap {
+  milestones: Array<RoadmapMilestone & { features: RoadmapFeature[] }>;
+}
+
+export interface RoadmapExportBundle {
+  roadmap: RoadmapWithHierarchy;
+  exportedAt: string;
+  formatVersion?: number;
+}
+
+export interface RoadmapMissionPlanningHandoff {
+  roadmapId: string;
+  roadmapTitle?: string;
+  missionTitle?: string;
+  summary: string;
+  description?: string;
+}
+
+export interface RoadmapFeatureTaskPlanningHandoff {
+  roadmapId: string;
+  featureId: string;
+  featureTitle?: string;
+  taskTitle?: string;
+  taskDescription: string;
+}
+
 export interface TaskSourceIssue {
   /** Issue provider key (for example: "github", "gitlab", "jira"). */
   provider: string;
@@ -804,9 +904,15 @@ export interface ReviewerTaskReviewSummary {
   summary?: string;
 }
 
+export type TaskReviewRefreshSource = "manual" | "auto" | "initial-load";
+export type TaskReviewRefreshStatus = "idle" | "refreshing" | "ready" | "error";
+
 export interface TaskReviewState {
   source: "pull-request" | "reviewer-agent";
   lastRefreshedAt?: string;
+  refreshSource?: TaskReviewRefreshSource;
+  refreshStatus?: TaskReviewRefreshStatus;
+  refreshError?: string;
   summary?: PrTaskReviewSummary | ReviewerTaskReviewSummary;
   items: TaskReviewStateItem[];
   addressing: ReviewAddressingRecord[];

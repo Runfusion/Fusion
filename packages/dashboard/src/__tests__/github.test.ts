@@ -1012,7 +1012,57 @@ describe("GitHubClient", () => {
       const snapshot = await client.getPrReviewSnapshot("owner", "repo", 1);
       expect(snapshot.items).toHaveLength(2);
       expect(snapshot.summary?.reviewDecision).toBe("CHANGES_REQUESTED");
+      expect(snapshot.prInfo.number).toBe(1);
+      expect(snapshot.commentCount).toBe(1);
       expect(snapshot.summary?.reviewers[0]).toEqual(expect.objectContaining({ login: "octocat", state: "CHANGES_REQUESTED" }));
+    });
+
+    it("falls back to API review details when gh fails and token is available", async () => {
+      mockRunGhJsonAsync.mockImplementation(() => {
+        throw new Error("gh down");
+      });
+      const clientWithToken = new GitHubClient("ghp_token");
+      const mockFetch = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewDecision: "APPROVED",
+                  comments: { nodes: [{ id: "C_1", body: "lgtm", createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-01-01T00:00:01Z", url: "https://example.com/c1", author: { login: "bot" } }] },
+                  reviews: { nodes: [{ id: "R_1", state: "APPROVED", body: "good", submittedAt: "2024-01-01T00:00:00Z", url: "https://example.com/r1", author: { login: "reviewer" } }] },
+                },
+              },
+            },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            data: {
+              repository: {
+                pullRequest: {
+                  number: 1,
+                  url: "https://github.com/owner/repo/pull/1",
+                  title: "PR",
+                  state: "OPEN",
+                  reviewDecision: "APPROVED",
+                  baseRefName: "main",
+                  headRefName: "fn/fn-1",
+                  comments: { totalCount: 1 },
+                  commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: [] } } } }] },
+                },
+              },
+            },
+          }),
+        });
+      global.fetch = mockFetch as any;
+
+      const snapshot = await clientWithToken.getPrReviewSnapshot("owner", "repo", 1);
+      expect(snapshot.summary?.reviewDecision).toBe("APPROVED");
+      expect(snapshot.items).toHaveLength(2);
+      vi.restoreAllMocks();
     });
   });
 

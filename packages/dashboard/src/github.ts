@@ -114,6 +114,8 @@ export interface PrReviewSnapshot {
   checks: PrCheckStatus[];
   items: PrReviewStateItem[];
   summary?: PrReviewSummary;
+  prInfo: PrInfo;
+  commentCount: number;
 }
 
 export interface PrMergeStatus {
@@ -179,6 +181,12 @@ interface GhPrViewJson {
     url: string;
   }>;
   reviews?: GhReviewJson[];
+}
+
+interface PrReviewDetails {
+  reviewDecision: ReviewDecision;
+  comments: GhPrViewJson["comments"];
+  reviews: GhReviewJson[];
 }
 
 interface GhPrListJson {
@@ -576,20 +584,12 @@ export class GitHubClient {
 
   async getPrReviewSnapshot(owner: string | undefined, repo: string | undefined, number: number): Promise<PrReviewSnapshot> {
     const { owner: resolvedOwner, repo: resolvedRepo } = this.resolveRepo(owner, repo);
-    const pr = await runGhJsonAsync<GhPrViewJson>([
-      "pr",
-      "view",
-      String(number),
-      "--repo",
-      `${resolvedOwner}/${resolvedRepo}`,
-      "--json",
-      "reviewDecision,reviews,comments",
-    ]);
-
+    const details = await this.getPrReviewDetails(resolvedOwner, resolvedRepo, number);
     const mergeStatus = await this.getPrMergeStatus(resolvedOwner, resolvedRepo, number);
     const checks = mergeStatus.checks;
-    const commentItems: PrReviewStateItem[] = (pr.comments ?? []).map((comment) => ({
+    const commentItems: PrReviewStateItem[] = (details.comments ?? []).map((comment) => ({
       id: `gh-comment-${comment.id}`,
+      threadId: `thread-comment-${comment.id}`,
       githubCommentId: Number.parseInt(comment.id, 10),
       body: comment.body,
       author: { login: comment.author?.login ?? "reviewer" },
@@ -599,10 +599,11 @@ export class GitHubClient {
       state: "COMMENTED",
     }));
 
-    const reviewItems: PrReviewStateItem[] = (pr.reviews ?? []).map((review) => {
+    const reviewItems: PrReviewStateItem[] = (details.reviews ?? []).map((review) => {
       const createdAt = review.submittedAt ?? new Date().toISOString();
       return {
         id: `gh-review-${review.id}`,
+        threadId: `thread-review-${review.id}`,
         body: review.body ?? `Review ${review.state}`,
         author: { login: review.author?.login ?? "reviewer" },
         createdAt,
@@ -613,12 +614,14 @@ export class GitHubClient {
     });
 
     return {
-      decision: pr.reviewDecision ?? null,
+      decision: details.reviewDecision ?? null,
       checks,
       items: [...reviewItems, ...commentItems],
+      prInfo: mergeStatus.prInfo,
+      commentCount: commentItems.length,
       summary: {
-        reviewDecision: pr.reviewDecision ?? null,
-        reviewers: (pr.reviews ?? []).map((review) => ({
+        reviewDecision: details.reviewDecision ?? null,
+        reviewers: (details.reviews ?? []).map((review) => ({
           login: review.author?.login ?? "reviewer",
           state: review.state === "APPROVED" || review.state === "CHANGES_REQUESTED" || review.state === "COMMENTED" || review.state === "PENDING" ? review.state : "COMMENTED",
           submittedAt: review.submittedAt ?? undefined,
@@ -626,6 +629,128 @@ export class GitHubClient {
         blockingReasons: mergeStatus.blockingReasons,
         checks,
       },
+    };
+  }
+
+  private async getPrReviewDetails(owner: string, repo: string, number: number): Promise<PrReviewDetails> {
+    if (this.hasGhAuth()) {
+      try {
+        return await this.getPrReviewDetailsWithGh(owner, repo, number);
+      } catch (err) {
+        if (this.token) {
+          return this.getPrReviewDetailsWithApi(owner, repo, number);
+        }
+        throw new Error(getGhErrorMessage(err));
+      }
+    }
+
+    if (this.token) {
+      return this.getPrReviewDetailsWithApi(owner, repo, number);
+    }
+
+    throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided.");
+  }
+
+  private async getPrReviewDetailsWithGh(owner: string, repo: string, number: number): Promise<PrReviewDetails> {
+    const pr = await runGhJsonAsync<GhPrViewJson>([
+      "pr",
+      "view",
+      String(number),
+      "--repo",
+      `${owner}/${repo}`,
+      "--json",
+      "reviewDecision,reviews,comments",
+    ]);
+    return {
+      reviewDecision: pr.reviewDecision ?? null,
+      comments: pr.comments ?? [],
+      reviews: pr.reviews ?? [],
+    };
+  }
+
+  private async getPrReviewDetailsWithApi(owner: string, repo: string, number: number): Promise<PrReviewDetails> {
+    const response = await fetch(`${this.baseUrl}/graphql`, {
+      method: "POST",
+      headers: this.buildHeaders(),
+      body: JSON.stringify({
+        query: `query PullRequestReviewDetails($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              reviewDecision
+              comments(first: 100) {
+                nodes {
+                  id
+                  body
+                  createdAt
+                  updatedAt
+                  url
+                  author { login }
+                }
+              }
+              reviews(first: 100) {
+                nodes {
+                  id
+                  state
+                  body
+                  submittedAt
+                  url
+                  author { login }
+                }
+              }
+            }
+          }
+        }`,
+        variables: { owner, repo, number },
+      }),
+    });
+
+    const payload = await response.json() as {
+      data?: {
+        repository?: {
+          pullRequest?: {
+            reviewDecision?: ReviewDecision;
+            comments?: { nodes?: Array<{ id: string; body: string; createdAt: string; updatedAt: string; url: string; author?: { login?: string | null } | null } | null> };
+            reviews?: { nodes?: Array<{ id: string; state: string; body?: string | null; submittedAt?: string | null; url?: string | null; author?: { login?: string | null } | null } | null> };
+          };
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+
+    if (!response.ok || payload.errors?.length) {
+      const message = payload.errors?.[0]?.message || response.statusText;
+      throw new Error(`GitHub API error: ${response.status} ${message}`);
+    }
+
+    const pr = payload.data?.repository?.pullRequest;
+    if (!pr) {
+      throw new Error(`PR #${number} not found in ${owner}/${repo}`);
+    }
+
+    return {
+      reviewDecision: pr.reviewDecision ?? null,
+      comments: (pr.comments?.nodes ?? []).flatMap((comment) => {
+        if (!comment) return [];
+        return [{
+          id: comment.id,
+          body: comment.body,
+          createdAt: comment.createdAt,
+          updatedAt: comment.updatedAt,
+          url: comment.url,
+          author: { login: comment.author?.login ?? "reviewer" },
+        }];
+      }),
+      reviews: (pr.reviews?.nodes ?? []).flatMap((review) => {
+        if (!review) return [];
+        return [{
+          id: review.id,
+          state: review.state,
+          body: review.body,
+          submittedAt: review.submittedAt,
+          url: review.url,
+          author: { login: review.author?.login ?? "reviewer" },
+        }];
+      }),
     };
   }
 

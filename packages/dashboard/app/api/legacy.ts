@@ -258,11 +258,13 @@ export interface TaskReviewResponse {
   reviewState: NonNullable<TaskDetail["reviewState"]>;
   automationStatus: string | null;
   emptyMessage?: string | null;
+  prInfo?: TaskDetail["prInfo"];
 }
 
 export interface RefreshTaskReviewResponse {
   reviewState: NonNullable<TaskDetail["reviewState"]>;
   automationStatus: string | null;
+  prInfo?: TaskDetail["prInfo"];
 }
 
 export interface ReviseTaskReviewResponse {
