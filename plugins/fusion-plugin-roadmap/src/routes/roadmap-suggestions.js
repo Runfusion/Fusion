@@ -1,4 +1,3 @@
-/* globals setTimeout */
 let injectedCreateAiSession;
 export const MILESTONE_SUGGESTION_SYSTEM_PROMPT = `You are a milestone planning assistant for a product roadmap system.
 
