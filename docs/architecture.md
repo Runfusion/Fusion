@@ -538,7 +538,7 @@ See [Memory Plugin Contract](./memory-plugin-contract.md) for the full plan.
 - `AgentRuntime` (`agent-runtime.ts`) — runtime adapter interface contract
 - `RuntimeResolution` (`runtime-resolution.ts`) — runtime selection and fallback logic
 - `AgentSessionHelpers` (`agent-session-helpers.ts`) — runtime-aware session creation helpers
-- `AgentActionGate` (`agent-action-gate.ts`) — permanent-agent runtime action classification + policy disposition decisions
+- `AgentActionGate` (`agent-action-gate.ts`) — permanent-agent runtime action classification + policy disposition decisions (shared classification source: `packages/engine/src/gating-classifications.ts`)
 
 Runtime action-gate flow (v1):
 - Tool execution wrappers in `pi.ts` compose `wrapToolsWithBoundary()` and `wrapToolsWithActionGate()`.

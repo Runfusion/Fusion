@@ -3,6 +3,13 @@ import type {
   AgentPermissionPolicyActionCategory,
   AgentPermissionPolicyDisposition,
 } from "@fusion/core";
+import {
+  ACTION_GATE_NETWORK_API_TOOLS,
+  ACTION_GATE_TASK_AGENT_MANAGEMENT_TOOLS,
+  COORDINATION_EXEMPT_TOOLS,
+  READONLY_BUILTIN_TOOLS,
+  classifyGitCommand,
+} from "./gating-classifications.js";
 import { runtimeLog } from "./logger.js";
 
 export type AgentActionGateResourceType = "file" | "git" | "task" | "agent" | "research" | "command" | "other";
@@ -32,31 +39,7 @@ export interface AgentActionGateContext {
 
 // FN-3724: Internal Fusion runtime/coordinator tools never perform external mutations.
 // They must bypass user-configurable approval/block policies so permanent-agent heartbeats cannot deadlock.
-const DEFAULT_EXEMPT_TOOLS = [
-  "read",
-  "find",
-  "grep",
-  "ls",
-  "fn_task_update",
-  "fn_task_log",
-  "fn_task_done",
-  "fn_task_document_write",
-  "fn_task_document_read",
-  "fn_memory_search",
-  "fn_memory_get",
-  "fn_read_messages",
-  "fn_heartbeat_done",
-  "fn_task_create",
-  "fn_delegate_task",
-  "fn_list_agents",
-  "fn_agent_show",
-  "fn_agent_org_chart",
-  "fn_send_message",
-  "fn_memory_append",
-  "fn_read_evaluations",
-  "fn_update_identity",
-  "fn_reflect_on_performance",
-] as const;
+const DEFAULT_EXEMPT_TOOLS = COORDINATION_EXEMPT_TOOLS;
 
 let _exemptTools: Set<string> | null = null;
 
@@ -95,43 +78,9 @@ export function getExemptToolNames(): string[] {
   return [...getExemptTools()];
 }
 
-const TASK_AGENT_MANAGEMENT_TOOLS = new Set([
-  "fn_task_create",
-  "fn_task_add_dep",
-  "fn_delegate_task",
-  "fn_spawn_agent",
-  "fn_update_agent_config",
-  "fn_update_identity",
-]);
-
-const NETWORK_API_TOOLS = new Set(["fn_research_run"]);
-
-const READONLY_DISCOVERY_TOOLS = new Set(["read", "find", "grep", "ls"]);
-
-const GIT_WRITE_SUBCOMMANDS = new Set([
-  "add",
-  "commit",
-  "merge",
-  "rebase",
-  "cherry-pick",
-  "am",
-  "apply",
-  "stash",
-  "tag",
-  "push",
-  "reset",
-  "rm",
-  "mv",
-  "clean",
-]);
-
-const GIT_READONLY_SUBCOMMANDS = new Set([
-  "status",
-  "diff",
-  "log",
-  "show",
-  "rev-parse",
-]);
+const TASK_AGENT_MANAGEMENT_TOOLS = ACTION_GATE_TASK_AGENT_MANAGEMENT_TOOLS;
+const NETWORK_API_TOOLS = ACTION_GATE_NETWORK_API_TOOLS;
+const READONLY_DISCOVERY_TOOLS = READONLY_BUILTIN_TOOLS;
 
 function normalizeArgs(args: unknown): Record<string, unknown> {
   return args && typeof args === "object" ? (args as Record<string, unknown>) : {};
@@ -142,61 +91,6 @@ function extractShellCommand(args: Record<string, unknown>): string {
   return typeof command === "string" ? command.trim() : "";
 }
 
-function classifyGitCommand(command: string): { write: boolean; operation: string } | null {
-  const match = command.match(/(?:^|&&|\|\||;|\n)\s*git\s+([^\s]+)/);
-  if (!match) return null;
-  const sub = match[1]?.trim() ?? "";
-  if (!sub) return { write: false, operation: "git" };
-
-  if (GIT_READONLY_SUBCOMMANDS.has(sub)) {
-    if (sub === "rev-parse" && /--show-current\b/.test(command)) {
-      return { write: false, operation: "git rev-parse --show-current" };
-    }
-    return { write: false, operation: `git ${sub}` };
-  }
-
-  if (sub === "branch") {
-    const mutatingFlags = /\s-d\b|\s-D\b|\s-m\b|\s-M\b|\s-c\b|\s-C\b/.test(command);
-    if (mutatingFlags) {
-      return { write: true, operation: "git branch" };
-    }
-    const tail = command.replace(/^[\s\S]*?\bgit\s+branch\b/, "").trim();
-    const hasPositionalArg = tail.length > 0 && !tail.startsWith("-");
-    if (hasPositionalArg) {
-      return { write: true, operation: "git branch" };
-    }
-    return { write: false, operation: /--show-current\b/.test(command) ? "git branch --show-current" : "git branch" };
-  }
-
-  if (sub === "switch") {
-    return { write: /\s-c\b/.test(command), operation: /\s-c\b/.test(command) ? "git switch -c" : "git switch" };
-  }
-
-  if (sub === "checkout") {
-    return { write: /\s-b\b/.test(command), operation: /\s-b\b/.test(command) ? "git checkout -b" : "git checkout" };
-  }
-
-  if (sub === "pull") {
-    return { write: /--rebase\b/.test(command), operation: /--rebase\b/.test(command) ? "git pull --rebase" : "git pull" };
-  }
-
-  if (sub === "restore") {
-    return { write: /--staged\b/.test(command), operation: /--staged\b/.test(command) ? "git restore --staged" : "git restore" };
-  }
-
-  if (sub === "remote") {
-    const write = /\s+add\b|\s+remove\b|\s+rename\b|\s+set-url\b/.test(command);
-    return { write, operation: /\s-v\b/.test(command) ? "git remote -v" : "git remote" };
-  }
-
-  if (sub === "worktree") {
-    if (/\s+add\b/.test(command)) return { write: true, operation: "git worktree add" };
-    if (/\s+remove\b/.test(command)) return { write: true, operation: "git worktree remove" };
-    return { write: false, operation: "git worktree" };
-  }
-
-  return { write: GIT_WRITE_SUBCOMMANDS.has(sub), operation: `git ${sub}` };
-}
 
 export function computeApprovalDedupeKey(input: {
   agentId: string;

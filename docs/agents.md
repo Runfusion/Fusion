@@ -88,6 +88,7 @@ Unknown/unclassified tool fallback:
 - Category `none` only yields `allow` when the tool is positively recognized as read-only.
 - Internal Fusion runtime coordination tools (heartbeat completion, task/agent coordination, messaging, evaluations, identity reflection, memory bookkeeping) are exempt by design and always allowed so permanent-agent heartbeats can complete.
 - Operators can reload the in-memory exempt-tool registry at runtime via `POST /api/action-gate/reload` (optional body `{ "tools": string[] }`) to apply exemption-list updates without restarting the engine process.
+- Canonical tool classification/exemption sets live in `packages/engine/src/gating-classifications.ts` and are shared by both action-gate paths.
 
 Interim enforcement behavior (persistence-integrated, pre-resume lifecycle):
 
