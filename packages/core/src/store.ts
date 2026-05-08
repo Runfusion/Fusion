@@ -3282,6 +3282,25 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           ...(runContext ? { runContext } : {}),
         });
       }
+      if (assignmentChanged) {
+        // Sync agent taskId columns so heartbeat dispatch routes to the correct agent.
+        // Uses direct SQL (same pattern as clearLinkedAgentTaskIds) to avoid a circular
+        // AgentStore reference — the shared SQLite database is the coordination point.
+        this.syncAgentTaskLinkOnReassignment(id, previousAssignedAgentId, task.assignedAgentId);
+
+        // Clear a stale checkout lease that belongs to the agent being replaced.
+        // A lease held by the old agent is no longer valid after reassignment.
+        if (task.checkedOutBy && task.checkedOutBy === previousAssignedAgentId) {
+          task.checkedOutBy = undefined;
+          task.checkedOutAt = undefined;
+        }
+
+        task.log.push({
+          timestamp: new Date().toISOString(),
+          action: `Agent task link synced: ${previousAssignedAgentId ?? 'none'} → ${task.assignedAgentId ?? 'none'}`,
+          ...(runContext ? { runContext } : {}),
+        });
+      }
       if (updates.pausedByAgentId === null) {
         task.pausedByAgentId = undefined;
       } else if (updates.pausedByAgentId !== undefined) {
