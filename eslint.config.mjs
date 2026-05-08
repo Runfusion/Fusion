@@ -32,6 +32,8 @@ export default tseslint.config(
       // Project metadata (fn data, worktrees, etc.)
       ".fusion/**",
       ".worktrees/**",
+      // Vitest temporary workspace resolution directories
+      ".tmp-fn-*/**",
       ".claude/**",
       // Lock files
       "*.lock",
