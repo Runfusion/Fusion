@@ -18,6 +18,7 @@ vi.mock("../../api", () => ({
   fetchAgentLogs: vi.fn(),
   fetchAgentLogsWithMeta: vi.fn(),
   fetchAgentMailbox: vi.fn(),
+  markMessageRead: vi.fn(),
   fetchAgentRunLogs: vi.fn(),
   fetchAgentChildren: vi.fn(),
   fetchAgentRuns: vi.fn(),
@@ -160,7 +161,7 @@ vi.mock("../../hooks/useConfirm", () => ({
   useConfirm: () => ({ confirm: mockConfirm }),
 }));
 
-import { fetchAgent, fetchAgents, updateAgent, updateAgentState, deleteAgent, fetchAgentChildren, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchDiscoveredSkills, fetchSkillContent, fetchModels, fetchPluginRuntimes, fetchAgentLogsWithMeta, fetchAgentMailbox, upgradeAgentHeartbeatProcedure, updateGlobalSettings, fetchCompanies } from "../../api";
+import { fetchAgent, fetchAgents, updateAgent, updateAgentState, deleteAgent, fetchAgentChildren, fetchAgentRunLogs, fetchAgentRuns, fetchAgentRunDetail, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchDiscoveredSkills, fetchSkillContent, fetchModels, fetchPluginRuntimes, fetchAgentLogsWithMeta, fetchAgentMailbox, markMessageRead, upgradeAgentHeartbeatProcedure, updateGlobalSettings, fetchCompanies } from "../../api";
 import { subscribeSse } from "../../sse-bus";
 
 const mockFetchAgent = vi.mocked(fetchAgent);
@@ -190,6 +191,7 @@ const mockFetchModels = vi.mocked(fetchModels);
 const mockFetchPluginRuntimes = vi.mocked(fetchPluginRuntimes);
 const mockFetchAgentLogsWithMeta = vi.mocked(fetchAgentLogsWithMeta);
 const mockFetchAgentMailbox = vi.mocked(fetchAgentMailbox);
+const mockMarkMessageRead = vi.mocked(markMessageRead);
 const mockUpgradeAgentHeartbeatProcedure = vi.mocked(upgradeAgentHeartbeatProcedure);
 const mockUpdateGlobalSettings = vi.mocked(updateGlobalSettings);
 const mockFetchCompanies = vi.mocked(fetchCompanies);
@@ -267,6 +269,18 @@ describe("AgentDetailView", () => {
       inbox: [],
       outbox: [],
     });
+    mockMarkMessageRead.mockResolvedValue({
+      id: "msg-default",
+      fromId: "dashboard",
+      fromType: "user",
+      toId: "agent-001",
+      toType: "agent",
+      content: "",
+      type: "user-to-agent",
+      read: true,
+      createdAt: "2024-01-01T00:00:00.000Z",
+      updatedAt: "2024-01-01T00:00:00.000Z",
+    } as any);
     // Default: no budget limit configured
     mockFetchAgentBudgetStatus.mockResolvedValue({
       agentId: "agent-001",
@@ -791,6 +805,130 @@ describe("AgentDetailView", () => {
     await waitFor(() => {
       expect(screen.getByText("Sent message")).toBeInTheDocument();
     });
+  });
+
+  it("opens message detail and supports going back to list", async () => {
+    const user = userEvent.setup();
+    mockFetchAgentMailbox.mockResolvedValue({
+      ownerId: "agent-001",
+      ownerType: "agent",
+      unreadCount: 1,
+      messages: [],
+      inbox: [
+        {
+          id: "msg-1",
+          fromId: "dashboard",
+          fromType: "user",
+          toId: "agent-001",
+          toType: "agent",
+          content: "First line\nSecond line with full body",
+          type: "user-to-agent",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+          metadata: { replyTo: { messageId: "msg-0" } },
+          read: true,
+        },
+      ],
+      outbox: [],
+    } as any);
+
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />,
+    );
+
+    await user.click(await screen.findByText("Mail"));
+    await user.click(await screen.findByRole("button", { name: /You/i }));
+
+    expect(await screen.findByTestId("agent-detail-mail-message")).toBeInTheDocument();
+    expect(screen.getByText(/First line\s*Second line with full body/)).toBeInTheDocument();
+    expect(screen.getByText(/Replying to message msg-0/)).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("agent-detail-mail-back"));
+    expect(await screen.findByTestId("agent-detail-mail-list")).toBeInTheDocument();
+  });
+
+  it("marks unread inbox messages as read and refreshes mailbox", async () => {
+    const user = userEvent.setup();
+    mockFetchAgentMailbox.mockResolvedValue({
+      ownerId: "agent-001",
+      ownerType: "agent",
+      unreadCount: 1,
+      messages: [],
+      inbox: [
+        {
+          id: "msg-1",
+          fromId: "dashboard",
+          fromType: "user",
+          toId: "agent-001",
+          toType: "agent",
+          content: "Unread message",
+          type: "user-to-agent",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+          read: false,
+        },
+      ],
+      outbox: [],
+    } as any);
+
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        projectId="proj-1"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />,
+    );
+
+    await user.click(await screen.findByText("Mail"));
+    await user.click(await screen.findByRole("button", { name: /You/i }));
+
+    await waitFor(() => {
+      expect(mockMarkMessageRead).toHaveBeenCalledWith("msg-1", "proj-1");
+      expect(mockFetchAgentMailbox).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("does not mark already read inbox messages", async () => {
+    const user = userEvent.setup();
+    mockFetchAgentMailbox.mockResolvedValue({
+      ownerId: "agent-001",
+      ownerType: "agent",
+      unreadCount: 0,
+      messages: [],
+      inbox: [
+        {
+          id: "msg-1",
+          fromId: "dashboard",
+          fromType: "user",
+          toId: "agent-001",
+          toType: "agent",
+          content: "Read message",
+          type: "user-to-agent",
+          createdAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+          read: true,
+        },
+      ],
+      outbox: [],
+    } as any);
+
+    render(
+      <AgentDetailView
+        agentId="agent-001"
+        onClose={vi.fn()}
+        addToast={vi.fn()}
+      />,
+    );
+
+    await user.click(await screen.findByText("Mail"));
+    await user.click(await screen.findByRole("button", { name: /You/i }));
+
+    expect(mockMarkMessageRead).not.toHaveBeenCalled();
   });
 
   it("renders redesigned dashboard summary sections", async () => {

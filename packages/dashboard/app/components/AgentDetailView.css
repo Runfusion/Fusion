@@ -604,6 +604,68 @@
   padding: var(--space-md) 0;
 }
 
+.agent-mail-tab .agent-mail-tab-message {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.agent-mail-tab .agent-mail-tab-message:hover {
+  background: var(--card-hover);
+}
+
+.agent-mail-tab .agent-mail-tab-message:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.agent-mail-tab .agent-mail-tab-message--selected {
+  background: color-mix(in srgb, var(--todo) 12%, transparent);
+}
+
+.agent-mail-tab .agent-mail-tab-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.agent-mail-tab .agent-mail-tab-back {
+  align-self: flex-start;
+}
+
+.agent-mail-tab .agent-mail-tab-detail-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.agent-mail-tab .agent-mail-tab-detail-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+.agent-mail-tab .agent-mail-tab-detail-label {
+  color: var(--text-muted);
+  min-width: calc(var(--space-2xl) * 2);
+}
+
+.agent-mail-tab .agent-mail-tab-reply-context {
+  color: var(--text-muted);
+}
+
+.agent-mail-tab .agent-mail-tab-detail-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* --- Runs Tab --- */
 .runs-tab {
   display: flex;
@@ -1676,6 +1738,15 @@
 
   .agent-mail-tab .mailbox-agent-subtab {
     flex: 1;
+  }
+
+  .agent-mail-tab .agent-mail-tab-detail {
+    width: 100%;
+    padding: var(--space-md);
+  }
+
+  .agent-mail-tab .agent-mail-tab-back {
+    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
   }
 
   /* Runs Tab mobile */

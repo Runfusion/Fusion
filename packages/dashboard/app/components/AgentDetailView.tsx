@@ -12,7 +12,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { AgentDetail, AgentState, AgentHeartbeatRun, AgentBudgetStatus, ModelInfo, MemoryFileInfo, AgentCapability, PluginRuntimeInfo, SkillContent, AgentOnboardingSummary, AgentMailboxResponse } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, upgradeAgentHeartbeatProcedure, updateGlobalSettings, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, upgradeAgentHeartbeatProcedure, updateGlobalSettings, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox, markMessageRead } from "../api";
 import type { Agent } from "../api";
 import type { AgentLogEntry, Task, Message, ParticipantType } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
@@ -689,6 +689,8 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
               mailbox={agentMailbox}
               isLoading={isLoadingMailbox}
               error={mailboxError}
+              projectId={projectId}
+              addToast={addToast}
               onRefresh={() => void loadMailbox()}
             />
           )}
@@ -1201,21 +1203,59 @@ function MailTab({
   mailbox,
   isLoading,
   error,
+  projectId,
+  addToast,
   onRefresh,
 }: {
   agent: AgentDetail;
   mailbox: AgentMailboxResponse | null;
   isLoading: boolean;
   error: string | null;
+  projectId?: string;
+  addToast?: (message: string, type?: "success" | "error") => void;
   onRefresh: () => void;
 }) {
   const [activeSubtab, setActiveSubtab] = useState<"inbox" | "outbox">("inbox");
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const messages = activeSubtab === "inbox" ? (mailbox?.inbox ?? []) : (mailbox?.outbox ?? []);
+  const selectedMessage = selectedMessageId ? messages.find((message) => message.id === selectedMessageId) ?? null : null;
+
+  useEffect(() => {
+    setSelectedMessageId(null);
+  }, [activeSubtab, agent.id]);
+
+  const handleMessageClick = async (message: Message) => {
+    setSelectedMessageId(message.id);
+
+    if (activeSubtab !== "inbox" || message.read) {
+      return;
+    }
+
+    try {
+      await markMessageRead(message.id, projectId);
+      onRefresh();
+    } catch (err) {
+      const errorMessage = `Failed to mark message as read: ${getErrorMessage(err)}`;
+      if (addToast) {
+        addToast(errorMessage, "error");
+      } else {
+        console.warn(errorMessage);
+      }
+    }
+  };
+
+  const handleRefresh = () => {
+    setSelectedMessageId(null);
+    onRefresh();
+  };
 
   const renderMessage = (message: Message) => (
-    <div
+    <button
       key={message.id}
-      className={cn("mailbox-item", activeSubtab === "inbox" && !message.read && "unread")}
+      type="button"
+      className={cn("mailbox-item", "agent-mail-tab-message", activeSubtab === "inbox" && !message.read && "unread", selectedMessageId === message.id && "agent-mail-tab-message--selected")}
+      onClick={() => void handleMessageClick(message)}
+      aria-pressed={selectedMessageId === message.id}
     >
       <div className="mailbox-item-avatar">
         {(activeSubtab === "inbox" ? message.fromType : message.toType) === "agent" ? <Bot size={16} /> : <User size={16} />}
@@ -1232,14 +1272,14 @@ function MailTab({
         <div className="mailbox-item-preview">{message.content.slice(0, 80)}{message.content.length > 80 ? "…" : ""}</div>
       </div>
       {activeSubtab === "inbox" && !message.read ? <div className="mailbox-item-unread-dot" aria-label="Unread message" /> : null}
-    </div>
+    </button>
   );
 
   return (
     <div className="agent-mail-tab">
       <div className="agent-mail-tab-header">
         <h3>{agent.name} Mail</h3>
-        <button className="btn btn-sm" onClick={onRefresh} disabled={isLoading}>
+        <button className="btn btn-sm" onClick={handleRefresh} disabled={isLoading}>
           <RefreshCw size={14} />
           Refresh
         </button>
@@ -1278,16 +1318,52 @@ function MailTab({
       ) : null}
 
       {!isLoading && !error ? (
-        <div className="mailbox-list" data-testid="agent-detail-mail-list">
-          {messages.length === 0 ? (
-            <div className="mailbox-empty" data-testid="agent-detail-mail-empty">
-              {activeSubtab === "inbox" ? <InboxIcon size={32} /> : <Send size={32} />}
-              <p>{activeSubtab === "inbox" ? "No received messages for this agent" : "No sent messages for this agent"}</p>
+        selectedMessage ? (
+          <div className="agent-mail-tab-detail" data-testid="agent-detail-mail-message">
+            <button
+              type="button"
+              className="btn btn-sm agent-mail-tab-back"
+              data-testid="agent-detail-mail-back"
+              onClick={() => setSelectedMessageId(null)}
+            >
+              <ChevronLeft size={14} />
+              Back to {activeSubtab === "inbox" ? "Inbox" : "Outbox"}
+            </button>
+            <div className="agent-mail-tab-detail-meta">
+              <div className="agent-mail-tab-detail-row">
+                <span className="agent-mail-tab-detail-label">From</span>
+                <span>{mailboxParticipantLabel(selectedMessage.fromId, selectedMessage.fromType)}</span>
+              </div>
+              <div className="agent-mail-tab-detail-row">
+                <span className="agent-mail-tab-detail-label">To</span>
+                <span>{mailboxParticipantLabel(selectedMessage.toId, selectedMessage.toType)}</span>
+              </div>
+              <div className="agent-mail-tab-detail-row">
+                <span className="agent-mail-tab-detail-label">Type</span>
+                <span>{selectedMessage.type}</span>
+              </div>
+              <div className="agent-mail-tab-detail-row">
+                <span className="agent-mail-tab-detail-label">Sent</span>
+                <span>{new Date(selectedMessage.createdAt).toLocaleString()}</span>
+              </div>
+              {selectedMessage.metadata?.replyTo?.messageId ? (
+                <div className="agent-mail-tab-reply-context">↪ Replying to message {selectedMessage.metadata.replyTo.messageId}</div>
+              ) : null}
             </div>
-          ) : (
-            messages.map(renderMessage)
-          )}
-        </div>
+            <div className="agent-mail-tab-detail-body">{selectedMessage.content}</div>
+          </div>
+        ) : (
+          <div className="mailbox-list" data-testid="agent-detail-mail-list">
+            {messages.length === 0 ? (
+              <div className="mailbox-empty" data-testid="agent-detail-mail-empty">
+                {activeSubtab === "inbox" ? <InboxIcon size={32} /> : <Send size={32} />}
+                <p>{activeSubtab === "inbox" ? "No received messages for this agent" : "No sent messages for this agent"}</p>
+              </div>
+            ) : (
+              messages.map(renderMessage)
+            )}
+          </div>
+        )
       ) : null}
     </div>
   );
