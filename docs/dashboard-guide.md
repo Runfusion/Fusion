@@ -102,6 +102,8 @@ Quick Chat is an optional floating panel for fast, project-scoped assistant conv
 Mailbox view shows inbox/outbox communication threads and unread state.
 
 - Inbox renders one row per message (no sender-based collapsing)
+- clicking a message in the Mail tab opens the task detail pane with full message content and conversation context
+- reply rows in the mailbox modal can expand inline to show the replied-to message context for easier thread reading
 - Visible message history/threading is driven by explicit `message.metadata.replyTo.messageId` links
 - Separate top-level messages from the same sender remain independent in the inbox and detail pane
 
