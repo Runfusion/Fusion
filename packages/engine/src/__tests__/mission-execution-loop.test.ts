@@ -472,7 +472,7 @@ describe("MissionExecutionLoop", () => {
       );
     });
 
-    it("creates validation board task when feature has assertions", async () => {
+    it("does NOT create a board task for single-feature validation", async () => {
       const feature = createMockFeature({ loopState: "implementing", taskId: "FN-001", sliceId: "SL-001" });
       missionStore._setFeature(feature);
       taskStore._setTask({ id: "FN-001", title: "Test", description: "Test task", log: [] });
@@ -490,17 +490,14 @@ describe("MissionExecutionLoop", () => {
 
       await loop.processTaskOutcome("FN-001");
 
-      // Should create a validation board task
-      expect(taskStore.createTask).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: expect.stringContaining("Validate:"),
-          column: "in-progress",
-          sliceId: "SL-001",
-        }),
-      );
+      // Must NOT create any board task (policy: docs/task-authoring-standards.md §5)
+      expect(taskStore.createTask).toHaveBeenCalledTimes(0);
+
+      // Internal validation still runs
+      expect(missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion");
     });
 
-    it("sets validation task status to mission-validation", async () => {
+    it("does NOT set mission-validation status on any task", async () => {
       const feature = createMockFeature({ loopState: "implementing", taskId: "FN-001", sliceId: "SL-001" });
       missionStore._setFeature(feature);
       taskStore._setTask({ id: "FN-001", title: "Test", description: "Test task", log: [] });
@@ -518,14 +515,14 @@ describe("MissionExecutionLoop", () => {
 
       await loop.processTaskOutcome("FN-001");
 
-      // Should update the task status to mission-validation
-      expect(taskStore.updateTask).toHaveBeenCalledWith(
+      // Must NOT set mission-validation status on any task (no board task created)
+      expect(taskStore.updateTask).not.toHaveBeenCalledWith(
         expect.any(String),
         expect.objectContaining({ status: "mission-validation" }),
       );
     });
 
-    it("passes taskId to startValidatorRun", async () => {
+    it("calls startValidatorRun without a board task ID", async () => {
       const feature = createMockFeature({ loopState: "implementing", taskId: "FN-001", sliceId: "SL-001" });
       missionStore._setFeature(feature);
       taskStore._setTask({ id: "FN-001", title: "Test", description: "Test task", log: [] });
@@ -533,8 +530,6 @@ describe("MissionExecutionLoop", () => {
       missionStore.listAssertionsForFeature = vi.fn().mockReturnValue([
         { id: "CA-1", milestoneId: "MS-001", title: "Test assertion", assertion: "Should work", status: "pending" as const, orderIndex: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
       ]);
-      // Make createTask return a predictable ID
-      taskStore.createTask = vi.fn().mockResolvedValue({ id: "KB-999" });
 
       loop = new MissionExecutionLoop({
         taskStore: taskStore as any,
@@ -545,12 +540,94 @@ describe("MissionExecutionLoop", () => {
 
       await loop.processTaskOutcome("FN-001");
 
-      // Should pass the created task ID to startValidatorRun
+      // Third argument must be absent (undefined) — no board task is created
       expect(missionStore.startValidatorRun).toHaveBeenCalledWith(
         "F-001",
         "task_completion",
-        "KB-999",
       );
+    });
+
+    it("validation pass does not create or move any board task", async () => {
+      const assertions = makeAssertions(1);
+      const passResponse = JSON.stringify({
+        status: "pass",
+        assertions: [{ assertionId: "CA-1", passed: true, message: "OK" }],
+        summary: "All assertions passed",
+      });
+      mockSessionHolder.session.state.messages = [
+        { role: "user", content: "Validate this" },
+        { role: "assistant", content: passResponse },
+      ];
+
+      const feature = createMockFeature({ loopState: "implementing", taskId: "FN-001", sliceId: "SL-001" });
+      missionStore._setFeature(feature);
+      missionStore.getFeatureByTaskId = vi.fn().mockReturnValue(feature);
+      missionStore.listAssertionsForFeature = vi.fn().mockReturnValue(assertions);
+      taskStore._setTask({ id: "FN-001", title: "Test", description: "Test task", log: [] });
+
+      loop = new MissionExecutionLoop({
+        taskStore: taskStore as any,
+        missionStore: missionStore as any,
+        rootDir: "/tmp",
+      });
+      loop.start();
+
+      await loop.processTaskOutcome("FN-001");
+
+      // No board task created
+      expect(taskStore.createTask).toHaveBeenCalledTimes(0);
+      // No mission-validation status update
+      expect(taskStore.updateTask).not.toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ status: "mission-validation" }),
+      );
+      // Internal validation still ran
+      expect(missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion");
+    });
+
+    it("validation fail creates Fix feature but no Validate board task", async () => {
+      const assertions = makeAssertions(1);
+      const failResponse = JSON.stringify({
+        status: "fail",
+        assertions: [{ assertionId: "CA-1", passed: false, message: "Failed", expected: "ok", actual: "not ok" }],
+        summary: "Assertion failed",
+      });
+      mockSessionHolder.session.state.messages = [
+        { role: "user", content: "Validate this" },
+        { role: "assistant", content: failResponse },
+      ];
+
+      const feature = createMockFeature({
+        loopState: "implementing",
+        taskId: "FN-001",
+        sliceId: "SL-001",
+        implementationAttemptCount: 1,
+      });
+      missionStore._setFeature(feature);
+      missionStore.getFeatureByTaskId = vi.fn().mockReturnValue(feature);
+      missionStore.listAssertionsForFeature = vi.fn().mockReturnValue(assertions);
+      taskStore._setTask({ id: "FN-001", title: "Test", description: "Test task", log: [] });
+
+      loop = new MissionExecutionLoop({
+        taskStore: taskStore as any,
+        missionStore: missionStore as any,
+        rootDir: "/tmp",
+      });
+      loop.start();
+
+      await loop.processTaskOutcome("FN-001");
+
+      // No board task created
+      expect(taskStore.createTask).toHaveBeenCalledTimes(0);
+      // Fix feature and triage still happen
+      expect(missionStore.createGeneratedFixFeature).toHaveBeenCalledWith(
+        "F-001",
+        expect.any(String),
+        expect.arrayContaining(["CA-1"]),
+      );
+      expect(missionStore.triageFeature).toHaveBeenCalledWith(expect.stringContaining("FIX-"));
+      // Internal validation still ran
+      expect(missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion");
     });
   });
 
