@@ -13,7 +13,13 @@ const RUNTIME_PLUGIN_IDS = [
   "fusion-plugin-openclaw-runtime",
   "fusion-plugin-paperclip-runtime",
   "fusion-plugin-cursor-runtime",
+  "fusion-plugin-droid-runtime",
 ] as const;
+
+const RUNTIME_PLUGINS_WITH_MCP_SCHEMA_SERVER = new Set([
+  "fusion-plugin-openclaw-runtime",
+  "fusion-plugin-droid-runtime",
+]);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const dashboardClientSrc = join(__dirname, "..", "dashboard", "dist", "client");
@@ -214,11 +220,11 @@ export default defineConfig({
         logLevel: "warning",
       });
 
-      if (pluginId === "fusion-plugin-openclaw-runtime") {
+      if (RUNTIME_PLUGINS_WITH_MCP_SCHEMA_SERVER.has(pluginId)) {
         const mcpServerAsset = join(pluginSrcDir, "src", "mcp-schema-server.cjs");
         if (!existsSync(mcpServerAsset)) {
           throw new Error(
-            `[tsup] Missing required openclaw bridge asset at ${mcpServerAsset}; expected committed source file mcp-schema-server.cjs.`,
+            `[tsup] Missing required bridge asset for ${pluginId} at ${mcpServerAsset}; expected committed source file mcp-schema-server.cjs.`,
           );
         }
         cpSync(mcpServerAsset, join(pluginDestDir, "mcp-schema-server.cjs"));

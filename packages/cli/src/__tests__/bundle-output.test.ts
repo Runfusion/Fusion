@@ -189,6 +189,17 @@ describe("CLI bundle output", () => {
     expect(existsSync(join(stagedRoot, "mcp-schema-server.cjs"))).toBe(true);
   });
 
+  it("dist/plugins/fusion-plugin-droid-runtime/ is staged with required bridge assets", () => {
+    const stagedRoot = join(cliRoot, "dist", "plugins", "fusion-plugin-droid-runtime");
+    const manifestPath = join(stagedRoot, "manifest.json");
+
+    expect(existsSync(manifestPath)).toBe(true);
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as { id?: string };
+    expect(manifest.id).toBe("fusion-plugin-droid-runtime");
+    expect(existsSync(join(stagedRoot, "bundled.js"))).toBe(true);
+    expect(existsSync(join(stagedRoot, "mcp-schema-server.cjs"))).toBe(true);
+  });
+
   it("dist/plugins/fusion-plugin-cursor-runtime/ is staged with a valid manifest", () => {
     const stagedRoot = join(cliRoot, "dist", "plugins", "fusion-plugin-cursor-runtime");
     const manifestPath = join(stagedRoot, "manifest.json");

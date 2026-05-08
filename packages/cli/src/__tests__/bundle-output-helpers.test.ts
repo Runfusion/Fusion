@@ -16,6 +16,7 @@ import {
   bundlePath,
   clientIndexPath,
   dashboardClientStubMarker,
+  droidPluginMcpServerPath,
   hasBuiltDashboardAssets,
   openclawMcpSchemaServerPath,
 } from "./bundle-output-helpers";
@@ -39,11 +40,21 @@ describe("hasBuiltDashboardAssets", () => {
     expect(hasBuiltDashboardAssets()).toBe(false);
   });
 
+  it("returns false when droid mcp-schema-server.cjs is missing", () => {
+    state.existingPaths.add(bundlePath);
+    state.existingPaths.add(clientIndexPath);
+    state.existingPaths.add(cursorPluginManifestPath);
+    state.existingPaths.add(openclawMcpSchemaServerPath);
+
+    expect(hasBuiltDashboardAssets()).toBe(false);
+  });
+
   it("returns true when all required assets exist and dashboard stub marker is absent", () => {
     state.existingPaths.add(bundlePath);
     state.existingPaths.add(clientIndexPath);
     state.existingPaths.add(cursorPluginManifestPath);
     state.existingPaths.add(openclawMcpSchemaServerPath);
+    state.existingPaths.add(droidPluginMcpServerPath);
 
     expect(hasBuiltDashboardAssets()).toBe(true);
   });
@@ -53,6 +64,7 @@ describe("hasBuiltDashboardAssets", () => {
     state.existingPaths.add(clientIndexPath);
     state.existingPaths.add(cursorPluginManifestPath);
     state.existingPaths.add(openclawMcpSchemaServerPath);
+    state.existingPaths.add(droidPluginMcpServerPath);
     state.indexHtml = dashboardClientStubMarker;
 
     expect(hasBuiltDashboardAssets()).toBe(false);

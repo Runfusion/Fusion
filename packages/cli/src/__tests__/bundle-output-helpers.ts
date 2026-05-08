@@ -14,6 +14,13 @@ export const openclawMcpSchemaServerPath = join(
   "fusion-plugin-openclaw-runtime",
   "mcp-schema-server.cjs",
 );
+export const droidPluginMcpServerPath = join(
+  cliRoot,
+  "dist",
+  "plugins",
+  "fusion-plugin-droid-runtime",
+  "mcp-schema-server.cjs",
+);
 
 export const dashboardClientStubMarker = "Dashboard assets not built";
 
@@ -40,7 +47,8 @@ export function hasBuiltDashboardAssets(): boolean {
     !existsSync(bundlePath) ||
     !existsSync(clientIndexPath) ||
     !existsSync(cursorPluginManifestPath) ||
-    !existsSync(openclawMcpSchemaServerPath)
+    !existsSync(openclawMcpSchemaServerPath) ||
+    !existsSync(droidPluginMcpServerPath)
   ) {
     return false;
   }
