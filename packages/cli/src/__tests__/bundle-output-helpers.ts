@@ -7,6 +7,13 @@ export const workspaceRoot = join(cliRoot, "..", "..");
 export const bundlePath = join(cliRoot, "dist", "bin.js");
 export const clientIndexPath = join(cliRoot, "dist", "client", "index.html");
 const cursorPluginManifestPath = join(cliRoot, "dist", "plugins", "fusion-plugin-cursor-runtime", "manifest.json");
+export const openclawMcpSchemaServerPath = join(
+  cliRoot,
+  "dist",
+  "plugins",
+  "fusion-plugin-openclaw-runtime",
+  "mcp-schema-server.cjs",
+);
 
 export const dashboardClientStubMarker = "Dashboard assets not built";
 
@@ -28,8 +35,13 @@ function runBuildCommand(command: string, cwd: string) {
   });
 }
 
-function hasBuiltDashboardAssets(): boolean {
-  if (!existsSync(bundlePath) || !existsSync(clientIndexPath) || !existsSync(cursorPluginManifestPath)) {
+export function hasBuiltDashboardAssets(): boolean {
+  if (
+    !existsSync(bundlePath) ||
+    !existsSync(clientIndexPath) ||
+    !existsSync(cursorPluginManifestPath) ||
+    !existsSync(openclawMcpSchemaServerPath)
+  ) {
     return false;
   }
 

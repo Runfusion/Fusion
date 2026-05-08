@@ -216,9 +216,12 @@ export default defineConfig({
 
       if (pluginId === "fusion-plugin-openclaw-runtime") {
         const mcpServerAsset = join(pluginSrcDir, "src", "mcp-schema-server.cjs");
-        if (existsSync(mcpServerAsset)) {
-          cpSync(mcpServerAsset, join(pluginDestDir, "mcp-schema-server.cjs"));
+        if (!existsSync(mcpServerAsset)) {
+          throw new Error(
+            `[tsup] Missing required openclaw bridge asset at ${mcpServerAsset}; expected committed source file mcp-schema-server.cjs.`,
+          );
         }
+        cpSync(mcpServerAsset, join(pluginDestDir, "mcp-schema-server.cjs"));
       }
 
       console.log(`Bundled runtime plugin ${pluginId} to dist/plugins/${pluginId}/bundled.js`);

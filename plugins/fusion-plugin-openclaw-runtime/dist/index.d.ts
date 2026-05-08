@@ -12,8 +12,9 @@ declare const plugin: FusionPlugin;
 export default plugin;
 export { openclawRuntimeMetadata, openclawRuntimeFactory, OPENCLAW_RUNTIME_ID };
 export { OpenClawRuntimeAdapter } from "./runtime-adapter.js";
-export { resolveCliConfig, buildOpenClawArgs, createCliSession, promptCli, describeCliModel, extractStderrError, } from "./pi-module.js";
+export { resolveCliConfig, buildOpenClawArgs, createCliSession, promptCli, describeCliModel, extractStderrError, configureOpenClawMcpServer, } from "./pi-module.js";
 export type { CliConfig, GatewaySession, OpenClawAgentJson } from "./types.js";
+export { toolsToMcpToolDefs, writeOpenClawMcpBridgeFiles, } from "./mcp-config.js";
 export { probeOpenClawBinary } from "./probe.js";
 export type { OpenClawBinaryStatus } from "./probe.js";
 //# sourceMappingURL=index.d.ts.map

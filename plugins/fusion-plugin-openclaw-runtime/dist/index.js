@@ -57,7 +57,8 @@ export default plugin;
 // ── Public exports ────────────────────────────────────────────────────────────
 export { openclawRuntimeMetadata, openclawRuntimeFactory, OPENCLAW_RUNTIME_ID };
 export { OpenClawRuntimeAdapter } from "./runtime-adapter.js";
-export { resolveCliConfig, buildOpenClawArgs, createCliSession, promptCli, describeCliModel, extractStderrError, } from "./pi-module.js";
+export { resolveCliConfig, buildOpenClawArgs, createCliSession, promptCli, describeCliModel, extractStderrError, configureOpenClawMcpServer, } from "./pi-module.js";
+export { toolsToMcpToolDefs, writeOpenClawMcpBridgeFiles, } from "./mcp-config.js";
 // Probe re-export for the dashboard's runtime-provider-probes façade.
 export { probeOpenClawBinary } from "./probe.js";
 //# sourceMappingURL=index.js.map
