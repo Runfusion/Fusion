@@ -307,6 +307,41 @@ describe("TaskDetailModal", () => {
     expect(screen.getByText("Comments")).toBeTruthy();
   });
 
+  it("shows non-PR review shell message in Review tab", () => {
+    render(
+      <TaskDetailModal
+        task={makeTask({ reviewState: { source: "reviewer-agent", items: [], addressing: [] } })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(screen.getByText("GitHub PR review details are only available when auto-merge uses Pull Request mode. Reviewer-agent feedback will appear here in direct mode.")).toBeTruthy();
+  });
+
+  it("shows PR review decision details in Review tab", () => {
+    render(
+      <TaskDetailModal
+        task={makeTask({ reviewState: { source: "pull-request", summary: { reviewDecision: "CHANGES_REQUESTED", reviewers: [{ login: "octocat", state: "CHANGES_REQUESTED" }], blockingReasons: ["changes requested review is active"], checks: [] }, items: [], addressing: [] } })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(screen.getByText("CHANGES_REQUESTED")).toBeTruthy();
+    expect(screen.getByText("changes requested review is active")).toBeTruthy();
+  });
+
   describe("inline execution mode toggle", () => {
     it("renders standard mode as an unpressed toggle", () => {
       render(

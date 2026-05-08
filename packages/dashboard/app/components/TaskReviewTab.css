@@ -31,16 +31,17 @@
   text-transform: capitalize;
 }
 
-.task-review-tab__decision--approved {
+.task-review-tab__decision--APPROVED {
   color: var(--color-success);
 }
 
-.task-review-tab__decision--changes-requested {
+.task-review-tab__decision--CHANGES_REQUESTED {
   color: var(--color-error);
 }
 
-.task-review-tab__decision--commented,
-.task-review-tab__decision--pending {
+.task-review-tab__decision--COMMENTED,
+.task-review-tab__decision--PENDING,
+.task-review-tab__decision--REVIEW_REQUIRED {
   color: var(--color-warning);
 }
 
@@ -91,8 +92,24 @@
   color: var(--color-success);
 }
 
+.task-review-tab__meta,
 .task-review-tab__empty {
   color: var(--text-muted);
+}
+
+.task-review-tab__error {
+  color: var(--color-error);
+}
+
+.task-review-tab__reviewers,
+.task-review-tab__blockers {
+  margin: 0;
+  padding-left: var(--space-lg);
+  color: var(--text-muted);
+}
+
+.task-review-tab__reviewer {
+  color: var(--text);
 }
 
 @media (max-width: 768px) {

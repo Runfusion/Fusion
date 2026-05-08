@@ -1,5 +1,5 @@
 import { RoadmapStore } from "../store/roadmap-store.js";
-import { generateFeatureSuggestions, generateMilestoneSuggestions, ParseError as SuggestionParseError, ServiceUnavailableError as SuggestionServiceUnavailableError, validateFeatureSuggestionInput, validateSuggestionInput, ValidationError as SuggestionValidationError, } from "./roadmap-suggestions.js";
+import { generateFeatureSuggestions, generateMilestoneSuggestions, SUGGESTION_TIMEOUT_MS, ParseError as SuggestionParseError, ServiceUnavailableError as SuggestionServiceUnavailableError, validateFeatureSuggestionInput, validateSuggestionInput, ValidationError as SuggestionValidationError, } from "./roadmap-suggestions.js";
 const roadmapStoreCache = new WeakMap();
 function getRoadmapStore(ctx) {
     const taskStoreWithRoadmaps = ctx.taskStore;
@@ -357,5 +357,5 @@ export function createRoadmapPluginRoutes() {
         },
     ];
 }
-export { SUGGESTION_TIMEOUT_MS } from "./roadmap-suggestions.js";
+export { SUGGESTION_TIMEOUT_MS };
 //# sourceMappingURL=roadmap-routes.js.map

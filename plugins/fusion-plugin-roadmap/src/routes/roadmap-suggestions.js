@@ -195,7 +195,7 @@ export async function generateMilestoneSuggestions(goalPrompt, count = DEFAULT_S
                 dispose?.();
             }
         })(),
-        new Promise((_, reject) => setTimeout(() => reject(new ServiceUnavailableError("AI suggestion generation timed out. Please try again.")), SUGGESTION_TIMEOUT_MS)),
+        new Promise((_, reject) => globalThis.setTimeout(() => reject(new ServiceUnavailableError("AI suggestion generation timed out. Please try again.")), SUGGESTION_TIMEOUT_MS)),
     ]);
     return result;
 }
@@ -262,7 +262,7 @@ export async function generateFeatureSuggestions(context, count = DEFAULT_SUGGES
                 dispose?.();
             }
         })(),
-        new Promise((_, reject) => setTimeout(() => reject(new ServiceUnavailableError("AI suggestion generation timed out. Please try again.")), SUGGESTION_TIMEOUT_MS)),
+        new Promise((_, reject) => globalThis.setTimeout(() => reject(new ServiceUnavailableError("AI suggestion generation timed out. Please try again.")), SUGGESTION_TIMEOUT_MS)),
     ]);
     return result;
 }

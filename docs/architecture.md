@@ -1252,3 +1252,24 @@ Git dashboard routes are registered in `register-git-github.ts`.
 - **Multi-project orchestrator:** `packages/engine/src/hybrid-executor.ts`
 - **Task routing resolver:** `packages/engine/src/effective-node.ts`
 - **Node override guard:** `packages/core/src/node-override-guard.ts`
+
+### PR-backed Review tab state and same-task revision flow
+
+Pull-request auto-merge tasks persist structured review metadata on the task as `reviewState`.
+
+- `reviewState.source`: `"pull-request"` or `"reviewer-agent"`
+- `reviewState.summary`: review decision, reviewer states, required checks, and blocking reasons
+- `reviewState.items`: normalized per-review/per-comment records keyed by stable GitHub IDs
+- `reviewState.addressing`: per-item lifecycle records (`queued`, `in-progress`, `addressed`, `failed`) with timestamps and optional `stale`
+
+API flow:
+
+1. `GET /api/tasks/:id/review` returns cached `reviewState` for modal load.
+2. `POST /api/tasks/:id/review/refresh` fetches latest GitHub PR review/review-comment state, updates `reviewState`, and preserves addressing history (items that disappear are retained as `stale: true`).
+3. `POST /api/tasks/:id/review/address` records selected review items as queued, appends a deterministic `**PR Review Revision Request**` steering comment payload, clears transient failure/session state, and requeues the same task to `todo` for same-task revision.
+
+UI contract boundary:
+
+- `PrSection` owns branch/PR lifecycle metadata and automation status.
+- `TaskReviewTab` owns review decisions, detailed review items, selection, and addressing progress.
+- `TaskComments` remains separate for general discussion.

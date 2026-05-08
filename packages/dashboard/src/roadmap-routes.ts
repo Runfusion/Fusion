@@ -1,6 +1,11 @@
 import { Router, type Request, type Response } from "express";
+import { createRequire } from "node:module";
 import { getCreateAiSessionFactory, type PluginContext, type PluginRouteDefinition, type TaskStore } from "@fusion/core";
-import { createRoadmapPluginRoutes } from "../../../plugins/fusion-plugin-roadmap/src/routes/roadmap-routes.js";
+
+const require = createRequire(import.meta.url);
+const { createRoadmapPluginRoutes } = require("../../../plugins/fusion-plugin-roadmap/src/routes/roadmap-routes.js") as {
+  createRoadmapPluginRoutes: () => PluginRouteDefinition[];
+};
 
 function isRouteResponse(value: unknown): value is { status: number; body?: unknown } {
   return (

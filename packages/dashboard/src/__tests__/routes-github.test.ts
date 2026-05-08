@@ -2027,6 +2027,38 @@ describe("GET /tasks/:id/file-diffs", () => {
   });
 });
 
+describe("GET /tasks/:id/review", () => {
+  let store: ReturnType<typeof createMockStore>;
+
+  beforeEach(() => {
+    store = createMockStore();
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store));
+    return app;
+  }
+
+  it("returns cached reviewState payload", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      reviewState: { source: "reviewer-agent", items: [], addressing: [] },
+    });
+
+    const res = await REQUEST(buildApp(), "GET", "/api/tasks/FN-001/review");
+    expect(res.status).toBe(200);
+    expect(res.body.reviewState.source).toBe("reviewer-agent");
+  });
+
+  it("returns 404 when task is missing", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockRejectedValue(Object.assign(new Error("not found"), { code: "ENOENT" }));
+    const res = await REQUEST(buildApp(), "GET", "/api/tasks/FN-404/review");
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("POST /tasks/:id/review/refresh", () => {
   let store: TaskStore;
 
@@ -2057,7 +2089,12 @@ describe("POST /tasks/:id/review/refresh", () => {
     vi.spyOn(GitHubClient.prototype, "getPrReviewSnapshot").mockResolvedValue({
       decision: "CHANGES_REQUESTED",
       checks: [],
-      summary: "needs work",
+      summary: {
+        reviewDecision: "CHANGES_REQUESTED",
+        reviewers: [],
+        blockingReasons: ["needs work"],
+        checks: [],
+      },
       items: [],
     });
 
@@ -2068,18 +2105,17 @@ describe("POST /tasks/:id/review/refresh", () => {
     expect(res.status).toBe(200);
     expect((store.updateTask as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
       "FN-001",
-      expect.objectContaining({ review: expect.objectContaining({ mode: "pull-request" }) }),
+      expect.objectContaining({ reviewState: expect.objectContaining({ source: "pull-request" }) }),
     );
   });
 
   it("refreshes direct-mode review payload without PR", async () => {
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...FAKE_TASK_DETAIL,
-      review: {
-        mode: "direct",
+      reviewState: {
         source: "reviewer-agent",
-        decision: "pending",
         items: [],
+        addressing: [],
       },
     });
 
@@ -2089,7 +2125,7 @@ describe("POST /tasks/:id/review/refresh", () => {
 
     expect(res.status).toBe(200);
     expect((store.updateTask as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
-    expect(res.body.review.mode).toBe("direct");
+    expect(res.body.reviewState.source).toBe("reviewer-agent");
   });
 });
 

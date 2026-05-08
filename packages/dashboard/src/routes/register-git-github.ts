@@ -3124,6 +3124,20 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     }
   });
 
+  router.get("/tasks/:id/review", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const task = await scopedStore.getTask(req.params.id);
+      res.json({ reviewState: task.reviewState ?? null, automationStatus: task.status ?? null });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        throw notFound(`Task ${req.params.id} not found`);
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
   /**
    * POST /api/tasks/:id/review/refresh
    * Refresh normalized review payload for task Review tab.
@@ -3133,7 +3147,8 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
 
-      let review = task.review;
+      let reviewState = task.reviewState;
+      const now = new Date().toISOString();
 
       if (task.prInfo) {
         const badgeParsed = parseBadgeUrl(task.prInfo.url);
@@ -3145,35 +3160,29 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
 
         const client = new GitHubClient();
         const snapshot = await client.getPrReviewSnapshot(owner, repo, task.prInfo.number);
-        review = {
-          mode: "pull-request",
-          source: "github-pr",
-          decision:
-            snapshot.decision === "APPROVED"
-              ? "approved"
-              : snapshot.decision === "CHANGES_REQUESTED"
-                ? "changes-requested"
-                : "pending",
+        const previousAddressing = task.reviewState?.addressing ?? [];
+        const availableIds = new Set(snapshot.items.map((item) => item.id));
+        const addressing = previousAddressing.map((record) => availableIds.has(record.itemId) ? record : { ...record, stale: true });
+
+        reviewState = {
+          source: "pull-request",
+          lastRefreshedAt: now,
           summary: snapshot.summary,
-          latestRefreshAt: new Date().toISOString(),
-          selectedItemIds: task.review?.selectedItemIds ?? [],
           items: snapshot.items,
+          addressing,
         };
       } else {
-        const existing = task.review;
-        review = {
-          mode: existing?.mode ?? "direct",
-          source: existing?.source ?? "reviewer-agent",
-          decision: existing?.decision ?? "pending",
-          summary: existing?.summary,
-          latestRefreshAt: new Date().toISOString(),
-          selectedItemIds: existing?.selectedItemIds ?? [],
-          items: existing?.items ?? [],
+        reviewState = {
+          source: task.reviewState?.source ?? "reviewer-agent",
+          lastRefreshedAt: now,
+          summary: task.reviewState?.summary,
+          items: task.reviewState?.items ?? [],
+          addressing: task.reviewState?.addressing ?? [],
         };
       }
 
-      await scopedStore.updateTask(task.id, { review });
-      res.json({ review, automationStatus: task.status ?? null });
+      await scopedStore.updateTask(task.id, { reviewState });
+      res.json({ reviewState, automationStatus: task.status ?? null });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {

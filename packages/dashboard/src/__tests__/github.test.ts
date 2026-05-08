@@ -990,6 +990,32 @@ describe("GitHubClient", () => {
     });
   });
 
+  describe("getPrReviewSnapshot", () => {
+    it("normalizes reviews/comments into review-state items and summary", async () => {
+      mockRunGhJsonAsync
+        .mockResolvedValueOnce({
+          reviewDecision: "CHANGES_REQUESTED",
+          reviews: [{ id: "r1", state: "CHANGES_REQUESTED", body: "please fix", submittedAt: "2024-01-01T00:00:00Z", author: { login: "octocat" }, url: "https://github.com/owner/repo/pull/1#review-r1" }],
+          comments: [{ id: "c1", body: "nit", createdAt: "2024-01-01T00:00:00Z", updatedAt: "2024-01-01T00:00:01Z", author: { login: "reviewer" }, url: "https://github.com/owner/repo/pull/1#issuecomment-c1" }],
+        })
+        .mockResolvedValueOnce({
+          number: 1,
+          url: "https://github.com/owner/repo/pull/1",
+          title: "PR",
+          state: "OPEN",
+          reviewDecision: "CHANGES_REQUESTED",
+          baseRefName: "main",
+          headRefName: "fn/fn-1",
+        })
+        .mockResolvedValueOnce([]);
+
+      const snapshot = await client.getPrReviewSnapshot("owner", "repo", 1);
+      expect(snapshot.items).toHaveLength(2);
+      expect(snapshot.summary?.reviewDecision).toBe("CHANGES_REQUESTED");
+      expect(snapshot.summary?.reviewers[0]).toEqual(expect.objectContaining({ login: "octocat", state: "CHANGES_REQUESTED" }));
+    });
+  });
+
   describe("mergePr", () => {
     it("merges a PR with gh CLI and refetches merged status", async () => {
       mockRunGh.mockReturnValue("Merged pull request");

@@ -1,9 +1,14 @@
 import type { PluginContext, PluginRouteDefinition, PluginRouteResponse } from "@fusion/core";
-import type { Request } from "express";
+
+interface RouteRequest {
+  params: Record<string, string>;
+  body?: unknown;
+}
 import { RoadmapStore } from "../store/roadmap-store.js";
 import {
   generateFeatureSuggestions,
   generateMilestoneSuggestions,
+  SUGGESTION_TIMEOUT_MS,
   ParseError as SuggestionParseError,
   ServiceUnavailableError as SuggestionServiceUnavailableError,
   validateFeatureSuggestionInput,
@@ -30,8 +35,8 @@ function getRoadmapStore(ctx: PluginContext): RoadmapStore {
   return store;
 }
 
-function asRequest(req: unknown): Request {
-  return req as Request;
+function asRequest(req: unknown): RouteRequest {
+  return req as RouteRequest;
 }
 
 function badRequest(message: string): PluginRouteResponse {
@@ -50,7 +55,7 @@ function noContent(): PluginRouteResponse {
   return { status: 204 };
 }
 
-function routeHandler<T>(handler: (req: Request, ctx: PluginContext, roadmapStore: RoadmapStore) => Promise<T | PluginRouteResponse> | T | PluginRouteResponse) {
+function routeHandler<T>(handler: (req: RouteRequest, ctx: PluginContext, roadmapStore: RoadmapStore) => Promise<T | PluginRouteResponse> | T | PluginRouteResponse) {
   return async (req: unknown, ctx: PluginContext): Promise<T | PluginRouteResponse> => {
     const roadmapStore = getRoadmapStore(ctx);
     try {

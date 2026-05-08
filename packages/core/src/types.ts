@@ -730,6 +730,74 @@ export interface TaskReview {
   items: TaskReviewItem[];
 }
 
+export type PrCheckState =
+  | "success"
+  | "pending"
+  | "failure"
+  | "cancelled"
+  | "timed_out"
+  | "action_required"
+  | "neutral"
+  | "skipped"
+  | "stale"
+  | "startup_failure";
+
+export interface PrCheckStatus {
+  name: string;
+  required: boolean;
+  state: PrCheckState;
+}
+
+export interface TaskReviewAuthor {
+  login: string;
+}
+
+export interface PrTaskReviewSummaryReviewer {
+  login: string;
+  state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "PENDING";
+  submittedAt?: string;
+}
+
+export interface PrTaskReviewSummary {
+  reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  reviewers: PrTaskReviewSummaryReviewer[];
+  blockingReasons: string[];
+  checks: PrCheckStatus[];
+}
+
+export interface TaskReviewStateItem {
+  id: string;
+  threadId?: string;
+  githubCommentId?: number;
+  path?: string;
+  diffSide?: string;
+  body: string;
+  author: TaskReviewAuthor;
+  createdAt: string;
+  updatedAt?: string;
+  state?: string;
+  htmlUrl?: string;
+  isResolved?: boolean;
+}
+
+export interface ReviewAddressingRecord {
+  itemId: string;
+  status: "queued" | "in-progress" | "addressed" | "failed";
+  selectedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+  stale?: boolean;
+}
+
+export interface TaskReviewState {
+  source: "pull-request" | "reviewer-agent";
+  lastRefreshedAt?: string;
+  summary?: PrTaskReviewSummary;
+  items: TaskReviewStateItem[];
+  addressing: ReviewAddressingRecord[];
+}
+
 export interface TaskDocument {
   /** UUID primary key */
   id: string;
@@ -949,8 +1017,10 @@ export interface Task {
   attachments?: TaskAttachment[];
   steeringComments?: SteeringComment[];
   comments?: TaskComment[];
-  /** Structured review metadata shown in the Review tab. */
+  /** Structured review metadata shown in the Review tab (legacy contract). */
   review?: TaskReview;
+  /** Structured review metadata shown in the Review tab (canonical contract). */
+  reviewState?: TaskReviewState;
   /** PR information for tasks linked to GitHub pull requests */
   prInfo?: PrInfo;
   mergeDetails?: MergeDetails;
@@ -2372,8 +2442,10 @@ export interface ArchivedTaskEntry {
   attachments?: TaskAttachment[];
   /** User and agent comments remain searchable in the archive DB. */
   comments?: TaskComment[];
-  /** Structured review metadata shown in the Review tab. */
+  /** Structured review metadata shown in the Review tab (legacy contract). */
   review?: TaskReview;
+  /** Structured review metadata shown in the Review tab (canonical contract). */
+  reviewState?: TaskReviewState;
   /** Reconstructed prompt content at archive time, without attachment blobs. */
   prompt?: string;
   /** Agent log retention mode used when this archive entry was written. */

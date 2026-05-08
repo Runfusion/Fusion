@@ -1771,7 +1771,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   });
 
   // Queue same-task revision pass for selected review items
-  router.post("/tasks/:id/review/revise", async (req, res) => {
+  router.post("/tasks/:id/review/address", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
@@ -1782,32 +1782,31 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (itemIds.length === 0) {
         throw badRequest("itemIds must be a non-empty array of review item IDs");
       }
-      if (!task.review) {
-        throw badRequest("Task has no review payload");
+      if (!task.reviewState) {
+        throw badRequest("Task has no reviewState payload");
       }
 
       const now = new Date().toISOString();
       const selectedSet = new Set(itemIds);
       const selectedSummaries: string[] = [];
-      const updatedItems = task.review.items.map((item) => {
-        if (!selectedSet.has(item.id)) return item;
-        selectedSummaries.push(`- ${item.summary}`);
-        return {
-          ...item,
-          status: "queued" as const,
-          updatedAt: now,
-          failedReason: undefined,
-        };
-      });
+      const selectedItems = task.reviewState.items.filter((item) => selectedSet.has(item.id));
+      for (const item of selectedItems) {
+        const excerpt = item.body.length > 140 ? `${item.body.slice(0, 140)}…` : item.body;
+        selectedSummaries.push(`- [${item.id}] @${item.author.login}${item.path ? ` (${item.path})` : ""}: ${excerpt}`);
+      }
 
-      const review = {
-        ...task.review,
-        selectedItemIds: itemIds,
-        items: updatedItems,
+      const nextAddressing = [
+        ...task.reviewState.addressing.filter((record) => !selectedSet.has(record.itemId)),
+        ...itemIds.map((itemId: string) => ({ itemId, status: "queued" as const, selectedAt: now })),
+      ];
+
+      const reviewState = {
+        ...task.reviewState,
+        addressing: nextAddressing,
       };
 
       await scopedStore.updateTask(task.id, {
-        review,
+        reviewState,
         status: null,
         error: null,
         sessionFile: null,
@@ -1821,7 +1820,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         try {
           const promptContent = await readFile(promptPath, "utf-8");
           const sectionHeader = "## Workflow Revision Instructions";
-          const sectionContent = `${sectionHeader}\n\nAddress the following selected review feedback items in this same task run:\n\n${selectedSummaries.join("\n")}\n`;
+          const sectionContent = `${sectionHeader}\n\n**PR Review Revision Request**\n\nAddress the following selected review feedback items in this same task run:\n\n${selectedSummaries.join("\n")}\n`;
           const sectionRegex = new RegExp(`${sectionHeader}[\\s\\S]*?(?=\\n## |\\n# |$)`, "m");
           const nextPrompt = promptContent.includes(sectionHeader)
             ? promptContent.replace(sectionRegex, sectionContent)
@@ -1835,7 +1834,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (selectedSummaries.length > 0) {
         await scopedStore.addTaskComment(
           task.id,
-          `Review revision requested for selected items:\n\n${selectedSummaries.join("\n")}`,
+          `**PR Review Revision Request**\n\nReview revision requested for selected items:\n\n${selectedSummaries.join("\n")}`,
           "user",
         );
       }
@@ -1850,7 +1849,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
       const moved = await scopedStore.moveTask(task.id, "todo", { preserveProgress: true });
       await scopedStore.logEntry(task.id, "Review revision requested", `${itemIds.length} item(s) queued for same-task revision`);
-      res.json({ task: moved, review });
+      res.json({ task: moved, reviewState });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

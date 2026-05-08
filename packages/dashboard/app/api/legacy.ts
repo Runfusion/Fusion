@@ -251,17 +251,17 @@ export async function fetchTaskDetail(id: string, projectId?: string): Promise<T
 }
 
 export interface UpdateTaskReviewRequest {
-  review: TaskDetail["review"] | null;
+  reviewState: TaskDetail["reviewState"] | null;
 }
 
 export interface RefreshTaskReviewResponse {
-  review: NonNullable<TaskDetail["review"]>;
+  reviewState: NonNullable<TaskDetail["reviewState"]>;
   automationStatus: string | null;
 }
 
 export interface ReviseTaskReviewResponse {
   task: Task;
-  review: NonNullable<TaskDetail["review"]>;
+  reviewState: NonNullable<TaskDetail["reviewState"]>;
 }
 
 export interface CreateTaskRequestOptions {
@@ -5116,7 +5116,7 @@ export function refreshTaskReview(taskId: string, projectId?: string): Promise<R
 
 /** Request an in-place revision pass for selected review items */
 export function reviseTaskReviewItems(taskId: string, itemIds: string[], projectId?: string): Promise<ReviseTaskReviewResponse> {
-  return api<ReviseTaskReviewResponse>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/review/revise`, projectId), {
+  return api<ReviseTaskReviewResponse>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/review/address`, projectId), {
     method: "POST",
     body: JSON.stringify({ itemIds }),
   });

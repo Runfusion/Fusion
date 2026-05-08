@@ -87,11 +87,33 @@ export interface PrReviewItem {
   updatedAt: string;
 }
 
+export interface PrReviewStateItem {
+  id: string;
+  threadId?: string;
+  githubCommentId?: number;
+  path?: string;
+  diffSide?: string;
+  body: string;
+  author: { login: string };
+  createdAt: string;
+  updatedAt?: string;
+  state?: string;
+  htmlUrl?: string;
+  isResolved?: boolean;
+}
+
+export interface PrReviewSummary {
+  reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  reviewers: Array<{ login: string; state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "PENDING"; submittedAt?: string }>;
+  blockingReasons: string[];
+  checks: PrCheckStatus[];
+}
+
 export interface PrReviewSnapshot {
   decision: ReviewDecision;
   checks: PrCheckStatus[];
-  items: PrReviewItem[];
-  summary?: string;
+  items: PrReviewStateItem[];
+  summary?: PrReviewSummary;
 }
 
 export interface PrMergeStatus {
@@ -564,31 +586,29 @@ export class GitHubClient {
       "reviewDecision,reviews,comments",
     ]);
 
-    const checks = (await this.getPrMergeStatus(resolvedOwner, resolvedRepo, number)).checks;
-    const commentItems: PrReviewItem[] = (pr.comments ?? []).map((comment) => ({
+    const mergeStatus = await this.getPrMergeStatus(resolvedOwner, resolvedRepo, number);
+    const checks = mergeStatus.checks;
+    const commentItems: PrReviewStateItem[] = (pr.comments ?? []).map((comment) => ({
       id: `gh-comment-${comment.id}`,
-      source: "github-pr",
-      status: "queued",
-      summary: comment.body.trim().slice(0, 160) || `Comment from @${comment.author?.login ?? "reviewer"}`,
+      githubCommentId: Number.parseInt(comment.id, 10),
       body: comment.body,
-      reviewer: comment.author?.login ?? undefined,
-      commentUrl: comment.url,
+      author: { login: comment.author?.login ?? "reviewer" },
       createdAt: comment.createdAt,
       updatedAt: comment.updatedAt,
+      htmlUrl: comment.url,
+      state: "COMMENTED",
     }));
 
-    const reviewItems: PrReviewItem[] = (pr.reviews ?? []).map((review) => {
+    const reviewItems: PrReviewStateItem[] = (pr.reviews ?? []).map((review) => {
       const createdAt = review.submittedAt ?? new Date().toISOString();
       return {
         id: `gh-review-${review.id}`,
-        source: "github-pr",
-        status: "queued",
-        summary: (review.body ?? "").trim().slice(0, 160) || `Review ${review.state} by @${review.author?.login ?? "reviewer"}`,
-        body: review.body ?? undefined,
-        reviewer: review.author?.login ?? undefined,
-        commentUrl: review.url ?? undefined,
+        body: review.body ?? `Review ${review.state}`,
+        author: { login: review.author?.login ?? "reviewer" },
         createdAt,
         updatedAt: createdAt,
+        htmlUrl: review.url ?? undefined,
+        state: review.state,
       };
     });
 
@@ -596,7 +616,16 @@ export class GitHubClient {
       decision: pr.reviewDecision ?? null,
       checks,
       items: [...reviewItems, ...commentItems],
-      summary: `PR #${number} has ${reviewItems.length} review(s) and ${commentItems.length} comment(s).`,
+      summary: {
+        reviewDecision: pr.reviewDecision ?? null,
+        reviewers: (pr.reviews ?? []).map((review) => ({
+          login: review.author?.login ?? "reviewer",
+          state: review.state === "APPROVED" || review.state === "CHANGES_REQUESTED" || review.state === "COMMENTED" || review.state === "PENDING" ? review.state : "COMMENTED",
+          submittedAt: review.submittedAt ?? undefined,
+        })),
+        blockingReasons: mergeStatus.blockingReasons,
+        checks,
+      },
     };
   }
 

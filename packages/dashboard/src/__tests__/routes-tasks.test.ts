@@ -2138,7 +2138,7 @@ describe("POST /subtasks/*", () => {
 });
 
 
-describe("POST /tasks/:id/review/revise", () => {
+describe("POST /tasks/:id/review/address", () => {
   let store: TaskStore;
 
   beforeEach(() => {
@@ -2158,20 +2158,18 @@ describe("POST /tasks/:id/review/revise", () => {
       id: "FN-001",
       column: "in-review",
       steps: [],
-      review: {
-        mode: "direct",
+      reviewState: {
         source: "reviewer-agent",
-        decision: "changes-requested",
         items: [
           {
             id: "ri-1",
-            source: "reviewer-agent",
-            status: "failed",
-            summary: "Fix tests",
+            body: "Fix tests",
+            author: { login: "reviewer" },
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           },
         ],
+        addressing: [],
       },
     };
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(taskWithReview);
@@ -2180,7 +2178,7 @@ describe("POST /tasks/:id/review/revise", () => {
     const res = await REQUEST(
       buildApp(),
       "POST",
-      "/api/tasks/FN-001/review/revise",
+      "/api/tasks/FN-001/review/address",
       JSON.stringify({ itemIds: ["ri-1"] }),
       { "Content-Type": "application/json" },
     );
@@ -2188,7 +2186,7 @@ describe("POST /tasks/:id/review/revise", () => {
     expect(res.status).toBe(200);
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-001",
-      expect.objectContaining({ review: expect.objectContaining({ selectedItemIds: ["ri-1"] }) }),
+      expect.objectContaining({ reviewState: expect.objectContaining({ addressing: expect.arrayContaining([expect.objectContaining({ itemId: "ri-1", status: "queued" })]) }) }),
     );
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveProgress: true });
   });
