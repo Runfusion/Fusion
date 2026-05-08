@@ -1183,8 +1183,19 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   });
 
   if (!isHeadless) {
-    // SPA fallback
-    app.get("/{*splat}", (_req, res) => {
+    // SPA fallback. Only serve index.html for navigation requests — never for
+    // hashed asset URLs (/assets/*, /icons/*, /fonts/*) or any path that looks
+    // like a static file. Returning index.html for a missing JS chunk poisons
+    // the page with a text/html module script (strict MIME failure → blank
+    // shell on reload). A real 404 lets versionCheck detect the stale chunk
+    // and recover.
+    const STATIC_PREFIXES = ["/assets/", "/icons/", "/fonts/", "/brands/"];
+    app.get("/{*splat}", (req, res) => {
+      const path = req.path;
+      if (STATIC_PREFIXES.some((p) => path.startsWith(p)) || /\.[a-z0-9]+$/i.test(path)) {
+        res.status(404).end();
+        return;
+      }
       res.sendFile(join(clientDir, "index.html"));
     });
   }
