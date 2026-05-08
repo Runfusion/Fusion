@@ -117,7 +117,7 @@ _Date: 2026-04-08_
 
 Sampled files (2-3 per package):
 - Core: `store.test.ts`, `db-migrate.test.ts`, `central-core.test.ts`
-- Engine: `executor.test.ts`, `stuck-task-detector.test.ts`
+- Engine: `executor-core.test.ts`, `executor-step-session.test.ts`, `stuck-task-detector.test.ts`
 - CLI: `commands/task.test.ts`, `commands/dashboard.test.ts`
 - Dashboard: `routes.test.ts`, `SettingsModal.test.tsx`, `components/__tests__/Column.test.tsx`
 

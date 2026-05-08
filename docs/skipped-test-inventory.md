@@ -78,7 +78,7 @@ Previously tracked actionable skip follow-ups are now resolved and should not be
 
 - **FN-2085**: wildcard proxy POST body forwarding coverage is active.
 - **FN-2076 / FN-2106 / FN-2109**: NewAgentDialog and MissionInterviewModal rollback favorite-toggle regressions are active interaction tests.
-- The former engine `executor.test.ts` step-session alias skip is no longer present; ownership now lives in active engine tests.
+- The former single-file executor step-session alias skip is no longer present; ownership now lives in the split executor suites (`executor-*.test.ts`).
 
 Searches for those IDs in repository test code and docs now return no active TODO/skip markers tied to unresolved work.
 
