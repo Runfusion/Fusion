@@ -219,6 +219,14 @@
   color: var(--color-warning);
 }
 
+.detail-execution-mode-toggle--fast svg {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 20%, transparent);
+  border-radius: var(--radius-pill);
+  padding: var(--space-xs);
+  box-shadow: var(--glow-warning);
+}
+
 .detail-execution-mode-toggle--saving {
   opacity: 0.75;
 }

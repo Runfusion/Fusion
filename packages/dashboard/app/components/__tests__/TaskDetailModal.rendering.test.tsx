@@ -324,6 +324,7 @@ describe("TaskDetailModal", () => {
       const toggle = screen.getByRole("button", { name: "Execution mode: standard" });
       expect(toggle).toHaveAttribute("aria-pressed", "false");
       expect(toggle).toHaveTextContent("Standard");
+      expect(toggle).not.toHaveClass("detail-execution-mode-toggle--fast");
     });
 
     it("renders fast mode as a pressed toggle", () => {
@@ -342,7 +343,19 @@ describe("TaskDetailModal", () => {
       const toggle = screen.getByRole("button", { name: "Execution mode: fast" });
       expect(toggle).toHaveAttribute("aria-pressed", "true");
       expect(toggle).toHaveTextContent("Fast");
+      expect(toggle).toHaveClass("detail-execution-mode-toggle--fast");
     });
+  });
+
+  it("defines fast execution mode svg highlight styles with warning tokens", () => {
+    const css = readDashboardStylesSource();
+
+    expectBaseRule(css, ".detail-execution-mode-toggle--fast svg", "color: var(--color-warning);");
+    expectBaseRule(
+      css,
+      ".detail-execution-mode-toggle--fast svg",
+      "background: color-mix(in srgb, var(--color-warning) 20%, transparent);",
+    );
   });
 
   it("appends daemon token query to attachment href/src URLs for direct browser loads", () => {
