@@ -2900,18 +2900,28 @@ input[type="range"]:focus-visible {
   margin: 4px;
 }
 
-/* Auto-merge toggle */
-.auto-merge-toggle {
-  display: flex;
+/* Toggle controls */
+.auto-merge-toggle,
+.toggle-switch {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-sm);
   cursor: pointer;
   user-select: none;
   flex-shrink: 0;
 }
 
-.auto-merge-toggle input {
-  display: none;
+.toggle-switch {
+  position: relative;
+}
+
+.auto-merge-toggle input,
+.toggle-switch input[type="checkbox"] {
+  position: absolute;
+  inline-size: 0;
+  block-size: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .toggle-slider {
@@ -2936,12 +2946,19 @@ input[type="range"]:focus-visible {
   transition: transform var(--transition-normal);
 }
 
-.auto-merge-toggle input:checked + .toggle-slider {
+.auto-merge-toggle input:checked + .toggle-slider,
+.toggle-switch input:checked + .toggle-slider {
   background: var(--in-review);
 }
 
-.auto-merge-toggle input:checked + .toggle-slider::after {
+.auto-merge-toggle input:checked + .toggle-slider::after,
+.toggle-switch input:checked + .toggle-slider::after {
   transform: translateX(12px);
+}
+
+.toggle-switch input:focus-visible + .toggle-slider,
+.auto-merge-toggle input:focus-visible + .toggle-slider {
+  box-shadow: var(--focus-ring-strong);
 }
 
 .toggle-label {

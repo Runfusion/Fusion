@@ -984,6 +984,7 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
                         type="checkbox"
                         checked={plugin.enabled}
                         onChange={() => plugin.enabled ? handleDisable(plugin) : handleEnable(plugin)}
+                        aria-label={`${plugin.enabled ? "Disable" : "Enable"} ${plugin.name}`}
                       />
                       <span className="toggle-slider"></span>
                     </label>
