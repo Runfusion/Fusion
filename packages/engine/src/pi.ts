@@ -1757,6 +1757,10 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
       boundaryContext.worktreePath,
       boundaryContext.worktreeProjectRoot,
     );
+    // Sort tools alphabetically by name for deterministic ordering.
+    // Prompt caching requires the tool list to be byte-identical across
+    // sessions — reordering breaks cache prefix matching.
+    customToolList.sort((a, b) => a.name.localeCompare(b.name));
     // Last-chance abort hook. Fires *here* — after every awaited setup step
     // in createFnAgent (provider registration, worktree validation, resource
     // loader reload) and immediately before the actual LLM session spawn.
