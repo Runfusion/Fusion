@@ -4159,6 +4159,63 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   }
 
   /**
+   * Sync `agents.taskId` column and JSON data blob when a task is reassigned.
+   *
+   * Called by {@link updateTask} whenever `assignedAgentId` changes. Performs two
+   * guarded SQL operations directly on the shared `agents` table (same pattern as
+   * {@link clearLinkedAgentTaskIds}) so that heartbeat dispatch — which routes
+   * timer wakes via `agents.taskId` — reflects the new assignment immediately:
+   *
+   * 1. **Clear the old agent's task link** — only if the agent's current `taskId`
+   *    still matches the reassigned task. This guard prevents clobbering an
+   *    agent that already moved on to a different task between the old
+   *    assignment and now (race condition protection).
+   * 2. **Set the new agent's task link** — only if the agent row exists.
+   *
+   * Both operations update `updatedAt` and keep the `data` JSON blob in sync
+   * with the column value so the two representations never diverge.
+   */
+  private syncAgentTaskLinkOnReassignment(
+    taskId: string,
+    previousAgentId: string | undefined,
+    newAgentId: string | undefined,
+  ): void {
+    const updatedAt = new Date().toISOString();
+
+    if (previousAgentId) {
+      // Only clear the old agent's link if it still points at this task.
+      // If the agent already moved on (agent.taskId !== taskId) we leave it
+      // untouched — guard against race conditions.
+      this.db.prepare(`
+        UPDATE agents
+        SET
+          taskId = NULL,
+          updatedAt = ?,
+          data = CASE
+            WHEN json_valid(data) THEN json_set(json_remove(data, '$.taskId'), '$.updatedAt', ?)
+            ELSE data
+          END
+        WHERE id = ? AND taskId = ?
+      `).run(updatedAt, updatedAt, previousAgentId, taskId);
+    }
+
+    if (newAgentId) {
+      // Set the new agent's task link — only if the agent row exists.
+      this.db.prepare(`
+        UPDATE agents
+        SET
+          taskId = ?,
+          updatedAt = ?,
+          data = CASE
+            WHEN json_valid(data) THEN json_set(data, '$.taskId', ?, '$.updatedAt', ?)
+            ELSE data
+          END
+        WHERE id = ?
+      `).run(taskId, updatedAt, taskId, updatedAt, newAgentId);
+    }
+  }
+
+  /**
    * Clean up the git branch associated with a task.
    *
    * Branch name resolution:
