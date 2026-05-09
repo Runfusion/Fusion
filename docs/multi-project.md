@@ -188,6 +188,14 @@ See also:
 - [Task Management → Node Routing](./task-management.md#node-routing)
 - [Architecture → Task Routing Architecture](./architecture.md#task-routing-architecture)
 
+### Verification coverage (automated)
+
+The multi-node mapping/routing contracts are guarded by automated suites:
+
+- Onboarding `projectMappings` payload + discovery UX: `packages/dashboard/app/components/__tests__/AddNodeModal.test.tsx`, `packages/dashboard/app/hooks/__tests__/useNodes.test.ts`, `packages/dashboard/src/__tests__/node-routes.test.ts`, `packages/dashboard/src/__tests__/routes-projects-across-nodes.test.ts`.
+- Mapping persistence/backfill invariants: `packages/core/src/__tests__/central-core.test.ts`, `packages/core/src/__tests__/central-db.test.ts`, `packages/core/src/__tests__/central-project-node-mappings.test.ts`.
+- Dispatch blocking on missing mappings + routed working-directory resolution: `packages/engine/src/__tests__/scheduler-node-routing.test.ts`, `packages/engine/src/__tests__/node-dispatch-validation.test.ts`, `packages/engine/src/__tests__/project-engine-manager.test.ts`, `packages/engine/src/__tests__/hybrid-executor.test.ts`.
+
 ## Auto-Migration from Single-Project
 
 On first run after upgrade:
