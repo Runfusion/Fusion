@@ -19,6 +19,7 @@ import type { DiscoveredSkill } from "@fusion/dashboard";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ProviderIcon } from "./ProviderIcon";
 import { AgentMentionPopup } from "./AgentMentionPopup";
+import { matchesAgentMentionFilter } from "./mentionMatching";
 import { FN_AGENT_ID, useQuickChat, type ChatMessageInfo, type ToolCallInfo } from "../hooks/useQuickChat";
 import { useAgents } from "../hooks/useAgents";
 import { FileMentionPopup } from "./FileMentionPopup";
@@ -1344,14 +1345,10 @@ export function QuickChatFAB({
     return matchingSkills.slice(0, 10);
   }, [discoveredSkills, skillFilter]);
 
-  const filteredMentionAgents = useMemo(() => {
-    const normalizedFilter = mentionFilter.trim().toLowerCase();
-    if (!normalizedFilter) {
-      return agents;
-    }
-
-    return agents.filter((agent) => agent.name.toLowerCase().includes(normalizedFilter));
-  }, [agents, mentionFilter]);
+  const filteredMentionAgents = useMemo(
+    () => agents.filter((agent) => matchesAgentMentionFilter(agent.name, mentionFilter)),
+    [agents, mentionFilter],
+  );
 
   const mentionAgentsByName = useMemo(() => {
     const byName = new Map<string, Agent>();

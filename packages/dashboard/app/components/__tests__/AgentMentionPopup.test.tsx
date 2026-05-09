@@ -51,11 +51,14 @@ describe("AgentMentionPopup", () => {
     expect(screen.getByTestId("agent-mention-item-agent-002")).toBeInTheDocument();
   });
 
-  it("filters agents by name case-insensitively", () => {
+  it.each([
+    ["review", "filters agents by name case-insensitively"],
+    ["beta_re", "matches underscore handles for agents with spaces"],
+  ])("%s %s", (filter) => {
     render(
       <AgentMentionPopup
         agents={agents}
-        filter="review"
+        filter={filter}
         highlightedIndex={0}
         visible={true}
         onSelect={vi.fn()}

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { AgentAvatar } from "./AgentAvatar";
 import "./AgentMentionPopup.css";
 import type { Agent } from "@fusion/core";
+import { matchesAgentMentionFilter } from "./mentionMatching";
 
 interface AgentMentionPopupProps {
   /** List of agents to show */
@@ -26,14 +27,7 @@ export function AgentMentionPopup({
   onSelect,
   position = "below",
 }: AgentMentionPopupProps) {
-  const filteredAgents = useMemo(() => {
-    const normalizedFilter = filter.trim().toLowerCase();
-    if (!normalizedFilter) {
-      return agents;
-    }
-
-    return agents.filter((agent) => agent.name.toLowerCase().includes(normalizedFilter));
-  }, [agents, filter]);
+  const filteredAgents = useMemo(() => agents.filter((agent) => matchesAgentMentionFilter(agent.name, filter)), [agents, filter]);
 
   if (!visible) {
     return null;

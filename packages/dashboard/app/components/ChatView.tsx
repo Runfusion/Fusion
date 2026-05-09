@@ -37,6 +37,7 @@ import { CreateRoomModal, type RoomDraft } from "./CreateRoomModal";
 import { useFileMention } from "../hooks/useFileMention";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
+import { matchesAgentMentionFilter } from "./mentionMatching";
 
 export interface ChatViewProps {
   projectId?: string;
@@ -860,13 +861,10 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
 
   const mentionAgents = useMemo(() => Array.from(agentsMap.values()), [agentsMap]);
 
-  const filteredMentionAgents = useMemo(() => {
-    const normalizedFilter = mentionFilter.trim().toLowerCase();
-    if (!normalizedFilter) {
-      return mentionAgents;
-    }
-    return mentionAgents.filter((agent) => agent.name.toLowerCase().includes(normalizedFilter));
-  }, [mentionAgents, mentionFilter]);
+  const filteredMentionAgents = useMemo(
+    () => mentionAgents.filter((agent) => matchesAgentMentionFilter(agent.name, mentionFilter)),
+    [mentionAgents, mentionFilter],
+  );
 
   const mentionAgentsByName = useMemo(() => {
     const byName = new Map<string, Agent>();
