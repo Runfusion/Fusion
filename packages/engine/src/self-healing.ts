@@ -832,6 +832,7 @@ export class SelfHealingManager {
           { name: "recover-stale-merging-status", fn: () => this.recoverStaleMergingStatus() },
           { name: "recover-mergeable-review", fn: () => this.recoverMergeableReviewTasks() },
           { name: "recover-merged-review", fn: () => this.recoverMergedReviewTasks() },
+          { name: "recover-already-merged-review", fn: () => this.recoverAlreadyMergedReviewTasks() },
           { name: "recover-misclassified-failures", fn: () => this.recoverMisclassifiedFailures() },
           { name: "recover-no-progress-no-task-done", fn: () => this.recoverNoProgressNoTaskDoneFailures() },
           { name: "recover-partial-progress-no-task-done", fn: () => this.recoverPartialProgressNoTaskDoneFailures() },
@@ -1599,6 +1600,99 @@ export class SelfHealingManager {
       return recovered;
     } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
       log.error(`Merged review recovery failed: ${errorMessage}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Recover retry-exhausted failed review tasks whose content already landed on
+   * the integration branch via a non-canonical merge lineage.
+   *
+   * Candidate filter:
+   * - `column === "in-review"`
+   * - not paused
+   * - `status === "failed"`
+   * - `(mergeRetries ?? 0) >= MAX_AUTO_MERGE_RETRIES`
+   * - `mergeDetails.mergeConfirmed !== true`
+   * - not actively executing
+   *
+   * Detection order (first match wins):
+   * 1. Fusion-Task-Id trailer lookup on the base branch
+   * 2. Task branch ancestry + task-id grep on first-parent base lineage
+   * 3. Patch-id match between task branch diff and recent base-branch commits
+   *
+   * Idempotency: recovered tasks are moved to `done`, status/error are cleared,
+   * and mergeRetries reset to 0, so subsequent sweeps will not match them.
+   */
+  async recoverAlreadyMergedReviewTasks(): Promise<number> {
+    try {
+      const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return 0;
+
+      const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      const candidates = tasks.filter((task) =>
+        task.column === "in-review" &&
+        !task.paused &&
+        task.status === "failed" &&
+        (task.mergeRetries ?? 0) >= MAX_AUTO_MERGE_RETRIES &&
+        task.mergeDetails?.mergeConfirmed !== true &&
+        !executingIds.has(task.id),
+      );
+
+      if (candidates.length === 0) return 0;
+
+      let recovered = 0;
+      for (const task of candidates) {
+        try {
+          const baseBranch = task.baseBranch || task.executionStartBranch || "main";
+          if (!baseBranch) continue;
+
+          const landed = await this.findAlreadyMergedTaskCommit({
+            taskId: task.id,
+            repoDir: this.options.rootDir,
+            baseBranch,
+            taskBranch: task.branch,
+            baseCommitSha: task.baseCommitSha,
+          });
+          if (!landed) continue;
+
+          const mergeDetails: MergeDetails = {
+            commitSha: landed.sha,
+            strategy: "squash",
+            branch: baseBranch,
+            mergedAt: new Date().toISOString(),
+            mergeConfirmed: true,
+            prNumber: task.prInfo?.number,
+          };
+
+          await this.store.updateTask(task.id, {
+            column: "done",
+            status: null,
+            error: null,
+            mergeRetries: 0,
+            mergeDetails,
+          });
+          await this.store.moveTask(task.id, "done");
+          await this.store.logEntry(
+            task.id,
+            `Auto-recovered: phantom-merge-guard false positive — content found on ${baseBranch} at ${landed.sha.slice(0, 8)} via ${landed.strategy}`,
+          );
+          await this.cleanupWorktreeOnly(task);
+          recovered++;
+        } catch (err: unknown) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          log.warn(`recoverAlreadyMergedReviewTasks: failed for ${task.id}: ${errorMessage}`);
+        }
+      }
+
+      if (recovered > 0) {
+        log.log(`Recovered ${recovered} already-merged retry-exhausted review task(s) → done`);
+      }
+      return recovered;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error(`Already-merged review recovery failed: ${errorMessage}`);
       return 0;
     }
   }
