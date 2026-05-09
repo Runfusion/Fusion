@@ -6,7 +6,7 @@
 
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, normalize, resolve } from "node:path";
 
 import extractZip from "extract-zip";
 import { parse as parseYaml } from "yaml";
@@ -488,7 +488,42 @@ async function extractTarArchive(archivePath: string, outputDir: string): Promis
   await execFileAsync("tar", ["xzf", archivePath, "-C", outputDir]);
 }
 
-export async function parseCompanyArchive(archivePath: string): Promise<AgentCompaniesPackage> {
+function sanitizeCompanySubPath(subPath: string): string {
+  const trimmed = subPath.trim();
+  if (trimmed.length === 0) {
+    throw new AgentCompaniesParseError("subPath must not be empty");
+  }
+  if (trimmed.includes("\\")) {
+    throw new AgentCompaniesParseError(`Invalid subPath "${subPath}": backslashes are not allowed`);
+  }
+  if (isAbsolute(trimmed)) {
+    throw new AgentCompaniesParseError(`Invalid subPath "${subPath}": absolute paths are not allowed`);
+  }
+
+  const normalized = normalize(trimmed).replace(/^\/+/, "");
+  if (normalized === "" || normalized === "." || normalized.split("/").some((segment) => segment === "..")) {
+    throw new AgentCompaniesParseError(`Invalid subPath "${subPath}": path traversal is not allowed`);
+  }
+
+  return normalized;
+}
+
+function findArchiveWrapperRoot(tempDir: string): string {
+  const directories = readdirSync(tempDir, { withFileTypes: true }).filter((entry) =>
+    entry.isDirectory(),
+  );
+
+  if (directories.length === 1) {
+    return join(tempDir, directories[0].name);
+  }
+
+  return tempDir;
+}
+
+export async function parseCompanyArchive(
+  archivePath: string,
+  options?: { subPath?: string },
+): Promise<AgentCompaniesPackage> {
   const resolvedArchivePath = resolve(archivePath);
   const tempDir = mkdtempSync(join(tmpdir(), "agent-companies-"));
 
@@ -501,6 +536,19 @@ export async function parseCompanyArchive(archivePath: string): Promise<AgentCom
       throw new AgentCompaniesParseError(
         "Unsupported archive format. Expected .tar.gz, .tgz, or .zip",
       );
+    }
+
+    if (typeof options?.subPath === "string") {
+      const wrapperRoot = findArchiveWrapperRoot(tempDir);
+      const sanitizedSubPath = sanitizeCompanySubPath(options.subPath);
+      const candidateRoot = join(wrapperRoot, sanitizedSubPath);
+      const companyManifestPath = join(candidateRoot, "COMPANY.md");
+      if (!existsSync(companyManifestPath)) {
+        throw new AgentCompaniesParseError(
+          `Company manifest not found at archive subPath "${sanitizedSubPath}" (expected ${companyManifestPath})`,
+        );
+      }
+      return parseCompanyDirectory(candidateRoot);
     }
 
     return parseCompanyDirectory(resolveExtractionRoot(tempDir));
