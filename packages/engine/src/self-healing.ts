@@ -1024,7 +1024,7 @@ export class SelfHealingManager {
         !task.status &&
         task.steps.length > 0 &&
         task.steps.some((step) => NON_TERMINAL_STEP_STATUSES.has(step.status)) &&
-        now - new Date(task.updatedAt).getTime() >= timeoutMs
+        now - new Date(task.columnMovedAt ?? task.updatedAt).getTime() >= timeoutMs
       );
 
       if (staleIncomplete.length === 0) return 0;
@@ -1095,7 +1095,7 @@ export class SelfHealingManager {
         !(task.status && GHOST_REVIEW_PRESERVED_STATUSES.has(task.status)) &&
         // Confirmed merges belong in `done` (handled by `recoverMergedReviewTasks`).
         task.mergeDetails?.mergeConfirmed !== true &&
-        now - new Date(task.updatedAt).getTime() >= timeoutMs
+        now - new Date(task.columnMovedAt ?? task.updatedAt).getTime() >= timeoutMs
       );
 
       if (ghosts.length === 0) return 0;
