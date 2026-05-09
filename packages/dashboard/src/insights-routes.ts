@@ -18,6 +18,7 @@ import {
   InsightLifecycleError,
   InsightStore,
   executeInsightRunLifecycle,
+  resolvePlanningSettingsModel,
   retryInsightRunLifecycle,
   type InsightCategory,
   type MemoryInsightCategory,
@@ -26,6 +27,7 @@ import {
   type InsightRunTrigger,
   type InsightRunListOptions,
   type InsightRunStatus,
+  type Settings,
 } from "@fusion/core";
 import {
   ApiError,
@@ -104,6 +106,9 @@ async function executeInsightAttempt(params: {
   runId: string;
   signal: AbortSignal;
   insightStore: InsightStore;
+  settings: Settings;
+  modelProvider?: string;
+  modelId?: string;
 }): Promise<{ summary: string; insightsCreated: number; insightsUpdated: number }> {
   const {
     readWorkingMemory,
@@ -120,10 +125,23 @@ async function executeInsightAttempt(params: {
     throw new Error("No working memory to analyze");
   }
 
+  const { provider: settingsProvider, modelId: settingsModelId } =
+    resolvePlanningSettingsModel(params.settings);
+
+  const finalProvider = params.modelProvider ?? settingsProvider;
+  const finalModelId = params.modelId ?? settingsModelId;
+  const hasCustomModel = params.modelProvider && params.modelId;
+  const fallbackProvider = hasCustomModel ? settingsProvider : undefined;
+  const fallbackModelId = hasCustomModel ? settingsModelId : undefined;
+
   const existingInsights = await readInsightsMemory(params.rootDir);
   let responseText = "";
   const { session } = await createFnAgent({
     cwd: params.rootDir,
+    defaultProvider: finalProvider,
+    defaultModelId: finalModelId,
+    fallbackProvider,
+    fallbackModelId,
     systemPrompt: [
       "You extract durable project insights from working memory notes.",
       "Return only valid JSON that matches the requested schema.",
@@ -309,14 +327,32 @@ export function createInsightsRouter(store: TaskStore): Router {
       const taskStore = requestContext.getStore();
       if (!taskStore) throw new ApiError(500, "Store context not available");
       const rootDir = taskStore.getRootDir();
+      const settings = await taskStore.getSettings();
+      const rawProvider = typeof req.body.modelProvider === "string" ? req.body.modelProvider.trim() : undefined;
+      const rawModelId = typeof req.body.modelId === "string" ? req.body.modelId.trim() : undefined;
+      // Require both provider and model ID together — partial values are discarded
+      const modelProvider = rawProvider && rawModelId ? rawProvider : undefined;
+      const modelId = rawProvider && rawModelId ? rawModelId : undefined;
       const controller = new AbortController();
+
+      // Stash model selection in inputMetadata.metadata so retries can recover it
+      const inputMetadata = typeof req.body.inputMetadata === "object" && req.body.inputMetadata !== null
+        ? { ...req.body.inputMetadata }
+        : {};
+      if (modelProvider || modelId) {
+        inputMetadata.metadata = {
+          ...(typeof inputMetadata.metadata === "object" && inputMetadata.metadata !== null ? inputMetadata.metadata : {}),
+          ...(modelProvider ? { modelProvider } : {}),
+          ...(modelId ? { modelId } : {}),
+        };
+      }
 
       const run = await executeInsightRunLifecycle({
         store: insightStore,
         projectId,
         input: {
           trigger,
-          inputMetadata: req.body.inputMetadata,
+          inputMetadata,
         },
         signal: controller.signal,
         timeoutMs: typeof req.body.timeoutMs === "number" ? req.body.timeoutMs : 120_000,
@@ -330,6 +366,9 @@ export function createInsightsRouter(store: TaskStore): Router {
             runId: run.id,
             signal,
             insightStore,
+            settings,
+            modelProvider,
+            modelId,
           });
         },
       });
@@ -474,7 +513,17 @@ export function createInsightsRouter(store: TaskStore): Router {
       const taskStore = requestContext.getStore();
       if (!taskStore) throw new ApiError(500, "Store context not available");
       const rootDir = taskStore.getRootDir();
+      const settings = await taskStore.getSettings();
       const controller = new AbortController();
+
+      // Recover model selection from the original run's inputMetadata
+      const originalMetadata = existing.inputMetadata?.metadata;
+      const retryModelProvider = typeof (originalMetadata as Record<string, unknown> | undefined)?.modelProvider === "string"
+        ? (originalMetadata as Record<string, unknown>).modelProvider as string
+        : undefined;
+      const retryModelId = typeof (originalMetadata as Record<string, unknown> | undefined)?.modelId === "string"
+        ? (originalMetadata as Record<string, unknown>).modelId as string
+        : undefined;
 
       const { run } = await retryInsightRunLifecycle({
         store,
@@ -491,6 +540,9 @@ export function createInsightsRouter(store: TaskStore): Router {
             runId: run.id,
             signal,
             insightStore: store,
+            settings,
+            modelProvider: retryModelProvider,
+            modelId: retryModelId,
           });
         },
       });

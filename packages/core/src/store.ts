@@ -1690,10 +1690,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       this.globalSettingsStore.getSettings(),
       this.readConfig(),
     ]);
+    // Strip global-only keys from project-level settings so stale project-scoped
+    // values don't override the correct global value during the spread merge.
+    const projectSettings = Object.fromEntries(
+      Object.entries(config.settings ?? {}).filter(([key]) => !isGlobalSettingsKey(key)),
+    );
     return canonicalizeSettings({
       ...DEFAULT_SETTINGS,
       ...globalSettings,
-      ...config.settings,
+      ...projectSettings,
     });
   }
 
@@ -1715,7 +1720,17 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       this.db.prepare("SELECT settings FROM config WHERE id = 1").get() as { settings?: string } | undefined,
     ]);
 
-    const projectSettings = row?.settings ? fromJson<Settings>(row.settings) : undefined;
+    const raw = row?.settings ? fromJson<Settings>(row.settings) : undefined;
+
+    // Strip global-only keys from the project-level row so stale project-scoped
+    // values (e.g. an empty experimentalFeatures={}) don't override the correct
+    // global value during the spread merge below. getSettingsByScopeFast() has
+    // always done this; getSettingsFast() was missing the filter.
+    const projectSettings: Partial<Settings> | undefined = raw
+      ? (Object.fromEntries(
+          Object.entries(raw).filter(([key]) => !isGlobalSettingsKey(key)),
+        ) as Partial<Settings>)
+      : undefined;
 
     return canonicalizeSettings({
       ...DEFAULT_SETTINGS,

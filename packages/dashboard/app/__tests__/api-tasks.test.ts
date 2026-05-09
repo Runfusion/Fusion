@@ -82,6 +82,7 @@ import {
   type GlobalConcurrencyState,
   type ExecutorStats,
   type ExecutorState,
+  triggerInsightRun,
 } from "../api";
 import type { Task, TaskDetail, BatchStatusResponse, MergeResult } from "@fusion/core";
 import { clearAuthToken } from "../auth";
@@ -1070,6 +1071,55 @@ describe("batchUpdateTaskModels", () => {
     await expect(batchUpdateTaskModels(["FN-001"], "openai", "gpt-4o")).rejects.toThrow(
       "Network failed"
     );
+  });
+});
+
+describe("triggerInsightRun", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    clearAuthToken();
+    localStorage.removeItem("fn.authToken");
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    clearAuthToken();
+    localStorage.removeItem("fn.authToken");
+  });
+
+  it("sends POST to /api/insights/run without model params by default", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { id: "INSR-test", status: "completed" }));
+
+    await triggerInsightRun("manual");
+
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(call[1].body);
+    expect(body).not.toHaveProperty("modelProvider");
+    expect(body).not.toHaveProperty("modelId");
+    expect(body.trigger).toBe("manual");
+  });
+
+  it("includes modelProvider and modelId in POST body when provided", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { id: "INSR-test", status: "completed" }));
+
+    await triggerInsightRun("manual", undefined, undefined, "openai", "gpt-4o");
+
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(call[1].body);
+    expect(body.modelProvider).toBe("openai");
+    expect(body.modelId).toBe("gpt-4o");
+  });
+
+  it("omits model params when provider is empty string", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { id: "INSR-test", status: "completed" }));
+
+    await triggerInsightRun("manual", undefined, undefined, "", "");
+
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(call[1].body);
+    expect(body).not.toHaveProperty("modelProvider");
+    expect(body).not.toHaveProperty("modelId");
   });
 });
 

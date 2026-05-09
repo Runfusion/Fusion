@@ -3131,6 +3131,25 @@ describe("TaskStore", () => {
       const settings = await store.getSettingsFast();
       expect(settings.experimentalFeatures).toEqual({ "fast-feature": true });
     });
+
+    it("project-level experimentalFeatures does not override global value", async () => {
+      // Set global experimentalFeatures
+      await store.updateGlobalSettings({ experimentalFeatures: { insights: true, roadmap: true } });
+
+      // Simulate stale project-level config with empty experimentalFeatures
+      // (can happen from older clients or direct DB writes)
+      store.getDatabase()
+        .prepare("UPDATE config SET settings = ? WHERE id = 1")
+        .run(JSON.stringify({ experimentalFeatures: {} }));
+
+      // getSettingsFast should ignore the project-level global key
+      const fastSettings = await store.getSettingsFast();
+      expect(fastSettings.experimentalFeatures).toEqual({ insights: true, roadmap: true });
+
+      // getSettings should also ignore the project-level global key
+      const settings = await store.getSettings();
+      expect(settings.experimentalFeatures).toEqual({ insights: true, roadmap: true });
+    });
   });
 
   // ── Concurrent stress test ───────────────────────────────────────

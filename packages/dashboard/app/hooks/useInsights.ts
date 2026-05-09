@@ -99,7 +99,7 @@ export interface UseInsightsResult {
 
   // Actions
   refresh: () => Promise<void>;
-  runInsights: () => Promise<void>;
+  runInsights: (modelProvider?: string, modelId?: string) => Promise<void>;
   dismiss: (id: string) => Promise<void>;
   createTask: (id: string) => Promise<{ title: string; description: string } | null>;
   archive: (id: string) => Promise<void>;
@@ -189,12 +189,12 @@ export function useInsights(projectId?: string): UseInsightsResult {
   }, []);
 
   // Run insights generation
-  const runInsights = useCallback(async () => {
+  const runInsights = useCallback(async (modelProvider?: string, modelId?: string) => {
     setIsRunInFlight(true);
     setRunError(null);
 
     try {
-      const run = await triggerInsightRun("manual", undefined, projectId);
+      const run = await triggerInsightRun("manual", undefined, projectId, modelProvider, modelId);
       setLatestRun(run);
 
       if (run.status === "completed") {

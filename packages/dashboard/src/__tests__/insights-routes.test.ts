@@ -385,6 +385,94 @@ describe("Insights routes", () => {
     expect(retried.lifecycle.retryOfRunId).toBe(retryableRun.id);
   });
 
+  it("POST /api/insights/runs/:id/retry preserves the original run's custom model", async () => {
+    // Create a run with a custom model that fails with a retryable error
+    piMocks.promptWithFallback.mockRejectedValue(new Error("HTTP 503"));
+    const failedRes = await request(
+      app,
+      "POST",
+      "/api/insights/run",
+      JSON.stringify({
+        trigger: "manual",
+        modelProvider: "openai",
+        modelId: "gpt-4o",
+      }),
+      { "Content-Type": "application/json" },
+    );
+    expect(failedRes.status).toBe(201);
+    const failedRun = failedRes.body as { id: string; inputMetadata: Record<string, unknown> };
+
+    // The failed run should have persisted the model info in inputMetadata
+    expect(failedRun.inputMetadata?.metadata).toMatchObject({
+      modelProvider: "openai",
+      modelId: "gpt-4o",
+    });
+
+    // Reset mock so retry succeeds
+    piMocks.promptWithFallback.mockResolvedValue(undefined);
+    piMocks.createFnAgent.mockClear();
+
+    const retriedRes = await request(app, "POST", `/api/insights/runs/${failedRun.id}/retry`, JSON.stringify({}), {
+      "Content-Type": "application/json",
+    });
+    expect(retriedRes.status).toBe(201);
+
+    // The retry should pass the original model to createFnAgent
+    expect(piMocks.createFnAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        defaultProvider: "openai",
+        defaultModelId: "gpt-4o",
+      }),
+    );
+  });
+
+  it("POST /api/insights/run passes explicit model override to createFnAgent", async () => {
+    const res = await request(
+      app,
+      "POST",
+      "/api/insights/run",
+      JSON.stringify({
+        trigger: "manual",
+        modelProvider: "openai",
+        modelId: "gpt-4o",
+      }),
+      { "Content-Type": "application/json" },
+    );
+    expect(res.status).toBe(201);
+
+    // createFnAgent should have been called with the explicit override
+    expect(piMocks.createFnAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        defaultProvider: "openai",
+        defaultModelId: "gpt-4o",
+        fallbackProvider: undefined,
+        fallbackModelId: undefined,
+      }),
+    );
+  });
+
+  it("POST /api/insights/run without model override uses settings resolution", async () => {
+    const res = await request(
+      app,
+      "POST",
+      "/api/insights/run",
+      JSON.stringify({
+        trigger: "manual",
+      }),
+      { "Content-Type": "application/json" },
+    );
+    expect(res.status).toBe(201);
+
+    // Without override, provider/model come from settings resolution
+    // (which returns undefined when no planning settings are configured)
+    expect(piMocks.createFnAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fallbackProvider: undefined,
+        fallbackModelId: undefined,
+      }),
+    );
+  });
+
   it("POST /api/insights/:id/create-task returns task-conversion payload", async () => {
     const insight = storeA.getInsightStore().createInsight("", {
       title: "Refactor parser",

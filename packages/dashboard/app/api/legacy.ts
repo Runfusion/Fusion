@@ -8865,10 +8865,15 @@ export function triggerInsightRun(
   trigger: InsightRunTrigger = "manual",
   inputMetadata?: InsightRun["inputMetadata"],
   projectId?: string,
+  modelProvider?: string,
+  modelId?: string,
 ): Promise<InsightRun> {
+  const body: Record<string, unknown> = { trigger, inputMetadata };
+  if (modelProvider) body.modelProvider = modelProvider;
+  if (modelId) body.modelId = modelId;
   return api<InsightRun>(withProjectId("/insights/run", projectId), {
     method: "POST",
-    body: JSON.stringify({ trigger, inputMetadata }),
+    body: JSON.stringify(body),
   });
 }
 
