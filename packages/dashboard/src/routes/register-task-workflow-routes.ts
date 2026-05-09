@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import type { TaskStore, Task, TaskDetail, Column } from "@fusion/core";
+import type { TaskStore, Task, TaskDetail, Column, TaskReviewData, TaskReviewItem, TaskReviewSummary } from "@fusion/core";
 import {
   COLUMNS,
   TASK_PRIORITIES,
@@ -11,11 +11,89 @@ import {
   validateNodeOverrideChange,
   canAgentTakeImplementationTask,
   formatRoleMismatchReason,
+  getCurrentRepo,
 } from "@fusion/core";
+import { GitHubClient } from "../github.js";
+import { parseGitHubBadgeUrl } from "./register-git-github.js";
 import { planTaskWorktreePath } from "@fusion/engine";
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
 import { fetchFromRemoteNode } from "./register-settings-sync-helpers.js";
 import type { ApiRoutesContext } from "./types.js";
+
+const REVIEW_BLOCK_RE = /##\s+(Code|Plan)\s+Review:[\s\S]*?(?=\n##\s+(?:Code|Plan)\s+Review:|$)/gi;
+const REVIEW_VERDICT_RE = /###\s+Verdict:\s*(APPROVE|REVISE|RETHINK|UNAVAILABLE)\b/i;
+const REVIEW_STEP_RE = /^(plan|code) review Step (\d+): (APPROVE|REVISE|RETHINK|UNAVAILABLE)\b/i;
+
+function buildReviewerAgentItemId(input: { index: number; reviewType: "plan" | "code"; step?: number; verdict?: string; createdAt?: string }): string {
+  const stepPart = input.step ? `step-${input.step}` : "step-na";
+  const verdictPart = (input.verdict ?? "unknown").toLowerCase();
+  const timePart = (input.createdAt ?? "na").replace(/[:.]/g, "-");
+  return `reviewer-${input.reviewType}-${stepPart}-${verdictPart}-${timePart}-${input.index + 1}`;
+}
+
+async function buildDirectTaskReviewData(task: Task, store: TaskStore): Promise<TaskReviewData> {
+  const agentLogs = await store.getAgentLogs(task.id);
+  const reviewerText = agentLogs.filter((entry) => entry.agent === "reviewer" && entry.type === "text").map((entry) => entry.text).join("\n");
+  const fallbackLogs = (task.log ?? []).filter((entry) => REVIEW_STEP_RE.test(entry.action));
+
+  const items: TaskReviewItem[] = [];
+  const blocks = reviewerText.match(REVIEW_BLOCK_RE) ?? [];
+  for (let index = 0; index < blocks.length; index += 1) {
+    const block = blocks[index] ?? "";
+    const typeMatch = block.match(/##\s+(Code|Plan)\s+Review:/i);
+    const reviewType = typeMatch?.[1]?.toLowerCase() === "plan" ? "plan" : "code";
+    const verdict = block.match(REVIEW_VERDICT_RE)?.[1]?.toUpperCase();
+    const fallback = fallbackLogs[index];
+    const createdAt = fallback?.timestamp ?? task.updatedAt;
+    items.push({
+      itemId: buildReviewerAgentItemId({ index, reviewType, verdict, createdAt }),
+      sourceMode: "reviewer-agent",
+      title: `${reviewType} review ${verdict ?? "feedback"}`,
+      body: block.trim(),
+      author: "reviewer-agent",
+      createdAt,
+      updatedAt: createdAt,
+      reviewState: verdict ?? null,
+      progressStatus: null,
+    });
+  }
+
+  if (items.length === 0) {
+    fallbackLogs.forEach((entry, index) => {
+      const match = entry.action.match(REVIEW_STEP_RE);
+      const reviewType = match?.[1]?.toLowerCase() === "plan" ? "plan" : "code";
+      const verdict = match?.[3]?.toUpperCase();
+      items.push({
+        itemId: buildReviewerAgentItemId({ index, reviewType, step: match?.[2] ? Number.parseInt(match[2], 10) : undefined, verdict, createdAt: entry.timestamp }),
+        sourceMode: "reviewer-agent",
+        title: `${reviewType} review ${verdict ?? "feedback"}`,
+        body: entry.action,
+        author: "reviewer-agent",
+        createdAt: entry.timestamp,
+        updatedAt: entry.timestamp,
+        reviewState: verdict ?? null,
+        progressStatus: null,
+      });
+    });
+  }
+
+  const sorted = [...items].sort((a, b) => Date.parse(b.createdAt ?? "") - Date.parse(a.createdAt ?? ""));
+  const latest = sorted[0];
+  const summary: TaskReviewSummary | null = latest
+    ? {
+        summary: latest.title,
+        verdict: (latest.reviewState as "APPROVE" | "REVISE" | "RETHINK" | "UNAVAILABLE" | null | undefined) ?? undefined,
+      }
+    : null;
+
+  return {
+    mode: "reviewer-agent",
+    refreshable: true,
+    fetchedAt: new Date().toISOString(),
+    summary,
+    items: sorted,
+  };
+}
 
 interface TaskWorkflowRouteDeps {
   runtimeLogger: { error: (message: string, data?: Record<string, unknown>) => void; warn: (message: string, data?: Record<string, unknown>) => void };
@@ -1765,6 +1843,62 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       } else {
         rethrowAsApiError(err);
       }
+    }
+  });
+
+  router.get("/tasks/:id/review", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const task = await scopedStore.getTask(req.params.id);
+      let reviewData: TaskReviewData;
+
+      if (task.prInfo) {
+        const badgeParsed = parseGitHubBadgeUrl(task.prInfo.url);
+        const repoInfo = getCurrentRepo(scopedStore.getRootDir());
+        const owner = badgeParsed?.owner ?? repoInfo?.owner;
+        const repo = badgeParsed?.repo ?? repoInfo?.repo;
+        if (!owner || !repo) {
+          throw badRequest("Could not determine GitHub repository for PR review fetch");
+        }
+        reviewData = await new GitHubClient(options?.githubToken ?? process.env.GITHUB_TOKEN).getPrReviewDetails(owner, repo, task.prInfo.number);
+      } else {
+        reviewData = await buildDirectTaskReviewData(task, scopedStore);
+      }
+
+      res.json(reviewData);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        throw notFound(`Task ${req.params.id} not found`);
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  router.post("/tasks/:id/review/refresh", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const task = await scopedStore.getTask(req.params.id);
+      let reviewData: TaskReviewData;
+      if (task.prInfo) {
+        const badgeParsed = parseGitHubBadgeUrl(task.prInfo.url);
+        const repoInfo = getCurrentRepo(scopedStore.getRootDir());
+        const owner = badgeParsed?.owner ?? repoInfo?.owner;
+        const repo = badgeParsed?.repo ?? repoInfo?.repo;
+        if (!owner || !repo) {
+          throw badRequest("Could not determine GitHub repository for PR review refresh");
+        }
+        reviewData = await new GitHubClient(options?.githubToken ?? process.env.GITHUB_TOKEN).getPrReviewDetails(owner, repo, task.prInfo.number);
+      } else {
+        reviewData = await buildDirectTaskReviewData(task, scopedStore);
+      }
+      res.json(reviewData);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        throw notFound(`Task ${req.params.id} not found`);
+      }
+      rethrowAsApiError(err);
     }
   });
 

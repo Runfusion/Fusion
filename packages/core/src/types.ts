@@ -711,7 +711,7 @@ export type TaskReviewVerdict = "APPROVE" | "REVISE" | "RETHINK" | "UNAVAILABLE"
 export type TaskReviewerType = "plan" | "code";
 export type TaskReviewItemStatus = "queued" | "in-progress" | "addressed" | "failed";
 
-export interface TaskReviewItem {
+export interface LegacyTaskReviewItem {
   id: string;
   source: TaskReviewSource;
   status: TaskReviewItemStatus;
@@ -734,7 +734,7 @@ export interface TaskReview {
   summary?: string;
   latestRefreshAt?: string;
   selectedItemIds?: string[];
-  items: TaskReviewItem[];
+  items: LegacyTaskReviewItem[];
 }
 
 export type PrCheckState =
@@ -836,6 +836,43 @@ export interface TaskReviewState {
   summary?: PrTaskReviewSummary | ReviewerTaskReviewSummary;
   items: TaskReviewStateItem[];
   addressing: ReviewAddressingRecord[];
+}
+
+export interface TaskReviewSummary {
+  reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  reviewers?: PrTaskReviewSummaryReviewer[];
+  blockingReasons?: string[];
+  checks?: PrCheckStatus[];
+  verdict?: TaskReviewVerdict;
+  reviewType?: TaskReviewerType;
+  summary?: string;
+}
+
+export interface TaskReviewDataItem {
+  itemId: string;
+  sourceMode: "pull-request" | "reviewer-agent";
+  title: string;
+  body: string;
+  author: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  url?: string;
+  filePath?: string;
+  line?: number;
+  threadId?: string;
+  reviewState?: string | null;
+  isResolved?: boolean;
+  progressStatus?: "queued" | "in-progress" | "addressed" | "failed" | null;
+}
+
+export type TaskReviewItem = TaskReviewDataItem;
+
+export interface TaskReviewData {
+  mode: "pull-request" | "reviewer-agent";
+  refreshable: boolean;
+  fetchedAt: string | null;
+  summary: TaskReviewSummary | null;
+  items: TaskReviewItem[];
 }
 
 export interface TaskDocument {

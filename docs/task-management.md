@@ -259,6 +259,8 @@ This file is the contract for execution and review.
 
 - **Task comments** (`fn task comment`) are general collaboration notes.
 - **Review tab feedback** is dedicated actionable review input (PR review data in pull-request mode, reviewer-agent findings in direct/non-PR mode) used to request same-task revisions.
+- Review data is served from task-scoped API endpoints: `GET /api/tasks/:id/review` and `POST /api/tasks/:id/review/refresh`.
+- Both endpoints return one normalized contract (`TaskReviewData`) with stable per-item `itemId` values and `sourceMode` (`pull-request` or `reviewer-agent`) so Review UI and per-item progress can share one read model.
 - The Review tab supports **manual refresh** without closing/reopening Task Detail:
   - Pull-request mode refreshes live GitHub-backed review decision/thread/comment state and updates PR metadata freshness.
   - Direct/non-PR mode refreshes normalized reviewer-agent feedback from persisted task review artifacts and does not call GitHub.

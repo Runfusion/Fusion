@@ -2059,9 +2059,9 @@ describe("GET /tasks/:id/review", () => {
 
     const res = await REQUEST(buildApp(), "GET", "/api/tasks/FN-001/review");
     expect(res.status).toBe(200);
-    expect(res.body.reviewState.source).toBe("reviewer-agent");
-    expect(res.body.reviewState.items[0].reviewType).toBe("code");
-    expect(res.body.reviewState.items[0].verdict).toBe("REVISE");
+    expect(res.body.mode).toBe("reviewer-agent");
+    expect(res.body.items[0].sourceMode).toBe("reviewer-agent");
+    expect(res.body.items[0].reviewState).toBe("REVISE");
   });
 
   it("returns exact empty payload/message when no reviewer feedback exists", async () => {
@@ -2074,8 +2074,9 @@ describe("GET /tasks/:id/review", () => {
 
     const res = await REQUEST(buildApp(), "GET", "/api/tasks/FN-001/review");
     expect(res.status).toBe(200);
-    expect(res.body.reviewState.items).toEqual([]);
-    expect(res.body.emptyMessage).toBe("No reviewer feedback yet — this task has not produced reviewer-agent feedback in direct mode.");
+    expect(res.body.mode).toBe("reviewer-agent");
+    expect(res.body.summary).toBeNull();
+    expect(res.body.items).toEqual([]);
   });
 
   it("falls back to task log summary when reviewer output is incomplete", async () => {
@@ -2096,8 +2097,8 @@ describe("GET /tasks/:id/review", () => {
 
     const res = await REQUEST(buildApp(), "GET", "/api/tasks/FN-001/review");
     expect(res.status).toBe(200);
-    expect(res.body.reviewState.items[0].summary).toBe("plan review Step 1: APPROVE");
-    expect(res.body.reviewState.items[0].step).toBe(1);
+    expect(res.body.items[0].title).toContain("plan review APPROVE");
+    expect(res.body.items[0].itemId).toContain("step-1");
   });
 
   it("returns 404 when task is missing", async () => {
@@ -2134,25 +2135,11 @@ describe("POST /tasks/:id/review/refresh", () => {
         commentCount: 0,
       },
     });
-    vi.spyOn(GitHubClient.prototype, "getPrReviewSnapshot").mockResolvedValue({
-      decision: "CHANGES_REQUESTED",
-      checks: [],
-      prInfo: {
-        url: "https://github.com/owner/repo/pull/42",
-        number: 42,
-        status: "open",
-        title: "PR",
-        headBranch: "fusion/fn-1",
-        baseBranch: "main",
-        commentCount: 1,
-      },
-      commentCount: 1,
-      summary: {
-        reviewDecision: "CHANGES_REQUESTED",
-        reviewers: [],
-        blockingReasons: ["needs work"],
-        checks: [],
-      },
+    vi.spyOn(GitHubClient.prototype, "getPrReviewDetails").mockResolvedValue({
+      mode: "pull-request",
+      refreshable: true,
+      fetchedAt: "2026-05-01T10:00:00.000Z",
+      summary: { reviewDecision: "CHANGES_REQUESTED", reviewers: [], blockingReasons: ["needs work"], checks: [] },
       items: [],
     });
 
@@ -2161,17 +2148,7 @@ describe("POST /tasks/:id/review/refresh", () => {
     });
 
     expect(res.status).toBe(200);
-    expect((store.updateTask as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
-      "FN-001",
-      expect.objectContaining({
-        reviewState: expect.objectContaining({
-          source: "pull-request",
-          refreshSource: "manual",
-          refreshStatus: "ready",
-          lastRefreshedAt: expect.any(String),
-        }),
-      }),
-    );
+    expect(res.body.mode).toBe("pull-request");
   });
 
   it("returns scoped refresh error payload in PR mode when GitHub refresh fails", async () => {
@@ -2188,15 +2165,14 @@ describe("POST /tasks/:id/review/refresh", () => {
       },
       reviewState: { source: "pull-request", items: [], addressing: [] },
     });
-    vi.spyOn(GitHubClient.prototype, "getPrReviewSnapshot").mockRejectedValue(new Error("GitHub outage"));
+    vi.spyOn(GitHubClient.prototype, "getPrReviewDetails").mockRejectedValue(new Error("GitHub outage"));
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/refresh", JSON.stringify({}), {
       "content-type": "application/json",
     });
 
-    expect(res.status).toBe(200);
-    expect(res.body.reviewState.refreshStatus).toBe("error");
-    expect(res.body.reviewState.refreshError).toContain("GitHub outage");
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain("GitHub outage");
   });
 
   it("refreshes direct-mode review payload without PR", async () => {
@@ -2209,26 +2185,15 @@ describe("POST /tasks/:id/review/refresh", () => {
       },
     });
 
-    const getSnapshotSpy = vi.spyOn(GitHubClient.prototype, "getPrReviewSnapshot");
+    const getDetailsSpy = vi.spyOn(GitHubClient.prototype, "getPrReviewDetails");
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/refresh", JSON.stringify({}), {
       "content-type": "application/json",
     });
 
     expect(res.status).toBe(200);
-    expect((store.updateTask as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
-      "FN-001",
-      expect.objectContaining({
-        reviewState: expect.objectContaining({
-          source: "reviewer-agent",
-          refreshSource: "manual",
-          refreshStatus: "ready",
-          lastRefreshedAt: expect.any(String),
-        }),
-      }),
-    );
-    expect(res.body.reviewState.source).toBe("reviewer-agent");
-    expect(getSnapshotSpy).not.toHaveBeenCalled();
+    expect(res.body.mode).toBe("reviewer-agent");
+    expect(getDetailsSpy).not.toHaveBeenCalled();
   });
 
   it("returns 404 when task is missing", async () => {

@@ -1,4 +1,4 @@
-import type { IssueInfo, PrInfo } from "@fusion/core";
+import type { IssueInfo, PrInfo, TaskReviewData, TaskReviewItem, TaskReviewSummary } from "@fusion/core";
 import {
   isGhAvailable,
   isGhAuthenticated,
@@ -584,7 +584,7 @@ export class GitHubClient {
 
   async getPrReviewSnapshot(owner: string | undefined, repo: string | undefined, number: number): Promise<PrReviewSnapshot> {
     const { owner: resolvedOwner, repo: resolvedRepo } = this.resolveRepo(owner, repo);
-    const details = await this.getPrReviewDetails(resolvedOwner, resolvedRepo, number);
+    const details = await this.getRawPrReviewDetails(resolvedOwner, resolvedRepo, number);
     const mergeStatus = await this.getPrMergeStatus(resolvedOwner, resolvedRepo, number);
     const checks = mergeStatus.checks;
     const commentItems: PrReviewStateItem[] = (details.comments ?? []).map((comment) => ({
@@ -632,7 +632,61 @@ export class GitHubClient {
     };
   }
 
-  private async getPrReviewDetails(owner: string, repo: string, number: number): Promise<PrReviewDetails> {
+  async getPrReviewDetails(owner: string | undefined, repo: string | undefined, number: number): Promise<TaskReviewData> {
+    const { owner: resolvedOwner, repo: resolvedRepo } = this.resolveRepo(owner, repo);
+    const details = await this.getRawPrReviewDetails(resolvedOwner, resolvedRepo, number);
+    const mergeStatus = await this.getPrMergeStatus(resolvedOwner, resolvedRepo, number);
+    const fetchedAt = new Date().toISOString();
+
+    const reviewItems: TaskReviewItem[] = (details.reviews ?? []).map((review) => ({
+      itemId: `gh-review-${review.id}`,
+      sourceMode: "pull-request",
+      title: `Review ${review.state}`,
+      body: review.body ?? `Review ${review.state}`,
+      author: review.author?.login ?? "reviewer",
+      createdAt: review.submittedAt ?? null,
+      updatedAt: review.submittedAt ?? null,
+      url: review.url ?? undefined,
+      threadId: `review-${review.id}`,
+      reviewState: review.state ?? null,
+      progressStatus: null,
+    }));
+
+    const commentItems: TaskReviewItem[] = (details.comments ?? []).map((comment) => ({
+      itemId: `gh-comment-${comment.id}`,
+      sourceMode: "pull-request",
+      title: "PR comment",
+      body: comment.body,
+      author: comment.author?.login ?? "reviewer",
+      createdAt: comment.createdAt ?? null,
+      updatedAt: comment.updatedAt ?? null,
+      url: comment.url,
+      threadId: `comment-${comment.id}`,
+      reviewState: "COMMENTED",
+      progressStatus: null,
+    }));
+
+    const summary: TaskReviewSummary = {
+      reviewDecision: details.reviewDecision ?? null,
+      reviewers: (details.reviews ?? []).map((review) => ({
+        login: review.author?.login ?? "reviewer",
+        state: review.state === "APPROVED" || review.state === "CHANGES_REQUESTED" || review.state === "COMMENTED" || review.state === "PENDING" ? review.state : "COMMENTED",
+        submittedAt: review.submittedAt ?? undefined,
+      })),
+      blockingReasons: mergeStatus.blockingReasons,
+      checks: mergeStatus.checks,
+    };
+
+    return {
+      mode: "pull-request",
+      refreshable: true,
+      fetchedAt,
+      summary,
+      items: [...reviewItems, ...commentItems],
+    };
+  }
+
+  private async getRawPrReviewDetails(owner: string, repo: string, number: number): Promise<PrReviewDetails> {
     if (this.hasGhAuth()) {
       try {
         return await this.getPrReviewDetailsWithGh(owner, repo, number);

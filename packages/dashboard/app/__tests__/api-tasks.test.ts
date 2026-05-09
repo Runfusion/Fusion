@@ -73,6 +73,8 @@ import {
   fetchMemoryBackendStatus,
   fetchPluginDashboardViews,
   fetchPluginUiSlots,
+  fetchTaskReviewData,
+  refreshTaskReviewData,
   type ProjectInfo,
   type ProjectHealth,
   type ActivityFeedEntry,
@@ -1071,3 +1073,27 @@ describe("batchUpdateTaskModels", () => {
   });
 });
 
+
+describe("task review data api wrappers", () => {
+  it("fetchTaskReviewData calls task review endpoint", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      mockFetchResponse(true, { mode: "reviewer-agent", refreshable: true, fetchedAt: null, summary: null, items: [] })
+    ) as unknown as typeof fetch;
+    await fetchTaskReviewData("FN-123", "proj-1");
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/tasks/FN-123/review?projectId=proj-1",
+      expect.any(Object)
+    );
+  });
+
+  it("refreshTaskReviewData posts to refresh endpoint", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      mockFetchResponse(true, { mode: "pull-request", refreshable: true, fetchedAt: "2026-05-01T00:00:00.000Z", summary: null, items: [] })
+    ) as unknown as typeof fetch;
+    await refreshTaskReviewData("FN-123");
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/tasks/FN-123/review/refresh",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+});

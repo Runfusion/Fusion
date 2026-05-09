@@ -1271,8 +1271,8 @@ Pull-request auto-merge tasks persist structured review metadata on the task as 
 
 API flow:
 
-1. `GET /api/tasks/:id/review` returns cached `reviewState` for modal load.
-2. `POST /api/tasks/:id/review/refresh` fetches latest GitHub PR review/review-comment state, updates `reviewState`, and preserves addressing history (items that disappear are retained as `stale: true`).
+1. `GET /api/tasks/:id/review` returns canonical `TaskReviewData` (`mode`, `refreshable`, `fetchedAt`, `summary`, `items[]`) for modal load.
+2. `POST /api/tasks/:id/review/refresh` returns the same `TaskReviewData` shape after re-fetching source data (GitHub PR mode or reviewer-agent direct mode).
 3. `POST /api/tasks/:id/review/address` records selected review items as queued, appends a deterministic `**PR Review Revision Request**` steering comment payload, clears transient failure/session state, and requeues the same task to `todo` for same-task revision.
 
 UI contract boundary:

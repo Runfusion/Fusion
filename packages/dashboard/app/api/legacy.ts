@@ -1,6 +1,7 @@
 import type {
   Task,
   TaskDetail,
+  TaskReviewData,
   TaskAttachment,
   TaskComment,
   TaskCreateInput,
@@ -5114,14 +5115,54 @@ export function acceptTaskReview(taskId: string, projectId?: string): Promise<Ta
   });
 }
 
+function mapTaskReviewDataToLegacy(data: TaskReviewData): TaskReviewResponse {
+  return {
+    reviewState: {
+      source: data.mode,
+      summary: data.summary ?? undefined,
+      items: data.items.map((item) => ({
+        id: item.itemId,
+        body: item.body,
+        author: { login: item.author },
+        createdAt: item.createdAt ?? new Date(0).toISOString(),
+        updatedAt: item.updatedAt ?? undefined,
+        path: item.filePath,
+        threadId: item.threadId,
+        htmlUrl: item.url,
+        state: item.reviewState ?? undefined,
+        isResolved: item.isResolved,
+      })),
+      addressing: [],
+      lastRefreshedAt: data.fetchedAt ?? undefined,
+      refreshStatus: "ready",
+      refreshSource: "initial-load",
+    },
+    automationStatus: null,
+  };
+}
+
 /** Fetch normalized task review data (PR mode or direct mode) */
-export function fetchTaskReview(taskId: string, projectId?: string): Promise<TaskReviewResponse> {
-  return api<TaskReviewResponse>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/review`, projectId));
+export async function fetchTaskReview(taskId: string, projectId?: string): Promise<TaskReviewResponse> {
+  const data = await api<TaskReviewData>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/review`, projectId));
+  return mapTaskReviewDataToLegacy(data);
+}
+
+/** Fetch canonical review payload for future review-tab rendering. */
+export function fetchTaskReviewData(taskId: string, projectId?: string): Promise<TaskReviewData> {
+  return api<TaskReviewData>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/review`, projectId));
 }
 
 /** Refresh normalized task review data (PR mode or direct mode) */
-export function refreshTaskReview(taskId: string, projectId?: string): Promise<RefreshTaskReviewResponse> {
-  return api<RefreshTaskReviewResponse>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/review/refresh`, projectId), {
+export async function refreshTaskReview(taskId: string, projectId?: string): Promise<RefreshTaskReviewResponse> {
+  const data = await api<TaskReviewData>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/review/refresh`, projectId), {
+    method: "POST",
+  });
+  return mapTaskReviewDataToLegacy(data);
+}
+
+/** Refresh canonical review payload for future review-tab rendering. */
+export function refreshTaskReviewData(taskId: string, projectId?: string): Promise<TaskReviewData> {
+  return api<TaskReviewData>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/review/refresh`, projectId), {
     method: "POST",
   });
 }
