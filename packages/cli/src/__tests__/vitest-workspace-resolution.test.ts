@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import vitestConfig from "../../vitest.config";
 
 const cliRoot = join(__dirname, "..", "..");
 const workspaceRoot = join(cliRoot, "..", "..");
-const hiddenDistRoot = join(workspaceRoot, `.tmp-fn-vitest-workspace-resolution-${process.pid}`);
+const hiddenDistRootPrefix = ".tmp-fn-vitest-workspace-resolution-";
+const hiddenDistRoot = join(workspaceRoot, `${hiddenDistRootPrefix}${process.pid}`);
 
 const internalPackages = ["core", "engine", "dashboard"] as const;
 const movedDistDirs: Array<{ from: string; to: string }> = [];
@@ -28,8 +29,29 @@ function rmSyncWithRetry(path: string) {
   }
 }
 
+function cleanupStaleHiddenDistRoots() {
+  for (const entry of readdirSync(workspaceRoot)) {
+    if (!entry.startsWith(hiddenDistRootPrefix)) {
+      continue;
+    }
+
+    const fullPath = join(workspaceRoot, entry);
+    try {
+      if (!lstatSync(fullPath).isDirectory()) {
+        continue;
+      }
+      rmSyncWithRetry(fullPath);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+}
+
 function hideInternalPackageDistDirs() {
-  rmSyncWithRetry(hiddenDistRoot);
+  cleanupStaleHiddenDistRoots();
   mkdirSync(hiddenDistRoot, { recursive: true });
 
   for (const pkg of internalPackages) {
@@ -63,6 +85,28 @@ function restoreInternalPackageDistDirs() {
   movedDistDirs.length = 0;
   rmSyncWithRetry(hiddenDistRoot);
 }
+
+describe("vitest workspace temp dir cleanup", () => {
+  it("cleans stale workspace-resolution temp dirs without touching unrelated tmp dirs", () => {
+    const staleDir = join(workspaceRoot, `${hiddenDistRootPrefix}stale-test`);
+    const staleMarker = join(staleDir, "marker.txt");
+    const unrelatedTmpDir = join(workspaceRoot, ".tmp-fn-other-marker-test");
+
+    rmSyncWithRetry(staleDir);
+    rmSyncWithRetry(unrelatedTmpDir);
+
+    mkdirSync(staleDir, { recursive: true });
+    writeFileSync(staleMarker, "stale");
+    mkdirSync(unrelatedTmpDir, { recursive: true });
+
+    cleanupStaleHiddenDistRoots();
+
+    expect(existsSync(staleDir)).toBe(false);
+    expect(existsSync(unrelatedTmpDir)).toBe(true);
+
+    rmSyncWithRetry(unrelatedTmpDir);
+  });
+});
 
 describe("CLI Vitest workspace resolution", () => {
   beforeAll(() => {
