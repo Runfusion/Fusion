@@ -57,6 +57,8 @@ import type { AgentReflectionService } from "./agent-reflection.js";
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext } from "./run-audit.js";
 import { evaluateSpecStaleness, getPromptPath } from "./spec-staleness.js";
 import {
+  createAgentCreateTool,
+  createAgentDeleteTool,
   createDelegateTaskTool,
   createGetAgentConfigTool,
   createListAgentsTool,
@@ -86,6 +88,8 @@ import type { AgentActionGateContext } from "./agent-action-gate.js";
 // Re-export for backward compatibility (tests import from executor.ts)
 export { summarizeToolArgs } from "./agent-logger.js";
 export {
+  createAgentCreateTool,
+  createAgentDeleteTool,
   createDelegateTaskTool,
   createGetAgentConfigTool,
   createListAgentsTool,
@@ -2954,6 +2958,8 @@ export class TaskExecutor {
           ...(assignedAgentId ? [
             createGetAgentConfigTool(this.options.agentStore, assignedAgentId),
             createUpdateAgentConfigTool(this.options.agentStore, assignedAgentId),
+            createAgentCreateTool(this.options.agentStore, assignedAgentId),
+            createAgentDeleteTool(this.options.agentStore, assignedAgentId),
           ] : []),
         ] : []),
         // Messaging tools — allows executor agents to send and receive messages.

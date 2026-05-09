@@ -1627,11 +1627,25 @@ export class AgentStore extends EventEmitter {
    * @param agentId - The agent ID
    * @throws Error if agent not found
    */
-  async deleteAgent(agentId: string): Promise<void> {
+  async deleteAgent(agentId: string, options?: { force?: boolean; reassignTo?: string }): Promise<void> {
     await this.withLock(agentId, async () => {
       const agent = await this.getAgent(agentId);
       if (!agent) {
         throw new Error(`Agent ${agentId} not found`);
+      }
+
+      if (this.taskStore && typeof (this.taskStore as { getTasksByAssignedAgent?: unknown }).getTasksByAssignedAgent === "function") {
+        const assignedTasks = await this.taskStore.getTasksByAssignedAgent(agentId);
+        for (const task of assignedTasks) {
+          if (task.checkedOutBy === agentId && options?.force !== true) {
+            throw new Error(`Agent ${agentId} holds checkout for task ${task.id}; pass force=true to delete`);
+          }
+
+          await this.taskStore.updateTask(task.id, {
+            assignedAgentId: options?.reassignTo ?? null,
+            checkedOutBy: task.checkedOutBy === agentId ? null : undefined,
+          });
+        }
       }
 
       this.db.prepare("DELETE FROM agents WHERE id = ?").run(agentId);

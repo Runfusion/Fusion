@@ -1247,6 +1247,24 @@ describe("AgentStore", () => {
       expect(handler).toHaveBeenCalledOnce();
       expect(handler).toHaveBeenCalledWith(created.id);
     });
+
+    it("blocks delete when checked-out assigned task exists unless force=true", async () => {
+      const taskStore = new TaskStore(rootDir, join(rootDir, ".fusion-global-settings"));
+      await taskStore.init();
+      const linkedStore = new AgentStore({ rootDir, inMemoryDb: true, taskStore });
+      await linkedStore.init();
+
+      const created = await linkedStore.createAgent({ name: "Checked Out", role: "executor" });
+      const task = await taskStore.createTask({ title: "T", description: "D", column: "todo", assignedAgentId: created.id });
+      await taskStore.updateTask(task.id, { checkedOutBy: created.id });
+
+      await expect(linkedStore.deleteAgent(created.id)).rejects.toThrow("holds checkout");
+      await linkedStore.deleteAgent(created.id, { force: true });
+      expect(await taskStore.getTask(task.id)).toEqual(expect.objectContaining({ assignedAgentId: undefined, checkedOutBy: undefined }));
+
+      linkedStore.close();
+      taskStore.close();
+    });
   });
 
   // ── listAgents ────────────────────────────────────────────────────

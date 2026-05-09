@@ -137,6 +137,8 @@ describe.skipIf(!SHOULD_RUN_EXTENSION_INTEGRATION)("built fn pi extension integr
       "fn_task_create",
       "fn_task_list",
       "fn_task_show",
+      "fn_agent_create",
+      "fn_agent_delete",
       "fn_list_agents",
       "fn_delegate_task",
       "fn_agent_show",

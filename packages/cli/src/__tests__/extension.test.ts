@@ -204,6 +204,8 @@ describe.skipIf(!SHOULD_RUN_LEGACY_EXTENSION_INTEGRATION)("fn pi extension (lega
         "fn_feature_link_task",
         "fn_agent_stop",
         "fn_agent_start",
+        "fn_agent_create",
+        "fn_agent_delete",
         "fn_list_agents",
         "fn_delegate_task",
         "fn_agent_show",

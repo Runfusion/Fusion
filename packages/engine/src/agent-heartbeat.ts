@@ -22,7 +22,7 @@ import { ApprovalRequestStore, buildExecutionMemoryInstructions, isEphemeralAgen
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import { createHash } from "node:crypto";
-import { createTaskCreateTool, createTaskLogToolWithContext, createTaskDocumentWriteTool, createTaskDocumentReadTool, createListAgentsTool, createDelegateTaskTool, createGetAgentConfigTool, createUpdateAgentConfigTool, createSendMessageTool, createReadMessagesTool, createMemoryTools, createReadEvaluationsTool, createUpdateIdentityTool, createReflectOnPerformanceTool, createWebFetchTool, readAgentMemoryWorkspaceLongTerm, taskCreateParams } from "./agent-tools.js";
+import { createTaskCreateTool, createTaskLogToolWithContext, createTaskDocumentWriteTool, createTaskDocumentReadTool, createListAgentsTool, createDelegateTaskTool, createGetAgentConfigTool, createUpdateAgentConfigTool, createAgentCreateTool, createAgentDeleteTool, createSendMessageTool, createReadMessagesTool, createMemoryTools, createReadEvaluationsTool, createUpdateIdentityTool, createReflectOnPerformanceTool, createWebFetchTool, readAgentMemoryWorkspaceLongTerm, taskCreateParams } from "./agent-tools.js";
 import { AgentLogger } from "./agent-logger.js";
 import {
   resolveAgentInstructionsWithRatings,
@@ -1735,6 +1735,8 @@ export class HeartbeatMonitor {
           heartbeatTools.push(createDelegateTaskTool(this.store, taskStore, { rootDir: this.rootDir }));
           heartbeatTools.push(createGetAgentConfigTool(this.store, agentId));
           heartbeatTools.push(createUpdateAgentConfigTool(this.store, agentId));
+          heartbeatTools.push(createAgentCreateTool(this.store, agentId));
+          heartbeatTools.push(createAgentDeleteTool(this.store, agentId));
 
           // Messaging tools — when MessageStore is available
           if (this.messageStore) {
@@ -2406,6 +2408,8 @@ export class HeartbeatMonitor {
     tools.push(createDelegateTaskTool(this.store, taskStore, { rootDir: this.rootDir }));
     tools.push(createGetAgentConfigTool(this.store, agentId));
     tools.push(createUpdateAgentConfigTool(this.store, agentId));
+    tools.push(createAgentCreateTool(this.store, agentId));
+    tools.push(createAgentDeleteTool(this.store, agentId));
 
     // Messaging tools — when MessageStore is available, agents can send and receive messages
     if (messageStore) {

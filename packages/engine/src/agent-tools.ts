@@ -103,6 +103,35 @@ export const updateAgentConfigParams = Type.Object({
   ], { description: "How agent responds to messages" })),
 });
 
+export const createAgentParams = Type.Object({
+  name: Type.String({ description: "Name for the new agent" }),
+  role: Type.Union([
+    Type.Literal("triage"),
+    Type.Literal("executor"),
+    Type.Literal("reviewer"),
+    Type.Literal("merger"),
+    Type.Literal("engineer"),
+    Type.Literal("custom"),
+  ], { description: "Agent role/capability" }),
+  soul: Type.Optional(Type.String({ description: "Agent personality/identity text", maxLength: 10000 })),
+  instructions_text: Type.Optional(Type.String({ description: "Inline custom instructions", maxLength: 50000 })),
+  instructions_path: Type.Optional(Type.String({ description: "Path to instructions markdown file", maxLength: 500 })),
+  reportsTo: Type.Optional(Type.String({ description: "Manager agent ID. Defaults to the calling agent." })),
+  heartbeat_interval_ms: Type.Optional(Type.Number({ description: "Heartbeat polling interval in ms", minimum: 1000 })),
+  heartbeat_timeout_ms: Type.Optional(Type.Number({ description: "Heartbeat timeout in ms", minimum: 5000 })),
+  max_concurrent_runs: Type.Optional(Type.Number({ description: "Max concurrent heartbeat runs", minimum: 1 })),
+  message_response_mode: Type.Optional(Type.Union([
+    Type.Literal("immediate"),
+    Type.Literal("on-heartbeat"),
+  ], { description: "How agent responds to messages" })),
+});
+
+export const deleteAgentParams = Type.Object({
+  agent_id: Type.String({ description: "Agent ID to delete" }),
+  force: Type.Optional(Type.Boolean({ description: "Force delete even if the agent currently holds a checkout lease" })),
+  reassign_to: Type.Optional(Type.String({ description: "Optional replacement agent ID for tasks currently assigned to the deleted agent" })),
+});
+
 export const sendMessageParams = Type.Object({
   to_id: Type.String({ description: "Recipient ID (agent ID or user ID, depending on message type)" }),
   content: Type.String({ description: "Message body (1-2000 characters)" }),
@@ -1322,6 +1351,11 @@ export function createGetAgentConfigTool(agentStore: AgentStore, callingAgentId:
   };
 }
 
+function isCallerPrivileged(caller: { id: string; role: string; reportsTo?: string | null } | null): boolean {
+  if (!caller) return false;
+  return caller.role === "ceo" || caller.reportsTo == null;
+}
+
 export function createUpdateAgentConfigTool(agentStore: AgentStore, callingAgentId: string): ToolDefinition {
   return {
     name: "fn_update_agent_config",
@@ -1429,6 +1463,100 @@ export function createUpdateAgentConfigTool(agentStore: AgentStore, callingAgent
  * @param taskStore - TaskStore for task creation
  * @returns ToolDefinition for the `fn_delegate_task` tool
  */
+export function createAgentCreateTool(
+  agentStore: AgentStore,
+  callingAgentId: string,
+  options?: { hireApprovalEnabled?: boolean },
+): ToolDefinition {
+  return {
+    name: "fn_agent_create",
+    label: "Create Agent",
+    description: "Create a new non-ephemeral direct-report agent.",
+    parameters: createAgentParams,
+    execute: async (_id: string, params: Static<typeof createAgentParams>) => {
+      const caller = await agentStore.getAgent(callingAgentId);
+      const privileged = isCallerPrivileged(caller);
+      const reportsTo = params.reportsTo ?? callingAgentId;
+
+      if (!privileged && reportsTo !== callingAgentId) {
+        return {
+          content: [{ type: "text" as const, text: "ERROR: You can only create agents that report to you" }],
+          details: {},
+        };
+      }
+
+      const runtimeConfig: Record<string, unknown> = {
+        ...(params.heartbeat_interval_ms !== undefined ? { heartbeatIntervalMs: params.heartbeat_interval_ms } : {}),
+        ...(params.heartbeat_timeout_ms !== undefined ? { heartbeatTimeoutMs: params.heartbeat_timeout_ms } : {}),
+        ...(params.max_concurrent_runs !== undefined ? { maxConcurrentRuns: params.max_concurrent_runs } : {}),
+        ...(params.message_response_mode !== undefined ? { messageResponseMode: params.message_response_mode } : {}),
+      };
+
+      const created = await agentStore.createAgent({
+        name: params.name,
+        role: params.role,
+        ...(params.soul !== undefined ? { soul: params.soul } : {}),
+        ...(params.instructions_text !== undefined ? { instructionsText: params.instructions_text } : {}),
+        ...(params.instructions_path !== undefined ? { instructionsPath: params.instructions_path } : {}),
+        reportsTo,
+        ...(Object.keys(runtimeConfig).length > 0 ? { runtimeConfig } : {}),
+      });
+
+      if (options?.hireApprovalEnabled) {
+        await agentStore.updateAgentState(created.id, "paused");
+        await agentStore.updateAgent(created.id, {
+          metadata: { ...(created.metadata ?? {}), pendingApproval: true },
+        });
+      }
+
+      return {
+        content: [{ type: "text" as const, text: `Created agent ${created.name} (${created.id})${options?.hireApprovalEnabled ? " in pending_approval" : ""}` }],
+        details: { agent: created, pendingApproval: options?.hireApprovalEnabled === true },
+      };
+    },
+  };
+}
+
+export function createAgentDeleteTool(agentStore: AgentStore, callingAgentId: string): ToolDefinition {
+  return {
+    name: "fn_agent_delete",
+    label: "Delete Agent",
+    description: "Delete one of your direct-report non-ephemeral agents.",
+    parameters: deleteAgentParams,
+    execute: async (_id: string, params: Static<typeof deleteAgentParams>) => {
+      const caller = await agentStore.getAgent(callingAgentId);
+      const target = await agentStore.getAgent(params.agent_id);
+      if (!target) {
+        return { content: [{ type: "text" as const, text: `ERROR: Agent ${params.agent_id} not found` }], details: {} };
+      }
+
+      const privileged = isCallerPrivileged(caller);
+      if (!privileged && target.reportsTo !== callingAgentId) {
+        return {
+          content: [{ type: "text" as const, text: "ERROR: You can only delete agents that report to you" }],
+          details: {},
+        };
+      }
+
+      if (isEphemeralAgent(target)) {
+        return { content: [{ type: "text" as const, text: `ERROR: Cannot delete ephemeral/runtime agent ${params.agent_id}` }], details: {} };
+      }
+
+      try {
+        await agentStore.deleteAgent(params.agent_id, { force: params.force === true, reassignTo: params.reassign_to });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { content: [{ type: "text" as const, text: `ERROR: ${message}` }], details: {} };
+      }
+
+      return {
+        content: [{ type: "text" as const, text: `Deleted agent ${target.name} (${target.id})` }],
+        details: { agentId: target.id },
+      };
+    },
+  };
+}
+
 export function createDelegateTaskTool(
   agentStore: AgentStore,
   taskStore: TaskStore,

@@ -2486,6 +2486,73 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── fn_agent_create ─────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "fn_agent_create",
+    label: "fn: Create Agent",
+    description: "Create a new non-ephemeral agent.",
+    parameters: Type.Object({
+      name: Type.String({ description: "Agent name" }),
+      role: Type.String({ description: "Agent role/capability" }),
+      soul: Type.Optional(Type.String({ description: "Agent personality/identity text" })),
+      instructions_text: Type.Optional(Type.String({ description: "Inline custom instructions" })),
+      instructions_path: Type.Optional(Type.String({ description: "Path to instructions markdown" })),
+      reportsTo: Type.Optional(Type.String({ description: "Manager agent ID" })),
+      heartbeat_interval_ms: Type.Optional(Type.Number({ minimum: 1000 })),
+      heartbeat_timeout_ms: Type.Optional(Type.Number({ minimum: 5000 })),
+      max_concurrent_runs: Type.Optional(Type.Number({ minimum: 1 })),
+      message_response_mode: Type.Optional(Type.Union([Type.Literal("immediate"), Type.Literal("on-heartbeat")])),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: getFusionDir(ctx.cwd) });
+      await agentStore.init();
+
+      const runtimeConfig: Record<string, unknown> = {
+        ...(params.heartbeat_interval_ms !== undefined ? { heartbeatIntervalMs: params.heartbeat_interval_ms } : {}),
+        ...(params.heartbeat_timeout_ms !== undefined ? { heartbeatTimeoutMs: params.heartbeat_timeout_ms } : {}),
+        ...(params.max_concurrent_runs !== undefined ? { maxConcurrentRuns: params.max_concurrent_runs } : {}),
+        ...(params.message_response_mode !== undefined ? { messageResponseMode: params.message_response_mode } : {}),
+      };
+
+      const created = await agentStore.createAgent({
+        name: params.name,
+        role: params.role as never,
+        ...(params.soul !== undefined ? { soul: params.soul } : {}),
+        ...(params.instructions_text !== undefined ? { instructionsText: params.instructions_text } : {}),
+        ...(params.instructions_path !== undefined ? { instructionsPath: params.instructions_path } : {}),
+        ...(params.reportsTo !== undefined ? { reportsTo: params.reportsTo } : {}),
+        ...(Object.keys(runtimeConfig).length > 0 ? { runtimeConfig } : {}),
+      });
+
+      return {
+        content: [{ type: "text" as const, text: `Created agent ${created.name} (${created.id})` }],
+        details: { agent: created },
+      };
+    },
+  });
+
+  // ── fn_agent_delete ─────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "fn_agent_delete",
+    label: "fn: Delete Agent",
+    description: "Delete a non-ephemeral agent.",
+    parameters: Type.Object({
+      id: Type.String({ description: "Agent ID to delete" }),
+      force: Type.Optional(Type.Boolean({ description: "Force delete when holding checkout" })),
+      reassign_to: Type.Optional(Type.String({ description: "Optional replacement agent for assigned tasks" })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const { AgentStore } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: getFusionDir(ctx.cwd) });
+      await agentStore.init();
+      await agentStore.deleteAgent(params.id, { force: params.force === true, reassignTo: params.reassign_to });
+      return { content: [{ type: "text" as const, text: `Deleted ${params.id}` }], details: { agentId: params.id } };
+    },
+  });
+
   // ── fn_list_agents ───────────────────────────────────────────────
 
   pi.registerTool({

@@ -298,7 +298,15 @@ The executor agent can spawn child agents that run in parallel. Each spawned age
 
 ## Agent Delegation Tools
 
-Four tools enable inter-agent coordination — discovering agents, delegating tasks, and managing direct-report configuration.
+Six tools enable inter-agent coordination — discovering agents, provisioning/decommissioning direct reports, delegating tasks, and managing direct-report configuration.
+
+### `agent_create` Tool
+
+Create a non-ephemeral agent that reports to the caller (or, for CEO-level callers, any `reportsTo` target).
+
+### `agent_delete` Tool
+
+Delete a non-ephemeral direct report. If the target holds a task checkout lease, deletion is blocked unless `force: true`. Assigned tasks can be reassigned via `reassign_to` or released/unassigned.
 
 ### `list_agents` Tool
 

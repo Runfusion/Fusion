@@ -4,7 +4,7 @@
 export const READONLY_BUILTIN_TOOLS: ReadonlySet<string> = new Set(["read", "find", "grep", "ls"]);
 export const FILE_WRITE_BUILTIN_TOOLS: ReadonlySet<string> = new Set(["write", "edit"]);
 
-const SHARED_TASK_AGENT_TOOLS = ["fn_task_add_dep", "fn_spawn_agent", "fn_update_agent_config"] as const;
+const SHARED_TASK_AGENT_TOOLS = ["fn_task_add_dep", "fn_spawn_agent", "fn_update_agent_config", "fn_agent_create", "fn_agent_delete"] as const;
 
 const ACTION_GATE_TASK_AGENT_ONLY_TOOLS = ["fn_task_create", "fn_delegate_task", "fn_update_identity"] as const;
 const PERMANENT_TASK_AGENT_ONLY_TOOLS = [

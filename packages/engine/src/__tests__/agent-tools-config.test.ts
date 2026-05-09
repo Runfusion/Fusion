@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Agent, AgentStore } from "@fusion/core";
-import { createGetAgentConfigTool, createUpdateAgentConfigTool } from "../agent-tools.js";
+import { createAgentCreateTool, createAgentDeleteTool, createGetAgentConfigTool, createUpdateAgentConfigTool } from "../agent-tools.js";
 
 function createAgent(overrides: Partial<Agent> = {}): Agent {
   const now = new Date().toISOString();
@@ -19,7 +19,10 @@ function createAgent(overrides: Partial<Agent> = {}): Agent {
 function createMockAgentStore(overrides: Partial<AgentStore> = {}): AgentStore {
   return {
     getAgent: vi.fn().mockResolvedValue(null),
+    createAgent: vi.fn(),
+    deleteAgent: vi.fn(),
     updateAgent: vi.fn(),
+    updateAgentState: vi.fn(),
     ...overrides,
   } as unknown as AgentStore;
 }
@@ -227,5 +230,46 @@ describe("createUpdateAgentConfigTool", () => {
     const tool = createUpdateAgentConfigTool(agentStore, "manager-1");
     const schema = tool.parameters as { properties: Record<string, { minimum?: number }> };
     expect(schema.properties.heartbeat_timeout_ms?.minimum).toBe(5000);
+  });
+});
+
+describe("agent lifecycle tools", () => {
+  it("create tool allows direct-report creation", async () => {
+    const manager = createAgent({ id: "manager-1", reportsTo: "ceo-1" });
+    const created = createAgent({ id: "report-1", reportsTo: "manager-1", name: "Report" });
+    const agentStore = createMockAgentStore();
+    vi.mocked(agentStore.getAgent).mockResolvedValue(manager);
+    vi.mocked(agentStore.createAgent).mockResolvedValue(created);
+
+    const tool = createAgentCreateTool(agentStore, "manager-1");
+    const result = await tool.execute("session", { name: "Report", role: "executor" }, undefined as never, undefined as never, undefined as never);
+
+    expect((result.content[0] as { text: string }).text).toContain("Created agent Report (report-1)");
+    expect(agentStore.createAgent).toHaveBeenCalledWith(expect.objectContaining({ reportsTo: "manager-1" }));
+  });
+
+  it("create tool blocks non-privileged cross-manager create", async () => {
+    const manager = createAgent({ id: "manager-1", reportsTo: "ceo-1" });
+    const agentStore = createMockAgentStore();
+    vi.mocked(agentStore.getAgent).mockResolvedValue(manager);
+
+    const tool = createAgentCreateTool(agentStore, "manager-1");
+    const result = await tool.execute("session", { name: "Report", role: "executor", reportsTo: "other" }, undefined as never, undefined as never, undefined as never);
+
+    expect((result.content[0] as { text: string }).text).toContain("ERROR: You can only create agents that report to you");
+    expect(agentStore.createAgent).not.toHaveBeenCalled();
+  });
+
+  it("delete tool blocks non-direct report delete", async () => {
+    const manager = createAgent({ id: "manager-1", reportsTo: "ceo-1" });
+    const target = createAgent({ id: "report-1", reportsTo: "other" });
+    const agentStore = createMockAgentStore();
+    vi.mocked(agentStore.getAgent).mockResolvedValueOnce(manager).mockResolvedValueOnce(target);
+
+    const tool = createAgentDeleteTool(agentStore, "manager-1");
+    const result = await tool.execute("session", { agent_id: "report-1" }, undefined as never, undefined as never, undefined as never);
+
+    expect((result.content[0] as { text: string }).text).toContain("ERROR: You can only delete agents that report to you");
+    expect(agentStore.deleteAgent).not.toHaveBeenCalled();
   });
 });
