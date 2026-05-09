@@ -7,6 +7,7 @@ import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { rm } from "node:fs/promises";
+import { ensureRoadmapSchema } from "../../../../plugins/fusion-plugin-roadmap/src/roadmap-schema.js";
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), "kb-db-test-"));
@@ -552,6 +553,32 @@ describe("Database", () => {
 
       await expect(db.runPluginSchemaInits(hooks)).resolves.toBeUndefined();
       await expect(db.runPluginSchemaInits(hooks)).resolves.toBeUndefined();
+    });
+
+    it("executes roadmap plugin schema hook to create roadmap-owned tables and indexes", async () => {
+      await db.runPluginSchemaInits([
+        {
+          pluginId: "roadmap-planner",
+          hook: ensureRoadmapSchema,
+        },
+      ]);
+
+      const roadmapTables = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('roadmaps', 'roadmap_milestones', 'roadmap_features') ORDER BY name")
+        .all() as Array<{ name: string }>;
+      expect(roadmapTables.map((table) => table.name)).toEqual([
+        "roadmap_features",
+        "roadmap_milestones",
+        "roadmaps",
+      ]);
+
+      const roadmapIndexes = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name IN ('idxRoadmapMilestonesRoadmapOrder', 'idxRoadmapFeaturesMilestoneOrder') ORDER BY name")
+        .all() as Array<{ name: string }>;
+      expect(roadmapIndexes.map((index) => index.name)).toEqual([
+        "idxRoadmapFeaturesMilestoneOrder",
+        "idxRoadmapMilestonesRoadmapOrder",
+      ]);
     });
   });
 

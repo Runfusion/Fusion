@@ -34,8 +34,9 @@ Roadmap behavior regression tests live in this plugin package and should stay he
 - `src/store/__tests__/roadmap-store.test.ts`
 - `src/store/__tests__/roadmap-ordering.test.ts`
 - `src/store/__tests__/roadmap-handoff.test.ts`
+- `src/__tests__/index.test.ts` *(plugin contract: `hooks.onSchemaInit`, dashboard view metadata registration)*
 - `src/__tests__/roadmap-routes.test.ts`
-- `src/__tests__/roadmap-suggestions.test.ts`
+- `src/__tests__/roadmap-suggestions.test.ts` *(AI suggestion flow uses injected `PluginContext.createAiSession()` and session lifecycle handling)*
 - `src/__tests__/api-client.test.ts`
 - `src/dashboard/__tests__/useRoadmaps.test.ts`
 - `src/dashboard/__tests__/RoadmapsView.test.tsx`
@@ -46,6 +47,20 @@ Prefer canonical package exports in tests:
 - dashboard view surface: `@fusion-plugin-examples/roadmap/dashboard-view`
 
 Use deep source imports only when no package export exists for the target module.
+
+## Host vs plugin capability boundaries
+
+Plugin-owned responsibilities:
+
+- Define roadmap schema DDL in `src/roadmap-schema.ts` and register it via `hooks.onSchemaInit` in `src/index.ts`.
+- Implement roadmap AI suggestion behavior through the injected `PluginContext.createAiSession()` seam.
+- Declare plugin dashboard view metadata (`dashboardViews`) and export the real view entrypoint (`./dashboard-view`).
+
+Host-owned responsibilities:
+
+- Execute plugin schema hooks during DB startup and expose resulting tables/indexes to plugin routes.
+- Inject `createAiSession()` into plugin runtime/route context.
+- Discover plugin dashboard views via `/api/plugins/dashboard-views` and resolve plugin view IDs (for roadmap: `plugin:roadmap-planner:roadmaps`) through the host view registry.
 
 ## Notes
 

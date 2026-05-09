@@ -71,6 +71,8 @@ import {
   fetchAgentRunTimeline,
   streamChatResponse,
   fetchMemoryBackendStatus,
+  fetchPluginDashboardViews,
+  fetchPluginUiSlots,
   type ProjectInfo,
   type ProjectHealth,
   type ActivityFeedEntry,
@@ -777,6 +779,51 @@ describe("task comments api", () => {
     expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/comments/c1", {
       headers: { "Content-Type": "application/json" },
       method: "DELETE",
+    });
+  });
+});
+
+describe("plugin dashboard view API wrappers", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("fetchPluginDashboardViews calls /api/plugins/dashboard-views", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, [
+      {
+        pluginId: "roadmap-planner",
+        view: { viewId: "roadmaps", label: "Roadmaps", componentPath: "./dashboard-view" },
+      },
+    ]));
+
+    const result = await fetchPluginDashboardViews("project-a");
+
+    expect(result).toHaveLength(1);
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/plugins/dashboard-views?projectId=project-a", {
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  it("fetchPluginUiSlots calls /api/plugins/ui-slots and keeps slot shape", async () => {
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, [
+      {
+        pluginId: "roadmap-planner",
+        slot: {
+          slotId: "task-detail-tab",
+          label: "Roadmap Details",
+          componentPath: "./task-detail.js",
+        },
+      },
+    ]));
+
+    const result = await fetchPluginUiSlots("project-a");
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toHaveProperty("slot");
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/plugins/ui-slots?projectId=project-a", {
+      headers: { "Content-Type": "application/json" },
     });
   });
 });

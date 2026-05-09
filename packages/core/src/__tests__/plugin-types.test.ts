@@ -1404,6 +1404,47 @@ describe("validatePluginManifest contribution metadata", () => {
     expect(result.errors).toContain("setup.binaryName is required and must be a non-empty string");
     expect(result.errors).toContain("setup.description is required and must be a non-empty string");
   });
+
+  it("accepts valid dashboardViews metadata", () => {
+    const result = validatePluginManifest({
+      id: "plugin-a",
+      name: "Plugin A",
+      version: "1.0.0",
+      dashboardViews: [
+        {
+          viewId: "roadmaps",
+          label: "Roadmaps",
+          componentPath: "./dashboard-view",
+          placement: "primary",
+        },
+      ],
+    });
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  it("rejects dashboardViews entries with malformed fields", () => {
+    const result = validatePluginManifest({
+      id: "plugin-a",
+      name: "Plugin A",
+      version: "1.0.0",
+      dashboardViews: [
+        {
+          viewId: "Roadmaps",
+          label: "",
+          componentPath: "",
+          placement: "sidebar",
+        },
+      ],
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("dashboardViews[0].viewId must be a valid slug (lowercase, alphanumeric, hyphens only, cannot start or end with hyphen)");
+    expect(result.errors).toContain("dashboardViews[0].label is required and must be a non-empty string");
+    expect(result.errors).toContain("dashboardViews[0].componentPath is required and must be a non-empty string");
+    expect(result.errors).toContain("dashboardViews[0].placement must be one of: primary, overflow, more");
+  });
 });
 
 describe("CreateAiSession types", () => {
