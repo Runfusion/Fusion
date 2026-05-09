@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { loadAllAppCss } from "../../test/cssFixture";
 import { AgentsView } from "../AgentsView";
 import * as apiModule from "../../api";
 import type { Agent, AgentState, AgentCapability, OrgTreeNode } from "../../api";
@@ -1335,7 +1336,18 @@ describe("AgentsView", () => {
       expect(leafNode.style.getPropertyValue("--org-chart-subtree-leaves")).toBe("1");
       expect(rootChildren).toBeTruthy();
       expect(rootChildren.className).toContain("org-chart-children");
+      expect(rootChildren.style.getPropertyValue("--org-chart-first-child-leaves")).toBe("1");
+      expect(rootChildren.style.getPropertyValue("--org-chart-last-child-leaves")).toBe("1");
       expect(container.querySelectorAll(".org-chart-node--has-children").length).toBeGreaterThan(0);
+    });
+
+    it("uses tokenized connector edge offsets for org chart child bars", () => {
+      const css = loadAllAppCss();
+      expect(css).toContain("--org-chart-first-child-center-offset");
+      expect(css).toContain("--org-chart-last-child-center-offset");
+      expect(css).toContain("left: var(--org-chart-first-child-center-offset)");
+      expect(css).toContain("right: var(--org-chart-last-child-center-offset)");
+      expect(css).toContain(".org-chart-children > .org-chart-node::before");
     });
 
     it("switches org chart to vertical layout mode when estimated width exceeds viewport", async () => {
