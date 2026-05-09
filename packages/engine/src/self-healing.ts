@@ -13,7 +13,7 @@
  *    by cleaning oldest idle worktrees when count exceeds 2× maxWorktrees.
  */
 
-import { exec } from "node:child_process";
+import { exec, execSync } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -129,6 +129,21 @@ interface LandedTaskCommit {
   filesChanged?: number;
   insertions?: number;
   deletions?: number;
+}
+
+type AlreadyMergedDetectionStrategy = "trailer" | "ancestry" | "patch-id";
+
+interface AlreadyMergedLookupInput {
+  taskId: string;
+  repoDir: string;
+  baseBranch: string;
+  taskBranch?: string;
+  baseCommitSha?: string;
+}
+
+interface AlreadyMergedLookupResult {
+  sha: string;
+  strategy: AlreadyMergedDetectionStrategy;
 }
 
 function commitOwnedByTask(taskId: string, subject: string, body: string): boolean {
@@ -592,6 +607,153 @@ export class SelfHealingManager {
     }
 
     return commit;
+  }
+
+  private async findAlreadyMergedTaskCommit(
+    input: AlreadyMergedLookupInput,
+  ): Promise<AlreadyMergedLookupResult | null> {
+    const { taskId, repoDir, baseBranch, taskBranch, baseCommitSha } = input;
+
+    try {
+      const trailerPattern = `^Fusion-Task-Id: ${taskId}$`;
+      const trailerCommand = [
+        "git log",
+        `--grep=${shellQuote(trailerPattern)}`,
+        "-E",
+        "--max-count=1",
+        "--format=%H",
+        shellQuote(baseBranch),
+      ].join(" ");
+      const { stdout } = await execAsync(trailerCommand, {
+        cwd: repoDir,
+        timeout: 30_000,
+        maxBuffer: 1024 * 1024,
+      });
+      const sha = stdout.trim();
+      if (sha) {
+        return { sha, strategy: "trailer" };
+      }
+    } catch {
+      // Fall through to ancestry/patch-id checks.
+    }
+
+    let branchTip: string | null = null;
+    const branchName = taskBranch || `fusion/${taskId.toLowerCase()}`;
+    try {
+      branchTip = execSync(`git rev-parse --verify ${shellQuote(branchName)}`, {
+        cwd: repoDir,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+
+      execSync(`git merge-base --is-ancestor ${shellQuote(branchTip)} ${shellQuote(baseBranch)}`, {
+        cwd: repoDir,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      const ancestryCommand = [
+        "git log",
+        "--first-parent",
+        "--format=%H",
+        `--grep=${shellQuote(taskId)}`,
+        "--max-count=1",
+        shellQuote(baseBranch),
+      ].join(" ");
+      const { stdout } = await execAsync(ancestryCommand, {
+        cwd: repoDir,
+        timeout: 30_000,
+        maxBuffer: 1024 * 1024,
+      });
+      const sha = stdout.trim();
+      if (sha) {
+        return { sha, strategy: "ancestry" };
+      }
+    } catch {
+      // Fall through to patch-id checks.
+    }
+
+    try {
+      if (!branchTip) {
+        branchTip = execSync(`git rev-parse --verify ${shellQuote(branchName)}`, {
+          cwd: repoDir,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+        }).trim();
+      }
+
+      let branchBase = baseCommitSha?.trim();
+      if (!branchBase) {
+        const { stdout: mergeBaseStdout } = await execAsync(
+          `git merge-base ${shellQuote(branchTip)} ${shellQuote(baseBranch)}`,
+          {
+            cwd: repoDir,
+            timeout: 30_000,
+            maxBuffer: 1024 * 1024,
+          },
+        );
+        branchBase = mergeBaseStdout.trim();
+      }
+
+      if (!branchBase) {
+        return null;
+      }
+
+      const branchPatchIdCommand = `git diff ${shellQuote(branchBase)}..${shellQuote(branchTip)} | git patch-id`;
+      const { stdout: branchPatchIdOut } = await execAsync(branchPatchIdCommand, {
+        cwd: repoDir,
+        shell: true,
+        timeout: 60_000,
+        maxBuffer: 32 * 1024 * 1024,
+      });
+      const branchPatchIdLine = branchPatchIdOut
+        .trim()
+        .split("\n")
+        .find((line) => line.trim().length > 0);
+      const branchPatchId = branchPatchIdLine?.trim().split(/\s+/)[0];
+      if (!branchPatchId) {
+        return null;
+      }
+
+      const basePatchMapCommand = `git log -n 200 -p --format='%H' ${shellQuote(baseBranch)} | git patch-id`;
+      const { stdout: basePatchIdsOut } = await execAsync(basePatchMapCommand, {
+        cwd: repoDir,
+        shell: true,
+        timeout: 60_000,
+        maxBuffer: 32 * 1024 * 1024,
+      });
+
+      const basePatchMap = new Map<string, string>();
+      for (const line of basePatchIdsOut.split("\n")) {
+        const [patchId, sha] = line.trim().split(/\s+/);
+        if (!patchId || !sha) continue;
+        basePatchMap.set(patchId, sha);
+      }
+
+      const matchedSha = basePatchMap.get(branchPatchId);
+      if (matchedSha) {
+        return { sha: matchedSha, strategy: "patch-id" };
+      }
+    } catch {
+      // Fall through to null when patch-id detection fails.
+    }
+
+    return null;
+  }
+
+  private async cleanupWorktreeOnly(task: Task): Promise<void> {
+    if (task.worktree && existsSync(task.worktree)) {
+      try {
+        await execAsync(`git worktree remove ${shellQuote(task.worktree)} --force`, {
+          cwd: this.options.rootDir,
+          timeout: 120_000,
+        });
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        log.warn(
+          `Failed to remove worktree ${task.worktree} for ${task.id}: ${errorMessage} — non-fatal, cleanup can retry later`,
+        );
+      }
+    }
   }
 
   private async cleanupInterruptedMergeArtifacts(task: Task): Promise<void> {
