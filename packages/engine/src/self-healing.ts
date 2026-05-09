@@ -842,6 +842,7 @@ export class SelfHealingManager {
           { name: "recover-ghost-review", fn: () => this.recoverGhostReviewTasks() },
           { name: "recover-orphaned-agents", fn: () => this.recoverOrphanedAgents() },
           { name: "recover-stale-heartbeat-runs", fn: () => this.recoverStaleHeartbeatRuns() },
+          { name: "clear-stale-blocked-by", fn: () => this.clearStaleBlockedBy() },
         ];
         for (const fn of batch2Fns) {
           try {
@@ -1059,6 +1060,78 @@ export class SelfHealingManager {
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.error(`Stale merging status recovery failed: ${errorMessage}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Clear `blockedBy` on todo tasks whose blocker has reached a terminal or
+   * stuck state.
+   *
+   * Stale-blocker conditions (clear if ANY apply):
+   * 1. Blocker task does not exist (id missing entirely)
+   * 2. Blocker `column === "done"` or `column === "archived"`
+   * 3. Blocker `column === "in-review"` and `paused === true`
+   * 4. Blocker `column === "in-review"` and `status === "failed"`
+   *    and `(mergeRetries ?? 0) >= MAX_AUTO_MERGE_RETRIES`
+   *
+   * @returns Number of tasks unblocked
+   */
+  async clearStaleBlockedBy(): Promise<number> {
+    try {
+      const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return 0;
+
+      const todoTasks = await this.store.listTasks({ column: "todo", slim: true });
+      const blockedTasks = todoTasks.filter(
+        (task) => typeof task.blockedBy === "string" && task.blockedBy.trim().length > 0,
+      );
+
+      if (blockedTasks.length === 0) return 0;
+
+      const allTasks = await this.store.listTasks({ slim: true, includeArchived: true });
+      const taskById = new Map(allTasks.map((task) => [task.id, task]));
+
+      let recovered = 0;
+      for (const task of blockedTasks) {
+        const blockerId = task.blockedBy;
+        if (!blockerId) continue;
+
+        const blocker = taskById.get(blockerId);
+        let reason: string | null = null;
+
+        if (!blocker) {
+          reason = `blocker ${blockerId} missing`;
+        } else if (blocker.column === "done") {
+          reason = `blocker ${blockerId} is done`;
+        } else if (blocker.column === "archived") {
+          reason = `blocker ${blockerId} is archived`;
+        } else if (blocker.column === "in-review" && blocker.paused) {
+          reason = `blocker ${blockerId} in-review + paused`;
+        } else if (
+          blocker.column === "in-review" &&
+          blocker.status === "failed" &&
+          (blocker.mergeRetries ?? 0) >= MAX_AUTO_MERGE_RETRIES
+        ) {
+          reason = `blocker ${blockerId} in-review + failed (mergeRetries ${blocker.mergeRetries ?? 0}/${MAX_AUTO_MERGE_RETRIES})`;
+        }
+
+        if (!reason) continue;
+
+        try {
+          await this.store.updateTask(task.id, { blockedBy: null, status: null });
+          await this.store.logEntry(task.id, `Auto-recovered: cleared stale blockedBy — ${reason}`);
+          recovered++;
+        } catch (err: unknown) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          log.error(`Failed to clear stale blockedBy for ${task.id}: ${errorMessage}`);
+        }
+      }
+
+      return recovered;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error(`Stale blockedBy sweep failed: ${errorMessage}`);
       return 0;
     }
   }
