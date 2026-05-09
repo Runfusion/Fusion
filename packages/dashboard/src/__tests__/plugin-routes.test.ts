@@ -101,6 +101,20 @@ function createMockPluginLoader(overrides: Partial<PluginLoader> = {}): PluginLo
     getPluginUiContributions: vi.fn().mockReturnValue([]),
     getPluginRuntimes: vi.fn().mockReturnValue([]),
     getPluginDashboardViews: vi.fn().mockReturnValue([]),
+    createRouteContext: vi.fn(async (pluginId: string, overrides?: { taskStore?: TaskStore; settings?: Record<string, unknown>; resolveProjectTaskStore?: (projectId: string) => Promise<TaskStore> }) => ({
+      pluginId,
+      taskStore: overrides?.taskStore ?? createMockTaskStore(),
+      settings: overrides?.settings ?? {},
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+      },
+      emitEvent: vi.fn(),
+      createAiSession: await fusionCore.getCreateAiSessionFactory(),
+      resolveProjectTaskStore: overrides?.resolveProjectTaskStore,
+    })),
     loadAllPlugins: vi.fn().mockResolvedValue({ loaded: 0, errors: 0 }),
     stopAllPlugins: vi.fn().mockResolvedValue(undefined),
     invokeHook: vi.fn().mockResolvedValue(undefined),
@@ -934,6 +948,39 @@ describe("GET /api/plugins/dashboard-views", () => {
       pluginId: "with-view",
       view: { viewId: "graph", label: "Graph", componentPath: "./Graph.js" },
     });
+  });
+
+  it("keeps dashboard-views payload separate from ui-slots payload", async () => {
+    (pluginLoader.getPluginDashboardViews as ReturnType<typeof vi.fn>).mockReturnValue([
+      {
+        pluginId: "roadmap-planner",
+        view: {
+          viewId: "roadmaps",
+          label: "Roadmaps",
+          componentPath: "./dashboard-view",
+        },
+      },
+    ]);
+    (pluginLoader.getPluginUiSlots as ReturnType<typeof vi.fn>).mockReturnValue([
+      {
+        pluginId: "roadmap-planner",
+        slot: {
+          slotId: "task-detail-tab",
+          label: "Roadmap Details",
+          componentPath: "./task-detail.js",
+        },
+      },
+    ]);
+
+    const viewsRes = await performGet(buildApp(), "/api/plugins/dashboard-views");
+    const slotsRes = await performGet(buildApp(), "/api/plugins/ui-slots");
+
+    expect(viewsRes.status).toBe(200);
+    expect(slotsRes.status).toBe(200);
+    expect(viewsRes.body[0]).toHaveProperty("view");
+    expect(viewsRes.body[0]).not.toHaveProperty("slot");
+    expect(slotsRes.body[0]).toHaveProperty("slot");
+    expect(slotsRes.body[0]).not.toHaveProperty("view");
   });
 });
 
