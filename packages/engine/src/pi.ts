@@ -1204,15 +1204,11 @@ export function wrapToolsWithActionGate(
         }
 
         if (gateOutcome.outcome === "execute-once-then-complete") {
-          try {
-            const result = await originalExecute(...args);
-            if (gateOutcome.approvalRequestId) {
-              await gateContext.markApprovalCompleted?.(gateOutcome.approvalRequestId);
-            }
-            return result;
-          } catch (error) {
-            throw error;
+          const result = await originalExecute(...args);
+          if (gateOutcome.approvalRequestId) {
+            await gateContext.markApprovalCompleted?.(gateOutcome.approvalRequestId);
           }
+          return result;
         }
 
         if (gateOutcome.outcome === "block") {
