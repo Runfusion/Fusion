@@ -230,6 +230,30 @@ describe("RoadmapsView", () => {
     });
   });
 
+  it("renders inline edit inputs with current values for milestone and feature", async () => {
+    render(<RoadmapsView addToast={mockAddToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Q2 Roadmap")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("roadmap-item-RM-001"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Milestone 1")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("milestone-edit-RMS-001"));
+
+    const milestoneTitleInput = await screen.findByTestId("milestone-title-input-RMS-001");
+    expect(milestoneTitleInput).toHaveValue("Milestone 1");
+
+    fireEvent.click(screen.getByTestId("feature-edit-RF-001"));
+
+    const featureTitleInput = await screen.findByTestId("feature-title-input-RF-001");
+    expect(featureTitleInput).toHaveValue("Feature 1");
+  });
+
   it("edits a roadmap title inline", async () => {
     (api.updateRoadmap as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockRoadmaps[0],

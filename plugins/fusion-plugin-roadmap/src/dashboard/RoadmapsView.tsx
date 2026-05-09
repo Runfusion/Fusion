@@ -619,7 +619,7 @@ function MilestoneCard({
       data-testid={`milestone-card-${milestone.id}`}
     >
       <div className="roadmaps-view__milestone-header">
-        {isEditingMilestone ? (
+        {isEditingMilestone && milestoneEdit ? (
           <div className="roadmaps-view__inline-edit">
             <div className="roadmaps-view__inline-edit-row">
               <span
@@ -833,7 +833,7 @@ function MilestoneCard({
                 onDragLeave={onFeatureDragLeave}
                 data-testid={`feature-item-${feature.id}`}
               >
-                {isEditingFeature ? (
+                {isEditingFeature && featureEdit ? (
                   <div className="roadmaps-view__inline-edit roadmaps-view__inline-edit--compact">
                     <div className="roadmaps-view__inline-edit-row">
                       <span

@@ -208,6 +208,29 @@ describe("useRoadmaps", () => {
     expect(onSuccess).toHaveBeenCalled();
   });
 
+  it("updates selectedRoadmap when updating the selected roadmap", async () => {
+    const updatedRoadmap = { ...mockRoadmaps[0], title: "Updated Title" };
+    (api.updateRoadmap as ReturnType<typeof vi.fn>).mockResolvedValue(updatedRoadmap);
+
+    const { result } = renderHook(() => useRoadmaps());
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    result.current.selectRoadmap("RM-001");
+
+    await waitFor(() => {
+      expect(result.current.selectedRoadmap?.title).toBe("Q2 Roadmap");
+    });
+
+    await result.current.updateRoadmap("RM-001", { title: "Updated Title" });
+
+    await waitFor(() => {
+      expect(result.current.selectedRoadmap?.title).toBe("Updated Title");
+    });
+  });
+
   it("deletes a roadmap and removes it from the list", async () => {
     (api.deleteRoadmap as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
