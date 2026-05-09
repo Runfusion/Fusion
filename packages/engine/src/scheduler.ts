@@ -661,9 +661,12 @@ export class Scheduler {
           const filteredScope = filterPathsByIgnoreList(scope, overlapIgnorePaths);
           if (filteredScope.length > 0) activeScopes.set(t.id, filteredScope);
         }
-        // In-review tasks with unmerged worktrees
+        // Paused in-review tasks (e.g., failed-merge tasks awaiting human triage) cannot
+        // make progress, so they must not contribute to activeScopes. Including them
+        // caused a deadlock pattern where a paused task indefinitely re-stamped
+        // `blockedBy` on overlapping todo tasks every scheduler tick. (FN-3867 / FN-3857)
         const inReviewWithWorktree = tasks.filter(
-          (t) => t.column === "in-review" && t.worktree,
+          (t) => t.column === "in-review" && t.worktree && !t.paused,
         );
         for (const t of inReviewWithWorktree) {
           const scope = await this.store.parseFileScopeFromPrompt(t.id);
