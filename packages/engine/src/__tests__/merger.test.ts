@@ -7655,8 +7655,9 @@ describe("aiMergeTask — in-merge verification fix", () => {
       [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
     );
     // Explicitly omit verificationFixRetries to test default behavior
+    const { verificationFixRetries: _omitVerificationFixRetries, ...settingsWithoutVerificationFixRetries } = DEFAULT_SETTINGS;
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ...DEFAULT_SETTINGS,
+      ...settingsWithoutVerificationFixRetries,
       testCommand: "vitest run",
       // verificationFixRetries is NOT set — should default to 2
     });
