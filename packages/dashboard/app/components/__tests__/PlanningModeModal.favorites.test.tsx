@@ -317,14 +317,20 @@ describe("PlanningModeModal", () => {
       const removeButton = within(portal).getByRole("button", { name: "Remove anthropic from favorites" });
       fireEvent.click(removeButton);
 
-      // Wait for the rejected promise to settle
+      // Optimistic state should immediately show unfavorited UI.
+      expect(within(portal).getByRole("button", { name: "Add anthropic to favorites" })).toBeTruthy();
+
+      // The API call is fire-and-forget; rollback runs in the rejected-promise catch microtask.
       await waitFor(() => {
         expect(api.updateGlobalSettings).toHaveBeenCalled();
       });
 
-      // After rollback, the provider should still show as favorited (★ button with "Remove" aria-label)
-      const portalAfterRollback = document.body.querySelector('[data-testid="model-combobox-portal"]') as HTMLElement;
-      expect(within(portalAfterRollback).getByRole("button", { name: "Remove anthropic from favorites" })).toBeTruthy();
+      // Re-query until rollback flushes and favorited UI is restored.
+      await waitFor(() => {
+        const portalAfterRollback = document.body.querySelector('[data-testid="model-combobox-portal"]');
+        expect(portalAfterRollback).not.toBeNull();
+        expect(within(portalAfterRollback as HTMLElement).getByRole("button", { name: "Remove anthropic from favorites" })).toBeTruthy();
+      });
     });
   });
 });
