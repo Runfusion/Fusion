@@ -470,7 +470,10 @@ export class SelfHealingManager {
     return Date.now() - updatedAt >= timeoutMs;
   }
 
-  private async findLandedTaskCommit(task: Task): Promise<LandedTaskCommit | null> {
+  private async findLandedTaskCommit(
+    task: Task,
+    options?: { preferEarliestOwnedCommit?: boolean },
+  ): Promise<LandedTaskCommit | null> {
     // Search strategies, tried in order of reliability:
     //   1. mergeDetails.commitSha — already stored by the merger; verify it's
     //      reachable from HEAD before trusting it.
@@ -517,6 +520,7 @@ export class SelfHealingManager {
         "git log",
         "--format=%H%x1f%s",
         "--max-count=20",
+        ...(options?.preferEarliestOwnedCommit ? ["--reverse"] : []),
         ...(fixedStrings ? ["--fixed-strings"] : ["-E"]),
         `--grep=${grepArg}`,
         shellQuote(range),
@@ -1305,19 +1309,52 @@ export class SelfHealingManager {
       let repaired = 0;
       for (const task of candidates) {
         try {
-          const landed = await this.findLandedTaskCommit(task);
-          if (!landed) {
-            if (task.mergeDetails?.mergeConfirmed === false) {
-              await this.store.updateTask(task.id, { mergeDetails: undefined });
-              await this.store.logEntry(task.id, "Auto-recovered: cleared unowned done-task mergeDetails commitSha");
-              repaired++;
+          const storedSha = task.mergeDetails?.commitSha;
+          if (!storedSha) continue;
+
+          if (task.mergeDetails?.mergeConfirmed === true) {
+            const landed = await this.findLandedTaskCommit(task);
+            if (!landed || landed.sha !== storedSha) {
+              log.warn(
+                `Refusing to overwrite confirmed mergeDetails.commitSha for ${task.id} — stored SHA ${storedSha.slice(0, 8)} no longer reachable; preserving canonical attribution`,
+              );
+              continue;
             }
+
+            const needsMetadataRepair =
+              task.mergeDetails?.filesChanged === undefined ||
+              task.mergeDetails?.insertions === undefined ||
+              task.mergeDetails?.deletions === undefined ||
+              task.mergeDetails?.mergeCommitMessage === undefined;
+
+            if (!needsMetadataRepair) continue;
+
+            await this.store.updateTask(task.id, {
+              mergeDetails: {
+                ...task.mergeDetails,
+                filesChanged: task.mergeDetails?.filesChanged ?? landed.filesChanged,
+                insertions: task.mergeDetails?.insertions ?? landed.insertions,
+                deletions: task.mergeDetails?.deletions ?? landed.deletions,
+                mergeCommitMessage: task.mergeDetails?.mergeCommitMessage ?? landed.subject,
+                mergedAt: task.mergeDetails?.mergedAt ?? new Date().toISOString(),
+                prNumber: task.prInfo?.number,
+              },
+            });
+            await this.store.logEntry(task.id, `Auto-recovered: reconciled done-task mergeDetails to owned commit ${landed.sha.slice(0, 8)}`);
+            repaired++;
+            continue;
+          }
+
+          const landed = await this.findLandedTaskCommit(task, { preferEarliestOwnedCommit: true });
+          if (!landed) {
+            await this.store.updateTask(task.id, { mergeDetails: undefined });
+            await this.store.logEntry(task.id, "Auto-recovered: cleared unowned done-task mergeDetails commitSha");
+            repaired++;
             continue;
           }
 
           const needsRepair =
             task.mergeDetails?.commitSha !== landed.sha ||
-            task.mergeDetails?.mergeConfirmed !== true ||
             task.mergeDetails?.filesChanged === undefined;
 
           if (!needsRepair) continue;

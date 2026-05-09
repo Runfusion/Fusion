@@ -56,12 +56,16 @@ vi.mock("../worktree-pool.js", () => ({
   scanOrphanedBranches: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock("../logger.js", () => ({
-  createLogger: vi.fn((_name: string) => ({
+const { selfHealingLoggerMock } = vi.hoisted(() => ({
+  selfHealingLoggerMock: {
     log: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
-  })),
+  },
+}));
+
+vi.mock("../logger.js", () => ({
+  createLogger: vi.fn((_name: string) => selfHealingLoggerMock),
 }));
 
 import { SelfHealingManager } from "../self-healing.js";
@@ -84,11 +88,7 @@ type MockLogger = {
 };
 
 function getSelfHealingLogger(): MockLogger {
-  const idx = mockedCreateLogger.mock.calls.findIndex(([name]) => name === "self-healing");
-  if (idx === -1) {
-    throw new Error("self-healing logger was not created");
-  }
-  return mockedCreateLogger.mock.results[idx]?.value as MockLogger;
+  return selfHealingLoggerMock;
 }
 
 // ── Mock helpers ────────────────────────────────────────────────────
@@ -3286,32 +3286,30 @@ describe("stale triage processing eviction before recovery", () => {
 // ── Maintenance cycle concurrency ──────────────────────────────────
 
 describe("recoverDoneTaskMergeMetadata", () => {
-  it("upgrades done task metadata to an owned landed commit", async () => {
+  it("FN-3862: confirmed task with reachable owned stored SHA preserves canonical commitSha", async () => {
     const store = createMockStore();
     const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
 
     (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
-        id: "FN-3469",
+        id: "FN-3862",
         column: "done",
         paused: false,
-        baseCommitSha: "base",
-        mergeDetails: { commitSha: "sharedsha", mergeConfirmed: false },
-        modifiedFiles: ["AGENTS.md"],
+        mergeDetails: { commitSha: "merge1", mergeConfirmed: true },
       },
     ]);
 
     mockedExecSync.mockImplementation((command) => {
       const cmd = String(command);
-      if (cmd.includes("merge-base --is-ancestor sharedsha HEAD")) return "" as any;
-      if (cmd.includes("log -1 --format=%H%x1f%s%x1f%b sharedsha")) {
-        return "sharedsha\u001ffix(FN-3468): other\u001fFusion-Task-Id: FN-3468" as any;
+      if (cmd.includes("merge-base --is-ancestor 'merge1' HEAD")) return "" as any;
+      if (cmd.includes("log -1 --format=%H%x1f%s%x1f%b 'merge1'")) {
+        return "merge1\u001ffix(FN-3862): canonical merge\u001fFusion-Task-Id: FN-3862" as any;
       }
-      if (cmd.includes("Fusion-Task-Id: FN-3469")) {
-        return "a47b1e5\u001ffix(FN-3469): correct lazy-loaded views\n" as any;
+      if (cmd.includes("show --shortstat --format= merge1")) {
+        return "3 files changed, 10 insertions(+), 1 deletions(-)" as any;
       }
-      if (cmd.includes("show --shortstat --format= a47b1e5")) {
-        return "2 files changed, 84 insertions(+), 2 deletions(-)" as any;
+      if (cmd.includes("Fusion-Task-Id: FN-3862")) {
+        return "fix2\u001ffix(FN-3862): follow-up\n" as any;
       }
       return "" as any;
     });
@@ -3319,17 +3317,108 @@ describe("recoverDoneTaskMergeMetadata", () => {
     const repaired = await manager.recoverDoneTaskMergeMetadata();
 
     expect(repaired).toBe(1);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-3469", {
+    expect(store.updateTask).toHaveBeenCalledTimes(1);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-3862", {
       mergeDetails: expect.objectContaining({
-        commitSha: "a47b1e5",
-        mergeConfirmed: true,
+        commitSha: "merge1",
       }),
     });
 
     manager.stop();
   });
 
-  it("clears unowned shared SHA for done task when no owned landed commit exists", async () => {
+  it("FN-3862: confirmed task with unreachable stored SHA is preserved with warning", async () => {
+    const store = createMockStore();
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: "FN-3814",
+        column: "done",
+        paused: false,
+        mergeDetails: {
+          commitSha: "gone1234",
+          mergeConfirmed: true,
+          filesChanged: 1,
+          insertions: 1,
+          deletions: 0,
+          mergeCommitMessage: "feat(FN-3814): landed",
+        },
+      },
+    ]);
+
+    mockedExecSync.mockImplementation((command) => {
+      const cmd = String(command);
+      if (cmd.includes("merge-base --is-ancestor gone1234 HEAD")) {
+        const err = new Error("not ancestor");
+        throw err as any;
+      }
+      if (cmd.includes("Fusion-Task-Id: FN-3814")) {
+        return "fix-later\u001ffix(FN-3814): later\n" as any;
+      }
+      return "" as any;
+    });
+
+    const warn = getSelfHealingLogger().warn;
+    warn.mockClear();
+
+    const repaired = await manager.recoverDoneTaskMergeMetadata();
+
+    expect(repaired).toBe(0);
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("gone1234"));
+
+    manager.stop();
+  });
+
+  it("FN-3862: unconfirmed task with multiple owned commits picks earliest via --reverse", async () => {
+    const store = createMockStore();
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: "FN-3829",
+        column: "done",
+        paused: false,
+        baseCommitSha: "base",
+        mergeDetails: { commitSha: "old", mergeConfirmed: false },
+      },
+    ]);
+
+    mockedExecSync.mockImplementation((command) => {
+      const cmd = String(command);
+      if (cmd.includes("merge-base --is-ancestor old HEAD")) {
+        throw new Error("not ancestor") as any;
+      }
+      if (cmd.includes("--reverse") && cmd.includes("Fusion-Task-Id: FN-3829")) {
+        return "mergeSha\u001ffix(FN-3829): merge\nfixupSha\u001ffix(FN-3829): follow-up\n" as any;
+      }
+      if (cmd.includes("Fusion-Task-Id: FN-3829")) {
+        return "fixupSha\u001ffix(FN-3829): follow-up\nmergeSha\u001ffix(FN-3829): merge\n" as any;
+      }
+      if (cmd.includes("show --shortstat --format= mergeSha")) {
+        return "2 files changed, 4 insertions(+), 1 deletions(-)" as any;
+      }
+      return "" as any;
+    });
+
+    const repaired = await manager.recoverDoneTaskMergeMetadata();
+
+    expect(repaired).toBe(1);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-3829", {
+      mergeDetails: expect.objectContaining({
+        commitSha: "mergeSha",
+      }),
+    });
+    expect(mockedExecSync).toHaveBeenCalledWith(
+      expect.stringContaining("--reverse"),
+      expect.anything(),
+    );
+
+    manager.stop();
+  });
+
+  it("FN-3862: unconfirmed task with no owned landed commit clears unowned stored SHA", async () => {
     const store = createMockStore();
     const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
 
