@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ProjectCard } from "../ProjectCard";
 import type { RegisteredProject, ProjectHealth } from "@fusion/core";
-import type { NodeInfo } from "../../api";
 
 // Mock lucide-react to avoid SVG rendering issues in test env
 vi.mock("lucide-react", () => ({
@@ -42,19 +41,6 @@ function makeHealth(overrides: Partial<ProjectHealth> = {}): ProjectHealth {
   };
 }
 
-function makeNode(overrides: Partial<NodeInfo> = {}): NodeInfo {
-  return {
-    id: "node_001",
-    name: "Build Node",
-    type: "local",
-    status: "online",
-    maxConcurrent: 2,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    ...overrides,
-  };
-}
-
 const noop = () => {};
 
 describe("ProjectCard", () => {
@@ -74,12 +60,12 @@ describe("ProjectCard", () => {
     expect(screen.getByText("/path/to/project")).toBeDefined();
   });
 
-  it("renders assigned node badge when node is provided", () => {
+  it("renders node availability rows with path details", () => {
     render(
       <ProjectCard
         project={makeProject()}
         health={makeHealth()}
-        node={makeNode({ name: "Remote Worker" })}
+        availabilityMappings={[{ nodeId: "node-1", displayName: "Remote Worker", path: "/srv/work", available: true }]}
         onSelect={noop}
         onPause={noop}
         onResume={noop}
@@ -87,7 +73,29 @@ describe("ProjectCard", () => {
       />
     );
 
-    expect(screen.getByText("on: Remote Worker")).toBeDefined();
+    expect(screen.getByText("Remote Worker")).toBeDefined();
+    expect(screen.getByText("/srv/work")).toBeDefined();
+  });
+
+  it("shows overflow indicator when more than three mappings exist", () => {
+    render(
+      <ProjectCard
+        project={makeProject()}
+        health={makeHealth()}
+        availabilityMappings={[
+          { nodeId: "node-1", displayName: "Node One", path: "/one", available: true },
+          { nodeId: "node-2", displayName: "Node Two", path: "/two", available: true },
+          { nodeId: "node-3", displayName: "Node Three", path: "/three", available: true },
+          { nodeId: "node-4", displayName: "Node Four", path: "/four", available: true },
+        ]}
+        onSelect={noop}
+        onPause={noop}
+        onResume={noop}
+        onRemove={noop}
+      />
+    );
+
+    expect(screen.getByText("+1 more")).toBeDefined();
   });
 
   it("truncates long paths", () => {

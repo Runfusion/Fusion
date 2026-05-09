@@ -5722,10 +5722,29 @@ export function fetchProjects(): Promise<ProjectInfo[]> {
   return api<ProjectInfo[]>("/projects");
 }
 
-/** Project info with source node metadata (added by server for remote projects) */
+/** Dashboard-facing mapping contract for project availability on nodes. */
+export interface ProjectNodeAvailability {
+  nodeId: string;
+  nodeName?: string;
+  path: string;
+  available: boolean;
+}
+
+/** Project info with source node metadata (added by server for remote projects). */
 export interface ProjectInfoWithSource extends ProjectInfo {
-  /** Name of the source node (added by server for remote projects) */
+  /** Name of the source node (added by server for remote projects). */
   _sourceNodeName?: string;
+  /** Normalized per-node project mappings for dashboard UI. */
+  nodeMappings?: ProjectNodeAvailability[];
+  /** Compatibility fields accepted from in-flight server rollouts. */
+  projectNodeMappings?: ProjectNodeAvailability[];
+  pathMappings?: ProjectNodeAvailability[];
+}
+
+export function hasNodeMappingsSupport(project: ProjectInfoWithSource): boolean {
+  return Array.isArray(project.nodeMappings)
+    || Array.isArray(project.projectNodeMappings)
+    || Array.isArray(project.pathMappings);
 }
 
 /** Fetch all registered projects from all nodes (local + remote) */

@@ -189,17 +189,17 @@
 }
 
 .project-card-action-resume:hover:not(:disabled) {
-  background: rgba(63, 185, 80, 0.1);
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
   border-color: var(--color-success);
 }
 
 .project-card-action-pause {
-  color: var(--warning, #e3b341);
+  color: var(--color-warning);
 }
 
 .project-card-action-pause:hover:not(:disabled) {
-  background: rgba(227, 179, 65, 0.1);
-  border-color: var(--warning, #e3b341);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  border-color: var(--color-warning);
 }
 
 .project-card-action-open {
@@ -207,7 +207,7 @@
 }
 
 .project-card-action-open:hover:not(:disabled) {
-  background: rgba(88, 166, 255, 0.1);
+  background: color-mix(in srgb, var(--todo) 10%, transparent);
   border-color: var(--todo);
 }
 
@@ -217,10 +217,59 @@
 }
 
 .project-card-action-remove:hover:not(:disabled) {
-  background: rgba(248, 81, 73, 0.1);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
   border-color: var(--color-error);
 }
 
 .project-card-action-remove.is-armed {
   background: color-mix(in srgb, var(--color-error) 14%, transparent);
+}
+
+.project-card-availability {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.project-card-availability__row {
+  display: grid;
+  grid-template-columns: minmax(0, auto) auto minmax(0, 1fr);
+  gap: var(--space-xs);
+  align-items: center;
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  color: var(--text-muted);
+}
+
+.project-card-availability__node {
+  color: var(--text);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-card-availability__arrow {
+  color: var(--text-dim);
+}
+
+.project-card-availability__path {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-card-availability__more {
+  color: var(--text-dim);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+}
+
+@media (max-width: 768px) {
+  .project-card-availability__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .project-card-availability__arrow {
+    display: none;
+  }
 }

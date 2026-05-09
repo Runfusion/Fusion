@@ -417,6 +417,22 @@ This keeps remote path mappings anchored to remote-authoritative data instead of
 | Offline | Red | Node is unreachable or shut down |
 | Connecting | Yellow (pulsing) | Connection attempt in progress |
 
+### Project availability and path visibility
+
+Node and project surfaces now use per-node project mappings (`nodeMappings`) instead of a single `project.nodeId` assumption.
+
+- **Node cards / counts** include only projects with an `available: true` mapping for that node.
+- **Node Details modal** lists one row per project available on the selected node and shows:
+  - project name
+  - project ID
+  - configured path for that node
+- **Project node filter** in the Projects view is built from available mappings and uses canonical node-name resolution (`Node.name` → mapping name → source node name → node ID).
+- **Project cards** show node availability as compact `Node → /path` rows:
+  - up to 3 rows inline
+  - `+N more` summary when additional mappings exist
+  - single-node projects still show the configured path clearly
+- Mappings marked `available: false` are excluded from node counts, node filter options, node detail project rows, and project-card availability summaries.
+
 ### Persistence
 
 The selected node persists across browser sessions via localStorage. If the selected remote node is unregistered, the dashboard automatically falls back to local mode.

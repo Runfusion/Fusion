@@ -2,7 +2,7 @@ import { memo, useCallback, useState } from "react";
 import { Play, Pause, AlertCircle, Loader2, Trash2, Folder, ArrowRight } from "lucide-react";
 import "./ProjectCard.css";
 import type { RegisteredProject, ProjectHealth, ProjectStatus } from "@fusion/core";
-import type { NodeInfo } from "../api";
+import type { ProjectNodeAvailability } from "../api";
 
 export interface ProjectCardProps {
   project: RegisteredProject;
@@ -11,17 +11,15 @@ export interface ProjectCardProps {
   onPause: (project: RegisteredProject) => void;
   onResume: (project: RegisteredProject) => void;
   onRemove: (project: RegisteredProject) => void;
-  node?: NodeInfo;
-  /** Fallback node name when the node object is not available (e.g., for remote projects) */
-  nodeNameFallback?: string;
+  availabilityMappings?: Array<ProjectNodeAvailability & { displayName: string }>;
   isLoading?: boolean;
 }
 
 const STATUS_CONFIG: Record<ProjectStatus, { label: string; color: string; icon: typeof Play }> = {
-  active: { label: "Active", color: "var(--success)", icon: Play },
-  paused: { label: "Paused", color: "var(--warning)", icon: Pause },
+  active: { label: "Active", color: "var(--color-success)", icon: Play },
+  paused: { label: "Paused", color: "var(--color-warning)", icon: Pause },
   errored: { label: "Error", color: "var(--color-error)", icon: AlertCircle },
-  initializing: { label: "Initializing", color: "var(--info)", icon: Loader2 },
+  initializing: { label: "Initializing", color: "var(--color-warning)", icon: Loader2 },
 };
 
 function formatRelativeTime(timestamp: string | undefined): string {
@@ -72,21 +70,18 @@ function areProjectCardPropsEqual(previous: ProjectCardProps, next: ProjectCardP
     return false;
   }
 
-  const prevNode = previous.node;
-  const nextNode = next.node;
-  if (!prevNode && !nextNode) {
-    // Compare fallback names
-    if (previous.nodeNameFallback !== next.nodeNameFallback) return false;
-    return true;
-  }
-  if (!prevNode || !nextNode) return false;
+  const prevMappings = previous.availabilityMappings ?? [];
+  const nextMappings = next.availabilityMappings ?? [];
+  if (prevMappings.length !== nextMappings.length) return false;
 
-  return (
-    prevNode.id === nextNode.id
-    && prevNode.name === nextNode.name
-    && prevNode.status === nextNode.status
-    && prevNode.type === nextNode.type
-  );
+  return prevMappings.every((mapping, index) => {
+    const nextMapping = nextMappings[index];
+    return Boolean(nextMapping)
+      && mapping.nodeId === nextMapping.nodeId
+      && mapping.path === nextMapping.path
+      && mapping.displayName === nextMapping.displayName
+      && mapping.available === nextMapping.available;
+  });
 }
 
 function ProjectCardInner({
@@ -96,8 +91,7 @@ function ProjectCardInner({
   onPause,
   onResume,
   onRemove,
-  node,
-  nodeNameFallback,
+  availabilityMappings = [],
   isLoading = false,
 }: ProjectCardProps) {
   const [removeArmed, setRemoveArmed] = useState(false);
@@ -155,10 +149,19 @@ function ProjectCardInner({
           <h3 className="project-card-name" title={project.name}>
             {project.name}
           </h3>
-          {(node || nodeNameFallback) && (
-            <span className="node-badge" title={`Assigned node: ${node?.name ?? nodeNameFallback}`}>
-              on: {node?.name ?? nodeNameFallback}
-            </span>
+          {availabilityMappings.length > 0 && (
+            <div className="project-card-availability" aria-label="Project node availability">
+              {availabilityMappings.slice(0, 3).map((mapping) => (
+                <div key={`${mapping.nodeId}-${mapping.path}`} className="project-card-availability__row" title={`${mapping.displayName} → ${mapping.path}`}>
+                  <span className="project-card-availability__node">{mapping.displayName}</span>
+                  <span className="project-card-availability__arrow">→</span>
+                  <code className="project-card-availability__path">{truncatePath(mapping.path, 28)}</code>
+                </div>
+              ))}
+              {availabilityMappings.length > 3 && (
+                <span className="project-card-availability__more">+{availabilityMappings.length - 3} more</span>
+              )}
+            </div>
           )}
           <span className="project-card-path" title={project.path}>
             {truncatePath(project.path)}

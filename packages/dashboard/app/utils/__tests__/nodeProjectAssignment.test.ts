@@ -1,16 +1,19 @@
 import { describe, it, expect } from "vitest";
 import {
-  isProjectRoutedToNode,
-  getProjectsForNode,
+  getAvailableNodeMappingsForNode,
+  getNodeMappingsForProject,
   getProjectCountForNode,
+  getProjectsForNode,
   getUnassignedProjectCount,
+  isProjectAvailableOnNode,
+  resolveNodeDisplayName,
 } from "../nodeProjectAssignment";
-import type { NodeInfo, ProjectInfo } from "../../api";
+import type { NodeInfo, ProjectInfoWithSource } from "../../api";
 
 function makeNode(overrides: Partial<NodeInfo> = {}): NodeInfo {
   return {
     id: "node-1",
-    name: "Test Node",
+    name: "Node One",
     type: "local",
     status: "online",
     maxConcurrent: 2,
@@ -20,7 +23,7 @@ function makeNode(overrides: Partial<NodeInfo> = {}): NodeInfo {
   };
 }
 
-function makeProject(overrides: Partial<ProjectInfo> = {}): ProjectInfo {
+function makeProject(overrides: Partial<ProjectInfoWithSource> = {}): ProjectInfoWithSource {
   return {
     id: "proj-1",
     name: "Project One",
@@ -29,155 +32,68 @@ function makeProject(overrides: Partial<ProjectInfo> = {}): ProjectInfo {
     isolationMode: "in-process",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
+    nodeMappings: [],
     ...overrides,
   };
 }
 
 describe("nodeProjectAssignment", () => {
-  describe("isProjectRoutedToNode", () => {
-    describe("local node", () => {
-      const localNode = makeNode({ id: "local-1", type: "local" });
-
-      it("returns true for projects explicitly assigned to this local node", () => {
-        const project = makeProject({ id: "proj-1", nodeId: "local-1" });
-        expect(isProjectRoutedToNode(project, localNode)).toBe(true);
-      });
-
-      it("returns true for unassigned projects (nodeId undefined)", () => {
-        const project = makeProject({ id: "proj-1", nodeId: undefined });
-        expect(isProjectRoutedToNode(project, localNode)).toBe(true);
-      });
-
-      it("returns true for unassigned projects (nodeId null)", () => {
-        const project = makeProject({ id: "proj-1", nodeId: null as unknown as string });
-        expect(isProjectRoutedToNode(project, localNode)).toBe(true);
-      });
-
-      it("returns false for projects assigned to other nodes", () => {
-        const project = makeProject({ id: "proj-1", nodeId: "other-node" });
-        expect(isProjectRoutedToNode(project, localNode)).toBe(false);
-      });
-
-      it("returns false for projects assigned to remote nodes", () => {
-        const project = makeProject({ id: "proj-1", nodeId: "remote-1" });
-        expect(isProjectRoutedToNode(project, localNode)).toBe(false);
-      });
+  it("normalizes mapping entries and defaults available=true", () => {
+    const project = makeProject({
+      nodeMappings: [
+        { nodeId: "node-1", path: "/mnt/one", available: true },
+        { nodeId: "node-2", path: "/mnt/two", available: false },
+        { nodeId: "", path: "/bad", available: true },
+      ],
     });
 
-    describe("remote node", () => {
-      const remoteNode = makeNode({ id: "remote-1", type: "remote" });
-
-      it("returns true for projects explicitly assigned to this remote node", () => {
-        const project = makeProject({ id: "proj-1", nodeId: "remote-1" });
-        expect(isProjectRoutedToNode(project, remoteNode)).toBe(true);
-      });
-
-      it("returns false for unassigned projects (nodeId undefined)", () => {
-        const project = makeProject({ id: "proj-1", nodeId: undefined });
-        expect(isProjectRoutedToNode(project, remoteNode)).toBe(false);
-      });
-
-      it("returns false for unassigned projects (nodeId null)", () => {
-        const project = makeProject({ id: "proj-1", nodeId: null as unknown as string });
-        expect(isProjectRoutedToNode(project, remoteNode)).toBe(false);
-      });
-
-      it("returns false for projects assigned to local nodes", () => {
-        const project = makeProject({ id: "proj-1", nodeId: "local-1" });
-        expect(isProjectRoutedToNode(project, remoteNode)).toBe(false);
-      });
-
-      it("returns false for projects assigned to other remote nodes", () => {
-        const project = makeProject({ id: "proj-1", nodeId: "other-remote" });
-        expect(isProjectRoutedToNode(project, remoteNode)).toBe(false);
-      });
-    });
+    expect(getNodeMappingsForProject(project)).toEqual([
+      { nodeId: "node-1", path: "/mnt/one", available: true, nodeName: undefined },
+      { nodeId: "node-2", path: "/mnt/two", available: false, nodeName: undefined },
+    ]);
   });
 
-  describe("getProjectsForNode", () => {
-    it("returns all projects routed to a local node (including unassigned)", () => {
-      const localNode = makeNode({ id: "local-1", type: "local" });
-      const projects: ProjectInfo[] = [
-        makeProject({ id: "proj-1", nodeId: "local-1" }), // assigned to this local node
-        makeProject({ id: "proj-2", nodeId: undefined }), // unassigned
-        makeProject({ id: "proj-3", nodeId: "other-local" }), // assigned to different local node
-        makeProject({ id: "proj-4", nodeId: "remote-1" }), // assigned to remote
-      ];
-
-      const result = getProjectsForNode(projects, localNode);
-      expect(result.map((p) => p.id)).toEqual(["proj-1", "proj-2"]);
+  it("filters available mappings for a given node", () => {
+    const project = makeProject({
+      nodeMappings: [
+        { nodeId: "node-1", path: "/mnt/live", available: true },
+        { nodeId: "node-1", path: "/mnt/down", available: false },
+      ],
     });
+    const node = makeNode({ id: "node-1" });
 
-    it("returns only explicitly assigned projects for a remote node", () => {
-      const remoteNode = makeNode({ id: "remote-1", type: "remote" });
-      const projects: ProjectInfo[] = [
-        makeProject({ id: "proj-1", nodeId: "remote-1" }), // assigned to this remote node
-        makeProject({ id: "proj-2", nodeId: undefined }), // unassigned
-        makeProject({ id: "proj-3", nodeId: "local-1" }), // assigned to local
-        makeProject({ id: "proj-4", nodeId: "other-remote" }), // assigned to other remote
-      ];
-
-      const result = getProjectsForNode(projects, remoteNode);
-      expect(result.map((p) => p.id)).toEqual(["proj-1"]);
-    });
+    expect(getAvailableNodeMappingsForNode(project, node)).toEqual([
+      { nodeId: "node-1", path: "/mnt/live", available: true, nodeName: undefined },
+    ]);
+    expect(isProjectAvailableOnNode(project, node)).toBe(true);
   });
 
-  describe("getProjectCountForNode", () => {
-    it("returns correct count for local node (includes unassigned)", () => {
-      const localNode = makeNode({ id: "local-1", type: "local" });
-      const projects: ProjectInfo[] = [
-        makeProject({ id: "proj-1", nodeId: "local-1" }),
-        makeProject({ id: "proj-2", nodeId: undefined }),
-        makeProject({ id: "proj-3", nodeId: undefined }),
-      ];
+  it("builds project lists and counts from available mappings only", () => {
+    const node = makeNode({ id: "node-1" });
+    const projects = [
+      makeProject({ id: "proj-a", nodeMappings: [{ nodeId: "node-1", path: "/a", available: true }] }),
+      makeProject({ id: "proj-b", nodeMappings: [{ nodeId: "node-1", path: "/b", available: false }] }),
+      makeProject({ id: "proj-c", nodeMappings: [{ nodeId: "node-2", path: "/c", available: true }] }),
+    ];
 
-      expect(getProjectCountForNode(projects, localNode)).toBe(3);
-    });
-
-    it("returns correct count for remote node (explicit only)", () => {
-      const remoteNode = makeNode({ id: "remote-1", type: "remote" });
-      const projects: ProjectInfo[] = [
-        makeProject({ id: "proj-1", nodeId: "remote-1" }),
-        makeProject({ id: "proj-2", nodeId: "remote-1" }),
-        makeProject({ id: "proj-3", nodeId: undefined }),
-      ];
-
-      expect(getProjectCountForNode(projects, remoteNode)).toBe(2);
-    });
-
-    it("returns 0 when no projects are routed to the node", () => {
-      const remoteNode = makeNode({ id: "remote-1", type: "remote" });
-      const projects: ProjectInfo[] = [
-        makeProject({ id: "proj-1", nodeId: "local-1" }),
-        makeProject({ id: "proj-2", nodeId: undefined }),
-      ];
-
-      expect(getProjectCountForNode(projects, remoteNode)).toBe(0);
-    });
+    expect(getProjectsForNode(projects, node).map((project) => project.id)).toEqual(["proj-a"]);
+    expect(getProjectCountForNode(projects, node)).toBe(1);
   });
 
-  describe("getUnassignedProjectCount", () => {
-    it("counts projects without nodeId", () => {
-      const projects: ProjectInfo[] = [
-        makeProject({ id: "proj-1", nodeId: undefined }),
-        makeProject({ id: "proj-2", nodeId: null as unknown as string }),
-        makeProject({ id: "proj-3", nodeId: "local-1" }),
-      ];
+  it("resolves display names in canonical order", () => {
+    const nodes = [makeNode({ id: "node-1", name: "Primary Node" })];
+    const project = makeProject({ _sourceNodeName: "Source Node" });
 
-      expect(getUnassignedProjectCount(projects)).toBe(2);
-    });
+    expect(resolveNodeDisplayName("node-1", { nodeId: "node-1", path: "/a", available: true, nodeName: "Mapping Name" }, nodes, project)).toBe("Primary Node");
+    expect(resolveNodeDisplayName("node-2", { nodeId: "node-2", path: "/b", available: true, nodeName: "Mapping Name" }, nodes, project)).toBe("Mapping Name");
+    expect(resolveNodeDisplayName("node-3", undefined, nodes, project)).toBe("Source Node");
+    expect(resolveNodeDisplayName("node-4", undefined, nodes, makeProject({ _sourceNodeName: undefined }))).toBe("node-4");
+  });
 
-    it("returns 0 when all projects are assigned", () => {
-      const projects: ProjectInfo[] = [
-        makeProject({ id: "proj-1", nodeId: "local-1" }),
-        makeProject({ id: "proj-2", nodeId: "remote-1" }),
-      ];
-
-      expect(getUnassignedProjectCount(projects)).toBe(0);
-    });
-
-    it("returns 0 for empty array", () => {
-      expect(getUnassignedProjectCount([])).toBe(0);
-    });
+  it("counts unassigned projects as projects without mappings", () => {
+    expect(getUnassignedProjectCount([
+      makeProject({ id: "proj-a", nodeMappings: [] }),
+      makeProject({ id: "proj-b", nodeMappings: [{ nodeId: "node-1", path: "/b", available: true }] }),
+    ])).toBe(1);
   });
 });

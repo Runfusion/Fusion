@@ -7,6 +7,7 @@ import { useProjectHealth } from "../../hooks/useProjectHealth";
 // Extended type with source node info for cross-node tests
 interface ProjectInfoWithSource extends ProjectInfo {
   _sourceNodeName?: string;
+  nodeMappings?: Array<{ nodeId: string; path: string; available: boolean; nodeName?: string }>;
 }
 
 // Default mock implementation
@@ -59,22 +60,21 @@ vi.mock("../ProjectCard", () => ({
   ProjectCard: ({ 
     project, 
     onSelect,
-    node,
-    nodeNameFallback,
-  }: { 
-    project: ProjectInfo; 
+    availabilityMappings,
+  }: {
+    project: ProjectInfo;
     onSelect: (p: ProjectInfo) => void;
-    node?: { id: string; name: string };
-    nodeNameFallback?: string;
+    availabilityMappings?: Array<{ displayName: string; path: string }>;
   }) => (
-    <div 
-      data-testid={`project-card-${project.id}`} 
-      data-node={node?.name ?? nodeNameFallback ?? "none"}
+    <div
+      data-testid={`project-card-${project.id}`}
+      data-node={(availabilityMappings ?? []).map((mapping) => mapping.displayName).join(",") || "none"}
       onClick={() => onSelect(project)}
     >
       {project.name}
-      {node && <span className="node-badge">{node.name}</span>}
-      {nodeNameFallback && !node && <span className="node-badge">{nodeNameFallback}</span>}
+      {(availabilityMappings ?? []).map((mapping) => (
+        <span key={`${mapping.displayName}-${mapping.path}`} className="node-badge">{mapping.displayName}</span>
+      ))}
     </div>
   ),
 }));
@@ -85,7 +85,7 @@ vi.mock("../ProjectGridSkeleton", () => ({
 }));
 
 function makeProject(overrides: Partial<ProjectInfoWithSource> = {}): ProjectInfoWithSource {
-  return {
+  const project: ProjectInfoWithSource = {
     id: "proj_abc123",
     name: "Test Project",
     path: "/home/user/projects/test",
@@ -96,6 +96,12 @@ function makeProject(overrides: Partial<ProjectInfoWithSource> = {}): ProjectInf
     lastActivityAt: new Date().toISOString(),
     ...overrides,
   };
+
+  if (!project.nodeMappings && project.nodeId) {
+    project.nodeMappings = [{ nodeId: project.nodeId, path: project.path, available: true }];
+  }
+
+  return project;
 }
 
 const noop = () => {};

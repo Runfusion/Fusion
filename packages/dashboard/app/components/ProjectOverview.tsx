@@ -1,9 +1,10 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { Plus, LayoutGrid, Filter, ArrowUpDown, Activity, CheckCircle, AlertCircle, Folder, Inbox, Server } from "lucide-react";
 import "./ProjectOverview.css";
-import type { ProjectInfo, ProjectHealth, NodeInfo, ProjectInfoWithSource } from "../api";
+import type { ProjectInfo, ProjectHealth, NodeInfo, ProjectInfoWithSource, ProjectNodeAvailability } from "../api";
 import type { ProjectStatus } from "@fusion/core";
 import { ProjectCard } from "./ProjectCard";
+import { getNodeMappingsForProject, resolveNodeDisplayName } from "../utils/nodeProjectAssignment";
 import { ProjectGridSkeleton } from "./ProjectGridSkeleton";
 import { useProjectHealth } from "../hooks/useProjectHealth";
 
@@ -25,6 +26,10 @@ type SortOption = "name" | "activity" | "status";
 interface ProjectWithHealth {
   project: ProjectInfoWithSource;
   health: ProjectHealth | null;
+}
+
+interface DisplayMapping extends ProjectNodeAvailability {
+  displayName: string;
 }
 
 /**
@@ -92,7 +97,7 @@ export function ProjectOverview({
 
     // Filter by node if a node filter is active
     if (activeNodeFilter !== null) {
-      filtered = filtered.filter(({ project }) => project.nodeId === activeNodeFilter);
+      filtered = filtered.filter(({ project }) => getNodeMappingsForProject(project).some((mapping) => mapping.available && mapping.nodeId === activeNodeFilter));
     }
 
     return filtered;
@@ -140,13 +145,15 @@ export function ProjectOverview({
     const erroredProjects = projects.filter((p) => p.status === "errored").length;
 
     // Count unique nodes with projects (local + remote)
-    const nodesWithProjects = new Set<string | undefined>();
-    projects.forEach((p) => {
-      if (p.nodeId) {
-        nodesWithProjects.add(p.nodeId);
-      }
+    const nodesWithProjects = new Set<string>();
+    projects.forEach((project) => {
+      getNodeMappingsForProject(project).forEach((mapping) => {
+        if (mapping.available) {
+          nodesWithProjects.add(mapping.nodeId);
+        }
+      });
     });
-    const totalNodes = nodesWithProjects.size || (totalProjects > 0 ? 1 : 0);
+    const totalNodes = nodesWithProjects.size;
 
     let totalActiveTasks = 0;
     let totalCompletedTasks = 0;
@@ -183,24 +190,25 @@ export function ProjectOverview({
 
   // Node filter options with project counts
   const nodeFilterOptions = useMemo(() => {
-    const nodeCounts = new Map<string | undefined, { name: string; count: number }>();
-    
-    projects.forEach((p) => {
-      const nodeId = p.nodeId;
-      const existing = nodeCounts.get(nodeId);
-      
-      if (existing) {
-        existing.count++;
-      } else {
-        // Get the node name from the nodes list or use _sourceNodeName for remote projects
-        const localNode = nodes.find((n) => n.id === nodeId);
-        const nodeName = localNode?.name ?? p._sourceNodeName ?? "Local";
-        nodeCounts.set(nodeId, { name: nodeName, count: 1 });
-      }
+    const nodeCounts = new Map<string, { name: string; count: number }>();
+
+    projects.forEach((project) => {
+      getNodeMappingsForProject(project)
+        .filter((mapping) => mapping.available)
+        .forEach((mapping) => {
+          const nodeId = mapping.nodeId;
+          const existing = nodeCounts.get(nodeId);
+          const resolvedName = resolveNodeDisplayName(nodeId, mapping, nodes, project);
+          if (existing) {
+            existing.count += 1;
+          } else {
+            nodeCounts.set(nodeId, { name: resolvedName, count: 1 });
+          }
+        });
     });
-    
+
     return Array.from(nodeCounts.entries()).map(([nodeId, { name, count }]) => ({
-      nodeId: nodeId ?? null,
+      nodeId,
       name,
       count,
     }));
@@ -404,16 +412,19 @@ export function ProjectOverview({
       {/* Project grid */}
       <div className="project-grid">
         {sortedProjects.map(({ project, health }) => {
-          const projectNode = nodes.find((node) => node.id === project.nodeId);
-          // Fallback: use server-provided _sourceNodeName for remote projects
-          const nodeNameFallback = !projectNode ? project._sourceNodeName : undefined;
+          const availabilityMappings: DisplayMapping[] = getNodeMappingsForProject(project)
+            .filter((mapping) => mapping.available)
+            .map((mapping) => ({
+              ...mapping,
+              displayName: resolveNodeDisplayName(mapping.nodeId, mapping, nodes, project),
+            }));
+
           return (
             <ProjectCard
               key={project.id}
               project={project}
               health={health}
-              node={projectNode}
-              nodeNameFallback={nodeNameFallback}
+              availabilityMappings={availabilityMappings}
               onSelect={handleSelectProject}
               onPause={onPauseProject}
               onResume={onResumeProject}

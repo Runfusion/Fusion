@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import type { JSX } from "react";
 import { NodeCard } from "../NodeCard";
-import type { NodeInfo, ProjectInfo } from "../../api";
+import type { NodeInfo, ProjectInfoWithSource } from "../../api";
 import type { ComputedNodeSyncStatus } from "../../hooks/useNodeSettingsSync";
 
 vi.mock("lucide-react", () => ({
@@ -47,8 +47,8 @@ function makeNode(overrides: Partial<NodeInfo> = {}): NodeInfo {
   };
 }
 
-function makeProject(overrides: Partial<ProjectInfo> = {}): ProjectInfo {
-  return {
+function makeProject(overrides: Partial<ProjectInfoWithSource> = {}): ProjectInfoWithSource {
+  const project: ProjectInfoWithSource = {
     id: "proj-1",
     name: "Project One",
     path: "/workspace/project-one",
@@ -58,6 +58,12 @@ function makeProject(overrides: Partial<ProjectInfo> = {}): ProjectInfo {
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
+
+  if (!project.nodeMappings && project.nodeId) {
+    project.nodeMappings = [{ nodeId: project.nodeId, path: project.path, available: true }];
+  }
+
+  return project;
 }
 
 function makeSyncStatus(overrides: Partial<ComputedNodeSyncStatus> = {}): ComputedNodeSyncStatus {
@@ -193,12 +199,12 @@ describe("NodeCard", () => {
     expect(onRemove).toHaveBeenCalledWith(node.id);
   });
 
-  it("local node counts include unassigned projects", () => {
+  it("local node counts only available mappings", () => {
     const localNode = makeNode({ id: "local-1", type: "local" });
     const projects = [
-      makeProject({ id: "proj-1", nodeId: "local-1" }), // explicitly assigned
-      makeProject({ id: "proj-2", nodeId: undefined }), // unassigned - runs on local
-      makeProject({ id: "proj-3", nodeId: "remote-1" }), // assigned to remote - not counted
+      makeProject({ id: "proj-1", nodeId: "local-1" }),
+      makeProject({ id: "proj-2", nodeMappings: [{ nodeId: "local-1", path: "/workspace/project-two", available: false }] }),
+      makeProject({ id: "proj-3", nodeId: "remote-1" }),
     ];
 
     render(
@@ -211,8 +217,7 @@ describe("NodeCard", () => {
       />
     );
 
-    // Local node should show 2 projects (explicitly assigned + unassigned)
-    expect(screen.getByText("2")).toBeDefined();
+    expect(screen.getByText("1")).toBeDefined();
   });
 
   it("remote node counts exclude unassigned projects", () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { NodesView } from "../NodesView";
-import type { NodeInfo, ProjectInfo } from "../../api";
+import type { NodeInfo, ProjectInfoWithSource } from "../../api";
 import { useNodes } from "../../hooks/useNodes";
 import { useProjects } from "../../hooks/useProjects";
 import { useNodeSettingsSync } from "../../hooks/useNodeSettingsSync";
@@ -62,8 +62,8 @@ function makeNode(overrides: Partial<NodeInfo> = {}): NodeInfo {
   };
 }
 
-function makeProject(overrides: Partial<ProjectInfo> = {}): ProjectInfo {
-  return {
+function makeProject(overrides: Partial<ProjectInfoWithSource> = {}): ProjectInfoWithSource {
+  const project: ProjectInfoWithSource = {
     id: "proj-1",
     name: "Project One",
     path: "/workspace/project-one",
@@ -73,6 +73,12 @@ function makeProject(overrides: Partial<ProjectInfo> = {}): ProjectInfo {
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
+
+  if (!project.nodeMappings && project.nodeId) {
+    project.nodeMappings = [{ nodeId: project.nodeId, path: project.path, available: true }];
+  }
+
+  return project;
 }
 
 function makeUseNodesResult(overrides: Partial<ReturnType<typeof useNodes>> = {}): ReturnType<typeof useNodes> {
@@ -274,11 +280,11 @@ describe("NodesView", () => {
     expect(screen.getByRole("dialog", { name: "Node details for Detail Node" })).toBeDefined();
   });
 
-  it("local node project count includes unassigned projects in detail modal", () => {
+  it("local node detail modal only counts projects with available mappings", () => {
     mockUseProjects.mockReturnValue({
       projects: [
-        makeProject({ id: "proj-1", nodeId: "node-1" }), // explicitly assigned
-        makeProject({ id: "proj-2", nodeId: undefined }), // unassigned - runs on local
+        makeProject({ id: "proj-1", nodeId: "node-1" }),
+        makeProject({ id: "proj-2", nodeMappings: [{ nodeId: "node-1", path: "/workspace/project-two", available: false }] }),
       ],
       loading: false,
       error: null,
@@ -299,8 +305,7 @@ describe("NodesView", () => {
     expect(nodeCard).toBeInTheDocument();
     fireEvent.click(nodeCard!);
 
-    // Modal should show "Projects (2)" - including the unassigned project
-    expect(screen.getByText("Projects (2)")).toBeDefined();
+    expect(screen.getByText("Projects (1)")).toBeDefined();
   });
 
   it("renders close button and calls onClose when clicked", () => {
