@@ -52,6 +52,7 @@ import {
   createListAgentsTool,
   createMemoryTools,
   createResearchTools,
+  createWebFetchTool,
   createTaskDocumentReadTool,
   createTaskDocumentWriteTool,
 } from "./agent-tools.js";
@@ -966,6 +967,7 @@ export class TriageProcessor {
               },
             }
             : undefined),
+          createWebFetchTool(),
           // Agent delegation tools — discover and delegate work to other agents.
           ...(this.options.agentStore ? [
             createListAgentsTool(this.options.agentStore),

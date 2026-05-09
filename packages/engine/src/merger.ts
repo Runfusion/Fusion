@@ -66,6 +66,7 @@ import { resolveAgentInstructions, buildSystemPromptWithInstructions } from "./a
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext } from "./run-audit.js";
+import { createWebFetchTool } from "./agent-tools.js";
 
 /** Conflict type classification for merge conflict resolution */
 export type ConflictType =
@@ -6443,7 +6444,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     cwd: rootDir,
     systemPrompt: mergerSystemPrompt,
     tools: "coding",
-    customTools: [reportBuildFailureTool],
+    customTools: [reportBuildFailureTool, createWebFetchTool()],
     onText: agentLogger.onText,
     onThinking: agentLogger.onThinking,
     onToolStart: agentLogger.onToolStart,

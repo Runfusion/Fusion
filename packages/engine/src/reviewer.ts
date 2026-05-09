@@ -22,7 +22,7 @@ import {
   buildPluginPromptSection,
 } from "./agent-instructions.js";
 import { createFallbackModelObserver } from "./fallback-model-observer.js";
-import { createMemoryGetTool, createMemorySearchTool } from "./agent-tools.js";
+import { createMemoryGetTool, createMemorySearchTool, createWebFetchTool } from "./agent-tools.js";
 
 export const REVIEWER_SYSTEM_PROMPT = `You are an independent code and plan reviewer.
 
@@ -496,7 +496,7 @@ export async function reviewStep(
       cwd,
       systemPrompt: reviewerSystemPromptFinal,
       tools: "readonly",
-      customTools: memoryTools,
+      customTools: [createWebFetchTool(), ...(memoryTools ?? [])],
       onText: agentLogger ? agentLogger.onText : (delta) => options.onText?.(delta),
       onThinking: agentLogger?.onThinking,
       onToolStart: agentLogger?.onToolStart,
