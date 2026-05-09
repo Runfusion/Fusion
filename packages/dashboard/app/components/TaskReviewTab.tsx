@@ -2,6 +2,7 @@ import "./TaskReviewTab.css";
 import type { Task, TaskDetail } from "@fusion/core";
 import { useEffect, useMemo, useState } from "react";
 import { fetchTaskReview, refreshTaskReview, reviseTaskReviewItems } from "../api";
+import type { SelectedReviewItem } from "../api";
 import type { ToastType } from "../hooks/useToast";
 
 interface Props {
@@ -126,13 +127,30 @@ export function TaskReviewTab({ task, projectId, onTaskUpdated, addToast }: Prop
 
   const onRevise = async () => {
     try {
+      if (!review) return;
       setError(null);
       setRevising(true);
-      const result = await reviseTaskReviewItems(task.id, selected, projectId);
+      const selectedItems: SelectedReviewItem[] = review.items
+        .filter((item) => selected.includes(item.id))
+        .map((item) => {
+          const itemRecord = item as unknown as Record<string, unknown>;
+          return {
+            id: item.id,
+            source: review.source === "pull-request" ? "pr-review" : "reviewer-agent",
+            threadId: typeof itemRecord.threadId === "string" ? itemRecord.threadId : undefined,
+            filePath: item.path,
+            lineNumber: typeof itemRecord.line === "number" ? itemRecord.line : undefined,
+            author: item.author?.login,
+            summary: item.summary ?? item.body.slice(0, 120),
+            body: item.body,
+            url: typeof itemRecord.url === "string" ? itemRecord.url : undefined,
+          };
+        });
+      const result = await reviseTaskReviewItems(task.id, selectedItems, projectId);
       setReview(result.reviewState);
       onTaskUpdated?.({ ...result.task, reviewState: result.reviewState } as Task);
       setSelected([]);
-      addToast("Queued same-task revision", "success");
+      addToast("Same-task AI revision started from selected review feedback", "success");
     } catch (reviseError) {
       const message = reviseError instanceof Error ? reviseError.message : "Failed to queue revision";
       setError(message);
@@ -153,7 +171,7 @@ export function TaskReviewTab({ task, projectId, onTaskUpdated, addToast }: Prop
         </div>
         <div className="task-review-tab__actions">
           <button className="btn btn-sm" onClick={onRefresh} disabled={refreshing || loading}>{refreshing ? "Refreshing…" : "Refresh"}</button>
-          <button className="btn btn-primary btn-sm" disabled={!canRevise || !isPrMode} onClick={onRevise}>{revising ? "Queueing…" : "Request revision"}</button>
+          <button className="btn btn-primary btn-sm" disabled={!canRevise} onClick={onRevise}>{revising ? "Queueing…" : "Request revision"}</button>
         </div>
       </div>
       <div className="task-review-tab__meta task-review-tab__refresh-meta" aria-live="polite">
@@ -206,8 +224,13 @@ export function TaskReviewTab({ task, projectId, onTaskUpdated, addToast }: Prop
               const status = getItemStatus(review, item);
               return (
                 <li key={item.id} className="task-review-tab__item card">
-                  <div className="task-review-tab__direct-item">
+                  <label className="task-review-tab__direct-item task-review-tab__direct-item--selectable">
                     <div className="task-review-tab__summary-wrap">
+                      <input
+                        type="checkbox"
+                        checked={selected.includes(item.id)}
+                        onChange={() => toggleSelected(item.id)}
+                      />
                       <span className="task-review-tab__decision">reviewer-agent</span>
                       {item.reviewType ? <span className="task-review-tab__meta">{item.reviewType} review</span> : null}
                       {typeof item.step === "number" ? <span className="task-review-tab__meta">Step {item.step}</span> : null}
@@ -217,7 +240,7 @@ export function TaskReviewTab({ task, projectId, onTaskUpdated, addToast }: Prop
                     {item.summary ? <p className="task-review-tab__summary">{item.summary}</p> : null}
                     <div className="task-review-tab__meta">{formatTimestamp(item.createdAt)}</div>
                     <pre className="task-review-tab__body">{item.body}</pre>
-                  </div>
+                  </label>
                 </li>
               );
             })}

@@ -2142,7 +2142,7 @@ describe("POST /tasks/:id/review/address", () => {
   let store: TaskStore;
 
   beforeEach(() => {
-    store = createMockStore();
+    store = createMockStore({ updateStep: vi.fn() } as unknown as Partial<TaskStore>);
   });
 
   function buildApp() {
@@ -2152,68 +2152,81 @@ describe("POST /tasks/:id/review/address", () => {
     return app;
   }
 
-  it("queues selected review items and moves task to todo", async () => {
+  it("resumes in-review tasks to in-progress using selected review payload", async () => {
     const taskWithReview = {
       ...FAKE_TASK_DETAIL,
       id: "FN-001",
       column: "in-review",
-      steps: [],
+      status: "awaiting-user-review",
+      assignedAgentId: null,
+      steps: [{ id: "s1", title: "Step 1", status: "done" }],
       reviewState: {
         source: "reviewer-agent",
-        items: [
-          {
-            id: "ri-1",
-            body: "Fix tests",
-            author: { login: "reviewer" },
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          },
-        ],
+        items: [{ id: "ri-1", body: "Fix tests", summary: "Fix tests", author: { login: "reviewer" }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
         addressing: [],
       },
     };
-    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(taskWithReview);
+    const movedTask = { ...taskWithReview, column: "in-progress", status: null, sessionFile: null, assignedAgentId: null };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(taskWithReview).mockResolvedValueOnce({ ...taskWithReview, reviewState: { ...taskWithReview.reviewState, addressing: [{ itemId: "ri-1", status: "queued", selectedAt: new Date().toISOString() }] } });
     (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sc-1" });
-    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...taskWithReview, column: "todo" });
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
 
-    const res = await REQUEST(
-      buildApp(),
-      "POST",
-      "/api/tasks/FN-001/review/address",
-      JSON.stringify({ itemIds: ["ri-1"] }),
-      { "Content-Type": "application/json" },
-    );
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/address", JSON.stringify({ selectedItems: [{ id: "ri-1", source: "reviewer-agent", summary: "Fix tests", body: "Fix tests" }] }), { "Content-Type": "application/json" });
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith(
-      "FN-001",
-      expect.objectContaining({ reviewState: expect.objectContaining({ addressing: expect.arrayContaining([expect.objectContaining({ itemId: "ri-1", status: "queued" })]) }) }),
-    );
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveProgress: true });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress", { preserveProgress: true });
+    expect(store.updateStep).toHaveBeenCalledWith("FN-001", 0, "pending");
+  });
+
+  it("for in-progress tasks injects steering without moving task", async () => {
+    const taskWithReview = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-001",
+      column: "in-progress",
+      sessionFile: "active.session.json",
+      reviewState: {
+        source: "pull-request",
+        items: [{ id: "ri-1", body: "Fix tests", summary: "Fix tests", author: { login: "reviewer" }, createdAt: new Date().toISOString(), path: "src/a.ts", line: 4 }],
+        addressing: [],
+      },
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce(taskWithReview).mockResolvedValueOnce(taskWithReview);
+    (store.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "sc-1" });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/address", JSON.stringify({ selectedItems: [{ id: "ri-1", source: "pr-review", summary: "Fix tests", body: "Fix tests", filePath: "src/a.ts", lineNumber: 4 }] }), { "Content-Type": "application/json" });
+
+    expect(res.status).toBe(200);
+    expect(store.moveTask).not.toHaveBeenCalled();
   });
 
   it("rejects empty selection", async () => {
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, id: "FN-001", reviewState: { source: "reviewer-agent", items: [], addressing: [] } });
-    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/address", JSON.stringify({ itemIds: [] }), { "Content-Type": "application/json" });
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/address", JSON.stringify({ selectedItems: [] }), { "Content-Type": "application/json" });
     expect(res.status).toBe(400);
-    expect(res.body.error).toContain("itemIds must be a non-empty array");
+    expect(res.body.error).toContain("selectedItems must be a non-empty array");
   });
 
-  it("rejects missing reviewState", async () => {
-    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, id: "FN-001", reviewState: undefined });
-    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/address", JSON.stringify({ itemIds: ["ri-1"] }), { "Content-Type": "application/json" });
+  it("rejects unsupported review source", async () => {
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, id: "FN-001", reviewState: { source: "reviewer-agent", items: [{ id: "ri-1", body: "x", summary: "x", author: { login: "reviewer" }, createdAt: new Date().toISOString() }], addressing: [] } });
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/address", JSON.stringify({ selectedItems: [{ id: "ri-1", source: "other", summary: "x", body: "x" }] }), { "Content-Type": "application/json" });
     expect(res.status).toBe(400);
-    expect(res.body.error).toContain("Task has no reviewState payload");
+    expect(res.body.error).toContain("Unsupported review source");
   });
 
-  it("rejects unknown item IDs", async () => {
+  it("rejects source mismatch and unknown item ids", async () => {
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...FAKE_TASK_DETAIL,
       id: "FN-001",
-      reviewState: { source: "reviewer-agent", items: [{ id: "ri-1", body: "x", author: { login: "reviewer" }, createdAt: new Date().toISOString() }], addressing: [] },
+      reviewState: { source: "pull-request", items: [{ id: "ri-1", body: "x", summary: "x", author: { login: "reviewer" }, createdAt: new Date().toISOString() }], addressing: [] },
     });
-    const res = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/address", JSON.stringify({ itemIds: ["ri-missing"] }), { "Content-Type": "application/json" });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toContain("must reference existing review items");
+
+    const mismatch = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/address", JSON.stringify({ selectedItems: [{ id: "ri-1", source: "reviewer-agent", summary: "x", body: "x" }] }), { "Content-Type": "application/json" });
+    expect(mismatch.status).toBe(400);
+    expect(mismatch.body.error).toContain("does not match task review mode");
+
+    const unknown = await REQUEST(buildApp(), "POST", "/api/tasks/FN-001/review/address", JSON.stringify({ selectedItems: [{ id: "ri-2", source: "pr-review", summary: "x", body: "x" }] }), { "Content-Type": "application/json" });
+    expect(unknown.status).toBe(400);
+    expect(unknown.body.error).toContain("must reference existing review items");
+    expect(store.createTask).not.toHaveBeenCalled();
   });
 });

@@ -268,7 +268,11 @@ This file is the contract for execution and review.
 
 Steering comments can be injected mid-run into active executor sessions.
 
-When users select review items and trigger **Request revision** from the Review tab, Fusion queues those items on the same task, injects revision guidance into `PROMPT.md`, reopens the last completed step, and re-dispatches the task through `todo` for an in-place revision pass.
+When users select review items and trigger **Request revision** from the Review tab, Fusion starts an in-place same-task AI revision pass (no refinement child task):
+
+- `in-progress` tasks receive compact steering guidance from the selected review items and continue on the same task/branch/worktree context.
+- `in-review` tasks are resumed back to `in-progress`, reopen the last completed step, and keep same-task branch/worktree context for the revision pass.
+- Assigned immediate-response agents are woken on-demand only when there is no active session; otherwise guidance is injected without forcing a new wake.
 
 ### User comments and triage re-consideration
 

@@ -34,6 +34,7 @@ import {
   fetchTaskComments,
   fetchGitRemotes,
   refineTask,
+  reviseTaskReviewItems,
   fetchBatchStatus,
   fetchWorkspaces,
   fetchWorkspaceFileList,
@@ -637,6 +638,34 @@ describe("refineTask", () => {
     );
 
     await expect(refineTask("FN-001", "feedback")).rejects.toThrow("done' or 'in-review'");
+  });
+});
+
+
+describe("reviseTaskReviewItems", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("posts selected review items with review tab marker", async () => {
+    const responseTask: Task = { ...FAKE_DETAIL, id: "FN-001" };
+    globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, {
+      task: responseTask,
+      reviewState: { source: "pull-request", items: [], addressing: [] },
+    }));
+
+    await reviseTaskReviewItems("FN-001", [{ id: "ri-1", source: "pr-review", summary: "Fix x", body: "Fix x" }]);
+
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/review/address", {
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+      body: JSON.stringify({
+        selectedItems: [{ id: "ri-1", source: "pr-review", summary: "Fix x", body: "Fix x" }],
+        tab: "review",
+      }),
+    });
   });
 });
 

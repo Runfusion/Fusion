@@ -144,7 +144,7 @@ describe("TaskReviewTab", () => {
     fireEvent.click(await screen.findByRole("checkbox"));
     fireEvent.click(screen.getByRole("button", { name: "Request revision" }));
 
-    expect(apiMocks.reviseTaskReviewItems).toHaveBeenCalledWith(task.id, ["ri-1"], undefined);
+    expect(apiMocks.reviseTaskReviewItems).toHaveBeenCalledWith(task.id, [expect.objectContaining({ id: "ri-1", source: "pr-review" })], undefined);
   });
 
   it("refreshes and updates direct-mode reviewer-agent content", async () => {
@@ -219,5 +219,26 @@ describe("TaskReviewTab", () => {
     expect(await screen.findByText("reviewer-agent")).toBeInTheDocument();
     expect(screen.getByText("Step 2")).toBeInTheDocument();
     expect(screen.getAllByText("REVISE").length).toBeGreaterThan(0);
+  });
+
+  it("submits reviewer-agent selections through same revision action", async () => {
+    const task = makeTask();
+    apiMocks.fetchTaskReview.mockResolvedValue({
+      reviewState: {
+        source: "reviewer-agent",
+        summary: { verdict: "REVISE", reviewType: "code", summary: "Needs fixes" },
+        items: [{ id: "reviewer-code-1", body: "Fix the failing test", author: { login: "reviewer-agent" }, createdAt: new Date().toISOString(), summary: "Fix failing test" }],
+        addressing: [],
+      },
+      automationStatus: null,
+      emptyMessage: null,
+    });
+    apiMocks.reviseTaskReviewItems.mockResolvedValue({ task: makeTask(), reviewState: { source: "reviewer-agent", items: [], addressing: [] } });
+
+    render(<TaskReviewTab task={task} addToast={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Request revision" }));
+
+    expect(apiMocks.reviseTaskReviewItems).toHaveBeenCalledWith(task.id, [expect.objectContaining({ id: "reviewer-code-1", source: "reviewer-agent" })], undefined);
   });
 });

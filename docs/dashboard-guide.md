@@ -333,6 +333,7 @@ Inspect task definition, logs, review feedback, comments, documents, workflow ou
 - The priority chip in task metadata is now an inline picker: you can change priority directly from the chip without entering full edit mode.
 - Execution mode now also has a read-mode inline control: a lightning-bolt toggle lets you switch Fast mode on/off from task metadata without opening the full edit form.
 - The **Review** tab is separate from **Comments**: Review shows actionable PR/reviewer feedback and same-task revision controls, while Comments remains the general collaboration thread.
+- **Request revision** in Review resumes work on the same task ID (no refinement task): `in-progress` tasks get steering injection, while `in-review` tasks are moved back to `in-progress` for the same branch/worktree revision pass.
 - Review supports a manual **Refresh** action in-place: PR mode pulls latest GitHub review state/decision, while direct mode rehydrates reviewer-agent feedback from persisted task data (no GitHub call).
 - In direct/non-PR auto-merge mode, Review renders normalized reviewer-agent feedback (verdict/step/timestamp/detail) with dedicated loading/error/empty states; it does not require users to read raw agent logs.
 

@@ -1,6 +1,4 @@
 import { createReadStream } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import type { TaskStore, Task, TaskDetail, Column } from "@fusion/core";
 import {
   COLUMNS,
@@ -1775,32 +1773,68 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id);
-      const itemIds = Array.isArray(req.body?.itemIds)
-        ? req.body.itemIds.filter((value: unknown): value is string => typeof value === "string" && value.trim().length > 0)
+
+      type SelectedReviewItem = {
+        id: string;
+        source: "pr-review" | "reviewer-agent";
+        threadId?: string;
+        filePath?: string;
+        lineNumber?: number;
+        author?: string;
+        summary: string;
+        body: string;
+        url?: string;
+      };
+
+      const selectedItems: SelectedReviewItem[] = Array.isArray(req.body?.selectedItems)
+        ? req.body.selectedItems.filter((value: unknown): value is SelectedReviewItem => {
+            if (!value || typeof value !== "object") return false;
+            const item = value as Record<string, unknown>;
+            return typeof item.id === "string" && item.id.trim().length > 0 && typeof item.summary === "string" && typeof item.body === "string";
+          })
         : [];
 
-      if (itemIds.length === 0) {
-        throw badRequest("itemIds must be a non-empty array of review item IDs");
+      if (selectedItems.length === 0) {
+        throw badRequest("selectedItems must be a non-empty array of review items");
+      }
+      const unsupportedSource = selectedItems.find((item) => item.source !== "pr-review" && item.source !== "reviewer-agent");
+      if (unsupportedSource) {
+        throw badRequest(`Unsupported review source: ${String(unsupportedSource.source)}`);
       }
       if (!task.reviewState) {
         throw badRequest("Task has no reviewState payload");
       }
 
       const now = new Date().toISOString();
-      const selectedSet = new Set(itemIds);
-      const selectedSummaries: string[] = [];
-      const selectedItems = task.reviewState.items.filter((item) => selectedSet.has(item.id));
-      if (selectedItems.length !== selectedSet.size) {
-        throw badRequest("itemIds must reference existing review items");
+      const selectedSet = new Set(selectedItems.map((item: SelectedReviewItem) => item.id));
+      const sourceById = new Map(selectedItems.map((item: SelectedReviewItem) => [item.id, item.source] as const));
+      const reviewSourceMismatch = task.reviewState.items.find((item: NonNullable<typeof task.reviewState>["items"][number]) => {
+        const selectedSource = sourceById.get(item.id);
+        if (!selectedSource || !task.reviewState) return false;
+        const expectedSource = task.reviewState.source === "pull-request" ? "pr-review" : "reviewer-agent";
+        return selectedSource !== expectedSource;
+      });
+      if (reviewSourceMismatch) {
+        throw badRequest("Selected review source does not match task review mode");
       }
-      for (const item of selectedItems) {
-        const excerpt = item.body.length > 140 ? `${item.body.slice(0, 140)}…` : item.body;
-        selectedSummaries.push(`- [${item.id}] @${item.author.login}${item.path ? ` (${item.path})` : ""}: ${excerpt}`);
+      const matchedItems = task.reviewState.items.filter((item: NonNullable<typeof task.reviewState>["items"][number]) => selectedSet.has(item.id));
+      if (matchedItems.length !== selectedSet.size) {
+        throw badRequest("selectedItems must reference existing review items");
       }
+
+      const modeSummary = `${task.reviewState.source === "pull-request" ? "pull-request" : "reviewer-agent"} · ${selectedItems.length} selected item(s)`;
+      const steeringItems = selectedItems.map((item: SelectedReviewItem, index: number) => {
+        const location = item.filePath ? `${item.filePath}${typeof item.lineNumber === "number" ? `:${item.lineNumber}` : ""}` : undefined;
+        const snippetSource = item.body.trim() || item.summary.trim();
+        const snippet = snippetSource.length > 220 ? `${snippetSource.slice(0, 220)}…` : snippetSource;
+        const urlSuffix = item.url ? ` | url: ${item.url}` : "";
+        return `${index + 1}. source: ${item.source}${location ? ` | location: ${location}` : ""} | "${snippet}"${urlSuffix}`;
+      });
+      const steeringText = ["Selected review feedback to address", modeSummary, ...steeringItems].join("\n");
 
       const nextAddressing = [
         ...task.reviewState.addressing.filter((record) => !selectedSet.has(record.itemId)),
-        ...itemIds.map((itemId: string) => ({ itemId, status: "queued" as const, selectedAt: now })),
+        ...selectedItems.map((item: SelectedReviewItem) => ({ itemId: item.id, status: "queued" as const, selectedAt: now })),
       ];
 
       const reviewState = {
@@ -1808,60 +1842,41 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         addressing: nextAddressing,
       };
 
-      await scopedStore.updateTask(task.id, {
-        reviewState,
-        status: null,
-        error: null,
-        sessionFile: null,
-      });
-
-      if (selectedSummaries.length > 0) {
-        const fusionDir = typeof scopedStore.getFusionDir === "function"
-          ? scopedStore.getFusionDir()
-          : join(scopedStore.getRootDir(), ".fusion");
-        const promptPath = join(fusionDir, "tasks", task.id, "PROMPT.md");
-        try {
-          const promptContent = await readFile(promptPath, "utf-8");
-          const sectionHeader = "## Workflow Revision Instructions";
-          const sectionContent = `${sectionHeader}\n\n**PR Review Revision Request**\n\nAddress the following selected review feedback items in this same task run:\n\n${selectedSummaries.join("\n")}\n`;
-          const sectionRegex = new RegExp(`${sectionHeader}[\\s\\S]*?(?=\\n## |\\n# |$)`, "m");
-          const nextPrompt = promptContent.includes(sectionHeader)
-            ? promptContent.replace(sectionRegex, sectionContent)
-            : `${promptContent}\n\n${sectionContent}`;
-          await writeFile(promptPath, nextPrompt, "utf-8");
-        } catch {
-          // non-fatal: task may not have prompt yet
-        }
-      }
+      await scopedStore.updateTask(task.id, { reviewState });
 
       let steeringCommentId: string | null = null;
-      if (selectedSummaries.length > 0) {
-        const steeringComment = await scopedStore.addSteeringComment(
-          task.id,
-          `**PR Review Revision Request**\n\nReview revision requested for selected items:\n\n${selectedSummaries.join("\n")}`,
-          "user",
-        );
-        steeringCommentId = steeringComment.id;
+      const steeringComment = await scopedStore.addSteeringComment(task.id, steeringText, "user");
+      steeringCommentId = steeringComment.id;
+
+      let updatedTask: Task = await scopedStore.getTask(task.id);
+
+      if (task.column === "in-review") {
+        await scopedStore.updateTask(task.id, {
+          status: null,
+          error: null,
+          sessionFile: null,
+        });
+        const lastDoneStep = [...task.steps]
+          .map((step, index) => ({ step, index }))
+          .reverse()
+          .find(({ step }) => step.status === "done" || step.status === "in-progress");
+        if (lastDoneStep) {
+          await scopedStore.updateStep(task.id, lastDoneStep.index, "pending");
+        }
+        updatedTask = await scopedStore.moveTask(task.id, "in-progress", { preserveProgress: true });
       }
 
-      const lastDoneStep = [...task.steps]
-        .map((step, index) => ({ step, index }))
-        .reverse()
-        .find(({ step }) => step.status === "done" || step.status === "in-progress");
-      if (lastDoneStep) {
-        await scopedStore.updateStep(task.id, lastDoneStep.index, "pending");
-      }
-
-      const moved = await scopedStore.moveTask(task.id, "todo", { preserveProgress: true });
-      if (steeringCommentId) {
-        await triggerCommentWakeForAssignedAgent(scopedStore, moved, {
+      const hasActiveSession = Boolean(updatedTask.sessionFile);
+      if (steeringCommentId && updatedTask.column === "in-progress" && updatedTask.assignedAgentId && !hasActiveSession) {
+        await triggerCommentWakeForAssignedAgent(scopedStore, updatedTask, {
           triggeringCommentType: "steering",
           triggeringCommentIds: [steeringCommentId],
           triggerDetail: "review-address",
         });
       }
-      await scopedStore.logEntry(task.id, "Review revision requested", `${itemIds.length} item(s) queued for same-task revision`);
-      res.json({ task: moved, reviewState });
+
+      await scopedStore.logEntry(task.id, "Same-task review revision requested", `${selectedItems.length} item(s) submitted from review tab`);
+      res.json({ task: updatedTask, reviewState });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

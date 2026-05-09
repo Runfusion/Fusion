@@ -269,6 +269,18 @@ export interface RefreshTaskReviewResponse {
   prInfo?: TaskDetail["prInfo"];
 }
 
+export interface SelectedReviewItem {
+  id: string;
+  source: "pr-review" | "reviewer-agent";
+  threadId?: string;
+  filePath?: string;
+  lineNumber?: number;
+  author?: string;
+  summary: string;
+  body: string;
+  url?: string;
+}
+
 export interface ReviseTaskReviewResponse {
   task: Task;
   reviewState: NonNullable<TaskDetail["reviewState"]>;
@@ -5130,10 +5142,10 @@ export function refreshTaskReview(taskId: string, projectId?: string): Promise<R
 }
 
 /** Request an in-place revision pass for selected review items */
-export function reviseTaskReviewItems(taskId: string, itemIds: string[], projectId?: string): Promise<ReviseTaskReviewResponse> {
+export function reviseTaskReviewItems(taskId: string, selectedItems: SelectedReviewItem[], projectId?: string): Promise<ReviseTaskReviewResponse> {
   return api<ReviseTaskReviewResponse>(withProjectId(`/tasks/${encodeURIComponent(taskId)}/review/address`, projectId), {
     method: "POST",
-    body: JSON.stringify({ itemIds }),
+    body: JSON.stringify({ selectedItems, tab: "review" }),
   });
 }
 
