@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 
 export const REQUIRED_BUILD_PACKAGES = [
   { name: "@fusion/core", requiredArtifacts: ["packages/core/dist/index.js"] },
+  { name: "@fusion/dashboard", requiredArtifacts: ["packages/dashboard/dist/index.js"] },
   { name: "@fusion/plugin-sdk", requiredArtifacts: ["packages/plugin-sdk/dist/index.js"] },
   {
     name: "@fusion-plugin-examples/hermes-runtime",

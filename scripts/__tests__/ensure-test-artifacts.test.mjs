@@ -36,6 +36,27 @@ test("ensureTestArtifacts builds only missing packages", () => {
   assert.deepEqual(calls[0].args, ["--filter", "@fusion-plugin-examples/openclaw-runtime", "build"]);
 });
 
+test("detectMissingArtifacts flags @fusion/dashboard when dist/index.js is missing", () => {
+  const missing = detectMissingArtifacts("/repo", (fullPath) => !fullPath.endsWith("packages/dashboard/dist/index.js"));
+  const names = missing.map((pkg) => pkg.name);
+
+  assert.ok(names.includes("@fusion/dashboard"));
+});
+
+test("ensureTestArtifacts rebuilds @fusion/dashboard when its dist is missing", () => {
+  const calls = [];
+  const built = ensureTestArtifacts(
+    "/repo",
+    (cmd, args, cwd) => calls.push({ cmd, args, cwd }),
+    (fullPath) => !fullPath.endsWith("packages/dashboard/dist/index.js"),
+  );
+
+  assert.deepEqual(built, ["@fusion/dashboard"]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].cmd, "pnpm");
+  assert.deepEqual(calls[0].args, ["--filter", "@fusion/dashboard", "build"]);
+});
+
 test("detectMissingArtifacts flags hermes when dist/index.js exists but dist/cli-spawn.js is missing", () => {
   const missing = detectMissingArtifacts("/repo", (fullPath) => !fullPath.endsWith("dist/cli-spawn.js"));
   const names = missing.map((pkg) => pkg.name);
