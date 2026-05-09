@@ -1638,4 +1638,86 @@ describe("fn pi extension (runnable structured-output regression slice)", () => 
       expect(result.content[0].text).toContain("lone-agent");
     });
   });
+
+  // ── FN-407 regression: fn_task_retry execution vs merge failure differentiation ──
+  describe("fn_task_retry", () => {
+    it("moves execution-failed in-review task (incomplete steps) to todo preserving progress", async () => {
+      // FN-327 / FN-358 regression: tasks that fail mid-execution (429, stream-ended)
+      // while in in-review must be moved back to todo to resume, not left stranded.
+      const store = new TaskStore(tmpDir);
+      await store.init();
+
+      // Create a task in todo, move through valid transitions to in-review
+      const task = await store.createTask({
+        title: "execution-failed task",
+        description: "test",
+        column: "todo",
+      });
+      // Set steps while moving through normal execution path
+      await store.updateTask(task.id, {
+        steps: [
+          { name: "Step 0", status: "done" },
+          { name: "Step 1", status: "in-progress" },  // still running when failure occurred
+          { name: "Step 2", status: "pending" },
+        ],
+      });
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.updateTask(task.id, { status: "failed", error: "429 rate limited" });
+
+      const retryTool = api.tools.get("fn_task_retry")!;
+      const result = await retryTool.execute("retry-exec", { id: task.id }, undefined, undefined, makeCtx(tmpDir));
+
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0].text).toContain("todo");
+      expect(result.details.newColumn).toBe("todo");
+
+      const updated = await store.getTask(task.id);
+      expect(updated?.column).toBe("todo");
+      // store represents cleared status/error as undefined internally
+      expect(updated?.status).toBeFalsy();
+      expect(updated?.error).toBeFalsy();
+
+      // Step statuses must be preserved (progress preserved)
+      expect(updated?.steps[0].status).toBe("done");
+      expect(updated?.steps[1].status).toBe("in-progress");
+      expect(updated?.steps[2].status).toBe("pending");
+    });
+
+    it("keeps merge-failed in-review task (all steps done) in in-review and resets merge state", async () => {
+      // All steps done = execution completed; task failed in merge/review phase only.
+      const store = new TaskStore(tmpDir);
+      await store.init();
+
+      // Create and move through valid transitions to in-review
+      const task = await store.createTask({
+        title: "merge-failed task",
+        description: "test",
+        column: "todo",
+      });
+      await store.updateTask(task.id, {
+        steps: [
+          { name: "Step 0", status: "done" },
+          { name: "Step 1", status: "done" },
+        ],
+      });
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.updateTask(task.id, { status: "failed", error: "merge conflict", mergeRetries: 3 });
+
+      const retryTool = api.tools.get("fn_task_retry")!;
+      const result = await retryTool.execute("retry-merge", { id: task.id }, undefined, undefined, makeCtx(tmpDir));
+
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0].text).toContain("in-review");
+      expect(result.details.newColumn).toBe("in-review");
+
+      const updated = await store.getTask(task.id);
+      expect(updated?.column).toBe("in-review");
+      // store represents cleared status/error as undefined internally
+      expect(updated?.status).toBeFalsy();
+      expect(updated?.error).toBeFalsy();
+      expect(updated?.mergeRetries).toBe(0);
+    });
+  });
 });

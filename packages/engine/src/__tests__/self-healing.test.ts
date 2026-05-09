@@ -2143,6 +2143,83 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    it("detects stale in-review task using columnMovedAt when available", async () => {
+      // FN-407: staleness should be measured from when the task entered in-review
+      // (columnMovedAt), not when it was last updated (updatedAt). A task could have
+      // been updated recently (e.g. log entry) but have been stuck in in-review for
+      // much longer.
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        taskStuckTimeoutMs: 60_000,
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-407-test-1",
+          column: "in-review",
+          paused: false,
+          status: null,
+          // columnMovedAt is stale (2 minutes ago) — task entered in-review long ago
+          columnMovedAt: new Date(Date.now() - 120_000).toISOString(),
+          // updatedAt is fresh (5 seconds ago, e.g. from a log entry)
+          updatedAt: new Date(Date.now() - 5_000).toISOString(),
+          steps: [
+            { name: "Step 0", status: "done" },
+            { name: "Step 1", status: "in-progress" },
+          ],
+          workflowStepResults: [],
+          mergeDetails: undefined,
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverStaleIncompleteReviewTasks();
+
+      // Should detect as stale because columnMovedAt (120s ago) > timeoutMs (60s)
+      // even though updatedAt (5s ago) is fresh
+      expect(result).toBe(1);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-407-test-1", "todo", { preserveProgress: true });
+
+      managerWithRecovery.stop();
+    });
+
+    it("falls back to updatedAt for staleness when columnMovedAt is null (legacy tasks)", async () => {
+      // FN-407: tasks created before columnMovedAt was added have null columnMovedAt.
+      // The fallback to updatedAt ensures they are still detected as stale.
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        taskStuckTimeoutMs: 60_000,
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-407-test-2",
+          column: "in-review",
+          paused: false,
+          status: null,
+          columnMovedAt: null,  // legacy task — null columnMovedAt
+          updatedAt: new Date(Date.now() - 120_000).toISOString(),  // stale
+          steps: [
+            { name: "Step 0", status: "in-progress" },
+          ],
+          workflowStepResults: [],
+          mergeDetails: undefined,
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverStaleIncompleteReviewTasks();
+
+      // Should detect as stale because updatedAt (120s ago) > timeoutMs (60s)
+      // (columnMovedAt is null so updatedAt fallback is used — like FN-327/FN-358)
+      expect(result).toBe(1);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-407-test-2", "todo", { preserveProgress: true });
+
+      managerWithRecovery.stop();
+    });
+
     it("moves merged in-review tasks to done and clears transient merge state", async () => {
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
