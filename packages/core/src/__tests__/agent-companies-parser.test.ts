@@ -502,6 +502,64 @@ name: Nested Archive CEO
       expect(pkg.company?.name).toBe("Flat Zip Co");
     });
 
+    it("uses subPath to select the correct company from a monorepo archive", async () => {
+      const root = createTempDir();
+      const archivePath = join(root, "mono.zip");
+
+      createZipFromEntries(archivePath, [
+        { path: "companies-main/aeon/COMPANY.md", content: `---\nname: Aeon\n---` },
+        { path: "companies-main/gstack/COMPANY.md", content: `---\nname: GStack\n---` },
+        { path: "companies-main/gstack/agents/ceo/AGENTS.md", content: `---\nname: GStack CEO\n---` },
+      ]);
+
+      const pkg = await parseCompanyArchive(archivePath, { subPath: "gstack" });
+      expect(pkg.company?.name).toBe("GStack");
+      expect(pkg.company?.name).not.toBe("Aeon");
+      expect(pkg.agents[0]?.name).toBe("GStack CEO");
+    });
+
+    it("throws when subPath does not contain COMPANY.md", async () => {
+      const root = createTempDir();
+      const archivePath = join(root, "missing-subpath.zip");
+
+      createZipFromEntries(archivePath, [
+        { path: "companies-main/aeon/COMPANY.md", content: `---\nname: Aeon\n---` },
+      ]);
+
+      await expect(parseCompanyArchive(archivePath, { subPath: "gstack" })).rejects.toThrow(
+        AgentCompaniesParseError,
+      );
+    });
+
+    it("rejects invalid subPath values", async () => {
+      const root = createTempDir();
+      const archivePath = join(root, "invalid-subpath.zip");
+
+      createZipFromEntries(archivePath, [
+        { path: "companies-main/gstack/COMPANY.md", content: `---\nname: GStack\n---` },
+      ]);
+
+      await expect(parseCompanyArchive(archivePath, { subPath: "../etc" })).rejects.toThrow(
+        AgentCompaniesParseError,
+      );
+      await expect(parseCompanyArchive(archivePath, { subPath: "/abs" })).rejects.toThrow(
+        AgentCompaniesParseError,
+      );
+    });
+
+    it("preserves legacy extraction behavior when subPath is omitted", async () => {
+      const root = createTempDir();
+      const archivePath = join(root, "legacy-behavior.zip");
+
+      createZipFromEntries(archivePath, [
+        { path: "companies-main/aeon/COMPANY.md", content: `---\nname: Aeon\n---` },
+        { path: "companies-main/gstack/COMPANY.md", content: `---\nname: GStack\n---` },
+      ]);
+
+      const pkg = await parseCompanyArchive(archivePath);
+      expect(pkg.company?.name).toBe("Aeon");
+    });
+
     it("throws for unsupported archive extension", async () => {
       const root = createTempDir();
       const archivePath = join(root, "company.rar");

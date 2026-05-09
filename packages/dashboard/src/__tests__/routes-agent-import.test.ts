@@ -576,7 +576,7 @@ describe("POST /api/agents/import", () => {
       const url = String(input);
       if (url === "https://companies.sh/api/companies") {
         return Promise.resolve(new Response(
-          JSON.stringify({ items: [{ slug: "acme-ai", name: "Acme AI", repo: "acme/reviewers" }] }),
+          JSON.stringify({ items: [{ slug: "acme-ai", name: "Acme AI", repo: "acme/reviewers", website: "https://github.com/acme/reviewers/tree/main" }] }),
           {
             status: 200,
             headers: { "content-type": "application/json" },
@@ -618,6 +618,109 @@ describe("POST /api/agents/import", () => {
     expect(body.skills).toEqual([{ name: "review", description: "Review implementation details" }]);
   });
 
+  it("passes website-derived subPath for monorepo company imports", async () => {
+    const archiveBuffer = createGitHubArchiveBuffer("gstack");
+
+    globalThis.fetch = vi.fn().mockImplementation((input: unknown) => {
+      const url = String(input);
+      if (url === "https://companies.sh/api/companies") {
+        return Promise.resolve(new Response(
+          JSON.stringify({
+            items: [
+              { slug: "gstack", name: "GStack", repo: "paperclipai/companies", website: "https://github.com/paperclipai/companies/tree/main/gstack" },
+              { slug: "aeon", name: "Aeon", repo: "paperclipai/companies", website: "https://github.com/paperclipai/companies/tree/main/aeon" },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ));
+      }
+
+      if (url === "https://github.com/paperclipai/companies/archive/refs/heads/main.tar.gz") {
+        return Promise.resolve(new Response(archiveBuffer, {
+          status: 200,
+          headers: { "content-type": "application/gzip" },
+        }));
+      }
+
+      return Promise.reject(new Error(`Unexpected fetch URL: ${url}`));
+    });
+
+    mockParseCompanyArchive.mockImplementation(async (_archivePath: string, options?: { subPath?: string }) => {
+      expect(options).toEqual({ subPath: "gstack" });
+      if (options?.subPath === "gstack") {
+        return {
+          company: { name: "GStack", slug: "gstack" },
+          agents: [{ name: "GStack Agent" }],
+          teams: [],
+          projects: [],
+          tasks: [],
+          skills: [],
+        };
+      }
+
+      return {
+        company: { name: "Aeon", slug: "aeon" },
+        agents: [{ name: "Aeon Agent" }],
+        teams: [],
+        projects: [],
+        tasks: [],
+        skills: [],
+      };
+    });
+
+    const response = await postImport(app, {
+      importSource: "companies.sh",
+      companySlug: "gstack",
+      dryRun: true,
+    });
+
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    const body = response.body as any;
+    expect(body.companyName).toBe("GStack");
+    expect(body.companySlug).toBe("gstack");
+  });
+
+  it("omits subPath when website is absent or invalid", async () => {
+    const archiveBuffer = createGitHubArchiveBuffer("acme-ai");
+
+    globalThis.fetch = vi.fn().mockImplementation((input: unknown) => {
+      const url = String(input);
+      if (url === "https://companies.sh/api/companies") {
+        return Promise.resolve(new Response(
+          JSON.stringify({ items: [{ slug: "acme-ai", name: "Acme AI", repo: "acme/reviewers", website: "https://example.com/not-github" }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ));
+      }
+
+      if (url === "https://github.com/acme/reviewers/archive/refs/heads/main.tar.gz") {
+        return Promise.resolve(new Response(archiveBuffer, {
+          status: 200,
+          headers: { "content-type": "application/gzip" },
+        }));
+      }
+
+      return Promise.reject(new Error(`Unexpected fetch URL: ${url}`));
+    });
+
+    mockParseCompanyArchive.mockResolvedValue({
+      company: { name: "Acme AI", slug: "acme-ai" },
+      agents: [{ name: "Reviewer", skills: ["review"] }],
+      teams: [],
+      projects: [],
+      tasks: [],
+      skills: [],
+    });
+
+    const response = await postImport(app, {
+      importSource: "companies.sh",
+      companySlug: "acme-ai",
+      dryRun: true,
+    });
+
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect(mockParseCompanyArchive).toHaveBeenCalledWith(expect.any(String), undefined);
+  });
+
   it("returns companies.sh live import with skill import result", async () => {
     const archiveBuffer = createGitHubArchiveBuffer("acme-ai");
 
@@ -625,7 +728,7 @@ describe("POST /api/agents/import", () => {
       const url = String(input);
       if (url === "https://companies.sh/api/companies") {
         return Promise.resolve(new Response(
-          JSON.stringify({ items: [{ slug: "acme-ai", name: "Acme AI", repo: "acme/reviewers" }] }),
+          JSON.stringify({ items: [{ slug: "acme-ai", name: "Acme AI", repo: "acme/reviewers", website: "https://github.com/acme/reviewers/tree/main" }] }),
           {
             status: 200,
             headers: { "content-type": "application/json" },
@@ -689,7 +792,7 @@ describe("POST /api/agents/import", () => {
       const url = String(input);
       if (url === "https://companies.sh/api/companies") {
         return Promise.resolve(new Response(
-          JSON.stringify({ items: [{ slug: "acme-ai", name: "Acme AI", repo: "acme/reviewers" }] }),
+          JSON.stringify({ items: [{ slug: "acme-ai", name: "Acme AI", repo: "acme/reviewers", website: "https://github.com/acme/reviewers/tree/main" }] }),
           {
             status: 200,
             headers: { "content-type": "application/json" },
