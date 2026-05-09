@@ -300,6 +300,13 @@ describe("agents-view mobile CSS", () => {
     expect(extractRuleBlock(mobileMediaBlock, ".agent-org-chart")).toContain("--org-chart-node-width: calc(var(--space-2xl) * 5)");
     expect(extractRuleBlock(mobileMediaBlock, ".agent-org-chart")).toContain("--org-chart-sibling-gap: var(--space-sm)");
     expect(extractRuleBlock(mobileMediaBlock, ".agent-org-chart")).toContain("--org-chart-children-offset: var(--space-lg)");
+    const childrenConnectorBlock = extractRuleBlock(cssContent, ".org-chart-children::before");
+    expect(childrenConnectorBlock).toContain("left: var(--org-chart-first-child-center-offset)");
+    expect(childrenConnectorBlock).toContain("right: var(--org-chart-last-child-center-offset)");
+    expect(childrenConnectorBlock).not.toContain("rgba(");
+    const verticalConnectorBlock = extractRuleBlock(cssContent, ".agent-org-chart--vertical .org-chart-children::before");
+    expect(verticalConnectorBlock).toContain("left: var(--space-sm)");
+    expect(verticalConnectorBlock).not.toContain("rgba(");
     expect(extractRuleBlock(mobileMediaBlock, ".org-chart-node-card")).toContain("padding: var(--space-sm)");
     expect(extractRuleBlock(mobileMediaBlock, ".org-chart-node__badge")).toContain("font-size: calc(var(--space-sm) + var(--space-xs) * 0.625)");
     expect(extractRuleBlock(mobileMediaBlock, ".agent-org-chart-shell")).toContain("overflow: hidden");

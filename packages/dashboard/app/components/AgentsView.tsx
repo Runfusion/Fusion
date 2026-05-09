@@ -125,6 +125,12 @@ function OrgChartNode({
   const stateNodeClass = getStateCardClass("org-chart-node-card", agent.state);
   const subtreeLeafCount = getOrgChartLeafCount(node);
   const nodeStyle = { "--org-chart-subtree-leaves": String(subtreeLeafCount) } as CSSProperties;
+  const firstChildLeafCount = children.length > 0 ? getOrgChartLeafCount(children[0]) : 1;
+  const lastChildLeafCount = children.length > 0 ? getOrgChartLeafCount(children[children.length - 1]) : 1;
+  const childrenStyle = {
+    "--org-chart-first-child-leaves": String(firstChildLeafCount),
+    "--org-chart-last-child-leaves": String(lastChildLeafCount),
+  } as CSSProperties;
 
   return (
     <div
@@ -162,7 +168,7 @@ function OrgChartNode({
         </div>
       </div>
       {children.length > 0 && (
-        <div className="org-chart-children" role="group" aria-label={`${agent.name} employees`}>
+        <div className="org-chart-children" style={childrenStyle} role="group" aria-label={`${agent.name} employees`}>
           {children.map((child) => (
             <OrgChartNode
               key={child.agent.id}

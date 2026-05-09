@@ -84,6 +84,12 @@ describe("Agent CSS classes", () => {
     expect(orgChartSection).toContain("--org-chart-connector-gap: var(--space-sm)");
     expect(orgChartSection).toContain("--org-chart-sibling-gap: var(--space-xl)");
     expect(orgChartSection).toContain("--org-chart-children-offset: calc(var(--space-lg) + var(--space-sm))");
+    expect(orgChartSection).toContain("--org-chart-first-child-leaves: 1");
+    expect(orgChartSection).toContain("--org-chart-last-child-leaves: 1");
+    expect(orgChartSection).toContain("--org-chart-first-child-center-offset");
+    expect(orgChartSection).toContain("--org-chart-last-child-center-offset");
+    expect(orgChartSection).toContain("left: var(--org-chart-first-child-center-offset)");
+    expect(orgChartSection).toContain("right: var(--org-chart-last-child-center-offset)");
     expect(orgChartSection).toContain("min-height: var(--org-chart-node-width)");
     expect(orgChartSection).toContain("touch-action: pan-x pan-y");
     expect(orgChartSection).toContain("overflow: auto");

@@ -853,6 +853,8 @@
   --org-chart-connector-gap: var(--space-sm);
   --org-chart-children-offset: calc(var(--space-lg) + var(--space-sm));
   --org-chart-root-gap: var(--space-xl);
+  --org-chart-first-child-leaves: 1;
+  --org-chart-last-child-leaves: 1;
   display: flex;
   align-items: flex-start;
   justify-content: flex-start;
@@ -968,6 +970,20 @@
 }
 
 .org-chart-children {
+  --org-chart-first-child-leaves-number: var(--org-chart-first-child-leaves, 1);
+  --org-chart-last-child-leaves-number: var(--org-chart-last-child-leaves, 1);
+  --org-chart-first-child-center-offset: calc(
+    (
+      var(--org-chart-first-child-leaves-number) * var(--org-chart-node-width) +
+      (var(--org-chart-first-child-leaves-number) - 1) * var(--org-chart-sibling-gap)
+    ) / 2
+  );
+  --org-chart-last-child-center-offset: calc(
+    (
+      var(--org-chart-last-child-leaves-number) * var(--org-chart-node-width) +
+      (var(--org-chart-last-child-leaves-number) - 1) * var(--org-chart-sibling-gap)
+    ) / 2
+  );
   position: relative;
   display: flex;
   align-items: flex-start;
@@ -982,8 +998,8 @@
   content: "";
   position: absolute;
   top: 0;
-  left: calc(var(--org-chart-node-width) / 2);
-  right: calc(var(--org-chart-node-width) / 2);
+  left: var(--org-chart-first-child-center-offset);
+  right: var(--org-chart-last-child-center-offset);
   height: 1px;
   background: var(--border);
 }
