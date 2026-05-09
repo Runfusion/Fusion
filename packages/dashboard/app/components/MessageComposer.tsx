@@ -49,6 +49,10 @@ export function MessageComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const selectedAgent = useMemo(() => agents.find((agent) => agent.id === toId), [agents, toId]);
+  const prefilledRecipientAgent = useMemo(
+    () => (recipient ? agents.find((agent) => agent.id === recipient.id) : undefined),
+    [agents, recipient],
+  );
   const recipientIsAgent = toType === "agent";
   const recipientAlwaysImmediate = recipientIsAgent && selectedAgent?.runtimeConfig?.messageResponseMode === "immediate";
   const wakeImmediately = recipientIsAgent && (wakeRecipient || recipientAlwaysImmediate);
@@ -164,7 +168,7 @@ export function MessageComposer({
             <span className="message-composer-label">To:</span>
             <span className="message-composer-recipient-fixed">
               <Bot size={14} />
-              {recipient.id}
+              {prefilledRecipientAgent?.name || recipient.id}
             </span>
           </div>
         )}

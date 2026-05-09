@@ -255,15 +255,29 @@ describe("MessageComposer", () => {
     }).not.toThrow();
   });
 
-  it("pre-fills recipient when provided", () => {
+  it("shows pre-filled recipient agent name when recipient id exists in agents list", () => {
     render(
       <MessageComposer
         {...defaultProps}
+        agents={mockAgents}
         recipient={{ id: "agent-001", type: "agent" }}
       />,
     );
-    // When recipient is pre-filled, it shows a fixed label instead of dropdown
-    expect(screen.getByText("agent-001")).toBeDefined();
+
+    expect(screen.getByText("Test Agent")).toBeDefined();
+    expect(screen.queryByText("agent-001")).toBeNull();
+  });
+
+  it("falls back to pre-filled recipient id when agent is not in agents list", () => {
+    render(
+      <MessageComposer
+        {...defaultProps}
+        agents={mockAgents}
+        recipient={{ id: "agent-missing", type: "agent" }}
+      />,
+    );
+
+    expect(screen.getByText("agent-missing")).toBeDefined();
   });
 
   it("shows loading state while sending", async () => {
