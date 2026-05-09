@@ -767,12 +767,75 @@ Behavior:
 
 ## Agent Delegation
 
-Executor and heartbeat agents can discover and delegate work to other agents using two built-in tools:
-
-- **`list_agents`** — List available agents with optional filters (role, state, includeEphemeral)
-- **`delegate_task`** — Create a task and assign it to a specific agent; the task enters `todo` and the agent picks it up on their next heartbeat
+Executor and heartbeat agents can coordinate through six built-in tools: `list_agents`, `delegate_task`, `agent_create`, `agent_delete`, `get_agent_config`, and `update_agent_config`.
 
 Delegation is designed for cross-agent handoff (e.g., an executor handing off to a QA agent). For parallel worktree-based parallelization, use `spawn_agent` instead.
+
+### `list_agents`
+
+List all available agents in the system. Shows each agent's name, role, state, personality (`soul`), and current assignment.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `role` | `string` (optional) | Filter by agent role/capability (e.g., `"executor"`, `"reviewer"`) |
+| `state` | `string` (optional) | Filter by agent state (e.g., `"idle"`, `"active"`, `"running"`) |
+| `includeEphemeral` | `boolean` (optional) | Include ephemeral/runtime agents (default: `false`) |
+
+### `delegate_task`
+
+Create a new task and assign it to a specific agent for execution. The task goes to `todo` and will be picked up by the target agent on their next heartbeat cycle.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `agent_id` | `string` (required) | The agent ID to delegate work to |
+| `description` | `string` (required) | What needs to be done |
+| `dependencies` | `string[]` (optional) | Task IDs this new task depends on |
+| `override` | `boolean` (optional) | Set true to bypass executor-role assignment policy |
+
+**Error cases:**
+- `"ERROR: Agent {agent_id} not found"`
+- `"ERROR: Cannot delegate to ephemeral/runtime agent {agent_id}"`
+- `"ERROR: Agent {agent_id} has role \"...\"; implementation task <new> requires an \"executor\"-role agent. Pass override=true to bypass."`
+
+### `agent_create`
+
+Create a new non-ephemeral direct-report agent. By default, the created agent reports to the caller; privileged (CEO-level) callers can set `reportsTo` to another manager.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | `string` (required) | Name for the new agent |
+| `role` | `"triage" \| "executor" \| "reviewer" \| "merger" \| "engineer" \| "custom"` (required) | Agent role/capability |
+| `soul` | `string` (optional) | Agent personality/identity text |
+| `instructions_text` | `string` (optional) | Inline custom instructions |
+| `instructions_path` | `string` (optional) | Path to instructions markdown file |
+| `reportsTo` | `string` (optional) | Manager agent ID. Defaults to the calling agent |
+| `heartbeat_interval_ms` | `number` (optional, min `1000`) | Heartbeat polling interval in milliseconds |
+| `heartbeat_timeout_ms` | `number` (optional, min `5000`) | Heartbeat timeout in milliseconds |
+| `max_concurrent_runs` | `number` (optional, min `1`) | Maximum concurrent heartbeat runs |
+| `message_response_mode` | `"immediate" \| "on-heartbeat"` (optional) | How the agent responds to messages |
+
+**Authorization rule:** Non-privileged callers may only create agents that report to themselves; privileged callers may set any `reportsTo` target.
+
+**Error case:**
+- `"ERROR: You can only create agents that report to you"`
+
+### `agent_delete`
+
+Delete a non-ephemeral direct-report agent. Deletion is blocked when the target holds a checkout lease unless `force: true` is provided, and assigned tasks can be reassigned during deletion via `reassign_to`.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `agent_id` | `string` (required) | Agent ID to delete |
+| `force` | `boolean` (optional) | Force delete even if the agent currently holds a checkout lease |
+| `reassign_to` | `string` (optional) | Replacement agent ID for tasks currently assigned to the deleted agent |
+
+**Authorization rule:** Callers can delete agents where `target.reportsTo === caller.id`; privileged callers may delete any non-ephemeral agent.
+
+**Error cases:**
+- `"ERROR: Agent {agent_id} not found"`
+- `"ERROR: You can only delete agents that report to you"`
+- `"ERROR: Cannot delete ephemeral/runtime agent {agent_id}"`
+- Underlying store errors (for example, an active checkout lease) are returned as `"ERROR: {message}"`; provide `force: true` to bypass lease-related blocking.
 
 ### Role-based assignment policy
 
