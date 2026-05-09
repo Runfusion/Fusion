@@ -827,12 +827,35 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
       
-      // In-review retry: keep the task in in-review, clear only error/retry state
+      // In-review retry: distinguish between execution failures and merge failures.
+      // A task that failed during execution will have incomplete steps (pending/in-progress),
+      // while a task that failed during the merge/review phase will have all steps done.
       if (task.column === 'in-review') {
+        const hasIncompleteSteps =
+          task.steps.length > 0 &&
+          task.steps.some((s: { status: string }) => s.status === "pending" || s.status === "in-progress");
+
+        if (hasIncompleteSteps) {
+          // Execution failure path: task failed mid-run (e.g. 429, stream-ended).
+          // Clear per-run failure state and move back to todo so the executor
+          // can resume where it left off. Worktree/branch are preserved by
+          // moveTask({ preserveProgress: true }) so the executor can reattach.
+          await store.updateTask(params.id, { status: null, error: null, stuckKillCount: 0 });
+          await store.logEntry(params.id, "Retry requested via Fusion extension (execution failure in-review → todo, preserving progress)");
+          await store.moveTask(params.id, "todo", { preserveProgress: true });
+          return {
+            content: [{ type: "text", text: `Retried ${params.id} → todo (execution failure, preserving step progress)` }],
+            details: { taskId: params.id, newColumn: 'todo' },
+          };
+        }
+
+        // Merge failure path: task completed execution (all steps done) but
+        // failed during the merge/review phase. Stay in in-review and reset
+        // merge retry state so the auto-merge system re-attempts on its next sweep.
         await store.updateTask(params.id, { status: null, error: null, stuckKillCount: 0, mergeRetries: 0 });
-        await store.logEntry(params.id, "Retry requested via Fusion extension (in-review retry, mergeRetries reset)");
+        await store.logEntry(params.id, "Retry requested via Fusion extension (in-review merge retry, mergeRetries reset)");
         return {
-          content: [{ type: "text", text: `Retried ${params.id} → in-review (merge retry state cleared, task stays in in-review)` }],
+          content: [{ type: "text", text: `Retried ${params.id} → in-review (merge retry state cleared)` }],
           details: { taskId: params.id, newColumn: 'in-review' },
         };
       }
