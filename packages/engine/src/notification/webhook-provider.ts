@@ -5,6 +5,7 @@ import type {
   NotificationResult,
 } from "@fusion/core";
 import { schedulerLog } from "../logger.js";
+import { buildNtfyClickUrl } from "../notifier.js";
 
 export interface WebhookProviderConfig {
   /** Webhook endpoint URL */
@@ -13,6 +14,10 @@ export interface WebhookProviderConfig {
   webhookFormat: "slack" | "discord" | "generic";
   /** Events to send (empty = all events) */
   events?: string[];
+  /** Dashboard host for click-through deep links */
+  dashboardHost?: string;
+  /** Project identifier for deep links */
+  projectId?: string;
 }
 
 export class WebhookNotificationProvider implements NotificationProvider {
@@ -49,6 +54,8 @@ export class WebhookNotificationProvider implements NotificationProvider {
       webhookUrl,
       webhookFormat,
       events: Array.isArray(config.events) ? config.events.filter((event): event is string => typeof event === "string") : [],
+      dashboardHost: typeof config.dashboardHost === "string" ? config.dashboardHost : undefined,
+      projectId: typeof config.projectId === "string" ? config.projectId : undefined,
     };
 
     this.abortController?.abort();
@@ -163,6 +170,8 @@ export class WebhookNotificationProvider implements NotificationProvider {
       return { content: message };
     }
 
+    const messageId = typeof payload.metadata?.messageId === "string" ? payload.metadata.messageId : undefined;
+
     return {
       event: payload.event,
       timestamp: new Date().toISOString(),
@@ -171,6 +180,13 @@ export class WebhookNotificationProvider implements NotificationProvider {
         title: payload.taskTitle,
       },
       metadata: payload.metadata,
+      clickUrl: buildNtfyClickUrl({
+        dashboardHost: this.config.dashboardHost,
+        projectId: this.config.projectId,
+        taskId: payload.taskId,
+        messageId,
+        view: "mailbox",
+      }),
     };
   }
 }

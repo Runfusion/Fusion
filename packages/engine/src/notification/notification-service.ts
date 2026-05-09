@@ -1,6 +1,7 @@
 import type {
   Column,
   MergeResult,
+  Message,
   NotificationEvent,
   NotificationPayload,
   NotificationProvider,
@@ -18,12 +19,19 @@ export interface NotificationServiceOptions {
   projectId?: string;
   /** Base URL for ntfy.sh (backward compat with NtfyNotifierOptions) */
   ntfyBaseUrl?: string;
+  /** Optional message store for mailbox message notifications */
+  messageStore?: NotificationMessageStore;
 }
 
 interface NotificationServiceStore {
   getSettings(): Promise<Settings> | Settings;
   on(event: string, listener: (...args: any[]) => void): void;
   off(event: string, listener: (...args: any[]) => void): void;
+}
+
+interface NotificationMessageStore {
+  on(event: "message:sent", listener: (message: Message) => void): void;
+  off?(event: "message:sent", listener: (message: Message) => void): void;
 }
 
 export class NotificationService {
@@ -59,6 +67,7 @@ export class NotificationService {
     this.store.on("task:updated", this.handleTaskUpdated);
     this.store.on("task:merged", this.handleTaskMerged);
     this.store.on("settings:updated", this.handleSettingsUpdated);
+    this.options.messageStore?.on("message:sent", this.handleMessageSent);
 
     this.started = true;
     schedulerLog.log("NotificationService started");
@@ -74,6 +83,9 @@ export class NotificationService {
       this.store.off("task:updated", this.handleTaskUpdated);
       this.store.off("task:merged", this.handleTaskMerged);
       this.store.off("settings:updated", this.handleSettingsUpdated);
+      if (typeof this.options.messageStore?.off === "function") {
+        this.options.messageStore.off("message:sent", this.handleMessageSent);
+      }
     }
 
     await this.dispatcher.shutdownAll();
@@ -218,8 +230,47 @@ export class NotificationService {
       webhookUrl: settings.webhookUrl,
       webhookFormat: settings.webhookFormat ?? "generic",
       events: settings.webhookEvents ?? [],
+      dashboardHost: settings.ntfyDashboardHost,
+      projectId: this.options.projectId,
     });
   }
+
+  private handleMessageSent = (message: Message): void => {
+    if (!this.notificationsEnabled) {
+      return;
+    }
+
+    let eventType: NotificationEvent;
+    if (message.type === "agent-to-user") {
+      eventType = "message:agent-to-user";
+    } else if (message.type === "agent-to-agent") {
+      eventType = "message:agent-to-agent";
+    } else {
+      return;
+    }
+
+    const preview = message.content.length > 100
+      ? `${message.content.slice(0, 100)}…`
+      : message.content;
+
+    const taskId = typeof message.metadata?.taskId === "string" ? message.metadata.taskId : undefined;
+
+    this.maybeNotify(message.id, eventType, {
+      taskId,
+      taskTitle: undefined,
+      event: eventType,
+      metadata: {
+        messageId: message.id,
+        fromId: message.fromId,
+        fromType: message.fromType,
+        toId: message.toId,
+        toType: message.toType,
+        type: message.type,
+        replyToMessageId: message.metadata?.replyTo?.messageId,
+        preview,
+      },
+    });
+  };
 
   private setNotificationsEnabledFromSettings(settings: Settings): void {
     this.notificationsEnabled = Boolean(

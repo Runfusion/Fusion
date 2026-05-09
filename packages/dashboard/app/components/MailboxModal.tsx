@@ -88,6 +88,21 @@ function messagePreview(content: string, max = 80): string {
   return `${content.slice(0, max)}…`;
 }
 
+function getDeepLinkedMessageId(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const paramId = params.get("mailbox-message");
+  if (paramId) {
+    return paramId;
+  }
+
+  const hashMatch = /^#message-(.+)$/.exec(window.location.hash);
+  return hashMatch?.[1] ?? null;
+}
+
 function buildReplyThread(messages: Message[], selectedMessage: Message): Message[] {
   const allMessages = [...messages];
   if (!allMessages.some((message) => message.id === selectedMessage.id)) {
@@ -293,6 +308,58 @@ export function MailboxModal({
       setConversationMessages([message]);
     }
   }, [projectId, activeTab]);
+
+  // Deep-link: open and highlight a specific message from URL params.
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const deepLinkedMessageId = getDeepLinkedMessageId();
+    if (!deepLinkedMessageId) {
+      return;
+    }
+
+    const message = [
+      ...(inbox?.messages ?? []),
+      ...(outbox?.messages ?? []),
+      ...(agentMailbox?.inbox ?? []),
+      ...(agentMailbox?.outbox ?? []),
+      ...conversationMessages,
+    ].find((candidate) => candidate.id === deepLinkedMessageId);
+
+    if (!message) {
+      return;
+    }
+
+    void handleOpenMessage(message);
+  }, [isOpen, inbox, outbox, agentMailbox, conversationMessages, handleOpenMessage]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const deepLinkedMessageId = getDeepLinkedMessageId();
+    if (!deepLinkedMessageId) {
+      return;
+    }
+
+    const element = document.getElementById(`message-${deepLinkedMessageId}`);
+    if (!element) {
+      return;
+    }
+
+    element.scrollIntoView({ behavior: "smooth", block: "center" });
+    element.classList.add("mailbox-message-highlight");
+    const timer = window.setTimeout(() => {
+      element.classList.remove("mailbox-message-highlight");
+    }, 2000);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [isOpen, selectedMessage, conversationMessages]);
 
   const handleCloseMessage = useCallback(() => {
     setSelectedMessage(null);
@@ -587,7 +654,7 @@ export function MailboxModal({
         <div className="mailbox-content" data-testid="mailbox-content">
           {/* Message Detail View */}
           {selectedMessage && !showComposer && (
-            <div className="mailbox-message-detail" data-testid="mailbox-message-detail">
+            <div className="mailbox-message-detail" data-testid="mailbox-message-detail" id={`message-${selectedMessage.id}`}>
               <div className="mailbox-message-detail-header">
                 <button
                   className="btn btn-sm btn-secondary"
@@ -650,6 +717,7 @@ export function MailboxModal({
                     return (
                       <div
                         key={msg.id}
+                        id={`message-${msg.id}`}
                         className={`mailbox-conversation-msg ${msg.id === selectedMessage.id ? "current" : ""}`}
                       >
                         <div className="mailbox-conversation-msg-header">
@@ -725,6 +793,7 @@ export function MailboxModal({
                   {inbox?.messages.map((msg) => (
                     <div
                       key={msg.id}
+                      id={`message-${msg.id}`}
                       className={`mailbox-item ${!msg.read ? "unread" : ""}`}
                       onClick={() => handleOpenMessage(msg)}
                       data-testid={`mailbox-item-${msg.id}`}
@@ -760,6 +829,7 @@ export function MailboxModal({
                   {outbox?.messages.map((msg) => (
                     <div
                       key={msg.id}
+                      id={`message-${msg.id}`}
                       className="mailbox-item"
                       onClick={() => handleOpenMessage(msg)}
                       data-testid={`mailbox-item-${msg.id}`}
@@ -864,6 +934,7 @@ export function MailboxModal({
                         {selectedAgentId && agentMailbox && agentSubTab === "inbox" && agentMailbox.inbox.map((msg) => (
                           <div
                             key={msg.id}
+                            id={`message-${msg.id}`}
                             className={`mailbox-item ${!msg.read ? "unread" : ""}`}
                             onClick={() => handleOpenMessage(msg)}
                             data-testid={`mailbox-item-${msg.id}`}
@@ -887,6 +958,7 @@ export function MailboxModal({
                         {selectedAgentId && agentMailbox && agentSubTab === "outbox" && agentMailbox.outbox.map((msg) => (
                           <div
                             key={msg.id}
+                            id={`message-${msg.id}`}
                             className="mailbox-item"
                             onClick={() => handleOpenMessage(msg)}
                             data-testid={`mailbox-item-${msg.id}`}

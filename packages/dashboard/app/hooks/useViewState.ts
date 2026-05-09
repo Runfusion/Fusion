@@ -126,6 +126,17 @@ export function useViewState(options: UseViewStateOptions): UseViewStateResult {
   }, [currentProject?.id, taskView]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const viewParam = new URLSearchParams(window.location.search).get("view");
+    if (viewParam && isTaskView(viewParam)) {
+      setTaskView(normalizeTaskView(viewParam));
+    }
+  }, []);
+
+  useEffect(() => {
     if (projectsLoading || currentProjectLoading) return;
 
     if (currentProject && viewMode === "overview") {

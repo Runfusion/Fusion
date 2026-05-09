@@ -366,6 +366,19 @@
   margin-bottom: var(--space-xs);
 }
 
+.mailbox-reply-context-static {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .mailbox-reply-context {
   display: flex;
   width: 100%;
@@ -1042,3 +1055,17 @@
   gap: var(--space-sm);
 }
 
+
+.mailbox-message-highlight {
+  animation: mailbox-flash 2s ease-out;
+}
+
+@keyframes mailbox-flash {
+  0% {
+    background: color-mix(in srgb, var(--color-info) 20%, transparent);
+  }
+
+  100% {
+    background: transparent;
+  }
+}

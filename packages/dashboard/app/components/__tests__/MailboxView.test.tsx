@@ -734,7 +734,7 @@ describe("MailboxView", () => {
       expect(screen.getByTestId("mailbox-conversation")).toBeDefined();
       const replyContext = screen.getByTestId("mailbox-reply-context-msg-thread-reply");
       expect(replyContext).toBeDefined();
-      expect(replyContext).toHaveClass("mailbox-reply-context");
+      expect(replyContext).toHaveClass("mailbox-reply-context-static");
       expect(screen.getByText(/Replying to Can you share your current status\?/)).toBeDefined();
     });
   });
@@ -806,7 +806,7 @@ describe("MailboxView", () => {
     await waitFor(() => {
       const replyContext = screen.getByTestId("mailbox-selected-reply-context");
       expect(replyContext).toBeDefined();
-      expect(replyContext).toHaveClass("mailbox-reply-context");
+      expect(replyContext).toHaveClass("mailbox-reply-context-static");
       expect(screen.getByTestId("mailbox-message-body")).toHaveTextContent("I have the answer now");
     });
   });
@@ -1453,6 +1453,24 @@ describe("MailboxView", () => {
       // Verify content
       const content = container.querySelector(".mailbox-content");
       expect(content).toBeTruthy();
+    });
+
+    it("highlights deep-linked mailbox message from URL", async () => {
+      const scrollIntoView = vi.fn();
+      Element.prototype.scrollIntoView = scrollIntoView;
+      window.history.replaceState({}, "", "?view=mailbox&mailbox-message=msg-001#message-msg-001");
+
+      mockFetchInbox.mockResolvedValue(makeInboxResponse([mockMessage], 1));
+      mockFetchConversation.mockResolvedValue([mockMessage]);
+
+      render(<MailboxView {...defaultProps} />);
+
+      const messageNode = await screen.findByTestId("mailbox-message-detail");
+      await waitFor(() => {
+        expect(messageNode).toHaveAttribute("id", "mailbox-detail-message-msg-001");
+        expect(messageNode).toHaveClass("mailbox-message-highlight");
+      });
+      expect(scrollIntoView).toHaveBeenCalled();
     });
   });
 });

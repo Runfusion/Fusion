@@ -93,6 +93,29 @@ function messagePreview(content: string, max = 80): string {
   return `${content.slice(0, max)}…`;
 }
 
+function getDeepLinkedMessageId(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const paramId = params.get("mailbox-message");
+  if (paramId) {
+    return paramId;
+  }
+
+  const hashMatch = /^#message-(.+)$/.exec(window.location.hash);
+  return hashMatch?.[1] ?? null;
+}
+
+function listMessageAnchorId(messageId: string): string {
+  return `mailbox-list-message-${messageId}`;
+}
+
+function detailMessageAnchorId(messageId: string): string {
+  return `mailbox-detail-message-${messageId}`;
+}
+
 function buildReplyThread(messages: Message[], selectedMessage: Message): Message[] {
   const allMessages = [...messages];
   if (!allMessages.some((message) => message.id === selectedMessage.id)) {
@@ -321,6 +344,50 @@ export function MailboxView({
     }
   }, [projectId, unreadCount, onUnreadCountChange, activeTab]);
 
+  // Deep-link: open and highlight a specific message from URL params.
+  useEffect(() => {
+    const deepLinkedMessageId = getDeepLinkedMessageId();
+    if (!deepLinkedMessageId) {
+      return;
+    }
+
+    const message = [
+      ...(inbox?.messages ?? []),
+      ...(outbox?.messages ?? []),
+      ...(agentMailbox?.inbox ?? []),
+      ...(agentMailbox?.outbox ?? []),
+      ...conversationMessages,
+    ].find((candidate) => candidate.id === deepLinkedMessageId);
+
+    if (!message) {
+      return;
+    }
+
+    void handleOpenMessage(message);
+  }, [inbox, outbox, agentMailbox, conversationMessages, handleOpenMessage]);
+
+  useEffect(() => {
+    const deepLinkedMessageId = getDeepLinkedMessageId();
+    if (!deepLinkedMessageId) {
+      return;
+    }
+
+    const element = document.getElementById(detailMessageAnchorId(deepLinkedMessageId));
+    if (!element) {
+      return;
+    }
+
+    element.scrollIntoView({ behavior: "smooth", block: "center" });
+    element.classList.add("mailbox-message-highlight");
+    const timer = window.setTimeout(() => {
+      element.classList.remove("mailbox-message-highlight");
+    }, 2000);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [selectedMessage, conversationMessages]);
+
   const handleCloseMessage = useCallback(() => {
     setSelectedMessage(null);
     setConversationMessages([]);
@@ -406,7 +473,7 @@ export function MailboxView({
     const threadMessages = buildReplyThread(conversationMessages, selectedMessage);
 
     return (
-      <div className="mailbox-message-detail" data-testid="mailbox-message-detail">
+      <div className="mailbox-message-detail" data-testid="mailbox-message-detail" id={detailMessageAnchorId(selectedMessage.id)}>
         <div className="mailbox-message-detail-header">
           {isMobile && (
             <button
@@ -470,6 +537,7 @@ export function MailboxView({
               return (
                 <div
                   key={msg.id}
+                  id={detailMessageAnchorId(msg.id)}
                   className={`mailbox-conversation-msg ${msg.id === selectedMessage.id ? "current" : ""}`}
                 >
                   <div className="mailbox-conversation-msg-header">
@@ -477,7 +545,7 @@ export function MailboxView({
                     <span className="mailbox-message-time">{formatTimestamp(msg.createdAt)}</span>
                   </div>
                   {replyToId && (
-                    <div className="mailbox-reply-context" data-testid={`mailbox-reply-context-${msg.id}`}>
+                    <div className="mailbox-reply-context-static" data-testid={`mailbox-reply-context-${msg.id}`}>
                       ↪ Replying to {replyToMessage ? messagePreview(replyToMessage.content, 60) : `message ${replyToId}`}
                     </div>
                   )}
@@ -493,7 +561,7 @@ export function MailboxView({
         {(threadMessages.length <= 1) && (
           <>
             {selectedMessage.metadata?.replyTo?.messageId && (
-              <div className="mailbox-reply-context" data-testid="mailbox-selected-reply-context">
+              <div className="mailbox-reply-context-static" data-testid="mailbox-selected-reply-context">
                 ↪ Replying to message {selectedMessage.metadata.replyTo.messageId}
               </div>
             )}
@@ -522,6 +590,7 @@ export function MailboxView({
           {inbox?.messages.map((msg) => (
             <div
               key={msg.id}
+              id={listMessageAnchorId(msg.id)}
               className={`mailbox-item ${!msg.read ? "unread" : ""}`}
               onClick={() => handleOpenMessage(msg)}
               data-testid={`mailbox-item-${msg.id}`}
@@ -556,6 +625,7 @@ export function MailboxView({
           {outbox?.messages.map((msg) => (
             <div
               key={msg.id}
+              id={listMessageAnchorId(msg.id)}
               className="mailbox-item"
               onClick={() => handleOpenMessage(msg)}
               data-testid={`mailbox-item-${msg.id}`}
@@ -658,6 +728,7 @@ export function MailboxView({
                 {selectedAgentId && agentMailbox && agentSubTab === "inbox" && agentMailbox.inbox.map((msg) => (
                   <div
                     key={msg.id}
+                    id={listMessageAnchorId(msg.id)}
                     className={`mailbox-item ${!msg.read ? "unread" : ""}`}
                     onClick={() => handleOpenMessage(msg)}
                     data-testid={`mailbox-item-${msg.id}`}
@@ -679,6 +750,7 @@ export function MailboxView({
                 {selectedAgentId && agentMailbox && agentSubTab === "outbox" && agentMailbox.outbox.map((msg) => (
                   <div
                     key={msg.id}
+                    id={listMessageAnchorId(msg.id)}
                     className="mailbox-item"
                     onClick={() => handleOpenMessage(msg)}
                     data-testid={`mailbox-item-${msg.id}`}

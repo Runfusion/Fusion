@@ -34,7 +34,9 @@ type SupportedNtfyEvent =
   | "awaiting-approval"
   | "awaiting-user-review"
   | "planning-awaiting-input"
-  | "fallback-used";
+  | "fallback-used"
+  | "message:agent-to-user"
+  | "message:agent-to-agent";
 
 const SUPPORTED_EVENTS = new Set<SupportedNtfyEvent>([
   "in-review",
@@ -44,6 +46,8 @@ const SUPPORTED_EVENTS = new Set<SupportedNtfyEvent>([
   "awaiting-user-review",
   "planning-awaiting-input",
   "fallback-used",
+  "message:agent-to-user",
+  "message:agent-to-agent",
 ]);
 
 export class NtfyNotificationProvider implements NotificationProvider {
@@ -102,10 +106,22 @@ export class NtfyNotificationProvider implements NotificationProvider {
     } as Pick<Task, "id" | "title" | "description"> as Task;
 
     const identifier = formatTaskIdentifier(taskLike);
+    const messageId = typeof payload.metadata?.messageId === "string" ? payload.metadata.messageId : undefined;
+    const senderLabel = typeof payload.metadata?.fromId === "string" ? payload.metadata.fromId : "agent";
+    const recipientLabel = typeof payload.metadata?.toId === "string" ? payload.metadata.toId : "recipient";
+    const preview = typeof payload.metadata?.preview === "string"
+      ? payload.metadata.preview
+      : "(no preview)";
+    const replyToMessageId = typeof payload.metadata?.replyToMessageId === "string"
+      ? payload.metadata.replyToMessageId
+      : undefined;
+
     const clickUrl = buildNtfyClickUrl({
       dashboardHost: this.config.dashboardHost,
       projectId: this.config.projectId,
       taskId: payload.taskId,
+      messageId,
+      view: "mailbox",
     });
 
     const contentByEvent: Record<SupportedNtfyEvent, { title: string; message: string; priority: "default" | "high" }> = {
@@ -143,6 +159,16 @@ export class NtfyNotificationProvider implements NotificationProvider {
         title: `Fallback model used${payload.taskId ? ` for ${payload.taskId}` : ""}`,
         message: `Fusion switched from ${String(payload.metadata?.primaryModel ?? "primary model")} to ${String(payload.metadata?.fallbackModel ?? "fallback model")} after a retryable failure (${String(payload.metadata?.triggerPoint ?? "unknown trigger")}).`,
         priority: "high",
+      },
+      "message:agent-to-user": {
+        title: `New message from ${senderLabel}`,
+        message: `${senderLabel} → you: ${preview}`,
+        priority: "high",
+      },
+      "message:agent-to-agent": {
+        title: replyToMessageId ? `Re: ${preview}` : `${senderLabel} → ${recipientLabel}`,
+        message: `${senderLabel} messaged ${recipientLabel}: ${preview}`,
+        priority: "default",
       },
     };
 

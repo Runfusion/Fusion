@@ -289,6 +289,7 @@ export class ProjectEngine {
       this.notificationService = new NotificationService(store, {
         projectId: this.options.projectId,
         ntfyBaseUrl: this.options.ntfyBaseUrl,
+        messageStore: this.runtime.getMessageStore(),
       });
       await this.notificationService.start();
 

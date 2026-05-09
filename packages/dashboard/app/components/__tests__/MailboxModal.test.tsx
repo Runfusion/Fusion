@@ -1191,4 +1191,21 @@ describe("MailboxModal", () => {
       expect(lightContent).toContain("--star-active");
     });
   });
+
+  it("highlights hash-linked message when modal opens", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    window.history.replaceState({}, "", "#message-msg-001");
+
+    render(<MailboxModal {...defaultProps} />);
+
+    // The deep-link opens the message detail view, so the element with id="message-msg-001"
+    // is in the detail section, not the inbox list.
+    const messageNode = await screen.findByTestId("mailbox-message-detail");
+    expect(messageNode).toHaveAttribute("id", "message-msg-001");
+    await waitFor(() => {
+      expect(messageNode).toHaveClass("mailbox-message-highlight");
+    });
+    expect(scrollIntoView).toHaveBeenCalled();
+  });
 });

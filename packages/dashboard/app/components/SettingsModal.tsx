@@ -246,6 +246,8 @@ const DEFAULT_NTFY_EVENTS: NtfyNotificationEvent[] = [
   "gridlock",
   "fallback-used",
   "memory-dreams-processed",
+  "message:agent-to-user",
+  "message:agent-to-agent",
 ];
 
 const NOTIFICATION_EVENT_OPTIONS: Array<{ event: NtfyNotificationEvent; label: string; description: string }> = [
@@ -258,6 +260,8 @@ const NOTIFICATION_EVENT_OPTIONS: Array<{ event: NtfyNotificationEvent; label: s
   { event: "gridlock", label: "Pipeline gridlocked", description: "When all schedulable todo tasks are blocked and work cannot advance" },
   { event: "fallback-used", label: "Fallback model used (recovered)", description: "When Fusion recovers from a retryable model failure by switching to a fallback model" },
   { event: "memory-dreams-processed", label: "DREAMS.md entry added", description: "When manual dream processing writes a new entry to project or agent DREAMS.md" },
+  { event: "message:agent-to-user", label: "Agent → user message", description: "An agent sent you a direct message" },
+  { event: "message:agent-to-agent", label: "Agent → agent message", description: "Agents are talking to each other (including replies)" },
 ];
 
 /** Well-known experimental feature flags with display labels.

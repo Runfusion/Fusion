@@ -24,6 +24,8 @@ export const DEFAULT_NTFY_EVENTS: readonly NtfyNotificationEvent[] = [
   "planning-awaiting-input",
   "gridlock",
   "fallback-used",
+  "message:agent-to-user",
+  "message:agent-to-agent",
 ] as const;
 
 export interface NtfyNotificationConfigInput {
@@ -99,8 +101,10 @@ export function buildNtfyClickUrl(options: {
   dashboardHost?: string;
   projectId?: string;
   taskId?: string;
+  messageId?: string;
+  view?: string;
 }): string | undefined {
-  const { dashboardHost, projectId, taskId } = options;
+  const { dashboardHost, projectId, taskId, messageId, view } = options;
   if (!dashboardHost) {
     return undefined;
   }
@@ -113,10 +117,19 @@ export function buildNtfyClickUrl(options: {
   }
   if (taskId) {
     queryParts.push(`task=${encodeURIComponent(taskId)}`);
+  } else if (messageId) {
+    queryParts.push(`view=${encodeURIComponent(view ?? "mailbox")}`);
+    queryParts.push(`mailbox-message=${encodeURIComponent(messageId)}`);
   }
 
   const query = queryParts.join("&");
-  return query ? `${normalizedHost}/?${query}` : `${normalizedHost}/`;
+  const baseUrl = query ? `${normalizedHost}/?${query}` : `${normalizedHost}/`;
+
+  if (messageId) {
+    return `${baseUrl}#message-${encodeURIComponent(messageId)}`;
+  }
+
+  return baseUrl;
 }
 
 /**

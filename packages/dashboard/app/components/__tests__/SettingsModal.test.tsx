@@ -2710,7 +2710,7 @@ describe("SettingsModal", () => {
       expect(screen.getByRole("button", { name: /Test notification/ })).toBeInTheDocument();
     });
 
-    it("shows fallback-used and dreams events for both providers", async () => {
+    it("shows fallback, dreams, and mailbox message events for both providers", async () => {
       mockFetchSettings.mockResolvedValueOnce({ ...defaultSettings, ntfyEnabled: true, ntfyTopic: "test-topic" });
       renderModal();
       await waitForSettingsModalReady();
@@ -2718,10 +2718,18 @@ describe("SettingsModal", () => {
 
       expect(screen.getByLabelText("Fallback model used (recovered)")).toBeInTheDocument();
       expect(screen.getByLabelText("DREAMS.md entry added")).toBeInTheDocument();
+      const agentToUserNtfy = screen.getByLabelText("Agent → user message") as HTMLInputElement;
+      const agentToAgentNtfy = screen.getByLabelText("Agent → agent message") as HTMLInputElement;
+      expect(agentToUserNtfy.checked).toBe(true);
+      expect(agentToAgentNtfy.checked).toBe(true);
 
       await userEvent.click(screen.getByLabelText("Webhook notifications"));
       expect(screen.getAllByLabelText("Fallback model used (recovered)").length).toBeGreaterThan(0);
       expect(screen.getAllByLabelText("DREAMS.md entry added").length).toBeGreaterThan(0);
+      const [agentToUserWebhook] = screen.getAllByLabelText("Agent → user message") as HTMLInputElement[];
+      const [agentToAgentWebhook] = screen.getAllByLabelText("Agent → agent message") as HTMLInputElement[];
+      expect(agentToUserWebhook.checked).toBe(true);
+      expect(agentToAgentWebhook.checked).toBe(true);
     });
 
     it("shows webhook fields when webhook provider is enabled", async () => {
