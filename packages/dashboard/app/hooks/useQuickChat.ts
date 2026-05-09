@@ -538,6 +538,8 @@ export function useQuickChat(
     setPendingMessage("");
   }, []);
 
+  const sendMessageRef = useRef<(content: string, attachments?: File[]) => Promise<void>>(() => Promise.resolve());
+
   /**
    * Send a message using SSE streaming.
    * @param content message text content
@@ -550,7 +552,7 @@ export function useQuickChat(
         return Promise.resolve();
       }
 
-      if (isStreaming) {
+      if (isStreamingRef.current) {
         if (attachments && attachments.length > 0) {
           return Promise.reject(new Error("Cannot send attachments while a response is streaming"));
         }
@@ -625,6 +627,7 @@ export function useQuickChat(
             setStreamingThinking("");
             setStreamingToolCalls([]);
             setIsStreaming(false);
+            isStreamingRef.current = false;
             streamRef.current = null;
             sendCompletionRef.current?.resolve();
             sendCompletionRef.current = null;
@@ -633,7 +636,7 @@ export function useQuickChat(
             if (queuedMessage) {
               pendingMessageRef.current = "";
               setPendingMessage("");
-              void sendMessage(queuedMessage);
+              void sendMessageRef.current(queuedMessage);
             }
           },
           onError: (data) => {
@@ -641,6 +644,7 @@ export function useQuickChat(
             setStreamingThinking("");
             setStreamingToolCalls([]);
             setIsStreaming(false);
+            isStreamingRef.current = false;
             streamRef.current = null;
             console.error("[useQuickChat] Stream error:", data);
             addToast?.(typeof data === "string" && data.trim() ? data : "Failed to get response", "error");
@@ -652,7 +656,7 @@ export function useQuickChat(
               if (queuedMessage) {
                 pendingMessageRef.current = "";
                 setPendingMessage("");
-                void sendMessage(queuedMessage);
+                void sendMessageRef.current(queuedMessage);
               }
             }
 
@@ -668,8 +672,10 @@ export function useQuickChat(
       void completionPromise.catch(() => {});
       return completionPromise;
     },
-    [activeSession, isStreaming, projectId, addToast, reloadMessages],
+    [activeSession, projectId, addToast, reloadMessages],
   );
+
+  sendMessageRef.current = sendMessage;
 
   // Cleanup on unmount
   useEffect(() => {
