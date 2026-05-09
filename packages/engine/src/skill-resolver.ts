@@ -484,3 +484,46 @@ export function createSkillsOverrideFromSelection(
     };
   };
 }
+
+/**
+ * Skills that are relevant to each session purpose. Executors get all
+ * skills (they do the implementation work). Other roles get a scoped
+ * subset to avoid loading 71KB of reference material for every session.
+ *
+ * The filter matches against the skill's directory name (the last path
+ * segment before SKILL.md).
+ */
+const REVIEWER_SKILL_ALLOWLIST = new Set([
+  "code-review",
+  "security-review",
+  "review",
+]);
+
+const HEARTBEAT_SKILL_ALLOWLIST = new Set([
+  "monitoring",
+  "heartbeat",
+]);
+
+/**
+ * Return a filter function that decides whether a skill (by name) should
+ * be included in a session of the given purpose.
+ *
+ * - "executor" and "triage": all skills (pass-through)
+ * - "reviewer": only review-related skills
+ * - "heartbeat": only monitoring-related skills
+ * - unknown: all skills (safe fallback)
+ */
+export function getSkillPurposeFilter(
+  sessionPurpose: string,
+): (skillName: string) => boolean {
+  switch (sessionPurpose) {
+    case "reviewer":
+      return (name) => REVIEWER_SKILL_ALLOWLIST.has(name);
+    case "heartbeat":
+      return (name) => HEARTBEAT_SKILL_ALLOWLIST.has(name);
+    case "executor":
+    case "triage":
+    default:
+      return () => true;
+  }
+}
