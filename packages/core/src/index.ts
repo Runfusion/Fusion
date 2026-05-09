@@ -242,6 +242,16 @@ export {
 } from "./backup.js";
 export type { BackupInfo, BackupOptions } from "./backup.js";
 export {
+  MemoryBackupManager,
+  createMemoryBackupManager,
+  runMemoryBackupCommand,
+  validateMemoryBackupSchedule,
+  MEMORY_BACKUP_SCHEDULE_NAME,
+  syncMemoryBackupAutomation,
+  syncMemoryBackupRoutine,
+} from "./memory-backup.js";
+export type { MemoryBackupInfo, MemoryBackupOptions } from "./memory-backup.js";
+export {
   exportSettings,
   importSettings,
   validateImportData,

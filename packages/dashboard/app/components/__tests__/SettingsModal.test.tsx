@@ -2988,6 +2988,39 @@ describe("SettingsModal", () => {
     });
   });
 
+  describe("memory backups settings", () => {
+    it("renders memory backup fields with defaults and saves changes", async () => {
+      renderModal({ initialSection: "backups" });
+      await waitForSettingsModalReady();
+
+      expect(screen.getByRole("heading", { name: "Memory Backups" })).toBeInTheDocument();
+      expect(screen.getByLabelText("Memory Backup Schedule (Cron)")).toHaveValue("0 3 * * *");
+      expect(screen.getByLabelText("Memory Retention Count")).toHaveValue(null);
+      expect(screen.getByLabelText("Memory Backup Directory")).toHaveValue(".fusion/backups/memory");
+      expect(screen.getByLabelText("Memory Backup Scope")).toHaveValue("all");
+
+      await userEvent.click(screen.getByLabelText("Enable automatic memory backups"));
+      fireEvent.change(screen.getByLabelText("Memory Backup Schedule (Cron)"), { target: { value: "0 5 * * *" } });
+      fireEvent.change(screen.getByLabelText("Memory Retention Count"), { target: { value: "21" } });
+      fireEvent.change(screen.getByLabelText("Memory Backup Directory"), { target: { value: ".fusion/backups/custom-memory" } });
+      await userEvent.selectOptions(screen.getByLabelText("Memory Backup Scope"), "agents");
+      await userEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(mockUpdateSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            memoryBackupEnabled: true,
+            memoryBackupSchedule: "0 5 * * *",
+            memoryBackupRetention: 21,
+            memoryBackupDir: ".fusion/backups/custom-memory",
+            memoryBackupScope: "agents",
+          }),
+          undefined,
+        );
+      });
+    });
+  });
+
   describe("research settings sections", () => {
     beforeEach(() => {
       mockFetchSettings.mockResolvedValue({

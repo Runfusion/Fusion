@@ -9,7 +9,7 @@
 
 import { CronExpressionParser } from "cron-parser";
 import { exec } from "node:child_process";
-import { isInProcessBackupCommand } from "./cron-runner.js";
+import { isInProcessBackupCommand, isInProcessMemoryBackupCommand } from "./cron-runner.js";
 import { promisify } from "node:util";
 import type {
   RoutineStore,
@@ -272,6 +272,31 @@ export class RoutineRunner {
         const fusionDir = this.options.taskStore.getFusionDir();
         const settings = await this.options.taskStore.getSettings();
         const result = await runBackupCommand(fusionDir, settings);
+        return {
+          success: result.success,
+          output: truncateOutput(result.output ?? "", ""),
+          error: result.success ? undefined : result.output,
+          startedAt,
+          completedAt: new Date().toISOString(),
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          success: false,
+          output: "",
+          error: message,
+          startedAt,
+          completedAt: new Date().toISOString(),
+        };
+      }
+    }
+
+    if (isInProcessMemoryBackupCommand(command) && this.options.taskStore) {
+      try {
+        const { runMemoryBackupCommand } = await import("@fusion/core");
+        const fusionDir = this.options.taskStore.getFusionDir();
+        const settings = await this.options.taskStore.getSettings();
+        const result = await runMemoryBackupCommand(fusionDir, settings);
         return {
           success: result.success,
           output: truncateOutput(result.output ?? "", ""),

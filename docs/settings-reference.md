@@ -239,6 +239,11 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `autoBackupSchedule` | `string` | `"0 2 * * *"` | Backup cron schedule. |
 | `autoBackupRetention` | `number` | `7` | Number of backups to retain. |
 | `autoBackupDir` | `string` | `".fusion/backups"` | Relative backup directory path. |
+| `memoryBackupEnabled` | `boolean` | `false` | Enable scheduled memory backups. |
+| `memoryBackupSchedule` | `string` | `"0 3 * * *"` | Memory backup cron schedule. |
+| `memoryBackupRetention` | `number` | `14` | Number of memory backups to retain. |
+| `memoryBackupDir` | `string` | `".fusion/backups/memory"` | Relative memory backup directory path. |
+| `memoryBackupScope` | `"project" \| "agents" \| "all"` | `"all"` | Backup scope: project memory, agent memory, or both. |
 | `autoSummarizeTitles` | `boolean` | `false` | Auto-generate titles for long untitled descriptions across dashboard/API task creation and agent/tool-created tasks. |
 | `useAiMergeCommitSummary` | `boolean` | `false` | Use AI-generated merge commit summaries instead of raw step-commit subject lists. |
 | `titleSummarizerProvider` | `string` | `undefined` | Provider for title summarization. |
@@ -981,6 +986,25 @@ Standard cron format: `minute hour day-of-month month day-of-week`
 | `0 2 * * *` | Daily at 2:00 AM (default) |
 | `0 */6 * * *` | Every 6 hours |
 | `0 9 * * 1` | Weekly on Monday at 9:00 AM |
+
+### Memory Backups
+
+Memory backups snapshot memory files into timestamped directories under `memoryBackupDir` (default: `.fusion/backups/memory`).
+
+- Project memory source: `.fusion/memory/**`
+- Agent memory source: `.fusion/agent-memory/**`
+- Snapshot layout:
+  - `memory-YYYY-MM-DD-HHMMSS/project/...`
+  - `memory-YYYY-MM-DD-HHMMSS/agents/<agentId>/...`
+
+CLI commands:
+
+- `fn memory-backup --create` — Create a memory backup now.
+- `fn memory-backup --create --scope <project|agents|all>` — Override scope for this run.
+- `fn memory-backup --list` — List memory backup snapshots.
+- `fn memory-backup --restore <filename>` — Restore from a snapshot directory.
+
+The default schedule is `0 3 * * *` (daily at 3:00 AM), offset from database backups (`0 2 * * *`).
 
 ### Scheduling Scope
 

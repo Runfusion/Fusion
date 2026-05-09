@@ -4498,6 +4498,82 @@ export function SettingsModal({
                 <small className="field-error">Path cannot contain parent directory traversal (..)</small>
               )}
             </div>
+
+            <h4 className="settings-section-heading">Memory Backups</h4>
+            <div className="form-group">
+              <label htmlFor="memoryBackupEnabled" className="checkbox-label">
+                <input
+                  id="memoryBackupEnabled"
+                  type="checkbox"
+                  checked={form.memoryBackupEnabled || false}
+                  onChange={(e) => setForm((f) => ({ ...f, memoryBackupEnabled: e.target.checked }))}
+                />
+                Enable automatic memory backups
+              </label>
+              <small>When enabled, project and agent memory files are backed up automatically on a schedule.</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="memoryBackupSchedule">Memory Backup Schedule (Cron)</label>
+              <input
+                id="memoryBackupSchedule"
+                type="text"
+                placeholder="0 3 * * *"
+                value={form.memoryBackupSchedule || "0 3 * * *"}
+                onChange={(e) => setForm((f) => ({ ...f, memoryBackupSchedule: e.target.value }))}
+                disabled={!form.memoryBackupEnabled}
+              />
+              <small>Cron expression for memory backup timing. Default: 0 3 * * * (daily at 3 AM).</small>
+              {form.memoryBackupSchedule && !/^[\s\d*,/-]+$/.test(form.memoryBackupSchedule) && (
+                <small className="field-error">Invalid cron expression format</small>
+              )}
+            </div>
+            <div className="form-group">
+              <label htmlFor="memoryBackupRetention">Memory Retention Count</label>
+              <input
+                id="memoryBackupRetention"
+                type="number"
+                min={1}
+                max={100}
+                value={form.memoryBackupRetention ?? ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setForm((f) => ({ ...f, memoryBackupRetention: val === "" ? undefined : Number(val) }));
+                }}
+                disabled={!form.memoryBackupEnabled}
+              />
+              <small>Number of memory backups to keep (oldest are deleted first). Range: 1-100.</small>
+              {form.memoryBackupRetention !== undefined && (form.memoryBackupRetention < 1 || form.memoryBackupRetention > 100) && (
+                <small className="field-error">Must be between 1 and 100</small>
+              )}
+            </div>
+            <div className="form-group">
+              <label htmlFor="memoryBackupDir">Memory Backup Directory</label>
+              <input
+                id="memoryBackupDir"
+                type="text"
+                placeholder=".fusion/backups/memory"
+                value={form.memoryBackupDir || ".fusion/backups/memory"}
+                onChange={(e) => setForm((f) => ({ ...f, memoryBackupDir: e.target.value }))}
+                disabled={!form.memoryBackupEnabled}
+              />
+              <small>Directory for memory backups, relative to project root.</small>
+              {form.memoryBackupDir && form.memoryBackupDir.includes("..") && (
+                <small className="field-error">Path cannot contain parent directory traversal (..)</small>
+              )}
+            </div>
+            <div className="form-group">
+              <label htmlFor="memoryBackupScope">Memory Backup Scope</label>
+              <select
+                id="memoryBackupScope"
+                value={form.memoryBackupScope || "all"}
+                onChange={(e) => setForm((f) => ({ ...f, memoryBackupScope: e.target.value as "project" | "agents" | "all" }))}
+                disabled={!form.memoryBackupEnabled}
+              >
+                <option value="all">All (project + agents)</option>
+                <option value="project">Project only (.fusion/memory)</option>
+                <option value="agents">Agents only (.fusion/agent-memory)</option>
+              </select>
+            </div>
             {backupLoading ? (
               <div className="settings-empty-state">Loading backup info…</div>
             ) : backupInfo ? (

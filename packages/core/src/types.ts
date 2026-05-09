@@ -2213,6 +2213,21 @@ export interface ProjectSettings {
   autoBackupRetention?: number;
   /** Directory for backup files, relative to project root. Default: ".fusion/backups". */
   autoBackupDir?: string;
+  /** When true, scheduled memory backups are enabled. Default: false. */
+  memoryBackupEnabled?: boolean;
+  /** Cron expression for memory backup schedule. Default: "0 3 * * *" (daily at 3 AM). */
+  memoryBackupSchedule?: string;
+  /** Number of memory backups to retain (oldest deleted when exceeded). Default: 14. */
+  memoryBackupRetention?: number;
+  /** Directory for memory backup snapshots, relative to project root.
+   *  Default: ".fusion/backups/memory". */
+  memoryBackupDir?: string;
+  /** Scope of memory backup snapshots.
+   *  - "project": backups `.fusion/memory` only
+   *  - "agents": backups `.fusion/agent-memory` only
+   *  - "all": backups both project and per-agent memory
+   *  Default: "all". */
+  memoryBackupScope?: "project" | "agents" | "all";
   /** When true, tasks created without titles but with descriptions longer than 200
    *  characters will automatically receive an AI-generated title (max 60 chars).
    *  Default: false. */

@@ -133,6 +133,46 @@ export function isInProcessBackupCommand(command: string | undefined): boolean {
   return true;
 }
 
+export function isInProcessMemoryBackupCommand(command: string | undefined): boolean {
+  if (!command) return false;
+  const trimmed = command.trim();
+  if (!trimmed) return false;
+  if (SHELL_METACHARACTERS_REGEX.test(trimmed)) return false;
+
+  const tokens = trimmed.split(/\s+/).map((tok) => tok.toLowerCase());
+  let cursor = 0;
+
+  if (tokens[cursor] === "npx") {
+    cursor += 1;
+    while (cursor < tokens.length) {
+      const tok = tokens[cursor];
+      if (tok === undefined || !tok.startsWith("-")) break;
+      const takesValue = (tok === "-p" || tok === "--package")
+        && cursor + 1 < tokens.length
+        && tokens[cursor + 1] !== undefined
+        && !tokens[cursor + 1]!.startsWith("-");
+      cursor += takesValue ? 2 : 1;
+    }
+  }
+
+  const binary = tokens[cursor];
+  if (!binary || !FUSION_BINARY_TOKENS.has(binary)) return false;
+  cursor += 1;
+
+  if (tokens[cursor] !== "memory-backup") return false;
+  cursor += 1;
+  if (tokens[cursor] !== "--create") return false;
+  cursor += 1;
+
+  for (; cursor < tokens.length; cursor += 1) {
+    const tok = tokens[cursor];
+    if (!tok) continue;
+    if (!tok.startsWith("-")) return false;
+  }
+
+  return true;
+}
+
 export function isInProcessScheduledEvalCommand(command: string | undefined): boolean {
   if (!command) return false;
   const trimmed = command.trim();
@@ -412,6 +452,10 @@ export class CronRunner {
       return this.executeBackupInProcess(schedule, startedAt);
     }
 
+    if (isInProcessMemoryBackupCommand(schedule.command)) {
+      return this.executeMemoryBackupInProcess(schedule, startedAt);
+    }
+
     if (isInProcessScheduledEvalCommand(schedule.command)) {
       return this.executeScheduledEvalInProcess(schedule, startedAt);
     }
@@ -468,6 +512,25 @@ export class CronRunner {
       log.log(`✓ ${schedule.name} completed in-process`);
     } else {
       log.warn(`✗ ${schedule.name} in-process backup ${action.error ? `threw: ${action.error}` : `reported failure: ${action.output}`}`);
+    }
+    return {
+      success: action.success,
+      output: action.output,
+      error: action.error,
+      startedAt,
+      completedAt: new Date().toISOString(),
+    };
+  }
+
+  private async executeMemoryBackupInProcess(
+    schedule: ScheduledTask,
+    startedAt: string,
+  ): Promise<AutomationRunResult> {
+    const action = await this.runMemoryBackupActionInProcess();
+    if (action.success) {
+      log.log(`✓ ${schedule.name} completed in-process`);
+    } else {
+      log.warn(`✗ ${schedule.name} in-process memory backup ${action.error ? `threw: ${action.error}` : `reported failure: ${action.output}`}`);
     }
     return {
       success: action.success,
@@ -535,6 +598,27 @@ export class CronRunner {
       const fusionDir = this.store.getFusionDir();
       const settings = await this.store.getSettings();
       const result = await runBackupCommand(fusionDir, settings);
+      return {
+        success: result.success,
+        output: truncateOutput(result.output ?? "", ""),
+        error: result.success ? undefined : result.output,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, output: "", error: message };
+    }
+  }
+
+  private async runMemoryBackupActionInProcess(): Promise<{
+    success: boolean;
+    output: string;
+    error: string | undefined;
+  }> {
+    try {
+      const { runMemoryBackupCommand } = await import("@fusion/core");
+      const fusionDir = this.store.getFusionDir();
+      const settings = await this.store.getSettings();
+      const result = await runMemoryBackupCommand(fusionDir, settings);
       return {
         success: result.success,
         output: truncateOutput(result.output ?? "", ""),
@@ -669,6 +753,20 @@ export class CronRunner {
     // to spawning a stale `runfusion.ai` binary.
     if (isInProcessBackupCommand(step.command)) {
       const action = await this.runBackupActionInProcess();
+      return {
+        stepId: step.id,
+        stepName: step.name,
+        stepIndex,
+        success: action.success,
+        output: action.output,
+        error: action.error,
+        startedAt,
+        completedAt: new Date().toISOString(),
+      };
+    }
+
+    if (isInProcessMemoryBackupCommand(step.command)) {
+      const action = await this.runMemoryBackupActionInProcess();
       return {
         stepId: step.id,
         stepName: step.name,

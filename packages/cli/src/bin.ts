@@ -124,6 +124,7 @@ async function loadCommandHandlers() {
   const { runSettingsImport } = await import("./commands/settings-import.js");
   const { runGitStatus, runGitFetch, runGitPull, runGitPush } = await import("./commands/git.js");
   const { runBackupCreate, runBackupList, runBackupRestore, runBackupCleanup } = await import("./commands/backup.js");
+  const { runMemoryBackupCreate, runMemoryBackupList, runMemoryBackupRestore } = await import("./commands/memory-backup.js");
   const { runMissionCreate, runMissionList, runMissionShow, runMissionDelete, runMissionActivateSlice } = await import("./commands/mission.js");
   const { runProjectList, runProjectAdd, runProjectRemove, runProjectShow, runProjectInfo, runProjectSetDefault, runProjectDetect } = await import("./commands/project.js");
   const { runNodeList, runNodeConnect, runNodeDisconnect, runNodeShow, runNodeHealth, runMeshStatus } = await import("./commands/node.js");
@@ -180,6 +181,9 @@ async function loadCommandHandlers() {
     runBackupList,
     runBackupRestore,
     runBackupCleanup,
+    runMemoryBackupCreate,
+    runMemoryBackupList,
+    runMemoryBackupRestore,
     runMissionCreate,
     runMissionList,
     runMissionShow,
@@ -339,6 +343,11 @@ Usage:
   fn backup --list           List all database backups
   fn backup --restore <file> Restore database from a backup file
   fn backup --cleanup        Remove old backups exceeding retention limit
+  fn memory-backup --create [--scope <project|agents|all>]
+                             Create a memory backup immediately
+  fn memory-backup --list    List all memory backups
+  fn memory-backup --restore <dir>
+                             Restore memory from a backup directory snapshot
   fn plugin list | ls                List installed plugins
   fn plugin install <path-or-package> [--ai-scan] Install a plugin from path or package
   fn plugin add <path-or-package>     Alias for plugin install
@@ -531,6 +540,9 @@ async function main() {
     runBackupList,
     runBackupRestore,
     runBackupCleanup,
+    runMemoryBackupCreate,
+    runMemoryBackupList,
+    runMemoryBackupRestore,
     runMissionCreate,
     runMissionList,
     runMissionShow,
@@ -1327,6 +1339,31 @@ async function main() {
           await runBackupRestore(restoreFile, projectName);
         } else {
           console.error("Usage: fn backup --create | --list | --cleanup | --restore <filename>");
+          process.exit(1);
+        }
+        break;
+      }
+
+      case "memory-backup": {
+        const create = args.includes("--create");
+        const list = args.includes("--list");
+        const restoreIdx = args.indexOf("--restore");
+        const restoreFile = restoreIdx !== -1 && restoreIdx + 1 < args.length ? args[restoreIdx + 1] : undefined;
+        const scopeIdx = args.indexOf("--scope");
+        const scope = scopeIdx !== -1 && scopeIdx + 1 < args.length ? args[scopeIdx + 1] : undefined;
+
+        if (create) {
+          if (scope && !["project", "agents", "all"].includes(scope)) {
+            console.error("Usage: fn memory-backup --create [--scope <project|agents|all>]");
+            process.exit(1);
+          }
+          await runMemoryBackupCreate({ projectName, scope: scope as "project" | "agents" | "all" | undefined });
+        } else if (list) {
+          await runMemoryBackupList(projectName);
+        } else if (restoreFile) {
+          await runMemoryBackupRestore(restoreFile, projectName);
+        } else {
+          console.error("Usage: fn memory-backup --create [--scope <project|agents|all>] | --list | --restore <filename>");
           process.exit(1);
         }
         break;
