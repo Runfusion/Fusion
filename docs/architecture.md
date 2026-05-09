@@ -1198,6 +1198,7 @@ Git dashboard routes are registered in `register-git-github.ts`.
 ### Merge strategies
 - Setting type: `MergeStrategy = "direct" | "pull-request"` (`types.ts`)
 - `aiMergeTask()` in `merger.ts` performs merge flow
+- `merger.ts` also exposes a test-only `__test__` helper object for internal merger unit/integration coverage (for example autostash orphan cleanup behavior)
 - Supports workflow-step execution after merge (post-merge phase)
 
 ### Conflict handling

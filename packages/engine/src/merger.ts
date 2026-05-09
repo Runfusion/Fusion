@@ -1258,6 +1258,11 @@ async function listOrphanedAutostashes(
   }
 }
 
+function parseAutostashTaskId(label: string): string | null {
+  const match = /^fusion-merger-autostash:([A-Za-z]+-\d+):/.exec(label.trim());
+  return match?.[1] ?? null;
+}
+
 /**
  * Stash any unrelated dirty changes in `rootDir` before a merge runs.
  *
@@ -1326,6 +1331,8 @@ async function sweepAutostashOrphans(
   const subsumed: Array<{ sha: string; ref: string; label: string }> = [];
   const live: Array<{ sha: string; ref: string; label: string }> = [];
 
+  const droppedClosedTask: Array<{ sha: string; taskId: string; column: Task["column"] }> = [];
+
   for (const orphan of orphans) {
     try {
       const stashFiles = await listStashChangedPaths(rootDir, orphan.sha);
@@ -1335,15 +1342,50 @@ async function sweepAutostashOrphans(
         continue;
       }
       const pathsArg = [...stashFiles].map(quoteArg).join(" ");
-      const { stdout } = await execAsync(
+      const { stdout: pathDiffOut } = await execAsync(
         `git diff --name-only HEAD ${quoteArg(orphan.sha)} -- ${pathsArg}`,
         { cwd: rootDir, encoding: "utf-8" },
       );
-      if (stdout.trim() === "") {
+      const isPathSubsumed = pathDiffOut.trim() === "";
+      if (isPathSubsumed) {
         subsumed.push(orphan);
-      } else {
-        live.push(orphan);
+        continue;
       }
+
+      const sourceTaskId = parseAutostashTaskId(orphan.label);
+      if (!sourceTaskId) {
+        live.push(orphan);
+        continue;
+      }
+
+      let sourceTask: Task | null = null;
+      try {
+        sourceTask = await store.getTask(sourceTaskId);
+      } catch {
+        live.push(orphan);
+        continue;
+      }
+      if (!sourceTask || (sourceTask.column !== "done" && sourceTask.column !== "archived")) {
+        live.push(orphan);
+        continue;
+      }
+
+      try {
+        const { stdout: netDiffOut } = await execAsync(
+          `git diff HEAD ${quoteArg(orphan.sha)}`,
+          { cwd: rootDir, encoding: "utf-8" },
+        );
+        if (netDiffOut.trim() === "") {
+          subsumed.push(orphan);
+          droppedClosedTask.push({ sha: orphan.sha, taskId: sourceTaskId, column: sourceTask.column });
+          continue;
+        }
+      } catch {
+        live.push(orphan);
+        continue;
+      }
+
+      live.push(orphan);
     } catch {
       // If we can't classify, treat as live — better to leave a real stash
       // sitting around than to drop one that still contains lost work.
@@ -1353,6 +1395,13 @@ async function sweepAutostashOrphans(
 
   for (const orphan of subsumed) {
     await dropAutostashBySha(rootDir, taskId, orphan.sha);
+    const closedTaskDrop = droppedClosedTask.find((entry) => entry.sha === orphan.sha);
+    if (closedTaskDrop) {
+      mergerLog.log(
+        `${taskId}: dropped closed-task autostash ${orphan.sha.slice(0, 7)} (task ${closedTaskDrop.taskId} is ${closedTaskDrop.column})`,
+      );
+      continue;
+    }
     mergerLog.log(
       `${taskId}: dropped subsumed autostash ${orphan.sha.slice(0, 7)} (${orphan.label}) — content already present on HEAD`,
     );
@@ -1387,6 +1436,11 @@ async function sweepAutostashOrphans(
       .catch(() => undefined);
   }
 }
+
+export const __test__ = {
+  sweepAutostashOrphans,
+  parseAutostashTaskId,
+};
 
 async function stashUnrelatedRootDirChanges(
   rootDir: string,
