@@ -27,6 +27,26 @@
 - `./server`: roadmap route + AI suggestion service exports
 - `./dashboard-view`: Roadmaps dashboard view export for host registry wiring
 
+## Regression test ownership
+
+Roadmap behavior regression tests live in this plugin package and should stay here (not in `@fusion/core` or `@fusion/dashboard`):
+
+- `src/store/__tests__/roadmap-store.test.ts`
+- `src/store/__tests__/roadmap-ordering.test.ts`
+- `src/store/__tests__/roadmap-handoff.test.ts`
+- `src/__tests__/roadmap-routes.test.ts`
+- `src/__tests__/roadmap-suggestions.test.ts`
+- `src/__tests__/api-client.test.ts`
+- `src/dashboard/__tests__/useRoadmaps.test.ts`
+- `src/dashboard/__tests__/RoadmapsView.test.tsx`
+
+Prefer canonical package exports in tests:
+
+- plugin/server surface: `@fusion-plugin-examples/roadmap` or `@fusion-plugin-examples/roadmap/server`
+- dashboard view surface: `@fusion-plugin-examples/roadmap/dashboard-view`
+
+Use deep source imports only when no package export exists for the target module.
+
 ## Notes
 
 Roadmap tables are plugin-owned and created via `hooks.onSchemaInit` in `src/index.ts`, which delegates to `src/roadmap-schema.ts`. Core database bootstrap no longer creates roadmap tables/indexes.
