@@ -32,8 +32,11 @@
 }
 
 .graph-task-node--active {
-  border-color: rgba(var(--in-progress-rgb), 0.5);
-  box-shadow: 0 0 0 var(--btn-border-width) rgba(var(--in-progress-rgb), 0.45), 0 0 0.75rem rgba(var(--in-progress-rgb), 0.5), 0 0 1.5rem rgba(var(--in-progress-rgb), 0.2);
+  border-color: color-mix(in srgb, var(--in-progress) 50%, transparent);
+  box-shadow:
+    0 0 0 var(--btn-border-width) color-mix(in srgb, var(--in-progress) 45%, transparent),
+    0 0 var(--space-md) color-mix(in srgb, var(--in-progress) 50%, transparent),
+    0 0 var(--space-xl) color-mix(in srgb, var(--in-progress) 20%, transparent);
   transform: scale(1.01);
 }
 
@@ -46,17 +49,17 @@
 .graph-task-active-indicator {
   display: flex;
   align-items: center;
-  min-height: 1.25rem;
+  min-height: calc(var(--space-xs) * 5);
   width: 100%;
   padding-inline: var(--space-sm);
-  background: rgba(var(--in-progress-rgb), 0.85);
+  background: color-mix(in srgb, var(--in-progress) 85%, transparent);
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   animation: graph-task-active-pulse calc(var(--transition-normal) * 8) ease-in-out infinite;
 }
 
 .graph-task-active-indicator-text {
   font-family: var(--font-mono);
-  font-size: 0.625rem;
+  font-size: calc(var(--space-xs) * 2.5);
   font-weight: 600;
   line-height: 1;
   letter-spacing: 0.04em;
@@ -89,7 +92,7 @@
 .graph-task-node[data-current-step="17"] .card-steps-list .card-step-item:nth-child(18),
 .graph-task-node[data-current-step="18"] .card-steps-list .card-step-item:nth-child(19),
 .graph-task-node[data-current-step="19"] .card-steps-list .card-step-item:nth-child(20) {
-  background: rgba(var(--in-progress-rgb), 0.15);
+  background: color-mix(in srgb, var(--in-progress) 15%, transparent);
   border-left: calc(var(--btn-border-width) * 2) solid var(--in-progress);
   padding-left: var(--space-xs);
   font-weight: 500;
@@ -115,18 +118,18 @@
 .graph-task-node[data-current-step="17"] .card-steps-list .card-step-item:nth-child(18) .card-step-dot,
 .graph-task-node[data-current-step="18"] .card-steps-list .card-step-item:nth-child(19) .card-step-dot,
 .graph-task-node[data-current-step="19"] .card-steps-list .card-step-item:nth-child(20) .card-step-dot {
-  width: 0.5rem;
-  height: 0.5rem;
+  width: var(--space-sm);
+  height: var(--space-sm);
   animation: graph-task-step-pulse calc(var(--transition-normal) * 10) ease-in-out infinite;
 }
 
 @keyframes graph-task-active-pulse {
   0%,
   100% {
-    background: rgba(var(--in-progress-rgb), 0.85);
+    background: color-mix(in srgb, var(--in-progress) 85%, transparent);
   }
   50% {
-    background: rgba(var(--in-progress-rgb), 0.65);
+    background: color-mix(in srgb, var(--in-progress) 65%, transparent);
   }
 }
 
@@ -152,11 +155,11 @@
   }
 
   .graph-task-active-indicator {
-    min-height: 1.5rem;
+    min-height: var(--space-xl);
     padding-inline: var(--space-md);
   }
 
   .graph-task-active-indicator-text {
-    font-size: 0.6875rem;
+    font-size: calc(var(--space-xs) * 2.75);
   }
 }

@@ -211,6 +211,24 @@ describe("CLI bundle output", () => {
     expect(manifest.name?.length).toBeGreaterThan(0);
   });
 
+  it("dist/plugins/fusion-plugin-cli-printing-press/ is staged with source entry for bundled install", () => {
+    const stagedRoot = join(cliRoot, "dist", "plugins", "fusion-plugin-cli-printing-press");
+    const manifestPath = join(stagedRoot, "manifest.json");
+    const packageJsonPath = join(stagedRoot, "package.json");
+
+    expect(existsSync(manifestPath)).toBe(true);
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as { id?: string; name?: string };
+    expect(manifest.id).toBe("fusion-plugin-cli-printing-press");
+    expect(typeof manifest.name).toBe("string");
+    expect(manifest.name?.length).toBeGreaterThan(0);
+
+    expect(existsSync(join(stagedRoot, "src", "index.ts"))).toBe(true);
+    const stagedPkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
+      exports?: { "."?: { import?: string } };
+    };
+    expect(stagedPkg.exports?.["."]?.import).toBe("./src/index.ts");
+  });
+
   it("dist/plugins/fusion-plugin-openclaw-runtime/ is staged with required bridge assets", () => {
     const stagedRoot = join(cliRoot, "dist", "plugins", "fusion-plugin-openclaw-runtime");
     const manifestPath = join(stagedRoot, "manifest.json");

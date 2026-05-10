@@ -15,6 +15,10 @@
   touch-action: none;
 }
 
+.dependency-graph__viewport:focus-visible {
+  box-shadow: var(--focus-ring-strong);
+}
+
 .graph-canvas-transform {
   position: relative;
   transform-origin: top left;

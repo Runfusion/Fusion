@@ -192,7 +192,6 @@ export function DependencyGraph({
           handleKeyDown(event, viewport.clientWidth, viewport.clientHeight, positions, { nodeWidth: NODE_WIDTH, nodeHeight: NODE_HEIGHT });
         }}
         tabIndex={0}
-        style={{ outline: "none" }}
         onClick={() => {
           if (pointerDraggedRef.current || isNodeDragging) return;
           setSelectedTaskId(null);
