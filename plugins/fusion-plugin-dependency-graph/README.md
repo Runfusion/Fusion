@@ -2,6 +2,16 @@
 
 Plugin-provided top-level **Graph** dashboard view for Fusion.
 
+## Host registration and bundled loading
+
+The dependency graph view is registered as a **bundled plugin view** in the dashboard. This means:
+
+- `registerBundledPluginViews()` (called at dashboard startup) registers the view component in the static plugin view registry under key `plugin:fusion-plugin-dependency-graph:graph`.
+- The view component is resolved via a **literal-specifier lazy import** (`import("@fusion-plugin-examples/dependency-graph/dashboard-view")`) — this is critical for Vite/esbuild to emit a production chunk.
+- In Vite dev/build and Vitest, `@fusion-plugin-examples/dependency-graph/dashboard-view` is aliased to `plugins/fusion-plugin-dependency-graph/src/dashboard-view.tsx` (source, not `dist/`). This avoids stale dist artifacts breaking the dashboard view.
+- The App.tsx graph route resolves to the bundled view via `isPluginViewRegistered` fallback, so the graph view works even when the plugin is not installed/loaded through the PluginLoader API (e.g. fresh DB).
+- The canonical route ID is `plugin:fusion-plugin-dependency-graph:graph`.
+
 ## Rendering approach
 
 - **Filtering**: includes `triage`, `todo`, `in-progress`, `in-review`; excludes `done`, `archived`

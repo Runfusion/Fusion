@@ -2034,6 +2034,24 @@ describe("App view switching", () => {
     localStorage.removeItem("kb-dashboard-view-mode");
   });
 
+  // FN-3916 regression: graph view must render via bundled static registration
+  // even when the API reports no plugin dashboard views (e.g. fresh DB).
+  it("renders graph view from bundled static registration when API returns no views", async () => {
+    localStorage.setItem("kb-dashboard-view-mode", "project");
+    localStorage.setItem(taskViewStorageKey(), "graph");
+    // API returns empty — plugin not installed/loaded
+    (fetchPluginDashboardViews as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dependency-graph")).toBeInTheDocument();
+    });
+
+    localStorage.removeItem(taskViewStorageKey());
+    localStorage.removeItem("kb-dashboard-view-mode");
+  });
+
   it("restores board and plugin routes when persisted taskView changes across remounts", async () => {
     localStorage.setItem("kb-dashboard-view-mode", "project");
 

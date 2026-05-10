@@ -50,7 +50,7 @@ import { useViewState, type TaskView } from "./hooks/useViewState";
 import { useNavigationHistory } from "./hooks/useNavigationHistory";
 import { usePluginDashboardViews } from "./hooks/usePluginDashboardViews";
 import { PluginDashboardViewHost } from "./plugins/PluginDashboardViewHost";
-import { isPluginViewId } from "./plugins/pluginViewRegistry";
+import { isPluginViewId, isPluginViewRegistered } from "./plugins/pluginViewRegistry";
 import { registerBundledPluginViews } from "./plugins/registerBundledPluginViews";
 import { useProjectActions } from "./hooks/useProjectActions";
 import { useTaskHandlers } from "./hooks/useTaskHandlers";
@@ -331,10 +331,17 @@ function AppInner() {
 
   const { views: pluginDashboardViews } = usePluginDashboardViews(currentProject?.id);
   const graphPluginTaskView = useMemo(() => {
+    // Prefer API response for the graph view (supports dynamic plugin discovery)
     const graphView = pluginDashboardViews.find(
       (entry) => entry.pluginId === "fusion-plugin-dependency-graph" && entry.view.viewId === "graph",
     );
-    return graphView ? (`plugin:${graphView.pluginId}:${graphView.view.viewId}` as const) : null;
+    if (graphView) return `plugin:${graphView.pluginId}:${graphView.view.viewId}` as const;
+    // Fall back to bundled static registration so the graph view works even when
+    // the plugin is not installed/loaded through the API (e.g. fresh DB).
+    if (isPluginViewRegistered("fusion-plugin-dependency-graph", "graph")) {
+      return `plugin:fusion-plugin-dependency-graph:graph` as const;
+    }
+    return null;
   }, [pluginDashboardViews]);
 
   // History-aware view change handler — pushes nav entry on back-navigation stack.
