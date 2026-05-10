@@ -3,6 +3,7 @@ packages:
   - "plugins/examples/*"
   - "plugins/fusion-plugin-paperclip-runtime"
   - "plugins/fusion-plugin-dependency-graph"
+  - "plugins/fusion-plugin-cli-printing-press"
   - "plugins/fusion-plugin-openclaw-runtime"
   - "plugins/fusion-plugin-hermes-runtime"
   - "plugins/fusion-plugin-droid-runtime"
