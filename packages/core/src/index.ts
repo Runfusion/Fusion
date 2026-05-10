@@ -88,7 +88,7 @@ export { discoverPiExtensions, formatPiExtensionSource, getEnabledPiExtensionPat
 export type { PiExtensionEntry, PiExtensionSettings, PiExtensionSource } from "./pi-extensions.js";
 export { canTransition, getValidTransitions, resolveDependencyOrder } from "./board.js";
 export { getTaskMergeBlocker, getTaskCompletionBlocker, isTaskReadyForMerge } from "./task-merge.js";
-export { 
+export {
   isGhAvailable, 
   isGhAuthenticated, 
   runGh, 
@@ -101,6 +101,12 @@ export {
   getCurrentRepo,
   type GhError,
 } from "./gh-cli.js";
+export {
+  parseRepoSlug,
+  isValidRepoSlug,
+  resolveTaskGithubTracking,
+} from "./github-tracking.js";
+export type { RepoSlug, ResolvedTaskGithubTracking } from "./github-tracking.js";
 export { AUTOMATION_PRESETS, MAX_RUN_HISTORY } from "./automation.js";
 export type { ScheduleType, ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, AutomationStepType, AutomationStep, AutomationStepResult } from "./automation.js";
 export { AutomationStore } from "./automation-store.js";

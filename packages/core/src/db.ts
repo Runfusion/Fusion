@@ -88,7 +88,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 70;
+const SCHEMA_VERSION = 71;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -206,6 +206,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   workflowStepResults TEXT DEFAULT '[]',
   prInfo TEXT,
   issueInfo TEXT,
+  githubTracking TEXT,
   sourceIssueProvider TEXT,
   sourceIssueRepository TEXT,
   sourceIssueExternalIssueId TEXT,
@@ -2957,6 +2958,12 @@ export class Database {
         `);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxChatRoomMessagesRoomCreatedAt ON chat_room_messages(roomId, createdAt)`);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxChatRoomMessagesRoomId ON chat_room_messages(roomId)`);
+      });
+    }
+
+    if (version < 71) {
+      this.applyMigration(71, () => {
+        this.addColumnIfMissing("tasks", "githubTracking", "TEXT");
       });
     }
 

@@ -646,3 +646,46 @@ describe("migrateFromLegacy", () => {
     });
   });
 });
+
+describe("schema migration", () => {
+  let tmpDir: string;
+  let fusionDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    fusionDir = join(tmpDir, ".fusion");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("adds tasks.githubTracking when migrating from schema version 70", () => {
+    const db = new Database(fusionDir);
+    db.exec("CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT)");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        "column" TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        issueInfo TEXT
+      )
+    `);
+    db.exec("INSERT INTO __meta (key, value) VALUES ('schemaVersion', '70')");
+    db.exec("INSERT INTO __meta (key, value) VALUES ('lastModified', '1000')");
+    db.exec(`INSERT INTO tasks (id, description, "column", createdAt, updatedAt, issueInfo) VALUES ('FN-legacy', 'legacy', 'todo', '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z', '{\"number\":1}')`);
+
+    db.init();
+
+    const columns = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain("githubTracking");
+
+    const row = db.prepare("SELECT id, issueInfo FROM tasks WHERE id = 'FN-legacy'").get() as { id: string; issueInfo: string };
+    expect(row.id).toBe("FN-legacy");
+    expect(JSON.parse(row.issueInfo).number).toBe(1);
+
+    db.close();
+  });
+});

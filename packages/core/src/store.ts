@@ -95,6 +95,7 @@ interface TaskRow {
   workflowStepResults: string | null;
   prInfo: string | null;
   issueInfo: string | null;
+  githubTracking: string | null;
   sourceIssueProvider: string | null;
   sourceIssueRepository: string | null;
   sourceIssueExternalIssueId: string | null;
@@ -808,6 +809,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       workflowStepResults: (() => { const w = fromJson<import("./types.js").WorkflowStepResult[]>(row.workflowStepResults); return w && w.length > 0 ? w : undefined; })(),
       prInfo: fromJson<import("./types.js").PrInfo>(row.prInfo),
       issueInfo: fromJson<import("./types.js").IssueInfo>(row.issueInfo),
+      githubTracking: fromJson<import("./types.js").TaskGithubTracking>(row.githubTracking) ?? undefined,
       sourceIssue: (() => {
         if (
           row.sourceIssueProvider === null
@@ -868,6 +870,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       reviewLevel: entry.reviewLevel,
       prInfo: slim ? undefined : entry.prInfo,
       issueInfo: slim ? undefined : entry.issueInfo,
+      githubTracking: slim ? undefined : entry.githubTracking,
       sourceIssue: slim ? undefined : entry.sourceIssue,
       attachments: slim ? undefined : entry.attachments,
       comments: entry.comments,
@@ -992,6 +995,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       reviewLevel: task.reviewLevel,
       prInfo: task.prInfo,
       issueInfo: task.issueInfo,
+      githubTracking: task.githubTracking,
       sourceIssue: task.sourceIssue,
       attachments: task.attachments,
       comments: task.comments,
@@ -1076,7 +1080,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt",
       "createdAt", "updatedAt", "columnMovedAt", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "comments", "review", "reviewState", "workflowStepResults", "steeringComments",
-      "attachments", "prInfo", "issueInfo", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
+      "attachments", "prInfo", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
       "breakIntoSubtasks", "enabledWorkflowSteps", "modifiedFiles",
       "missionId", "sliceId", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
@@ -1125,7 +1129,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt",
       "createdAt", "updatedAt", "columnMovedAt", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "attachments", "steeringComments",
-      "comments", "review", "reviewState", "workflowStepResults", "prInfo", "issueInfo", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
+      "comments", "review", "reviewState", "workflowStepResults", "prInfo", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
       "breakIntoSubtasks", "enabledWorkflowSteps", "modifiedFiles",
       "missionId", "sliceId", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
@@ -1168,11 +1172,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         tokenUsageTotalTokens, tokenUsageFirstUsedAt, tokenUsageLastUsedAt, createdAt, updatedAt, columnMovedAt,
         executionStartedAt, executionCompletedAt,
         dependencies, steps, log, attachments, steeringComments,
-        comments, review, reviewState, workflowStepResults, prInfo, issueInfo,
+        comments, review, reviewState, workflowStepResults, prInfo, issueInfo, githubTracking,
         sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl,
         mergeDetails, breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch
       ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
       ON CONFLICT(id) DO UPDATE SET
         title = excluded.title,
@@ -1232,6 +1236,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         workflowStepResults = excluded.workflowStepResults,
         prInfo = excluded.prInfo,
         issueInfo = excluded.issueInfo,
+        githubTracking = excluded.githubTracking,
         sourceIssueProvider = excluded.sourceIssueProvider,
         sourceIssueRepository = excluded.sourceIssueRepository,
         sourceIssueExternalIssueId = excluded.sourceIssueExternalIssueId,
@@ -1321,6 +1326,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       toJson(task.workflowStepResults || []),
       toJsonNullable(task.prInfo),
       toJsonNullable(task.issueInfo),
+      toJsonNullable(task.githubTracking),
       task.sourceIssue?.provider ?? null,
       task.sourceIssue?.repository ?? null,
       task.sourceIssue?.externalIssueId ?? null,
@@ -2754,6 +2760,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       if (slim) {
         task.timedExecutionMs = this.computeTimedExecutionMs(task.log);
         task.log = [];
+        task.githubTracking = undefined;
       }
 
       if (!slim || task.steps.length > 0) {
@@ -2826,6 +2833,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       const task = this.rowToTask(row);
       task.timedExecutionMs = this.computeTimedExecutionMs(task.log);
       task.log = [];
+      task.githubTracking = undefined;
       return task;
     });
 
@@ -2937,6 +2945,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       if (slim) {
         task.timedExecutionMs = this.computeTimedExecutionMs(task.log);
         task.log = [];
+        task.githubTracking = undefined;
       }
 
       if (task.steps.length > 0) {
@@ -5970,6 +5979,98 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     });
   }
 
+  async updateGithubTracking(
+    id: string,
+    tracking: import("./types.js").TaskGithubTracking | null,
+  ): Promise<Task> {
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.readTaskJson(dir);
+      const nextTracking = tracking ?? undefined;
+      const previousTracking = task.githubTracking;
+
+      if (JSON.stringify(previousTracking ?? null) === JSON.stringify(nextTracking ?? null)) {
+        return task;
+      }
+
+      task.githubTracking = nextTracking;
+      task.log.push({
+        timestamp: new Date().toISOString(),
+        action: tracking?.enabled === false ? "GitHub tracking disabled" : "GitHub tracking enabled",
+      });
+      task.updatedAt = new Date().toISOString();
+
+      await this.atomicWriteTaskJson(dir, task);
+      if (this.isWatching) this.taskCache.set(id, { ...task });
+      this.emit("task:updated", task);
+      return task;
+    });
+  }
+
+  async linkGithubIssue(
+    id: string,
+    issue: import("./types.js").TaskGithubTrackedIssue,
+  ): Promise<Task> {
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.readTaskJson(dir);
+      const previous = task.githubTracking ?? {};
+
+      const nextTracking: import("./types.js").TaskGithubTracking = {
+        ...previous,
+        issue,
+        enabled: previous.enabled ?? true,
+      };
+
+      if (JSON.stringify(previous) === JSON.stringify(nextTracking)) {
+        return task;
+      }
+
+      task.githubTracking = nextTracking;
+      task.log.push({
+        timestamp: new Date().toISOString(),
+        action: "GitHub issue linked",
+        outcome: `${issue.owner}/${issue.repo}#${issue.number}`,
+      });
+      task.updatedAt = new Date().toISOString();
+
+      await this.atomicWriteTaskJson(dir, task);
+      if (this.isWatching) this.taskCache.set(id, { ...task });
+      this.emit("task:updated", task);
+      return task;
+    });
+  }
+
+  async unlinkGithubIssue(id: string): Promise<Task> {
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.readTaskJson(dir);
+      const previous = task.githubTracking;
+      const previousIssue = previous?.issue;
+
+      if (!previousIssue || !previous) {
+        return task;
+      }
+
+      task.githubTracking = {
+        ...previous,
+        issue: undefined,
+        unlinkedAt: new Date().toISOString(),
+      };
+      task.log.push({
+        timestamp: new Date().toISOString(),
+        action: "GitHub issue unlinked",
+        outcome: `${previousIssue.owner}/${previousIssue.repo}#${previousIssue.number}`,
+      });
+      task.updatedAt = new Date().toISOString();
+
+      await this.atomicWriteTaskJson(dir, task);
+      if (this.isWatching) this.taskCache.set(id, { ...task });
+      this.emit("task:updated", task);
+      return task;
+    });
+  }
+
   /**
    * Read historical agent log entries for a task from SQLite.
    * Returns entries in chronological order (oldest first).
@@ -6270,6 +6371,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       prInfo: entry.prInfo,
       review: entry.review,
       issueInfo: entry.issueInfo,
+      githubTracking: entry.githubTracking,
       sourceIssue: entry.sourceIssue,
       attachments: entry.attachments,
       log: [...entry.log, { timestamp: new Date().toISOString(), action: "Task restored from archive" }],

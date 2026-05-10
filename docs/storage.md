@@ -170,6 +170,8 @@ Additional backend notes:
 | Table | Purpose |
 |---|---|
 | `tasks` | Core task metadata and JSON-backed nested fields (priority, dependencies, steps, log, attachments, comments, model overrides, workflow results, merge details, assignment, mission linkage). |
+
+The `tasks.githubTracking` JSON column stores per-task GitHub tracking state (`enabled`, optional `repoOverride`, linked issue metadata, and `unlinkedAt`). It is additive and default-off; imported-source issue metadata remains in `issueInfo` / `sourceIssue`. Behavior wiring (issue creation/lifecycle sync and UI surfacing) lands in FN-3870/FN-3873/FN-3874.
 | `config` | Single-row project configuration (`nextId`, settings payload, workflow step counters). |
 | `workflow_steps` | Workflow step definitions (`prompt`/`script`) with phase, template metadata, and model overrides. |
 | `activityLog` | Per-project activity/event log with timestamp/type/task indexes. |

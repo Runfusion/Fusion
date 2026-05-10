@@ -576,6 +576,27 @@ export interface IssueInfo {
   lastCheckedAt?: string;
 }
 
+export interface TaskGithubTrackedIssue {
+  owner: string;
+  repo: string;
+  number: number;
+  url: string;
+  nodeId?: string;
+  createdAt: string;
+  lastSyncedAt?: string;
+}
+
+export interface TaskGithubTracking {
+  /** Per-task enabled override. When undefined, project/global default applies. */
+  enabled?: boolean;
+  /** "owner/repo" override; when undefined, project/global default repo applies. */
+  repoOverride?: string;
+  /** Linked GitHub issue. Set after issue creation succeeds. Cleared via unlinkGithubIssue(). */
+  issue?: TaskGithubTrackedIssue;
+  /** ISO-8601 of the most recent manual unlink, retained for audit. */
+  unlinkedAt?: string;
+}
+
 /**
  * Durable provenance metadata for tasks imported from external issue trackers.
  *
@@ -1103,6 +1124,11 @@ export interface Task {
   mergeDetails?: MergeDetails;
   /** Issue information for tasks imported from GitHub issues */
   issueInfo?: IssueInfo;
+  /**
+   * Per-task tracking metadata for Fusion-emitted GitHub issues.
+   * Distinct from issueInfo/sourceIssue, which describe imported source issues.
+   */
+  githubTracking?: TaskGithubTracking;
   /** Durable source provenance for the originating external issue. */
   sourceIssue?: TaskSourceIssue;
   log: TaskLogEntry[];
@@ -2556,6 +2582,7 @@ export interface ArchivedTaskEntry {
   executionMode?: ExecutionMode;
   prInfo?: PrInfo;
   issueInfo?: IssueInfo;
+  githubTracking?: TaskGithubTracking;
   /** Durable source provenance for the originating external issue. */
   sourceIssue?: TaskSourceIssue;
   /** Attachment metadata (filenames, mime types, etc.) without file content */
