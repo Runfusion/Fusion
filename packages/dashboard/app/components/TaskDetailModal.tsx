@@ -10,6 +10,7 @@ import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, Settings, G
 import {
   COLUMN_LABELS,
   DEFAULT_TASK_PRIORITY,
+  REPO_OVERRIDE_RE,
   TASK_PRIORITIES,
   VALID_TRANSITIONS,
   getErrorMessage,
@@ -37,7 +38,6 @@ import { TaskTokenStatsPanel } from "./TaskTokenStatsPanel";
 import { PluginSlot } from "./PluginSlot";
 import { ProviderIcon } from "./ProviderIcon";
 import { subscribeSse } from "../sse-bus";
-import { REPO_OVERRIDE_RE } from "./githubTracking";
 import { usePluginUiSlots } from "../hooks/usePluginUiSlots";
 import { appendTokenQuery } from "../auth";
 import { extractDependencyDeleteConflict } from "../utils/taskDelete";

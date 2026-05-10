@@ -414,7 +414,7 @@ export default function kbExtension(pi: ExtensionAPI) {
 
       if (normalizedAgentId !== undefined && normalizedAgentId !== null) {
         const candidateTask: Pick<Task, "id" | "column"> = { id: "<new>", column: "triage" };
-        const error = await validateAssignableAgentId(ctx.cwd, normalizedAgentId, candidateTask);
+        const error = await validateAssignableAgentId(ctx.cwd ?? process.cwd(), normalizedAgentId, candidateTask);
         if (error) {
           return {
             content: [{ type: "text", text: error }],
@@ -532,8 +532,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
       if (params.agentId !== undefined) {
         const normalizedAgentId = normalizeNullableStringInput(params.agentId);
-        if (normalizedAgentId !== null) {
-          const error = await validateAssignableAgentId(ctx.cwd, normalizedAgentId, task);
+        if (normalizedAgentId !== undefined && normalizedAgentId !== null) {
+          const error = await validateAssignableAgentId(ctx.cwd ?? process.cwd(), normalizedAgentId, task);
           if (error) {
             return {
               content: [{ type: "text", text: error }],
@@ -2677,7 +2677,7 @@ export default function kbExtension(pi: ExtensionAPI) {
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       // Validate target agent exists and is not ephemeral
       const delegateTask: Pick<Task, "id" | "column"> = { id: "<new>", column: "todo" };
-      const agentError = await validateAssignableAgentId(ctx.cwd, params.agent_id, delegateTask, params.override === true);
+      const agentError = await validateAssignableAgentId(ctx.cwd ?? process.cwd(), params.agent_id, delegateTask, params.override === true);
       if (agentError) {
         return {
           content: [{ type: "text", text: `ERROR: ${agentError}` }],
