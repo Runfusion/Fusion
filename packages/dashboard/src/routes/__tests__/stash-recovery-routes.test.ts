@@ -51,6 +51,9 @@ describe("stash recovery routes", () => {
         createdAt: null,
         changedPaths: ["file.txt"],
         classification: "live",
+        sourcePhase: "finalize-reset",
+        detectedByTaskId: "FN-1234",
+        detectedAt: "2026-05-10T00:00:00.000Z",
       },
     ]);
 
@@ -58,6 +61,7 @@ describe("stash recovery routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.count).toBe(1);
     expect(res.body.records[0].sha).toBe("abcdef1");
+    expect(res.body.records[0].sourcePhase).toBe("finalize-reset");
   });
 
   it("returns diff + truncated flag", async () => {

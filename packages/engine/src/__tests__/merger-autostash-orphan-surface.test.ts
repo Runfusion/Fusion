@@ -62,16 +62,19 @@ describe("autostash orphan surface", () => {
     expect(records[0]?.label).toContain("fusion-merger-autostash:FN-2001");
   });
 
-  it("parses sourceTaskId and createdAt; malformed labels return null fields", async () => {
+  it("parses sourceTaskId, createdAt, and source phase; malformed labels return null fields", async () => {
     const ts = Date.now();
     createAutostash(dir, `fusion-merger-autostash:FN-2002:${ts}`, "a\n");
+    createAutostash(dir, `fusion-merger-autostash:FN-2002:finalize-reset:${ts + 1}`, "phase\n");
     createAutostash(dir, "fusion-merger-autostash:FN-2003:not-a-ts", "b\n");
 
     const records = await listAutostashOrphans(dir);
-    const good = records.find((r) => r.sourceTaskId === "FN-2002");
+    const good = records.find((r) => r.sourceTaskId === "FN-2002" && r.sourcePhase === "pre-merge");
     const bad = records.find((r) => r.label.includes("not-a-ts"));
 
+    const phased = records.find((r) => r.label.includes("finalize-reset"));
     expect(good?.createdAt).toBe(new Date(ts).toISOString());
+    expect(phased?.sourcePhase).toBe("finalize-reset");
     expect(bad?.sourceTaskId).toBe("FN-2003");
     expect(bad?.createdAt).toBeNull();
   });
@@ -113,11 +116,14 @@ describe("autostash orphan surface", () => {
     expect(git(dir, 'git stash list --format="%H %s"')).toContain(sha);
   });
 
-  it("emits merger:autostashOrphans event with records payload", async () => {
+  it("emits merger:autostashOrphans event with provenance payload", async () => {
     createAutostash(dir, `fusion-merger-autostash:FN-2008:${Date.now()}`, "emit\n");
     const store = { emit: vi.fn() } as any;
 
-    const records = await notifyAutostashOrphans(store, dir);
+    const records = await notifyAutostashOrphans(store, dir, { detectedByTaskId: "FN-MERGE" });
+
+    expect(records[0]?.detectedByTaskId).toBe("FN-MERGE");
+    expect(records[0]?.detectedAt).toMatch(/T/);
 
     expect(records).toHaveLength(1);
     expect(store.emit).toHaveBeenCalledWith("merger:autostashOrphans", {

@@ -2503,6 +2503,22 @@ export interface DistributedTaskIdStateResult {
   lastCommittedTaskId?: string;
 }
 
+export interface AutostashOrphanRecord {
+  sha: string;
+  ref: string;
+  label: string;
+  sourceTaskId: string | null;
+  createdAt: string | null;
+  changedPaths: string[];
+  classification: "subsumed" | "live" | "unknown";
+  /** Merge/recovery phase that created this stash label when known. */
+  sourcePhase?: string | null;
+  /** Task that detected/surfaced this orphan in the current run. */
+  detectedByTaskId?: string | null;
+  /** ISO timestamp when this orphan was surfaced in the current run. */
+  detectedAt?: string | null;
+}
+
 /**
  * Outcome of restoring the developer's pre-merge autostash after the merge
  * completes. Surfaced on MergeResult so the UI / dashboard can show whether

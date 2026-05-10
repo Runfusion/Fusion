@@ -55,6 +55,8 @@ type MockTaskStore = {
   logEntry: ReturnType<typeof vi.fn>;
   getActiveMergingTask: ReturnType<typeof vi.fn>;
   createTask: ReturnType<typeof vi.fn>;
+  on: ReturnType<typeof vi.fn>;
+  off: ReturnType<typeof vi.fn>;
 };
 
 const TASK_ID = "FN-2084";
@@ -110,6 +112,8 @@ function makeStore({
       id: "FN-9999",
       description: input.description,
     })),
+    on: vi.fn(),
+    off: vi.fn(),
   };
 }
 
@@ -195,6 +199,57 @@ describe("ProjectEngine merge error recovery", () => {
     expect(vi.getTimerCount()).toBe(1);
     expect(setTimeoutSpy.mock.calls.some(([, interval]) => interval === 7000)).toBe(true);
     vi.useRealTimers();
+  });
+
+  it("creates one recovery follow-up for live autostash orphans and dedupes by parent task", async () => {
+    const store = makeStore();
+    store.listTasks.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      { id: "FN-9000", column: "todo", sourceType: "recovery", sourceParentTaskId: "FN-7777" },
+    ]);
+
+    const engine = createEngine(store);
+    const privateEngine = engine as unknown as {
+      wireAutostashOrphanRecovery: (store: MockTaskStore) => void;
+      autostashOrphansHandler?: (data: { rootDir: string; records: Array<any> }) => Promise<void>;
+    };
+
+    privateEngine.wireAutostashOrphanRecovery(store);
+    await privateEngine.autostashOrphansHandler?.({
+      rootDir: "/tmp/project",
+      records: [
+        {
+          sha: "abcdef1234567",
+          ref: "stash@{0}",
+          label: "fusion-merger-autostash:FN-7777:finalize-reset:1",
+          sourceTaskId: "FN-7777",
+          createdAt: new Date().toISOString(),
+          changedPaths: ["a.ts"],
+          classification: "live",
+          sourcePhase: "finalize-reset",
+          detectedByTaskId: "FN-1234",
+          detectedAt: new Date().toISOString(),
+        },
+      ],
+    });
+    await privateEngine.autostashOrphansHandler?.({
+      rootDir: "/tmp/project",
+      records: [
+        {
+          sha: "abcdef1234567",
+          ref: "stash@{0}",
+          label: "fusion-merger-autostash:FN-7777:finalize-reset:1",
+          sourceTaskId: "FN-7777",
+          createdAt: new Date().toISOString(),
+          changedPaths: ["a.ts"],
+          classification: "live",
+          sourcePhase: "finalize-reset",
+          detectedByTaskId: "FN-1234",
+          detectedAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    expect(store.createTask).toHaveBeenCalledTimes(1);
   });
 
   it("uses default retry interval when interval settings retrieval fails", async () => {

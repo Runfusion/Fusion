@@ -51,6 +51,7 @@ import {
   type CanonicalMergeConflictStrategy,
   type TaskSourceIssue,
   type Task,
+  type AutostashOrphanRecord,
 } from "@fusion/core";
 import { describeModel, promptWithFallback } from "./pi.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
@@ -1042,7 +1043,7 @@ interface AutostashHandle {
 }
 
 const AUTOSTASH_LABEL_PREFIX = "fusion-merger-autostash:";
-const AUTOSTASH_TIMESTAMP_RE = /^fusion-merger-autostash:[A-Za-z]+-\d+:(?:race-rescue-\d+:)?(\d+)$/;
+const AUTOSTASH_TIMESTAMP_RE = /^fusion-merger-autostash:[A-Za-z]+-\d+:(?:(?:[a-z0-9-]+:)?(?:\d+:)?)?(\d+)$/;
 
 /** Return the set of paths a stash commit recorded as changed against its
  *  parent (HEAD-at-stash-time). Used to compare a new dirty snapshot against
@@ -1274,15 +1275,6 @@ function parseAutostashTaskId(label: string): string | null {
   return match?.[1] ?? null;
 }
 
-export interface AutostashOrphanRecord {
-  sha: string;
-  ref: string;
-  label: string;
-  sourceTaskId: string | null;
-  createdAt: string | null;
-  changedPaths: string[];
-  classification: "subsumed" | "live" | "unknown";
-}
 
 function parseAutostashCreatedAt(label: string): string | null {
   const match = AUTOSTASH_TIMESTAMP_RE.exec(label.trim());
@@ -1290,6 +1282,15 @@ function parseAutostashCreatedAt(label: string): string | null {
   const ts = Number.parseInt(match[1] ?? "", 10);
   if (!Number.isFinite(ts)) return null;
   return new Date(ts).toISOString();
+}
+
+function parseAutostashSourcePhase(label: string): string | null {
+  const trimmed = label.trim();
+  const phaseMatch = /^fusion-merger-autostash:[A-Za-z]+-\d+:([a-z-]+):\d+$/.exec(trimmed);
+  if (phaseMatch?.[1]) return phaseMatch[1];
+  if (/^fusion-merger-autostash:[A-Za-z]+-\d+:race-rescue-\d+:\d+$/.test(trimmed)) return "race-rescue";
+  if (/^fusion-merger-autostash:[A-Za-z]+-\d+:\d+$/.test(trimmed)) return "pre-merge";
+  return null;
 }
 
 async function classifyAutostashOrphan(rootDir: string, sha: string): Promise<"subsumed" | "live" | "unknown"> {
@@ -1320,13 +1321,25 @@ export async function listAutostashOrphans(rootDir: string): Promise<AutostashOr
       createdAt: parseAutostashCreatedAt(orphan.label),
       changedPaths,
       classification: await classifyAutostashOrphan(rootDir, orphan.sha),
+      sourcePhase: parseAutostashSourcePhase(orphan.label),
+      detectedByTaskId: null,
+      detectedAt: null,
     });
   }
   return records;
 }
 
-export async function notifyAutostashOrphans(store: TaskStore, rootDir: string): Promise<AutostashOrphanRecord[]> {
-  const records = await listAutostashOrphans(rootDir);
+export async function notifyAutostashOrphans(
+  store: TaskStore,
+  rootDir: string,
+  options?: { detectedByTaskId?: string | null; detectedAt?: string },
+): Promise<AutostashOrphanRecord[]> {
+  const detectedAt = options?.detectedAt ?? new Date().toISOString();
+  const records = (await listAutostashOrphans(rootDir)).map((record) => ({
+    ...record,
+    detectedByTaskId: options?.detectedByTaskId ?? null,
+    detectedAt,
+  }));
   store.emit("merger:autostashOrphans", { rootDir, records });
   return records;
 }
@@ -1539,7 +1552,7 @@ async function sweepAutostashOrphans(
       .catch(() => undefined);
   }
 
-  await notifyAutostashOrphans(store, rootDir).catch(() => undefined);
+  await notifyAutostashOrphans(store, rootDir, { detectedByTaskId: taskId }).catch(() => undefined);
 }
 
 export async function sweepStaleAutostashes(
@@ -1573,6 +1586,8 @@ export async function sweepStaleAutostashes(
     return { dropped: 0 };
   }
 }
+
+export type { AutostashOrphanRecord };
 
 export const __test__ = {
   sweepAutostashOrphans,
@@ -2800,6 +2815,37 @@ type MergeFinalizeResult =
   | { ok: true; reason: "completed" | "head-task-trailer" | "branch-already-merged" }
   | { ok: false; reason: "fix-produced-no-content" | "unknown-phantom" };
 
+async function persistFinalizeResetLeftovers(rootDir: string, taskId: string, store?: TaskStore): Promise<void> {
+  try {
+    const dirtyPaths = [...(await snapshotDirtyFiles(rootDir))];
+    if (dirtyPaths.length === 0) return;
+    await execAsync("git add -A", { cwd: rootDir });
+    const { stdout: createOut } = await execAsync("git stash create", { cwd: rootDir, encoding: "utf-8" });
+    const sha = String(createOut).trim();
+    if (!sha) {
+      await execAsync("git reset", { cwd: rootDir }).catch(() => undefined);
+      return;
+    }
+    const label = `${AUTOSTASH_LABEL_PREFIX}${taskId}:finalize-reset:${Date.now()}`;
+    await execAsync(`git stash store -m ${quoteArg(label)} ${sha}`, { cwd: rootDir });
+    await execAsync("git reset", { cwd: rootDir }).catch(() => undefined);
+    mergerLog.warn(
+      `${taskId}: persisted ${dirtyPaths.length} dirty rootDir path(s) before finalize reset as ${sha.slice(0, 7)} (${label})`,
+    );
+    if (store) {
+      await store.logEntry(
+        taskId,
+        `Persisted ${dirtyPaths.length} dirty rootDir path(s) before finalize reset/amend cleanup`,
+        `stash: ${sha}\nlabel: ${label}\nphase: finalize-reset\npaths:\n${dirtyPaths.join("\n")}`,
+      ).catch(() => undefined);
+      await notifyAutostashOrphans(store, rootDir, { detectedByTaskId: taskId }).catch(() => undefined);
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    mergerLog.warn(`${taskId}: failed to persist dirty rootDir leftovers before finalize reset: ${msg}`);
+  }
+}
+
 export async function commitOrAmendMergeWithFixes(
   rootDir: string,
   taskId: string,
@@ -2814,6 +2860,7 @@ export async function commitOrAmendMergeWithFixes(
   aiSummary?: string | null,
   aiSubject?: string | null,
   fixModifiedFiles: ReadonlySet<string> = new Set(),
+  store?: TaskStore,
 ): Promise<MergeFinalizeResult> {
   try {
     // Build an allowlist of paths we are permitted to stage.
@@ -2998,6 +3045,7 @@ export async function commitOrAmendMergeWithFixes(
       // squash from branch -> preAttemptHeadSha and continue normally.
       let squashRestoreReportedUpToDate = false;
       try {
+        await persistFinalizeResetLeftovers(rootDir, taskId, store);
         await execAsync(`git reset --hard ${preAttemptHeadSha}`, {
           cwd: rootDir,
           encoding: "utf-8",
@@ -5412,6 +5460,7 @@ export async function aiMergeTask(
                 aiMergeSummary,
                 aiMergeSubject,
                 verificationFixModifiedFiles,
+                store,
               );
               if (!finalized.ok) {
                 // Phantom-merge guard: refused to fabricate a commit. Reset
@@ -5533,6 +5582,7 @@ export async function aiMergeTask(
               aiMergeSummary,
               aiMergeSubject,
               buildFixModifiedFiles,
+              store,
             );
             if (!finalized.ok) {
               // Phantom-merge guard: the verification fix passed but no

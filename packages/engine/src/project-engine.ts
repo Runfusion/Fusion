@@ -5,6 +5,7 @@ import type {
   CentralCore,
   Settings,
   MergeResult,
+  AutostashOrphanRecord,
   AutomationStore as AutomationStoreType,
   ScheduledTask,
   AutomationRunResult,
@@ -203,6 +204,7 @@ export class ProjectEngine {
   private settingsHandlers: Array<(...args: any[]) => void> = [];
   private taskMovedHandler?: (...args: any[]) => void;
   private taskUpdatedHandler?: (...args: any[]) => void;
+  private autostashOrphansHandler?: (...args: any[]) => void;
 
   constructor(
     private config: ProjectRuntimeConfig,
@@ -438,6 +440,7 @@ export class ProjectEngine {
     // 6. Wire auto-merge on task:moved and task:updated pause interruptions
     this.wireAutoMerge(store, cwd);
     this.wireTaskPauseMergeInterruption(store);
+    this.wireAutostashOrphanRecovery(store);
 
     // 7. Auto-merge startup sweep
     await this.startupMergeSweep(store);
@@ -512,6 +515,9 @@ export class ProjectEngine {
       }
       if (this.taskUpdatedHandler) {
         store.off("task:updated", this.taskUpdatedHandler);
+      }
+      if (this.autostashOrphansHandler) {
+        store.off("merger:autostashOrphans", this.autostashOrphansHandler as any);
       }
     } catch {
       // Store may not be initialized if start() failed partway
@@ -1830,6 +1836,38 @@ export class ProjectEngine {
       }, MERGE_HANDOFF_GRACE_MS);
     };
     store.on("task:moved", this.taskMovedHandler);
+  }
+
+  private wireAutostashOrphanRecovery(store: TaskStore): void {
+    this.autostashOrphansHandler = async ({ records }: { rootDir: string; records: AutostashOrphanRecord[] }) => {
+      const liveRecords = records.filter((record) => record.classification === "live");
+      for (const record of liveRecords) {
+        const parentTaskId = record.sourceTaskId;
+        if (!parentTaskId) continue;
+        try {
+          const existingFollowUp = await this.findActiveRecoveryFollowUp(store, parentTaskId);
+          if (existingFollowUp) continue;
+          const sourcePhase = record.sourcePhase ?? "unknown";
+          await store.createTask({
+            description:
+              `Investigate preserved merger autostash leftover from ${parentTaskId} (${record.sha.slice(0, 7)}). ` +
+              `Detected by ${record.detectedByTaskId ?? "merge sweep"} during ${sourcePhase}; ` +
+              `stash label: ${record.label}. Recover from stash-recovery before dropping.`,
+            sourceType: "recovery",
+            sourceParentTaskId: parentTaskId,
+          } as any);
+          await store.logEntry(
+            parentTaskId,
+            `Auto-created recovery follow-up for live autostash orphan ${record.sha.slice(0, 7)}`,
+            `detectedBy=${record.detectedByTaskId ?? "unknown"}; phase=${sourcePhase}; stash=${record.label}`,
+          ).catch(() => undefined);
+        } catch (err: unknown) {
+          runtimeLog.warn(`Autostash orphan recovery follow-up failed for ${parentTaskId}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    };
+
+    store.on("merger:autostashOrphans", this.autostashOrphansHandler as any);
   }
 
   private wireTaskPauseMergeInterruption(store: TaskStore): void {

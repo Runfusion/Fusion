@@ -1269,6 +1269,7 @@ When a tracked task transitions into `done`, Fusion closes the linked GitHub iss
 
 #### Autostash lifecycle
 - Before destructive merge prep, `stashUnrelatedRootDirChanges()` snapshots dirty root-dir edits into `fusion-merger-autostash:<taskId>:<ts>` (plus optional `race-rescue-*` stashes for late writes).
+- During verification-fix finalize fallback, `commitOrAmendMergeWithFixes()` now snapshots any still-dirty root-dir state into `fusion-merger-autostash:<taskId>:finalize-reset:<ts>` *before* its hard reset/clean recovery path, preventing silent mixed-worktree leftovers from being discarded.
 - In `aiMergeTask` cleanup, `restoreUnrelatedRootDirChanges()` attempts restore; then `dropAutostashHandle()` runs on every terminal path and drops primary + race-rescue stashes when restoration succeeded or content is no longer live.
 - If restore fails with unresolved developer work (`failed`/`conflict-needs-manual`), cleanup uses a keep-if-live rule so still-live stashes are preserved for manual recovery.
 - `sweepAutostashOrphans()` keeps its subsumed/live classification for prior-run leftovers, and `sweepStaleAutostashes()` adds an age-based backstop that drops `fusion-merger-autostash:*` entries older than the configured threshold (default 24h).
@@ -1277,6 +1278,8 @@ When a tracked task transitions into `done`, Fusion closes the linked GitHub iss
 - Orphans are typically residual `fusion-merger-autostash:*` entries from older merge runs where restore could not safely complete.
 - Existing task-scoped surfacing remains: merger warnings still log to `mergerLog.warn` and `store.logEntry` for the active merge task.
 - New global surfacing adds `merger:autostashOrphans` TaskStore events, engine helpers (`listAutostashOrphans`, `getAutostashDiff`, `applyAutostashBySha`, `dropAutostashBySha`), and dashboard API endpoints under `/api/stash-recovery/*`.
+- `merger:autostashOrphans` records now include provenance fields (`sourcePhase`, `detectedByTaskId`, `detectedAt`) so operators can attribute leftovers to the merge phase and surfacing task/session.
+- `ProjectEngine` consumes the orphan event stream and auto-creates deduplicated `sourceType: "recovery"` follow-up tasks keyed by `sourceParentTaskId` for live leftovers, so repeated detections do not spam the board.
 - Dashboard operators can inspect orphan counts, review diffs, apply stashes, and explicitly drop entries with confirmation.
 - Decision: recovery stays user-gated. Auto-apply was rejected because clean-tree checks are racy, stash placement is ambiguous after source task merge, and apply conflicts can produce hard-to-untangle state. `sweepAutostashOrphans` continues to auto-drop only subsumed entries while preserving live developer work.
 

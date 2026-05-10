@@ -363,6 +363,7 @@ Navigation:
 
 Features:
 - Lists orphaned stash entries grouped by source task ID (or **Unknown source** when unavailable)
+- Surfaces provenance metadata from recovery events (`sourcePhase`, `detectedByTaskId`, `detectedAt`) to show where/when leftovers were captured and surfaced
 - Inspect diff output for any orphaned stash before taking action
 - Apply a stash to recover changes, or drop a stash with confirmation to permanently remove it
 
