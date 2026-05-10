@@ -233,8 +233,8 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `githubCommentTemplate` | `string` | `undefined` | Optional issue comment template used by `githubCommentOnDone`. Supports `{taskId}` and `{taskTitle}` placeholders. If unset, Fusion uses a default completion message. |
 | `githubTrackingEnabledByDefault` | `boolean` | `false` | Project-level default for enabling issue tracking on new tasks. Even when this is false, issue creation can still occur per task if tracking is explicitly enabled. |
 | `githubTrackingDefaultRepo` | `string` | `undefined` | Project default issue-tracking repo (`owner/repo`) used before global fallback for tracked task creation. |
-| `githubAuthMode` | `"gh-cli" \| "token"` | `"gh-cli"` | Project GitHub auth strategy used by tracking issue creation (`gh-cli` by default, `token` when configured). |
-| `githubAuthToken` | `string` | `undefined` | Optional project PAT used when `githubAuthMode` is `"token"`. Added in FN-3868 as data-layer groundwork; downstream subtasks consume it. |
+| `githubAuthMode` | `"gh-cli" \| "token"` | `"gh-cli"` | Project GitHub auth strategy used by tracking lifecycle integration. `"gh-cli"` requires an installed/authenticated `gh` CLI. `"token"` requires a non-empty `githubAuthToken` (or `GITHUB_TOKEN` env fallback). Tracking lifecycle auth is strict per selected mode (no cross-fallback). |
+| `githubAuthToken` | `string` | `undefined` | Optional project PAT used when `githubAuthMode` is `"token"` (takes precedence over server startup token for tracking flows). |
 | `autoCreatePr` | `boolean` | `false` | Auto-create PRs for completed tasks. |
 | `autoBackupEnabled` | `boolean` | `false` | Enable scheduled DB backups. |
 | `autoBackupSchedule` | `string` | `"0 2 * * *"` | Backup cron schedule. |
@@ -458,6 +458,12 @@ Short-lived token bounds are enforced server-side:
 > **Note:** Agent `metadata.skills` is not a top-level project setting, but it is the primary mechanism for controlling execution-time skill selection. The engine's `buildSessionSkillContext` function reads this metadata from the assigned agent and uses it to resolve which skills are available in the agent session. If `metadata.skills` is absent or empty, the engine falls back to the built-in `fusion` skill.
 
 ---
+
+### Server-owned GET `/api/settings` fields
+
+- `trackingAuthAvailable` (`boolean`) is computed server-side from `githubAuthMode` + credential/runtime availability for tracking lifecycle calls.
+- `trackingAuthReason` (`"token_missing" | "gh_not_installed" | "gh_not_authenticated" | "invalid_mode" | null`) explains unavailability when `trackingAuthAvailable` is false.
+- These fields are response-only and are stripped from `PUT /api/settings` payloads.
 
 ## Model Selection Hierarchy
 

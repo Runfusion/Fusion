@@ -1,6 +1,7 @@
 import type { GlobalSettings, ProjectSettings, Task, TaskStore } from "@fusion/core";
 import type { CreatedIssue } from "./github.js";
-import type { GitHubClient } from "./github.js";
+import { GitHubClient } from "./github.js";
+import { resolveGithubTrackingAuth } from "./github-auth.js";
 
 const TRACKING_ISSUE_TITLE_LIMIT = 240;
 const TRACKING_ISSUE_BODY_SUMMARY_LIMIT = 500;
@@ -67,11 +68,21 @@ export function formatTrackingIssueBody(task: {
 
 export interface MaybeCreateTrackingIssueDeps {
   taskStore: TaskStore;
-  githubClient: GitHubClient;
   projectSettings: ProjectSettings;
   globalSettings: GlobalSettings;
   logger?: Pick<Console, "warn" | "info">;
 }
+
+export type MaybeCreateTrackingIssueReason =
+  | "tracking_disabled"
+  | "issue_already_linked"
+  | "github_import_source"
+  | "no_repo_configured"
+  | "github_error"
+  | "auth_token_missing"
+  | "auth_gh_not_installed"
+  | "auth_gh_not_authenticated"
+  | "auth_invalid_mode";
 
 function parseRepo(value: string | undefined): { owner: string; repo: string } | null {
   if (!value) return null;
@@ -84,7 +95,7 @@ function parseRepo(value: string | undefined): { owner: string; repo: string } |
 export async function maybeCreateTrackingIssue(
   task: Task,
   deps: MaybeCreateTrackingIssueDeps,
-): Promise<{ created: false; reason: string } | { created: true; issue: CreatedIssue }> {
+): Promise<{ created: false; reason: MaybeCreateTrackingIssueReason } | { created: true; issue: CreatedIssue }> {
   const tracking = task.githubTracking;
   if (tracking?.enabled !== true) {
     return { created: false, reason: "tracking_disabled" };
@@ -115,11 +126,37 @@ export async function maybeCreateTrackingIssue(
     return { created: false, reason: "no_repo_configured" };
   }
 
+  const resolution = resolveGithubTrackingAuth({
+    projectSettings: deps.projectSettings,
+    globalSettings: {},
+  });
+
+  if (!resolution.ok) {
+    deps.logger?.warn?.(`[github-tracking] ${task.id}: auth unavailable (${resolution.reason}): ${resolution.message}`);
+    await deps.taskStore.recordActivity({
+      type: "task:updated",
+      taskId: task.id,
+      taskTitle: task.title,
+      details: `GitHub tracking issue not created: ${resolution.message}`,
+      metadata: {
+        type: "github-issue-skipped",
+        reason: resolution.reason,
+        message: resolution.message,
+      },
+    });
+
+    return { created: false, reason: `auth_${resolution.reason}` };
+  }
+
+  const githubClient = resolution.auth.mode === "token"
+    ? new GitHubClient({ token: resolution.auth.token, forceMode: "token" })
+    : new GitHubClient({ forceMode: "gh-cli" });
+
   const title = formatTrackingIssueTitle(task);
   const body = formatTrackingIssueBody(task);
 
   try {
-    const issue = await deps.githubClient.createIssue({ owner: repo.owner, repo: repo.repo, title, body });
+    const issue = await githubClient.createIssue({ owner: repo.owner, repo: repo.repo, title, body });
 
     await deps.taskStore.linkGithubIssue(task.id, {
       owner: repo.owner,

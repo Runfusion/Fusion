@@ -11,8 +11,14 @@ export {
   type RuntimeLogSink,
 } from "./runtime-logger.js";
 export { createSkillsAdapter, getProjectSettingsPath, type SkillsAdapter, type DiscoveredSkill, type CatalogEntry, type CatalogFetchResult, type ToggleSkillResult, type UpstreamError, type UpstreamErrorCode, type SkillContent, type SkillFileEntry } from "./skills-adapter.js";
-export { GitHubClient, isPrMergeReady, type PrMergeStatus, type PrCheckStatus, type ReviewDecision, type MergePrParams, type FindPrParams, type CreateIssueParams, type CreatedIssue } from "./github.js";
+export { GitHubClient, isPrMergeReady, type GitHubClientOptions, type PrMergeStatus, type PrCheckStatus, type ReviewDecision, type MergePrParams, type FindPrParams, type CreateIssueParams, type CreatedIssue } from "./github.js";
 export { maybeCreateTrackingIssue, type MaybeCreateTrackingIssueDeps } from "./github-tracking.js";
+export {
+  resolveGithubTrackingAuth,
+  type GithubTrackingAuth,
+  type GithubTrackingAuthResolution,
+  type ResolveGithubTrackingAuthDeps,
+} from "./github-auth.js";
 export { rateLimit, RATE_LIMITS, type RateLimitOptions } from "./rate-limit.js";
 export { GitHubPollingService, type GitHubPollingServiceOptions, type TaskWatchInput, type WatchedBadgeType } from "./github-poll.js";
 export { GitHubIssueCommentService, DEFAULT_COMMENT_TEMPLATE } from "./github-issue-comment.js";

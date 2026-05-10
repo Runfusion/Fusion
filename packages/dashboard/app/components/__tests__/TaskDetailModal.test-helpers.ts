@@ -28,6 +28,7 @@ vi.mock("../../api", async (importOriginal) => {
     fetchAgent: vi.fn().mockResolvedValue(null),
     fetchModels: vi.fn().mockResolvedValue({ models: [], favoriteProviders: [] }),
     fetchSettings: vi.fn().mockResolvedValue({ modelPresets: [], autoSelectModelPreset: false, defaultPresetBySize: {} }),
+    fetchGlobalSettings: vi.fn().mockResolvedValue({}),
     fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
     refineText: vi.fn(),
     getRefineErrorMessage: vi.fn((err: any) => err?.message || "Failed to refine"),

@@ -26,6 +26,7 @@ vi.mock("../../api", () => ({
     defaultPresetBySize: {},
   }),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
+  fetchGlobalSettings: vi.fn().mockResolvedValue({}),
   refineText: vi.fn().mockResolvedValue("Refined text"),
   getRefineErrorMessage: vi.fn((err) => err?.message || "Failed to refine text. Please try again."),
   updateGlobalSettings: vi.fn().mockResolvedValue({}),
@@ -1493,6 +1494,59 @@ describe("TaskForm focus behavior (FN-1459)", () => {
       // Should not have any unexpected elements - just verify normal rendering works
       expect(screen.getByRole("textbox", { name: /Description/i })).toBeInTheDocument();
       expect(screen.getByTestId("task-form-more-options-toggle")).toBeInTheDocument();
+    });
+  });
+
+  describe("GitHub tracking controls", () => {
+    it("seeds tracking toggle from project settings default", async () => {
+      const { fetchSettings } = await import("../../api");
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        modelPresets: [],
+        autoSelectModelPreset: false,
+        defaultPresetBySize: {},
+        githubTrackingEnabledByDefault: true,
+      });
+
+      const onGithubTrackingEnabledChange = vi.fn();
+      renderTaskForm({
+        githubTrackingEnabled: false,
+        onGithubTrackingEnabledChange,
+      });
+
+      await waitFor(() => {
+        expect(onGithubTrackingEnabledChange).toHaveBeenCalledWith(true);
+      });
+    });
+
+    it("renders tracking controls and propagates changes", async () => {
+      const onGithubTrackingEnabledChange = vi.fn();
+      const onGithubRepoOverrideChange = vi.fn();
+
+      renderTaskForm({
+        githubTrackingEnabled: false,
+        onGithubTrackingEnabledChange,
+        githubRepoOverride: "",
+        onGithubRepoOverrideChange,
+      });
+
+      const toggle = await screen.findByLabelText("Enable GitHub issue tracking for this task");
+      fireEvent.click(toggle);
+      expect(onGithubTrackingEnabledChange).toHaveBeenCalledWith(true);
+
+      const input = screen.getByLabelText("Repository (owner/repo)");
+      fireEvent.change(input, { target: { value: "owner/repo" } });
+      expect(onGithubRepoOverrideChange).toHaveBeenCalledWith("owner/repo");
+    });
+
+    it("shows validation error for invalid repo override", () => {
+      renderTaskForm({
+        githubTrackingEnabled: true,
+        onGithubTrackingEnabledChange: vi.fn(),
+        githubRepoOverride: "invalid repo",
+        onGithubRepoOverrideChange: vi.fn(),
+      });
+
+      expect(screen.getByText("Repository must be in owner/repo format.")).toBeInTheDocument();
     });
   });
 });

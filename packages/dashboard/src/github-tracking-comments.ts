@@ -1,5 +1,6 @@
-import type { Task, TaskStore } from "@fusion/core";
+import type { GlobalSettings, ProjectSettings, Task, TaskStore } from "@fusion/core";
 import { GitHubClient } from "./github.js";
+import { resolveGithubTrackingAuth } from "./github-auth.js";
 
 const COMMENT_MAX_LENGTH = 500;
 
@@ -34,15 +35,13 @@ export function formatTrackingComment(
 
 export class GitHubTrackingCommentService {
   private readonly store: TaskStore;
-  private readonly getGitHubToken: () => string | undefined;
   private readonly onTaskMoved = (event: TaskMovedEvent): void => {
     void this.handleTaskMoved(event);
   };
   private started = false;
 
-  constructor(store: TaskStore, getGitHubToken?: () => string | undefined) {
+  constructor(store: TaskStore) {
     this.store = store;
-    this.getGitHubToken = getGitHubToken ?? (() => process.env.GITHUB_TOKEN);
   }
 
   start(): void {
@@ -88,7 +87,17 @@ export class GitHubTrackingCommentService {
     const body = formatTrackingComment(event.task, event.to);
 
     try {
-      const client = new GitHubClient(this.getGitHubToken());
+      const projectSettings = await this.store.getSettings() as Pick<ProjectSettings, "githubAuthMode" | "githubAuthToken">;
+      const globalSettings = (await this.store.getGlobalSettingsStore?.()?.getSettings?.() ?? {}) as Pick<GlobalSettings, never>;
+      const resolution = resolveGithubTrackingAuth({ projectSettings, globalSettings });
+      if (!resolution.ok) {
+        await this.store.logEntry(event.task.id, "Skipped GitHub tracking comment", resolution.message);
+        return;
+      }
+
+      const client = resolution.auth.mode === "token"
+        ? new GitHubClient({ token: resolution.auth.token, forceMode: "token" })
+        : new GitHubClient({ forceMode: "gh-cli" });
       await client.commentOnIssue(owner, repo, number, body);
       await this.store.logEntry(
         event.task.id,

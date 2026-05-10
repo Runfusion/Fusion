@@ -1374,6 +1374,8 @@ export interface TaskCreateInput {
   nodeId?: string;
   /** Optional explicit user assignment for this task (used during review handoff) */
   assigneeUserId?: string;
+  /** Per-task GitHub issue tracking overrides for Fusion-created linked issues. */
+  githubTracking?: Pick<TaskGithubTracking, "enabled" | "repoOverride">;
   /** Review level for task execution — controls review rigor: 0=None, 1=Plan Only, 2=Plan and Code, 3=Full */
   reviewLevel?: number;
   /** Execution mode for task implementation.

@@ -10,18 +10,30 @@ const { mockCommentOnIssue } = vi.hoisted(() => ({
   mockCommentOnIssue: vi.fn(),
 }));
 
+const { mockResolveGithubTrackingAuth } = vi.hoisted(() => ({
+  mockResolveGithubTrackingAuth: vi.fn(),
+}));
+
 vi.mock("../github.js", () => ({
   GitHubClient: vi.fn().mockImplementation(() => ({
     commentOnIssue: (...args: unknown[]) => mockCommentOnIssue(...args),
   })),
 }));
 
+vi.mock("../github-auth.js", () => ({
+  resolveGithubTrackingAuth: (...args: unknown[]) => mockResolveGithubTrackingAuth(...args),
+}));
+
 class MockStore extends EventEmitter {
   logEntry: Mock;
+  getSettings: Mock;
+  getGlobalSettingsStore: Mock;
 
   constructor() {
     super();
     this.logEntry = vi.fn().mockResolvedValue(undefined);
+    this.getSettings = vi.fn().mockResolvedValue({ githubAuthMode: "token", githubAuthToken: "ghp_test" });
+    this.getGlobalSettingsStore = vi.fn(() => ({ getSettings: vi.fn().mockResolvedValue({}) }));
   }
 }
 
@@ -86,18 +98,11 @@ describe("formatTrackingComment", () => {
 describe("GitHubTrackingCommentService", () => {
   let store: MockStore;
   let service: GitHubTrackingCommentService;
-  let tokenValue: string;
-  let tokenCalls: number;
-
   beforeEach(() => {
     vi.clearAllMocks();
     store = new MockStore();
-    tokenValue = "ghp_test";
-    tokenCalls = 0;
-    service = new GitHubTrackingCommentService(store as unknown as TaskStore, () => {
-      tokenCalls += 1;
-      return tokenValue;
-    });
+    mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
+    service = new GitHubTrackingCommentService(store as unknown as TaskStore);
   });
 
   it("start/stop are idempotent", async () => {
@@ -252,17 +257,14 @@ describe("GitHubTrackingCommentService", () => {
     expect(mockCommentOnIssue).not.toHaveBeenCalled();
   });
 
-  it("invokes token thunk for each call", async () => {
+  it("resolves auth for each call", async () => {
     service.start();
 
-    tokenValue = "ghp_1";
     store.emit("task:moved", { task: createTask(), from: "todo", to: "in-progress" });
-
-    tokenValue = "ghp_2";
     store.emit("task:moved", { task: createTask(), from: "in-progress", to: "done" });
     await flushAsync();
 
     expect(mockCommentOnIssue).toHaveBeenCalledTimes(2);
-    expect(tokenCalls).toBe(2);
+    expect(mockResolveGithubTrackingAuth).toHaveBeenCalledTimes(2);
   });
 });

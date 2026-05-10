@@ -9,6 +9,7 @@ import { Bot } from "lucide-react";
 import { useSetupReadiness } from "../hooks/useSetupReadiness";
 import { SetupWarningBanner } from "./SetupWarningBanner";
 import { TaskForm, type PendingImage } from "./TaskForm";
+import { REPO_OVERRIDE_RE } from "./githubTracking";
 import { useConfirm } from "../hooks/useConfirm";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
@@ -58,6 +59,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   const [reviewLevel, setReviewLevel] = useState<number | undefined>(undefined);
   const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
   const [nodeId, setNodeId] = useState<string | undefined>(undefined);
+  const [githubTrackingEnabled, setGithubTrackingEnabled] = useState(false);
+  const [githubRepoOverride, setGithubRepoOverride] = useState("");
 
   // Agent assignment state
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -158,6 +161,9 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   const truncate = (s: string, len: number) =>
     s.length > len ? s.slice(0, len) + "…" : s;
 
+  const githubRepoOverrideTrimmed = githubRepoOverride.trim();
+  const githubRepoOverrideInvalid = githubRepoOverrideTrimmed.length > 0 && !REPO_OVERRIDE_RE.test(githubRepoOverrideTrimmed);
+
   // Track dirty state
   useEffect(() => {
     const isDirty =
@@ -174,9 +180,11 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       priority !== DEFAULT_TASK_PRIORITY ||
       nodeId !== undefined ||
       branch !== "" ||
-      baseBranch !== "";
+      baseBranch !== "" ||
+      githubTrackingEnabled ||
+      githubRepoOverrideTrimmed !== "";
     setHasDirtyState(isDirty);
-  }, [description, dependencies, pendingImages, executorModel, validatorModel, planningModel, thinkingLevel, selectedWorkflowSteps, selectedAgentId, reviewLevel, priority, nodeId, branch, baseBranch]);
+  }, [description, dependencies, pendingImages, executorModel, validatorModel, planningModel, thinkingLevel, selectedWorkflowSteps, selectedAgentId, reviewLevel, priority, nodeId, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed]);
 
   const handleClose = useCallback(async () => {
     if (hasDirtyState) {
@@ -209,12 +217,14 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setBranch("");
     setBaseBranch("");
     setHasDirtyState(false);
+    setGithubTrackingEnabled(false);
+    setGithubRepoOverride("");
     onClose();
   }, [hasDirtyState, onClose, pendingImages, confirm]);
 
   const handleSubmit = useCallback(async () => {
     const trimmedDesc = description.trim();
-    if (!trimmedDesc || isSubmitting) return;
+    if (!trimmedDesc || isSubmitting || githubRepoOverrideInvalid) return;
 
     setIsSubmitting(true);
     try {
@@ -244,6 +254,14 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
         nodeId,
         branch: branch.trim() === "" ? undefined : branch.trim(),
         baseBranch: baseBranch.trim() === "" ? undefined : baseBranch.trim(),
+        ...(githubTrackingEnabled || githubRepoOverrideTrimmed !== ""
+          ? {
+              githubTracking: {
+                enabled: githubTrackingEnabled,
+                ...(githubRepoOverrideTrimmed !== "" ? { repoOverride: githubRepoOverrideTrimmed } : {}),
+              },
+            }
+          : {}),
       });
 
       // Upload pending images as attachments
@@ -500,6 +518,10 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
             nodeId={nodeId}
             onNodeIdChange={setNodeId}
             nodeOptions={nodes}
+            githubTrackingEnabled={githubTrackingEnabled}
+            onGithubTrackingEnabledChange={setGithubTrackingEnabled}
+            githubRepoOverride={githubRepoOverride}
+            onGithubRepoOverrideChange={setGithubRepoOverride}
             renderBelowPrimary={quickFields}
             hideDependencies={true}
             autoExpandMoreOptionsOnSelection={false}
@@ -514,7 +536,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
           <button
             className="btn btn-primary btn-sm"
             onClick={handleSubmit}
-            disabled={!description.trim() || isSubmitting}
+            disabled={!description.trim() || isSubmitting || githubRepoOverrideInvalid}
           >
             {isSubmitting ? "Creating..." : "Create Task"}
           </button>

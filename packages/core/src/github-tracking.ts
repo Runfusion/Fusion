@@ -1,5 +1,7 @@
 import type { GlobalSettings, ProjectSettings, Task } from "./types.js";
 
+export const REPO_OVERRIDE_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+
 export interface RepoSlug {
   owner: string;
   repo: string;
@@ -32,7 +34,7 @@ export function parseRepoSlug(input: string | undefined | null): RepoSlug | null
 }
 
 export function isValidRepoSlug(input: string): boolean {
-  return parseRepoSlug(input) !== null;
+  return REPO_OVERRIDE_RE.test(input.trim());
 }
 
 export function resolveTaskGithubTracking(

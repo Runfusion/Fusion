@@ -1656,6 +1656,42 @@ describe("PATCH /tasks/:id", () => {
     expect(res.body.error).toContain("sourceIssue.externalIssueId");
   });
 
+  it("forwards githubTracking updates including null issue unlink", async () => {
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({
+      githubTracking: {
+        enabled: true,
+        repoOverride: "runfusion/fusion",
+        issue: null,
+      },
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("KB-001", {
+      githubTracking: {
+        enabled: true,
+        repoOverride: "runfusion/fusion",
+        issue: null,
+      },
+    });
+  });
+
+  it("returns 400 for invalid githubTracking repo override format", async () => {
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({
+      githubTracking: {
+        repoOverride: "invalid repo",
+      },
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("owner/repo");
+  });
+
   it("does not clear model or assignee fields when they are omitted", async () => {
     (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL, title: "New" });
 

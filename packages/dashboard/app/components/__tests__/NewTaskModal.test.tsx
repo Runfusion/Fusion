@@ -28,6 +28,7 @@ vi.mock("../../api", () => ({
     defaultPresetBySize: {},
   }),
   fetchWorkflowSteps: vi.fn().mockResolvedValue([]),
+  fetchGlobalSettings: vi.fn().mockResolvedValue({}),
   fetchAgents: vi.fn().mockResolvedValue([]),
   fetchAuthStatus: vi.fn().mockResolvedValue({ providers: [] }),
   refineText: vi.fn(),
@@ -1065,6 +1066,31 @@ describe("NewTaskModal", () => {
 
       await waitFor(() => {
         expect(screen.getByTestId("new-task-agent-button")).toHaveTextContent("Assign agent");
+      });
+    });
+  });
+
+  describe("GitHub tracking", () => {
+    it("seeds tracking toggle from project settings and submits githubTracking payload", async () => {
+      const { fetchSettings } = await import("../../api");
+      vi.mocked(fetchSettings).mockResolvedValueOnce({
+        modelPresets: [],
+        autoSelectModelPreset: false,
+        defaultPresetBySize: {},
+        githubTrackingEnabledByDefault: true,
+      });
+
+      const { props } = renderNewTaskModal();
+      fireEvent.change(screen.getByRole("textbox"), { target: { value: "Task with tracking" } });
+
+      const toggle = await screen.findByLabelText("Enable GitHub issue tracking for this task");
+      fireEvent.click(toggle);
+
+      fireEvent.change(screen.getByLabelText("Repository (owner/repo)"), { target: { value: "acme/repo" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+      await waitFor(() => {
+        expect(props.onCreateTask).toHaveBeenCalledTimes(1);
       });
     });
   });

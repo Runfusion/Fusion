@@ -6,7 +6,7 @@ import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, Settings, AgentLogEntry, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult } from "@fusion/core";
+import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, Settings, GlobalSettings, AgentLogEntry, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult } from "@fusion/core";
 import {
   COLUMN_LABELS,
   DEFAULT_TASK_PRIORITY,
@@ -17,7 +17,7 @@ import {
   resolveTaskPlanningModel,
   resolveTaskValidatorModel,
 } from "@fusion/core";
-import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent } from "../api";
+import { uploadAttachment, deleteAttachment, updateTask, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import { useAgentLogs } from "../hooks/useAgentLogs";
 import { useConfirm } from "../hooks/useConfirm";
@@ -37,10 +37,12 @@ import { TaskTokenStatsPanel } from "./TaskTokenStatsPanel";
 import { PluginSlot } from "./PluginSlot";
 import { ProviderIcon } from "./ProviderIcon";
 import { subscribeSse } from "../sse-bus";
+import { REPO_OVERRIDE_RE } from "./githubTracking";
 import { usePluginUiSlots } from "../hooks/usePluginUiSlots";
 import { appendTokenQuery } from "../auth";
 import { extractDependencyDeleteConflict } from "../utils/taskDelete";
 import { computeBlockerFanoutMap } from "../hooks/useBlockerFanout";
+import { resolveEffectiveGithubRepoDefault } from "./githubTracking";
 
 interface ModelSelection {
   provider?: string;
@@ -531,6 +533,9 @@ export function TaskDetailContent({
   const [showMoveMenu, setShowMoveMenu] = useState(false);
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const [sourceIssueExpanded, setSourceIssueExpanded] = useState(false);
+  const [githubRepoOverrideDraft, setGithubRepoOverrideDraft] = useState(task.githubTracking?.repoOverride ?? "");
+  const [githubRepoOverrideError, setGithubRepoOverrideError] = useState<string | null>(null);
+  const [isSavingGithubTracking, setIsSavingGithubTracking] = useState(false);
   const moveMenuRef = useRef<HTMLDivElement>(null);
   const moveButtonRef = useRef<HTMLButtonElement>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
@@ -557,6 +562,7 @@ export function TaskDetailContent({
 
   // Merged project settings for effective model resolution in Agent Log header
   const [settings, setSettings] = useState<Settings | undefined>(undefined);
+  const [globalSettings, setGlobalSettings] = useState<GlobalSettings | null>(null);
 
   // Workflow results state
   const [workflowResults, setWorkflowResults] = useState<WorkflowStepResult[]>([]);
@@ -576,8 +582,10 @@ export function TaskDetailContent({
     setEditSourceIssueUrl(task.sourceIssue?.url ?? "");
     setEditExecutionMode(normalizeExecutionModeValue(task.executionMode));
     setSourceIssueExpanded(false);
+    setGithubRepoOverrideDraft(task.githubTracking?.repoOverride ?? "");
+    setGithubRepoOverrideError(null);
     setIsEditing(false);
-  }, [task.id, task.title, task.description, task.branch, task.baseBranch, task.sourceIssue, task.executionMode]);
+  }, [task.id, task.title, task.description, task.branch, task.baseBranch, task.sourceIssue, task.executionMode, task.githubTracking]);
 
   useEffect(() => {
     setWorkflowEnabledSteps(task.enabledWorkflowSteps || []);
@@ -600,6 +608,13 @@ export function TaskDetailContent({
       })
       .catch(() => {
         // Settings fetch failure is non-blocking; fallback to "Using default"
+      });
+    fetchGlobalSettings()
+      .then((nextGlobalSettings) => {
+        if (!cancelled) setGlobalSettings(nextGlobalSettings);
+      })
+      .catch(() => {
+        if (!cancelled) setGlobalSettings(null);
       });
     return () => { cancelled = true; };
   }, [projectId]);
@@ -760,6 +775,50 @@ export function TaskDetailContent({
 
   // Check if task can be edited
   const canEdit = EDITABLE_COLUMNS.has(task.column) && !isSaving;
+  const githubTrackingEnabled = task.githubTracking?.enabled === true;
+  const githubTrackedIssue = task.githubTracking?.issue;
+  const showGithubTrackingSection = githubTrackingEnabled || Boolean(githubTrackedIssue);
+  const effectiveGithubRepoDefault = resolveEffectiveGithubRepoDefault(settings ?? null, globalSettings);
+  const githubRepoOverrideTrimmed = githubRepoOverrideDraft.trim();
+
+  const handleToggleGithubTracking = useCallback(async () => {
+    if (!canEdit || isSavingGithubTracking) return;
+    setIsSavingGithubTracking(true);
+    try {
+      const updatedTask = await updateTask(task.id, {
+        githubTracking: {
+          enabled: !githubTrackingEnabled,
+        },
+      }, projectId);
+      onTaskUpdated?.(updatedTask);
+    } catch (err) {
+      addToast(`Failed to update ${task.id}: ${getErrorMessage(err)}`, "error");
+    } finally {
+      if (mountedRef.current) setIsSavingGithubTracking(false);
+    }
+  }, [addToast, canEdit, githubTrackingEnabled, isSavingGithubTracking, onTaskUpdated, projectId, task.id]);
+
+  const handleSaveGithubRepoOverride = useCallback(async () => {
+    if (!canEdit || isSavingGithubTracking) return;
+    if (githubRepoOverrideTrimmed.length > 0 && !REPO_OVERRIDE_RE.test(githubRepoOverrideTrimmed)) {
+      setGithubRepoOverrideError("Repository override must be in owner/repo format");
+      return;
+    }
+    setGithubRepoOverrideError(null);
+    setIsSavingGithubTracking(true);
+    try {
+      const updatedTask = await updateTask(task.id, {
+        githubTracking: {
+          repoOverride: githubRepoOverrideTrimmed.length > 0 ? githubRepoOverrideTrimmed : null,
+        },
+      }, projectId);
+      onTaskUpdated?.(updatedTask);
+    } catch (err) {
+      addToast(`Failed to update ${task.id}: ${getErrorMessage(err)}`, "error");
+    } finally {
+      if (mountedRef.current) setIsSavingGithubTracking(false);
+    }
+  }, [addToast, canEdit, githubRepoOverrideTrimmed, isSavingGithubTracking, onTaskUpdated, projectId, task.id]);
 
   const enterEditMode = useCallback(() => {
     if (!canEdit) return;
@@ -1055,6 +1114,29 @@ export function TaskDetailContent({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { nodes } = useNodes();
   const { confirm } = useConfirm();
+
+  const handleUnlinkGithubIssue = useCallback(async () => {
+    if (!canEdit || !githubTrackedIssue || isSavingGithubTracking) return;
+    const confirmed = await confirm({
+      title: "Unlink GitHub issue?",
+      body: "This stops Fusion from syncing with the linked GitHub issue. The issue itself will not be modified.",
+      confirmLabel: "Unlink",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+
+    setIsSavingGithubTracking(true);
+    try {
+      const updatedTask = await updateTask(task.id, { githubTracking: { issue: null } }, projectId);
+      onTaskUpdated?.(updatedTask);
+      addToast("GitHub issue unlinked", "success");
+    } catch (err) {
+      addToast(`Failed to update ${task.id}: ${getErrorMessage(err)}`, "error");
+    } finally {
+      if (mountedRef.current) setIsSavingGithubTracking(false);
+    }
+  }, [addToast, canEdit, confirm, githubTrackedIssue, isSavingGithubTracking, onTaskUpdated, projectId, task.id]);
+
   const {
     entries: agentLogEntries,
     loading: agentLogLoading,
@@ -2241,6 +2323,78 @@ export function TaskDetailContent({
                     </dd>
                   </div>
                 </dl>
+              )}
+            </div>
+          )}
+          {showGithubTrackingSection && (
+            <div className="detail-section detail-github-tracking-section">
+              <div className="detail-source-header">
+                <div className="detail-source-summary">
+                  <span className="detail-source-label">GitHub tracking</span>
+                  <span className="detail-source-provider-badge" aria-label="GitHub tracking status">
+                    <GitBranch aria-hidden="true" />
+                    <span>{githubTrackedIssue ? "Linked" : "Pending"}</span>
+                  </span>
+                  {!githubTrackedIssue && <span className="detail-source-empty">Not yet created</span>}
+                </div>
+              </div>
+              {githubTrackedIssue && (
+                <dl className="detail-source-grid detail-github-tracking-grid">
+                  <div>
+                    <dt>Issue</dt>
+                    <dd>
+                      {githubTrackedIssue.url ? (
+                        <a className="detail-source-link" href={githubTrackedIssue.url} target="_blank" rel="noopener noreferrer">
+                          {`${githubTrackedIssue.owner}/${githubTrackedIssue.repo}#${githubTrackedIssue.number}`}
+                        </a>
+                      ) : (
+                        <span>{`${githubTrackedIssue.owner}/${githubTrackedIssue.repo}#${githubTrackedIssue.number}`}</span>
+                      )}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>State</dt>
+                    <dd>
+                      <span className={`detail-github-issue-state ${task.issueInfo?.state === "closed" ? "detail-github-issue-state--closed" : "detail-github-issue-state--open"}`}>
+                        {task.issueInfo?.state ?? "open"}
+                      </span>
+                    </dd>
+                  </div>
+                </dl>
+              )}
+              {canEdit && (
+                <div className="detail-github-tracking-controls">
+                  <label className="checkbox-label" htmlFor="detail-github-tracking-toggle">
+                    <input
+                      id="detail-github-tracking-toggle"
+                      type="checkbox"
+                      checked={githubTrackingEnabled}
+                      disabled={isSavingGithubTracking}
+                      onChange={() => void handleToggleGithubTracking()}
+                    />
+                    Enable GitHub tracking
+                  </label>
+                  <div className="detail-github-tracking-repo-row">
+                    <input
+                      className="input"
+                      value={githubRepoOverrideDraft}
+                      onChange={(event) => {
+                        setGithubRepoOverrideDraft(event.target.value);
+                        setGithubRepoOverrideError(null);
+                      }}
+                      placeholder={effectiveGithubRepoDefault || "owner/repo"}
+                    />
+                    <button className="btn btn-sm" onClick={() => void handleSaveGithubRepoOverride()} disabled={isSavingGithubTracking}>
+                      Save
+                    </button>
+                  </div>
+                  {githubRepoOverrideError && <small className="detail-github-tracking-error">{githubRepoOverrideError}</small>}
+                  {githubTrackedIssue && (
+                    <button className="btn btn-sm touch-target" onClick={() => void handleUnlinkGithubIssue()} disabled={isSavingGithubTracking}>
+                      Unlink GitHub issue
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           )}

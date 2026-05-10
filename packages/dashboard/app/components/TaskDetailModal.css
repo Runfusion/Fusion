@@ -435,6 +435,53 @@
   border-top: 1px solid var(--border);
 }
 
+.detail-github-tracking-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.detail-github-tracking-grid {
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+}
+
+.detail-github-issue-state {
+  font-weight: 600;
+  text-transform: lowercase;
+}
+
+.detail-github-issue-state--open {
+  color: var(--color-success);
+}
+
+.detail-github-issue-state--closed {
+  color: var(--text-muted);
+}
+
+.detail-github-tracking-controls {
+  margin-top: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.detail-github-tracking-repo-row {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.detail-github-tracking-repo-row .input {
+  flex: 1;
+}
+
+.detail-github-tracking-error {
+  color: var(--color-error);
+}
+
 /* Agent Log tab: stretch to fill the remaining modal body height
    so the log viewer uses all available space above the action bar. */
 .detail-section--agent-log {
@@ -1475,6 +1522,11 @@
   .detail-source-grid,
   .detail-source-edit-grid {
     grid-template-columns: 1fr;
+  }
+
+  .detail-github-tracking-repo-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .detail-priority-chip {

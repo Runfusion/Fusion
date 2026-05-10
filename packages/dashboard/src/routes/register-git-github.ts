@@ -1107,17 +1107,11 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     githubIssueCommentService.start();
     ctx.registerDispose(() => githubIssueCommentService.stop());
 
-    const githubTrackingCommentService = new GitHubTrackingCommentService(
-      store,
-      () => ctx.options?.githubToken ?? process.env.GITHUB_TOKEN,
-    );
+    const githubTrackingCommentService = new GitHubTrackingCommentService(store);
     githubTrackingCommentService.start();
     ctx.registerDispose(() => githubTrackingCommentService.stop());
 
-    const githubTrackingStateService = new GitHubTrackingStateService(
-      store,
-      () => ctx.options?.githubToken ?? process.env.GITHUB_TOKEN,
-    );
+    const githubTrackingStateService = new GitHubTrackingStateService(store);
     githubTrackingStateService.start();
     ctx.registerDispose(() => githubTrackingStateService.stop());
   }

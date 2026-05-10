@@ -6,6 +6,7 @@ import {
   VALID_TRANSITIONS,
   buildMeshReplicatedTaskCreatePayload,
   isTaskPriority,
+  REPO_OVERRIDE_RE,
   resolveTitleSummarizerSettingsModel,
   toReplicatedCreateInput,
   validateNodeOverrideChange,
@@ -100,16 +101,15 @@ async function buildDirectTaskReviewData(task: Task, store: TaskStore): Promise<
 async function maybeCreateTaskTrackingIssue(taskStore: TaskStore, task: Task, optionsToken?: string): Promise<void> {
   const projectSettings = await taskStore.getSettings();
   const globalSettings = (await taskStore.getGlobalSettingsStore?.()?.getSettings?.()) ?? {};
-  const authMode = projectSettings.githubAuthMode;
-  const token = authMode === "token"
-    ? projectSettings.githubAuthToken ?? optionsToken
-    : optionsToken;
+  const trackingProjectSettings = {
+    ...projectSettings,
+    githubAuthToken: projectSettings.githubAuthToken ?? optionsToken,
+  };
 
   try {
     await maybeCreateTrackingIssue(task, {
       taskStore,
-      githubClient: new GitHubClient(token),
-      projectSettings,
+      projectSettings: trackingProjectSettings,
       globalSettings,
       logger: console,
     });
@@ -205,6 +205,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         baseBranch,
         branchSelection,
         nodeId,
+        githubTracking,
       } = req.body;
       if (!description || typeof description !== "string") {
         throw badRequest("description is required");
@@ -301,6 +302,28 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const { branch: normalizedBranch, baseBranch: normalizedBaseBranch } =
         resolveBranchSelection(branchSelection, branch, baseBranch);
 
+      let validatedGithubTracking: { enabled?: boolean; repoOverride?: string } | undefined;
+      if (githubTracking !== undefined && githubTracking !== null) {
+        if (typeof githubTracking !== "object") {
+          throw badRequest("githubTracking must be an object");
+        }
+        const candidate = githubTracking as { enabled?: unknown; repoOverride?: unknown };
+        if (candidate.enabled !== undefined && typeof candidate.enabled !== "boolean") {
+          throw badRequest("githubTracking.enabled must be a boolean");
+        }
+        if (candidate.repoOverride !== undefined && typeof candidate.repoOverride !== "string") {
+          throw badRequest("githubTracking.repoOverride must be a string");
+        }
+        const trimmedRepoOverride = typeof candidate.repoOverride === "string" ? candidate.repoOverride.trim() : "";
+        if (trimmedRepoOverride.length > 0 && !REPO_OVERRIDE_RE.test(trimmedRepoOverride)) {
+          throw badRequest("githubTracking.repoOverride must be in 'owner/repo' format");
+        }
+        validatedGithubTracking = {
+          ...(candidate.enabled !== undefined ? { enabled: candidate.enabled } : {}),
+          ...(trimmedRepoOverride.length > 0 ? { repoOverride: trimmedRepoOverride } : {}),
+        };
+      }
+
       const createInput = {
         title,
         description,
@@ -324,6 +347,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         branch: normalizedBranch,
         baseBranch: normalizedBaseBranch,
         ...(typeof nodeId === "string" && nodeId.trim().length > 0 ? { nodeId: nodeId.trim() } : {}),
+        ...(validatedGithubTracking ? { githubTracking: validatedGithubTracking } : {}),
       };
 
       if (typeof scopedStore.createTaskWithReservedId !== "function") {
@@ -1585,7 +1609,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   router.patch("/tasks/:id", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const { title, description, prompt, priority, dependencies, enabledWorkflowSteps, modelProvider, modelId, validatorModelProvider, validatorModelId, planningModelProvider, planningModelId, thinkingLevel, assigneeUserId, reviewLevel, executionMode, sourceIssue, nodeId, branch, baseBranch } = req.body;
+      const { title, description, prompt, priority, dependencies, enabledWorkflowSteps, modelProvider, modelId, validatorModelProvider, validatorModelId, planningModelProvider, planningModelId, thinkingLevel, assigneeUserId, reviewLevel, executionMode, sourceIssue, nodeId, branch, baseBranch, githubTracking } = req.body;
       const hasBodyField = (field: string) => Object.prototype.hasOwnProperty.call(req.body, field);
 
       // Validate model fields are strings or undefined/null
@@ -1710,6 +1734,39 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const normalizedBranch = hasBodyField("branch") ? validatePatchBranchField(branch, "branch") : undefined;
       const normalizedBaseBranch = hasBodyField("baseBranch") ? validatePatchBranchField(baseBranch, "baseBranch") : undefined;
 
+      let validatedGithubTracking: { enabled?: boolean; repoOverride?: string | null; issue?: null } | null | undefined;
+      if (hasBodyField("githubTracking")) {
+        if (githubTracking === null) {
+          validatedGithubTracking = null;
+        } else if (typeof githubTracking !== "object") {
+          throw new Error("githubTracking must be an object or null");
+        } else {
+          const candidate = githubTracking as { enabled?: unknown; repoOverride?: unknown; issue?: unknown };
+          if (candidate.enabled !== undefined && typeof candidate.enabled !== "boolean") {
+            throw new Error("githubTracking.enabled must be a boolean");
+          }
+          if (candidate.repoOverride !== undefined && candidate.repoOverride !== null && typeof candidate.repoOverride !== "string") {
+            throw new Error("githubTracking.repoOverride must be a string or null");
+          }
+          if (typeof candidate.repoOverride === "string") {
+            const trimmed = candidate.repoOverride.trim();
+            if (trimmed.length > 0 && !REPO_OVERRIDE_RE.test(trimmed)) {
+              throw badRequest("githubTracking.repoOverride must be in 'owner/repo' format");
+            }
+          }
+          if (candidate.issue !== undefined && candidate.issue !== null) {
+            throw new Error("githubTracking.issue only supports null for manual unlink");
+          }
+
+          const trimmedRepo = typeof candidate.repoOverride === "string" ? candidate.repoOverride.trim() : candidate.repoOverride;
+          validatedGithubTracking = {
+            ...(candidate.enabled !== undefined ? { enabled: candidate.enabled } : {}),
+            ...(candidate.repoOverride !== undefined ? { repoOverride: typeof trimmedRepo === "string" ? (trimmedRepo.length > 0 ? trimmedRepo : null) : null } : {}),
+            ...(candidate.issue === null ? { issue: null } : {}),
+          };
+        }
+      }
+
       const updates: Parameters<typeof scopedStore.updateTask>[1] = {};
       if (title !== undefined) updates.title = title;
       if (description !== undefined) updates.description = description;
@@ -1731,6 +1788,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (hasBodyField("nodeId")) updates.nodeId = validatedNodeId;
       if (hasBodyField("branch")) updates.branch = normalizedBranch;
       if (hasBodyField("baseBranch")) updates.baseBranch = normalizedBaseBranch;
+      if (hasBodyField("githubTracking")) {
+        (updates as Record<string, unknown>).githubTracking = validatedGithubTracking;
+      }
 
       if (hasBodyField("nodeId") && validatedNodeId !== undefined) {
         const currentTask = await scopedStore.getTask(req.params.id);

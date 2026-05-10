@@ -7,18 +7,30 @@ const { mockSetIssueState } = vi.hoisted(() => ({
   mockSetIssueState: vi.fn(),
 }));
 
+const { mockResolveGithubTrackingAuth } = vi.hoisted(() => ({
+  mockResolveGithubTrackingAuth: vi.fn(),
+}));
+
 vi.mock("../github.js", () => ({
   GitHubClient: vi.fn().mockImplementation(() => ({
     setIssueState: (...args: unknown[]) => mockSetIssueState(...args),
   })),
 }));
 
+vi.mock("../github-auth.js", () => ({
+  resolveGithubTrackingAuth: (...args: unknown[]) => mockResolveGithubTrackingAuth(...args),
+}));
+
 class MockStore extends EventEmitter {
   logEntry: Mock;
+  getSettings: Mock;
+  getGlobalSettingsStore: Mock;
 
   constructor() {
     super();
     this.logEntry = vi.fn().mockResolvedValue(undefined);
+    this.getSettings = vi.fn().mockResolvedValue({ githubAuthMode: "token", githubAuthToken: "ghp_test" });
+    this.getGlobalSettingsStore = vi.fn(() => ({ getSettings: vi.fn().mockResolvedValue({}) }));
   }
 }
 
@@ -74,18 +86,11 @@ describe("decideIssueAction", () => {
 describe("GitHubTrackingStateService", () => {
   let store: MockStore;
   let service: GitHubTrackingStateService;
-  let tokenValue: string;
-  let tokenCalls: number;
-
   beforeEach(() => {
     vi.clearAllMocks();
     store = new MockStore();
-    tokenValue = "ghp_test";
-    tokenCalls = 0;
-    service = new GitHubTrackingStateService(store as unknown as TaskStore, () => {
-      tokenCalls += 1;
-      return tokenValue;
-    });
+    mockResolveGithubTrackingAuth.mockReturnValue({ ok: true, auth: { mode: "token", token: "ghp_test" } });
+    service = new GitHubTrackingStateService(store as unknown as TaskStore);
   });
 
   it("start/stop are idempotent", async () => {
@@ -233,18 +238,15 @@ describe("GitHubTrackingStateService", () => {
     expect(store.logEntry).toHaveBeenCalledWith("FN-1", "Failed to reopen GitHub tracking issue", "reopen failed");
   });
 
-  it("invokes token thunk per call", async () => {
+  it("resolves auth per call", async () => {
     service.start();
 
-    tokenValue = "ghp_1";
     store.emit("task:moved", { task: createTask(), from: "todo", to: "done" });
-
-    tokenValue = "ghp_2";
     store.emit("task:moved", { task: createTask(), from: "done", to: "todo" });
     await flushAsync();
 
     expect(mockSetIssueState).toHaveBeenCalledTimes(2);
-    expect(tokenCalls).toBe(2);
+    expect(mockResolveGithubTrackingAuth).toHaveBeenCalledTimes(2);
   });
 
   it("emits close then reopen in order", async () => {

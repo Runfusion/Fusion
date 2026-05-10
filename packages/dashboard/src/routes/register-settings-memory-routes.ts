@@ -48,6 +48,7 @@ import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
 import { ApiError, badRequest } from "../api-error.js";
+import { resolveGithubTrackingAuth } from "../github-auth.js";
 import { generateRemoteToken, issueRemoteAuthToken, maskRemoteToken } from "../remote-auth.js";
 import { invalidateAllGlobalSettingsCaches } from "../project-store-resolver.js";
 import type { ApiRoutesContext } from "./types.js";
@@ -375,10 +376,20 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettingsFast();
       const prAuthAvailable = (isGhAvailable() && isGhAuthenticated()) || Boolean(githubToken);
+      const trackingAuthResolution = resolveGithubTrackingAuth({
+        projectSettings: {
+          githubAuthMode: settings.githubAuthMode,
+          githubAuthToken: settings.githubAuthToken,
+        },
+        globalSettings: {},
+        env: process.env,
+      });
       // Inject server-side configuration flags
       res.json({
         ...settings,
         prAuthAvailable,
+        trackingAuthAvailable: trackingAuthResolution.ok,
+        trackingAuthReason: trackingAuthResolution.ok ? null : trackingAuthResolution.reason,
       });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -394,7 +405,13 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       // Strip server-owned fields that should never be persisted to config.json.
       // These are computed server-side and injected only on GET /settings.
        
-      const { githubTokenConfigured, prAuthAvailable, ...clientSettings } = req.body;
+      const {
+        githubTokenConfigured,
+        prAuthAvailable,
+        trackingAuthAvailable,
+        trackingAuthReason,
+        ...clientSettings
+      } = req.body;
 
       // Reject global-only fields with a helpful error pointing to the correct endpoint
       const globalKeySet = new Set<string>(GLOBAL_SETTINGS_KEYS);

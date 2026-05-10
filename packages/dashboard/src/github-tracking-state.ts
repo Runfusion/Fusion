@@ -1,5 +1,6 @@
-import type { TaskStore } from "@fusion/core";
+import type { GlobalSettings, ProjectSettings, TaskStore } from "@fusion/core";
 import { GitHubClient } from "./github.js";
+import { resolveGithubTrackingAuth } from "./github-auth.js";
 
 type Column = "triage" | "todo" | "in-progress" | "in-review" | "done" | "archived";
 
@@ -39,15 +40,13 @@ export function decideIssueAction(
 
 export class GitHubTrackingStateService {
   private readonly store: TaskStore;
-  private readonly getGitHubToken: () => string | undefined;
   private readonly onTaskMoved = (event: TaskMovedEvent): void => {
     void this.handleTaskMoved(event);
   };
   private started = false;
 
-  constructor(store: TaskStore, getGitHubToken?: () => string | undefined) {
+  constructor(store: TaskStore) {
     this.store = store;
-    this.getGitHubToken = getGitHubToken ?? (() => process.env.GITHUB_TOKEN);
   }
 
   start(): void {
@@ -87,9 +86,19 @@ export class GitHubTrackingStateService {
       return;
     }
 
-    const client = new GitHubClient(this.getGitHubToken());
-
     try {
+      const projectSettings = await this.store.getSettings() as Pick<ProjectSettings, "githubAuthMode" | "githubAuthToken">;
+      const globalSettings = (await this.store.getGlobalSettingsStore?.()?.getSettings?.() ?? {}) as Pick<GlobalSettings, never>;
+      const resolution = resolveGithubTrackingAuth({ projectSettings, globalSettings });
+      if (!resolution.ok) {
+        await this.store.logEntry(event.task.id, "Skipped GitHub tracking issue state update", resolution.message);
+        return;
+      }
+
+      const client = resolution.auth.mode === "token"
+        ? new GitHubClient({ token: resolution.auth.token, forceMode: "token" })
+        : new GitHubClient({ forceMode: "gh-cli" });
+
       await client.setIssueState(
         owner,
         repo,

@@ -370,21 +370,56 @@ export function isPrMergeReady(input: {
   };
 }
 
+export interface GitHubClientOptions {
+  token?: string;
+  /**
+   * When set, every dual-path method on this client uses ONLY the named transport.
+   * "token" requires a non-empty `token`; "gh-cli" ignores `token` entirely.
+   * When undefined, the legacy opportunistic behavior is preserved.
+   */
+  forceMode?: "token" | "gh-cli";
+}
+
 export class GitHubClient {
   private token: string | undefined;
+  private forceMode: "token" | "gh-cli" | undefined;
   private baseUrl = "https://api.github.com";
   private lastRequestTime = 0;
 
   /**
    * Create a GitHub client.
-   * @param token Optional GitHub token for REST API fallback when gh CLI is unavailable
+   * @param tokenOrOptions Optional token or options for transport behavior
    */
-  constructor(token?: string) {
-    this.token = token;
+  constructor(tokenOrOptions?: string | GitHubClientOptions) {
+    if (typeof tokenOrOptions === "string") {
+      this.token = tokenOrOptions;
+      this.forceMode = undefined;
+      return;
+    }
+
+    this.token = tokenOrOptions?.token;
+    this.forceMode = tokenOrOptions?.forceMode;
   }
 
   private hasGhAuth(): boolean {
     return isGhAvailable() && isGhAuthenticated();
+  }
+
+  private requireToken(): string {
+    const token = this.token?.trim();
+    if (!token) {
+      throw new Error("GitHub client is forced to token mode, but no token is configured.");
+    }
+    return token;
+  }
+
+  private requireGh(): void {
+    if (!isGhAvailable()) {
+      throw new Error(getGhErrorMessage(new Error("gh CLI is not available.")));
+    }
+    if (!isGhAuthenticated()) {
+      throw new Error(getGhErrorMessage(new Error("gh CLI is not authenticated.")));
+    }
   }
 
   private resolveRepo(owner?: string, repo?: string): { owner: string; repo: string } {
@@ -407,6 +442,16 @@ export class GitHubClient {
    * to the REST API. Returns the created PR info.
    */
   async createPr(params: CreatePrParams): Promise<PrInfo> {
+    if (this.forceMode === "gh-cli") {
+      this.requireGh();
+      return this.createPrWithGh(params);
+    }
+
+    if (this.forceMode === "token") {
+      this.requireToken();
+      return this.createPrWithApi(params);
+    }
+
     // Try gh CLI first (preferred for auth handling)
     if (this.hasGhAuth()) {
       try {
@@ -428,6 +473,20 @@ export class GitHubClient {
   }
 
   async createIssue(params: CreateIssueParams): Promise<CreatedIssue> {
+    if (this.forceMode === "gh-cli") {
+      this.requireGh();
+      return this.createIssueWithGh(params);
+    }
+
+    if (this.forceMode === "token") {
+      this.requireToken();
+      try {
+        return await this.createIssueWithApi(params);
+      } catch (error) {
+        throw new Error(`Failed to create GitHub issue in ${params.owner}/${params.repo}`, { cause: error });
+      }
+    }
+
     if (this.hasGhAuth()) {
       try {
         return await this.createIssueWithGh(params);
@@ -1308,7 +1367,23 @@ export class GitHubClient {
   }
 
   async commentOnIssue(owner: string, repo: string, issueNumber: number, body: string): Promise<void> {
-    if (this.hasGhAuth()) {
+    if (this.forceMode === "gh-cli") {
+      this.requireGh();
+      runGh([
+        "issue",
+        "comment",
+        String(issueNumber),
+        "--repo",
+        `${owner}/${repo}`,
+        "--body",
+        body,
+      ]);
+      return;
+    }
+
+    if (this.forceMode === "token") {
+      this.requireToken();
+    } else if (this.hasGhAuth()) {
       try {
         runGh([
           "issue",
@@ -1355,7 +1430,20 @@ export class GitHubClient {
     state: "open" | "closed",
     stateReason?: "completed" | "not_planned" | "reopened",
   ): Promise<void> {
-    if (this.hasGhAuth()) {
+    if (this.forceMode === "gh-cli") {
+      this.requireGh();
+      const command = state === "closed" ? "close" : "reopen";
+      const args = ["issue", command, String(issueNumber), "--repo", `${owner}/${repo}`];
+      if (state === "closed" && (stateReason === "completed" || stateReason === "not_planned")) {
+        args.push("--reason", stateReason);
+      }
+      runGh(args);
+      return;
+    }
+
+    if (this.forceMode === "token") {
+      this.requireToken();
+    } else if (this.hasGhAuth()) {
       try {
         const command = state === "closed" ? "close" : "reopen";
         const args = ["issue", command, String(issueNumber), "--repo", `${owner}/${repo}`];
@@ -1406,6 +1494,16 @@ export class GitHubClient {
     repo: string,
     number: number,
   ): Promise<Omit<import("@fusion/core").IssueInfo, "lastCheckedAt"> | null> {
+    if (this.forceMode === "gh-cli") {
+      this.requireGh();
+      return this.getIssueStatusWithGh(owner, repo, number);
+    }
+
+    if (this.forceMode === "token") {
+      this.requireToken();
+      return this.getIssueStatusWithApi(owner, repo, number);
+    }
+
     if (this.hasGhAuth()) {
       try {
         return await this.getIssueStatusWithGh(owner, repo, number);
@@ -1416,7 +1514,7 @@ export class GitHubClient {
         throw new Error(getGhErrorMessage(err));
       }
     }
-    
+
     if (this.token) {
       return this.getIssueStatusWithApi(owner, repo, number);
     }

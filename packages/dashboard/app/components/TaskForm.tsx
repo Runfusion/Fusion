@@ -1,11 +1,12 @@
 import { useState, useCallback, useEffect, useRef, type ReactNode } from "react";
-import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, type Task, type TaskPriority, type Settings, type WorkflowStep } from "@fusion/core";
+import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, type GlobalSettings, type Task, type TaskPriority, type Settings, type WorkflowStep } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
-import { fetchModels, fetchSettings, fetchWorkflowSteps, refineText, getRefineErrorMessage, updateGlobalSettings, type RefinementType, type ModelInfo, type NodeInfo } from "../api";
+import { fetchModels, fetchSettings, fetchWorkflowSteps, refineText, getRefineErrorMessage, updateGlobalSettings, fetchGlobalSettings, type RefinementType, type ModelInfo, type NodeInfo } from "../api";
 import { applyPresetToSelection, getRecommendedPresetForSize } from "../utils/modelPresets";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { Sparkles, ChevronUp, ChevronDown, X, Maximize2, Minimize2 } from "lucide-react";
+import { REPO_OVERRIDE_RE, resolveEffectiveGithubRepoDefault } from "./githubTracking";
 
 function getNodeStatusLabel(status: NodeInfo["status"]): string {
   if (status === "online") return "Online";
@@ -99,6 +100,10 @@ export interface TaskFormProps {
   onReviewLevelChange?: (value: number | undefined) => void;
   executionMode?: TaskExecutionModeSelection;
   onExecutionModeChange?: (value: TaskExecutionModeSelection) => void;
+  githubTrackingEnabled?: boolean;
+  onGithubTrackingEnabledChange?: (value: boolean) => void;
+  githubRepoOverride?: string;
+  onGithubRepoOverrideChange?: (value: string) => void;
 
   // AI-assisted creation callbacks (create mode only)
   onPlanningMode?: (initialPlan: string) => void;
@@ -168,6 +173,10 @@ export function TaskForm({
   onReviewLevelChange,
   executionMode,
   onExecutionModeChange,
+  githubTrackingEnabled,
+  onGithubTrackingEnabledChange,
+  githubRepoOverride,
+  onGithubRepoOverrideChange,
 }: TaskFormProps) {
   const hasInitialMoreOptions =
     (hideDependencies ? false : dependencies.length > 0) ||
@@ -183,7 +192,9 @@ export function TaskForm({
     executionMode === "fast" ||
     (branch || "") !== "" ||
     (baseBranch || "") !== "" ||
-    (nodeId || "") !== "";
+    (nodeId || "") !== "" ||
+    githubTrackingEnabled === true ||
+    (githubRepoOverride || "") !== "";
 
   const [showDepDropdown, setShowDepDropdown] = useState(false);
   const [showMoreOptions, setShowMoreOptions] = useState(
@@ -195,6 +206,7 @@ export function TaskForm({
   const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [globalSettings, setGlobalSettings] = useState<GlobalSettings | null>(null);
   const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
   const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
 
@@ -233,10 +245,16 @@ export function TaskForm({
     fetchWorkflowSteps(projectId)
       .then((steps) => setWorkflowSteps(steps.filter((s) => s.enabled)))
       .catch(() => setWorkflowSteps([]));
+    fetchGlobalSettings()
+      .then((nextGlobalSettings) => setGlobalSettings(nextGlobalSettings))
+      .catch(() => setGlobalSettings(null));
   }, [isActive, projectId]);
 
   const availablePresets = settings?.modelPresets || [];
   const selectedPreset = availablePresets.find((preset) => preset.id === selectedPresetId);
+  const effectiveGithubRepoDefault = resolveEffectiveGithubRepoDefault(settings, globalSettings);
+  const githubRepoOverrideTrimmed = (githubRepoOverride || "").trim();
+  const githubRepoOverrideInvalid = githubRepoOverrideTrimmed.length > 0 && !REPO_OVERRIDE_RE.test(githubRepoOverrideTrimmed);
   const hasMoreOptionSelections =
     (hideDependencies ? false : dependencies.length > 0) ||
     pendingImages.length > 0 ||
@@ -251,7 +269,9 @@ export function TaskForm({
     executionMode === "fast" ||
     (branch || "") !== "" ||
     (baseBranch || "") !== "" ||
-    (nodeId || "") !== "";
+    (nodeId || "") !== "" ||
+    githubTrackingEnabled === true ||
+    (githubRepoOverride || "") !== "";
 
   // Auto-select preset by size (create mode only)
   useEffect(() => {
@@ -268,6 +288,7 @@ export function TaskForm({
 
   // Auto-select defaultOn workflow steps (create mode, once per activation)
   const defaultOnAppliedRef = useRef(false);
+  const githubTrackingDefaultAppliedRef = useRef(false);
   useEffect(() => {
     if (mode !== "create" || !isActive) return;
     if (defaultOnAppliedRef.current) return;
@@ -286,6 +307,22 @@ export function TaskForm({
   useEffect(() => {
     if (!isActive) {
       defaultOnAppliedRef.current = false;
+    }
+  }, [isActive]);
+
+  useEffect(() => {
+    if (mode !== "create" || !isActive) return;
+    if (!onGithubTrackingEnabledChange) return;
+    if (githubTrackingDefaultAppliedRef.current) return;
+    if (!settings) return;
+
+    onGithubTrackingEnabledChange(settings.githubTrackingEnabledByDefault ?? false);
+    githubTrackingDefaultAppliedRef.current = true;
+  }, [mode, isActive, settings, onGithubTrackingEnabledChange]);
+
+  useEffect(() => {
+    if (!isActive) {
+      githubTrackingDefaultAppliedRef.current = false;
     }
   }, [isActive]);
 
@@ -957,6 +994,43 @@ export function TaskForm({
                 placeholder="e.g. main"
                 disabled={disabled}
               />
+            </>
+          )}
+        </div>
+      )}
+
+      {(onGithubTrackingEnabledChange || onGithubRepoOverrideChange) && (
+        <div className="form-group" data-testid="task-form-github-tracking">
+          <label>GitHub Tracking</label>
+          {onGithubTrackingEnabledChange && (
+            <label className="checkbox-label" htmlFor="task-github-tracking-enabled">
+              <input
+                id="task-github-tracking-enabled"
+                type="checkbox"
+                checked={githubTrackingEnabled === true}
+                onChange={(event) => {
+                  githubTrackingDefaultAppliedRef.current = true;
+                  onGithubTrackingEnabledChange(event.target.checked);
+                }}
+                disabled={disabled}
+              />
+              Enable GitHub issue tracking for this task
+            </label>
+          )}
+          {onGithubRepoOverrideChange && (
+            <>
+              <label htmlFor="task-github-repo-override" className="model-select-label">Repository (owner/repo)</label>
+              <input
+                id="task-github-repo-override"
+                className="input"
+                value={githubRepoOverride || ""}
+                onChange={(event) => onGithubRepoOverrideChange(event.target.value)}
+                placeholder={effectiveGithubRepoDefault || "owner/repo"}
+                disabled={disabled}
+              />
+              {githubRepoOverrideInvalid ? (
+                <div className="form-error">Repository must be in owner/repo format.</div>
+              ) : null}
             </>
           )}
         </div>

@@ -337,6 +337,8 @@ describe("GET /settings", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.prAuthAvailable).toBe(true);
+    expect(res.body.trackingAuthAvailable).toBe(true);
+    expect(res.body.trackingAuthReason).toBeNull();
     expect(res.body.githubTokenConfigured).toBeUndefined();
   });
 
@@ -361,6 +363,8 @@ describe("GET /settings", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.prAuthAvailable).toBe(false);
+    expect(res.body.trackingAuthAvailable).toBe(false);
+    expect(res.body.trackingAuthReason).toBe("gh_not_installed");
     expect(res.body.githubTokenConfigured).toBeUndefined();
   });
 
@@ -551,7 +555,13 @@ describe("PUT /settings", () => {
       buildApp(),
       "PUT",
       "/api/settings",
-      JSON.stringify({ maxConcurrent: 4, githubTokenConfigured: true, prAuthAvailable: true }),
+      JSON.stringify({
+        maxConcurrent: 4,
+        githubTokenConfigured: true,
+        prAuthAvailable: true,
+        trackingAuthAvailable: true,
+        trackingAuthReason: null,
+      }),
       { "Content-Type": "application/json" },
     );
 
@@ -568,7 +578,13 @@ describe("PUT /settings", () => {
       buildApp(),
       "PUT",
       "/api/settings",
-      JSON.stringify({ maxWorktrees: 10, githubTokenConfigured: true, prAuthAvailable: true }),
+      JSON.stringify({
+        maxWorktrees: 10,
+        githubTokenConfigured: true,
+        prAuthAvailable: true,
+        trackingAuthAvailable: false,
+        trackingAuthReason: "token_missing",
+      }),
       { "Content-Type": "application/json" },
     );
 

@@ -2094,4 +2094,162 @@ describe("TaskDetailModal", () => {
       expect(screen.queryByText("Plugin A Tab")).toBeNull();
     });
   });
+
+  describe("github tracking section", () => {
+    it("renders linked issue as link when url exists", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            githubTracking: {
+              enabled: true,
+              issue: {
+                owner: "runfusion",
+                repo: "fusion",
+                number: 123,
+                url: "https://github.com/runfusion/fusion/issues/123",
+                createdAt: "2026-01-01T00:00:00Z",
+              },
+            },
+            issueInfo: { url: "https://github.com/runfusion/fusion/issues/123", number: 123, state: "open", title: "Issue" },
+          })}
+          onClose={noop}
+          onOpenDetail={noopOpenDetail}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText("GitHub tracking")).toBeTruthy();
+      expect(screen.getByRole("link", { name: "runfusion/fusion#123" })).toHaveAttribute("href", "https://github.com/runfusion/fusion/issues/123");
+    });
+
+    it("hides section when tracking is disabled and no issue exists", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ githubTracking: { enabled: false } })}
+          onClose={noop}
+          onOpenDetail={noopOpenDetail}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByText("GitHub tracking")).toBeNull();
+    });
+
+    it("sends githubTracking enabled toggle payload", async () => {
+      const { updateTask } = await import("../../api");
+      const mockUpdate = vi.mocked(updateTask);
+      mockUpdate.mockResolvedValueOnce({ id: "FN-001" } as Task);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            id: "FN-001",
+            column: "todo",
+            githubTracking: {
+              enabled: false,
+              issue: {
+                owner: "runfusion",
+                repo: "fusion",
+                number: 99,
+                url: "https://github.com/runfusion/fusion/issues/99",
+                createdAt: "2026-01-01T00:00:00Z",
+              },
+            },
+          })}
+          onClose={noop}
+          onOpenDetail={noopOpenDetail}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByLabelText("Enable GitHub tracking"));
+      await waitFor(() => {
+        expect(mockUpdate).toHaveBeenCalledWith("FN-001", { githubTracking: { enabled: true } }, undefined);
+      });
+    });
+
+    it("sends repo override updates and null when cleared", async () => {
+      const { updateTask } = await import("../../api");
+      const mockUpdate = vi.mocked(updateTask);
+      mockUpdate.mockResolvedValue({ id: "FN-001" } as Task);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "FN-001", column: "todo", githubTracking: { enabled: true, repoOverride: "runfusion/fusion" } })}
+          onClose={noop}
+          onOpenDetail={noopOpenDetail}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.change(screen.getByPlaceholderText("owner/repo"), { target: { value: "runfusion/cli" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdate).toHaveBeenCalledWith("FN-001", { githubTracking: { repoOverride: "runfusion/cli" } }, undefined);
+      });
+
+      fireEvent.change(screen.getByPlaceholderText("owner/repo"), { target: { value: "   " } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdate).toHaveBeenCalledWith("FN-001", { githubTracking: { repoOverride: null } }, undefined);
+      });
+    });
+
+    it("unlinks issue after confirm and skips on cancel", async () => {
+      const { updateTask } = await import("../../api");
+      const mockUpdate = vi.mocked(updateTask);
+      mockUpdate.mockResolvedValue({ id: "FN-001" } as Task);
+
+      mockConfirm.mockResolvedValueOnce(false);
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            id: "FN-001",
+            column: "todo",
+            githubTracking: {
+              enabled: true,
+              issue: {
+                owner: "runfusion",
+                repo: "fusion",
+                number: 200,
+                url: "https://github.com/runfusion/fusion/issues/200",
+                createdAt: "2026-01-01T00:00:00Z",
+              },
+            },
+          })}
+          onClose={noop}
+          onOpenDetail={noopOpenDetail}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Unlink GitHub issue" }));
+      await waitFor(() => {
+        expect(mockUpdate).not.toHaveBeenCalledWith("FN-001", { githubTracking: { issue: null } }, undefined);
+      });
+
+      mockConfirm.mockResolvedValueOnce(true);
+      fireEvent.click(screen.getByRole("button", { name: "Unlink GitHub issue" }));
+      await waitFor(() => {
+        expect(mockUpdate).toHaveBeenCalledWith("FN-001", { githubTracking: { issue: null } }, undefined);
+      });
+    });
+  });
 });

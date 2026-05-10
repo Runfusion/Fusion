@@ -311,6 +311,7 @@ export function createTask(
     nodeId,
     branch,
     baseBranch,
+    githubTracking,
   } = input;
 
   return proxyApi<Task>(withProjectId("/tasks", projectId), {
@@ -341,6 +342,7 @@ export function createTask(
       nodeId,
       branch,
       baseBranch,
+      githubTracking,
     }),
   });
 }
@@ -367,6 +369,11 @@ export function updateTask(
     nodeId?: string | null;
     branch?: string | null;
     baseBranch?: string | null;
+    githubTracking?: {
+      enabled?: boolean;
+      repoOverride?: string | null;
+      issue?: null;
+    } | null;
   },
   projectId?: string,
 ): Promise<Task> {
