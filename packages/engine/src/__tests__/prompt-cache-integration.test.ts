@@ -7,8 +7,9 @@ describe("cross-session prompt cache integration", () => {
 
   function simulateReviewerSession(sessionIndex: number): SystemPromptLayers {
     return buildPromptLayers({
-      basePrompt: REVIEWER_SYSTEM_PROMPT + MEMORY_INSTRUCTIONS,
+      basePrompt: REVIEWER_SYSTEM_PROMPT,
       agentInstructions: `Session ${sessionIndex}: custom instructions that vary per agent.`,
+      memorySection: MEMORY_INSTRUCTIONS,
       pluginContributions: sessionIndex % 2 === 0
         ? "## Plugin: lint\n\nCheck lint rules."
         : "",
