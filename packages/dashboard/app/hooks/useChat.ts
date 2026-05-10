@@ -661,7 +661,11 @@ export function useChat(
           if (shouldSuppressSuspensionError) {
             console.info("[useChat] Suppressed tab-suspension stream error:", data);
             if (activeSession?.id) {
-              void loadMessages(activeSession.id);
+              if (activeSession.isGenerating) {
+                attachIfGenerating(activeSession.id, activeSession.inFlightGeneration);
+              } else {
+                void loadMessages(activeSession.id);
+              }
             }
           } else {
             addToast?.(errorMessage, "error");
@@ -680,7 +684,7 @@ export function useChat(
 
       streamRef.current = streamChatResponse(activeSession.id, content, handlers, attachments, projectId);
     },
-    [activeSession, projectId, refreshSessions, addToast, loadMessages, visibilitySuspension],
+    [activeSession, projectId, refreshSessions, addToast, loadMessages, attachIfGenerating, visibilitySuspension],
   );
 
   sendMessageRef.current = sendMessage;

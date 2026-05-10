@@ -687,6 +687,63 @@ describe("useChat", () => {
     });
   });
 
+  it("re-attaches suspended stream when session is still generating", async () => {
+    const session = {
+      ...makeSession({ id: "session-001", agentId: "agent-001" }),
+      isGenerating: true,
+      inFlightGeneration: {
+        status: "generating" as const,
+        streamingText: "partial",
+        streamingThinking: "thinking",
+        toolCalls: [],
+        replayFromEventId: 42,
+        updatedAt: "2026-04-08T00:00:00.000Z",
+      },
+    };
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+    const addToast = vi.fn();
+
+    let errorHandler: ((data: string) => void) | undefined;
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      errorHandler = handlers.onError;
+      return { close: vi.fn(), isConnected: () => true };
+    });
+
+    setDocumentVisibilityState("hidden");
+    const { result } = renderHook(() => useChat(undefined, addToast));
+
+    await waitFor(() => {
+      expect(result.current.sessions).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.selectSession("session-001");
+    });
+
+    await waitFor(() => {
+      expect(result.current.activeSession?.id).toBe("session-001");
+    });
+
+    const messageLoadCountBeforeError = mockFetchChatMessages.mock.calls.length;
+
+    act(() => {
+      result.current.sendMessage("Hello!");
+      errorHandler?.("Load failed");
+    });
+
+    await waitFor(() => {
+      expect(addToast).not.toHaveBeenCalledWith("Load failed", "error");
+      expect(mockAttachChatStream).toHaveBeenCalledWith(
+        "session-001",
+        expect.any(Object),
+        undefined,
+        { lastEventId: 42 },
+      );
+      expect(mockFetchChatMessages.mock.calls.length).toBe(messageLoadCountBeforeError);
+    });
+  });
+
   it("shows Load failed toast when tab stays visible", async () => {
     const session = makeSession({ id: "session-001", agentId: "agent-001" });
     mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
