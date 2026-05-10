@@ -109,7 +109,6 @@ export {
   type GhError,
 } from "./gh-cli.js";
 export {
-  REPO_OVERRIDE_RE,
   parseRepoSlug,
   isValidRepoSlug,
   resolveTaskGithubTracking,

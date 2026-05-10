@@ -1,6 +1,6 @@
 import { REPO_OVERRIDE_RE, type GlobalSettings, type ProjectSettings, type Task } from "./types.js";
 
-export const REPO_OVERRIDE_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+export { REPO_OVERRIDE_RE };
 
 export interface RepoSlug {
   owner: string;
