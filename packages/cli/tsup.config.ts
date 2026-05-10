@@ -38,6 +38,8 @@ const roadmapPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-r
 const roadmapPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-roadmap");
 const reportsPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-reports");
 const reportsPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-reports");
+const cliPrintingPressPluginSrc = join(__dirname, "..", "..", "plugins", "fusion-plugin-cli-printing-press");
+const cliPrintingPressPluginDest = join(__dirname, "dist", "plugins", "fusion-plugin-cli-printing-press");
 const dashboardClientStub = `<!doctype html>
 <html lang="en">
   <head>
@@ -246,6 +248,21 @@ export default defineConfig({
     } else {
       console.warn(
         `WARNING: Reports plugin source not found at ${reportsPluginSrc}; bundled auto-install will be unavailable.`,
+      );
+    }
+
+    if (existsSync(cliPrintingPressPluginDest)) {
+      rmSync(cliPrintingPressPluginDest, { recursive: true, force: true });
+    }
+    if (existsSync(cliPrintingPressPluginSrc)) {
+      mkdirSync(cliPrintingPressPluginDest, { recursive: true });
+      cpSync(join(cliPrintingPressPluginSrc, "manifest.json"), join(cliPrintingPressPluginDest, "manifest.json"));
+      cpSync(join(cliPrintingPressPluginSrc, "package.json"), join(cliPrintingPressPluginDest, "package.json"));
+      cpSync(join(cliPrintingPressPluginSrc, "src"), join(cliPrintingPressPluginDest, "src"), { recursive: true });
+      console.log("Copied cli-printing-press plugin to dist/plugins/fusion-plugin-cli-printing-press/");
+    } else {
+      console.warn(
+        `WARNING: cli-printing-press plugin source not found at ${cliPrintingPressPluginSrc}; bundled auto-install will be unavailable.`,
       );
     }
 

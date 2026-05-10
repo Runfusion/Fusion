@@ -15,6 +15,7 @@ export const BUNDLED_PLUGIN_IDS = [
   "fusion-plugin-openclaw-runtime",
   "fusion-plugin-paperclip-runtime",
   "fusion-plugin-cursor-runtime",
+  "fusion-plugin-cli-printing-press",
 ] as const;
 
 export type BundledPluginId = (typeof BUNDLED_PLUGIN_IDS)[number];
