@@ -94,6 +94,7 @@ Fusion task columns:
    - If merge/finalization hits a terminal error, tasks can remain in `in-review` with `status: "failed"` for explicit follow-up. This state is intentionally preserved by recovery (not auto-bounced to `todo`).
    - Retry behavior splits by step completion: `in-review` tasks with incomplete steps (`pending`/`in-progress`) are treated as execution failures and retried back to `todo` with `preserveProgress: true`; `in-review` tasks with all steps `done` are treated as merge/finalization failures and stay in `in-review` with merge retry state reset.
    - Self-healing can still auto-finalize retry-exhausted failed review tasks when it can prove their branch content already landed on the merge target, so already-merged work does not deadlock in `in-review`.
+   - Non-recoverable state-machine errors during finalization (for example `Invalid transition: 'todo' → 'done'`) are treated as terminal review failures: recovery must not re-enqueue these tasks for merge unless task state changes prove they are recoverable.
 5. **done** — merged/finalized
 6. **archived** — preserved history, optionally cleaned from filesystem
 

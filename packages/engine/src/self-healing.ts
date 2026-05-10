@@ -168,6 +168,11 @@ function parseShortstat(output: string): Pick<LandedTaskCommit, "filesChanged" |
   };
 }
 
+function hasTerminalInvalidDoneTransition(task: Pick<Task, "error">): boolean {
+  const error = task.error ?? "";
+  return error.includes("Invalid transition:") && error.includes("→ 'done'");
+}
+
 export class SelfHealingManager {
   // ── Auto-unpause state ──────────────────────────────────────────────
   private unpauseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1181,6 +1186,7 @@ export class SelfHealingManager {
         t.status !== "merging-pr" &&
         Boolean(t.worktree) &&
         t.mergeDetails?.mergeConfirmed !== true &&
+        !hasTerminalInvalidDoneTransition(t) &&
         // Mirror ProjectEngine.canMergeTask retry gate. If retries are already
         // exhausted, re-enqueueing here is a no-op and each recovery log write
         // refreshes updatedAt, preventing cooldown-based retries from ever

@@ -80,6 +80,11 @@ function formatErrorDetails(error: unknown): { message: string; detail: string }
   return { message: detail, detail };
 }
 
+function isInvalidDoneTransitionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Invalid transition:") && message.includes("→ 'done'");
+}
+
 export interface AutomationSubsystemHealth {
   status: "not-initialized" | "initializing" | "ready" | "degraded";
   message: string;
@@ -1265,7 +1270,24 @@ export class ProjectEngine {
                 "Merge already confirmed; completing task (recovered from post-merge state inconsistency)",
               );
               await store.updateTask(taskId, { status: null });
-              await store.moveTask(taskId, "done");
+              try {
+                await store.moveTask(taskId, "done");
+              } catch (error) {
+                if (isInvalidDoneTransitionError(error)) {
+                  const latest = await store.getTask(taskId).catch(() => null);
+                  if (latest && latest.column !== "in-review") {
+                    runtimeLog.warn(
+                      `Auto-merge: ${taskId} merge-confirmed finalize skipped — task moved to ${latest.column} before done transition`,
+                    );
+                    await store.logEntry(
+                      taskId,
+                      `Merge confirmed finalize skipped: task moved to '${latest.column}' before in-review → done transition`,
+                    );
+                    continue;
+                  }
+                }
+                throw error;
+              }
               continue;
             }
 

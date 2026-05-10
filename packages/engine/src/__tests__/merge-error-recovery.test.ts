@@ -35,6 +35,7 @@ type MockTask = {
   mergeRetries: number;
   status: string | null;
   error: string | null;
+  mergeDetails?: { mergeConfirmed?: boolean } | null;
   verificationFailureCount?: number;
   mergeConflictBounceCount?: number;
   branch?: string;
@@ -581,6 +582,35 @@ describe("ProjectEngine merge error recovery", () => {
       error: "remote branch missing",
     });
     expect(hasErrorLog(errorSpy, "after non-conflict error")).toBe(false);
+  });
+
+  it("does not park merge-confirmed tasks as failed when finalize loses in-review ownership", async () => {
+    const store = makeStore({
+      tasks: [
+        makeTask({
+          mergeDetails: { mergeConfirmed: true },
+        }),
+        makeTask({ column: "todo" }),
+      ],
+    });
+    store.moveTask.mockRejectedValueOnce(
+      new Error("Invalid transition: 'todo' → 'done'. Valid targets: in-progress, triage"),
+    );
+
+    const engine = createEngine(store);
+    await runMergeCycle(engine);
+
+    expect(store.moveTask).toHaveBeenCalledWith(TASK_ID, "done");
+    expect(store.updateTask).toHaveBeenCalledWith(TASK_ID, { status: null });
+    expect(store.updateTask).not.toHaveBeenCalledWith(TASK_ID, {
+      status: "failed",
+      mergeRetries: 3,
+      error: expect.stringContaining("Invalid transition"),
+    });
+    expect(store.logEntry).toHaveBeenCalledWith(
+      TASK_ID,
+      expect.stringContaining("finalize skipped"),
+    );
   });
 
   it("logs when non-conflict direct merge error recovery update fails", async () => {
