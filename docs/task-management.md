@@ -376,6 +376,31 @@ Manual/non-auto-merge behavior:
 - If no PR exists, Fusion pushes the task branch to `origin` before creating the PR.
 - When buffered actionable PR feedback exists on a PR that is already merged/closed and the task leaves `in-review`, Fusion creates a dependency-linked follow-up task in `triage` so feedback is not stranded.
 
+## GitHub Tracking Issues
+
+GitHub tracking issues are optional issues Fusion can create from Fusion tasks. They are **not** the same as imported source issues (`issueInfo` / `sourceIssue`): imported issues represent an existing GitHub issue that created the task, while tracking issues are new GitHub issues opened to track a Fusion task.
+
+When task creation runs with tracking enabled, Fusion attempts issue creation during task creation flows (including quick create, planning output, and subtask creation paths that create tasks). Creation is best-effort and non-blocking: task creation still succeeds even if repo resolution fails or GitHub calls fail.
+
+Tracking behavior is controlled per task:
+
+- `task.githubTracking.enabled` turns tracking on for that task.
+- `task.githubTracking.repoOverride` optionally forces a specific target repo (`owner/repo`).
+
+Repository resolution order:
+
+1. Task override: `task.githubTracking.repoOverride`
+2. Project default: `githubTrackingDefaultRepo`
+3. Global default: `githubTrackingDefaultRepo`
+
+When Fusion creates a tracking issue, it uses:
+
+- Title: `[FN-XXXX] Task title`
+- Body prefix: `Fusion task: FN-XXXX`
+- Body content: bounded plain-text task summary snippet (not full prompt content)
+
+GitHub authentication/settings are configured in [Settings Reference](./settings-reference.md) via `githubAuthMode` (`gh-cli` or `token`) and `githubAuthToken`.
+
 ## Completion Modes (`mergeStrategy`)
 
 - **`direct`**: local squash-merge flow into target branch
