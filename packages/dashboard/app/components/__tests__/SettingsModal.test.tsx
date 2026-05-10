@@ -716,6 +716,23 @@ describe("SettingsModal", () => {
     });
   });
 
+  describe("settings header actions", () => {
+    it("renders Help and GitHub star controls with shared header sizing contract class hooks", async () => {
+      renderModal();
+      await waitForSettingsModalReady();
+
+      const headerActions = document.querySelector(".settings-header-actions");
+      expect(headerActions).toBeInTheDocument();
+
+      const starLink = within(headerActions as HTMLElement).getByRole("link", { name: "Star Fusion on GitHub" });
+      const helpLink = within(headerActions as HTMLElement).getByRole("link", { name: "Help and discussions" });
+
+      expect(starLink).toHaveClass("settings-github-star-btn");
+      expect(helpLink).toHaveClass("settings-header-help-btn");
+      expect(helpLink).toHaveClass("btn", "btn-sm");
+    });
+  });
+
   describe("settings version display", () => {
     it("renders the app version from the health endpoint", async () => {
       renderModal();

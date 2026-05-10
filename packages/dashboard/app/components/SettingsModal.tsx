@@ -5880,7 +5880,7 @@ export function SettingsModal({
               href="https://github.com/Runfusion/Fusion/discussions"
               target="_blank"
               rel="noopener noreferrer"
-              className="btn btn-sm"
+              className="btn btn-sm settings-header-help-btn"
               aria-label="Help and discussions"
               title="Help and discussions"
             >

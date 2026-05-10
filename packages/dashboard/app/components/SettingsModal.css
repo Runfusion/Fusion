@@ -4,6 +4,8 @@
 
 /* === Settings Modal header action buttons (Star on GitHub, Help) === */
 .settings-header-actions {
+  --settings-header-action-height: calc(var(--space-md) * 2 + var(--space-xs) / 2);
+
   display: flex;
   align-items: stretch;
   gap: var(--space-xs);
@@ -14,16 +16,26 @@
 /* Keep the GitHub Star and Help buttons at matching heights regardless of
    their differing icon sizes (provider icon 16px vs. HelpCircle 13px). */
 .settings-header-actions > .settings-github-star-btn,
-.settings-header-actions > .btn {
-  height: calc(var(--space-md) * 2 + var(--space-xs) / 2);
+.settings-header-actions > .settings-header-help-btn {
+  height: var(--settings-header-action-height);
   box-sizing: border-box;
+}
+
+.settings-header-help-btn {
+  display: inline-flex;
+  align-items: center;
 }
 
 @media (max-width: 768px) {
   /* Preserve mobile touch targets while keeping visuals compact via icon sizing/padding. */
+  .settings-header-actions {
+    --settings-header-action-height: calc(var(--space-md) * 3);
+  }
+
   .settings-header-actions > .btn-icon,
-  .settings-header-actions > .settings-github-star-btn {
-    min-height: calc(var(--space-md) * 3);
+  .settings-header-actions > .settings-github-star-btn,
+  .settings-header-actions > .settings-header-help-btn {
+    min-height: var(--settings-header-action-height);
   }
 
   .settings-header-actions > .btn-icon {
@@ -32,7 +44,7 @@
 
   .settings-github-star-btn__action,
   .settings-github-star-btn__count {
-    min-height: calc(var(--space-md) * 3);
+    min-height: var(--settings-header-action-height);
   }
 }
 
