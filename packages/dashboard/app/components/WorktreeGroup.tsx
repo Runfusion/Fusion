@@ -3,6 +3,7 @@ import type { Task, TaskDetail } from "@fusion/core";
 import { ClipboardList, GitBranch } from "lucide-react";
 import { TaskCard } from "./TaskCard";
 import type { ToastType } from "../hooks/useToast";
+import type { BlockerFanoutEntry } from "../hooks/useBlockerFanout";
 
 interface WorktreeGroupProps {
   label: string;
@@ -26,6 +27,8 @@ interface WorktreeGroupProps {
   lastFetchTimeMs?: number;
   /** Lookup of workflow step IDs to display names, fetched once at board level. */
   workflowStepNameLookup?: ReadonlyMap<string, string>;
+  /** Precomputed blocker fanout keyed by blocker task ID. */
+  blockerFanoutMap?: ReadonlyMap<string, BlockerFanoutEntry>;
 }
 
 function WorktreeGroupComponent({
@@ -43,6 +46,7 @@ function WorktreeGroupComponent({
   onOpenMission,
   lastFetchTimeMs,
   workflowStepNameLookup,
+  blockerFanoutMap,
 }: WorktreeGroupProps) {
   return (
     <div className="worktree-group">
@@ -53,7 +57,7 @@ function WorktreeGroupComponent({
         <span className="worktree-label">{label}</span>
       </div>
       {activeTasks.map((task) => (
-        <TaskCard key={task.id} task={task} projectId={projectId} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} onUpdateTask={onUpdateTask} onRetryTask={onRetryTask} onOpenDetailWithTab={onOpenDetailWithTab} taskStuckTimeoutMs={taskStuckTimeoutMs} onOpenMission={onOpenMission} lastFetchTimeMs={lastFetchTimeMs} workflowStepNameLookup={workflowStepNameLookup} />
+        <TaskCard key={task.id} task={task} projectId={projectId} onOpenDetail={onOpenDetail} addToast={addToast} globalPaused={globalPaused} onUpdateTask={onUpdateTask} onRetryTask={onRetryTask} onOpenDetailWithTab={onOpenDetailWithTab} taskStuckTimeoutMs={taskStuckTimeoutMs} onOpenMission={onOpenMission} lastFetchTimeMs={lastFetchTimeMs} workflowStepNameLookup={workflowStepNameLookup} fanout={blockerFanoutMap?.get(task.id)} />
       ))}
       {queuedTasks.map((task) => (
         <TaskCard
@@ -71,6 +75,7 @@ function WorktreeGroupComponent({
           onOpenMission={onOpenMission}
           lastFetchTimeMs={lastFetchTimeMs}
           workflowStepNameLookup={workflowStepNameLookup}
+          fanout={blockerFanoutMap?.get(task.id)}
         />
       ))}
     </div>

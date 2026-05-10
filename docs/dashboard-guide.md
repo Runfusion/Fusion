@@ -381,6 +381,18 @@ Inspect task definition, logs, review feedback, comments, documents, workflow ou
 - Review supports a manual **Refresh** action in-place: PR mode pulls latest GitHub review state/decision, while direct mode rehydrates reviewer-agent feedback from persisted task data (no GitHub call).
 - In direct/non-PR auto-merge mode, Review renders normalized reviewer-agent feedback (verdict/step/timestamp/detail) with dedicated loading/error/empty states; it does not require users to read raw agent logs.
 
+### Identifying high-impact blockers
+
+Use the `Blocks N` badge on task cards to spot blockers with high downstream impact:
+
+- `Blocks N` counts active downstream dependents in `triage`, `todo`, `in-progress`, or `in-review`.
+- The badge tooltip shows total active dependents plus how many are currently waiting in `todo`.
+- Open a task to the **Blocking** section in Task Detail to view each downstream dependent and click through quickly.
+- `(stale)` markers mean the dependent is blocked through `blockedBy` and matches stale conditions that `clearStaleBlockedBy` self-healing should clear automatically.
+- Stale `dependencies[]` links are shown for awareness but are not auto-cleared by `clearStaleBlockedBy`.
+
+Recommended workflow: when a blocker has high fan-out, prioritize unblocking first (reassign, split, or resolve immediately) before lower-impact tasks.
+
 ### Logs → Agent Log view
 
 The **Logs** tab includes an **Agent Log** subview designed for debugging long-running and tool-heavy sessions:

@@ -411,7 +411,29 @@
   cursor: default;
 }
 
-.card-scope-badge[data-tooltip]:hover::after {
+.card-fanout-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-xs) / 2);
+  font-size: 0.6875rem;
+  color: var(--color-info);
+  position: relative;
+  cursor: default;
+}
+
+.card-fanout-count {
+  font-family: var(--font-mono);
+}
+
+.card-fanout-badge--stale {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  border-radius: var(--radius-pill);
+  padding-inline: calc(var(--space-xs) / 2);
+}
+
+.card-scope-badge[data-tooltip]:hover::after,
+.card-fanout-badge[data-tooltip]:hover::after {
   content: attr(data-tooltip);
   position: absolute;
   bottom: 100%;

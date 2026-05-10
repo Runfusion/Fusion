@@ -6,6 +6,7 @@ import type { Task } from "@fusion/core";
 // Mock lucide-react to avoid SVG rendering issues in test env
 vi.mock("lucide-react", () => ({
   Link: () => null,
+  GitBranch: () => null,
   Clock: () => null,
   Pencil: () => null,
   Layers: () => null,
@@ -172,6 +173,65 @@ describe("TaskCard", () => {
     );
 
     expect(screen.getByText("paused by agent")).toBeDefined();
+  });
+
+  it("shows plain paused label when pausedByAgentId is not set", () => {
+    render(
+      <TaskCard task={makeTask({ paused: true })} onOpenDetail={noop} addToast={noop} />,
+    );
+
+    expect(screen.getByText("paused")).toBeDefined();
+    expect(screen.queryByText("paused by agent")).toBeNull();
+  });
+
+  it("does not render fan-out badge when fanout is missing or zero", () => {
+    const { container, rerender } = render(
+      <TaskCard task={makeTask({ column: "todo" })} onOpenDetail={noop} addToast={noop} />,
+    );
+
+    expect(container.querySelector(".card-fanout-badge")).toBeNull();
+
+    rerender(
+      <TaskCard
+        task={makeTask({ column: "todo" })}
+        fanout={{ totalCount: 0, activeTodoCount: 0, dependentIds: [], staleBlockedByDependentIds: [] }}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(container.querySelector(".card-fanout-badge")).toBeNull();
+  });
+
+  it("renders fan-out badge with downstream count and tooltip", () => {
+    render(
+      <TaskCard
+        task={makeTask({ column: "in-progress" })}
+        fanout={{ totalCount: 7, activeTodoCount: 4, dependentIds: ["FN-002"], staleBlockedByDependentIds: [] }}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const badge = screen.getByText("Blocks").closest(".card-fanout-badge") as HTMLElement;
+    expect(badge).not.toBeNull();
+    expect(badge.textContent).toContain("Blocks 7");
+    expect(badge.getAttribute("data-tooltip")).toBe("Blocking 7 task(s); 4 waiting in todo");
+  });
+
+  it("applies stale fan-out modifier when stale blockedBy dependents exist", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({ column: "in-progress" })}
+        fanout={{ totalCount: 3, activeTodoCount: 1, dependentIds: ["FN-003"], staleBlockedByDependentIds: ["FN-003"] }}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const badge = container.querySelector(".card-fanout-badge") as HTMLElement;
+    expect(badge.className).toContain("card-fanout-badge--stale");
+    expect(badge.textContent).toContain("(1 stale)");
   });
 
   it("shows plain paused label when pausedByAgentId is not set", () => {

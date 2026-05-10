@@ -40,6 +40,7 @@ import { subscribeSse } from "../sse-bus";
 import { usePluginUiSlots } from "../hooks/usePluginUiSlots";
 import { appendTokenQuery } from "../auth";
 import { extractDependencyDeleteConflict } from "../utils/taskDelete";
+import { computeBlockerFanoutMap } from "../hooks/useBlockerFanout";
 
 interface ModelSelection {
   provider?: string;
@@ -1579,6 +1580,21 @@ export function TaskDetailContent({
       return bNum - aNum;
     });
 
+  const blockerFanoutMap = useMemo(() => computeBlockerFanoutMap(tasks), [tasks]);
+  const blockingEntry = blockerFanoutMap.get(task.id);
+  const blockingDependents = useMemo(() => {
+    if (!blockingEntry) return [] as Array<{ id: string; label: string; stale: boolean }>;
+    const staleSet = new Set(blockingEntry.staleBlockedByDependentIds);
+    return blockingEntry.dependentIds.map((dependentId) => {
+      const dependentTask = tasks.find((candidate) => candidate.id === dependentId);
+      return {
+        id: dependentId,
+        label: dependentTask?.title || dependentTask?.description || dependentId,
+        stale: staleSet.has(dependentId),
+      };
+    });
+  }, [blockingEntry, tasks]);
+
   const assignedAgentLabel = assignedAgent?.name ?? task.assignedAgentId ?? null;
   const detailProviders = useMemo(() => {
     const providers: string[] = [];
@@ -2537,6 +2553,43 @@ export function TaskDetailContent({
                 );
               })()}
             </div>
+          </div>
+          <div className="detail-deps detail-blocking">
+            <h4>Blocking</h4>
+            {blockingDependents.length > 0 ? (
+              <ul className="detail-dep-list">
+                {blockingDependents.map((dependent) => (
+                  <li key={dependent.id} className="detail-dep-item">
+                    <span
+                      className="detail-dep-link"
+                      onClick={() => handleDepClick(dependent.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          handleDepClick(dependent.id);
+                        }
+                      }}
+                      role="link"
+                      tabIndex={0}
+                      title={`Click to view ${dependent.id}`}
+                    >
+                      <span className="detail-dep-id">{dependent.id}</span>
+                      <span className="detail-dep-label">{truncate(dependent.label, 40)}</span>
+                    </span>
+                    {dependent.stale && (
+                      <span
+                        className="detail-blocking-item--stale"
+                        title="Stale blockedBy edge: self-healing clearStaleBlockedBy should clear this automatically"
+                      >
+                        (stale)
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="detail-empty-inline">(no downstream tasks blocked)</div>
+            )}
           </div>
           {/* PR Section - only for in-review tasks */}
           {task.column === "in-review" && (

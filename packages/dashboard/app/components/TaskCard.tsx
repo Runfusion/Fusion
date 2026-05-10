@@ -1,6 +1,6 @@
 import "./TaskCard.css";
 import { memo, useCallback, useState, useRef, useEffect, useMemo } from "react";
-import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap } from "lucide-react";
+import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch } from "lucide-react";
 import type { Task, TaskDetail, Column, PrInfo, IssueInfo, TaskPriority } from "@fusion/core";
 import { COLUMN_LABELS, DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, VALID_TRANSITIONS, getErrorMessage } from "@fusion/core";
 import { fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent } from "../api";
@@ -17,6 +17,7 @@ import { getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseT
 import type { ToastType } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
 import { extractDependencyDeleteConflict } from "../utils/taskDelete";
+import type { BlockerFanoutEntry } from "../hooks/useBlockerFanout";
 
 // ── Mission title caching ───────────────────────────────────────────────────
 
@@ -277,6 +278,8 @@ interface TaskCardProps {
   workflowStepNameLookup?: ReadonlyMap<string, string>;
   /** Disable card drag semantics when embedding in custom draggable containers (e.g. dependency graph). */
   disableDrag?: boolean;
+  /** Downstream fan-out entry for this task, computed at board-level. */
+  fanout?: BlockerFanoutEntry;
 }
 
 function areTaskBadgeInfosEqual(
@@ -401,6 +404,10 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.onMoveTask === next.onMoveTask &&
     previous.workflowStepNameLookup === next.workflowStepNameLookup &&
     previous.disableDrag === next.disableDrag &&
+    previous.fanout?.totalCount === next.fanout?.totalCount &&
+    previous.fanout?.activeTodoCount === next.fanout?.activeTodoCount &&
+    areTaskDependenciesEqual(previous.fanout?.dependentIds ?? [], next.fanout?.dependentIds ?? []) &&
+    areTaskDependenciesEqual(previous.fanout?.staleBlockedByDependentIds ?? [], next.fanout?.staleBlockedByDependentIds ?? []) &&
     previousTask.id === nextTask.id &&
     previousTask.title === nextTask.title &&
     previousTask.description === nextTask.description &&
@@ -465,6 +472,7 @@ function TaskCardComponent({
   lastFetchTimeMs,
   workflowStepNameLookup,
   disableDrag,
+  fanout,
 }: TaskCardProps) {
   const [dragging, setDragging] = useState(false);
   const [fileDragOver, setFileDragOver] = useState(false);
@@ -1609,7 +1617,7 @@ function TaskCardComponent({
           )}
         </div>
       )}
-      {((task.dependencies && task.dependencies.length > 0) || queued || task.status === "queued" || task.blockedBy) && (
+      {((task.dependencies && task.dependencies.length > 0) || queued || task.status === "queued" || task.blockedBy || (fanout && fanout.totalCount > 0)) && (
         <div className="card-meta">
           {task.dependencies && task.dependencies.length > 0 && (
             <div className="card-dep-list">
@@ -1628,6 +1636,18 @@ function TaskCardComponent({
           {task.blockedBy && (
             <span className="card-scope-badge" data-tooltip={`Blocked by ${task.blockedBy} (file overlap)`}>
               <Layers size={12} style={{ verticalAlign: "middle" }} /> {task.blockedBy}
+            </span>
+          )}
+          {fanout && fanout.totalCount > 0 && (
+            <span
+              className={`card-fanout-badge${fanout.staleBlockedByDependentIds.length > 0 ? " card-fanout-badge--stale" : ""}`}
+              data-tooltip={`Blocking ${fanout.totalCount} task(s); ${fanout.activeTodoCount} waiting in todo`}
+            >
+              <GitBranch size={12} style={{ verticalAlign: "middle" }} />
+              <span>
+                Blocks <span className="card-fanout-count">{fanout.totalCount}</span>
+                {fanout.staleBlockedByDependentIds.length > 0 ? ` (${fanout.staleBlockedByDependentIds.length} stale)` : ""}
+              </span>
             </span>
           )}
           {(queued || task.status === "queued") && task.column !== "in-progress" && <span className="queued-badge"><Clock size={12} style={{ verticalAlign: "middle" }} /> Queued</span>}

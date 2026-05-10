@@ -6,6 +6,7 @@ import type { ToastType } from "../hooks/useToast";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useBatchBadgeFetch } from "../hooks/useBatchBadgeFetch";
 import { fetchWorkflowSteps, type ModelInfo } from "../api";
+import { useBlockerFanout } from "../hooks/useBlockerFanout";
 
 interface BoardProps {
   tasks: Task[];
@@ -76,6 +77,7 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
   const { fetchBatch } = useBatchBadgeFetch(projectId);
   const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [workflowStepNameLookup, setWorkflowStepNameLookup] = useState<ReadonlyMap<string, string>>(EMPTY_WORKFLOW_STEP_NAME_LOOKUP);
+  const blockerFanoutMap = useBlockerFanout(tasks);
   // Normalized search-active signal: trimmed and non-empty
   const isSearchActive = searchQuery.trim() !== "";
   const tasksByColumnCacheRef = useRef<Record<ColumnType, Task[]>>({
@@ -222,6 +224,7 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
             onOpenMission={onOpenMission}
             lastFetchTimeMs={lastFetchTimeMs}
             workflowStepNameLookup={workflowStepNameLookup}
+            blockerFanoutMap={blockerFanoutMap}
             {...(col === "triage" ? { onQuickCreate, onNewTask, onPlanningMode, onSubtaskBreakdown } : {})}
             {...(col === "in-review" ? { autoMerge, onToggleAutoMerge } : {})}
             {...(col === "done" ? { onArchiveAllDone } : {})}

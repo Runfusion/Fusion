@@ -725,5 +725,32 @@ describe("TaskDetailModal", () => {
     });
   });
 
+  describe("blocking section", () => {
+    it("renders downstream dependents and stale annotations", () => {
+      const tasks = [
+        makeTask({ id: "FN-099", title: "Blocker", column: "done" as Column }),
+        makeTask({ id: "FN-100", title: "Todo dependent", column: "todo" as Column, dependencies: ["FN-099"] }),
+        makeTask({ id: "FN-101", title: "Stale blockedBy dependent", column: "todo" as Column, blockedBy: "FN-099" }),
+      ];
+
+      const { container } = render(
+        <TaskDetailModal
+          task={tasks[0]}
+          tasks={tasks}
+          onOpenDetail={noopOpenDetail}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.getByText("Blocking")).toBeTruthy();
+      expect(container.textContent).toContain("FN-100");
+      expect(container.textContent).toContain("FN-101");
+      expect(container.querySelector(".detail-blocking-item--stale")?.textContent).toBe("(stale)");
+    });
+  });
 
 });

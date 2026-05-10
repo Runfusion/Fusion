@@ -522,6 +522,11 @@
   position: relative;
 }
 
+.detail-blocking-item--stale {
+  color: var(--color-warning);
+  font-size: 0.75rem;
+}
+
 .modal-actions-spacer {
   flex: 1;
 }
