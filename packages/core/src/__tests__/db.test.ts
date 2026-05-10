@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
 import {
   Database,
   createDatabase,
@@ -25,6 +25,12 @@ function makeTmpDir(): string {
   createdTmpDirs.add(dir);
   return dir;
 }
+
+afterAll(async () => {
+  const cleanup = Array.from(createdTmpDirs);
+  createdTmpDirs.clear();
+  await Promise.all(cleanup.map((dir) => rm(dir, { recursive: true, force: true })));
+});
 
 describe("Database", () => {
   let tmpDir: string;
