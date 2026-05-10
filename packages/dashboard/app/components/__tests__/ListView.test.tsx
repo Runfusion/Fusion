@@ -2391,7 +2391,7 @@ describe("ListView - Bulk Selection", () => {
     fireEvent.click(checkbox);
     expect(screen.getByText("1 selected")).toBeDefined();
 
-    const clearButton = screen.getByRole("button", { name: /selected/i });
+    const clearButton = screen.getByRole("button", { name: /^1 selected$/i });
     fireEvent.click(clearButton);
 
     expect(screen.queryByText("1 selected")).toBeNull();
@@ -2408,7 +2408,7 @@ describe("ListView - Bulk Selection", () => {
     const selectAllCheckbox = screen.getByLabelText("Select all visible tasks");
     fireEvent.click(selectAllCheckbox);
 
-    expect(screen.getByRole("button", { name: /selected/i })).toBeDefined();
+    expect(screen.getByRole("button", { name: /^2 selected$/i })).toBeDefined();
   });
 
   it("accepts favoriteProviders and favoriteModels props", () => {
@@ -2486,6 +2486,112 @@ describe("ListView - Bulk Selection", () => {
 
     const applyButton = screen.getByText("Apply");
     expect(applyButton).toBeDisabled();
+  });
+
+  describe("bulk delete", () => {
+    it("deletes selected tasks and clears selection on success", async () => {
+      const user = userEvent.setup();
+      const tasks = [createMockTask({ id: "FN-001" }), createMockTask({ id: "FN-002" })];
+      const onDeleteTask = vi.fn(async () => createMockTask());
+      mockConfirm.mockResolvedValueOnce(true);
+
+      renderListView({ tasks, onDeleteTask });
+      enterBulkEditMode();
+      await user.click(screen.getByLabelText("Select FN-001"));
+      await user.click(screen.getByLabelText("Select FN-002"));
+      await user.click(screen.getByRole("button", { name: /delete selected/i }));
+
+      await waitFor(() => {
+        expect(onDeleteTask).toHaveBeenCalledTimes(2);
+        expect(onDeleteTask).toHaveBeenNthCalledWith(1, "FN-001");
+        expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-002");
+      });
+      expect(mockAddToast).toHaveBeenCalledWith("Deleted 2 tasks · 0 archived skipped · 0 failed", "success");
+      expect(screen.queryByText("2 selected")).toBeNull();
+    });
+
+    it("skips archived tasks and reports summary", async () => {
+      const user = userEvent.setup();
+      const tasks = [createMockTask({ id: "FN-001", column: "todo" }), createMockTask({ id: "FN-002", column: "archived" })];
+      const onDeleteTask = vi.fn(async () => createMockTask());
+      mockConfirm.mockResolvedValueOnce(true);
+      localStorage.setItem(scopedStorageKey("kb-dashboard-selected-tasks"), JSON.stringify(["FN-001", "FN-002"]));
+
+      renderListView({ tasks, onDeleteTask });
+      enterBulkEditMode();
+      await user.click(screen.getByRole("button", { name: /delete selected/i }));
+
+      await waitFor(() => {
+        expect(onDeleteTask).toHaveBeenCalledTimes(1);
+        expect(onDeleteTask).toHaveBeenCalledWith("FN-001");
+      });
+      expect(mockAddToast).toHaveBeenCalledWith("Deleted 1 task · 1 archived skipped · 0 failed", "success");
+      expect(screen.getByText("1 selected")).toBeInTheDocument();
+    });
+
+    it("does nothing when delete confirm is cancelled", async () => {
+      const user = userEvent.setup();
+      const tasks = [createMockTask({ id: "FN-001" })];
+      const onDeleteTask = vi.fn(async () => createMockTask());
+      mockConfirm.mockResolvedValueOnce(false);
+
+      renderListView({ tasks, onDeleteTask });
+      enterBulkEditMode();
+      await user.click(screen.getByLabelText("Select FN-001"));
+      await user.click(screen.getByRole("button", { name: /delete selected/i }));
+
+      await waitFor(() => {
+        expect(mockConfirm).toHaveBeenCalledTimes(1);
+      });
+      expect(onDeleteTask).not.toHaveBeenCalled();
+    });
+
+    it("force deletes when dependency conflict is confirmed", async () => {
+      const user = userEvent.setup();
+      const tasks = [createMockTask({ id: "FN-001" })];
+      const conflictError = Object.assign(new Error("dependency conflict"), {
+        details: { code: "TASK_HAS_DEPENDENTS", dependentIds: ["FN-100"] },
+      });
+      const onDeleteTask = vi
+        .fn<(...args: [string, { removeDependencyReferences?: boolean }?]) => Promise<Task>>()
+        .mockRejectedValueOnce(conflictError)
+        .mockResolvedValueOnce(createMockTask());
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+
+      renderListView({ tasks, onDeleteTask });
+      enterBulkEditMode();
+      await user.click(screen.getByLabelText("Select FN-001"));
+      await user.click(screen.getByRole("button", { name: /delete selected/i }));
+
+      await waitFor(() => {
+        expect(onDeleteTask).toHaveBeenCalledTimes(2);
+      });
+      expect(onDeleteTask).toHaveBeenNthCalledWith(1, "FN-001");
+      expect(onDeleteTask).toHaveBeenNthCalledWith(2, "FN-001", { removeDependencyReferences: true });
+      expect(mockAddToast).toHaveBeenCalledWith("Deleted 1 task · 0 archived skipped · 0 failed", "success");
+    });
+
+    it("marks failure when force delete is declined", async () => {
+      const user = userEvent.setup();
+      const tasks = [createMockTask({ id: "FN-001" })];
+      const conflictError = Object.assign(new Error("dependency conflict"), {
+        details: { code: "TASK_HAS_DEPENDENTS", dependentIds: ["FN-100"] },
+      });
+      const onDeleteTask = vi.fn(async () => {
+        throw conflictError;
+      });
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+      renderListView({ tasks, onDeleteTask });
+      enterBulkEditMode();
+      await user.click(screen.getByLabelText("Select FN-001"));
+      await user.click(screen.getByRole("button", { name: /delete selected/i }));
+
+      await waitFor(() => {
+        expect(onDeleteTask).toHaveBeenCalledTimes(1);
+      });
+      expect(mockAddToast).toHaveBeenCalledWith("Deleted 0 tasks · 0 archived skipped · 1 failed", "error");
+    });
   });
 
   it("persists selection to localStorage", () => {

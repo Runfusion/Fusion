@@ -39,6 +39,7 @@ import { ProviderIcon } from "./ProviderIcon";
 import { subscribeSse } from "../sse-bus";
 import { usePluginUiSlots } from "../hooks/usePluginUiSlots";
 import { appendTokenQuery } from "../auth";
+import { extractDependencyDeleteConflict } from "../utils/taskDelete";
 
 interface ModelSelection {
   provider?: string;
@@ -255,24 +256,6 @@ export type TaskDetailContentProps = Omit<TaskDetailModalProps, "onClose"> & {
   embedded?: boolean;
   onRequestClose?: () => void;
 };
-
-function extractDependencyDeleteConflict(err: unknown): { dependentIds: string[] } | null {
-  if (!(err instanceof Error)) {
-    return null;
-  }
-
-  const details = (err as { details?: { code?: string; dependentIds?: unknown } }).details;
-  if (details?.code === "TASK_HAS_DEPENDENTS" && Array.isArray(details.dependentIds)) {
-    return { dependentIds: details.dependentIds.filter((id): id is string => typeof id === "string") };
-  }
-
-  const idsInMessage = err.message.match(/[A-Z]+-\d+/g) ?? [];
-  if (idsInMessage.length > 1) {
-    return { dependentIds: [...new Set(idsInMessage.slice(1))] };
-  }
-
-  return null;
-}
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "…" : s;

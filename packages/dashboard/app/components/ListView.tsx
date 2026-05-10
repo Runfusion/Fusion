@@ -1,6 +1,6 @@
 import "./ListView.css";
 import { useState, useCallback, useMemo, Fragment, useEffect, useRef } from "react";
-import { ArrowUpDown, ArrowUp, ArrowDown, Link, Columns3, EyeOff, Eye, ChevronRight, Zap } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, Link, Columns3, EyeOff, Eye, ChevronRight, Zap, Trash2 } from "lucide-react";
 import type { Task, TaskDetail, Column, TaskCreateInput, MergeResult } from "@fusion/core";
 import { COLUMN_LABELS, COLUMNS, DEFAULT_COLUMN, getErrorMessage, isColumn } from "@fusion/core";
 import { sortTasksForDisplayColumn } from "./taskSorting";
@@ -16,6 +16,7 @@ import { useViewportMode } from "../hooks/useViewportMode";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
 import { getUnifiedTaskProgress } from "../utils/taskProgress";
 import { useConfirm } from "../hooks/useConfirm";
+import { extractDependencyDeleteConflict } from "../utils/taskDelete";
 
 const COLUMN_COLOR_MAP: Record<Column, string> = {
   triage: "var(--triage)",
@@ -643,6 +644,88 @@ export function ListView({
   }, [selectedTaskIds.size]);
 
   // Handle apply bulk model update
+  const handleBulkDelete = useCallback(async () => {
+    if (selectedTaskIds.size === 0) return;
+
+    const selectedTasks = Array.from(selectedTaskIds)
+      .map((id) => tasks.find((task) => task.id === id))
+      .filter((task): task is Task => Boolean(task));
+    const archivedTasks = selectedTasks.filter((task) => task.column === "archived");
+    const deletableTasks = selectedTasks.filter((task) => task.column !== "archived");
+
+    if (deletableTasks.length === 0) {
+      addToast("No selected tasks can be deleted (archived tasks are excluded)", "error");
+      return;
+    }
+
+    const confirmed = await confirm({
+      title: "Delete Selected Tasks",
+      message: `Delete ${deletableTasks.length} selected task${deletableTasks.length === 1 ? "" : "s"}?`,
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
+
+    if (!confirmed) return;
+
+    setIsApplying(true);
+    const deletedIds: string[] = [];
+    const failedIds: string[] = [];
+    const skippedIds = archivedTasks.map((task) => task.id);
+
+    try {
+      for (const task of deletableTasks) {
+        try {
+          await onDeleteTask(task.id);
+          deletedIds.push(task.id);
+        } catch (err) {
+          const conflict = extractDependencyDeleteConflict(err);
+          if (!conflict) {
+            failedIds.push(task.id);
+            continue;
+          }
+
+          const forceDelete = await confirm({
+            title: "Force Delete Task",
+            message: `Task ${task.id} has dependents: ${conflict.dependentIds.join(", ")}. Remove dependency references and force delete?`,
+            confirmLabel: "Force Delete",
+            cancelLabel: "Skip",
+            danger: true,
+          });
+
+          if (!forceDelete) {
+            failedIds.push(task.id);
+            continue;
+          }
+
+          try {
+            await onDeleteTask(task.id, { removeDependencyReferences: true });
+            deletedIds.push(task.id);
+          } catch {
+            failedIds.push(task.id);
+          }
+        }
+      }
+    } finally {
+      setIsApplying(false);
+    }
+
+    if (deletedIds.length > 0) {
+      setSelectedTaskIds((previous) => {
+        const next = new Set(previous);
+        for (const id of deletedIds) {
+          next.delete(id);
+        }
+        return next;
+      });
+    }
+
+    addToast(
+      `Deleted ${deletedIds.length} task${deletedIds.length === 1 ? "" : "s"} · ${skippedIds.length} archived skipped · ${failedIds.length} failed`,
+      failedIds.length > 0 ? "error" : "success",
+    );
+  }, [addToast, confirm, onDeleteTask, selectedTaskIds, tasks]);
+
   const handleApplyBulkUpdate = useCallback(async () => {
     if (selectedTaskIds.size === 0) return;
 
@@ -1098,64 +1181,74 @@ export function ListView({
                   View options
                 </button>
                 {viewOptionsOpen && renderViewOptionsPanel("list-view-options-panel")}
-                {bulkEditEnabled && selectedTaskIds.size > 0 && availableModels && availableModels.length > 0 && (
-                  <div className="bulk-edit-toolbar">
-                    <span className="bulk-edit-label">Bulk Edit Models &amp; Node:</span>
-                    <div className="bulk-edit-dropdown">
-                      <CustomModelDropdown
-                        models={availableModels}
-                        value={executorModel}
-                        onChange={setExecutorModel}
-                        label="Executor Model"
-                        noChangeValue="__no_change__"
-                        noChangeLabel="No change"
-                        favoriteProviders={favoriteProviders}
-                        onToggleFavorite={onToggleFavorite}
-                        favoriteModels={favoriteModels}
-                        onToggleModelFavorite={onToggleModelFavorite}
-                      />
+                {bulkEditEnabled && selectedTaskIds.size > 0 ? (
+                  <>
+                    <div className="bulk-edit-toolbar">
+                      <button className="btn btn-danger btn-sm" onClick={handleBulkDelete} disabled={isApplying}>
+                        <Trash2 size={14} />
+                        Delete selected
+                      </button>
                     </div>
-                    <div className="bulk-edit-dropdown">
-                      <CustomModelDropdown
-                        models={availableModels}
-                        value={validatorModel}
-                        onChange={setValidatorModel}
-                        label="Reviewer Model"
-                        noChangeValue="__no_change__"
-                        noChangeLabel="No change"
-                        favoriteProviders={favoriteProviders}
-                        onToggleFavorite={onToggleFavorite}
-                        favoriteModels={favoriteModels}
-                        onToggleModelFavorite={onToggleModelFavorite}
-                      />
-                    </div>
-                    <div className="bulk-edit-dropdown bulk-edit-node-wrap">
-                      <select
-                        className="select bulk-node-select"
-                        value={nodeOverride}
-                        onChange={(e) => setNodeOverride(e.target.value)}
-                        aria-label="Node Override"
-                        disabled={isLoadingNodes}
-                      >
-                        <option value="__no_change__">No change</option>
-                        <option value="">Use project default</option>
-                        {availableNodes.map((node) => (
-                          <option key={node.id} value={node.id}>
-                            {`${getNodeStatusSymbol(node.status)} ${node.name || node.id} (${getNodeStatusLabel(node.status)})`}
-                          </option>
-                        ))}
-                      </select>
-                      {selectedOverrideNode ? <NodeHealthDot status={selectedOverrideNode.status} showLabel /> : null}
-                    </div>
-                    <button
-                      className="btn btn-primary btn-sm bulk-edit-apply-btn"
-                      onClick={handleApplyBulkUpdate}
-                      disabled={isApplying || (executorModel === "__no_change__" && validatorModel === "__no_change__" && nodeOverride === "__no_change__")}
-                    >
-                      {isApplying ? "Applying..." : "Apply"}
-                    </button>
-                  </div>
-                )}
+                    {availableModels && availableModels.length > 0 ? (
+                      <div className="bulk-edit-toolbar">
+                        <span className="bulk-edit-label">Bulk Edit Models &amp; Node:</span>
+                        <div className="bulk-edit-dropdown">
+                          <CustomModelDropdown
+                            models={availableModels}
+                            value={executorModel}
+                            onChange={setExecutorModel}
+                            label="Executor Model"
+                            noChangeValue="__no_change__"
+                            noChangeLabel="No change"
+                            favoriteProviders={favoriteProviders}
+                            onToggleFavorite={onToggleFavorite}
+                            favoriteModels={favoriteModels}
+                            onToggleModelFavorite={onToggleModelFavorite}
+                          />
+                        </div>
+                        <div className="bulk-edit-dropdown">
+                          <CustomModelDropdown
+                            models={availableModels}
+                            value={validatorModel}
+                            onChange={setValidatorModel}
+                            label="Reviewer Model"
+                            noChangeValue="__no_change__"
+                            noChangeLabel="No change"
+                            favoriteProviders={favoriteProviders}
+                            onToggleFavorite={onToggleFavorite}
+                            favoriteModels={favoriteModels}
+                            onToggleModelFavorite={onToggleModelFavorite}
+                          />
+                        </div>
+                        <div className="bulk-edit-dropdown bulk-edit-node-wrap">
+                          <select
+                            className="select bulk-node-select"
+                            value={nodeOverride}
+                            onChange={(e) => setNodeOverride(e.target.value)}
+                            aria-label="Node Override"
+                            disabled={isLoadingNodes}
+                          >
+                            <option value="__no_change__">No change</option>
+                            <option value="">Use project default</option>
+                            {availableNodes.map((node) => (
+                              <option key={node.id} value={node.id}>
+                                {`${getNodeStatusSymbol(node.status)} ${node.name || node.id} (${getNodeStatusLabel(node.status)})`}
+                              </option>
+                            ))}
+                          </select>
+                          {selectedOverrideNode ? <NodeHealthDot status={selectedOverrideNode.status} showLabel /> : null}
+                        </div>
+                        <button
+                          className="btn btn-primary btn-sm bulk-edit-apply-btn"
+                          onClick={handleApplyBulkUpdate}
+                          disabled={isApplying || (executorModel === "__no_change__" && validatorModel === "__no_change__" && nodeOverride === "__no_change__")}
+                        >
+                          {isApplying ? "Applying..." : "Apply"}
+                        </button>
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
               </aside>
             )}
             <div className="list-quick-entry-above-table">

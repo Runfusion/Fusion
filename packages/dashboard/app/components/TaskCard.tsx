@@ -16,6 +16,7 @@ import { getUnifiedTaskProgress } from "../utils/taskProgress";
 import { getEndToEndDurationMs, getTimedDurationMs, getWorkflowRuntimeMs, parseTimestampToMs } from "../utils/taskTiming";
 import type { ToastType } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
+import { extractDependencyDeleteConflict } from "../utils/taskDelete";
 
 // ── Mission title caching ───────────────────────────────────────────────────
 
@@ -313,24 +314,6 @@ function areTaskWorkflowStepIdsEqual(previous?: string[], next?: string[]): bool
 function getIssueUrlFromMetadata(metadata: Task["sourceMetadata"]): string | undefined {
   const issueUrl = metadata?.issueUrl;
   return typeof issueUrl === "string" && issueUrl.length > 0 ? issueUrl : undefined;
-}
-
-function extractDependencyDeleteConflict(err: unknown): { dependentIds: string[] } | null {
-  if (!(err instanceof Error)) {
-    return null;
-  }
-
-  const details = (err as { details?: { code?: string; dependentIds?: unknown } }).details;
-  if (details?.code === "TASK_HAS_DEPENDENTS" && Array.isArray(details.dependentIds)) {
-    return { dependentIds: details.dependentIds.filter((id): id is string => typeof id === "string") };
-  }
-
-  const idsInMessage = err.message.match(/[A-Z]+-\d+/g) ?? [];
-  if (idsInMessage.length > 1) {
-    return { dependentIds: [...new Set(idsInMessage.slice(1))] };
-  }
-
-  return null;
 }
 
 function areTaskWorkflowResultsEqual(previous?: Task["workflowStepResults"], next?: Task["workflowStepResults"]): boolean {
