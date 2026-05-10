@@ -45,6 +45,22 @@ export interface CreatePrParams {
   base?: string;
 }
 
+export interface CreateIssueParams {
+  owner: string;
+  repo: string;
+  title: string;
+  body: string;
+  labels?: string[];
+}
+
+export interface CreatedIssue {
+  owner: string;
+  repo: string;
+  number: number;
+  htmlUrl: string;
+  createdAt: string;
+}
+
 export interface PrComment {
   id: number;
   body: string;
@@ -403,12 +419,91 @@ export class GitHubClient {
         throw new Error(getGhErrorMessage(err));
       }
     }
-    
+
     // Fall back to REST API
     if (this.token) {
       return this.createPrWithApi(params);
     }
     throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided. Run 'gh auth login' or set GITHUB_TOKEN.");
+  }
+
+  async createIssue(params: CreateIssueParams): Promise<CreatedIssue> {
+    if (this.hasGhAuth()) {
+      try {
+        return await this.createIssueWithGh(params);
+      } catch (error) {
+        if (this.token) {
+          try {
+            return await this.createIssueWithApi(params);
+          } catch (apiError) {
+            throw new Error(`Failed to create GitHub issue in ${params.owner}/${params.repo}`, { cause: apiError });
+          }
+        }
+        throw new Error(`Failed to create GitHub issue in ${params.owner}/${params.repo}`, { cause: error });
+      }
+    }
+
+    if (this.token) {
+      try {
+        return await this.createIssueWithApi(params);
+      } catch (error) {
+        throw new Error(`Failed to create GitHub issue in ${params.owner}/${params.repo}`, { cause: error });
+      }
+    }
+
+    throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided. Run 'gh auth login' or set GITHUB_TOKEN.");
+  }
+
+  private async createIssueWithGh(params: CreateIssueParams): Promise<CreatedIssue> {
+    const issue = await runGhJsonAsync<{ url: string; number: number; createdAt: string }>([
+      "issue",
+      "create",
+      "--repo",
+      `${params.owner}/${params.repo}`,
+      "--title",
+      params.title,
+      "--body",
+      params.body,
+      ...(params.labels && params.labels.length > 0 ? ["--label", params.labels.join(",")] : []),
+      "--json",
+      "url,number,createdAt",
+    ]);
+
+    return {
+      owner: params.owner,
+      repo: params.repo,
+      number: issue.number,
+      htmlUrl: issue.url,
+      createdAt: issue.createdAt,
+    };
+  }
+
+  private async createIssueWithApi(params: CreateIssueParams): Promise<CreatedIssue> {
+    const url = `${this.baseUrl}/repos/${encodeURIComponent(params.owner)}/${encodeURIComponent(params.repo)}/issues`;
+    const result = await this.fetchThrottled<{
+      number: number;
+      html_url: string;
+      created_at: string;
+    }>(url, {
+      method: "POST",
+      body: JSON.stringify({
+        title: params.title,
+        body: params.body,
+        labels: params.labels,
+      }),
+    });
+
+    if (!result.success || !result.data) {
+      throw new Error(result.error ?? "GitHub API error");
+    }
+
+    return {
+      owner: params.owner,
+      repo: params.repo,
+      number: result.data.number,
+      htmlUrl: result.data.html_url,
+      createdAt: result.data.created_at,
+    };
   }
 
   private createPrWithGh(params: CreatePrParams): PrInfo {

@@ -1234,6 +1234,10 @@ Git dashboard routes are registered in `register-git-github.ts`.
 | POST | `/api/git/commit` | Create a commit from staged changes with a required message. |
 | POST | `/api/git/discard` | Discard working-tree changes for specified files. |
 
+### GitHub tracking lifecycle (task creation)
+
+When a task is created, Fusion only attempts GitHub issue creation if per-task tracking is explicitly enabled (`task.githubTracking.enabled === true`). The lifecycle then resolves the repo in priority order: task override (`repoOverride`) → project `githubTrackingDefaultRepo` → global `githubTrackingDefaultRepo`. If no repo resolves, task creation still succeeds and an activity entry records the skip reason. GitHub API/CLI failures are best-effort only (swallowed with warning), so task creation is never blocked by GitHub availability.
+
 ### Worktree model
 - Each active task runs in isolated worktree under `.worktrees/*`
 - Executor creates branches like `fusion/{task-id}` (`executor.ts`)

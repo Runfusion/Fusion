@@ -59,7 +59,7 @@ In **Settings → Notifications**, use **Test message notification** to exercise
 | `openrouterModelSync` | `boolean` | `true` | Sync OpenRouter model catalog into model pickers at startup. |
 | `opencodeGoModelSync` | `boolean` | `true` | Sync opencode-go model catalog at startup via `opencode models opencode --refresh`, normalizing discovered `opencode/...` IDs into the `opencode-go` provider surface used by `/api/models`. |
 | `updateCheckEnabled` | `boolean` | `true` | When enabled, Fusion performs a daily npm registry check for new `@runfusion/fusion` versions and shows update notices in CLI/dashboard. |
-| `githubTrackingDefaultRepo` | `string` | `undefined` | Global fallback issue-tracking repo (`owner/repo`) introduced in FN-3868 as groundwork for the FN-3868 → FN-3876 GitHub tracking epic; behavior wiring lands in downstream subtasks. |
+| `githubTrackingDefaultRepo` | `string` | `undefined` | Global fallback issue-tracking repo (`owner/repo`) used when task-level tracking is enabled and no project/task override is set. |
 | `autoReloadOnVersionChange` | `boolean` | `true` | When enabled (default), the dashboard automatically reloads when a new build version is detected via `/version.json` polling or service worker activation. Set to `false` to suppress automatic reloads — the user must manually refresh to pick up updates. |
 | `modelOnboardingComplete` | `boolean` | `undefined` | Whether AI onboarding has been completed or dismissed. |
 | `executionGlobalProvider` | `string` | `undefined` | Global baseline provider for task execution. Project `executionProvider` overrides this. |
@@ -231,9 +231,9 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `autoUpdatePrStatus` | `boolean` | `false` | Auto-refresh PR status badges. |
 | `githubCommentOnDone` | `boolean` | `false` | When enabled, tasks imported from GitHub issues post a completion comment to the source issue when the task moves to `done`. |
 | `githubCommentTemplate` | `string` | `undefined` | Optional issue comment template used by `githubCommentOnDone`. Supports `{taskId}` and `{taskTitle}` placeholders. If unset, Fusion uses a default completion message. |
-| `githubTrackingEnabledByDefault` | `boolean` | `false` | Project-level default for enabling issue tracking on new tasks. Added in FN-3868 as foundation for the FN-3868 → FN-3876 GitHub tracking epic; task/issue behavior ships in later subtasks. |
-| `githubTrackingDefaultRepo` | `string` | `undefined` | Project default issue-tracking repo (`owner/repo`). Added in FN-3868 as foundation for the FN-3868 → FN-3876 epic; downstream subtasks implement runtime usage. |
-| `githubAuthMode` | `"gh-cli" \| "token"` | `"gh-cli"` | Project GitHub auth strategy selector added in FN-3868 for the FN-3868 → FN-3876 tracking epic; auth wiring is deferred to later subtasks. |
+| `githubTrackingEnabledByDefault` | `boolean` | `false` | Project-level default for enabling issue tracking on new tasks. Even when this is false, issue creation can still occur per task if tracking is explicitly enabled. |
+| `githubTrackingDefaultRepo` | `string` | `undefined` | Project default issue-tracking repo (`owner/repo`) used before global fallback for tracked task creation. |
+| `githubAuthMode` | `"gh-cli" \| "token"` | `"gh-cli"` | Project GitHub auth strategy used by tracking issue creation (`gh-cli` by default, `token` when configured). |
 | `githubAuthToken` | `string` | `undefined` | Optional project PAT used when `githubAuthMode` is `"token"`. Added in FN-3868 as data-layer groundwork; downstream subtasks consume it. |
 | `autoCreatePr` | `boolean` | `false` | Auto-create PRs for completed tasks. |
 | `autoBackupEnabled` | `boolean` | `false` | Enable scheduled DB backups. |

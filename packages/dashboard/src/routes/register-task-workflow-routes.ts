@@ -14,6 +14,7 @@ import {
   getCurrentRepo,
 } from "@fusion/core";
 import { GitHubClient } from "../github.js";
+import { maybeCreateTrackingIssue } from "../github-tracking.js";
 import { parseGitHubBadgeUrl } from "./register-git-github.js";
 import { planTaskWorktreePath } from "@fusion/engine";
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
@@ -94,6 +95,27 @@ async function buildDirectTaskReviewData(task: Task, store: TaskStore): Promise<
     summary,
     items: sorted,
   };
+}
+
+async function maybeCreateTaskTrackingIssue(taskStore: TaskStore, task: Task, optionsToken?: string): Promise<void> {
+  const projectSettings = await taskStore.getSettings();
+  const globalSettings = (await taskStore.getGlobalSettingsStore?.()?.getSettings?.()) ?? {};
+  const authMode = projectSettings.githubAuthMode;
+  const token = authMode === "token"
+    ? projectSettings.githubAuthToken ?? optionsToken
+    : optionsToken;
+
+  try {
+    await maybeCreateTrackingIssue(task, {
+      taskStore,
+      githubClient: new GitHubClient(token),
+      projectSettings,
+      globalSettings,
+      logger: console,
+    });
+  } catch {
+    // best-effort only
+  }
 }
 
 interface TaskWorkflowRouteDeps {
@@ -309,6 +331,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           createInput,
           { onSummarize, settings: { autoSummarizeTitles: settings.autoSummarizeTitles } },
         );
+        await maybeCreateTaskTrackingIssue(scopedStore, task, options?.githubToken);
         res.status(201).json(task);
         return;
       }
@@ -343,6 +366,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           createdTask = await scopedStore.createTaskWithReservedId(createInput, {
             taskId: reservation.taskId,
           });
+          await maybeCreateTaskTrackingIssue(scopedStore, createdTask, options?.githubToken);
 
           const replicatedPayload = buildMeshReplicatedTaskCreatePayload({
             taskId: createdTask.id,
