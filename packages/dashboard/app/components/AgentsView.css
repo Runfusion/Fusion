@@ -1306,8 +1306,9 @@
     justify-content: center;
   }
 
-  /* New Agent: icon-only on mobile, sized to match view-toggle buttons.
-     Text is visually hidden via font-size: 0 (the SVG icon keeps its size). */
+  /* Import + New Agent: icon-only on mobile, sized to match view-toggle
+     buttons so the no-wrap action row never overflows (FN-3895 follow-up). */
+  .agents-view-primary-actions .agent-import-trigger,
   .agents-view-primary-actions .btn-task-create {
     width: calc(var(--space-lg) * 2 + var(--space-xs));
     height: calc(var(--space-lg) * 2 + var(--space-xs));

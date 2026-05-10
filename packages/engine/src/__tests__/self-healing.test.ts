@@ -440,6 +440,7 @@ describe("SelfHealingManager", () => {
       const recoverOrphanedExecutions = vi.spyOn(manager, "recoverOrphanedExecutions").mockResolvedValue(1);
       const recoverApprovedTriageTasks = vi.spyOn(manager, "recoverApprovedTriageTasks").mockResolvedValue(1);
       const recoverOrphanedAgents = vi.spyOn(manager, "recoverOrphanedAgents").mockResolvedValue(1);
+      const clearStaleBlockedBy = vi.spyOn(manager, "clearStaleBlockedBy").mockResolvedValue(1);
 
       await manager.runStartupRecovery();
 
@@ -451,6 +452,23 @@ describe("SelfHealingManager", () => {
       expect(recoverOrphanedExecutions).toHaveBeenCalledTimes(1);
       expect(recoverApprovedTriageTasks).toHaveBeenCalledTimes(1);
       expect(recoverOrphanedAgents).toHaveBeenCalledTimes(1);
+      expect(clearStaleBlockedBy).toHaveBeenCalledTimes(1);
+    });
+
+    it("runStartupRecovery clears stale blockedBy rows", async () => {
+      vi.mocked(store.getSettings).mockResolvedValue({
+        globalPause: false,
+        enginePaused: false,
+      } as unknown as Settings);
+      vi.mocked(store.listTasks).mockResolvedValue([
+        { id: "A", column: "todo", blockedBy: "B", paused: false, mergeRetries: 0 } as unknown as Task,
+        { id: "B", column: "done", blockedBy: null, paused: false, mergeRetries: 0 } as unknown as Task,
+      ]);
+
+      await manager.runStartupRecovery();
+
+      expect(store.updateTask).toHaveBeenCalledWith("A", { blockedBy: null, status: null });
+      expect(store.logEntry).toHaveBeenCalledWith("A", expect.stringContaining("Auto-recovered: cleared stale blockedBy"));
     });
 
     it("runStartupRecovery skips while enginePaused is active", async () => {
@@ -463,6 +481,21 @@ describe("SelfHealingManager", () => {
       await manager.runStartupRecovery();
 
       expect(recoverCompletedTasks).not.toHaveBeenCalled();
+    });
+
+    it("runStartupRecovery skips while globalPause is active", async () => {
+      vi.mocked(store.getSettings).mockResolvedValue({
+        globalPause: true,
+        enginePaused: false,
+      } as unknown as Settings);
+      vi.mocked(store.listTasks).mockResolvedValue([
+        { id: "A", column: "todo", blockedBy: "B", paused: false, mergeRetries: 0 } as unknown as Task,
+        { id: "B", column: "done", blockedBy: null, paused: false, mergeRetries: 0 } as unknown as Task,
+      ]);
+
+      await manager.runStartupRecovery();
+
+      expect(store.updateTask).not.toHaveBeenCalledWith("A", { blockedBy: null, status: null });
     });
   });
 

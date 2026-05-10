@@ -338,6 +338,90 @@ describe("Scheduler", () => {
       expect(store.moveTask).toHaveBeenCalledWith("FN-002", "in-progress", expect.objectContaining({ allocateWorktree: expect.any(Function) }));
     });
 
+    it.each(["done", "archived"] as const)("FN-3895: clears blockedBy when blocker moves to %s", async (to) => {
+      const dependent = createMockTask({ id: "FN-3799", column: "todo", blockedBy: "FN-3885" });
+      const blocker = createMockTask({ id: "FN-3885", column: to });
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([dependent]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+        updateTask: vi.fn().mockResolvedValue(undefined),
+      });
+
+      new Scheduler(store);
+      const onCalls = (store.on as any).mock.calls;
+      const movedHandler = onCalls.find((call: any) => call[0] === "task:moved")?.[1];
+
+      await movedHandler({ task: blocker, from: "in-review", to });
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-3799", { blockedBy: null, status: null });
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-3799",
+        `Auto-unblocked: blocker FN-3885 reached ${to}`,
+      );
+    });
+
+    it("FN-3895: does not clear blockedBy for non-terminal transitions", async () => {
+      const dependent = createMockTask({ id: "FN-3799", column: "todo", blockedBy: "FN-3885" });
+      const blocker = createMockTask({ id: "FN-3885", column: "in-review" });
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([dependent]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+      });
+
+      new Scheduler(store);
+      const movedHandler = (store.on as any).mock.calls.find((call: any) => call[0] === "task:moved")?.[1];
+      await movedHandler({ task: blocker, from: "in-progress", to: "in-review" });
+
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-3799", { blockedBy: null, status: null });
+    });
+
+    it("FN-3895: does not clear blockedBy for tasks blocked by a different task", async () => {
+      const dependent = createMockTask({ id: "FN-3799", column: "todo", blockedBy: "FN-4000" });
+      const blocker = createMockTask({ id: "FN-3885", column: "done" });
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([dependent]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+      });
+
+      new Scheduler(store);
+      const movedHandler = (store.on as any).mock.calls.find((call: any) => call[0] === "task:moved")?.[1];
+      await movedHandler({ task: blocker, from: "in-review", to: "done" });
+
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-3799", { blockedBy: null, status: null });
+    });
+
+    it("FN-3895: skips event-driven unblock when enginePaused is true", async () => {
+      const dependent = createMockTask({ id: "FN-3799", column: "todo", blockedBy: "FN-3885" });
+      const blocker = createMockTask({ id: "FN-3885", column: "done" });
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([dependent]),
+        getSettings: vi.fn().mockResolvedValue({ enginePaused: true, globalPause: false }),
+      });
+
+      new Scheduler(store);
+      const movedHandler = (store.on as any).mock.calls.find((call: any) => call[0] === "task:moved")?.[1];
+      await movedHandler({ task: blocker, from: "in-review", to: "done" });
+
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-3799", { blockedBy: null, status: null });
+    });
+
+    it("FN-3895: unblocks FN-3799 and FN-3811 once FN-3885 reaches done", async () => {
+      const dependentA = createMockTask({ id: "FN-3799", column: "todo", blockedBy: "FN-3885" });
+      const dependentB = createMockTask({ id: "FN-3811", column: "todo", blockedBy: "FN-3885" });
+      const blocker = createMockTask({ id: "FN-3885", column: "done" });
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([dependentA, dependentB]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+      });
+
+      new Scheduler(store);
+      const movedHandler = (store.on as any).mock.calls.find((call: any) => call[0] === "task:moved")?.[1];
+      await movedHandler({ task: blocker, from: "in-review", to: "done" });
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-3799", { blockedBy: null, status: null });
+      expect(store.updateTask).toHaveBeenCalledWith("FN-3811", { blockedBy: null, status: null });
+    });
+
     it("does not trigger scheduling for non-done task:moved events", async () => {
       const store = createMockStore({
         listTasks: vi.fn().mockResolvedValue([

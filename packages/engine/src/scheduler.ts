@@ -232,7 +232,7 @@ export class Scheduler {
      * Also handles mission auto-advance: when a linked task completes,
      * update feature status and potentially activate next pending slice.
      */
-    this.store.on("task:moved", ({ task, from, to }) => {
+    this.store.on("task:moved", async ({ task, from, to }) => {
       // PR Monitoring
       if (this.options.prMonitor) {
         if (to === "in-review" && task.prInfo) {
@@ -276,6 +276,34 @@ export class Scheduler {
           void Promise.resolve(this.options.onTaskFailed(task.id)).catch((err) => {
             schedulerLog.error(`Error in onTaskFailed for ${task.id}:`, err);
           });
+        }
+      }
+
+      // FN-3895: complement periodic stale-blockedBy self-healing with immediate
+      // unblock when a blocker reaches a terminal completion column.
+      if (to === "done" || to === "archived") {
+        try {
+          const settings = await this.store.getSettings();
+          if (!settings.globalPause && !settings.enginePaused) {
+            const todoTasks = await this.store.listTasks({ column: "todo", slim: true });
+            for (const dependent of todoTasks) {
+              if (dependent.blockedBy !== task.id) continue;
+              try {
+                await this.store.updateTask(dependent.id, { blockedBy: null, status: null });
+                await this.store.logEntry(
+                  dependent.id,
+                  `Auto-unblocked: blocker ${task.id} reached ${to}`,
+                );
+              } catch (error) {
+                schedulerLog.error(
+                  `Failed to auto-unblock dependent ${dependent.id} for blocker ${task.id}`,
+                  error,
+                );
+              }
+            }
+          }
+        } catch (error) {
+          schedulerLog.error(`Failed event-driven unblock pass for blocker ${task.id}`, error);
         }
       }
 

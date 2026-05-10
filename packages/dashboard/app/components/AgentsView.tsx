@@ -800,7 +800,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
               <RefreshCw size={16} className={isLoading ? "spin" : undefined} />
             </button>
             <button
-              className="btn btn-sm"
+              className="btn btn-sm agent-import-trigger"
               onClick={() => {
                 setIsImporting(true);
                 setIsControlsPanelOpen(false);
