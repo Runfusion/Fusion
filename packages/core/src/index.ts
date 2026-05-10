@@ -454,6 +454,7 @@ export type {
   GlobalConcurrencyState,
   IsolationMode,
   MeshDiscovery,
+  MeshClusterSnapshot,
   MigrationOptions,
   NodeConfig,
   NodeMeshState,

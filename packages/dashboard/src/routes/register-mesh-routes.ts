@@ -7,9 +7,10 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
 
   const withCentralCore = async <T>(work: (central: import("@fusion/core").CentralCore) => Promise<T>): Promise<T> => {
     const { CentralCore } = await import("@fusion/core");
-    const central = options?.centralCore ?? new CentralCore();
-    const shouldClose = !options?.centralCore;
-    if (shouldClose) {
+    const sharedCentral = options?.centralCore;
+    const central = sharedCentral ?? new CentralCore();
+    const shouldClose = !sharedCentral;
+    if (!sharedCentral || (typeof central.isInitialized === "function" && !central.isInitialized())) {
       await central.init();
     }
     try {
@@ -71,88 +72,101 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
     try {
       const includeRemote = req.query.includeRemote !== "false";
       const meshState = await withCentralCore(async (central) => {
-        const nodes = await central.listNodes();
-        const remoteNodes = nodes.filter((n) => n.type === "remote");
-        const nodeStates = new Map<string, unknown>();
+        const { z } = await import("zod");
+        const metricsSchema = z.object({
+          cpuUsage: z.number(),
+          memoryUsed: z.number(),
+          memoryTotal: z.number(),
+          storageUsed: z.number(),
+          storageTotal: z.number(),
+          uptime: z.number(),
+          reportedAt: z.string(),
+        });
+        const nodeMeshStateSchema = z.object({
+          nodeId: z.string(),
+          nodeName: z.string(),
+          nodeUrl: z.string().optional(),
+          nodeType: z.enum(["local", "remote"]),
+          status: z.enum(["online", "offline", "connecting", "error"]),
+          metrics: metricsSchema.nullable(),
+          lastSeen: z.string(),
+          connectedAt: z.string(),
+          knownPeers: z.array(z.object({
+            id: z.string(),
+            nodeId: z.string(),
+            peerNodeId: z.string(),
+            name: z.string(),
+            url: z.string(),
+            status: z.enum(["online", "offline", "connecting", "error"]),
+            lastSeen: z.string(),
+            connectedAt: z.string(),
+          })),
+        });
+        const meshArraySchema = z.array(nodeMeshStateSchema);
 
-        const fallbackStateForNode = (node: (typeof nodes)[number]) => {
-          const connections =
-            node.type === "local"
-              ? remoteNodes.map((peer) => ({
-                  peerId: peer.id,
-                  peerName: peer.name,
-                  peerUrl: peer.url ?? null,
-                  status: peer.status,
-                }))
-              : [];
-          return {
-            nodeId: node.id,
-            nodeName: node.name,
-            nodeUrl: node.url ?? null,
-            type: node.type,
-            status: node.status,
-            metrics: null,
-            lastSeen: node.updatedAt ?? null,
-            connectedAt: node.createdAt ?? null,
-            knownPeers: connections,
-            connections,
-          };
-        };
+        const localSnapshots = await central.getLocalMeshSnapshot();
+        const sourceNodeId = localSnapshots.find((entry) => entry.nodeType === "local")?.nodeId ?? "unknown";
 
-        for (const node of nodes) {
-          const state = typeof (central as { getMeshState?: (nodeId?: string) => Promise<unknown> }).getMeshState === "function"
-            ? await (central as { getMeshState: (nodeId?: string) => Promise<unknown> }).getMeshState(node.id)
-            : null;
-          nodeStates.set(node.id, state ?? fallbackStateForNode(node));
-        }
-
+        const nodesById = new Map(localSnapshots.map((entry) => [entry.nodeId, entry]));
         if (!includeRemote) {
-          const localNode = nodes.find((node) => node.type === "local");
-          return localNode ? [nodeStates.get(localNode.id)] : Array.from(nodeStates.values());
+          return {
+            collectedAt: new Date().toISOString(),
+            sourceNodeId,
+            nodes: Array.from(nodesById.values()),
+          };
         }
 
-        await Promise.all(
+        const registeredNodes = await central.listNodes();
+        const remoteNodes = registeredNodes.filter((node) => node.type === "remote" && node.url);
+
+        const remoteResults = await Promise.allSettled(
           remoteNodes.map(async (remoteNode) => {
-            if (!remoteNode.url) {
-              return;
-            }
             const headers: Record<string, string> = { "Content-Type": "application/json" };
             if (remoteNode.apiKey) {
               headers.Authorization = `Bearer ${remoteNode.apiKey}`;
             }
-            try {
-              const response = await fetch(`${remoteNode.url.replace(/\/$/, "")}/api/mesh/state?includeRemote=false`, {
-                method: "GET",
-                headers,
-                signal: AbortSignal.timeout(10_000),
-              });
-              if (!response.ok) {
-                throw new Error(`Remote mesh state request failed (${response.status})`);
-              }
-              const payload = await response.json();
-              if (!Array.isArray(payload)) {
-                return;
-              }
-              for (const remoteState of payload) {
-                if (remoteState && typeof remoteState === "object" && typeof (remoteState as { nodeId?: unknown }).nodeId === "string") {
-                  nodeStates.set((remoteState as { nodeId: string }).nodeId, remoteState);
-                }
-              }
-            } catch (error) {
-              emitRemoteRouteDiagnostic({
-                route: "mesh-state",
-                message: "Failed to fetch remote mesh state",
-                nodeId: remoteNode.id,
-                upstreamPath: "/api/mesh/state",
-                operationStage: "fetch-remote-mesh-state",
-                level: "warn",
-                error,
-              });
+            const response = await fetch(`${remoteNode.url!.replace(/\/$/, "")}/api/mesh/state?includeRemote=false`, {
+              method: "GET",
+              headers,
+              signal: AbortSignal.timeout(10_000),
+            });
+            if (!response.ok) {
+              throw new Error(`Remote mesh state request failed (${response.status})`);
             }
+            const payload = await response.json() as unknown;
+            if (!payload || typeof payload !== "object") {
+              throw new Error("Remote mesh state payload was not an object");
+            }
+            const remoteNodesPayload = meshArraySchema.parse((payload as { nodes?: unknown }).nodes);
+            return remoteNodesPayload.map((entry) => ({ ...entry, nodeUrl: entry.nodeUrl ?? undefined }));
           }),
         );
 
-        return Array.from(nodeStates.values());
+        remoteResults.forEach((result, index) => {
+          const remoteNode = remoteNodes[index];
+          if (result.status === "fulfilled") {
+            for (const snapshot of result.value) {
+              nodesById.set(snapshot.nodeId, snapshot);
+            }
+            return;
+          }
+
+          emitRemoteRouteDiagnostic({
+            route: "mesh-state",
+            message: "Failed to fetch remote mesh state",
+            nodeId: remoteNode?.id,
+            upstreamPath: "/api/mesh/state",
+            operationStage: "fetch-remote-mesh-state",
+            level: "warn",
+            error: result.reason,
+          });
+        });
+
+        return {
+          collectedAt: new Date().toISOString(),
+          sourceNodeId,
+          nodes: Array.from(nodesById.values()),
+        };
       });
 
       res.json(meshState);

@@ -33,7 +33,7 @@ import type {
   ParticipantType,
   NodeConfig,
   NodeStatus,
-  NodeMeshState,
+  MeshClusterSnapshot,
   SystemMetrics,
   DiscoveryConfig,
   MissionEvent,
@@ -5980,8 +5980,8 @@ export async function fetchNodeMetrics(id: string): Promise<SystemMetrics | null
 }
 
 /** Fetch full mesh topology state (all nodes with their metrics and known peers) */
-export async function fetchMeshState(): Promise<NodeMeshState[]> {
-  return api<NodeMeshState[]>("/mesh/state");
+export async function fetchMeshState(): Promise<MeshClusterSnapshot> {
+  return api<MeshClusterSnapshot>("/mesh/state");
 }
 
 /** Browse directory entries for the directory picker */

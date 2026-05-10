@@ -234,6 +234,14 @@ Lifecycle contract (`types.ts` `isValidApprovalRequestTransition`):
 - Direct `pending -> completed` and all transitions from `denied`/`completed` (except no-op self-transition) are rejected
 - Same-state transitions (`from === to`) are treated as valid by the helper even though the intended lifecycle is forward-only
 
+### Mesh state read path for dashboard topology
+
+- `GET /api/mesh/state` in `packages/dashboard/src/routes/register-mesh-routes.ts` is the authoritative dashboard/API read path for topology.
+- Default behavior aggregates a deduped cluster snapshot from the local node plus reachable peers (`includeRemote !== false`) while preserving node-local last-known entries when peers are unreachable.
+- `includeRemote=false` is the non-recursive local-only path used for peer fan-out, so cross-node aggregation never recursively calls remote aggregated endpoints.
+- Route registration reuses the shared `options?.centralCore` instance when available instead of creating per-request `CentralCore` instances, preserving shared mesh state continuity.
+- Nodes UI topology (`MeshTopology` via `useMeshState`) now renders peer relationships from `knownPeers` in this snapshot, including remote↔remote links when present.
+
 ### Shared mesh-state snapshot helpers
 
 `packages/core/src/shared-mesh-state.ts` defines a common snapshot envelope for non-task mesh state export/apply:

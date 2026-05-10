@@ -40,25 +40,33 @@ async function loadRoadmapView(): Promise<{ default: PluginViewComponent }> {
 async function loadCliPrintingPressWizardView(): Promise<{ default: PluginViewComponent }> {
   const moduleId = "@fusion-plugin-examples/cli-printing-press/dashboard-view";
   const exportName = "CliPrintingPressWizardView";
-  const mod = await import("@fusion-plugin-examples/cli-printing-press/dashboard-view") as unknown as Record<string, ComponentType<{ context?: PluginDashboardViewContext }>>;
-  const component = mod[exportName];
-  if (!component) {
-    console.warn(`[plugin-views] Missing export ${exportName} from ${moduleId}`);
+  try {
+    const mod = await import(/* @vite-ignore */ moduleId) as unknown as Record<string, ComponentType<{ context?: PluginDashboardViewContext }>>;
+    const component = mod[exportName];
+    if (!component) {
+      console.warn(`[plugin-views] Missing export ${exportName} from ${moduleId}`);
+      return { default: createMissingPluginView(moduleId, exportName) };
+    }
+    return { default: component as PluginViewComponent };
+  } catch {
     return { default: createMissingPluginView(moduleId, exportName) };
   }
-  return { default: component as PluginViewComponent };
 }
 
 async function loadCliPrintingPressManageView(): Promise<{ default: PluginViewComponent }> {
   const moduleId = "@fusion-plugin-examples/cli-printing-press/manage-view";
   const exportName = "CliPrintingPressManageView";
-  const mod = await import("@fusion-plugin-examples/cli-printing-press/manage-view") as unknown as Record<string, ComponentType<{ context?: PluginDashboardViewContext }>>;
-  const component = mod[exportName];
-  if (!component) {
-    console.warn(`[plugin-views] Missing export ${exportName} from ${moduleId}`);
+  try {
+    const mod = await import(/* @vite-ignore */ moduleId) as unknown as Record<string, ComponentType<{ context?: PluginDashboardViewContext }>>;
+    const component = mod[exportName];
+    if (!component) {
+      console.warn(`[plugin-views] Missing export ${exportName} from ${moduleId}`);
+      return { default: createMissingPluginView(moduleId, exportName) };
+    }
+    return { default: component as PluginViewComponent };
+  } catch {
     return { default: createMissingPluginView(moduleId, exportName) };
   }
-  return { default: component as PluginViewComponent };
 }
 
 export function registerBundledPluginViews(): void {

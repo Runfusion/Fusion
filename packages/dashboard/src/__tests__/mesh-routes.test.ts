@@ -22,6 +22,8 @@ const mockGetLocalPeerInfo = vi.fn();
 const mockGetNode = vi.fn();
 const mockUpdateNode = vi.fn();
 const mockGetLocalNode = vi.fn();
+const mockListNodes = vi.fn();
+const mockGetLocalMeshSnapshot = vi.fn();
 const mockGetSettingsForSync = vi.fn();
 const mockApplyRemoteSettings = vi.fn();
 const mockReserveDistributedTaskId = vi.fn();
@@ -49,6 +51,8 @@ vi.mock("@fusion/core", async () => {
       getNode: mockGetNode,
       updateNode: mockUpdateNode,
       getLocalNode: mockGetLocalNode,
+      listNodes: mockListNodes,
+      getLocalMeshSnapshot: mockGetLocalMeshSnapshot,
       getSettingsForSync: mockGetSettingsForSync,
       applyRemoteSettings: mockApplyRemoteSettings,
     })),
@@ -204,6 +208,30 @@ describe("POST /api/mesh/sync", () => {
       createdAt: "2026-04-01T10:00:00.000Z",
       updatedAt: "2026-04-01T12:00:00.000Z",
     });
+    mockListNodes.mockResolvedValue([
+      {
+        id: "node_local",
+        name: "local",
+        type: "local",
+        status: "online",
+        maxConcurrent: 4,
+        createdAt: "2026-04-01T10:00:00.000Z",
+        updatedAt: "2026-04-01T12:00:00.000Z",
+      },
+    ]);
+    mockGetLocalMeshSnapshot.mockResolvedValue([
+      {
+        nodeId: "node_local",
+        nodeName: "local",
+        nodeUrl: undefined,
+        nodeType: "local",
+        status: "online",
+        metrics: null,
+        lastSeen: "2026-04-01T12:00:00.000Z",
+        connectedAt: "2026-04-01T10:00:00.000Z",
+        knownPeers: [],
+      },
+    ]);
 
     const store = new MockStore();
     app = createServer(store as unknown as TaskStore);
@@ -823,5 +851,109 @@ describe("/api/mesh/tasks/create", () => {
       Authorization: "Bearer wrong",
     });
     expect(response.status).toBe(401);
+  });
+
+  it("returns local-only mesh snapshot when includeRemote=false", async () => {
+    const response = await request(app, "GET", "/api/mesh/state?includeRemote=false");
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      sourceNodeId: "node_local",
+      nodes: [
+        {
+          nodeId: "node_local",
+          nodeType: "local",
+        },
+      ],
+    });
+  });
+
+  it("reuses provided centralCore instance", async () => {
+    const sharedCentral = {
+      isInitialized: vi.fn().mockReturnValue(true),
+      init: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      getLocalMeshSnapshot: vi.fn().mockResolvedValue([{
+        nodeId: "node_local",
+        nodeName: "local",
+        nodeUrl: undefined,
+        nodeType: "local",
+        status: "online",
+        metrics: null,
+        lastSeen: "2026-04-01T12:00:00.000Z",
+        connectedAt: "2026-04-01T10:00:00.000Z",
+        knownPeers: [],
+      }]),
+      getLocalNode: vi.fn().mockResolvedValue({ id: "node_local", type: "local" }),
+      listNodes: vi.fn().mockResolvedValue([]),
+    };
+
+    const store = new MockStore();
+    const sharedApp = createServer(store as unknown as TaskStore, { centralCore: sharedCentral as never });
+    const response = await request(sharedApp, "GET", "/api/mesh/state?includeRemote=false");
+
+    expect(response.status).toBe(200);
+    expect(sharedCentral.close).not.toHaveBeenCalled();
+    expect(sharedCentral.getLocalMeshSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("merges remote mesh snapshots and deduplicates by nodeId", async () => {
+    mockListNodes.mockResolvedValue([
+      { id: "node_local", name: "local", type: "local", status: "online", maxConcurrent: 4, createdAt: "2026-04-01T10:00:00.000Z", updatedAt: "2026-04-01T12:00:00.000Z" },
+      { id: "node_remote_1", name: "Remote 1", type: "remote", url: "https://remote-1.example.com", status: "online", maxConcurrent: 2, createdAt: "2026-04-01T10:00:00.000Z", updatedAt: "2026-04-01T12:00:00.000Z" },
+    ]);
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch" as any).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        sourceNodeId: "node_remote_1",
+        collectedAt: "2026-04-01T12:00:00.000Z",
+        nodes: [
+          {
+            nodeId: "node_remote_1",
+            nodeName: "Remote 1",
+            nodeUrl: "https://remote-1.example.com",
+            nodeType: "remote",
+            status: "online",
+            metrics: null,
+            lastSeen: "2026-04-01T12:00:00.000Z",
+            connectedAt: "2026-04-01T10:00:00.000Z",
+            knownPeers: [],
+          },
+          {
+            nodeId: "node_local",
+            nodeName: "local",
+            nodeType: "local",
+            status: "online",
+            metrics: null,
+            lastSeen: "2026-04-01T12:00:00.000Z",
+            connectedAt: "2026-04-01T10:00:00.000Z",
+            knownPeers: [],
+          },
+        ],
+      }),
+    } as Response);
+
+    const response = await request(app, "GET", "/api/mesh/state");
+    fetchSpy.mockRestore();
+
+    expect(response.status).toBe(200);
+    expect((response.body as { nodes: Array<{ nodeId: string }> }).nodes.map((node) => node.nodeId).sort()).toEqual([
+      "node_local",
+      "node_remote_1",
+    ]);
+  });
+
+  it("keeps local fallback snapshots when remote fetch fails", async () => {
+    mockListNodes.mockResolvedValue([
+      { id: "node_local", name: "local", type: "local", status: "online", maxConcurrent: 4, createdAt: "2026-04-01T10:00:00.000Z", updatedAt: "2026-04-01T12:00:00.000Z" },
+      { id: "node_remote_1", name: "Remote 1", type: "remote", url: "https://remote-1.example.com", status: "online", maxConcurrent: 2, createdAt: "2026-04-01T10:00:00.000Z", updatedAt: "2026-04-01T12:00:00.000Z" },
+    ]);
+    vi.spyOn(globalThis, "fetch" as any).mockRejectedValue(new Error("offline"));
+
+    const response = await request(app, "GET", "/api/mesh/state");
+
+    vi.restoreAllMocks();
+    expect(response.status).toBe(200);
+    expect((response.body as { nodes: Array<{ nodeId: string }> }).nodes.map((node) => node.nodeId)).toContain("node_local");
   });
 });

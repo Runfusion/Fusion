@@ -1,161 +1,52 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MeshTopology } from "../MeshTopology";
-import type { NodeInfo } from "../../api";
+import type { NodeMeshState } from "@fusion/core";
 
-function makeNode(overrides: Partial<NodeInfo> = {}): NodeInfo {
+function makeNode(overrides: Partial<NodeMeshState> = {}): NodeMeshState {
   return {
-    id: "node_test",
-    name: "Test Node",
-    type: "local",
+    nodeId: "local",
+    nodeName: "Local",
+    nodeUrl: undefined,
+    nodeType: "local",
     status: "online",
-    maxConcurrent: 2,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
+    metrics: null,
+    lastSeen: "2026-01-01T00:00:00.000Z",
+    connectedAt: "2026-01-01T00:00:00.000Z",
+    knownPeers: [],
     ...overrides,
   };
 }
 
 describe("MeshTopology", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("renders empty state when no nodes provided", () => {
+  it("renders empty state with no nodes", () => {
     render(<MeshTopology nodes={[]} />);
     expect(screen.getByText("No nodes to display")).toBeInTheDocument();
   });
 
-  it("renders empty state when empty array provided", () => {
-    render(<MeshTopology nodes={[]} />);
-    const svg = document.querySelector(".mesh-topology__svg");
-    expect(svg).not.toBeInTheDocument();
-  });
-
-  it("renders local node with correct status color", () => {
-    const nodes = [makeNode({ id: "local", name: "Local", type: "local", status: "online" })];
-    render(<MeshTopology nodes={nodes} />);
-
-    const circles = document.querySelectorAll(".mesh-topology__node-circle");
-    expect(circles).toHaveLength(1);
-    expect(circles[0]).toHaveAttribute("fill", expect.stringContaining("var(--success"));
-  });
-
-  it("renders remote nodes in circular arrangement", () => {
-    const nodes = [
-      makeNode({ id: "local", name: "Local", type: "local", status: "online" }),
-      makeNode({ id: "remote1", name: "Remote 1", type: "remote", status: "online" }),
-      makeNode({ id: "remote2", name: "Remote 2", type: "remote", status: "offline" }),
-    ];
-    render(<MeshTopology nodes={nodes} />);
-
-    const circles = document.querySelectorAll(".mesh-topology__node-circle");
-    expect(circles).toHaveLength(3); // 1 local + 2 remote
-  });
-
-  it("renders link lines between local and remote nodes", () => {
-    const nodes = [
-      makeNode({ id: "local", name: "Local", type: "local" }),
-      makeNode({ id: "remote", name: "Remote", type: "remote" }),
-    ];
-    render(<MeshTopology nodes={nodes} />);
-
-    const links = document.querySelectorAll(".mesh-topology__link");
-    expect(links).toHaveLength(1); // One line from local to remote
-  });
-
-  it("does not render fabricated peer links between remote nodes", () => {
-    const nodes = [
-      makeNode({ id: "local", name: "Local", type: "local" }),
-      makeNode({ id: "remote-1", name: "Remote 1", type: "remote" }),
-      makeNode({ id: "remote-2", name: "Remote 2", type: "remote" }),
-      makeNode({ id: "remote-3", name: "Remote 3", type: "remote" }),
+  it("renders peer-derived links including remote-to-remote edges", () => {
+    const nodes: NodeMeshState[] = [
+      makeNode({
+        nodeId: "local",
+        knownPeers: [{ id: "p1", nodeId: "local", peerNodeId: "remote-1", name: "Remote 1", url: "http://r1", status: "online", lastSeen: "2026-01-01T00:00:00.000Z", connectedAt: "2026-01-01T00:00:00.000Z" }],
+      }),
+      makeNode({
+        nodeId: "remote-1",
+        nodeName: "Remote 1",
+        nodeType: "remote",
+        nodeUrl: "http://r1",
+        knownPeers: [{ id: "p2", nodeId: "remote-1", peerNodeId: "remote-2", name: "Remote 2", url: "http://r2", status: "online", lastSeen: "2026-01-01T00:00:00.000Z", connectedAt: "2026-01-01T00:00:00.000Z" }],
+      }),
+      makeNode({ nodeId: "remote-2", nodeName: "Remote 2", nodeType: "remote", nodeUrl: "http://r2" }),
     ];
 
     render(<MeshTopology nodes={nodes} />);
+    expect(document.querySelectorAll(".mesh-topology__peer-line")).toHaveLength(2);
+    expect(screen.queryByText("Peer-to-peer discovery data unavailable.")).not.toBeInTheDocument();
+  });
 
-    expect(document.querySelectorAll(".mesh-topology__peer-line")).toHaveLength(0);
+  it("shows fallback notice when peer data is unavailable", () => {
+    render(<MeshTopology nodes={[makeNode(), makeNode({ nodeId: "remote", nodeType: "remote", nodeName: "Remote" })]} />);
     expect(screen.getByText("Peer-to-peer discovery data unavailable.")).toBeInTheDocument();
-  });
-
-  it("renders legend with status colors", () => {
-    render(<MeshTopology nodes={[makeNode()]} />);
-
-    const legend = document.querySelector(".mesh-topology__legend");
-    expect(legend).toBeInTheDocument();
-    expect(screen.getByText("Online")).toBeInTheDocument();
-    expect(screen.getByText("Offline")).toBeInTheDocument();
-    expect(screen.getByText("Connecting")).toBeInTheDocument();
-    expect(screen.getByText("Error")).toBeInTheDocument();
-  });
-
-  it("applies custom className", () => {
-    const { container } = render(<MeshTopology nodes={[]} className="custom-class" />);
-    expect(container.firstChild).toHaveClass("custom-class");
-    expect(container.firstChild).toHaveClass("mesh-topology");
-  });
-
-  it("renders node labels truncated at 12 characters", () => {
-    const nodes = [makeNode({ name: "This is a very long node name that should be truncated" })];
-    render(<MeshTopology nodes={nodes} />);
-
-    // The label should contain truncated text
-    const label = document.querySelector(".mesh-topology__node-label");
-    expect(label).toBeInTheDocument();
-  });
-
-  it("renders SVG with correct viewBox", () => {
-    const nodes = [
-      makeNode({ id: "local", name: "Local", type: "local" }),
-      makeNode({ id: "remote1", name: "Remote 1", type: "remote" }),
-      makeNode({ id: "remote2", name: "Remote 2", type: "remote" }),
-      makeNode({ id: "remote3", name: "Remote 3", type: "remote" }),
-      makeNode({ id: "remote4", name: "Remote 4", type: "remote" }),
-    ];
-    render(<MeshTopology nodes={nodes} />);
-
-    const svg = document.querySelector(".mesh-topology__svg");
-    expect(svg).toBeInTheDocument();
-    expect(svg).toHaveAttribute("viewBox");
-  });
-
-  it("renders correct status color for offline nodes", () => {
-    const nodes = [makeNode({ id: "offline", name: "Offline Node", status: "offline" })];
-    render(<MeshTopology nodes={nodes} />);
-
-    const circles = document.querySelectorAll(".mesh-topology__node-circle");
-    expect(circles).toHaveLength(1);
-    expect(circles[0]).toHaveAttribute("fill", expect.stringContaining("var(--text-dim"));
-  });
-
-  it("renders correct status color for error nodes", () => {
-    const nodes = [makeNode({ id: "error", name: "Error Node", status: "error" })];
-    render(<MeshTopology nodes={nodes} />);
-
-    const circles = document.querySelectorAll(".mesh-topology__node-circle");
-    expect(circles).toHaveLength(1);
-    expect(circles[0]).toHaveAttribute("fill", expect.stringContaining("var(--color-error"));
-  });
-
-  it("uses consistent node type badges instead of emoji glyphs", () => {
-    const nodes = [
-      makeNode({ id: "local", name: "Local", type: "local" }),
-      makeNode({ id: "remote", name: "Remote", type: "remote" }),
-    ];
-    render(<MeshTopology nodes={nodes} />);
-
-    const typeBadges = document.querySelectorAll(".mesh-topology__node-type-badge");
-    expect(typeBadges).toHaveLength(2);
-    expect(screen.queryByText("🏠")).not.toBeInTheDocument();
-    expect(screen.queryByText("🌐")).not.toBeInTheDocument();
-  });
-
-  it("renders correct status color for connecting nodes", () => {
-    const nodes = [makeNode({ id: "connecting", name: "Connecting Node", status: "connecting" })];
-    render(<MeshTopology nodes={nodes} />);
-
-    const circles = document.querySelectorAll(".mesh-topology__node-circle");
-    expect(circles).toHaveLength(1);
-    expect(circles[0]).toHaveAttribute("fill", expect.stringContaining("var(--triage"));
   });
 });

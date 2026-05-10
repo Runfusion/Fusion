@@ -15,7 +15,8 @@ const mockCheckNodeHealth = vi.fn();
 const mockUpdateProject = vi.fn();
 const mockAssignProjectToNode = vi.fn();
 const mockUnassignProjectFromNode = vi.fn();
-const mockGetMeshState = vi.fn();
+const mockGetLocalMeshSnapshot = vi.fn();
+const mockGetLocalNode = vi.fn();
 const mockGetNodeVersionInfo = vi.fn();
 const mockSyncPlugins = vi.fn();
 const mockCheckVersionCompatibility = vi.fn();
@@ -37,7 +38,8 @@ vi.mock("@fusion/core", async () => {
       updateProject: mockUpdateProject,
       assignProjectToNode: mockAssignProjectToNode,
       unassignProjectFromNode: mockUnassignProjectFromNode,
-      getMeshState: mockGetMeshState,
+      getLocalMeshSnapshot: mockGetLocalMeshSnapshot,
+      getLocalNode: mockGetLocalNode,
       getNodeVersionInfo: mockGetNodeVersionInfo,
       syncPlugins: mockSyncPlugins,
       checkVersionCompatibility: mockCheckVersionCompatibility,
@@ -139,16 +141,20 @@ describe("Node routes", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
-    mockGetMeshState.mockResolvedValue({
-      nodeId: "node_local",
-      nodeName: "local-node",
-      nodeUrl: undefined,
-      status: "online",
-      metrics: null,
-      lastSeen: "2026-01-01T00:00:00.000Z",
-      connectedAt: "2026-01-01T00:00:00.000Z",
-      knownPeers: [],
-    });
+    mockGetLocalNode.mockResolvedValue({ id: "node_local", type: "local" });
+    mockGetLocalMeshSnapshot.mockResolvedValue([
+      {
+        nodeId: "node_local",
+        nodeName: "local-node",
+        nodeUrl: undefined,
+        nodeType: "local",
+        status: "online",
+        metrics: null,
+        lastSeen: "2026-01-01T00:00:00.000Z",
+        connectedAt: "2026-01-01T00:00:00.000Z",
+        knownPeers: [],
+      },
+    ]);
     mockGetNodeVersionInfo.mockResolvedValue(undefined);
     mockSyncPlugins.mockResolvedValue({
       localNodeId: "node_local",
@@ -493,42 +499,38 @@ describe("Node routes", () => {
     expect(res.status).toBe(404);
   });
 
-  it("GET /api/mesh/state returns mesh topology state", async () => {
-    const localMeshState = {
-      nodeId: "node_local",
-      nodeName: "local",
-      nodeUrl: undefined,
-      status: "online" as const,
-      metrics: null,
-      lastSeen: "2026-01-01T00:00:00.000Z",
-      connectedAt: "2026-01-01T00:00:00.000Z",
-      knownPeers: [],
-    };
-    const remoteMeshState = {
-      nodeId: "node_remote",
-      nodeName: "remote",
-      nodeUrl: "http://remote:3001",
-      status: "online" as const,
-      metrics: { cpuUsage: 30, memoryUsed: 2e9, memoryTotal: 8e9, storageUsed: 100e9, storageTotal: 500e9, uptime: 3600000, reportedAt: "2026-01-01T00:00:00.000Z" },
-      lastSeen: "2026-01-01T00:00:00.000Z",
-      connectedAt: "2026-01-01T00:00:00.000Z",
-      knownPeers: [{ id: "peer_1", nodeId: "node_remote", peerNodeId: "node_local", name: "local", url: "http://localhost:3001", status: "online" as const, lastSeen: "2026-01-01T00:00:00.000Z", connectedAt: "2026-01-01T00:00:00.000Z" }],
-    };
-
+  it("GET /api/mesh/state returns mesh topology snapshot", async () => {
     mockListNodes.mockResolvedValue([
       makeNode({ id: "node_local", name: "local", type: "local" }),
       makeNode({ id: "node_remote", name: "remote", type: "remote", url: "http://remote:3001" }),
     ]);
-    mockGetMeshState
-      .mockResolvedValueOnce(localMeshState)
-      .mockResolvedValueOnce(remoteMeshState);
+
+    const remoteMeshState = {
+      sourceNodeId: "node_remote",
+      collectedAt: "2026-01-01T00:00:00.000Z",
+      nodes: [
+        {
+          nodeId: "node_remote",
+          nodeName: "remote",
+          nodeUrl: "http://remote:3001",
+          nodeType: "remote" as const,
+          status: "online" as const,
+          metrics: { cpuUsage: 30, memoryUsed: 2e9, memoryTotal: 8e9, storageUsed: 100e9, storageTotal: 500e9, uptime: 3600000, reportedAt: "2026-01-01T00:00:00.000Z" },
+          lastSeen: "2026-01-01T00:00:00.000Z",
+          connectedAt: "2026-01-01T00:00:00.000Z",
+          knownPeers: [{ id: "peer_1", nodeId: "node_remote", peerNodeId: "node_local", name: "local", url: "http://localhost:3001", status: "online" as const, lastSeen: "2026-01-01T00:00:00.000Z", connectedAt: "2026-01-01T00:00:00.000Z" }],
+        },
+      ],
+    };
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => remoteMeshState }));
 
     const res = await request(app, "GET", "/api/mesh/state");
 
     expect(res.status).toBe(200);
-    expect((res.body as any[])).toHaveLength(2);
-    expect((res.body as any[])[0].nodeId).toBe("node_local");
-    expect((res.body as any[])[1].nodeId).toBe("node_remote");
+    expect((res.body as { nodes: Array<{ nodeId: string }> }).nodes).toHaveLength(2);
+    expect((res.body as { nodes: Array<{ nodeId: string }> }).nodes[0].nodeId).toBe("node_local");
+    expect((res.body as { nodes: Array<{ nodeId: string }> }).nodes[1].nodeId).toBe("node_remote");
   });
 
   it("GET /api/nodes/:id/metrics returns systemMetrics from node", async () => {

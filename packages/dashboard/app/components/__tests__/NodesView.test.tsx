@@ -6,6 +6,7 @@ import { useNodes } from "../../hooks/useNodes";
 import { useProjects } from "../../hooks/useProjects";
 import { useNodeSettingsSync } from "../../hooks/useNodeSettingsSync";
 import { useManagedDockerNodes } from "../../hooks/useManagedDockerNodes";
+import { useMeshState } from "../../hooks/useMeshState";
 import type { NodeSettingsSyncStatus } from "../../api-node";
 
 vi.mock("../../hooks/useNodes", () => ({
@@ -44,10 +45,15 @@ vi.mock("../../hooks/useManagedDockerNodes", () => ({
   useManagedDockerNodes: vi.fn(),
 }));
 
+vi.mock("../../hooks/useMeshState", () => ({
+  useMeshState: vi.fn(),
+}));
+
 const mockUseNodes = vi.mocked(useNodes);
 const mockUseProjects = vi.mocked(useProjects);
 const mockUseNodeSettingsSync = vi.mocked(useNodeSettingsSync);
 const mockUseManagedDockerNodes = vi.mocked(useManagedDockerNodes);
+const mockUseMeshState = vi.mocked(useMeshState);
 
 function makeNode(overrides: Partial<NodeInfo> = {}): NodeInfo {
   return {
@@ -134,6 +140,13 @@ beforeEach(() => {
     getLogs: vi.fn().mockResolvedValue(""),
     create: vi.fn().mockResolvedValue(undefined),
   });
+
+  mockUseMeshState.mockReturnValue({
+    meshState: { collectedAt: "2026-01-01T00:00:00.000Z", sourceNodeId: "local", nodes: [] },
+    loading: false,
+    error: null,
+    refresh: vi.fn().mockResolvedValue(undefined),
+  });
 });
 
 describe("NodesView", () => {
@@ -188,6 +201,19 @@ describe("NodesView", () => {
         makeNode({ id: "node-2", name: "Beta", status: "offline", type: "remote", url: "https://beta.node" }),
       ],
     }));
+    mockUseMeshState.mockReturnValue({
+      meshState: {
+        collectedAt: "2026-01-01T00:00:00.000Z",
+        sourceNodeId: "node-1",
+        nodes: [
+          { nodeId: "node-1", nodeName: "Alpha", nodeUrl: undefined, nodeType: "local", status: "online", metrics: null, lastSeen: "2026-01-01T00:00:00.000Z", connectedAt: "2026-01-01T00:00:00.000Z", knownPeers: [] },
+          { nodeId: "node-2", nodeName: "Beta", nodeUrl: "https://beta.node", nodeType: "remote", status: "offline", metrics: null, lastSeen: "2026-01-01T00:00:00.000Z", connectedAt: "2026-01-01T00:00:00.000Z", knownPeers: [] },
+        ],
+      },
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
 
     render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
 
@@ -334,6 +360,26 @@ describe("NodesView", () => {
       ];
 
       mockUseNodes.mockReturnValue(makeUseNodesResult({ nodes: sampleNodes }));
+      mockUseMeshState.mockReturnValue({
+        meshState: {
+          collectedAt: "2026-01-01T00:00:00.000Z",
+          sourceNodeId: "node-local",
+          nodes: sampleNodes.map((node) => ({
+            nodeId: node.id,
+            nodeName: node.name,
+            nodeUrl: node.url,
+            nodeType: node.type,
+            status: node.status,
+            metrics: null,
+            lastSeen: node.updatedAt,
+            connectedAt: node.createdAt,
+            knownPeers: [],
+          })),
+        },
+        loading: false,
+        error: null,
+        refresh: vi.fn().mockResolvedValue(undefined),
+      });
 
       render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
 

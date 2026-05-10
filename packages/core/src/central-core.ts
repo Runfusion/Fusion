@@ -1361,12 +1361,43 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       nodeId: node.id,
       nodeName: node.name,
       nodeUrl: node.url,
+      nodeType: node.type,
       status: node.status,
       metrics: node.systemMetrics ?? null,
       lastSeen: node.updatedAt,
       connectedAt: node.createdAt,
       knownPeers: peers,
     };
+  }
+
+  /**
+   * Return mesh snapshots for all locally known nodes from the central registry.
+   * This is a local-only read path and performs no remote fan-out.
+   */
+  async getLocalMeshSnapshot(): Promise<NodeMeshState[]> {
+    this.ensureInitialized();
+    const nodes = await this.listNodes();
+    const snapshots = await Promise.all(
+      nodes.map(async (node) => {
+        try {
+          return await this.getMeshState(node.id);
+        } catch {
+          return {
+            nodeId: node.id,
+            nodeName: node.name,
+            nodeUrl: node.url,
+            nodeType: node.type,
+            status: node.status,
+            metrics: node.systemMetrics ?? null,
+            lastSeen: node.updatedAt,
+            connectedAt: node.createdAt,
+            knownPeers: [],
+          } satisfies NodeMeshState;
+        }
+      }),
+    );
+
+    return snapshots;
   }
 
   /**

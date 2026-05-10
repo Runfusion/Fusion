@@ -1349,6 +1349,7 @@ describe("CentralCore", () => {
 
       const state = await central.getMeshState(local!.id);
       expect(state.nodeId).toBe(local!.id);
+      expect(state.nodeType).toBe("local");
       expect(state.metrics).toEqual(metrics);
       expect(state.knownPeers).toHaveLength(1);
       expect(state.knownPeers[0].peerNodeId).toBe("node_mesh_peer");
@@ -1370,8 +1371,25 @@ describe("CentralCore", () => {
 
       expect(metricsSpy).toHaveBeenCalledTimes(1);
       expect(state.nodeName).toBe("local");
+      expect(state.nodeType).toBe("local");
       expect(state.metrics).toEqual(metrics);
       expect(state.knownPeers).toEqual([]);
+    });
+
+    it("should return local mesh snapshots for all known nodes", async () => {
+      const remoteNode = await central.registerNode({
+        name: "Snapshot Remote",
+        type: "remote",
+        url: "https://snapshot-remote.example",
+      });
+
+      const snapshots = await central.getLocalMeshSnapshot();
+      const remote = snapshots.find((entry) => entry.nodeId === remoteNode.id);
+      const local = snapshots.find((entry) => entry.nodeType === "local");
+
+      expect(local).toBeDefined();
+      expect(remote).toBeDefined();
+      expect(remote?.nodeType).toBe("remote");
     });
 
     describe("peer exchange methods", () => {

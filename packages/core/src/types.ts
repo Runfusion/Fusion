@@ -2797,6 +2797,8 @@ export interface NodeMeshState {
   nodeName: string;
   /** Optional base URL (undefined for local nodes). */
   nodeUrl: string | undefined;
+  /** Runtime node type for this snapshot. */
+  nodeType: NodeConfig["type"];
   /** Current node status. */
   status: NodeStatus;
   /** Latest metrics payload for the node. */
@@ -2807,6 +2809,16 @@ export interface NodeMeshState {
   connectedAt: string;
   /** Expanded peer list for the node. */
   knownPeers: PeerNode[];
+}
+
+/** Cluster-wide mesh topology snapshot merged from local and remote mesh reads. */
+export interface MeshClusterSnapshot {
+  /** ISO timestamp when this aggregate snapshot was assembled. */
+  collectedAt: string;
+  /** Node ID that assembled and served the snapshot. */
+  sourceNodeId: string;
+  /** Deduplicated per-node mesh snapshots keyed by nodeId semantically. */
+  nodes: NodeMeshState[];
 }
 
 /** Lightweight mesh discovery record for propagating peer awareness. */
