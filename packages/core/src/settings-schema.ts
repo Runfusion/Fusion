@@ -214,7 +214,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   requirePlanApproval: false,
   specStalenessEnabled: false,
   specStalenessMaxAgeMs: 6 * 60 * 60 * 1000,
-  taskStuckTimeoutMs: undefined,
+  taskStuckTimeoutMs: 600_000,
   aiSessionTtlMs: 7 * 24 * 60 * 60 * 1000,
   aiSessionCleanupIntervalMs: 60 * 60 * 1000,
   autoUnpauseEnabled: true,

@@ -11,7 +11,8 @@
  * - `recordProgress(taskId)` — step transitions (in-progress, done, skipped); resets counters
  *
  * The detector polls at a configurable interval and compares timestamps against
- * `taskStuckTimeoutMs` from settings.
+ * `taskStuckTimeoutMs` from settings. Project defaults keep this active by
+ * default while keeping workflow-step execution timeouts independent.
  */
 
 import type { TaskStore, Settings } from "@fusion/core";
@@ -471,7 +472,7 @@ export class StuckTaskDetector {
     if (settings.globalPause || settings.enginePaused) return;
 
     const timeoutMs = settings.taskStuckTimeoutMs;
-    if (!timeoutMs || timeoutMs <= 0) return; // Disabled
+    if (!timeoutMs || timeoutMs <= 0) return; // Disabled when task stuck timeout is explicitly unset/disabled
 
     const stuckTasks: string[] = [];
 

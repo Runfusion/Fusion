@@ -2180,7 +2180,7 @@ export interface ProjectSettings {
   /** Timeout in milliseconds for detecting stuck tasks. When a task's agent session
    *  shows no activity (no text deltas, tool calls, or progress updates) for longer
    *  than this duration, the task is considered stuck and will be terminated and retried.
-   *  Default: undefined (disabled). Suggested value: 600000 (10 minutes). */
+   *  Default: 600000 (10 minutes). Set to 0 to disable. */
   taskStuckTimeoutMs?: number;
   /** TTL in milliseconds for persisted AI planning/subtask/mission interview sessions.
    *  Sessions older than this cutoff are expired by the dashboard session cleanup loop.
