@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { REPO_OVERRIDE_RE, resolveEffectiveGithubRepoDefault } from "../githubTracking";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@fusion/core", () => ({
+  REPO_OVERRIDE_RE: /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/,
+}));
+
+import { REPO_OVERRIDE_RE } from "@fusion/core";
+import { resolveEffectiveGithubRepoDefault } from "../githubTracking";
 
 describe("githubTracking helper", () => {
   it("accepts valid owner/repo values and rejects malformed values", () => {

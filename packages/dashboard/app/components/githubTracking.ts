@@ -1,6 +1,4 @@
-import type { GlobalSettings, ProjectSettings } from "@fusion/core";
-
-export const REPO_OVERRIDE_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+import { REPO_OVERRIDE_RE, type GlobalSettings, type ProjectSettings } from "@fusion/core";
 
 function normalizeRepoValue(value: string | null | undefined): string {
   const trimmed = value?.trim() ?? "";

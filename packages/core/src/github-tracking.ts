@@ -14,17 +14,16 @@ export interface ResolvedTaskGithubTracking {
   };
 }
 
+export const REPO_OVERRIDE_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+
 function parseRepoSlugCandidate(input: unknown): RepoSlug | null {
   if (typeof input !== "string") return null;
   const trimmed = input.trim();
   if (!trimmed) return null;
 
-  const parts = trimmed.split("/");
-  if (parts.length !== 2) return null;
-  const [owner, repo] = parts;
-  if (!owner || !repo) return null;
-  if (/\s/.test(owner) || /\s/.test(repo)) return null;
+  if (!REPO_OVERRIDE_RE.test(trimmed)) return null;
 
+  const [owner, repo] = trimmed.split("/");
   return { owner, repo };
 }
 
