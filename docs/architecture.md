@@ -1246,11 +1246,11 @@ Git dashboard routes are registered in `register-git-github.ts`.
 | POST | `/api/git/commit` | Create a commit from staged changes with a required message. |
 | POST | `/api/git/discard` | Discard working-tree changes for specified files. |
 
-### GitHub tracking lifecycle (task creation)
+### GitHub tracking lifecycle (task creation + existing-task edits)
 
-When a task is created, Fusion only attempts GitHub issue creation if per-task tracking is explicitly enabled (`task.githubTracking.enabled === true`). The lifecycle then resolves the repo in priority order: task override (`repoOverride`) → project `githubTrackingDefaultRepo` → global `githubTrackingDefaultRepo`. If no repo resolves, task creation still succeeds and an activity entry records the skip reason. GitHub API/CLI failures are best-effort only (swallowed with warning), so task creation is never blocked by GitHub availability.
+Fusion attempts GitHub issue creation when per-task tracking is explicitly enabled (`task.githubTracking.enabled === true`) and the task is currently unlinked. This runs during task creation flows and during existing-task PATCH updates that include `githubTracking` changes (for example enable/retarget updates). The lifecycle resolves the repo in priority order: task override (`repoOverride`) → project `githubTrackingDefaultRepo` → global `githubTrackingDefaultRepo`. If no repo resolves, task create/update still succeeds and an activity entry records the skip reason. GitHub API/CLI failures are best-effort only (swallowed with warning), so task updates are never blocked by GitHub availability.
 
-When Fusion does create a tracking issue, it formats the title as `[FN-XXXX] Task title` and sends a short plain-text body prefixed with `Fusion task: FN-XXXX`. The body is a bounded summary snippet (not full task prompt content), and Fusion does not include any hyperlink back to the local dashboard.
+When Fusion does create a tracking issue, it formats the title as `[FN-XXXX] Task title` and sends a short plain-text body prefixed with `Fusion task: FN-XXXX`. The body is a bounded summary snippet (not full task prompt content), and Fusion does not include any hyperlink back to the local dashboard. Manual unlink requests (`githubTracking.issue: null`) do not recreate an issue in that same PATCH request, and disable updates do not create issues.
 
 When a tracked task later moves to `in-progress` or `done`, Fusion posts one short lifecycle comment on the linked tracking issue. These comments include the Fusion task ID as plain text (`Fusion task: FN-XXXX`) and never link back to the Fusion app. No comment is posted for any other transition.
 

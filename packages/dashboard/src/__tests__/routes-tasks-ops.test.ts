@@ -204,6 +204,8 @@ function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
     deleteTaskDocument: vi.fn().mockResolvedValue(undefined),
     updatePrInfo: vi.fn().mockResolvedValue(undefined),
     updateIssueInfo: vi.fn().mockResolvedValue(undefined),
+    linkGithubIssue: vi.fn().mockResolvedValue(undefined),
+    recordActivity: vi.fn().mockResolvedValue(undefined),
     getRootDir: vi.fn().mockReturnValue("/fake/root"),
     listWorkflowSteps: vi.fn().mockResolvedValue([]),
     createWorkflowStep: vi.fn(),
@@ -1677,6 +1679,97 @@ describe("PATCH /tasks/:id", () => {
         issue: null,
       },
     });
+  });
+
+  it("creates and links a tracking issue when enabling tracking on an existing task with resolvable repo", async () => {
+    const createIssueSpy = vi.spyOn(GitHubClient.prototype, "createIssue").mockResolvedValue({
+      owner: "runfusion",
+      repo: "fusion",
+      number: 73,
+      htmlUrl: "https://github.com/runfusion/fusion/issues/73",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ githubAuthMode: "token", githubAuthToken: "tok" });
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "KB-001",
+      githubTracking: { enabled: true, repoOverride: "runfusion/fusion" },
+    });
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "KB-001",
+      githubTracking: {
+        enabled: true,
+        repoOverride: "runfusion/fusion",
+        issue: { owner: "runfusion", repo: "fusion", number: 73, url: "https://github.com/runfusion/fusion/issues/73", createdAt: "2026-01-01T00:00:00.000Z" },
+      },
+    });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({
+      githubTracking: {
+        enabled: true,
+        repoOverride: "runfusion/fusion",
+      },
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(createIssueSpy).toHaveBeenCalledWith(expect.objectContaining({ owner: "runfusion", repo: "fusion" }));
+    expect(store.linkGithubIssue).toHaveBeenCalledWith("KB-001", expect.objectContaining({ owner: "runfusion", repo: "fusion", number: 73 }));
+    createIssueSpy.mockRestore();
+  });
+
+  it("does not recreate tracking issue during explicit manual unlink patch", async () => {
+    const createIssueSpy = vi.spyOn(GitHubClient.prototype, "createIssue").mockResolvedValue({
+      owner: "runfusion",
+      repo: "fusion",
+      number: 99,
+      htmlUrl: "https://github.com/runfusion/fusion/issues/99",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...FAKE_TASK_DETAIL });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({
+      githubTracking: { issue: null },
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(createIssueSpy).not.toHaveBeenCalled();
+    expect(store.getTask).not.toHaveBeenCalled();
+    createIssueSpy.mockRestore();
+  });
+
+  it("does not create tracking issue when disabling tracking", async () => {
+    const createIssueSpy = vi.spyOn(GitHubClient.prototype, "createIssue").mockResolvedValue({
+      owner: "runfusion",
+      repo: "fusion",
+      number: 100,
+      htmlUrl: "https://github.com/runfusion/fusion/issues/100",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "KB-001",
+      githubTracking: { enabled: false, repoOverride: "runfusion/fusion" },
+    });
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "KB-001",
+      githubTracking: { enabled: false, repoOverride: "runfusion/fusion" },
+    });
+
+    const res = await REQUEST(buildApp(), "PATCH", "/api/tasks/KB-001", JSON.stringify({
+      githubTracking: { enabled: false },
+    }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(createIssueSpy).not.toHaveBeenCalled();
+    createIssueSpy.mockRestore();
   });
 
   it("returns 400 for invalid githubTracking repo override format", async () => {
