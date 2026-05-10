@@ -20,7 +20,7 @@ import { TodoStore } from "./todo-store.js";
 import { EvalStore } from "./eval-store.js";
 import { BackwardCompat, ProjectRequiredError } from "./migration.js";
 import { CentralCore } from "./central-core.js";
-import { getTaskMergeBlocker } from "./task-merge.js";
+import { getTaskMergeBlocker, resolveTaskMergeTarget } from "./task-merge.js";
 import { ensureMemoryFileWithBackend } from "./project-memory.js";
 import { runCommandAsync } from "./run-command.js";
 import { createLogger } from "./logger.js";
@@ -4487,7 +4487,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return clearedIds;
   }
 
-  private async collectMergeDetails(_id: string, _branch: string, task: Task, commitMessage: string): Promise<import("./types.js").MergeDetails> {
+  private async collectMergeDetails(
+    _id: string,
+    _branch: string,
+    task: Task,
+    commitMessage: string,
+    mergeTarget?: { branch: string; source: "task-base-branch" | "task-branch-context" | "project-default" | "legacy-main" },
+  ): Promise<import("./types.js").MergeDetails> {
     const mergedAt = new Date().toISOString();
     let commitSha: string | undefined;
     let filesChanged: number | undefined;
@@ -4526,6 +4532,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       mergedAt,
       mergeConfirmed: true,
       prNumber: task.prInfo?.number,
+      mergeTargetBranch: mergeTarget?.branch,
+      mergeTargetSource: mergeTarget?.source,
       resolutionStrategy: task.mergeDetails?.resolutionStrategy,
       resolutionMethod: task.mergeDetails?.resolutionMethod,
       attemptsMade: task.mergeDetails?.attemptsMade,
@@ -4541,7 +4549,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return this.withTaskLock(id, async () => {
       const dir = this.taskDir(id);
       const task = await this.readTaskJson(dir);
-      const branch = `fusion/${id.toLowerCase()}`;
+      const branch = task.branch || `fusion/${id.toLowerCase()}`;
       // Branch is derived from the task id (already validated at create time),
       // but assert as defense-in-depth against future id-format changes.
       assertSafeGitBranchName(branch);
@@ -4601,6 +4609,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         branchDeleted: false,
       };
 
+      const settings = await this.getSettings();
+      const projectDefaultBranch = typeof settings.baseBranch === "string" ? settings.baseBranch : undefined;
+      const mergeTarget = resolveTaskMergeTarget(task, {
+        projectDefaultBranch,
+      });
+
       // 1. Check the branch exists
       const verifyBranch = await this.runGitCommand(`git rev-parse --verify "${branch}"`);
       if (verifyBranch.exitCode !== 0) {
@@ -4610,11 +4624,18 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           mergedAt: new Date().toISOString(),
           mergeConfirmed: false,
           prNumber: task.prInfo?.number,
+          mergeTargetBranch: mergeTarget.branch,
+          mergeTargetSource: mergeTarget.source,
         };
         await this.moveToDone(task, dir);
         result.task = { ...task, column: "done" };
         this.emit("task:merged", result);
         return result;
+      }
+
+      const checkoutTarget = await this.runGitCommand(`git checkout "${mergeTarget.branch}"`, 120_000);
+      if (checkoutTarget.exitCode !== 0) {
+        throw new Error(`Unable to checkout merge target branch '${mergeTarget.branch}' for ${id}`);
       }
 
       // 2. Merge the branch
@@ -4626,7 +4647,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
       if (merge.exitCode === 0 && commit.exitCode === 0) {
         result.merged = true;
-        const mergeDetails = await this.collectMergeDetails(id, branch, task, mergeCommitMessage);
+        const mergeDetails = await this.collectMergeDetails(id, branch, task, mergeCommitMessage, mergeTarget);
         task.mergeDetails = mergeDetails;
         Object.assign(result, mergeDetails);
       } else {

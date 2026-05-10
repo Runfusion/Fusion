@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import type { StepStatus } from "../types.js";
-import { getTaskCompletionBlocker, getTaskMergeBlocker, isTaskReadyForMerge } from "../task-merge.js";
+import {
+  getTaskCompletionBlocker,
+  getTaskMergeBlocker,
+  isTaskReadyForMerge,
+  resolveTaskMergeTarget,
+} from "../task-merge.js";
 
 const baseTask = {
   column: "in-review" as const,
@@ -15,6 +20,47 @@ const baseCompletionTask = {
   dependencies: [] as string[],
   blockedBy: undefined as string | undefined,
 };
+
+describe("resolveTaskMergeTarget", () => {
+  it("prefers task baseBranch when present", () => {
+    expect(resolveTaskMergeTarget({ baseBranch: "release/1.2", branchContext: undefined })).toEqual({
+      branch: "release/1.2",
+      source: "task-base-branch",
+    });
+  });
+
+  it("falls back to inherited branch context", () => {
+    expect(resolveTaskMergeTarget({
+      baseBranch: undefined,
+      branchContext: {
+        groupId: "G-1",
+        source: "planning",
+        assignmentMode: "shared",
+        inheritedBaseBranch: "develop",
+      },
+    })).toEqual({
+      branch: "develop",
+      source: "task-branch-context",
+    });
+  });
+
+  it("uses project default branch when task has no explicit target", () => {
+    expect(resolveTaskMergeTarget(
+      { baseBranch: undefined, branchContext: undefined },
+      { projectDefaultBranch: "trunk" },
+    )).toEqual({
+      branch: "trunk",
+      source: "project-default",
+    });
+  });
+
+  it("falls back to legacy main when no target is configured", () => {
+    expect(resolveTaskMergeTarget({ baseBranch: undefined, branchContext: undefined })).toEqual({
+      branch: "main",
+      source: "legacy-main",
+    });
+  });
+});
 
 describe("getTaskMergeBlocker", () => {
   it("returns undefined for a clean task in review", () => {

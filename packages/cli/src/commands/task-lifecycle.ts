@@ -17,6 +17,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 const execAsync = promisify(exec);
 import type { TaskStore } from "@fusion/core";
+import { resolveTaskMergeTarget } from "@fusion/core";
 import type { Settings, TaskDetail, PrInfo } from "@fusion/core";
 
 /**
@@ -25,7 +26,7 @@ import type { Settings, TaskDetail, PrInfo } from "@fusion/core";
  */
 interface GitHubOperations {
   findPrForBranch(params: { head: string; state?: "open" | "closed" | "all" }): Promise<PrInfo | null>;
-  createPr(params: { title: string; body: string; head: string }): Promise<PrInfo>;
+  createPr(params: { title: string; body: string; head: string; base?: string }): Promise<PrInfo>;
   getPrMergeStatus(base?: string, head?: string, number?: number): Promise<{
     prInfo: PrInfo;
     reviewDecision: string | null;
@@ -228,6 +229,11 @@ export async function processPullRequestMergeTask(
   }
 
   const branch = getTaskBranchName(task.id);
+  const settings = await store.getSettings();
+  const projectDefaultBranch = typeof settings.baseBranch === "string" ? settings.baseBranch : undefined;
+  const mergeTarget = resolveTaskMergeTarget(task, {
+    projectDefaultBranch,
+  });
   let prInfo: PrInfo | undefined = task.prInfo;
 
   if (!prInfo) {
@@ -245,6 +251,7 @@ export async function processPullRequestMergeTask(
         title: buildPullRequestTitle(task),
         body: buildPullRequestBody(task),
         head: branch,
+        base: mergeTarget.branch,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -269,7 +276,7 @@ export async function processPullRequestMergeTask(
     throw new Error(`Failed to create or resolve pull request for ${task.id}`);
   }
 
-  const mergeStatus = await github.getPrMergeStatus(undefined, undefined, prInfo.number);
+  const mergeStatus = await github.getPrMergeStatus(mergeTarget.branch, branch, prInfo.number);
   const refreshedPrInfo: PrInfo = {
     ...prInfo,
     ...mergeStatus.prInfo,
@@ -288,7 +295,6 @@ export async function processPullRequestMergeTask(
   // immediately. `requirePrApproval` lets users keep PR mode as "open the
   // PR, wait for me to approve and merge it" by holding the merge until
   // reviewDecision === "APPROVED".
-  const settings = await store.getSettings();
   if (settings.requirePrApproval && mergeStatus.reviewDecision !== "APPROVED") {
     await store.updateTask(task.id, { status: "awaiting-pr-checks" });
     return "waiting";

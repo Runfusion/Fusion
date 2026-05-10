@@ -33,6 +33,7 @@ import { hostname } from "node:os";
 import {
   getTaskMergeBlocker,
   normalizeMergeConflictStrategy,
+  resolveTaskMergeTarget,
   resolveProjectDefaultModel,
   resolveTitleSummarizerSettingsModel,
   resolveAgentPrompt,
@@ -4600,6 +4601,11 @@ export async function aiMergeTask(
   // sites in mergeAttempt + attemptWithSideStrategy.
   let mergeWasEmpty = false;
 
+  const projectDefaultBranch = typeof settings.baseBranch === "string" ? settings.baseBranch : undefined;
+  const mergeTarget = resolveTaskMergeTarget(task, {
+    projectDefaultBranch,
+  });
+
   // 3. Check branch exists
   try {
     execSync(`git rev-parse --verify "${branch}"`, {
@@ -4622,6 +4628,8 @@ export async function aiMergeTask(
           mergedAt: new Date().toISOString(),
           mergeConfirmed: true,
           prNumber: task.prInfo?.number,
+          mergeTargetBranch: mergeTarget.branch,
+          mergeTargetSource: mergeTarget.source,
         },
       });
       mergerLog.log(`${taskId}: branch missing; recovered owned landed commit ${ownedCommit.sha.slice(0, 8)}`);
@@ -4632,9 +4640,8 @@ export async function aiMergeTask(
     return result;
   }
 
-  // 3b. Ensure rootDir is on the main branch before merging.
-  // Without this, a merge could land on whatever branch was last checked out,
-  // causing feature code to be committed to the wrong lineage.
+  // 3b. Ensure rootDir is on the resolved merge target before merging.
+  // Without this, a merge could land on whatever branch was last checked out.
   try {
     throwIfAborted(options.signal, taskId);
     const currentBranch = execSyncText("git symbolic-ref --short HEAD", {
@@ -4642,32 +4649,16 @@ export async function aiMergeTask(
       encoding: "utf-8",
       stdio: "pipe",
     }).trim();
-    const mainBranch = execSyncText("git rev-parse --abbrev-ref origin/HEAD", {
-      cwd: rootDir,
-      encoding: "utf-8",
-      stdio: "pipe",
-    }).trim().replace(/^origin\//, "");
-    if (currentBranch !== mainBranch) {
-      mergerLog.log(`${taskId}: rootDir on '${currentBranch}', checking out '${mainBranch}' before merge`);
-      await execAsync(`git checkout "${mainBranch}"`, {
+    if (currentBranch !== mergeTarget.branch) {
+      mergerLog.log(`${taskId}: rootDir on '${currentBranch}', checking out '${mergeTarget.branch}' before merge (${mergeTarget.source})`);
+      await execAsync(`git checkout "${mergeTarget.branch}"`, {
         cwd: rootDir,
       });
-      // Audit trail: record git checkout (FN-1404)
-      await audit.git({ type: "branch:checkout", target: mainBranch });
+      await audit.git({ type: "branch:checkout", target: mergeTarget.branch });
     }
   } catch (error: unknown) {
     rethrowIfMergeAborted(error);
-
-    // Fallback: try checking out main directly
-    try {
-      throwIfAborted(options.signal, taskId);
-      await execAsync("git checkout main", { cwd: rootDir });
-      // Audit trail: record git checkout (FN-1404)
-      await audit.git({ type: "branch:checkout", target: "main" });
-    } catch (fallbackError: unknown) {
-      rethrowIfMergeAborted(fallbackError);
-      mergerLog.warn(`${taskId}: unable to verify/checkout main branch — proceeding on current HEAD`);
-    }
+    mergerLog.warn(`${taskId}: unable to verify/checkout merge target '${mergeTarget.branch}' — proceeding on current HEAD`);
   }
 
   // 3c. Pre-merge remote rebase.
@@ -5739,6 +5730,8 @@ export async function aiMergeTask(
       mergeCommitMessage: aiMergeSummary || commitLog,
       mergedAt: new Date().toISOString(),
       mergeConfirmed: true,
+      mergeTargetBranch: mergeTarget.branch,
+      mergeTargetSource: mergeTarget.source,
       resolutionStrategy: result.resolutionStrategy,
       resolutionMethod: result.resolutionMethod,
       attemptsMade: result.attemptsMade,
@@ -5756,7 +5749,7 @@ export async function aiMergeTask(
     if (recordedSha) {
       summaryParts.push(`commit ${recordedSha.slice(0, 8)}`);
     } else if (mergeWasEmpty) {
-      summaryParts.push("no commit landed (branch already on main)");
+      summaryParts.push(`no commit landed (branch already on ${mergeTarget.branch})`);
     } else if (isEmptyCommit) {
       summaryParts.push("squash collapsed to empty (sha deferred)");
     }

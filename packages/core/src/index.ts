@@ -87,7 +87,14 @@ export { DaemonTokenManager, DAEMON_TOKEN_PREFIX, DAEMON_TOKEN_HEX_LENGTH, isDae
 export { discoverPiExtensions, formatPiExtensionSource, getEnabledPiExtensionPaths, getFusionAgentDir, getFusionAgentSettingsPath, getLegacyPiAgentDir, getPiExtensionDiscoveryDirs, reconcileClaudeCliPaths, reconcileDroidCliPaths, resolvePiExtensionProjectRoot, updatePiExtensionDisabledIds } from "./pi-extensions.js";
 export type { PiExtensionEntry, PiExtensionSettings, PiExtensionSource } from "./pi-extensions.js";
 export { canTransition, getValidTransitions, resolveDependencyOrder } from "./board.js";
-export { getTaskMergeBlocker, getTaskCompletionBlocker, isTaskReadyForMerge } from "./task-merge.js";
+export {
+  getTaskMergeBlocker,
+  getTaskCompletionBlocker,
+  isTaskReadyForMerge,
+  resolveTaskMergeTarget,
+  type MergeTargetResolution,
+  type MergeTargetResolverOptions,
+} from "./task-merge.js";
 export {
   isGhAvailable, 
   isGhAuthenticated, 

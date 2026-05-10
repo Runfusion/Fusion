@@ -989,6 +989,8 @@ export interface MergeDetails {
   mergedAt?: string;
   mergeConfirmed?: boolean;
   prNumber?: number;
+  mergeTargetBranch?: string;
+  mergeTargetSource?: "task-base-branch" | "task-branch-context" | "project-default" | "legacy-main";
   resolutionStrategy?: "ai" | "auto-resolve" | "theirs" | "ours" | "abort";
   resolutionMethod?: "ai" | "auto" | "mixed" | "theirs" | "ours" | "abort";
   attemptsMade?: 1 | 2 | 3;

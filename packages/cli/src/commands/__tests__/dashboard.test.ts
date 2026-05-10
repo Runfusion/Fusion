@@ -901,6 +901,7 @@ describe("processPullRequestMergeTask", () => {
       title: "FN-093: Add support for creating pull requests",
       body: "Automated PR for FN-093.\n\nImplement PR automation",
       head: "fusion/fn-093",
+      base: "main",
     });
     expect(store.updatePrInfo).toHaveBeenCalledWith(
       "FN-093",
@@ -1126,6 +1127,7 @@ describe("runDashboard — PR-first auto-merge queue", () => {
       title: "FN-093: Task",
       body: "Automated PR for FN-093.\n\nDescription",
       head: "fusion/fn-093",
+      base: "main",
     });
     expect(aiMergeTask).not.toHaveBeenCalled();
   });
@@ -1154,6 +1156,7 @@ describe("runDashboard — PR-first auto-merge queue", () => {
       title: "FN-093: Task",
       body: "Automated PR for FN-093.\n\nDescription",
       head: "fusion/fn-093",
+      base: "main",
     });
     expect(aiMergeTask).not.toHaveBeenCalled();
   });

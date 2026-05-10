@@ -1,5 +1,38 @@
 import type { Task, WorkflowStepResult } from "./types.js";
 
+export interface MergeTargetResolution {
+  branch: string;
+  source: "task-base-branch" | "task-branch-context" | "project-default" | "legacy-main";
+}
+
+export interface MergeTargetResolverOptions {
+  projectDefaultBranch?: string;
+  legacyFallbackBranch?: string;
+}
+
+export function resolveTaskMergeTarget(
+  task: Pick<Task, "baseBranch" | "branchContext">,
+  options: MergeTargetResolverOptions = {},
+): MergeTargetResolution {
+  const configuredBase = task.baseBranch?.trim();
+  if (configuredBase) {
+    return { branch: configuredBase, source: "task-base-branch" };
+  }
+
+  const inheritedBase = task.branchContext?.inheritedBaseBranch?.trim();
+  if (inheritedBase) {
+    return { branch: inheritedBase, source: "task-branch-context" };
+  }
+
+  const projectDefault = options.projectDefaultBranch?.trim();
+  if (projectDefault) {
+    return { branch: projectDefault, source: "project-default" };
+  }
+
+  const legacyFallback = options.legacyFallbackBranch?.trim() || "main";
+  return { branch: legacyFallback, source: "legacy-main" };
+}
+
 const BLOCKING_TASK_STATUSES = new Set([
   "failed",
   // ── User-attention / awaiting-handoff states ─────────────────────────
