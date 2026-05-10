@@ -83,30 +83,29 @@ describe("prompt layers backward compatibility", () => {
   });
 
   describe("reviewer assembly pattern", () => {
-    it("reproduces the reviewer prompt assembly", () => {
+    it("produces the expected reviewer prompt with memory in dynamic layer", () => {
       const basePrompt = "You are an independent code and plan reviewer.";
       const memoryInstructions = "\n## Memory\n\nUse fn_memory_search.";
       const agentInstructions = "Focus on security.";
       const plugins = "## Plugin: lint\n\nCheck eslint.";
 
-      // Old reviewer pattern:
-      // 1. buildSystemPromptWithInstructions(base + memory, instructions)
-      // 2. if plugins: concatenate
-      const oldSystemPrompt = buildSystemPromptWithInstructions(
-        basePrompt + memoryInstructions,
-        agentInstructions,
-      );
-      const oldResult = `${oldSystemPrompt}\n\n${plugins}`;
-
-      // New reviewer pattern:
+      // New reviewer pattern: memory goes in dynamic layer (not stable) so
+      // the stable prefix is byte-identical across sessions even when memory
+      // changes mid-task.
       const layers = buildPromptLayers({
-        basePrompt: basePrompt + memoryInstructions,
+        basePrompt,
         agentInstructions,
+        memorySection: memoryInstructions,
         pluginContributions: plugins,
       });
-      const newResult = collapsePromptLayers(layers);
+      const result = collapsePromptLayers(layers);
 
-      expect(newResult).toBe(oldResult);
+      // Base prompt is the stable layer
+      expect(layers.stable).toBe(basePrompt);
+      // Dynamic layer contains instructions, memory, and plugins
+      expect(result).toContain(agentInstructions);
+      expect(result).toContain("Memory");
+      expect(result).toContain(plugins);
     });
   });
 

@@ -410,8 +410,9 @@ export async function reviewStep(
     : "";
 
   // Build structured layers for cross-session prompt caching.
-  // The stable layer (base prompt + memory instructions) is byte-identical
-  // across all reviewer sessions in this task, enabling cache hits.
+  // The stable layer (base prompt only) is byte-identical across all
+  // reviewer sessions in this task, enabling cache hits. Memory goes
+  // into the dynamic layer because it can change between sessions.
   const reviewerPluginContributions = buildPluginPromptSection(
     "reviewer",
     options.pluginRunner,
@@ -421,8 +422,9 @@ export async function reviewStep(
   }
 
   const layers = buildPromptLayers({
-    basePrompt: reviewerBasePrompt + memorySection,
+    basePrompt: reviewerBasePrompt,
     agentInstructions: reviewerInstructions,
+    memorySection,
     pluginContributions: reviewerPluginContributions,
   });
 

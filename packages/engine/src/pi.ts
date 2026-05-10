@@ -1787,7 +1787,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
           ...customToolList.map((tool) => tool.name),
           ...options.builtinToolsAllowlist,
         ]),
-      ];
+      ].sort();
     }
 
     return createAgentSession(createSessionOptions);

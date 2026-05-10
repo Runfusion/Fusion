@@ -92,13 +92,15 @@ export async function accumulateSessionTokenUsage(
 }
 
 /**
- * Compute the cache hit ratio: the fraction of input tokens served from
- * cache. Returns a number in [0, 1]. Useful for measuring the effectiveness
- * of prompt caching optimizations.
+ * Compute the cache hit ratio: the fraction of effective input tokens served
+ * from cache. Returns a number in [0, 1]. Useful for measuring the
+ * effectiveness of prompt caching optimizations.
  *
- * @param inputTokens - Non-cached input tokens (includes cache-write tokens)
- * @param cachedTokens - Tokens read from cache
- * @returns Cache hit ratio in [0, 1], or 0 if no tokens used
+ * @param inputTokens - Non-cached input tokens (NOT including cache-write tokens;
+ *   use only `tokens.input` here, not `tokens.input + tokens.cacheWrite`)
+ * @param cachedTokens - Tokens read from cache (`tokens.cacheRead`)
+ * @returns Cache hit ratio in [0, 1] matching Anthropic console's `cache_read / input` metric,
+ *   or 0 if no tokens used
  */
 export function computeCacheHitRatio(
   inputTokens: number,
