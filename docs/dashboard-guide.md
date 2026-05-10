@@ -55,6 +55,7 @@ Features:
 - Sortable columns (ID/title/status/column)
 - Column visibility toggles and optional hide-done filtering
 - Bulk selection + batch model updates
+- Bulk delete from the selection toolbar (`Delete selected`): archived selections are skipped automatically, and dependency-conflict failures can be force-deleted per task after a danger confirmation that removes dependency references.
 
 ![List view](./screenshots/list-view.png)
 
