@@ -405,8 +405,12 @@ export async function reviewStep(
     }
   }
   const reviewerBasePrompt = resolveAgentPrompt("reviewer", options.agentPrompts) || REVIEWER_SYSTEM_PROMPT;
+  // Memory goes in the dynamic layer (not concatenated onto basePrompt) so the
+  // stable prefix is byte-identical across sessions even if memory changes.
+  // The leading "\n" separator is no longer needed — buildPromptLayers handles
+  // section joining with "\n\n".
   const memorySection = options.rootDir && options.settings?.memoryEnabled !== false
-    ? "\n" + buildReviewerMemoryInstructions(options.rootDir, options.settings)
+    ? buildReviewerMemoryInstructions(options.rootDir, options.settings)
     : "";
 
   // Build structured layers for cross-session prompt caching.
