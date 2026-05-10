@@ -709,6 +709,19 @@
   white-space: nowrap;
 }
 
+.agents-split-sidebar .agent-card-actions {
+  gap: var(--space-xs);
+}
+
+.agents-split-sidebar .agent-card-actions .btn {
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.agents-split-sidebar .agent-card-actions .agent-card-action-label {
+  display: none;
+}
+
 .agent-card-details-btn {
   margin-left: auto;
 }

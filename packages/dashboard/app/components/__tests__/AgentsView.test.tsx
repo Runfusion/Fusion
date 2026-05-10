@@ -1976,6 +1976,29 @@ describe("AgentsView", () => {
   });
 
   describe("Run Now button", () => {
+    it("renders sidebar action labels with wrapper spans for icon-only compaction (FN-3902)", async () => {
+      const activeWithoutTaskId = { ...mockAgents[1] };
+      delete activeWithoutTaskId.taskId;
+      mockFetchAgents.mockResolvedValue([
+        mockAgents[0],
+        activeWithoutTaskId,
+        mockAgents[2],
+        mockAgents[3],
+      ]);
+
+      render(<AgentsView addToast={mockAddToast} />);
+
+      const runNowButton = await screen.findByTitle("Run Now");
+      const pauseButton = await screen.findByTitle("Pause");
+      const activeCard = runNowButton.closest(".agent-card");
+      const detailsButton = activeCard?.querySelector('[aria-label^="View details for "]') as HTMLButtonElement | null;
+
+      expect(detailsButton).toBeTruthy();
+      expect(runNowButton.querySelector(".agent-card-action-label")).toBeTruthy();
+      expect(pauseButton.querySelector(".agent-card-action-label")).toBeTruthy();
+      expect(detailsButton?.querySelector(".agent-card-action-label")).toBeTruthy();
+    });
+
     it("shows Run Now button for active agent without taskId", async () => {
       const activeWithoutTaskId = { ...mockAgents[1] };
       delete activeWithoutTaskId.taskId;

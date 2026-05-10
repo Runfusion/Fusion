@@ -1375,7 +1375,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                         disabled={transitioningAgentIds.has(agent.id)}
                         title="Activate"
                       >
-                        <Play size={14} /> Start
+                        <Play size={14} /> <span className="agent-card-action-label">Start</span>
                       </button>
                     )}
                     {agent.state === "active" && (
@@ -1387,7 +1387,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                           title="Run Now"
                           aria-label={`Run now for ${agent.name}`}
                         >
-                          <Activity size={14} /> Run Now
+                          <Activity size={14} /> <span className="agent-card-action-label">Run Now</span>
                         </button>
                         <button
                           className="btn btn-sm"
@@ -1395,7 +1395,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                           disabled={transitioningAgentIds.has(agent.id)}
                           title="Pause"
                         >
-                          <Pause size={14} /> Pause
+                          <Pause size={14} /> <span className="agent-card-action-label">Pause</span>
                         </button>
                       </>
                     )}
@@ -1406,7 +1406,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                         disabled={transitioningAgentIds.has(agent.id)}
                         title="Resume"
                       >
-                        <Play size={14} /> Resume
+                        <Play size={14} /> <span className="agent-card-action-label">Resume</span>
                       </button>
                     )}
                     {agent.state === "running" && (
@@ -1417,7 +1417,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                           title="View live run details"
                           aria-label={`View live run details for ${agent.name}`}
                         >
-                          <Activity size={14} /> Running
+                          <Activity size={14} /> <span className="agent-card-action-label">Running</span>
                         </button>
                         <button
                           className="btn btn-sm"
@@ -1425,7 +1425,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                           disabled={transitioningAgentIds.has(agent.id)}
                           title="Pause"
                         >
-                          <Pause size={14} /> Pause
+                          <Pause size={14} /> <span className="agent-card-action-label">Pause</span>
                         </button>
                       </>
                     )}
@@ -1436,7 +1436,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                         disabled={transitioningAgentIds.has(agent.id)}
                         title="Retry"
                       >
-                        <Play size={14} /> Retry
+                        <Play size={14} /> <span className="agent-card-action-label">Retry</span>
                       </button>
                     )}
                     <button
@@ -1445,7 +1445,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                       title={`View details for ${agent.name}`}
                       aria-label={`View details for ${agent.name}`}
                     >
-                      Details
+                      <span className="agent-card-action-label">Details</span>
                     </button>
                     {(agent.state === "idle" || agent.state === "paused") && (
                       <button
@@ -1453,7 +1453,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                         onClick={() => void handleDelete(agent.id, agent.name)}
                         title="Delete"
                       >
-                        <Trash2 size={14} /> Delete
+                        <Trash2 size={14} /> <span className="agent-card-action-label">Delete</span>
                       </button>
                     )}
                   </div>
