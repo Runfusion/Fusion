@@ -1,6 +1,6 @@
 {
   "name": "@fusion/droid-cli",
-  "version": "0.11.8",
+  "version": "0.11.9",
   "description": "First-party Fusion pi extension that routes LLM calls through the Droid CLI subprocess.",
   "license": "MIT",
   "private": true,
