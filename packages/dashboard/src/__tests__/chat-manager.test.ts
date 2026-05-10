@@ -1913,4 +1913,44 @@ describe("ChatManager generation isolation", () => {
     expect(chatManager.isGenerating("chat-001")).toBe(false);
   });
 
+  it("sendRoomMessage persists assistant room replies", async () => {
+    (mockChatStore as any).getRoom = vi.fn().mockReturnValue({ id: "room-1", name: "team" });
+    (mockChatStore as any).listRoomMembers = vi.fn().mockReturnValue([
+      { roomId: "room-1", agentId: "agent-001", role: "member", addedAt: "2026-01-01" },
+    ]);
+    (mockChatStore as any).addRoomMessage = vi.fn().mockImplementation((_roomId: string, input: any) => ({
+      id: "room-msg",
+      roomId: "room-1",
+      ...input,
+    }));
+
+    mockAgentStore.listAgents.mockResolvedValue([
+      { id: "agent-001", name: "Avery", role: "executor", state: "idle" },
+    ]);
+
+    __setCreateResolvedAgentSession(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        state: { messages: [{ role: "assistant", content: "Room answer" }] },
+      },
+      provider: "test",
+      model: "test",
+      fallbackInfo: undefined,
+    } as any));
+
+    const chatManager = createChatManager();
+    await chatManager.sendRoomMessage("room-1", "hello @Avery");
+
+    const assistant = (mockChatStore as any).addRoomMessage.mock.calls
+      .map((call: any[]) => call[1])
+      .find((entry: any) => entry.role === "assistant");
+
+    expect(assistant).toMatchObject({
+      role: "assistant",
+      senderAgentId: "agent-001",
+      content: "Room answer",
+    });
+  });
+
 });

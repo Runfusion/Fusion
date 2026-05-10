@@ -257,15 +257,12 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext): void {
         throw badRequest("senderAgentId is reserved for FN-3810; must be null or omitted");
       }
 
-      const message = chatStore.addRoomMessage(roomId, {
-        role: "user",
-        content: content.trim(),
-        senderAgentId: null,
-        mentions: [],
-        ...(Array.isArray(attachments) ? { attachments } : {}),
-      });
+      const chatManager = options?.chatManager;
+      if (!chatManager) throw internalError("Chat manager not available");
 
-      res.status(201).json({ message });
+      const result = await chatManager.sendRoomMessage(roomId, content.trim(), Array.isArray(attachments) ? attachments : undefined);
+
+      res.status(201).json({ message: result.userMessage });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
       rethrowAsApiError(err, "Failed to create chat room message");

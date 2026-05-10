@@ -790,6 +790,174 @@ export class ChatManager {
     return this.chatStore.createSession(input);
   }
 
+  async sendRoomMessage(
+    roomId: string,
+    content: string,
+    attachments?: ChatAttachment[],
+    modelProvider?: string,
+    modelId?: string,
+  ) {
+    const room = this.chatStore.getRoom(roomId);
+    if (!room) {
+      throw new Error(`Chat room ${roomId} not found`);
+    }
+
+    const trimmedContent = content.trim();
+    const hasMentionCandidates = /@[\w-]+/.test(trimmedContent);
+    const availableAgents = await this.listAgentsForMentions();
+    const mentions = hasMentionCandidates ? await this.parseMentions(trimmedContent, availableAgents) : [];
+
+    const responderPlan = this.resolveRoomResponders(
+      { id: `room-${roomId}`, kind: "room", roomId, agentId: "room", status: "active" } as ChatSession,
+      mentions,
+      availableAgents,
+    );
+
+    const userMessage = this.chatStore.addRoomMessage(roomId, {
+      role: "user",
+      content: trimmedContent,
+      senderAgentId: null,
+      mentions: mentions.map((mention) => mention.agentId),
+      metadata: responderPlan.nonMemberMentions.length > 0
+        ? {
+            nonMemberMentions: responderPlan.nonMemberMentions,
+          }
+        : undefined,
+      ...(Array.isArray(attachments) ? { attachments } : {}),
+    });
+
+    const responders = [...responderPlan.direct, ...responderPlan.ambient];
+    if (responders.length === 0) {
+      if (responderPlan.nonMemberMentions.length > 0) {
+        const labels = responderPlan.nonMemberMentions
+          .map((mention) => `@${mention.agentName.replace(/\s+/g, "_")}`)
+          .join(", ");
+        this.chatStore.addRoomMessage(roomId, {
+          role: "assistant",
+          senderAgentId: null,
+          content: `I couldn't route ${labels} because they are not members of this room.`,
+        });
+      }
+      return { userMessage, responders: [] };
+    }
+
+    for (const responder of responders) {
+      const response = await this.generateRoomResponderReply({
+        roomId,
+        roomName: room.name,
+        content: trimmedContent,
+        mentions,
+        responder,
+        modelProvider,
+        modelId,
+      });
+
+      this.chatStore.addRoomMessage(roomId, {
+        role: "assistant",
+        content: response.content,
+        thinkingOutput: response.thinkingOutput,
+        metadata: response.metadata,
+        senderAgentId: responder.id,
+        mentions: mentions.map((mention) => mention.agentId),
+      });
+    }
+
+    if (responderPlan.nonMemberMentions.length > 0) {
+      const labels = responderPlan.nonMemberMentions
+        .map((mention) => `@${mention.agentName.replace(/\s+/g, "_")}`)
+        .join(", ");
+      this.chatStore.addRoomMessage(roomId, {
+        role: "assistant",
+        senderAgentId: null,
+        content: `Note: ${labels} are not members of this room, so they did not respond.`,
+      });
+    }
+
+    return {
+      userMessage,
+      responders: responders.map((responder) => responder.id),
+    };
+  }
+
+  private async generateRoomResponderReply(input: {
+    roomId: string;
+    roomName: string;
+    content: string;
+    mentions: ChatMention[];
+    responder: Agent;
+    modelProvider?: string;
+    modelId?: string;
+  }): Promise<{ content: string; thinkingOutput: string | null; metadata?: Record<string, unknown> }> {
+    await ensureEngineReady();
+
+    let systemPrompt = CHAT_SYSTEM_PROMPT;
+    if (buildAgentChatPromptFn) {
+      try {
+        systemPrompt = await buildAgentChatPromptFn({
+          agent: input.responder,
+          rootDir: this.rootDir,
+          agentStore: this.agentStore,
+          basePrompt: CHAT_SYSTEM_PROMPT,
+          includeProjectMemory: true,
+        });
+      } catch (error) {
+        diagnostics.warn(`Failed to build chat prompt for room responder ${input.responder.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    const mentionContext = await this.buildMentionContext(input.mentions);
+    if (mentionContext) {
+      systemPrompt = `${systemPrompt}\n\n${mentionContext}`;
+    }
+    systemPrompt = `${systemPrompt}\n\n${CHAT_AGENT_MESSAGE_ROUTING_GUIDANCE}`;
+
+    const roomPrompt = [
+      `You are replying as ${input.responder.name} in room #${input.roomName}.`,
+      "Reply to the latest user room message in the context of this shared room thread.",
+      input.content,
+    ].join("\n\n");
+
+    const resolvedSession = await createResolvedAgentSession({
+      createFnAgent,
+      resolvedProvider: input.modelProvider,
+      resolvedModel: input.modelId,
+      defaultModelProvider: input.modelProvider,
+      defaultModelId: input.modelId,
+      createFnAgentArgs: {
+        rootDir: this.rootDir,
+        modelProvider: input.modelProvider,
+        modelId: input.modelId,
+        systemPrompt,
+      },
+    });
+
+    try {
+      await enginePromptWithFallback(resolvedSession.session, roomPrompt);
+
+      type AgentMessage = { role?: string; type?: string; content?: string | Array<{ type?: string; text?: string }> };
+      const messages = (resolvedSession.session.state.messages as AgentMessage[]) ?? [];
+      const lastAssistant = [...messages].reverse().find((message) => message.role === "assistant" || message.type === "assistant");
+      let content = "";
+      if (typeof lastAssistant?.content === "string") {
+        content = lastAssistant.content;
+      } else if (Array.isArray(lastAssistant?.content)) {
+        content = lastAssistant.content
+          .map((part) => (part?.type === "text" ? part.text ?? "" : ""))
+          .join("");
+      }
+
+      return {
+        content: content.trim() || "(no response)",
+        thinkingOutput: null,
+        metadata: {
+          roomId: input.roomId,
+        },
+      };
+    } finally {
+      resolvedSession.session.dispose?.();
+    }
+  }
+
   /**
    * Send a message and stream AI response via SSE.
    *

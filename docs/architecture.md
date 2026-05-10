@@ -270,7 +270,9 @@ Intentional exclusions from shared snapshots:
 - The Rooms tab in `packages/dashboard/app/components/ChatView.tsx` is wired through `useChatRooms` (`packages/dashboard/app/hooks/useChatRooms.ts`).
 - `useChatRooms` owns room list fetch/sort, active-room selection, member+message hydration, room creation/deletion, and room message sends.
 - The hook subscribes to `/api/events` and consumes `chat:room:created`, `chat:room:updated`, `chat:room:deleted`, `chat:room:member:added`, `chat:room:member:removed`, `chat:room:message:added`, `chat:room:message:updated`, and `chat:room:message:deleted` to keep UI state in sync.
-- Room messages persist through `POST /api/chat/rooms/:id/messages`; UI does not optimistically insert and instead renders persisted messages from `chat:room:message:*` SSE events.
+- Room messages persist through `POST /api/chat/rooms/:id/messages`; the route persists the user message first, then calls `ChatManager.sendRoomMessage(...)` to orchestrate room-member responders and persist assistant room replies with `chatStore.addRoomMessage(...)`.
+- `sendRoomMessage(...)` uses existing room-member + mention resolution rules: mentioned members are direct responders, non-mentioned members are ambient responders (capped by `ROOM_AMBIENT_MAX_RESPONDERS`), and non-member mentions are handled explicitly by the manager instead of silently disappearing.
+- UI does not optimistically insert room messages; it renders persisted user + assistant room messages from `chat:room:message:*` SSE events.
 
 ### Agent Companies
 
@@ -739,7 +741,7 @@ Key server capabilities:
   - `GET/PATCH/DELETE /api/chat/rooms/:id` → room read/update/delete (`404` for unknown room)
   - `GET/POST/DELETE /api/chat/rooms/:id/members[/:agentId]` → member list/add/remove (`400` for invalid body, `404` for unknown room/member)
   - `GET /api/chat/rooms/:id/messages` + `POST /api/chat/rooms/:id/messages` + `DELETE /api/chat/rooms/:id/messages/:messageId`
-    - Room message POST is persist-only (`201 { message }`) and rejects non-null `senderAgentId` in v1
+    - Room message POST persists the user room message (`201 { message }`), rejects non-null `senderAgentId` for user submissions, then triggers server-side room responder execution that persists assistant room replies via `chatStore.addRoomMessage(...)`
   - `POST /api/chat/rooms/:id/messages/:messageId/attachments` records attachment metadata on an existing room message
   - Error contract follows existing API patterns: `400` validation failures, `404` missing resources, `409` duplicate-slug conflicts, `503` when chat store is unavailable
   - SSE fan-out on `/api/events` now includes: `chat:room:created`, `chat:room:updated`, `chat:room:deleted`, `chat:room:member:added`, `chat:room:member:removed`, `chat:room:message:added`, `chat:room:message:updated`, `chat:room:message:deleted`

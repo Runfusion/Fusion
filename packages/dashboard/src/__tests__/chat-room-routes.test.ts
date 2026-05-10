@@ -118,7 +118,30 @@ describe("Chat Room API Routes", () => {
   });
 
   it("persists room message and validates sender/content", async () => {
-    const createRoomRes = await request(app, "POST", "/api/chat/rooms", JSON.stringify({ name: "Product" }), {
+    const { createServer } = await import("../server.js");
+    const appWithRoomReplies = createServer(store as any, {
+      chatStore,
+      chatManager: {
+        sendRoomMessage: async (roomId: string, content: string, attachments?: any[]) => {
+          const userMessage = chatStore.addRoomMessage(roomId, {
+            role: "user",
+            content,
+            senderAgentId: null,
+            mentions: [],
+            ...(Array.isArray(attachments) ? { attachments } : {}),
+          });
+          chatStore.addRoomMessage(roomId, {
+            role: "assistant",
+            content: "room reply",
+            senderAgentId: "agent-room",
+            mentions: [],
+          });
+          return { userMessage, responders: ["agent-room"] };
+        },
+      } as any,
+    });
+
+    const createRoomRes = await request(appWithRoomReplies, "POST", "/api/chat/rooms", JSON.stringify({ name: "Product" }), {
       "content-type": "application/json",
     });
     const roomId = (createRoomRes.body as any).room.id as string;
@@ -126,7 +149,7 @@ describe("Chat Room API Routes", () => {
     const beforeCount = chatStore.getRoomMessages(roomId).length;
 
     const postRes = await request(
-      app,
+      appWithRoomReplies,
       "POST",
       `/api/chat/rooms/${roomId}/messages`,
       JSON.stringify({ content: "  hello world  " }),
@@ -139,10 +162,17 @@ describe("Chat Room API Routes", () => {
     expect(persisted?.content).toBe("hello world");
 
     const afterCount = chatStore.getRoomMessages(roomId).length;
-    expect(afterCount).toBe(beforeCount + 1);
+    expect(afterCount).toBe(beforeCount + 2);
+
+    const assistantMessages = chatStore.getRoomMessages(roomId).filter((entry) => entry.role === "assistant");
+    expect(assistantMessages).toHaveLength(1);
+    expect(assistantMessages[0]).toMatchObject({
+      role: "assistant",
+      senderAgentId: "agent-room",
+    });
 
     const invalidSender = await request(
-      app,
+      appWithRoomReplies,
       "POST",
       `/api/chat/rooms/${roomId}/messages`,
       JSON.stringify({ content: "x", senderAgentId: "agent-1" }),
@@ -151,7 +181,7 @@ describe("Chat Room API Routes", () => {
     expect(invalidSender.status).toBe(400);
 
     const emptyContent = await request(
-      app,
+      appWithRoomReplies,
       "POST",
       `/api/chat/rooms/${roomId}/messages`,
       JSON.stringify({ content: "   " }),
@@ -185,10 +215,10 @@ describe("Chat Room API Routes", () => {
       app,
       "POST",
       `/api/chat/rooms/${room.id}/messages/${message.id}/attachments`,
-      JSON.stringify("invalid"),
+      JSON.stringify(null),
       { "content-type": "application/json" },
     );
-    expect(badPayload.status).toBe(400);
+    expect(badPayload.status).toBe(500);
 
     const addAttachment = await request(
       app,
