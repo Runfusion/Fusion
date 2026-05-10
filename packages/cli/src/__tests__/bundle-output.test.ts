@@ -37,9 +37,11 @@ describe("CLI bundle output", () => {
     expect(content).not.toMatch(/from\s+["']@fusion\/core["']/);
     expect(content).not.toMatch(/from\s+["']@fusion\/dashboard["']/);
     expect(content).not.toMatch(/from\s+["']@fusion\/engine["']/);
+    expect(content).not.toMatch(/from\s+["']@fusion-plugin-examples\/roadmap["']/);
     expect(content).not.toContain('"@fusion/core"');
     expect(content).not.toContain('"@fusion/dashboard"');
     expect(content).not.toContain('"@fusion/engine"');
+    expect(content).not.toContain('"@fusion-plugin-examples/roadmap"');
   });
 
   it("does not contain runtime memory-backend side-load imports", () => {
@@ -166,6 +168,26 @@ describe("CLI bundle output", () => {
     expect(existsSync(manifestPath)).toBe(true);
     const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as { id?: string; name?: string };
     expect(manifest.id).toBe("fusion-plugin-dependency-graph");
+    expect(typeof manifest.name).toBe("string");
+    expect(manifest.name?.length).toBeGreaterThan(0);
+
+    expect(existsSync(join(stagedRoot, "bundled.js"))).toBe(true);
+    expect(existsSync(join(stagedRoot, "src"))).toBe(false);
+
+    const stagedPkg = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
+      exports?: { "."?: { import?: string } };
+    };
+    expect(stagedPkg.exports?.["."]?.import).toBe("./bundled.js");
+  });
+
+  it("dist/plugins/fusion-plugin-roadmap/ is staged as bundled runtime output", () => {
+    const stagedRoot = join(cliRoot, "dist", "plugins", "fusion-plugin-roadmap");
+    const manifestPath = join(stagedRoot, "manifest.json");
+    const packageJsonPath = join(stagedRoot, "package.json");
+
+    expect(existsSync(manifestPath)).toBe(true);
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as { id?: string; name?: string };
+    expect(manifest.id).toBe("roadmap-planner");
     expect(typeof manifest.name).toBe("string");
     expect(manifest.name?.length).toBeGreaterThan(0);
 

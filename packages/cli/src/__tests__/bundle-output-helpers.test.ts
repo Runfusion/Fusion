@@ -25,6 +25,10 @@ const cursorPluginManifestPath = bundlePath.replace(
   "dist/bin.js",
   "dist/plugins/fusion-plugin-cursor-runtime/manifest.json",
 );
+const roadmapPluginBundledPath = bundlePath.replace(
+  "dist/bin.js",
+  "dist/plugins/fusion-plugin-roadmap/bundled.js",
+);
 
 describe("hasBuiltDashboardAssets", () => {
   beforeEach(() => {
@@ -36,6 +40,7 @@ describe("hasBuiltDashboardAssets", () => {
     state.existingPaths.add(bundlePath);
     state.existingPaths.add(clientIndexPath);
     state.existingPaths.add(cursorPluginManifestPath);
+    state.existingPaths.add(roadmapPluginBundledPath);
 
     expect(hasBuiltDashboardAssets()).toBe(false);
   });
@@ -44,6 +49,7 @@ describe("hasBuiltDashboardAssets", () => {
     state.existingPaths.add(bundlePath);
     state.existingPaths.add(clientIndexPath);
     state.existingPaths.add(cursorPluginManifestPath);
+    state.existingPaths.add(roadmapPluginBundledPath);
     state.existingPaths.add(openclawMcpSchemaServerPath);
 
     expect(hasBuiltDashboardAssets()).toBe(false);
@@ -53,6 +59,7 @@ describe("hasBuiltDashboardAssets", () => {
     state.existingPaths.add(bundlePath);
     state.existingPaths.add(clientIndexPath);
     state.existingPaths.add(cursorPluginManifestPath);
+    state.existingPaths.add(roadmapPluginBundledPath);
     state.existingPaths.add(openclawMcpSchemaServerPath);
     state.existingPaths.add(droidPluginMcpServerPath);
 
@@ -63,6 +70,7 @@ describe("hasBuiltDashboardAssets", () => {
     state.existingPaths.add(bundlePath);
     state.existingPaths.add(clientIndexPath);
     state.existingPaths.add(cursorPluginManifestPath);
+    state.existingPaths.add(roadmapPluginBundledPath);
     state.existingPaths.add(openclawMcpSchemaServerPath);
     state.existingPaths.add(droidPluginMcpServerPath);
     state.indexHtml = dashboardClientStubMarker;

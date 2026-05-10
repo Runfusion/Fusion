@@ -1119,9 +1119,9 @@ export function TaskDetailContent({
     if (!canEdit || !githubTrackedIssue || isSavingGithubTracking) return;
     const confirmed = await confirm({
       title: "Unlink GitHub issue?",
-      body: "This stops Fusion from syncing with the linked GitHub issue. The issue itself will not be modified.",
+      message: "This stops Fusion from syncing with the linked GitHub issue. The issue itself will not be modified.",
       confirmLabel: "Unlink",
-      tone: "danger",
+      danger: true,
     });
     if (!confirmed) return;
 

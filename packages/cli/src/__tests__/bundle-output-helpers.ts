@@ -7,6 +7,7 @@ export const workspaceRoot = join(cliRoot, "..", "..");
 export const bundlePath = join(cliRoot, "dist", "bin.js");
 export const clientIndexPath = join(cliRoot, "dist", "client", "index.html");
 const cursorPluginManifestPath = join(cliRoot, "dist", "plugins", "fusion-plugin-cursor-runtime", "manifest.json");
+const roadmapPluginBundledPath = join(cliRoot, "dist", "plugins", "fusion-plugin-roadmap", "bundled.js");
 export const openclawMcpSchemaServerPath = join(
   cliRoot,
   "dist",
@@ -47,6 +48,7 @@ export function hasBuiltDashboardAssets(): boolean {
     !existsSync(bundlePath) ||
     !existsSync(clientIndexPath) ||
     !existsSync(cursorPluginManifestPath) ||
+    !existsSync(roadmapPluginBundledPath) ||
     !existsSync(openclawMcpSchemaServerPath) ||
     !existsSync(droidPluginMcpServerPath)
   ) {

@@ -21,6 +21,8 @@ if (mode === "prepack") {
   delete devDependencies["@fusion/dashboard"];
   delete devDependencies["@fusion/engine"];
   delete devDependencies["@fusion/pi-claude-cli"];
+  delete devDependencies["@fusion/pi-llama-cpp"];
+  delete devDependencies["@fusion-plugin-examples/roadmap"];
 
   pkg.devDependencies = devDependencies;
   writeFileSync(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");

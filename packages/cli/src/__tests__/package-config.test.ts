@@ -22,6 +22,11 @@ function loadRootPackageJson(): any {
   return JSON.parse(readFileSync(path, "utf-8"));
 }
 
+function loadCliPrepackScript(): string {
+  const path = join(workspaceRoot, "packages", "cli", "scripts", "prepare-publish-manifest.mjs");
+  return readFileSync(path, "utf-8");
+}
+
 function hasProjectArg(script: string | undefined, project: string): boolean {
   const parts = script?.trim().split(/\s+/) ?? [];
   return parts.some((part, index) => part === "--project" && parts[index + 1] === project);
@@ -29,6 +34,7 @@ function hasProjectArg(script: string | undefined, project: string): boolean {
 
 describe("CLI package.json publishing config", () => {
   const pkg = loadPackageJson("cli");
+  const prepackScript = loadCliPrepackScript();
 
   it('has "bin" field with fn pointing to ./dist/bin.js', () => {
     expect(pkg.bin).toBeDefined();
@@ -83,6 +89,12 @@ describe("CLI package.json publishing config", () => {
   it("declares ioredis as a runtime dependency for badge pub/sub", () => {
     const deps = Object.keys(pkg.dependencies || {});
     expect(deps).toContain("ioredis");
+  });
+
+  it("prepack manifest rewrite strips workspace-only plugin/tooling devDependencies", () => {
+    expect(prepackScript).toContain('delete devDependencies["@fusion/pi-claude-cli"]');
+    expect(prepackScript).toContain('delete devDependencies["@fusion/pi-llama-cpp"]');
+    expect(prepackScript).toContain('delete devDependencies["@fusion-plugin-examples/roadmap"]');
   });
 
   // Generalized guard derived from tsup.config.ts. Any non-builtin module

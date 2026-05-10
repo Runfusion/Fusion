@@ -132,7 +132,7 @@ export default defineConfig({
   esbuildOptions(options) {
     options.conditions = [...(options.conditions || []), "source"];
   },
-  noExternal: [/^@fusion\//],
+  noExternal: [/^@fusion\//, /^@fusion-plugin-examples\//],
   // Native module: leave node-pty (aliased to @homebridge fork) out of the
   // bundle. esbuild can't statically resolve its conditional native require()s
   // (build/Release/pty.node, build/Debug/conpty.node, ...).
@@ -228,20 +228,11 @@ export default defineConfig({
       );
     }
 
-    if (existsSync(roadmapPluginDest)) {
-      rmSync(roadmapPluginDest, { recursive: true, force: true });
-    }
-    if (existsSync(roadmapPluginSrc)) {
-      mkdirSync(roadmapPluginDest, { recursive: true });
-      cpSync(join(roadmapPluginSrc, "manifest.json"), join(roadmapPluginDest, "manifest.json"));
-      cpSync(join(roadmapPluginSrc, "package.json"), join(roadmapPluginDest, "package.json"));
-      cpSync(join(roadmapPluginSrc, "src"), join(roadmapPluginDest, "src"), { recursive: true });
-      console.log("Copied roadmap plugin to dist/plugins/fusion-plugin-roadmap/");
-    } else {
-      console.warn(
-        `WARNING: Roadmap plugin source not found at ${roadmapPluginSrc}; bundled auto-install will be unavailable.`,
-      );
-    }
+    await bundlePluginEntry({
+      pluginId: "fusion-plugin-roadmap",
+      srcDir: roadmapPluginSrc,
+      destDir: roadmapPluginDest,
+    });
 
     if (existsSync(reportsPluginDest)) {
       rmSync(reportsPluginDest, { recursive: true, force: true });

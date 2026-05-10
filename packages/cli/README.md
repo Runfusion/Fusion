@@ -174,6 +174,12 @@ To use it:
 
 Once enabled, `droid-cli` models appear in Fusion model selection.
 
+## Maintainer note: workspace plugins in published CLI bundles
+
+When CLI or dashboard runtime code imports workspace plugin packages (for example `@fusion-plugin-examples/roadmap`), those imports must stay statically analyzable and covered by `packages/cli/tsup.config.ts` `noExternal` rules so plugin runtime code is inlined into `dist/bin.js`.
+
+Do not introduce dynamic or variable module specifiers for workspace plugin runtime paths in the published execution path. If a workspace plugin is needed for bundled auto-install, stage a bundled plugin entry (`dist/plugins/<id>/bundled.js`) rather than copying raw TypeScript source into `dist/`.
+
 ## Full documentation
 
 Architecture details, development setup, and contributor info live in the [project README](https://github.com/Runfusion/Fusion#readme).
