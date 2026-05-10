@@ -1220,7 +1220,11 @@ function AppInner() {
       return (
         <PageErrorBoundary>
           <Suspense fallback={null}>
-            <ChatView addToast={addToast} projectId={currentProject?.id} />
+            <ChatView
+              addToast={addToast}
+              projectId={currentProject?.id}
+              experimentalFeatures={experimentalFeatures}
+            />
           </Suspense>
         </PageErrorBoundary>
       );

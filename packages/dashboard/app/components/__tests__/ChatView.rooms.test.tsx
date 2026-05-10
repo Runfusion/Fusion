@@ -67,7 +67,7 @@ describe("ChatView rooms", () => {
     });
     mockUseChatRooms.mockReturnValue(roomsMock);
 
-    render(<ChatView addToast={vi.fn()} projectId="proj-1" />);
+    render(<ChatView addToast={vi.fn()} projectId="proj-1" experimentalFeatures={{ chatRooms: true }} />);
     await userEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
     await userEvent.click(screen.getByTestId("chat-room-item-engineering"));
 
@@ -80,7 +80,7 @@ describe("ChatView rooms", () => {
     const roomsMock = buildRoomsMock({ rooms: [] });
     mockUseChatRooms.mockReturnValue(roomsMock);
 
-    render(<ChatView addToast={vi.fn()} projectId="proj-1" />);
+    render(<ChatView addToast={vi.fn()} projectId="proj-1" experimentalFeatures={{ chatRooms: true }} />);
     await userEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
     await userEvent.click(screen.getByTestId("chat-create-room-btn"));
     await userEvent.type(screen.getByLabelText("Room name"), "product");
@@ -100,7 +100,7 @@ describe("ChatView rooms", () => {
     });
     mockUseChatRooms.mockReturnValue(roomsMock);
 
-    render(<ChatView addToast={vi.fn()} projectId="proj-1" />);
+    render(<ChatView addToast={vi.fn()} projectId="proj-1" experimentalFeatures={{ chatRooms: true }} />);
     await userEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
     await userEvent.click(screen.getByTestId("chat-room-item-engineering"));
 
@@ -113,7 +113,7 @@ describe("ChatView rooms", () => {
     });
     mockUseChatRooms.mockReturnValue(roomsMock);
 
-    render(<ChatView addToast={vi.fn()} projectId="proj-1" />);
+    render(<ChatView addToast={vi.fn()} projectId="proj-1" experimentalFeatures={{ chatRooms: true }} />);
     await userEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
     await userEvent.type(screen.getByTestId("chat-input"), "hello room");
     await userEvent.click(screen.getByTestId("chat-send-btn"));
@@ -128,7 +128,7 @@ describe("ChatView rooms", () => {
     });
     mockUseChatRooms.mockReturnValue(roomsMock);
 
-    render(<ChatView addToast={vi.fn()} projectId="proj-1" />);
+    render(<ChatView addToast={vi.fn()} projectId="proj-1" experimentalFeatures={{ chatRooms: true }} />);
     await userEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
     await userEvent.type(screen.getByTestId("chat-input"), "  hello room from enter  ");
     await userEvent.keyboard("{Enter}");
@@ -144,7 +144,7 @@ describe("ChatView rooms", () => {
     });
     mockUseChatRooms.mockReturnValue(roomsMock);
 
-    render(<ChatView addToast={vi.fn()} projectId="proj-1" />);
+    render(<ChatView addToast={vi.fn()} projectId="proj-1" experimentalFeatures={{ chatRooms: true }} />);
     await userEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
     await userEvent.click(screen.getByTestId("chat-room-delete-engineering"));
 
@@ -158,7 +158,7 @@ describe("ChatView rooms", () => {
     });
     mockUseChatRooms.mockReturnValue(roomsMock);
 
-    render(<ChatView addToast={vi.fn()} projectId="proj-1" />);
+    render(<ChatView addToast={vi.fn()} projectId="proj-1" experimentalFeatures={{ chatRooms: true }} />);
     await userEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
     await userEvent.click(screen.getByTestId("chat-room-delete-engineering"));
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -173,7 +173,7 @@ describe("ChatView rooms", () => {
     });
     mockUseChatRooms.mockReturnValue(roomsMock);
 
-    render(<ChatView addToast={vi.fn()} projectId="proj-1" />);
+    render(<ChatView addToast={vi.fn()} projectId="proj-1" experimentalFeatures={{ chatRooms: true }} />);
     await userEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
     await userEvent.click(screen.getByTestId("chat-room-delete-engineering"));
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -189,11 +189,11 @@ describe("ChatView rooms", () => {
     });
     mockUseChatRooms.mockImplementation(() => state);
 
-    const { rerender } = render(<ChatView addToast={vi.fn()} projectId="proj-1" />);
+    const { rerender } = render(<ChatView addToast={vi.fn()} projectId="proj-1" experimentalFeatures={{ chatRooms: true }} />);
     await userEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
 
     state.messages = [{ id: "msg-2", roomId: "room-1", role: "assistant", content: "reply", thinkingOutput: null, metadata: null, senderAgentId: "agent-1", mentions: [], createdAt: "2026-05-09T00:00:00.000Z" }];
-    rerender(<ChatView addToast={vi.fn()} projectId="proj-1" />);
+    rerender(<ChatView addToast={vi.fn()} projectId="proj-1" experimentalFeatures={{ chatRooms: true }} />);
 
     expect(screen.getByText("reply")).toBeInTheDocument();
   });

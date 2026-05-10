@@ -44,6 +44,7 @@ import { matchesAgentMentionFilter } from "./mentionMatching";
 export interface ChatViewProps {
   projectId?: string;
   addToast: (msg: string, type?: "success" | "error" | "warning") => void;
+  experimentalFeatures?: Record<string, boolean>;
 }
 
 function formatRelativeTime(dateStr: string): string {
@@ -709,7 +710,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
   );
 });
 
-export function ChatView({ projectId, addToast }: ChatViewProps) {
+export function ChatView({ projectId, addToast, experimentalFeatures }: ChatViewProps) {
   const {
     activeSession,
     sessionsLoading,
@@ -741,6 +742,9 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
   const [sidebarWidth, setSidebarWidth] = useState(CHAT_SIDEBAR_DEFAULT_WIDTH);
   const [chatScope, setChatScope] = useState<"direct" | "rooms">("direct");
   const [createRoomOpen, setCreateRoomOpen] = useState(false);
+  const chatRoomsEnabled = experimentalFeatures?.chatRooms === true;
+  // Keep this hook unconditional to preserve hook ordering and test stability.
+  // Rooms UI and interactions are fully gated by `chatRoomsEnabled`.
   const rooms = useChatRooms(projectId, addToast);
   const [agentsMap, setAgentsMap] = useState<Map<string, Agent>>(new Map());
   const [discoveredSkills, setDiscoveredSkills] = useState<DiscoveredSkill[]>([]);
@@ -813,21 +817,29 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
   useEffect(() => {
     try {
       const persistedScope = localStorage.getItem(CHAT_SCOPE_STORAGE_KEY);
-      if (persistedScope === "direct" || persistedScope === "rooms") {
-        setChatScope(persistedScope);
+      if (persistedScope === "direct") {
+        setChatScope("direct");
+        return;
+      }
+      if (persistedScope === "rooms" && chatRoomsEnabled) {
+        setChatScope("rooms");
       }
     } catch {
       // Ignore storage errors.
     }
-  }, []);
+  }, [chatRoomsEnabled]);
 
   useEffect(() => {
+    if (!chatRoomsEnabled && chatScope === "rooms") {
+      setChatScope("direct");
+      return;
+    }
     try {
       localStorage.setItem(CHAT_SCOPE_STORAGE_KEY, chatScope);
     } catch {
       // Ignore storage errors.
     }
-  }, [chatScope]);
+  }, [chatRoomsEnabled, chatScope]);
 
   const { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen } = useMobileKeyboard({
     enabled: isMobile && !!activeSession,
@@ -1229,7 +1241,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
       return;
     }
 
-    if (chatScope === "rooms") {
+    if (chatRoomsEnabled && chatScope === "rooms") {
       if (!rooms.activeRoom) {
         return;
       }
@@ -1239,7 +1251,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
     }
 
     handleSend();
-  }, [messageInput, chatScope, rooms, handleSend]);
+  }, [messageInput, chatRoomsEnabled, chatScope, rooms, handleSend]);
 
   const handleSkillSelect = useCallback(
     (skill: DiscoveredSkill) => {
@@ -1759,29 +1771,31 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
         className={`chat-sidebar${!sidebarVisible ? " chat-sidebar--hidden" : ""}`}
         style={isMobile ? undefined : { width: `${sidebarWidth}px` }}
       >
-        <div className="chat-sidebar-scope-toggle" role="tablist" data-testid="chat-sidebar-scope-toggle">
-          <button
-            type="button"
-            role="tab"
-            className={`chat-sidebar-scope-btn${chatScope === "direct" ? " chat-sidebar-scope-btn--active" : ""}`}
-            aria-selected={chatScope === "direct"}
-            data-testid="chat-sidebar-scope-direct"
-            onClick={() => setChatScope("direct")}
-          >
-            Direct
-          </button>
-          <button
-            type="button"
-            role="tab"
-            className={`chat-sidebar-scope-btn${chatScope === "rooms" ? " chat-sidebar-scope-btn--active" : ""}`}
-            aria-selected={chatScope === "rooms"}
-            data-testid="chat-sidebar-scope-rooms"
-            onClick={() => setChatScope("rooms")}
-          >
-            Rooms
-          </button>
-        </div>
-        {chatScope === "direct" ? (
+        {chatRoomsEnabled && (
+          <div className="chat-sidebar-scope-toggle" role="tablist" data-testid="chat-sidebar-scope-toggle">
+            <button
+              type="button"
+              role="tab"
+              className={`chat-sidebar-scope-btn${chatScope === "direct" ? " chat-sidebar-scope-btn--active" : ""}`}
+              aria-selected={chatScope === "direct"}
+              data-testid="chat-sidebar-scope-direct"
+              onClick={() => setChatScope("direct")}
+            >
+              Direct
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className={`chat-sidebar-scope-btn${chatScope === "rooms" ? " chat-sidebar-scope-btn--active" : ""}`}
+              aria-selected={chatScope === "rooms"}
+              data-testid="chat-sidebar-scope-rooms"
+              onClick={() => setChatScope("rooms")}
+            >
+              Rooms
+            </button>
+          </div>
+        )}
+        {!chatRoomsEnabled || chatScope === "direct" ? (
           <>
             {/* Search section */}
             <div className="chat-sidebar-search-container">
@@ -1999,7 +2013,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
         </div>
       )}
 
-      {confirmDeleteRoomId && (
+      {chatRoomsEnabled && confirmDeleteRoomId && (
         <div className="chat-new-dialog-backdrop chat-view-dialog-backdrop" onClick={() => setConfirmDeleteRoomId(null)}>
           <div className="chat-new-dialog chat-view-dialog" onClick={(e) => e.stopPropagation()}>
             <h3>Delete Room?</h3>
@@ -2030,7 +2044,7 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
         </div>
       )}
       {/* Thread */}
-      {chatScope === "rooms" ? (
+      {chatRoomsEnabled && chatScope === "rooms" ? (
         <div className="chat-thread">
           {rooms.activeRoom ? (
             <>
@@ -2460,16 +2474,18 @@ export function ChatView({ projectId, addToast }: ChatViewProps) {
       </div>
       )}
 
-      <CreateRoomModal
-        isOpen={createRoomOpen}
-        onClose={() => setCreateRoomOpen(false)}
-        projectId={projectId}
-        existingRoomNames={rooms.rooms.map((room) => room.name)}
-        onCreate={async (draft) => {
-          await rooms.createRoom({ name: draft.name, memberAgentIds: draft.memberAgentIds });
-          setCreateRoomOpen(false);
-        }}
-      />
+      {chatRoomsEnabled && (
+        <CreateRoomModal
+          isOpen={createRoomOpen}
+          onClose={() => setCreateRoomOpen(false)}
+          projectId={projectId}
+          existingRoomNames={rooms.rooms.map((room) => room.name)}
+          onCreate={async (draft) => {
+            await rooms.createRoom({ name: draft.name, memberAgentIds: draft.memberAgentIds });
+            setCreateRoomOpen(false);
+          }}
+        />
+      )}
 
       {/* New Chat Dialog (rendered at root level) */}
       {showNewDialog && (

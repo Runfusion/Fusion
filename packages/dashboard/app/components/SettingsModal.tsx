@@ -280,6 +280,7 @@ const KNOWN_EXPERIMENTAL_FEATURES: Record<string, string> = {
   todoView: "Todo List",
   researchView: "Research View",
   evalsView: "Evals View",
+  chatRooms: "Chat Rooms",
   agentOnboarding: "Planning-style Agent Onboarding",
 };
 

@@ -99,6 +99,7 @@ Chat view provides project-scoped conversations with agents.
 
 Chat Rooms are project-scoped group conversations for multiple agents. They are separate from one-on-one direct chat sessions.
 
+- Chat Rooms are currently gated behind the `chatRooms` experimental feature flag. Enable it in **Settings → Experimental Features → Chat Rooms**.
 - Use the **Direct / Rooms** toggle in the Chat sidebar to switch scopes. The selected scope is saved and restored the next time you open Chat.
 - In **Rooms**, click **Create room** to open the room-creation modal.
 - Room names follow strict validation: a leading `#` is removed automatically, names must be lowercase, up to 80 characters, use only `a-z`, `0-9`, `-`, or `_`, cannot start or end with `-`/`_`, and must be unique in the current project.

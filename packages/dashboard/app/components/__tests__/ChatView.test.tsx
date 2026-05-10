@@ -2436,18 +2436,37 @@ describe("Direct/Rooms scope toggle", () => {
     localStorage.clear();
   });
 
+  it("hides rooms UI when chatRooms experimental flag is off", () => {
+    setupMockChat({ sessions: [], filteredSessions: [] });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{}} />);
+
+    expect(screen.queryByTestId("chat-sidebar-scope-rooms")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("chat-sidebar-rooms")).not.toBeInTheDocument();
+  });
+
   it("defaults to Direct with sidebar list visible", () => {
     setupMockChat({
       sessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" }],
       filteredSessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" }],
     });
 
-    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
 
     expect(screen.getByTestId("chat-sidebar-scope-direct")).toHaveAttribute("aria-selected", "true");
     expect(screen.getByTestId("chat-sidebar-scope-rooms")).toHaveAttribute("aria-selected", "false");
     expect(document.querySelector(".chat-session-list")).toBeInTheDocument();
     expect(screen.queryByTestId("chat-sidebar-rooms-empty")).toBeNull();
+  });
+
+  it("shows rooms UI when chatRooms experimental flag is on", async () => {
+    setupMockChat({ sessions: [], filteredSessions: [] });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+
+    expect(screen.getByTestId("chat-sidebar-scope-rooms")).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
+    expect(screen.getByTestId("chat-sidebar-rooms")).toBeInTheDocument();
   });
 
   it("shows rooms placeholder and hides direct search/list in Rooms scope", async () => {
@@ -2456,7 +2475,7 @@ describe("Direct/Rooms scope toggle", () => {
       filteredSessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" }],
     });
 
-    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
 
     await userEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
 
@@ -2473,7 +2492,7 @@ describe("Direct/Rooms scope toggle", () => {
       filteredSessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" }],
     });
 
-    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
 
     await userEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
     await userEvent.click(screen.getByTestId("chat-sidebar-scope-direct"));
@@ -2483,17 +2502,27 @@ describe("Direct/Rooms scope toggle", () => {
     expect(screen.getByTestId("chat-session-session-001")).toHaveClass("chat-session-item--active");
   });
 
+  it("forces direct scope when localStorage persisted rooms but chatRooms is off", () => {
+    setupMockChat({ sessions: [], filteredSessions: [] });
+    localStorage.setItem("fusion:chat-scope", "rooms");
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{}} />);
+
+    expect(screen.queryByTestId("chat-sidebar-scope-rooms")).not.toBeInTheDocument();
+    expect(screen.getByTestId("chat-search-input")).toBeInTheDocument();
+  });
+
   it("persists scope in localStorage and restores Rooms on next mount", async () => {
     setupMockChat({ sessions: [], filteredSessions: [] });
 
-    const { unmount } = render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    const { unmount } = render(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
 
     await userEvent.click(screen.getByTestId("chat-sidebar-scope-rooms"));
     expect(localStorage.getItem("fusion:chat-scope")).toBe("rooms");
 
     unmount();
 
-    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
 
     expect(screen.getByTestId("chat-sidebar-scope-rooms")).toHaveAttribute("aria-selected", "true");
     expect(screen.getByTestId("chat-sidebar-rooms-empty")).toBeInTheDocument();
@@ -3206,7 +3235,9 @@ describe("ChatView mobile behavior", () => {
 
       await userEvent.click(screen.getByTestId("chat-jump-to-latest"));
       expect(scrollTopValue).toBe(1000);
-      expect(screen.queryByTestId("chat-jump-to-latest")).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.queryByTestId("chat-jump-to-latest")).not.toBeInTheDocument();
+      });
     } finally {
       restoreMatchMedia.mockRestore();
     }
