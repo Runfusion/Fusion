@@ -999,43 +999,6 @@ export function TaskForm({
         </div>
       )}
 
-      {(onGithubTrackingEnabledChange || onGithubRepoOverrideChange) && (
-        <div className="form-group" data-testid="task-form-github-tracking">
-          <label>GitHub Tracking</label>
-          {onGithubTrackingEnabledChange && (
-            <label className="checkbox-label" htmlFor="task-github-tracking-enabled">
-              <input
-                id="task-github-tracking-enabled"
-                type="checkbox"
-                checked={githubTrackingEnabled === true}
-                onChange={(event) => {
-                  githubTrackingDefaultAppliedRef.current = true;
-                  onGithubTrackingEnabledChange(event.target.checked);
-                }}
-                disabled={disabled}
-              />
-              Enable GitHub issue tracking for this task
-            </label>
-          )}
-          {onGithubRepoOverrideChange && (
-            <>
-              <label htmlFor="task-github-repo-override" className="model-select-label">Repository (owner/repo)</label>
-              <input
-                id="task-github-repo-override"
-                className="input"
-                value={githubRepoOverride || ""}
-                onChange={(event) => onGithubRepoOverrideChange(event.target.value)}
-                placeholder={effectiveGithubRepoDefault || "owner/repo"}
-                disabled={disabled}
-              />
-              {githubRepoOverrideInvalid ? (
-                <div className="form-error">Repository must be in owner/repo format.</div>
-              ) : null}
-            </>
-          )}
-        </div>
-      )}
-
       {/* Model Selection */}
       <div className="form-group">
         <label>Model Configuration</label>
@@ -1315,6 +1278,43 @@ export function TaskForm({
           </div>
         )}
       </div>
+
+      {(onGithubTrackingEnabledChange || onGithubRepoOverrideChange) && (
+        <div className="form-group" data-testid="task-form-github-tracking">
+          <label>GitHub Tracking</label>
+          {onGithubTrackingEnabledChange && (
+            <label className="checkbox-label" htmlFor="task-github-tracking-enabled">
+              <input
+                id="task-github-tracking-enabled"
+                type="checkbox"
+                checked={githubTrackingEnabled === true}
+                onChange={(event) => {
+                  githubTrackingDefaultAppliedRef.current = true;
+                  onGithubTrackingEnabledChange(event.target.checked);
+                }}
+                disabled={disabled}
+              />
+              Enable GitHub issue tracking for this task
+            </label>
+          )}
+          {onGithubRepoOverrideChange && (
+            <>
+              <label htmlFor="task-github-repo-override" className="model-select-label">Repository (owner/repo)</label>
+              <input
+                id="task-github-repo-override"
+                className="input"
+                value={githubRepoOverride || ""}
+                onChange={(event) => onGithubRepoOverrideChange(event.target.value)}
+                placeholder={effectiveGithubRepoDefault || "owner/repo"}
+                disabled={disabled}
+              />
+              {githubRepoOverrideInvalid ? (
+                <div className="form-error">Repository must be in owner/repo format.</div>
+              ) : null}
+            </>
+          )}
+        </div>
+      )}
       </div>
     </div>
   );

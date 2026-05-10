@@ -1439,6 +1439,10 @@ describe("TaskForm focus behavior (FN-1459)", () => {
     it("renders renderBelowModelConfiguration content below model section in More options", async () => {
       renderTaskForm({
         renderBelowModelConfiguration: <div data-testid="injected-below-model">Bottom slot content</div>,
+        githubTrackingEnabled: false,
+        onGithubTrackingEnabledChange: vi.fn(),
+        githubRepoOverride: "",
+        onGithubRepoOverrideChange: vi.fn(),
       });
 
       const toggle = screen.getByTestId("task-form-more-options-toggle");
@@ -1451,12 +1455,16 @@ describe("TaskForm focus behavior (FN-1459)", () => {
       const modelLabel = screen.getByText("Model Configuration");
       const workflowLabel = screen.getByText("Workflow Steps");
       const injectedBottom = screen.getByTestId("injected-below-model");
+      const githubTrackingSection = screen.getByTestId("task-form-github-tracking");
 
       expect(
         modelLabel.compareDocumentPosition(injectedBottom) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
       expect(
         injectedBottom.compareDocumentPosition(workflowLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(
+        workflowLabel.compareDocumentPosition(githubTrackingSection) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     });
 

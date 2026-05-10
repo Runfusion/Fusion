@@ -1071,6 +1071,19 @@ describe("NewTaskModal", () => {
   });
 
   describe("GitHub tracking", () => {
+    it("renders GitHub tracking after Workflow Steps in more options", async () => {
+      renderNewTaskModal();
+
+      fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
+
+      const workflowLabel = await screen.findByText("Workflow Steps");
+      const githubTrackingSection = screen.getByTestId("task-form-github-tracking");
+
+      expect(
+        workflowLabel.compareDocumentPosition(githubTrackingSection) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+
     it("seeds tracking toggle from project settings and submits githubTracking payload", async () => {
       const { fetchSettings } = await import("../../api");
       vi.mocked(fetchSettings).mockResolvedValueOnce({
