@@ -36,6 +36,7 @@ const BUNDLED_PLUGIN_ID = "fusion-plugin-dependency-graph";
 const HERMES_PLUGIN_ID = "fusion-plugin-hermes-runtime";
 const CURSOR_PLUGIN_ID = "fusion-plugin-cursor-runtime";
 const ROADMAP_PLUGIN_ID = "fusion-plugin-roadmap";
+const CLI_PRINTING_PRESS_PLUGIN_ID = "fusion-plugin-cli-printing-press";
 
 function makeManifest(overrides?: Partial<{ id: string; version: string; name: string }>) {
   return {
@@ -219,6 +220,10 @@ describe("resolvePluginEntryPath", () => {
 describe("ensureBundledDependencyGraphPluginInstalled", () => {
   it("includes roadmap plugin in bundled plugin ids", () => {
     expect(BUNDLED_PLUGIN_IDS).toContain(ROADMAP_PLUGIN_ID);
+  });
+
+  it("includes CLI printing press plugin in bundled plugin ids", () => {
+    expect(BUNDLED_PLUGIN_IDS).toContain(CLI_PRINTING_PRESS_PLUGIN_ID);
   });
   it("fresh install: registers and loads the plugin when not in DB", async () => {
     setupBundleExists();
