@@ -381,7 +381,7 @@ Manual/non-auto-merge behavior:
 
 GitHub tracking issues are optional issues Fusion can create from Fusion tasks. They are **not** the same as imported source issues (`issueInfo` / `sourceIssue`): imported issues represent an existing GitHub issue that created the task, while tracking issues are new GitHub issues opened to track a Fusion task.
 
-When task creation runs with tracking enabled, Fusion attempts issue creation during task creation flows (including quick create, planning output, and subtask creation paths that create tasks). Creation is best-effort and non-blocking: task creation still succeeds even if repo resolution fails or GitHub calls fail.
+When task creation runs with tracking enabled, Fusion attempts issue creation during task creation flows (including quick create, planning output, and subtask creation paths that create tasks). Fusion also attempts issue creation on existing-task edits that update `githubTracking` (for example enabling tracking or setting a resolvable repo override) when the resulting task is enabled and unlinked. Creation is best-effort and non-blocking: task updates and task creation still succeed even if repo resolution fails or GitHub calls fail.
 
 Tracking behavior is controlled per task:
 
@@ -389,7 +389,8 @@ Tracking behavior is controlled per task:
 - `task.githubTracking.repoOverride` optionally forces a specific target repo (`owner/repo`).
 - In the dashboard **Task Detail** modal, eligible existing tasks (`triage`, `todo`, `in-progress`, `in-review`) always show GitHub tracking controls so tracking can be enabled, disabled, or retargeted without reopening the task in a creation flow.
 - Clearing the Task Detail repo override stores `null`, which reverts repo resolution to project/global defaults.
-- Explicit task-level enablement is honored even when project/global GitHub tracking defaults are unset. If `enabled: true` and the repo resolves at task scope (for example via `repoOverride`), Fusion still attempts create-time tracking-issue creation.
+- Explicit task-level enablement is honored even when project/global GitHub tracking defaults are unset. If `enabled: true` and the repo resolves at task scope (for example via `repoOverride`), Fusion attempts tracking-issue creation on both create-time and eligible edit-time flows.
+- Explicit manual unlink (`githubTracking.issue: null`) does not recreate a tracking issue in that same update request, and disabling tracking does not create new issues.
 
 Repository resolution order:
 
