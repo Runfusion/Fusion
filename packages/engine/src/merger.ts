@@ -4724,6 +4724,76 @@ export async function aiMergeTask(
     throw new Error(`Cannot merge ${taskId}: ${mergeBlocker}`);
   }
 
+  const branch = task.branch || `fusion/${taskId.toLowerCase()}`;
+  const requestedBaseRef = task.mergeDetails?.mergeTargetBranch || "main";
+  const resolveAheadCount = async (): Promise<{ aheadCount: number; baseRef: string } | null> => {
+    try {
+      await execAsync(`git rev-parse --verify ${quoteArg(branch)}`, { cwd: rootDir, timeout: 30_000 });
+    } catch {
+      return null;
+    }
+
+    let baseRef = requestedBaseRef;
+    try {
+      await execAsync(`git rev-parse --verify ${quoteArg(baseRef)}`, { cwd: rootDir, timeout: 30_000 });
+    } catch {
+      const remoteRef = `origin/${requestedBaseRef}`;
+      try {
+        await execAsync(`git rev-parse --verify ${quoteArg(remoteRef)}`, { cwd: rootDir, timeout: 30_000 });
+        baseRef = remoteRef;
+      } catch {
+        return null;
+      }
+    }
+
+    try {
+      const { stdout } = await execAsync(
+        `git rev-list --count ${quoteArg(baseRef)}..${quoteArg(branch)}`,
+        { cwd: rootDir, timeout: 30_000 },
+      );
+      const aheadCount = Number.parseInt(stdout.trim(), 10);
+      if (!Number.isFinite(aheadCount)) {
+        return null;
+      }
+      return { aheadCount, baseRef };
+    } catch {
+      return null;
+    }
+  };
+
+  const aheadInfo = await resolveAheadCount();
+  if (aheadInfo?.aheadCount === 0) {
+    const noOpReason = `branch has zero commits ahead of ${aheadInfo.baseRef}`;
+    const mergeDetails: MergeDetails = {
+      ...(task.mergeDetails || {}),
+      mergeConfirmed: true,
+      noOpMerge: true,
+      noOpReason,
+      mergedAt: new Date().toISOString(),
+      prNumber: task.prInfo?.number,
+      mergeTargetBranch: aheadInfo.baseRef,
+    };
+    await store.updateTask(taskId, { mergeDetails });
+    await store.logEntry(
+      taskId,
+      `Auto-finalized: ${noOpReason}; treating as no-op merge and moving to done`,
+    );
+    await store.moveTask(taskId, "done");
+    return {
+      task,
+      branch,
+      merged: true,
+      noOp: true,
+      worktreeRemoved: false,
+      branchDeleted: false,
+      mergeConfirmed: true,
+      noOpMerge: true,
+      noOpReason,
+      mergedAt: mergeDetails.mergedAt,
+      mergeTargetBranch: aheadInfo.baseRef,
+    };
+  }
+
   // Advisory: announce that rootDir is volatile until this merge finishes.
   // Dashboards / status lines / pre-Edit hooks can read this file to warn
   // devs that edits made now may end up in a race-rescue stash. Not a lock —
@@ -4759,7 +4829,6 @@ export async function aiMergeTask(
   let resultForFinally: MergeResult | undefined;
   try {
 
-  const branch = task.branch || `fusion/${taskId.toLowerCase()}`;
   const sourceIssueRef = buildSourceIssueRef(task.sourceIssue);
   const worktreePath = task.worktree;
   const result: MergeResult = {
@@ -7224,7 +7293,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     } else {
       // The agent committed. Idempotently ensure canonical task trailers are
       // present on HEAD for durable lineage attribution and fallback recovery.
-      await ensureTaskTrailersOnHead(rootDir, task);
+      await ensureTaskTrailersOnHead(rootDir, { id: taskId });
     }
 
     return { success: true };

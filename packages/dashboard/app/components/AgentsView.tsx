@@ -1,6 +1,6 @@
 import "./AgentsView.css";
 import { useState, useEffect, useCallback, useRef, useMemo, useId, lazy, Suspense, type CSSProperties } from "react";
-import { Plus, Play, Pause, Activity, Trash2, RefreshCw, Bot, List, ChevronRight, Filter, Upload, Network, SlidersHorizontal, ZoomIn, ZoomOut, Minimize2 } from "lucide-react";
+import { Plus, Play, Pause, Activity, Trash2, RefreshCw, Bot, List, ChevronRight, Filter, Upload, Network, SlidersHorizontal, ZoomIn, ZoomOut, Minimize2, Info } from "lucide-react";
 import type { Agent, AgentCapability, AgentOnboardingSummary, AgentState, OrgTreeNode } from "../api";
 import { updateAgent, updateAgentState, deleteAgent, startAgentRun, fetchOrgTree, fetchSettings, updateSettings } from "../api";
 
@@ -1445,7 +1445,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                       title={`View details for ${agent.name}`}
                       aria-label={`View details for ${agent.name}`}
                     >
-                      <ChevronRight size={14} /> <span className="agent-card-action-label">Details</span>
+                      <Info size={14} /> <span className="agent-card-action-label">Details</span>
                     </button>
                     {(agent.state === "idle" || agent.state === "paused") && (
                       <button

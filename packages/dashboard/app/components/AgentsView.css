@@ -702,6 +702,8 @@
   gap: var(--space-sm);
   align-items: center;
   flex-wrap: nowrap;
+  container-type: inline-size;
+  container-name: agent-card-actions;
 }
 
 .agent-card-actions .btn {
@@ -718,8 +720,10 @@
   padding: var(--space-xs) var(--space-sm);
 }
 
-.agents-split-sidebar .agent-card-actions .agent-card-action-label {
-  display: none;
+@container agent-card-actions (max-width: calc(var(--space-2xl) * 9)) {
+  .agents-split-sidebar .agent-card-actions .agent-card-action-label {
+    display: none;
+  }
 }
 
 .agent-card-details-btn {

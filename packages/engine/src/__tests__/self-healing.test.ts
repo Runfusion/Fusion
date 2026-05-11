@@ -68,7 +68,7 @@ vi.mock("../logger.js", () => ({
   createLogger: vi.fn((_name: string) => selfHealingLoggerMock),
 }));
 
-import { SelfHealingManager } from "../self-healing.js";
+import { SelfHealingManager, isBranchAheadOfBase } from "../self-healing.js";
 import type { TaskStore, Settings, Task, AgentStore, Agent } from "@fusion/core";
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
@@ -2360,6 +2360,232 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    it("finalizes no-op in-review tasks with zero commits ahead", async () => {
+      const enqueueMerge = vi.fn();
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        enqueueMerge,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        globalPause: false,
+        enginePaused: false,
+      });
+      mockedExecSync.mockImplementation((command) => {
+        const cmd = String(command);
+        if (cmd.includes("rev-parse --verify 'fusion/fn-500'")) return "ok" as any;
+        if (cmd.includes("rev-parse --verify 'main'")) return "ok" as any;
+        if (cmd.includes("rev-list --count 'main'..'fusion/fn-500'")) return "0\n" as any;
+        return "" as any;
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce([
+          {
+            id: "FN-500",
+            column: "in-review",
+            paused: false,
+            status: null,
+            worktree: "/tmp/test-project/.worktrees/fn-500",
+            steps: [{ name: "Ship it", status: "done" }],
+            workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
+            mergeDetails: undefined,
+            log: [],
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: "FN-500",
+            column: "in-review",
+            paused: false,
+            status: null,
+            mergeRetries: 0,
+            worktree: "/tmp/test-project/.worktrees/fn-500",
+            steps: [{ name: "Ship it", status: "done" }],
+            workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
+            mergeDetails: { mergeConfirmed: true, noOpMerge: true },
+            log: [],
+          },
+        ]);
+
+      const finalized = await managerWithRecovery.finalizeNoOpReviewTasks();
+      const recovered = await managerWithRecovery.recoverMergeableReviewTasks();
+
+      expect(finalized).toBe(1);
+      expect(recovered).toBe(0);
+      expect(store.updateTask).toHaveBeenCalledWith(
+        "FN-500",
+        expect.objectContaining({
+          mergeDetails: expect.objectContaining({
+            mergeConfirmed: true,
+            noOpMerge: true,
+            noOpReason: expect.stringContaining("main"),
+          }),
+        }),
+      );
+      expect(store.moveTask).toHaveBeenCalledWith("FN-500", "done");
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-500",
+        expect.stringContaining("Auto-finalized: branch has zero commits ahead of main"),
+      );
+      expect(enqueueMerge).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("does not finalize when branch is ahead by one or more commits", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        globalPause: false,
+        enginePaused: false,
+      });
+      mockedExecSync.mockImplementation((command) => {
+        const cmd = String(command);
+        if (cmd.includes("rev-parse --verify 'fusion/fn-501'")) return "ok" as any;
+        if (cmd.includes("rev-parse --verify 'main'")) return "ok" as any;
+        if (cmd.includes("rev-list --count 'main'..'fusion/fn-501'")) return "3\n" as any;
+        return "" as any;
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-501",
+          column: "in-review",
+          paused: false,
+          status: null,
+          worktree: "/tmp/test-project/.worktrees/fn-501",
+          steps: [{ name: "Ship it", status: "done" }],
+          workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
+          mergeDetails: undefined,
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.finalizeNoOpReviewTasks();
+
+      expect(result).toBe(0);
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-501", "done");
+
+      managerWithRecovery.stop();
+    });
+
+    it("skips finalize pass when autoMerge is disabled", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: false,
+        globalPause: false,
+        enginePaused: false,
+      });
+
+      const result = await managerWithRecovery.finalizeNoOpReviewTasks();
+
+      expect(result).toBe(0);
+      expect(store.listTasks).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("does not finalize no-op tasks when branch inspection errors", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        globalPause: false,
+        enginePaused: false,
+      });
+      mockedExecSync.mockImplementation((command) => {
+        const cmd = String(command);
+        if (cmd.includes("rev-parse --verify 'fusion/fn-502'")) return "ok" as any;
+        if (cmd.includes("rev-parse --verify 'main'")) return "ok" as any;
+        if (cmd.includes("rev-list --count 'main'..'fusion/fn-502'")) {
+          throw new Error("git failed");
+        }
+        return "" as any;
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-502",
+          column: "in-review",
+          paused: false,
+          status: null,
+          worktree: "/tmp/test-project/.worktrees/fn-502",
+          steps: [{ name: "Ship it", status: "done" }],
+          workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
+          mergeDetails: undefined,
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.finalizeNoOpReviewTasks();
+
+      expect(result).toBe(0);
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-502", "done");
+      expect(getSelfHealingLogger().warn).toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("does not re-enqueue tasks marked noOpMerge", async () => {
+      const enqueueMerge = vi.fn();
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        enqueueMerge,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        globalPause: false,
+        enginePaused: false,
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-503",
+          column: "in-review",
+          paused: false,
+          status: null,
+          mergeRetries: 0,
+          worktree: "/tmp/test-project/.worktrees/fn-503",
+          steps: [{ name: "Ship it", status: "done" }],
+          workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
+          mergeDetails: { noOpMerge: true },
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverMergeableReviewTasks();
+
+      expect(result).toBe(0);
+      expect(enqueueMerge).not.toHaveBeenCalled();
+      expect(store.logEntry).not.toHaveBeenCalledWith(
+        "FN-503",
+        expect.stringContaining("re-enqueued"),
+      );
+
+      managerWithRecovery.stop();
+    });
+
+    it("resolves ahead count via origin fallback", async () => {
+      mockedExecSync.mockImplementation((command) => {
+        const cmd = String(command);
+        if (cmd.includes("rev-parse --verify 'fusion/fn-999'")) return "ok" as any;
+        if (cmd.includes("rev-parse --verify 'release'")) throw new Error("missing local");
+        if (cmd.includes("rev-parse --verify 'origin/release'")) return "ok" as any;
+        if (cmd.includes("rev-list --count 'origin/release'..'fusion/fn-999'")) return "0\n" as any;
+        return "" as any;
+      });
+
+      const result = await isBranchAheadOfBase(
+        { id: "FN-999", branch: "fusion/fn-999" } as Task,
+        "/tmp/test-project",
+        "release",
+      );
+
+      expect(result).toEqual({ aheadCount: 0, baseRef: "origin/release" });
+    });
+
     it("moves stale in-review tasks with incomplete steps back to todo for retry", async () => {
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
@@ -4324,6 +4550,7 @@ describe("maintenance cycle concurrency", () => {
     makeSlow("recoverStaleIncompleteReviewTasks");
     makeSlow("recoverInterruptedMergingTasks");
     makeSlow("recoverStaleMergingStatus");
+    makeSlow("finalizeNoOpReviewTasks");
     makeSlow("recoverMergeableReviewTasks");
     makeSlow("recoverMergedReviewTasks");
     makeSlow("recoverStuckMergeDeadlocks");
@@ -4352,6 +4579,7 @@ describe("maintenance cycle concurrency", () => {
       "recoverStaleIncompleteReviewTasks",
       "recoverInterruptedMergingTasks",
       "recoverStaleMergingStatus",
+      "finalizeNoOpReviewTasks",
       "recoverMergeableReviewTasks",
       "recoverMergedReviewTasks",
       "recoverStuckMergeDeadlocks",

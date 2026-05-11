@@ -160,6 +160,62 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+export async function isBranchAheadOfBase(
+  task: Task,
+  rootDir: string,
+  preferredBaseRef?: string,
+): Promise<{ aheadCount: number; baseRef: string } | null> {
+  const branchName = task.branch || `fusion/${task.id.toLowerCase()}`;
+
+  try {
+    await execAsync(`git rev-parse --verify ${shellQuote(branchName)}`, {
+      cwd: rootDir,
+      timeout: 30_000,
+    });
+  } catch {
+    return null;
+  }
+
+  const requestedBaseRef = preferredBaseRef || task.mergeDetails?.mergeTargetBranch || "main";
+  let resolvedBaseRef = requestedBaseRef;
+
+  try {
+    await execAsync(`git rev-parse --verify ${shellQuote(requestedBaseRef)}`, {
+      cwd: rootDir,
+      timeout: 30_000,
+    });
+  } catch {
+    const remoteRef = `origin/${requestedBaseRef}`;
+    try {
+      await execAsync(`git rev-parse --verify ${shellQuote(remoteRef)}`, {
+        cwd: rootDir,
+        timeout: 30_000,
+      });
+      resolvedBaseRef = remoteRef;
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    const { stdout } = await execAsync(
+      `git rev-list --count ${shellQuote(resolvedBaseRef)}..${shellQuote(branchName)}`,
+      { cwd: rootDir, timeout: 30_000 },
+    );
+    const aheadCount = Number.parseInt(stdout.trim(), 10);
+    if (!Number.isFinite(aheadCount)) {
+      return null;
+    }
+    return { aheadCount, baseRef: resolvedBaseRef };
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    log.warn(
+      `Failed to compare ${branchName} against ${resolvedBaseRef} for ${task.id}: ${errorMessage}`,
+    );
+    return null;
+  }
+}
+
 function parseShortstat(output: string): Pick<LandedTaskCommit, "filesChanged" | "insertions" | "deletions"> {
   const normalized = output.trim().replace(/\n/g, " ");
   const filesMatch = normalized.match(/(\d+) files? changed/);
@@ -878,6 +934,7 @@ export class SelfHealingManager {
           { name: "recover-interrupted-merging", fn: () => this.recoverInterruptedMergingTasks() },
           { name: "recover-done-merge-metadata", fn: () => this.recoverDoneTaskMergeMetadata() },
           { name: "recover-stale-merging-status", fn: () => this.recoverStaleMergingStatus() },
+          { name: "finalize-noop-review", fn: () => this.finalizeNoOpReviewTasks() },
           { name: "recover-mergeable-review", fn: () => this.recoverMergeableReviewTasks() },
           { name: "recover-merged-review", fn: () => this.recoverMergedReviewTasks() },
           { name: "recover-already-merged-review", fn: () => this.recoverAlreadyMergedReviewTasks() },
@@ -1193,6 +1250,65 @@ export class SelfHealingManager {
     }
   }
 
+  async finalizeNoOpReviewTasks(): Promise<number> {
+    try {
+      const settings = await this.store.getSettings();
+      if (!settings.autoMerge) return 0;
+      if (settings.globalPause || settings.enginePaused) return 0;
+
+      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      const candidates = tasks.filter((t) =>
+        t.column === "in-review" &&
+        !t.paused &&
+        Boolean(t.worktree) &&
+        t.mergeDetails?.mergeConfirmed !== true &&
+        t.status !== "merging" &&
+        t.status !== "merging-pr" &&
+        t.status !== "awaiting-user-review" &&
+        t.status !== "failed" &&
+        getTaskMergeBlocker(t) === undefined,
+      );
+
+      if (candidates.length === 0) return 0;
+
+      let recovered = 0;
+      for (const task of candidates) {
+        const ahead = await this.isBranchAheadOfBase(task, task.mergeDetails?.mergeTargetBranch || "main");
+        if (!ahead || ahead.aheadCount !== 0) {
+          continue;
+        }
+
+        const noOpReason = `branch has zero commits ahead of ${ahead.baseRef}`;
+        // Reaching in-review means executor/spec gates already passed. If there
+        // are no commits ahead of base, treat this as a successful no-op merge.
+        const mergeDetails: MergeDetails = {
+          ...(task.mergeDetails || {}),
+          mergeConfirmed: true,
+          noOpMerge: true,
+          noOpReason,
+          mergedAt: new Date().toISOString(),
+        };
+
+        await this.store.updateTask(task.id, { mergeDetails });
+        await this.store.logEntry(
+          task.id,
+          `Auto-finalized: ${noOpReason}; treating as no-op merge and moving to done`,
+        );
+        await this.store.moveTask(task.id, "done");
+        recovered++;
+      }
+
+      if (recovered > 0) {
+        log.log(`Recovered ${recovered} no-op review task(s) → done`);
+      }
+      return recovered;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error(`No-op review finalization failed: ${errorMessage}`);
+      return 0;
+    }
+  }
+
   /**
    * Recover `in-review` tasks that are fully mergeable but never had
    * `mergeTask()` invoked.
@@ -1223,11 +1339,13 @@ export class SelfHealingManager {
         t.status !== "merging-pr" &&
         Boolean(t.worktree) &&
         t.mergeDetails?.mergeConfirmed !== true &&
+        t.mergeDetails?.noOpMerge !== true &&
         !hasTerminalInvalidDoneTransition(t) &&
         // Mirror ProjectEngine.canMergeTask retry gate. If retries are already
         // exhausted, re-enqueueing here is a no-op and each recovery log write
         // refreshes updatedAt, preventing cooldown-based retries from ever
-        // becoming eligible.
+        // becoming eligible. Also skip tasks explicitly tagged as no-op merges
+        // in case updateTask(moveTask) is briefly out-of-order during recovery.
         (t.mergeRetries ?? 0) < MAX_AUTO_MERGE_RETRIES &&
         getTaskMergeBlocker(t) === undefined,
       );
@@ -2420,6 +2538,13 @@ export class SelfHealingManager {
       log.error(`Partial-progress no-task_done recovery failed: ${errorMessage}`);
       return 0;
     }
+  }
+
+  private async isBranchAheadOfBase(
+    task: Task,
+    baseRef?: string,
+  ): Promise<{ aheadCount: number; baseRef: string } | null> {
+    return isBranchAheadOfBase(task, this.options.rootDir, baseRef);
   }
 
   private async hasRecoverableGitWork(task: Task): Promise<boolean> {

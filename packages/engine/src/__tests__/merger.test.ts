@@ -1084,6 +1084,44 @@ describe("aiMergeTask — merge-target branch resolution", () => {
   });
 });
 
+describe("aiMergeTask — no-op short-circuit", () => {
+  it("finalizes to done when branch has zero commits ahead of base", async () => {
+    const store = createMockStore({
+      id: "FN-3834-NOOP",
+      branch: "fusion/fn-3834-noop",
+      mergeDetails: { mergeTargetBranch: "main" },
+      worktree: "/tmp/root/.worktrees/FN-3834-NOOP",
+    });
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify") && cmdStr.includes("fusion/fn-3834-noop")) return Buffer.from("ok");
+      if (cmdStr.includes("rev-parse --verify") && cmdStr.includes("main")) return Buffer.from("ok");
+      if (cmdStr.includes("rev-list --count") && cmdStr.includes("main") && cmdStr.includes("fusion/fn-3834-noop")) return "0\n" as any;
+      if (cmdStr.includes("git merge --squash")) {
+        throw new Error("merge path should not run");
+      }
+      return Buffer.from("");
+    });
+
+    const result = await aiMergeTask(store, "/tmp/root", "FN-3834-NOOP");
+
+    expect(result.merged).toBe(true);
+    expect(result.noOp).toBe(true);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-3834-NOOP", "done");
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-3834-NOOP",
+      expect.objectContaining({
+        mergeDetails: expect.objectContaining({
+          mergeConfirmed: true,
+          noOpMerge: true,
+          noOpReason: expect.stringContaining("main"),
+        }),
+      }),
+    );
+  });
+});
+
 describe("aiMergeTask — empty squash merge (branch already merged via dep)", () => {
   beforeEach(() => {
     vi.clearAllMocks();

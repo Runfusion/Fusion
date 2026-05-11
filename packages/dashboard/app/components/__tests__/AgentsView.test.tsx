@@ -658,6 +658,14 @@ describe("AgentsView", () => {
       expect(detailsButton.querySelector("svg")).toBeTruthy();
     });
 
+    it("hides split-sidebar action labels only within an agent-card-actions container query", () => {
+      const css = loadAllAppCss();
+
+      expect(css).not.toContain(".agents-split-sidebar .agent-card-actions .agent-card-action-label {\n  display: none;\n}");
+      expect(css).toContain("@container agent-card-actions (max-width: calc(var(--space-2xl) * 9))");
+      expect(css).toContain(".agents-split-sidebar .agent-card-actions .agent-card-action-label {\n    display: none;\n  }");
+    });
+
     it("opens matching detail view when clicking View Details button", async () => {
       render(<AgentsView addToast={mockAddToast} />);
 

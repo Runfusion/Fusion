@@ -1002,6 +1002,8 @@ export interface MergeDetails {
   mergeCommitMessage?: string;
   mergedAt?: string;
   mergeConfirmed?: boolean;
+  noOpMerge?: boolean;
+  noOpReason?: string;
   prNumber?: number;
   mergeTargetBranch?: string;
   mergeTargetSource?: "task-base-branch" | "task-branch-context" | "project-default" | "legacy-main";
@@ -1096,7 +1098,7 @@ export interface TaskBranchContext {
 export interface Task {
   id: string;
   /** Immutable lineage identity used for durable commit/task attribution. */
-  lineageId: string;
+  lineageId?: string;
   title?: string;
   description: string;
   /**
@@ -2577,6 +2579,7 @@ export interface MergeResult extends MergeDetails {
   task: Task;
   branch: string;
   merged: boolean;
+  noOp?: boolean;
   worktreeRemoved: boolean;
   branchDeleted: boolean;
   error?: string;
