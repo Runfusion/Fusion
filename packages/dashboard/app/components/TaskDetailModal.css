@@ -449,10 +449,15 @@
   padding: var(--space-sm) var(--space-md);
 }
 
-.detail-github-tracking-grid {
+.detail-github-tracking-content {
   margin-top: var(--space-sm);
   padding-top: var(--space-sm);
   border-top: 1px solid var(--border);
+}
+
+.detail-github-tracking-grid {
+  margin-top: 0;
+  padding-top: 0;
 }
 
 .detail-github-issue-state {

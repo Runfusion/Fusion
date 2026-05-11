@@ -534,6 +534,7 @@ export function TaskDetailContent({
   const [showMoveMenu, setShowMoveMenu] = useState(false);
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const [sourceIssueExpanded, setSourceIssueExpanded] = useState(false);
+  const [githubTrackingExpanded, setGithubTrackingExpanded] = useState(false);
   const [githubRepoOverrideDraft, setGithubRepoOverrideDraft] = useState(task.githubTracking?.repoOverride ?? "");
   const [githubTrackingEnabledDraft, setGithubTrackingEnabledDraft] = useState<boolean | null>(null);
   const [githubRepoOverrideError, setGithubRepoOverrideError] = useState<string | null>(null);
@@ -584,6 +585,7 @@ export function TaskDetailContent({
     setEditSourceIssueUrl(task.sourceIssue?.url ?? "");
     setEditExecutionMode(normalizeExecutionModeValue(task.executionMode));
     setSourceIssueExpanded(false);
+    setGithubTrackingExpanded(false);
     setGithubRepoOverrideDraft(task.githubTracking?.repoOverride ?? "");
     setGithubTrackingEnabledDraft(null);
     setGithubRepoOverrideError(null);
@@ -2358,62 +2360,78 @@ export function TaskDetailContent({
                     </span>
                   )}
                 </div>
+                <button
+                  type="button"
+                  className="detail-source-toggle"
+                  aria-expanded={githubTrackingExpanded}
+                  aria-label={githubTrackingExpanded ? "Collapse GitHub tracking details" : "Expand GitHub tracking details"}
+                  onClick={() => setGithubTrackingExpanded((expanded) => !expanded)}
+                >
+                  <ChevronRight
+                    size={16}
+                    className={githubTrackingExpanded ? "detail-source-chevron--expanded" : undefined}
+                  />
+                </button>
               </div>
-              {githubTrackedIssue && (
-                <dl className="detail-source-grid detail-github-tracking-grid">
-                  <div>
-                    <dt>Issue</dt>
-                    <dd>
-                      {githubTrackedIssue.url ? (
-                        <a className="detail-source-link" href={githubTrackedIssue.url} target="_blank" rel="noopener noreferrer">
-                          {`${githubTrackedIssue.owner}/${githubTrackedIssue.repo}#${githubTrackedIssue.number}`}
-                        </a>
-                      ) : (
-                        <span>{`${githubTrackedIssue.owner}/${githubTrackedIssue.repo}#${githubTrackedIssue.number}`}</span>
-                      )}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>State</dt>
-                    <dd>
-                      <span className={`detail-github-issue-state ${task.issueInfo?.state === "closed" ? "detail-github-issue-state--closed" : "detail-github-issue-state--open"}`}>
-                        {task.issueInfo?.state ?? "open"}
-                      </span>
-                    </dd>
-                  </div>
-                </dl>
-              )}
-              {canEditGithubTracking && (
-                <div className="detail-github-tracking-controls">
-                  <label className="checkbox-label" htmlFor="detail-github-tracking-toggle">
-                    <input
-                      id="detail-github-tracking-toggle"
-                      type="checkbox"
-                      checked={githubTrackingEnabled}
-                      disabled={isSavingGithubTracking}
-                      onChange={() => void handleToggleGithubTracking()}
-                    />
-                    Enable GitHub tracking
-                  </label>
-                  <div className="detail-github-tracking-repo-row">
-                    <input
-                      className="input"
-                      value={githubRepoOverrideDraft}
-                      onChange={(event) => {
-                        setGithubRepoOverrideDraft(event.target.value);
-                        setGithubRepoOverrideError(null);
-                      }}
-                      placeholder={effectiveGithubRepoDefault || "owner/repo"}
-                    />
-                    <button className="btn btn-sm" onClick={() => void handleSaveGithubRepoOverride()} disabled={isSavingGithubTracking}>
-                      Save
-                    </button>
-                  </div>
-                  {githubRepoOverrideError && <small className="detail-github-tracking-error">{githubRepoOverrideError}</small>}
+              {githubTrackingExpanded && (
+                <div className="detail-github-tracking-content">
                   {githubTrackedIssue && (
-                    <button className="btn btn-sm touch-target" onClick={() => void handleUnlinkGithubIssue()} disabled={isSavingGithubTracking}>
-                      Unlink GitHub issue
-                    </button>
+                    <dl className="detail-source-grid detail-github-tracking-grid">
+                      <div>
+                        <dt>Issue</dt>
+                        <dd>
+                          {githubTrackedIssue.url ? (
+                            <a className="detail-source-link" href={githubTrackedIssue.url} target="_blank" rel="noopener noreferrer">
+                              {`${githubTrackedIssue.owner}/${githubTrackedIssue.repo}#${githubTrackedIssue.number}`}
+                            </a>
+                          ) : (
+                            <span>{`${githubTrackedIssue.owner}/${githubTrackedIssue.repo}#${githubTrackedIssue.number}`}</span>
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>State</dt>
+                        <dd>
+                          <span className={`detail-github-issue-state ${task.issueInfo?.state === "closed" ? "detail-github-issue-state--closed" : "detail-github-issue-state--open"}`}>
+                            {task.issueInfo?.state ?? "open"}
+                          </span>
+                        </dd>
+                      </div>
+                    </dl>
+                  )}
+                  {canEditGithubTracking && (
+                    <div className="detail-github-tracking-controls">
+                      <label className="checkbox-label" htmlFor="detail-github-tracking-toggle">
+                        <input
+                          id="detail-github-tracking-toggle"
+                          type="checkbox"
+                          checked={githubTrackingEnabled}
+                          disabled={isSavingGithubTracking}
+                          onChange={() => void handleToggleGithubTracking()}
+                        />
+                        Enable GitHub tracking
+                      </label>
+                      <div className="detail-github-tracking-repo-row">
+                        <input
+                          className="input"
+                          value={githubRepoOverrideDraft}
+                          onChange={(event) => {
+                            setGithubRepoOverrideDraft(event.target.value);
+                            setGithubRepoOverrideError(null);
+                          }}
+                          placeholder={effectiveGithubRepoDefault || "owner/repo"}
+                        />
+                        <button className="btn btn-sm" onClick={() => void handleSaveGithubRepoOverride()} disabled={isSavingGithubTracking}>
+                          Save
+                        </button>
+                      </div>
+                      {githubRepoOverrideError && <small className="detail-github-tracking-error">{githubRepoOverrideError}</small>}
+                      {githubTrackedIssue && (
+                        <button className="btn btn-sm touch-target" onClick={() => void handleUnlinkGithubIssue()} disabled={isSavingGithubTracking}>
+                          Unlink GitHub issue
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               )}

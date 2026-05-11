@@ -59,8 +59,8 @@ describe("TaskDetailModal", () => {
 
       const toggle = screen.getByRole("button", { name: "Expand source issue details" });
       expect(toggle).toHaveAttribute("aria-expanded", "false");
-      const chevron = screen.getByTestId("chevron-right-icon");
-      expect(chevron.classList.contains("detail-source-chevron--expanded")).toBe(false);
+      const chevron = toggle.querySelector("svg");
+      expect(chevron?.classList.contains("detail-source-chevron--expanded")).toBe(false);
 
       await user.click(toggle);
 
@@ -71,7 +71,8 @@ describe("TaskDetailModal", () => {
       const sourceLink = screen.getByRole("link", { name: "https://github.com/runfusion/fusion/issues/2473" });
       expect(sourceLink).toHaveAttribute("href", "https://github.com/runfusion/fusion/issues/2473");
       expect(sourceLink).toHaveAttribute("target", "_blank");
-      expect(screen.getByTestId("chevron-right-icon").classList.contains("detail-source-chevron--expanded")).toBe(true);
+      const expandedChevron = screen.getByRole("button", { name: "Collapse source issue details" }).querySelector("svg");
+      expect(expandedChevron?.classList.contains("detail-source-chevron--expanded")).toBe(true);
     });
 
     it("applies compact GitHub source summary styling contracts", () => {
@@ -2132,6 +2133,10 @@ describe("TaskDetailModal", () => {
   });
 
   describe("github tracking section", () => {
+    const expandGithubTracking = () => {
+      fireEvent.click(screen.getByRole("button", { name: "Expand GitHub tracking details" }));
+    };
+
     it("renders linked issue as link when url exists", () => {
       render(
         <TaskDetailModal
@@ -2158,6 +2163,12 @@ describe("TaskDetailModal", () => {
       );
 
       expect(screen.getByText("GitHub tracking")).toBeTruthy();
+      expect(screen.getByLabelText("GitHub tracking status")).toHaveTextContent("Linked");
+      expect(screen.queryByRole("link", { name: "runfusion/fusion#123" })).toBeNull();
+
+      expandGithubTracking();
+
+      expect(screen.getByRole("button", { name: "Collapse GitHub tracking details" })).toHaveAttribute("aria-expanded", "true");
       expect(screen.getByRole("link", { name: "runfusion/fusion#123" })).toHaveAttribute("href", "https://github.com/runfusion/fusion/issues/123");
     });
 
@@ -2176,6 +2187,7 @@ describe("TaskDetailModal", () => {
 
       expect(screen.getByText("GitHub tracking")).toBeTruthy();
       expect(screen.getByText("Tracking is currently disabled")).toBeTruthy();
+      expect(screen.queryByLabelText("Enable GitHub tracking")).toBeNull();
     });
 
     it("hides section when tracking is disabled and task is not in an eligible column", () => {
@@ -2224,6 +2236,8 @@ describe("TaskDetailModal", () => {
         />,
       );
 
+      expandGithubTracking();
+
       const toggle = screen.getByLabelText("Enable GitHub tracking") as HTMLInputElement;
       expect(toggle.checked).toBe(false);
 
@@ -2258,6 +2272,8 @@ describe("TaskDetailModal", () => {
         />,
       );
 
+      expandGithubTracking();
+
       fireEvent.click(screen.getByLabelText("Enable GitHub tracking"));
       await waitFor(() => {
         expect(mockUpdate).toHaveBeenCalledWith("FN-001", { githubTracking: { enabled: false } }, undefined);
@@ -2280,6 +2296,8 @@ describe("TaskDetailModal", () => {
           addToast={noop}
         />,
       );
+
+      expandGithubTracking();
 
       fireEvent.change(screen.getByPlaceholderText("owner/repo"), { target: { value: "runfusion/cli" } });
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -2326,6 +2344,8 @@ describe("TaskDetailModal", () => {
           addToast={noop}
         />,
       );
+
+      expandGithubTracking();
 
       fireEvent.click(screen.getByRole("button", { name: "Unlink GitHub issue" }));
       await waitFor(() => {
