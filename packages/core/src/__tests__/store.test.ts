@@ -6689,6 +6689,39 @@ Task with acceptance criteria
       ).rejects.toThrow("Task FN-9004 cannot depend on itself");
     });
 
+    it("advances config nextId high-water after reserved id create", async () => {
+      await store.createTaskWithReservedId({ description: "reserved" }, { taskId: "FN-9015" });
+      const created = await store.createTask({ description: "plain create" });
+      expect(created.id).toBe("FN-9016");
+    });
+
+    it("skips existing ids when config nextId drifts below task high-water", async () => {
+      await store.createTaskWithReservedId({ description: "existing" }, { taskId: "FN-9020" });
+      (store as any).db.prepare("UPDATE config SET nextId = 1 WHERE id = 1").run();
+
+      const created = await store.createTask({ description: "should skip collision" });
+      expect(created.id).toBe("FN-001");
+
+      (store as any).db.prepare("UPDATE config SET nextId = 9020 WHERE id = 1").run();
+      const next = await store.createTask({ description: "stale high water" });
+      expect(next.id).toBe("FN-9021");
+    });
+
+    it("does not overwrite existing non-triage task on colliding create attempt", async () => {
+      const existing = await store.createTaskWithReservedId({ description: "protected" }, { taskId: "FN-9030" });
+      await store.moveTask(existing.id, "todo");
+      await store.moveTask(existing.id, "in-progress");
+      await store.moveTask(existing.id, "in-review");
+
+      await expect(
+        store.createTaskWithReservedId({ description: "collision" }, { taskId: "FN-9030" }),
+      ).rejects.toThrow("Task ID already exists: FN-9030");
+
+      const reloaded = await store.getTask("FN-9030");
+      expect(reloaded.description).toBe("protected");
+      expect(reloaded.column).toBe("in-review");
+    });
+
     it("applyReplicatedTaskCreate does not auto-apply default workflow steps", async () => {
       const workflowStep = await store.createWorkflowStep({
         name: "Default step",

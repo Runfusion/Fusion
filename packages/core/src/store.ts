@@ -2143,6 +2143,29 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     }
   }
 
+  private taskIdExistsInLiveOrArchive(taskId: string): boolean {
+    const existsInTable = (table: string): boolean => {
+      try {
+        const row = this.db
+          .prepare(`SELECT 1 as found FROM ${table} WHERE id = ? LIMIT 1`)
+          .get(taskId) as { found?: number } | undefined;
+        return row?.found === 1;
+      } catch {
+        return false;
+      }
+    };
+
+    return existsInTable("tasks") || existsInTable("archivedTasks");
+  }
+
+  private parseTaskIdSequence(taskId: string): { prefix: string; sequence: number } | null {
+    const match = taskId.trim().match(/^([A-Za-z][A-Za-z0-9_-]*)-(\d+)$/);
+    if (!match) return null;
+    const sequence = Number.parseInt(match[2], 10);
+    if (!Number.isFinite(sequence)) return null;
+    return { prefix: match[1], sequence };
+  }
+
   private async allocateId(): Promise<string> {
     // Use withConfigLock to ensure the entire ID allocation + config sync is serialized
     return this.withConfigLock(async () => {
@@ -2150,9 +2173,16 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         const row = this.db.prepare("SELECT nextId, settings FROM config WHERE id = 1").get() as unknown as { nextId: number; settings: string | null } | undefined;
         const settings = fromJson<Settings>(row?.settings ?? null);
         const prefix = settings?.taskPrefix || "KB";
-        const nextId = row?.nextId || 1;
-        const taskId = `${prefix}-${String(nextId).padStart(3, "0")}`;
-        this.db.prepare("UPDATE config SET nextId = ? WHERE id = 1").run(nextId + 1);
+        const configuredNextId = Math.max(1, row?.nextId || 1);
+
+        let sequence = configuredNextId;
+        let taskId = `${prefix}-${String(sequence).padStart(3, "0")}`;
+        while (this.taskIdExistsInLiveOrArchive(taskId)) {
+          sequence += 1;
+          taskId = `${prefix}-${String(sequence).padStart(3, "0")}`;
+        }
+
+        this.db.prepare("UPDATE config SET nextId = ? WHERE id = 1").run(sequence + 1);
         this.db.bumpLastModified();
         return taskId;
       }); // Database.transaction() directly executes and returns the result
@@ -2454,8 +2484,28 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       throw new Error(`Task ${id} cannot depend on itself`);
     }
 
-    if (this.readTaskFromDb(id)) {
+    if (this.taskIdExistsInLiveOrArchive(id)) {
       throw new Error(`Task ID already exists: ${id}`);
+    }
+
+    const parsedReservedId = this.parseTaskIdSequence(id);
+    if (parsedReservedId) {
+      await this.withConfigLock(async () => {
+        this.db.transaction(() => {
+          const row = this.db.prepare("SELECT nextId, settings FROM config WHERE id = 1").get() as unknown as { nextId: number; settings: string | null } | undefined;
+          const settings = fromJson<Settings>(row?.settings ?? null);
+          const configuredPrefix = settings?.taskPrefix || "KB";
+          if (configuredPrefix !== parsedReservedId.prefix) {
+            return;
+          }
+          const currentNextId = Math.max(1, row?.nextId || 1);
+          const highWaterNextId = parsedReservedId.sequence + 1;
+          if (highWaterNextId > currentNextId) {
+            this.db.prepare("UPDATE config SET nextId = ? WHERE id = 1").run(highWaterNextId);
+            this.db.bumpLastModified();
+          }
+        });
+      });
     }
 
     const title = input.title?.trim() || undefined;
@@ -2573,6 +2623,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       createdAt: now,
       updatedAt: options?.updatedAt ?? now,
     };
+
+    if (this.taskIdExistsInLiveOrArchive(id)) {
+      throw new Error(`Task ID already exists: ${id}`);
+    }
 
     const dir = this.taskDir(id);
     await mkdir(dir, { recursive: true });
