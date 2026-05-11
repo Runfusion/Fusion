@@ -1838,6 +1838,7 @@ describe("ChatManager generation isolation", () => {
       role: "assistant",
       content: "",
     });
+    mockChatStore.getRoomMessages.mockReturnValue([]);
   });
 
   // Regression: a "Generation cancelled" broadcast from a previous generation
