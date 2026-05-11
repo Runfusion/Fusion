@@ -90,12 +90,12 @@
 
 .file-mention-popup-loading .spinner {
   display: inline-block;
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--border);
+  width: var(--space-lg);
+  height: var(--space-lg);
+  border: calc(var(--space-xs) / 2) solid var(--border);
   border-top-color: var(--text-muted);
   border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  animation: spin var(--transition-slow) linear infinite;
 }
 
 @keyframes spin {
