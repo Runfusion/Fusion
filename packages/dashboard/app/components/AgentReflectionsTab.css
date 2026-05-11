@@ -291,40 +291,40 @@
 /* ── Budget Progress Bar ────────────────────────────────────────────────────── */
 
 .budget-progress-container {
-  margin-top: 4px;
+  margin-top: var(--space-xs);
 }
 
 .budget-progress-bar {
   width: 100%;
-  height: 8px;
-  background: var(--bg-secondary, #161b22);
-  border-radius: 4px;
+  height: var(--space-sm);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
   overflow: hidden;
-  margin-top: 4px;
+  margin-top: var(--space-xs);
 }
 
 .budget-progress-bar__fill {
   height: 100%;
-  border-radius: 4px;
-  transition: width 0.3s ease, background-color 0.3s ease;
+  border-radius: var(--radius-sm);
+  transition: width var(--transition-slow), background-color var(--transition-slow);
 }
 
 .budget-progress-bar__fill--green {
-  background: var(--state-active-text, #3fb950);
+  background: var(--color-success);
 }
 
 .budget-progress-bar__fill--amber {
-  background: var(--state-paused-text, #e3b541);
+  background: var(--color-warning);
 }
 
 .budget-progress-bar__fill--red {
-  background: var(--state-error-text, #f85149);
+  background: var(--color-error);
 }
 
 .budget-progress-label {
   font-size: 0.75rem;
-  color: var(--text-secondary, #8b949e);
-  margin-top: 4px;
+  color: var(--text-muted);
+  margin-top: var(--space-xs);
   display: block;
 }
 
@@ -333,9 +333,9 @@
 .budget-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 12px;
+  gap: var(--space-xs);
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+  border-radius: var(--radius-pill);
   font-size: 0.75rem;
   font-weight: 500;
 }
@@ -345,117 +345,22 @@
 .budget-warning-banner {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: 6px;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
   background: var(--state-error-bg, color-mix(in srgb, var(--color-error) 15%, transparent));
-  color: var(--state-error-text, #f85149);
-  border: 1px solid var(--state-error-border, #f85149);
+  color: var(--state-error-text);
+  border: 1px solid var(--state-error-border);
   font-size: 0.875rem;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-md);
 }
 
 /* ── Budget Reset Button ─────────────────────────────────────────────────────── */
 
 .btn-reset-budget {
-  margin-top: 8px;
+  margin-top: var(--space-sm);
 }
 
-/* ── Chat View Mobile Styles ────────────────────────────────────────────────── */
-
-/* Default: hide footer, mobile will override to show bottom-anchored New Chat */
-.chat-sidebar-footer {
-  display: none;
-}
-
-@media (max-width: 768px) {
-  .chat-view {
-    flex-direction: column;
-  }
-
-  .chat-sidebar {
-    width: 100%;
-    min-width: 100%;
-    height: 100%;
-    max-height: none;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    flex-direction: column;
-  }
-
-  /* Desktop header hidden on mobile - New Chat is in footer instead */
-  .chat-sidebar-header {
-    display: none;
-  }
-
-  /* Hide search controls on mobile list view */
-  .chat-sidebar-search {
-    display: none;
-  }
-
-  /* Session list fills available space with scrolling */
-  .chat-sidebar-list {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-  }
-
-  /* Footer with bottom-anchored New Chat action */
-  .chat-sidebar-footer {
-    display: flex;
-    padding: var(--space-md);
-    border-top: 1px solid var(--border);
-    background: var(--bg-secondary);
-  }
-
-  .chat-sidebar-footer-btn {
-    flex: 1;
-    justify-content: center;
-  }
-
-  .chat-sidebar--hidden {
-    display: none;
-  }
-
-  .chat-message {
-    max-width: 90%;
-  }
-
-  .chat-new-dialog {
-    width: 95vw;
-    margin: 16px;
-  }
-
-  .chat-thread-header {
-    padding: 8px 12px;
-  }
-
-  .chat-skill-menu {
-    left: var(--space-md);
-    right: calc(var(--space-md) + var(--mobile-nav-height));
-    min-width: 0;
-    max-width: none;
-  }
-}
-
-
-
-/* Mobile responsive for file mention popup */
-@media (max-width: 768px) {
-  .file-mention-popup {
-    max-height: 200px;
-  }
-
-  .file-mention-popup-item {
-    min-height: 36px;
-    padding: 10px 12px;
-  }
-
-  .agent-mention-popup {
-    max-width: 280px;
-    min-width: 200px;
-  }
-}
 
 
 

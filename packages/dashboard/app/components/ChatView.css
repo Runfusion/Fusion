@@ -1274,10 +1274,32 @@
    thread takes the full viewport. The thread already renders a back
    button (ChevronLeft) on mobile to flip back to the session list. */
 @media (max-width: 768px) {
+  .chat-view {
+    flex-direction: column;
+  }
+
   .chat-sidebar {
     width: 100%;
-    min-width: 0;
+    min-width: 100%;
+    height: 100%;
+    max-height: none;
     border-right: none;
+    border-bottom: 1px solid var(--border);
+    flex-direction: column;
+  }
+
+  .chat-sidebar-header {
+    display: none;
+  }
+
+  .chat-sidebar-search {
+    display: none;
+  }
+
+  .chat-sidebar-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
   }
 
   /* When the sidebar is shown, the thread is hidden so only the session
@@ -1405,7 +1427,23 @@
   }
 
   .chat-message {
-    max-width: 82%;
+    max-width: 90%;
+  }
+
+  .chat-new-dialog {
+    width: 95vw;
+    margin: var(--space-lg);
+  }
+
+  .chat-thread-header {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .chat-skill-menu {
+    left: var(--space-md);
+    right: calc(var(--space-md) + var(--mobile-nav-height));
+    min-width: 0;
+    max-width: none;
   }
 
   .chat-jump-to-latest {

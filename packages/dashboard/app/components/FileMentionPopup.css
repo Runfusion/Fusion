@@ -105,9 +105,13 @@
 }
 
 @media (max-width: 768px) {
-  .agent-mention-popup {
-    max-width: 280px;
-    min-width: 200px;
+  .file-mention-popup {
+    max-height: calc(var(--space-xl) * 8 + var(--space-sm));
+  }
+
+  .file-mention-popup-item {
+    min-height: calc(var(--space-lg) + var(--space-xl) - var(--space-sm));
+    padding: calc(var(--space-sm) + (var(--space-xs) / 2)) var(--space-md);
   }
 }
 
@@ -118,26 +122,26 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: var(--space-lg);
   color: var(--text-secondary);
-  padding: 24px;
+  padding: var(--space-xl);
   text-align: center;
 }
 
 .chat-empty-state h2 {
-  font-size: 20px;
+  font-size: calc(var(--space-xl) - var(--space-xs));
   color: var(--text);
   margin: 0;
 }
 
 .chat-empty-state-agent-select select {
-  padding: 8px 12px;
+  padding: var(--space-sm) var(--space-md);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   color: var(--text);
-  font-size: 14px;
-  min-width: 200px;
+  font-size: calc(var(--space-sm) + (var(--space-xs) * 1.5));
+  min-width: calc(var(--space-xl) * 8 + var(--space-sm));
 }
 
 /* New chat dialog */
@@ -155,36 +159,36 @@
 .chat-new-dialog {
   background: var(--bg-elevated, var(--bg));
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 24px;
-  width: 400px;
-  max-width: 90vw;
+  border-radius: var(--radius-lg);
+  padding: var(--space-xl);
+  width: calc(var(--space-xl) * 16 + var(--space-md));
+  max-width: calc(100vw - (var(--space-md) * 2));
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-lg);
 }
 
 .chat-new-dialog h3 {
   margin: 0;
-  font-size: 18px;
+  font-size: calc(var(--space-lg) + (var(--space-xs) / 2));
 }
 
 .chat-new-dialog label {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
+  gap: var(--space-xs);
+  font-size: calc(var(--space-sm) + (var(--space-xs) * 1.25));
   color: var(--text-secondary);
 }
 
 .chat-new-dialog input,
 .chat-new-dialog select {
-  padding: 8px 12px;
+  padding: var(--space-sm) var(--space-md);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   color: var(--text);
-  font-size: 14px;
+  font-size: calc(var(--space-sm) + (var(--space-xs) * 1.5));
 }
 
 .chat-new-dialog-mode-toggle {
@@ -199,7 +203,7 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: calc(var(--space-sm) + (var(--space-xs) * 1.25));
   cursor: pointer;
   transition: var(--transition-fast);
 }
@@ -238,42 +242,42 @@
 .chat-new-dialog-model-label {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 /* Agent list in new chat dialog */
 .chat-new-dialog-loading,
 .chat-new-dialog-empty {
-  padding: 16px;
+  padding: var(--space-lg);
   text-align: center;
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: calc(var(--space-sm) + (var(--space-xs) * 1.5));
 }
 
 .chat-new-dialog-agent-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-height: 300px;
+  gap: var(--space-xs);
+  max-height: calc(var(--space-xl) * 12 + var(--space-md));
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 4px;
+  border-radius: var(--radius-md);
+  padding: var(--space-xs);
 }
 
 .chat-new-dialog-agent-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
-  font-size: 14px;
+  font-size: calc(var(--space-sm) + (var(--space-xs) * 1.5));
   text-align: left;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--transition-fast);
 }
 
 .chat-new-dialog-agent-item:hover {
@@ -291,7 +295,7 @@
 }
 
 .chat-new-dialog-agent-role {
-  font-size: 12px;
+  font-size: var(--space-md);
   color: var(--text-secondary);
   text-transform: capitalize;
 }
@@ -303,16 +307,16 @@
 
 @media (max-width: 768px) {
   .quick-chat-fab {
-    right: 4px;
-    bottom: calc(4px + var(--executor-footer-height-mobile, var(--executor-footer-height, 0px)) + var(--mobile-nav-height, 44px) + env(safe-area-inset-bottom, 0px));
+    right: var(--space-xs);
+    bottom: calc(var(--space-xs) + var(--executor-footer-height-mobile, var(--executor-footer-height, 0px)) + var(--mobile-nav-height, 44px) + env(safe-area-inset-bottom, 0px));
   }
 
   .quick-chat-panel {
-    right: 4px;
-    left: 4px;
+    right: var(--space-xs);
+    left: var(--space-xs);
     width: auto;
-    bottom: calc(60px + var(--executor-footer-height-mobile, var(--executor-footer-height, 0px)) + var(--mobile-nav-height, 44px) + env(safe-area-inset-bottom, 0px));
-    height: min(520px, calc(100dvh - 120px));
+    bottom: calc((var(--space-xl) * 2) + var(--space-md) + var(--executor-footer-height-mobile, var(--executor-footer-height, 0px)) + var(--mobile-nav-height, 44px) + env(safe-area-inset-bottom, 0px));
+    height: min(calc(var(--space-xl) * 21 + var(--space-md)), calc(100dvh - (var(--space-xl) * 5)));
   }
 
   /* ChatView New Chat + Delete dialogs should stay inset/compact on mobile.
