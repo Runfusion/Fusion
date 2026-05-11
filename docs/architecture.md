@@ -357,7 +357,7 @@ Hybrid evaluator pipeline (FN-3389/FN-3391):
 - `TaskStore.getPluginStore()` now propagates the configured `globalSettingsDir`/central directory so all CLI and dashboard install paths resolve the same central DB
 - `PluginLoader` (`plugin-loader.ts`) loads/unloads plugin modules using the effective per-project plugin state
 - Plugin contributions now include both embedded `uiSlots` and top-level `dashboardViews`
-- Executor runtime contributions can be provided via `executorRuntimeEnv(taskCtx, ctx)`; the engine aggregates plugin-provided `pathPrepend` + `env` overlays per task and applies them only to executor-spawned user commands (configured commands, verification commands, step-session subprocesses), never to git plumbing subprocesses.
+- Executor runtime contributions can be provided via `executorRuntimeEnv(taskCtx, ctx)`; see the canonical plugin-authoring contract in [`docs/PLUGIN_AUTHORING.md` §4 "`executorRuntimeEnv`: task-scoped executor subprocess environment"](./PLUGIN_AUTHORING.md#executorruntimeenv-task-scoped-executor-subprocess-environment). The engine applies these task-scoped overlays only to executor-spawned user commands, never to git plumbing subprocesses.
 - Discovery endpoints:
   - `GET /api/plugins/ui-slots`
   - `GET /api/plugins/dashboard-views`

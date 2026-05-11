@@ -343,6 +343,7 @@ const plugin: FusionPlugin = {
 | `onTaskCompleted` | `(task: Task, ctx: PluginContext) => Promise<void> \| void` | Task reached "done" |
 | `onError` | `(error: Error, ctx: PluginContext) => Promise<void> \| void` | Error occurred in plugin execution |
 | `onSchemaInit` | `(db: Database) => Promise<void> \| void` | After enabled plugins are loaded at startup (engine/daemon/dashboard/serve) |
+| `executorRuntimeEnv` | `(taskCtx: ExecutorRuntimeTaskContext, ctx: PluginContext) => Promise<ExecutorRuntimeEnvContribution> \| ExecutorRuntimeEnvContribution` | Before executor-spawned task commands run, to contribute task-scoped env and PATH prepends |
 
 ### Hook Behavior
 
@@ -372,6 +373,85 @@ hooks: {
   },
 },
 ```
+
+### `executorRuntimeEnv`: task-scoped executor subprocess environment
+
+Use `executorRuntimeEnv` when your plugin needs to provide runtime environment values for **executor-spawned user commands** tied to a specific task.
+
+This hook runs when Fusion prepares subprocess environments for executor command surfaces such as configured commands, verification commands, and step-session subprocesses.
+
+It does **not** apply to internal git plumbing subprocesses used by worktree/branch management.
+
+```typescript
+import type {
+  ExecutorRuntimeEnvContribution,
+  ExecutorRuntimeTaskContext,
+  PluginContext,
+} from "@fusion/plugin-sdk";
+
+function executorRuntimeEnv(
+  taskCtx: ExecutorRuntimeTaskContext,
+  ctx: PluginContext,
+): ExecutorRuntimeEnvContribution {
+  ctx.logger.info(`Preparing env for task ${taskCtx.taskId}`);
+  return {
+    pathPrepend: ["/absolute/path/to/tools"],
+    env: {
+      MY_PLUGIN_TASK_ID: taskCtx.taskId,
+    },
+  };
+}
+```
+
+`ExecutorRuntimeTaskContext` fields:
+
+- `taskId`: Fusion task ID
+- `worktreePath`: absolute path to the task worktree
+- `rootDir`: project root directory
+- `branch?`: task branch name when available
+
+`ExecutorRuntimeEnvContribution` fields:
+
+- `pathPrepend?`: array of **absolute** path strings prepended to `PATH` for executor-spawned commands
+- `env?`: key/value string map merged into the subprocess environment
+- `description?`: optional human-readable note for debugging/telemetry
+
+Validation and merge behavior (from engine runtime collection):
+
+- `pathPrepend` must be an array of absolute path strings; non-absolute entries are rejected.
+- `env` values must be strings.
+- `env` must not include `PATH`; use `pathPrepend` instead.
+- When multiple plugins set the same `env` key, later plugins override earlier values and the engine logs a warning.
+- `pathPrepend` entries from later plugins are placed earlier in the final prepend list.
+
+### Example: prepend a generated tool directory for executor commands
+
+```typescript
+import { definePlugin } from "@fusion/plugin-sdk";
+import path from "node:path";
+
+export default definePlugin({
+  manifest: {
+    id: "fusion-plugin-tooling-example",
+    name: "Tooling Example",
+    version: "1.0.0",
+  },
+  state: "installed",
+  hooks: {},
+  executorRuntimeEnv: (taskCtx) => {
+    const toolDir = path.resolve(taskCtx.rootDir, ".fusion/tools/my-plugin/bin");
+
+    return {
+      pathPrepend: [toolDir],
+      env: {
+        MY_PLUGIN_TOOL_HOME: toolDir,
+      },
+    };
+  },
+});
+```
+
+With this hook enabled, executor-spawned commands (for example verification commands or `bash` tool subprocesses in the task session) can resolve binaries from `toolDir` without mutating global process environment.
 
 ### Example: Notification on Task Completion
 

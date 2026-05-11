@@ -85,3 +85,20 @@ test("PLUGIN_AUTHORING TOC includes top-level dashboard views and anchors align 
   assert.ok(topLevelEntry, "TOC should include section 8");
   assert.equal(topLevelEntry.title, "Registering Top-Level Dashboard Views");
 });
+
+test("PLUGIN_AUTHORING documents executorRuntimeEnv hook signature in hook reference", () => {
+  assert.match(
+    doc,
+    /\| `executorRuntimeEnv` \| `\(taskCtx: ExecutorRuntimeTaskContext, ctx: PluginContext\) => Promise<ExecutorRuntimeEnvContribution> \\| ExecutorRuntimeEnvContribution` \|/,
+  );
+});
+
+test("PLUGIN_AUTHORING documents executorRuntimeEnv runtime env contract and PATH injection example", () => {
+  assert.match(doc, /### `executorRuntimeEnv`: task-scoped executor subprocess environment/);
+  assert.match(doc, /does \*\*not\*\* apply to internal git plumbing subprocesses/);
+  assert.match(doc, /pathPrepend` must be an array of absolute path strings/);
+  assert.match(doc, /must not include `PATH`; use `pathPrepend` instead/);
+  assert.match(doc, /later plugins override earlier values and the engine logs a warning/);
+  assert.match(doc, /later plugins are placed earlier in the final prepend list/);
+  assert.match(doc, /pathPrepend: \[toolDir\]/);
+});
