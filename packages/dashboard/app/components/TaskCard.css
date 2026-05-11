@@ -895,7 +895,8 @@
   color: var(--text-muted);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  transition: opacity var(--transition-fast), background var(--transition-fast),
+    color var(--transition-fast);
 }
 
 .card:hover .card-edit-btn {
@@ -924,10 +925,10 @@
   background: transparent;
   border: none;
   border-radius: var(--radius-sm);
-  color: var(--text-secondary);
+  color: var(--text-muted);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s, color 0.15s;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
 }
 
 .card:hover .card-delete-btn {
@@ -961,7 +962,8 @@
   color: var(--text-muted);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s, background 0.15s, color 0.15s, border-color 0.15s;
+  transition: opacity var(--transition-fast), background var(--transition-fast),
+    color var(--transition-fast), border-color var(--transition-fast);
 }
 
 .card:hover .card-archive-btn,
@@ -1003,7 +1005,8 @@
   color: var(--text-muted);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.15s, background 0.15s, color 0.15s, border-color 0.15s;
+  transition: opacity var(--transition-fast), background var(--transition-fast),
+    color var(--transition-fast), border-color var(--transition-fast);
 }
 
 .card:hover .card-send-back-btn {
@@ -1024,7 +1027,7 @@
 
 .card-send-back-menu {
   position: absolute;
-  top: calc(100% + 4px);
+  top: calc(100% + var(--space-xs));
   right: 0;
   z-index: 50;
   min-width: 100px;
@@ -1038,7 +1041,7 @@
 .card-send-back-menu-item {
   display: block;
   width: 100%;
-  padding: 6px 12px;
+  padding: calc(var(--space-sm) - (var(--space-xs) / 4)) var(--space-md);
   font-size: 0.75rem;
   font-weight: 400;
   color: var(--text);
@@ -1046,7 +1049,7 @@
   border: none;
   cursor: pointer;
   text-align: left;
-  transition: background 0.1s;
+  transition: background var(--transition-instant);
 }
 
 .card-send-back-menu-item:hover {
