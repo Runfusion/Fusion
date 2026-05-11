@@ -176,6 +176,8 @@ export class Scheduler {
   private wasNodeBlocked = new Set<string>();
   /** Tracks tasks blocked by missing project-node mapping to deduplicate block log entries. */
   private wasNodeDispatchValidationBlocked = new Set<string>();
+  /** Tracks dispatch-queued reason signatures to avoid per-tick log spam. */
+  private wasDispatchQueuedReasonLogged = new Set<string>();
 
   /**
    * Async listener guard convention:
@@ -460,7 +462,27 @@ export class Scheduler {
     this.failedTaskIds.clear();
     this.wasNodeBlocked.clear();
     this.wasNodeDispatchValidationBlocked.clear();
+    this.wasDispatchQueuedReasonLogged.clear();
     schedulerLog.log("Stopped");
+  }
+
+  private clearDispatchQueuedReasonMemo(taskId: string): void {
+    for (const key of this.wasDispatchQueuedReasonLogged) {
+      if (key.startsWith(`${taskId}:`)) {
+        this.wasDispatchQueuedReasonLogged.delete(key);
+      }
+    }
+  }
+
+  private async logDispatchQueuedReason(taskId: string, reason: string): Promise<void> {
+    const key = `${taskId}:${reason}`;
+    if (this.wasDispatchQueuedReasonLogged.has(key)) {
+      return;
+    }
+
+    this.clearDispatchQueuedReasonMemo(taskId);
+    this.wasDispatchQueuedReasonLogged.add(key);
+    await this.store.logEntry(taskId, reason);
   }
 
   /**
@@ -740,6 +762,7 @@ export class Scheduler {
           );
           if (!recovered) {
             await this.store.updateTask(task.id, { status: "queued" });
+            await this.logDispatchQueuedReason(task.id, "queued — checkout lease recovery blocked dispatch");
             continue;
           }
         }
@@ -755,6 +778,7 @@ export class Scheduler {
             status: "queued",
             blockedBy: unmetDeps[0],
           });
+          await this.logDispatchQueuedReason(task.id, `queued — unmet dependencies: ${unmetDeps.join(", ")}`);
           this.options.onBlocked?.(task, unmetDeps);
           continue;
         }
@@ -818,6 +842,7 @@ export class Scheduler {
               if (task.status !== "queued" || task.blockedBy !== targetBlockedBy) {
                 await this.store.updateTask(task.id, { status: "queued", blockedBy: targetBlockedBy });
               }
+              await this.logDispatchQueuedReason(task.id, `queued — file scope overlap with ${overlappingTaskId}`);
               continue;
             }
           }
@@ -825,6 +850,7 @@ export class Scheduler {
 
         // Dependencies met — check concurrency
         if (started >= available) {
+          await this.logDispatchQueuedReason(task.id, `queued — concurrency limit reached (${available} available)`);
           continue;
         }
 
@@ -927,6 +953,7 @@ export class Scheduler {
         });
         this.wasNodeBlocked.delete(task.id);
         this.wasNodeDispatchValidationBlocked.delete(task.id);
+        this.clearDispatchQueuedReasonMemo(task.id);
         await this.store.logEntry(task.id, `Node routing resolved: ${effectiveNode.nodeId ?? "local"} (source: ${effectiveNode.source})`);
         this.options.onSchedule?.(task);
         started++;

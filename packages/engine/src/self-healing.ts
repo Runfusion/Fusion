@@ -1199,52 +1199,95 @@ export class SelfHealingManager {
       const blockedTasks = todoTasks.filter(
         (task) => typeof task.blockedBy === "string" && task.blockedBy.trim().length > 0,
       );
+      const queuedDependencyTasks = todoTasks.filter(
+        (task) => task.status === "queued" && task.dependencies.length > 0,
+      );
 
-      if (blockedTasks.length === 0) return 0;
+      if (blockedTasks.length === 0 && queuedDependencyTasks.length === 0) return 0;
 
       const allTasks = await this.store.listTasks({ slim: true, includeArchived: true });
       const taskById = new Map(allTasks.map((task) => [task.id, task]));
 
       let recovered = 0;
-      for (const task of blockedTasks) {
-        const blockerId = task.blockedBy;
-        if (!blockerId) continue;
+      const blockedTaskIds = new Set(blockedTasks.map((task) => task.id));
+      const queuedDependencyTaskIds = new Set(queuedDependencyTasks.map((task) => task.id));
+      const candidates = new Map<string, typeof todoTasks[number]>();
+      for (const task of blockedTasks) candidates.set(task.id, task);
+      for (const task of queuedDependencyTasks) candidates.set(task.id, task);
 
-        const blocker = taskById.get(blockerId);
-        let reason: string | null = null;
+      for (const task of candidates.values()) {
+        const blockerId = task.blockedBy;
 
         const unresolvedDeps = task.dependencies.filter((depId) => {
           const dep = taskById.get(depId);
           return dep && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
         });
 
-        if (!blocker) {
-          reason = `blocker ${blockerId} missing`;
-        } else if (blocker.column === "done") {
-          reason = `blocker ${blockerId} is done`;
-        } else if (blocker.column === "archived") {
-          reason = `blocker ${blockerId} is archived`;
-        } else if (blocker.column === "in-review" && blocker.paused) {
-          reason = `blocker ${blockerId} in-review + paused`;
-        } else if (
-          blocker.column === "in-review" &&
-          blocker.status === "failed" &&
-          (blocker.mergeRetries ?? 0) >= MAX_AUTO_MERGE_RETRIES
-        ) {
-          reason = `blocker ${blockerId} in-review + failed (mergeRetries ${blocker.mergeRetries ?? 0}/${MAX_AUTO_MERGE_RETRIES})`;
-        } else if (task.dependencies.length > 0 && !unresolvedDeps.includes(blockerId)) {
-          reason = `blocker ${blockerId} not among unresolved dependencies`;
+        if (blockedTaskIds.has(task.id)) {
+          if (!blockerId) continue;
+
+          const blocker = taskById.get(blockerId);
+          let reason: string | null = null;
+
+          if (!blocker) {
+            reason = `blocker ${blockerId} missing`;
+          } else if (blocker.column === "done") {
+            reason = `blocker ${blockerId} is done`;
+          } else if (blocker.column === "archived") {
+            reason = `blocker ${blockerId} is archived`;
+          } else if (blocker.column === "in-review" && blocker.paused) {
+            reason = `blocker ${blockerId} in-review + paused`;
+          } else if (
+            blocker.column === "in-review" &&
+            blocker.status === "failed" &&
+            (blocker.mergeRetries ?? 0) >= MAX_AUTO_MERGE_RETRIES
+          ) {
+            reason = `blocker ${blockerId} in-review + failed (mergeRetries ${blocker.mergeRetries ?? 0}/${MAX_AUTO_MERGE_RETRIES})`;
+          } else if (task.dependencies.length > 0 && !unresolvedDeps.includes(blockerId)) {
+            reason = `blocker ${blockerId} not among unresolved dependencies`;
+          }
+
+          if (reason) {
+            try {
+              if (unresolvedDeps.length > 0) {
+                const nextBlocker = unresolvedDeps[0]!;
+                await this.store.updateTask(task.id, { blockedBy: nextBlocker, status: "queued" });
+                await this.store.logEntry(task.id, `Auto-recovered: refreshed stale blockedBy — ${reason}; now blocked by ${nextBlocker}`);
+              } else {
+                await this.store.updateTask(task.id, { blockedBy: null, status: null });
+                await this.store.logEntry(task.id, `Auto-recovered: cleared stale blockedBy — ${reason}`);
+              }
+              recovered++;
+            } catch (err: unknown) {
+              const errorMessage = err instanceof Error ? err.message : String(err);
+              log.error(`Failed to clear stale blockedBy for ${task.id}: ${errorMessage}`);
+            }
+            continue;
+          }
         }
 
-        if (!reason) continue;
+        if (unresolvedDeps.length === 0) {
+          if (queuedDependencyTaskIds.has(task.id)) {
+            try {
+              await this.store.updateTask(task.id, { blockedBy: null, status: null });
+              await this.store.logEntry(task.id, "Auto-recovered: cleared stale queued status — all dependencies satisfied");
+              recovered++;
+            } catch (err: unknown) {
+              const errorMessage = err instanceof Error ? err.message : String(err);
+              log.error(`Failed to clear stale queued status for ${task.id}: ${errorMessage}`);
+            }
+          }
+          continue;
+        }
 
-        try {
-          await this.store.updateTask(task.id, { blockedBy: null, status: null });
-          await this.store.logEntry(task.id, `Auto-recovered: cleared stale blockedBy — ${reason}`);
-          recovered++;
-        } catch (err: unknown) {
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          log.error(`Failed to clear stale blockedBy for ${task.id}: ${errorMessage}`);
+        const nextBlocker = unresolvedDeps[0] ?? null;
+        if (nextBlocker && task.blockedBy !== nextBlocker) {
+          try {
+            await this.store.updateTask(task.id, { blockedBy: nextBlocker, status: "queued" });
+          } catch (err: unknown) {
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            log.error(`Failed to refresh blockedBy for ${task.id}: ${errorMessage}`);
+          }
         }
       }
 
