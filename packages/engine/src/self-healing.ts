@@ -1249,8 +1249,14 @@ export class SelfHealingManager {
 
           if (reason) {
             try {
-              await this.store.updateTask(task.id, { blockedBy: null, status: null });
-              await this.store.logEntry(task.id, `Auto-recovered: cleared stale blockedBy — ${reason}`);
+              if (unresolvedDeps.length > 0) {
+                const nextBlocker = unresolvedDeps[0]!;
+                await this.store.updateTask(task.id, { blockedBy: nextBlocker, status: "queued" });
+                await this.store.logEntry(task.id, `Auto-recovered: refreshed stale blockedBy — ${reason}; now blocked by ${nextBlocker}`);
+              } else {
+                await this.store.updateTask(task.id, { blockedBy: null, status: null });
+                await this.store.logEntry(task.id, `Auto-recovered: cleared stale blockedBy — ${reason}`);
+              }
               recovered++;
             } catch (err: unknown) {
               const errorMessage = err instanceof Error ? err.message : String(err);

@@ -4334,6 +4334,48 @@ describe("clearStaleBlockedBy", () => {
     expect(store.logEntry).toHaveBeenCalledTimes(1);
     manager.stop();
   });
+
+  it("FN-3908: clears stale queued status when all dependencies are already satisfied", async () => {
+    const store = createRunningStore();
+    const queuedTask = createTask("FN-3170", {
+      status: "queued",
+      blockedBy: null,
+      dependencies: ["FN-3168", "FN-3169"],
+    });
+    const depA = createTask("FN-3168", { column: "archived" });
+    const depB = createTask("FN-3169", { column: "done" });
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([queuedTask, depA, depB]);
+
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+    const recovered = await manager.clearStaleBlockedBy();
+
+    expect(recovered).toBe(1);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-3170", { blockedBy: null, status: null });
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-3170",
+      "Auto-recovered: cleared stale queued status — all dependencies satisfied",
+    );
+    manager.stop();
+  });
+
+  it("FN-3908: refreshes blockedBy to first unresolved dependency when stale blocker changed", async () => {
+    const store = createRunningStore();
+    const queuedTask = createTask("FN-3170", {
+      status: "queued",
+      blockedBy: "FN-3168",
+      dependencies: ["FN-3168", "FN-3169"],
+    });
+    const depA = createTask("FN-3168", { column: "archived" });
+    const depB = createTask("FN-3169", { column: "in-progress" });
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([queuedTask, depA, depB]);
+
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+    await manager.clearStaleBlockedBy();
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-3170", { blockedBy: "FN-3169", status: "queued" });
+    expect(store.logEntry).toHaveBeenCalledWith("FN-3170", expect.stringContaining("refreshed stale blockedBy"));
+    manager.stop();
+  });
 });
 
 describe("stale triage processing eviction before recovery", () => {

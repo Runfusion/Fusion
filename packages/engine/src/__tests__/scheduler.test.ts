@@ -422,6 +422,85 @@ describe("Scheduler", () => {
       expect(store.updateTask).toHaveBeenCalledWith("FN-3811", { blockedBy: null, status: null });
     });
 
+    it("FN-3908: unblocks queued multi-dependency task when moved blocker archives and remaining deps are satisfied", async () => {
+      const dependent = createMockTask({
+        id: "FN-3170",
+        column: "todo",
+        status: "queued",
+        blockedBy: null,
+        dependencies: ["FN-3168", "FN-3169"],
+      });
+      const blockerA = createMockTask({ id: "FN-3168", column: "archived" });
+      const blockerB = createMockTask({ id: "FN-3169", column: "done" });
+      const allTasks = [dependent, blockerA, blockerB];
+      const store = createMockStore({
+        listTasks: vi.fn(async (options?: { column?: string }) =>
+          options?.column === "todo" ? [dependent] : allTasks,
+        ),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+      });
+
+      new Scheduler(store);
+      const movedHandler = (store.on as any).mock.calls.find((call: any) => call[0] === "task:moved")?.[1];
+      await movedHandler({ task: blockerA, from: "in-review", to: "archived" });
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-3170", { blockedBy: null, status: null });
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-3170",
+        "Auto-unblocked: blocker FN-3168 reached archived",
+      );
+    });
+
+    it("FN-3908: repoints blockedBy when moved blocker is done but another dependency remains unresolved", async () => {
+      const dependent = createMockTask({
+        id: "FN-3170",
+        column: "todo",
+        status: "queued",
+        blockedBy: "FN-3168",
+        dependencies: ["FN-3168", "FN-3169"],
+      });
+      const blockerA = createMockTask({ id: "FN-3168", column: "done" });
+      const blockerB = createMockTask({ id: "FN-3169", column: "in-progress" });
+      const allTasks = [dependent, blockerA, blockerB];
+      const store = createMockStore({
+        listTasks: vi.fn(async (options?: { column?: string }) =>
+          options?.column === "todo" ? [dependent] : allTasks,
+        ),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4 }),
+      });
+
+      new Scheduler(store);
+      const movedHandler = (store.on as any).mock.calls.find((call: any) => call[0] === "task:moved")?.[1];
+      await movedHandler({ task: blockerA, from: "in-progress", to: "done" });
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-3170", { status: "queued", blockedBy: "FN-3169" });
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-3170", { blockedBy: null, status: null });
+    });
+
+    it.each([
+      { globalPause: true, enginePaused: false },
+      { globalPause: false, enginePaused: true },
+    ])("FN-3908: skips event-driven dependency reconciliation when pauses are active", async (settings) => {
+      const dependent = createMockTask({
+        id: "FN-3170",
+        column: "todo",
+        status: "queued",
+        blockedBy: null,
+        dependencies: ["FN-3168"],
+      });
+      const blocker = createMockTask({ id: "FN-3168", column: "archived" });
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([dependent, blocker]),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxWorktrees: 4, ...settings }),
+      });
+
+      new Scheduler(store);
+      const movedHandler = (store.on as any).mock.calls.find((call: any) => call[0] === "task:moved")?.[1];
+      await movedHandler({ task: blocker, from: "in-review", to: "archived" });
+
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-3170", { blockedBy: null, status: null });
+    });
+
     it("FN-3924: does not repoint cleared dependency blocker to unrelated overlap task", async () => {
       vi.mocked(existsSync).mockReturnValue(true);
       vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
@@ -763,6 +842,31 @@ describe("Scheduler", () => {
 
       // With 4 in-progress and maxWorktrees=4, no new tasks should start
       expect(store.moveTask).not.toHaveBeenCalled();
+    });
+
+    it("FN-3908: logs queued concurrency reason once per unchanged state", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const tasks = [
+        createMockTask({ id: "FN-001", column: "todo", dependencies: [] }),
+        createMockTask({ id: "FN-002", column: "todo", dependencies: [] }),
+      ];
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 1, maxWorktrees: 4 }),
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+      await scheduler.schedule();
+
+      const concurrencyReasonCalls = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: unknown[]) => call[0] === "FN-002" && String(call[1]).includes("queued — concurrency limit reached"),
+      );
+      expect(concurrencyReasonCalls).toHaveLength(1);
     });
   });
 
