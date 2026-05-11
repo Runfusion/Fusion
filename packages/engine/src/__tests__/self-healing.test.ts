@@ -1324,6 +1324,86 @@ describe("SelfHealingManager", () => {
     });
   });
 
+  describe("recoverMissingWorktreeReviewFailures", () => {
+    it("requeues failed in-review tasks with missing-worktree session-start errors", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-3900",
+          column: "in-review",
+          paused: false,
+          status: "failed",
+          worktree: "/tmp/project/.worktrees/fn-3900-stale",
+          branch: "fusion/fn-3900",
+          sessionFile: "/tmp/project/.fusion/sessions/fn-3900.json",
+          error: "Refusing to start coding agent in missing worktree: /tmp/other/.worktrees/fn-3900",
+          steps: [{ status: "done" }, { status: "pending" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverMissingWorktreeReviewFailures();
+
+      expect(result).toBe(1);
+      expect(store.updateTask).toHaveBeenCalledWith("FN-3900", {
+        status: null,
+        error: null,
+        worktree: null,
+        branch: null,
+        sessionFile: null,
+      });
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-3900",
+        expect.stringContaining("missing worktree"),
+      );
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-3900",
+        expect.stringContaining("/tmp/project/.worktrees/fn-3900-stale"),
+      );
+      expect(store.moveTask).toHaveBeenCalledWith("FN-3900", "todo", { preserveProgress: true });
+
+      managerWithRecovery.stop();
+    });
+
+    it("does not requeue non-matching in-review failures", async () => {
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-3901",
+          column: "in-review",
+          paused: false,
+          status: "failed",
+          error: "Deterministic test verification failed",
+          steps: [{ status: "done" }, { status: "pending" }],
+          log: [],
+        },
+        {
+          id: "FN-3902",
+          column: "in-review",
+          paused: true,
+          status: "failed",
+          error: "Refusing to start coding agent in missing worktree: /tmp/project/.worktrees/fn-3902",
+          steps: [{ status: "done" }, { status: "pending" }],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverMissingWorktreeReviewFailures();
+
+      expect(result).toBe(0);
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(store.moveTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+  });
+
   describe("recoverMisclassifiedFailures", () => {
     it("clears failed status when all steps are done and error is no-task_done", async () => {
       const managerWithRecovery = new SelfHealingManager(store, {

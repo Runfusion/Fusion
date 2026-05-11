@@ -21,6 +21,7 @@ import { getTaskMergeBlocker, isEphemeralAgent, type AgentStore, type TaskStore,
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger } from "./logger.js";
 import { getRegisteredWorktreePaths, scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
+import { isRecoverableMissingWorktreeReviewFailure } from "./restart-recovery-coordinator.js";
 
 const log = createLogger("self-healing");
 const execAsync = promisify(exec);
@@ -239,6 +240,7 @@ export class SelfHealingManager {
       { name: "recover-already-merged-review", fn: () => this.recoverAlreadyMergedReviewTasks().then(() => undefined) },
       { name: "recover-stuck-merge-deadlocks", fn: () => this.recoverStuckMergeDeadlocks().then(() => undefined) },
       { name: "misclassified-failures", fn: () => this.recoverMisclassifiedFailures().then(() => undefined) },
+      { name: "missing-worktree-review-failures", fn: () => this.recoverMissingWorktreeReviewFailures().then(() => undefined) },
       { name: "partial-progress-no-task-done", fn: () => this.recoverPartialProgressNoTaskDoneFailures().then(() => undefined) },
       { name: "orphaned-executions", fn: () => this.recoverOrphanedExecutions().then(() => undefined) },
       { name: "approved-triage", fn: () => this.recoverApprovedTriageTasks().then(() => undefined) },
@@ -847,6 +849,7 @@ export class SelfHealingManager {
           { name: "recover-already-merged-review", fn: () => this.recoverAlreadyMergedReviewTasks() },
           { name: "recover-stuck-merge-deadlocks", fn: () => this.recoverStuckMergeDeadlocks() },
           { name: "recover-misclassified-failures", fn: () => this.recoverMisclassifiedFailures() },
+          { name: "recover-missing-worktree-review-failures", fn: () => this.recoverMissingWorktreeReviewFailures() },
           { name: "recover-no-progress-no-task-done", fn: () => this.recoverNoProgressNoTaskDoneFailures() },
           { name: "recover-partial-progress-no-task-done", fn: () => this.recoverPartialProgressNoTaskDoneFailures() },
           { name: "recover-orphaned-executions", fn: () => this.recoverOrphanedExecutions() },
@@ -2252,6 +2255,57 @@ export class SelfHealingManager {
       return recovered;
     } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
       log.error(`No-progress no-task_done recovery failed: ${errorMessage}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Recover failed `in-review` retries that point at a missing worktree path.
+   *
+   * This is a narrow guard for session-start failures thrown by
+   * assertValidWorktreeSession() (`Refusing to start coding agent in missing worktree:`).
+   * We clear stale worktree metadata and failure state, keep step progress and
+   * retry counters, then requeue to todo for a clean retry.
+   */
+  async recoverMissingWorktreeReviewFailures(): Promise<number> {
+    try {
+      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      const candidates = tasks.filter((task) => isRecoverableMissingWorktreeReviewFailure(task));
+
+      if (candidates.length === 0) return 0;
+
+      log.warn(`Found ${candidates.length} in-review task(s) failed by missing-worktree session start`);
+
+      let recovered = 0;
+      for (const task of candidates) {
+        try {
+          const staleWorktree = task.worktree;
+          await this.store.updateTask(task.id, {
+            status: null,
+            error: null,
+            worktree: null,
+            branch: null,
+            sessionFile: null,
+          });
+          await this.store.logEntry(
+            task.id,
+            `Auto-recovered: retry/verification session targeted missing worktree${staleWorktree ? ` (${staleWorktree})` : ""} — cleared stale session metadata and requeued to todo`,
+          );
+          await this.store.moveTask(task.id, "todo", { preserveProgress: true });
+          recovered++;
+        } catch (err: unknown) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          log.error(`Failed to recover missing-worktree review failure ${task.id}: ${errorMessage}`);
+        }
+      }
+
+      if (recovered > 0) {
+        log.log(`Recovered ${recovered} missing-worktree review failure(s) → todo`);
+      }
+      return recovered;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error(`Missing-worktree review recovery failed: ${errorMessage}`);
       return 0;
     }
   }

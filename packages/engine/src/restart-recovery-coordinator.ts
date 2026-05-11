@@ -4,7 +4,7 @@ import { createLogger } from "./logger.js";
 
 const log = createLogger("restart-recovery");
 
-function hasStepProgress(task: Task): boolean {
+export function hasStepProgress(task: Task): boolean {
   const steps = Array.isArray(task.steps) ? task.steps : [];
   return steps.some((step) => step.status === "done" || step.status === "in-progress" || step.status === "skipped");
 }
@@ -13,6 +13,21 @@ function isNoTaskDoneFailure(task: Task): boolean {
   return task.status === "failed"
     && typeof task.error === "string"
     && task.error.toLowerCase().includes("without calling fn_task_done");
+}
+
+export function isMissingWorktreeSessionStartFailure(error: unknown): boolean {
+  if (typeof error !== "string") {
+    return false;
+  }
+  return error.includes("Refusing to start coding agent in missing worktree:");
+}
+
+export function isRecoverableMissingWorktreeReviewFailure(task: Task): boolean {
+  return task.column === "in-review"
+    && !task.paused
+    && task.status === "failed"
+    && isMissingWorktreeSessionStartFailure(task.error)
+    && hasStepProgress(task);
 }
 
 export class RestartRecoveryCoordinator {

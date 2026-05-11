@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { TaskStore, Task } from "@fusion/core";
-import { RestartRecoveryCoordinator } from "../restart-recovery-coordinator.js";
+import {
+  RestartRecoveryCoordinator,
+  isMissingWorktreeSessionStartFailure,
+  isRecoverableMissingWorktreeReviewFailure,
+} from "../restart-recovery-coordinator.js";
 
 function createTask(overrides: Partial<Task>): Task {
   return {
@@ -19,6 +23,26 @@ function createTask(overrides: Partial<Task>): Task {
 }
 
 describe("RestartRecoveryCoordinator", () => {
+  it("classifies missing-worktree session-start failures narrowly", () => {
+    expect(isMissingWorktreeSessionStartFailure("Refusing to start coding agent in missing worktree: /tmp/wt")).toBe(true);
+    expect(isMissingWorktreeSessionStartFailure("Refusing to start coding agent in incomplete worktree: /tmp/wt")).toBe(false);
+    expect(isMissingWorktreeSessionStartFailure("Deterministic test verification failed")).toBe(false);
+  });
+
+  it("identifies recoverable in-review missing-worktree failures with step progress", () => {
+    const task = createTask({
+      column: "in-review",
+      paused: false,
+      status: "failed",
+      error: "Refusing to start coding agent in missing worktree: /tmp/wt",
+      steps: [{ id: "s1", title: "step", status: "done" }] as any,
+    });
+    expect(isRecoverableMissingWorktreeReviewFailure(task)).toBe(true);
+    expect(isRecoverableMissingWorktreeReviewFailure({ ...task, paused: true })).toBe(false);
+    expect(isRecoverableMissingWorktreeReviewFailure({ ...task, error: "other" })).toBe(false);
+    expect(isRecoverableMissingWorktreeReviewFailure({ ...task, steps: [{ id: "s2", title: "y", status: "pending" }] as any })).toBe(false);
+  });
+
   it("requeues interrupted failed tasks with no progress, then resumes remaining orphans", async () => {
     const store = {
       listTasks: vi.fn().mockResolvedValue([
