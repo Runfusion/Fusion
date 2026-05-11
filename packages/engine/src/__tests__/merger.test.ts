@@ -1085,10 +1085,11 @@ describe("aiMergeTask — merge-target branch resolution", () => {
 });
 
 describe("aiMergeTask — no-op short-circuit", () => {
-  it("finalizes to done when branch has zero commits ahead of base", async () => {
+  it("finalizes to done when branch has zero commits ahead of base (including review-level-0 coordination tasks)", async () => {
     const store = createMockStore({
       id: "FN-3834-NOOP",
       branch: "fusion/fn-3834-noop",
+      reviewLevel: 0,
       mergeDetails: { mergeTargetBranch: "main" },
       worktree: "/tmp/root/.worktrees/FN-3834-NOOP",
     });

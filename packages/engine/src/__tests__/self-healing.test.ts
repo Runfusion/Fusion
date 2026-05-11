@@ -2360,7 +2360,7 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
-    it("finalizes no-op in-review tasks with zero commits ahead", async () => {
+    it("finalizes no-op in-review tasks with zero commits ahead (including review-level-0 coordination tasks)", async () => {
       const enqueueMerge = vi.fn();
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
@@ -2386,6 +2386,7 @@ describe("SelfHealingManager", () => {
             paused: false,
             status: null,
             worktree: "/tmp/test-project/.worktrees/fn-500",
+            reviewLevel: 0,
             steps: [{ name: "Ship it", status: "done" }],
             workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
             mergeDetails: undefined,
@@ -2400,6 +2401,7 @@ describe("SelfHealingManager", () => {
             status: null,
             mergeRetries: 0,
             worktree: "/tmp/test-project/.worktrees/fn-500",
+            reviewLevel: 0,
             steps: [{ name: "Ship it", status: "done" }],
             workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
             mergeDetails: { mergeConfirmed: true, noOpMerge: true },
