@@ -510,6 +510,26 @@ describe("AgentHealthStatus reason field", () => {
     expect(status.reason).toContain("threshold:");
   });
 
+  it("surfaces unresponsive status when timer repair metadata marks stale and no newer heartbeat exists", () => {
+    const repairTime = new Date(FIXED_NOW - 2 * 60 * 1000).toISOString();
+    const agent = makeAgent({
+      state: "active",
+      lastHeartbeatAt: new Date(FIXED_NOW - 20 * 60 * 1000).toISOString(),
+      runtimeConfig: { heartbeatIntervalMs: 60 * 60 * 1000 },
+      metadata: {
+        heartbeatTimerRepair: {
+          repairedAt: repairTime,
+          staleAtRepair: true,
+          staleRepairReason: "No heartbeat before repair",
+        },
+      },
+    });
+
+    const status = getAgentHealthStatus(agent);
+    expect(status.label).toBe("Unresponsive");
+    expect(status.reason).toBe("No heartbeat before repair");
+  });
+
   it("formats reason with elapsed time and threshold", () => {
     const agent = makeAgent({
       state: "active",

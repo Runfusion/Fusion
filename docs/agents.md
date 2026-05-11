@@ -1024,6 +1024,7 @@ Effects:
 - Repair target: durable, heartbeat-enabled agents in tickable states (`active`, `running`, `idle`) that are missing a timer entry
 - Safety guards: skip ephemeral/task-worker agents, skip disabled agents, skip non-tickable states, and skip agents with an active heartbeat run
 - Existing timer entries are left untouched (no interval reset/jitter churn)
+- Repair metadata: each audit re-arm writes `metadata.heartbeatTimerRepair` with `repairedAt` and a stale-at-repair indicator when the agent had already missed its expected cadence
 
 This covers the untracked timer-loss failure mode where no `agent:updated` event fires after a timer entry disappears. Manual stop/start is no longer required to re-arm the timer in that case.
 
@@ -1046,7 +1047,7 @@ The dashboard displays agent health status in AgentsView, AgentListModal, and Ag
 | **Starting...** | State is "active" with no lastHeartbeatAt |
 | **Idle** | Non-active state with no lastHeartbeatAt |
 | **Healthy** | Heartbeat is fresh within the resolved interval-based staleness threshold |
-| **Unresponsive** | Heartbeat exceeded the resolved interval-based staleness threshold |
+| **Unresponsive** | Heartbeat exceeded the resolved interval-based staleness threshold, or timer-repair metadata indicates scheduler-detected stale drift before the next successful heartbeat |
 
 ### Timeout Configuration
 
@@ -1062,6 +1063,7 @@ Health status uses interval-based staleness evaluation:
 - **Consistent across views**: All dashboard surfaces use the same centralized utility, ensuring consistent health labels everywhere
 - **Auto-refresh**: Health status is refreshed every 30 seconds while views are open to keep status current
 - **State-first evaluation**: Explicit non-idle states (error, paused, running) take priority over timeout-based evaluation
+- **Repair-aware surfacing**: If scheduler audit repairs a missing timer and marks the agent stale, dashboard surfaces `Unresponsive` immediately until a newer heartbeat arrives
 
 ## Heartbeat Run Lifecycle
 

@@ -38,6 +38,10 @@ describe("HeartbeatTriggerScheduler", () => {
       listAgents: vi.fn().mockResolvedValue([]),
       on: vi.fn(),
       off: vi.fn(),
+      updateAgent: vi.fn().mockImplementation(async (_id: string, updates: { metadata: Record<string, unknown> }) => ({
+        id: "agent-001",
+        metadata: updates.metadata,
+      })),
     } as unknown as AgentStore;
   });
 
@@ -102,6 +106,37 @@ describe("HeartbeatTriggerScheduler", () => {
       await vi.advanceTimersByTimeAsync(60_000);
 
       expect(scheduler.getRegisteredAgents()).toContain("agent-001");
+    });
+
+    it("marks repaired agent metadata as stale when last heartbeat is old", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-01-01T02:00:00.000Z"));
+      const agent = {
+        id: "agent-001",
+        name: "Agent 001",
+        role: "executor",
+        state: "active",
+        lastHeartbeatAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { enabled: true, heartbeatIntervalMs: 30_000 },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      } as Agent;
+      vi.mocked(store.listAgents).mockResolvedValue([agent]);
+      vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+      scheduler = new HeartbeatTriggerScheduler(store, callback);
+      scheduler.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(store.updateAgent).toHaveBeenCalledWith(
+        "agent-001",
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            heartbeatTimerRepair: expect.objectContaining({ staleAtRepair: true }),
+          }),
+        }),
+      );
     });
 
     it("skips audit re-arm when the agent already has an active heartbeat run", async () => {

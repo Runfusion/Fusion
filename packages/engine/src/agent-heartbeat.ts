@@ -2855,6 +2855,26 @@ function isHeartbeatManaged(agent: Agent): boolean {
  * - `heartbeatIntervalMs`: Timer interval (default 1h)
  * - `maxConcurrentRuns`: Skip tick if agent already has an active run
  */
+type HeartbeatTimerRepairMetadata = {
+  repairedAt?: string;
+  staleAtRepair?: boolean;
+  staleRepairReason?: string;
+};
+
+function readHeartbeatTimerRepairMetadata(agent: Agent): HeartbeatTimerRepairMetadata {
+  const metadata = (agent.metadata ?? {}) as Record<string, unknown>;
+  const raw = metadata.heartbeatTimerRepair;
+  if (!raw || typeof raw !== "object") {
+    return {};
+  }
+  const candidate = raw as Record<string, unknown>;
+  return {
+    repairedAt: typeof candidate.repairedAt === "string" ? candidate.repairedAt : undefined,
+    staleAtRepair: typeof candidate.staleAtRepair === "boolean" ? candidate.staleAtRepair : undefined,
+    staleRepairReason: typeof candidate.staleRepairReason === "string" ? candidate.staleRepairReason : undefined,
+  };
+}
+
 export class HeartbeatTriggerScheduler {
   private store: AgentStore;
   private callback: TriggerCallback;
@@ -2871,6 +2891,7 @@ export class HeartbeatTriggerScheduler {
   private timerAuditIntervalHandle: ReturnType<typeof setInterval> | null = null;
 
   private static readonly TIMER_AUDIT_INTERVAL_MS = 60_000;
+  private static readonly REPAIR_STALE_GRACE_MULTIPLIER = 1.5;
 
   constructor(store: AgentStore, callback: TriggerCallback, taskStore?: TaskStore, options?: { isTaskExecuting?: (taskId: string) => boolean }) {
     this.store = store;
@@ -3364,6 +3385,43 @@ export class HeartbeatTriggerScheduler {
     }
   }
 
+  private getRepairStaleThresholdMs(agent: Agent): number {
+    const config = this.getAgentTimerConfig(agent);
+    let rawIntervalMs = config.heartbeatIntervalMs;
+    if (!rawIntervalMs || typeof rawIntervalMs !== "number" || !Number.isFinite(rawIntervalMs) || rawIntervalMs <= 0) {
+      rawIntervalMs = HeartbeatTriggerScheduler.DEFAULT_HEARTBEAT_INTERVAL_MS;
+    }
+    const intervalMs = Math.max(1000, Math.round(rawIntervalMs));
+    return Math.round(intervalMs * HeartbeatTriggerScheduler.REPAIR_STALE_GRACE_MULTIPLIER);
+  }
+
+  private async markRepairMetadata(agent: Agent, staleAtRepair: boolean, staleRepairReason?: string): Promise<void> {
+    const updater = (this.store as { updateAgent?: (agentId: string, updates: { metadata: Record<string, unknown> }) => Promise<unknown> }).updateAgent;
+    if (typeof updater !== "function") {
+      return;
+    }
+
+    const existing = readHeartbeatTimerRepairMetadata(agent);
+    const repairedAt = new Date().toISOString();
+    const nextRepair: HeartbeatTimerRepairMetadata = {
+      repairedAt,
+      staleAtRepair,
+      ...(staleAtRepair && staleRepairReason ? { staleRepairReason } : {}),
+    };
+
+    const didChange =
+      existing.repairedAt !== nextRepair.repairedAt ||
+      existing.staleAtRepair !== nextRepair.staleAtRepair ||
+      existing.staleRepairReason !== nextRepair.staleRepairReason;
+    if (!didChange) {
+      return;
+    }
+
+    const metadata = { ...(agent.metadata ?? {}) } as Record<string, unknown>;
+    metadata.heartbeatTimerRepair = nextRepair;
+    await updater.call(this.store, agent.id, { metadata });
+  }
+
   async auditTimerRegistrations(reason: "start" | "interval" = "interval"): Promise<void> {
     if (!this.running) return;
 
@@ -3383,8 +3441,18 @@ export class HeartbeatTriggerScheduler {
         this.registerAgent(agent.id, this.getAgentTimerConfig(agent), {
           lastHeartbeatAt: agent.lastHeartbeatAt,
         });
+
+        const staleThresholdMs = this.getRepairStaleThresholdMs(agent);
+        const lastHeartbeatMs = agent.lastHeartbeatAt ? Date.parse(agent.lastHeartbeatAt) : Number.NaN;
+        const elapsedMs = Number.isFinite(lastHeartbeatMs) ? Date.now() - lastHeartbeatMs : Number.NaN;
+        const staleAtRepair = Number.isFinite(elapsedMs) && elapsedMs > staleThresholdMs;
+        const staleRepairReason = staleAtRepair
+          ? `No heartbeat for ${Math.round(elapsedMs / 1000)}s before timer audit repair (threshold ${Math.round(staleThresholdMs / 1000)}s)`
+          : undefined;
+        await this.markRepairMetadata(agent, staleAtRepair, staleRepairReason);
+
         rearmedCount++;
-        heartbeatLog.log(`Timer re-armed for ${agent.id} (audit:${reason})`);
+        heartbeatLog.log(`Timer re-armed for ${agent.id} (audit:${reason}${staleAtRepair ? ", stale" : ""})`);
       }
 
       if (rearmedCount > 0) {
