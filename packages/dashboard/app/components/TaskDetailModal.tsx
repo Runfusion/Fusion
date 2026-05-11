@@ -535,6 +535,7 @@ export function TaskDetailContent({
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const [sourceIssueExpanded, setSourceIssueExpanded] = useState(false);
   const [githubRepoOverrideDraft, setGithubRepoOverrideDraft] = useState(task.githubTracking?.repoOverride ?? "");
+  const [githubTrackingEnabledDraft, setGithubTrackingEnabledDraft] = useState<boolean | null>(null);
   const [githubRepoOverrideError, setGithubRepoOverrideError] = useState<string | null>(null);
   const [isSavingGithubTracking, setIsSavingGithubTracking] = useState(false);
   const moveMenuRef = useRef<HTMLDivElement>(null);
@@ -584,6 +585,7 @@ export function TaskDetailContent({
     setEditExecutionMode(normalizeExecutionModeValue(task.executionMode));
     setSourceIssueExpanded(false);
     setGithubRepoOverrideDraft(task.githubTracking?.repoOverride ?? "");
+    setGithubTrackingEnabledDraft(null);
     setGithubRepoOverrideError(null);
     setIsEditing(false);
   }, [task.id, task.title, task.description, task.branch, task.baseBranch, task.sourceIssue, task.executionMode, task.githubTracking]);
@@ -599,6 +601,13 @@ export function TaskDetailContent({
   useEffect(() => {
     setInlineExecutionMode(normalizeExecutionModeValue(task.executionMode));
   }, [task.id, task.executionMode]);
+
+  useEffect(() => {
+    if (githubTrackingEnabledDraft === null) return;
+    if ((task.githubTracking?.enabled === true) === githubTrackingEnabledDraft) {
+      setGithubTrackingEnabledDraft(null);
+    }
+  }, [githubTrackingEnabledDraft, task.githubTracking?.enabled]);
 
   // Load merged settings for effective model resolution
   useEffect(() => {
@@ -777,7 +786,7 @@ export function TaskDetailContent({
   // Check if task can be edited
   const canEdit = EDITABLE_COLUMNS.has(task.column) && !isSaving;
   const canEditGithubTracking = GITHUB_TRACKING_EDITABLE_COLUMNS.has(task.column) && !isSaving;
-  const githubTrackingEnabled = task.githubTracking?.enabled === true;
+  const githubTrackingEnabled = githubTrackingEnabledDraft ?? (task.githubTracking?.enabled === true);
   const githubTrackedIssue = task.githubTracking?.issue;
   const showGithubTrackingSection = canEditGithubTracking || githubTrackingEnabled || Boolean(githubTrackedIssue);
   const githubTrackingStatus = githubTrackedIssue ? "Linked" : githubTrackingEnabled ? "Enabled" : "Disabled";
@@ -786,20 +795,23 @@ export function TaskDetailContent({
 
   const handleToggleGithubTracking = useCallback(async () => {
     if (!canEditGithubTracking || isSavingGithubTracking) return;
+    const nextEnabled = !githubTrackingEnabled;
+    setGithubTrackingEnabledDraft(nextEnabled);
     setIsSavingGithubTracking(true);
     try {
       const updatedTask = await updateTask(task.id, {
         githubTracking: {
-          enabled: !githubTrackingEnabled,
+          enabled: nextEnabled,
         },
       }, projectId);
       onTaskUpdated?.(updatedTask);
     } catch (err) {
+      setGithubTrackingEnabledDraft(task.githubTracking?.enabled === true);
       addToast(`Failed to update ${task.id}: ${getErrorMessage(err)}`, "error");
     } finally {
       if (mountedRef.current) setIsSavingGithubTracking(false);
     }
-  }, [addToast, canEditGithubTracking, githubTrackingEnabled, isSavingGithubTracking, onTaskUpdated, projectId, task.id]);
+  }, [addToast, canEditGithubTracking, githubTrackingEnabled, isSavingGithubTracking, onTaskUpdated, projectId, task.githubTracking?.enabled, task.id]);
 
   const handleSaveGithubRepoOverride = useCallback(async () => {
     if (!canEditGithubTracking || isSavingGithubTracking) return;

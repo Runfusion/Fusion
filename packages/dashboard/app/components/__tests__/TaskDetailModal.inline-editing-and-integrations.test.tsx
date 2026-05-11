@@ -2187,10 +2187,15 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByLabelText("Enable GitHub tracking"));
+      const toggle = screen.getByLabelText("Enable GitHub tracking") as HTMLInputElement;
+      expect(toggle.checked).toBe(false);
+
+      fireEvent.click(toggle);
+
       await waitFor(() => {
         expect(mockUpdate).toHaveBeenCalledWith("FN-001", { githubTracking: { enabled: true } }, undefined);
       });
+      expect(toggle.checked).toBe(true);
     });
 
     it("sends githubTracking enabled→disabled toggle payload", async () => {
