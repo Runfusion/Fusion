@@ -841,6 +841,7 @@ describe("createFnAgent", () => {
 
     const spawnHook = createBashToolMock.mock.calls.at(-1)?.[1]?.spawnHook;
     const originalEnv = { PATH: "/base/bin", HOME: "/home/user" };
+    const processEnvBefore = { ...process.env };
     const spawned = spawnHook({
       command: "echo hi",
       cwd: "/project",
@@ -857,6 +858,7 @@ describe("createFnAgent", () => {
       },
     });
     expect(originalEnv).toEqual({ PATH: "/base/bin", HOME: "/home/user" });
+    expect(process.env).toEqual(processEnvBefore);
   });
 
   it("keeps bash tool default behavior when taskEnv is not provided", async () => {
@@ -869,6 +871,71 @@ describe("createFnAgent", () => {
     });
 
     expect(createBashToolMock).toHaveBeenCalledWith("/project", undefined);
+  });
+
+  it("keeps spawned env unchanged when taskEnv is empty", async () => {
+    const { createFnAgent } = await import("../pi.js");
+
+    await createFnAgent({
+      cwd: "/project",
+      systemPrompt: "test",
+      tools: "coding",
+      taskEnv: {},
+    });
+
+    const spawnHook = createBashToolMock.mock.calls.at(-1)?.[1]?.spawnHook;
+    const originalEnv = { HOME: "/home/user", PATH: "/bin" };
+    const spawned = spawnHook({ command: "env", cwd: "/project", env: originalEnv });
+
+    expect(spawned.env).toEqual({ HOME: "/home/user", PATH: "/bin" });
+  });
+
+  it("adds new task env keys absent from spawned env", async () => {
+    const { createFnAgent } = await import("../pi.js");
+
+    await createFnAgent({
+      cwd: "/project",
+      systemPrompt: "test",
+      tools: "coding",
+      taskEnv: { TASK_ONLY: "abc" },
+    });
+
+    const spawnHook = createBashToolMock.mock.calls.at(-1)?.[1]?.spawnHook;
+    const spawned = spawnHook({ command: "env", cwd: "/project", env: { HOME: "/home/user" } });
+
+    expect(spawned.env).toEqual({ HOME: "/home/user", TASK_ONLY: "abc" });
+  });
+
+  it("preserves undefined task env values explicitly in merged env", async () => {
+    const { createFnAgent } = await import("../pi.js");
+
+    await createFnAgent({
+      cwd: "/project",
+      systemPrompt: "test",
+      tools: "coding",
+      taskEnv: { TASK_OPTIONAL: undefined },
+    });
+
+    const spawnHook = createBashToolMock.mock.calls.at(-1)?.[1]?.spawnHook;
+    const spawned = spawnHook({ command: "env", cwd: "/project", env: { HOME: "/home/user" } });
+
+    expect(spawned.env).toEqual({ HOME: "/home/user", TASK_OPTIONAL: undefined });
+  });
+
+  it("injects PATH from task env when spawned env has no PATH", async () => {
+    const { createFnAgent } = await import("../pi.js");
+
+    await createFnAgent({
+      cwd: "/project",
+      systemPrompt: "test",
+      tools: "coding",
+      taskEnv: { PATH: "/task/bin" },
+    });
+
+    const spawnHook = createBashToolMock.mock.calls.at(-1)?.[1]?.spawnHook;
+    const spawned = spawnHook({ command: "env", cwd: "/project", env: { HOME: "/home/user" } });
+
+    expect(spawned.env).toEqual({ HOME: "/home/user", PATH: "/task/bin" });
   });
 
   it("refuses to start a coding agent in an unregistered worktree", async () => {

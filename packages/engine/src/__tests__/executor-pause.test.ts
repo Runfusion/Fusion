@@ -350,14 +350,21 @@ describe("Agent Spawning", () => {
 
     // createFnAgent is called at least twice: once for parent, once for child
     expect(mockedCreateFnAgent.mock.calls.length).toBeGreaterThanOrEqual(2);
-    
+
+    const parentCall = mockedCreateFnAgent.mock.calls.find(
+      (call: any) => !call[0].systemPrompt?.includes("child agent spawned")
+    );
     // Find the child session call
     const childCall = mockedCreateFnAgent.mock.calls.find(
       (call: any) => call[0].systemPrompt?.includes("child agent spawned")
     );
+
+    expect(parentCall).toBeDefined();
     expect(childCall).toBeDefined();
     expect(childCall![0].tools).toBe("coding");
+    expect(childCall![0].cwd).toContain("/.worktrees/swift-falcon");
     expect(childCall![0].systemPrompt).toContain("FN-SPAWN");
+    expect(childCall![0].taskEnv).toEqual(parentCall![0].taskEnv);
   });
 
   it("respects per-parent maxSpawnedAgentsPerParent limit", async () => {

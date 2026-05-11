@@ -279,6 +279,7 @@ describe("Workflow Steps Execution", () => {
     expect(secondCall[0].tools).toBe("readonly");
     expect(secondCall[0].systemPrompt).toContain("Docs Review");
     expect(secondCall[0].systemPrompt).toContain("Review all docs and verify they are complete.");
+    expect(secondCall[0].taskEnv).toEqual(mockedCreateFnAgent.mock.calls[0][0].taskEnv);
 
     // Task should move to in-review
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
@@ -816,6 +817,7 @@ describe("Workflow Steps Execution", () => {
 
   it("executes script-mode workflow step successfully", async () => {
     const store = createMockStore();
+    process.env.FN3968_SCRIPT_ENV = "workflow-script-env";
 
     store.getSettings.mockResolvedValue({
       maxConcurrent: 2,
@@ -906,6 +908,12 @@ describe("Workflow Steps Execution", () => {
     );
     const updatePayloads = store.updateTask.mock.calls.map((call: any[]) => call[1]);
     expect(JSON.stringify(updatePayloads)).not.toContain("all tests passed");
+
+    const scriptExecCall = mockedExecSync.mock.calls.find(
+      (call: any[]) => typeof call[0] === "string" && call[0].includes("echo 'all tests passed'")
+    );
+    expect(scriptExecCall?.[1]?.env?.FN3968_SCRIPT_ENV).toBe("workflow-script-env");
+    delete process.env.FN3968_SCRIPT_ENV;
   });
 
   it("executes plugin script-mode workflow step successfully", async () => {
