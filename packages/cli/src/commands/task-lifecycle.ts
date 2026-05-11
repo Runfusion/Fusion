@@ -175,11 +175,12 @@ async function finalizePullRequestMerge(
   cwd: string,
   task: TaskDetail,
   prInfo: PrInfo,
+  message = "Pull request merged",
 ): Promise<void> {
   await cleanupMergedTaskArtifacts(cwd, task);
   await store.updateTask(task.id, { status: null, mergeRetries: 0 });
   await store.moveTask(task.id, "done");
-  await store.logEntry(task.id, "Pull request merged", `PR #${prInfo.number}: ${prInfo.url}`);
+  await store.logEntry(task.id, message, `PR #${prInfo.number}: ${prInfo.url}`);
 }
 
 /**
@@ -316,7 +317,36 @@ export async function processPullRequestMergeTask(
     return "waiting";
   }
   await store.updateTask(task.id, { status: "merging-pr" });
-  const mergedPr = await github.mergePr({ number: prInfo.number, method: "squash" });
+  let mergedPr: PrInfo;
+  try {
+    mergedPr = await github.mergePr({ number: prInfo.number, method: "squash" });
+  } catch (err: unknown) {
+    let refreshedStatus: Awaited<ReturnType<GitHubOperations["getPrMergeStatus"]>>;
+    try {
+      refreshedStatus = await github.getPrMergeStatus(mergeTarget.branch, branch, prInfo.number);
+    } catch {
+      throw err;
+    }
+    const refreshedAfterFailure: PrInfo = {
+      ...prInfo,
+      ...refreshedStatus.prInfo,
+      lastCheckedAt: new Date().toISOString(),
+    };
+    await store.updatePrInfo(task.id, refreshedAfterFailure);
+
+    if (refreshedAfterFailure.status === "merged") {
+      await finalizePullRequestMerge(
+        store,
+        cwd,
+        task,
+        refreshedAfterFailure,
+        "Pull request already merged after merge command failed; reconciled task state from GitHub",
+      );
+      return "merged";
+    }
+
+    throw err;
+  }
   await store.updatePrInfo(task.id, { ...mergedPr, lastCheckedAt: new Date().toISOString() });
   await finalizePullRequestMerge(store, cwd, task, mergedPr);
   return "merged";

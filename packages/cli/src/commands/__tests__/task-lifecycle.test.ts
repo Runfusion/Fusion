@@ -502,6 +502,199 @@ describe("processPullRequestMergeTask", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-9004", "done");
   });
 
+  it("reconciles to done when PR merges after readiness check but before merge command completes", async () => {
+    const task: MockTask = {
+      id: "FN-9104",
+      title: "test",
+      description: "desc",
+      column: "in-review",
+      worktree: "/tmp/worktree-fn-9104",
+      prInfo: {
+        number: 124,
+        url: "https://github.com/x/y/pull/124",
+        status: "open",
+        headBranch: "fusion/fn-9104",
+        baseBranch: "main",
+      },
+    };
+    const store = makeStore(task);
+    execMock.mockImplementation(() => "");
+
+    const openPr = {
+      number: 124,
+      url: "https://github.com/x/y/pull/124",
+      status: "open" as const,
+      headBranch: "fusion/fn-9104",
+      baseBranch: "main",
+    };
+    const mergedPr = {
+      ...openPr,
+      status: "merged" as const,
+    };
+    const github = {
+      findPrForBranch: vi.fn(),
+      createPr: vi.fn(),
+      getPrMergeStatus: vi
+        .fn()
+        .mockResolvedValueOnce({
+          prInfo: openPr,
+          reviewDecision: "APPROVED",
+          checks: [],
+          mergeReady: true,
+          blockingReasons: [],
+        })
+        .mockResolvedValueOnce({
+          prInfo: mergedPr,
+          reviewDecision: "APPROVED",
+          checks: [],
+          mergeReady: true,
+          blockingReasons: [],
+        }),
+      mergePr: vi.fn(async () => {
+        throw new Error("Pull request is not mergeable: the merge commit cannot be cleanly created");
+      }),
+    };
+
+    const result = await processPullRequestMergeTask(
+      store as never,
+      "/repo",
+      task.id,
+      github as never,
+      () => undefined,
+    );
+
+    expect(result).toBe("merged");
+    expect(github.mergePr).toHaveBeenCalledWith({ number: 124, method: "squash" });
+    expect(github.getPrMergeStatus).toHaveBeenCalledTimes(2);
+    expect(store.updatePrInfo).toHaveBeenLastCalledWith("FN-9104", expect.objectContaining({ status: "merged" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-9104", { status: null, mergeRetries: 0 });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-9104", "done");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-9104",
+      "Pull request already merged after merge command failed; reconciled task state from GitHub",
+      "PR #124: https://github.com/x/y/pull/124",
+    );
+  });
+
+  it("rethrows the original merge error when refresh does not confirm merged", async () => {
+    const task: MockTask = {
+      id: "FN-9105",
+      title: "test",
+      description: "desc",
+      column: "in-review",
+      prInfo: {
+        number: 125,
+        url: "https://github.com/x/y/pull/125",
+        status: "open",
+        headBranch: "fusion/fn-9105",
+        baseBranch: "main",
+      },
+    };
+    const store = makeStore(task);
+    const mergeError = new Error("Pull request is not mergeable");
+    const openPr = {
+      number: 125,
+      url: "https://github.com/x/y/pull/125",
+      status: "open" as const,
+      headBranch: "fusion/fn-9105",
+      baseBranch: "main",
+    };
+    const github = {
+      findPrForBranch: vi.fn(),
+      createPr: vi.fn(),
+      getPrMergeStatus: vi
+        .fn()
+        .mockResolvedValueOnce({
+          prInfo: openPr,
+          reviewDecision: "APPROVED",
+          checks: [],
+          mergeReady: true,
+          blockingReasons: [],
+        })
+        .mockResolvedValueOnce({
+          prInfo: openPr,
+          reviewDecision: "APPROVED",
+          checks: [],
+          mergeReady: true,
+          blockingReasons: [],
+        }),
+      mergePr: vi.fn(async () => {
+        throw mergeError;
+      }),
+    };
+
+    await expect(
+      processPullRequestMergeTask(
+        store as never,
+        "/repo",
+        task.id,
+        github as never,
+        () => undefined,
+      ),
+    ).rejects.toThrow(mergeError.message);
+
+    expect(github.mergePr).toHaveBeenCalledWith({ number: 125, method: "squash" });
+    expect(github.getPrMergeStatus).toHaveBeenCalledTimes(2);
+    expect(store.updatePrInfo).not.toHaveBeenCalledWith("FN-9105", expect.objectContaining({ status: "merged" }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("rethrows the original merge error when the post-failure refresh also fails", async () => {
+    const task: MockTask = {
+      id: "FN-9106",
+      title: "test",
+      description: "desc",
+      column: "in-review",
+      prInfo: {
+        number: 126,
+        url: "https://github.com/x/y/pull/126",
+        status: "open",
+        headBranch: "fusion/fn-9106",
+        baseBranch: "main",
+      },
+    };
+    const store = makeStore(task);
+    const mergeError = new Error("merge command failed");
+    const openPr = {
+      number: 126,
+      url: "https://github.com/x/y/pull/126",
+      status: "open" as const,
+      headBranch: "fusion/fn-9106",
+      baseBranch: "main",
+    };
+    const github = {
+      findPrForBranch: vi.fn(),
+      createPr: vi.fn(),
+      getPrMergeStatus: vi
+        .fn()
+        .mockResolvedValueOnce({
+          prInfo: openPr,
+          reviewDecision: "APPROVED",
+          checks: [],
+          mergeReady: true,
+          blockingReasons: [],
+        })
+        .mockRejectedValueOnce(new Error("status refresh failed")),
+      mergePr: vi.fn(async () => {
+        throw mergeError;
+      }),
+    };
+
+    await expect(
+      processPullRequestMergeTask(
+        store as never,
+        "/repo",
+        task.id,
+        github as never,
+        () => undefined,
+      ),
+    ).rejects.toThrow(mergeError.message);
+
+    expect(github.mergePr).toHaveBeenCalledWith({ number: 126, method: "squash" });
+    expect(github.getPrMergeStatus).toHaveBeenCalledTimes(2);
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
   it("preserves PR number/url through create, refresh, and merge completion", async () => {
     const task: MockTask = {
       id: "FN-9103",
