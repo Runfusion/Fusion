@@ -647,7 +647,7 @@ describe("QuickChatFAB session-first UX", () => {
     });
   });
 
-  it("FN-3945: snaps to bottom when opening with an active session already loaded", async () => {
+  it("FN-3945: snaps to bottom on controlled initial open (open=false -> open=true) with an active session already loaded", async () => {
     mockFetchChatMessages.mockResolvedValueOnce({
       messages: [{ id: "msg-open", sessionId: "session-model", role: "assistant", content: "Loaded", createdAt: new Date().toISOString() }],
     });

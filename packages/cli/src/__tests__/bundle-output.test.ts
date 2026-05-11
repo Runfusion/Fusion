@@ -187,7 +187,7 @@ describe("CLI bundle output", () => {
 
     expect(existsSync(manifestPath)).toBe(true);
     const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as { id?: string; name?: string };
-    expect(manifest.id).toBe("fusion-plugin-roadmap");
+    expect(manifest.id).toBe("roadmap-planner");
     expect(typeof manifest.name).toBe("string");
     expect(manifest.name?.length).toBeGreaterThan(0);
 
