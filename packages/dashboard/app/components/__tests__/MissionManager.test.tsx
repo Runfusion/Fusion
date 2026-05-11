@@ -1777,14 +1777,66 @@ describe("MissionManager", () => {
 
     expect(screen.queryByText("Should not render")).not.toBeInTheDocument();
     expect(screen.queryByText(/interview sessions pending/i)).not.toBeInTheDocument();
+  });
 
-    const awaitingInterviewRow = screen.getByText("Payment workflow planning").closest(".mission-list__item");
-    expect(awaitingInterviewRow).toBeTruthy();
-    fireEvent.click(within(awaitingInterviewRow as HTMLElement).getByLabelText("Resume interview"));
+  it("keeps persisted interview missions distinct from transient interview sessions", async () => {
+    const missionsWithInterview = [
+      {
+        id: "M-PERSISTED-INTERVIEW",
+        title: "Persisted mission interview",
+        description: "Persisted mission row",
+        status: "planning",
+        interviewState: "in_progress",
+        milestones: [],
+        createdAt: "2026-01-06T00:00:00.000Z",
+        updatedAt: "2026-01-06T00:00:00.000Z",
+      },
+      ...mockMissions,
+    ];
 
-    await waitFor(() => {
-      expect(screen.getByText("Plan Mission with AI")).toBeInTheDocument();
+    mockFetchAiSessions.mockResolvedValueOnce([
+      {
+        id: "session-awaiting",
+        type: "mission_interview",
+        status: "awaiting_input",
+        title: "Transient interview session",
+        projectId: null,
+        lockedByTab: null,
+        updatedAt: "2026-01-03T00:00:00.000Z",
+      },
+    ]);
+
+    globalThis.fetch = createFetchMockWithHealth(missionsWithInterview as Array<Record<string, unknown>>, {
+      ...mockMissionHealthById,
+      "M-PERSISTED-INTERVIEW": {
+        missionId: "M-PERSISTED-INTERVIEW",
+        status: "planning",
+        tasksCompleted: 0,
+        tasksFailed: 0,
+        tasksInFlight: 0,
+        totalTasks: 0,
+        estimatedCompletionPercent: 0,
+        autopilotState: "inactive",
+        autopilotEnabled: false,
+      },
     });
+
+    render(<MissionManager isOpen={true} onClose={vi.fn()} addToast={vi.fn()} />);
+
+    const persistedTitle = await screen.findByText("Persisted mission interview");
+    const transientTitle = await screen.findByText("Transient interview session");
+
+    const persistedRow = persistedTitle.closest(".mission-list__item");
+    const transientRow = transientTitle.closest(".mission-list__item");
+
+    expect(persistedRow).toBeTruthy();
+    expect(transientRow).toBeTruthy();
+    expect(persistedRow).not.toBe(transientRow);
+
+    expect(within(persistedRow as HTMLElement).getByText("Interview in progress")).toBeInTheDocument();
+    expect(within(transientRow as HTMLElement).getByText("Awaiting input")).toBeInTheDocument();
+    expect(screen.queryByText(/interview sessions pending/i)).not.toBeInTheDocument();
+
   });
 
   it("only shows in-progress interview sessions scoped to the active project", async () => {

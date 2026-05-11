@@ -368,6 +368,16 @@ describe("MissionStore", () => {
       expect(batchedResult.summary.completedFeatures).toBe(singleSummary.completedFeatures);
       expect(batchedResult.summary.progressPercent).toBe(singleSummary.progressPercent);
     });
+
+    it("preserves persisted interviewState when listing missions with summaries", () => {
+      const interviewMission = store.createMission({ title: "Interview mission" });
+      store.updateMissionInterviewState(interviewMission.id, "in_progress");
+
+      const listed = store.listMissionsWithSummaries().find((mission) => mission.id === interviewMission.id);
+
+      expect(listed).toBeDefined();
+      expect(listed?.interviewState).toBe("in_progress");
+    });
   });
 
   // ── Batched Health Tests ──────────────────────────────────────────────

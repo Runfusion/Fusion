@@ -708,6 +708,24 @@ describe("Mission API", () => {
       expect(res.body).toHaveLength(2);
     });
 
+    it("returns persisted interview-stage missions from list endpoint", async () => {
+      const { app, missionStore } = buildApp();
+      const mission = missionStore.createMission({ title: "Interview draft" });
+      missionStore.updateMissionInterviewState(mission.id, "in_progress");
+
+      const res = await get(app, "/api/missions");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: mission.id,
+            interviewState: "in_progress",
+          }),
+        ]),
+      );
+    });
+
     it("should return empty array when no missions", async () => {
       const { app } = buildApp();
       const res = await get(app, "/api/missions");
