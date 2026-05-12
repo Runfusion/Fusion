@@ -1142,6 +1142,58 @@ describe("SettingsModal", () => {
       expect(openSpy).toHaveBeenCalled();
     });
 
+    it("scrolls the manual-code input into view on mobile focus", async () => {
+      Object.defineProperty(window, "matchMedia", {
+        writable: true,
+        value: vi.fn().mockImplementation((query: string) => ({
+          matches: query === "(max-width: 768px)" || query === "(pointer: coarse)",
+          media: query,
+          onchange: null,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          dispatchEvent: vi.fn(),
+        })),
+      });
+
+      const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+      vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      });
+
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [{ id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" }],
+      });
+      mockLoginProvider.mockResolvedValueOnce({
+        url: "https://claude.ai/oauth/authorize",
+        manualCode: {
+          prompt: "Paste the final redirect URL or authorization code",
+        },
+      });
+
+      renderModal();
+      await waitForSettingsModalReady();
+
+      const anthropicCard = screen.getByTestId("auth-provider-icon-anthropic").closest(".auth-provider-card") as HTMLElement;
+      await userEvent.click(within(anthropicCard).getByRole("button", { name: "Login" }));
+
+      const textarea = await within(anthropicCard).findByRole("textbox");
+      const scrollIntoView = vi.fn();
+      Object.defineProperty(textarea, "scrollIntoView", {
+        value: scrollIntoView,
+        writable: true,
+      });
+
+      fireEvent.focus(textarea);
+
+      await waitFor(() => {
+        expect(scrollIntoView).toHaveBeenCalled();
+      });
+      expect(openSpy).toHaveBeenCalled();
+    });
+
     it("shows cancel action for server-reported pending oauth login", async () => {
       mockFetchAuthStatus.mockResolvedValue({
         providers: [{ id: "github-copilot", name: "GitHub Copilot", authenticated: false, type: "oauth", loginInProgress: true }],

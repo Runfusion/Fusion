@@ -712,6 +712,60 @@ describe("ModelOnboardingModal", () => {
       expect(mockWindowOpen).toHaveBeenCalled();
     });
 
+    it("scrolls the onboarding manual-code input into view on mobile focus", async () => {
+      Object.defineProperty(window, "matchMedia", {
+        writable: true,
+        value: vi.fn().mockImplementation((query: string) => ({
+          matches: query === "(max-width: 768px)" || query === "(pointer: coarse)",
+          media: query,
+          onchange: null,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+          dispatchEvent: vi.fn(),
+        })),
+      });
+
+      vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      });
+
+      const mockWindowOpen = vi.fn();
+      vi.spyOn(window, "open").mockImplementation(mockWindowOpen);
+      mockLoginProvider.mockResolvedValueOnce({
+        url: "https://claude.ai/oauth/authorize",
+        manualCode: {
+          prompt: "Paste the final redirect URL or authorization code",
+        },
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Login")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByText("Login"));
+
+      const prompt = await screen.findByText("Paste the final redirect URL or authorization code");
+      const card = prompt.closest(".onboarding-provider-card") as HTMLElement;
+      const textarea = within(card).getByRole("textbox");
+      const scrollIntoView = vi.fn();
+      Object.defineProperty(textarea, "scrollIntoView", {
+        value: scrollIntoView,
+        writable: true,
+      });
+
+      fireEvent.focus(textarea);
+
+      await waitFor(() => {
+        expect(scrollIntoView).toHaveBeenCalled();
+      });
+      expect(mockWindowOpen).toHaveBeenCalled();
+    });
+
     it("keeps OpenAI Codex manual-code UX available in onboarding", async () => {
       mockFetchAuthStatus.mockResolvedValueOnce({
         providers: [{ id: "openai-codex", name: "OpenAI Codex", authenticated: false, type: "oauth" }],
