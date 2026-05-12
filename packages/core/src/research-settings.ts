@@ -22,8 +22,7 @@ export interface ResolvedResearchSettings {
 
 const DEFAULT_SEARCH_PROVIDER = "builtin";
 
-const FALLBACK_SOURCES: ResearchEnabledSources = {
-  webSearch: true,
+const FALLBACK_SOURCES: Omit<ResearchEnabledSources, "webSearch"> = {
   pageFetch: true,
   github: false,
   localDocs: true,
@@ -44,10 +43,7 @@ export function resolveResearchSettings(settings: Partial<Settings> | undefined)
     synthesisProvider: projectSettings?.synthesisProvider ?? globalDefaults?.synthesisProvider,
     synthesisModelId: projectSettings?.synthesisModelId ?? globalDefaults?.synthesisModelId,
     enabledSources: {
-      webSearch:
-        projectSettings?.enabledSources?.webSearch ??
-        globalDefaults?.enabledSources?.webSearch ??
-        FALLBACK_SOURCES.webSearch,
+      webSearch: true,
       pageFetch:
         projectSettings?.enabledSources?.pageFetch ??
         globalDefaults?.enabledSources?.pageFetch ??

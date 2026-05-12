@@ -28,7 +28,6 @@ describe("WebSearchProvider", () => {
 
   it("validates configuration for each backend", () => {
     expect(new WebSearchProvider({ backend: "builtin", projectRoot: process.cwd() }).isConfigured()).toBe(true);
-    expect(new WebSearchProvider({ backend: "none" }).isConfigured()).toBe(false);
     expect(new WebSearchProvider({ backend: "searxng", searxngUrl: "https://sx" }).isConfigured()).toBe(true);
     expect(new WebSearchProvider({ backend: "brave", braveApiKey: "k" }).isConfigured()).toBe(true);
     expect(new WebSearchProvider({ backend: "google", googleApiKey: "k", googleCx: "cx" }).isConfigured()).toBe(true);

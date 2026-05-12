@@ -53,7 +53,7 @@ This also reveals the **Research Defaults** and **Research** settings sections i
 
 ### 2. Built-in web search is the default
 
-By default, `researchGlobalWebSearchProvider` resolves to `"builtin"`. Search and fetch run through the agent runtime's native `WebSearch` and `WebFetch` tools, so no API key is required for baseline usage.
+By default, `researchGlobalWebSearchProvider` resolves to `"builtin"`. Search and fetch run through the agent runtime's native `WebSearch` and `WebFetch` tools, so no API key is required for baseline usage, and web search stays enabled even if older persisted settings still contain `enabledSources.webSearch: false`.
 
 ### 3. Optional: external search backends
 
@@ -66,7 +66,6 @@ You can opt into external providers in global settings:
 | `"brave"` | `researchGlobalBraveApiKey` — Brave Search API key |
 | `"google"` | `researchGlobalGoogleSearchApiKey` + `researchGlobalGoogleSearchCx` — Google Custom Search credentials |
 | `"tavily"` | `researchGlobalTavilyApiKey` — Tavily API key |
-| `"none"` | Disables web search (Page Fetch, Local Docs, GitHub, and LLM synthesis can still run) |
 
 API keys are stored through Fusion's auth credential pipeline (`/api/auth/api-key`), not in settings JSON directly.
 
@@ -304,7 +303,7 @@ Before creating runs, `fn_research_run` checks:
 2. Web search is available (`"builtin"` by default, or an explicitly configured external backend)
 3. Required API keys are present for external providers
 
-If a check fails, the tool returns an actionable error with setup guidance instead of crashing. In practice, with the default `"builtin"` backend, provider-setup errors are mostly limited to explicit external-provider selections or explicit `"none"` opt-out.
+If a check fails, the tool returns an actionable error with setup guidance instead of crashing. In practice, with the default `"builtin"` backend, provider-setup errors are mostly limited to explicit external-provider selections.
 
 ### Best practices for agents
 
@@ -437,7 +436,7 @@ When all retries are exhausted, the run transitions to `retry_exhausted`.
 | Symptom | Cause | Resolution |
 |---|---|---|
 | "Research is disabled in settings" | `researchGlobalEnabled` or `researchSettings.enabled` is `false` | Enable in Settings → Research |
-| "Research provider is not configured" | Web search was explicitly disabled (`researchGlobalWebSearchProvider: "none"`) or external provider setup is incomplete | Re-enable builtin search, or finish configuring your selected external provider in Settings |
+| "Research provider is not configured" | External provider setup is incomplete | Switch back to builtin search or finish configuring your selected external provider in Settings |
 | "Missing API key for {provider}" | Auth credential not found | Configure provider credentials in Settings → Authentication |
 | Run stuck in `queued` | Engine not running or no available concurrency slots | Start the project engine; check `maxConcurrentRuns` |
 | Run times out | Provider slow or `maxDurationMs` too low | Increase timeout in project research settings |

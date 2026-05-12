@@ -43,7 +43,6 @@ async function getStore(projectName?: string): Promise<TaskStore> {
 
 function hasProviderCredentials(settings: Awaited<ReturnType<TaskStore["getSettings"]>>, providerId: string | undefined): boolean {
   if (!providerId || providerId === "builtin") return true;
-  if (providerId === "none") return false;
   if (providerId === "searxng") return Boolean(settings.researchGlobalSearxngUrl);
   if (providerId === "brave") return Boolean(settings.researchGlobalBraveApiKey);
   if (providerId === "google") return Boolean(settings.researchGlobalGoogleSearchApiKey && settings.researchGlobalGoogleSearchCx);
@@ -59,7 +58,7 @@ async function getResearchRuntime(store: TaskStore) {
   }
 
   const configuredProvider = (resolved.searchProvider as string | undefined) ?? settings.researchGlobalWebSearchProvider ?? "builtin";
-  if (configuredProvider !== "builtin" && configuredProvider !== "none" && !hasProviderCredentials(settings, configuredProvider)) {
+  if (configuredProvider !== "builtin" && !hasProviderCredentials(settings, configuredProvider)) {
     throw new Error(`missing-credentials: ${configuredProvider} credentials are missing. Configure Authentication and Research defaults in settings.`);
   }
 

@@ -962,7 +962,7 @@ describe("createResearchTools", () => {
     researchGlobalMaxConcurrentRuns: 2,
     researchGlobalDefaultTimeout: 30_000,
     researchGlobalMaxSynthesisRounds: 2,
-    researchGlobalWebSearchProvider: "none",
+    researchGlobalWebSearchProvider: "builtin",
     researchSettings: { enabled: true },
   };
 

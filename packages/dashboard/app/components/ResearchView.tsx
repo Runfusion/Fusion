@@ -57,7 +57,6 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
   } = useResearch({ projectId });
   const [query, setQuery] = useState("");
   const [effectiveSettings, setEffectiveSettings] = useState(() => resolveResearchSettings(undefined));
-  const [rawSettings, setRawSettings] = useState<Partial<Settings>>({});
   const [authProviders, setAuthProviders] = useState<Array<{ id: string; authenticated: boolean }>>([]);
   const [submitting, setSubmitting] = useState(false);
   const [selectedProviders, setSelectedProviders] = useState<ResearchProviderOption[]>([]);
@@ -67,8 +66,8 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
   const providerOptions = availability.supportedProviders ?? DEFAULT_PROVIDERS;
   const selectedSearchProvider = effectiveSettings.searchProvider;
   const isProviderEnabled = (provider: ResearchProviderOption) => {
-    if (provider === "web-search" && selectedSearchProvider === "none") {
-      return false;
+    if (provider === "web-search") {
+      return true;
     }
     return effectiveSettings.enabledSources[PROVIDER_TO_SOURCE_KEY[provider]];
   };
@@ -92,7 +91,6 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
     ])
       .then(([settings, authStatus]) => {
         if (cancelled) return;
-        setRawSettings(settings);
         setEffectiveSettings(resolveResearchSettings(settings));
         setAuthProviders(
           authStatus.providers
@@ -127,7 +125,6 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
 
   const supportedExportFormats = availability.supportedExportFormats ?? ["markdown", "json", "html"];
 
-  const webSearchExplicitlyDisabled = rawSettings.researchGlobalWebSearchProvider === "none" || selectedSearchProvider === "none";
   const apiKeyProviderAuth = useMemo(() => new Map(authProviders.map((provider) => [provider.id, provider.authenticated])), [authProviders]);
   const requiredCredentialProviders = useMemo(() => {
     const required = new Set<string>();
@@ -156,9 +153,6 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
         settingsSection: "research-project" as SectionId,
       };
     }
-    if (webSearchExplicitlyDisabled) {
-      return null;
-    }
     if (missingCredentialProvider) {
       return {
         reason: `Missing API key for ${missingCredentialProvider}.`,
@@ -167,7 +161,7 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
       };
     }
     return null;
-  }, [availability.available, availability.reason, availability.setupInstructions, effectiveSettings.enabled, missingCredentialProvider, webSearchExplicitlyDisabled]);
+  }, [availability.available, availability.reason, availability.setupInstructions, effectiveSettings.enabled, missingCredentialProvider]);
 
   const runAction = async (key: string, action: () => Promise<unknown>, successMessage: string) => {
     setActionLoading(key);
@@ -256,16 +250,6 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
         </div>
       ) : (
       <>
-        {webSearchExplicitlyDisabled ? (
-          <div className="research-view__state card" data-testid="research-state-web-search-disabled">
-            <p>Web search is disabled. Page Fetch, Local Docs, GitHub and LLM Synthesis still work.</p>
-            <div className="research-view__actions">
-              <button className="btn btn-primary" type="button" onClick={() => onOpenSettings?.("research-global")}>
-                Re-enable Web Search
-              </button>
-            </div>
-          </div>
-        ) : null}
       <div className="research-view__layout">
         <aside className="research-view__sidebar card">
           <div className="research-view__form">
@@ -276,24 +260,28 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
             <div className="form-group">
               <label>Providers</label>
               <div className="research-view__providers">
-                {providerOptions.map((provider) => (
-                  <label key={provider} className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={selectedProviders.includes(provider)}
-                      disabled={!isProviderEnabled(provider)}
-                      onChange={() => {
-                        if (!isProviderEnabled(provider)) {
-                          return;
-                        }
-                        setSelectedProviders((current) =>
-                          current.includes(provider) ? current.filter((entry) => entry !== provider) : [...current, provider],
-                        );
-                      }}
-                    />
-                    <span>{PROVIDER_LABELS[provider] ?? provider}</span>
-                  </label>
-                ))}
+                {providerOptions.map((provider) => {
+                  const providerEnabled = isProviderEnabled(provider);
+                  const providerLocked = provider === "web-search";
+                  return (
+                    <label key={provider} className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={providerLocked || selectedProviders.includes(provider)}
+                        disabled={providerLocked || !providerEnabled}
+                        onChange={() => {
+                          if (providerLocked || !providerEnabled) {
+                            return;
+                          }
+                          setSelectedProviders((current) =>
+                            current.includes(provider) ? current.filter((entry) => entry !== provider) : [...current, provider],
+                          );
+                        }}
+                      />
+                      <span>{PROVIDER_LABELS[provider] ?? provider}{providerLocked ? " (always on)" : ""}</span>
+                    </label>
+                  );
+                })}
               </div>
             </div>
             <button className="btn btn-primary" type="button" disabled={!query.trim() || submitting} onClick={() => void handleCreateRun()}>

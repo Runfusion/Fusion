@@ -95,12 +95,25 @@ describe("resolveResearchSettings", () => {
     expect(resolved.searchProvider).toBe("brave");
   });
 
-  it("honors explicit legacy global search provider opt-out", () => {
+  it("forces web search on even when persisted settings disable it", () => {
     const resolved = resolveResearchSettings({
-      researchGlobalWebSearchProvider: "none",
+      researchGlobalDefaults: {
+        enabledSources: {
+          webSearch: false,
+          pageFetch: true,
+          github: false,
+          localDocs: true,
+          llmSynthesis: true,
+        },
+      },
+      researchSettings: {
+        enabledSources: {
+          webSearch: false,
+        },
+      },
     });
 
-    expect(resolved.searchProvider).toBe("none");
+    expect(resolved.enabledSources.webSearch).toBe(true);
   });
 
   it("supports null-as-delete semantics for researchSettings object", () => {

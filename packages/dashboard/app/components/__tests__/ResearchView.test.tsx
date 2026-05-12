@@ -134,19 +134,14 @@ describe("ResearchView", () => {
     expect(await screen.findByTestId("research-state-empty")).toBeInTheDocument();
   });
 
-  it("shows friendly web-search disabled state when provider is none", async () => {
-    const onOpenSettings = vi.fn();
-    mockFetchSettings.mockResolvedValue({ researchGlobalWebSearchProvider: "none" });
+  it("does not render a web-search disabled state when the provider setting is absent", async () => {
+    mockFetchSettings.mockResolvedValue({ researchSettings: { enabled: true } });
     mockFetchAuthStatus.mockResolvedValue({ providers: [] });
 
-    render(<ResearchView projectId="p1" onOpenSettings={onOpenSettings} />);
+    render(<ResearchView projectId="p1" />);
 
-    expect(await screen.findByTestId("research-state-web-search-disabled")).toHaveTextContent(
-      "Web search is disabled. Page Fetch, Local Docs, GitHub and LLM Synthesis still work.",
-    );
-    expect(screen.getByRole("checkbox", { name: "Web Search" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Re-enable Web Search" }));
-    expect(onOpenSettings).toHaveBeenCalledWith("research-global");
+    await screen.findByLabelText("Query");
+    expect(screen.queryByTestId("research-state-web-search-disabled")).not.toBeInTheDocument();
   });
 
   it("renders selected run details, citations, and history", async () => {
@@ -389,19 +384,19 @@ describe("ResearchView", () => {
     });
     mockFetchAuthStatus.mockResolvedValue({ providers: [{ id: "openrouter", type: "api_key", authenticated: true }] });
     render(<ResearchView projectId="p1" />);
-    expect(await screen.findByText("Web Search")).toBeInTheDocument();
+    expect(await screen.findByText("Web Search (always on)")).toBeInTheDocument();
     expect(screen.getByText("Page Fetch")).toBeInTheDocument();
     expect(screen.getByText("LLM Synthesis")).toBeInTheDocument();
   });
 
-  it("disables provider checkboxes when sources are disabled in settings", async () => {
+  it("keeps web search visibly locked on when other sources are disabled in settings", async () => {
     mockFetchSettings.mockResolvedValue({
       ...configuredResearchSettings,
       researchGlobalDefaults: {
         ...configuredResearchSettings.researchGlobalDefaults,
         enabledSources: {
           webSearch: false,
-          pageFetch: true,
+          pageFetch: false,
           github: false,
           localDocs: true,
           llmSynthesis: true,
@@ -417,13 +412,14 @@ describe("ResearchView", () => {
 
     render(<ResearchView projectId="p1" />);
 
-    const webSearch = (await screen.findByLabelText("Web Search")) as HTMLInputElement;
+    const webSearch = (await screen.findByLabelText("Web Search (always on)")) as HTMLInputElement;
     const pageFetch = screen.getByLabelText("Page Fetch") as HTMLInputElement;
     expect(webSearch.disabled).toBe(true);
-    expect(pageFetch.disabled).toBe(false);
+    expect(webSearch.checked).toBe(true);
+    expect(pageFetch.disabled).toBe(true);
   });
 
-  it("submits only enabled providers", async () => {
+  it("submits only enabled providers while always including web search", async () => {
     const createRun = vi.fn().mockResolvedValue({ run: { id: "RR-2" } });
     mockFetchSettings.mockResolvedValue({
       ...configuredResearchSettings,
@@ -450,7 +446,7 @@ describe("ResearchView", () => {
     fireEvent.click(screen.getByText("Create Run"));
 
     await waitFor(() => {
-      expect(createRun).toHaveBeenCalledWith(expect.objectContaining({ providers: ["page-fetch", "llm-synthesis"] }));
+      expect(createRun).toHaveBeenCalledWith(expect.objectContaining({ providers: ["web-search", "page-fetch", "llm-synthesis"] }));
     });
   });
 

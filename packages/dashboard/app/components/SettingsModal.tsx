@@ -4298,8 +4298,7 @@ export function SettingsModal({
           resolvedProvider === "searxng" ||
           resolvedProvider === "brave" ||
           resolvedProvider === "google" ||
-          resolvedProvider === "tavily" ||
-          resolvedProvider === "none";
+          resolvedProvider === "tavily";
         const selectedCredentialProvider =
           resolvedProvider === "brave" || resolvedProvider === "tavily" ? resolvedProvider : null;
         const hasMissingResearchCredential = selectedCredentialProvider
@@ -4352,7 +4351,6 @@ export function SettingsModal({
                   <option value="brave">Brave</option>
                   <option value="google">Google Custom Search</option>
                   <option value="tavily">Tavily</option>
-                  <option value="none">None (disable web search)</option>
                 </select>
               </div>
               <div className="form-group">
@@ -4451,8 +4449,16 @@ export function SettingsModal({
             <div className="form-group">
               <label>Enabled Sources</label>
               <div className="settings-research-source-grid">
+                <div>
+                  <label htmlFor="research-project-source-webSearch" className="checkbox-label">
+                    <input id="research-project-source-webSearch" type="checkbox" checked disabled readOnly />
+                    Web Search
+                  </label>
+                  <div className="settings-field-help">
+                    Always on. The resolver ignores any older persisted <code>enabledSources.webSearch=false</code> value.
+                  </div>
+                </div>
                 {[
-                  ["webSearch", "Web Search"],
                   ["pageFetch", "Page Fetch"],
                   ["github", "GitHub"],
                   ["localDocs", "Local Docs"],

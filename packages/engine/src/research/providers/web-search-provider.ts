@@ -35,7 +35,6 @@ export class WebSearchProvider implements ResearchProvider {
   isConfigured(): boolean {
     const backend = this.options.backend ?? "builtin";
     if (backend === "builtin") return true;
-    if (backend === "none") return false;
     if (backend === "searxng") return Boolean(this.options.searxngUrl);
     if (backend === "brave") return Boolean(this.options.braveApiKey);
     if (backend === "google") return Boolean(this.options.googleApiKey && this.options.googleCx);

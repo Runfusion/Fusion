@@ -240,9 +240,7 @@ async function getResearchAvailability(store: TaskStore): Promise<{ ok: boolean;
   const backend = (resolved.searchProvider as string | undefined) ?? settings.researchGlobalWebSearchProvider ?? "builtin";
   const configured = backend === "builtin"
     ? true
-    : backend === "none"
-      ? false
-      : backend === "searxng"
+    : backend === "searxng"
         ? Boolean(settings.researchGlobalSearxngUrl)
         : backend === "brave"
           ? Boolean(settings.researchGlobalBraveApiKey)

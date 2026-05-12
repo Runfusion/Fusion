@@ -3411,6 +3411,17 @@ describe("SettingsModal", () => {
       );
     });
 
+    it("shows web search as always on in project research settings", async () => {
+      renderModal();
+      await waitForSettingsModalReady();
+      await openResearchProjectSection();
+
+      const webSearch = await screen.findByLabelText("Web Search");
+      expect(webSearch).toBeChecked();
+      expect(webSearch).toBeDisabled();
+      expect(screen.getByText(/Always on\./i)).toBeInTheDocument();
+    });
+
     it("saves project research settings through updateSettings only", async () => {
       renderModal();
       await waitForSettingsModalReady();

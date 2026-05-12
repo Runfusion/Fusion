@@ -92,7 +92,7 @@ Fusion automatically falls back to ntfy's JSON publish format when a notificatio
 | `researchGlobalDefaultTimeout` | `number` | `300000` | Default timeout for end-to-end research runs in milliseconds (5 minutes). |
 | `researchGlobalMaxSourcesPerRun` | `number` | `20` | Maximum number of sources per research run. |
 | `researchGlobalMaxSynthesisRounds` | `number` | `2` | Maximum synthesis rounds per research run. |
-| `researchGlobalWebSearchProvider` | `"builtin" \| "searxng" \| "brave" \| "google" \| "tavily" \| "none"` | `"builtin"` | Web search backend for research. Default: `"builtin"` (uses agent-native WebSearch/WebFetch tools with no API key requirement). |
+| `researchGlobalWebSearchProvider` | `"builtin" \| "searxng" \| "brave" \| "google" \| "tavily"` | `"builtin"` | Web search backend for research. Default: `"builtin"` (uses agent-native WebSearch/WebFetch tools with no API key requirement). Web search itself is always enabled. |
 | `researchGlobalSearxngUrl` | `string` | `undefined` | SearXNG instance URL (required when provider is `"searxng"`). |
 | `researchGlobalBraveApiKey` | `string` | `undefined` | Brave Search API key (required when provider is `"brave"`). |
 | `researchGlobalGoogleSearchApiKey` | `string` | `undefined` | Google Custom Search API key (required when provider is `"google"`). |

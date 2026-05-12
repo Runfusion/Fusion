@@ -11,11 +11,6 @@ describe("ResearchProviderRegistry", () => {
     expect(registry.isProviderAvailable("github")).toBe(false);
   });
 
-  it("honors explicit none by disabling web-search", () => {
-    const registry = new ResearchProviderRegistry({ researchGlobalWebSearchProvider: "none" }, process.cwd());
-    expect(registry.isProviderAvailable("web-search")).toBe(false);
-  });
-
   it("requires credentials for explicit external providers", () => {
     const registry = new ResearchProviderRegistry({ researchGlobalWebSearchProvider: "tavily" }, process.cwd());
     expect(registry.isProviderAvailable("web-search")).toBe(false);
@@ -37,7 +32,7 @@ describe("ResearchProviderRegistry", () => {
   });
 
   it("refreshes providers after settings changes", () => {
-    const registry = new ResearchProviderRegistry({ researchGlobalWebSearchProvider: "none" }, process.cwd());
+    const registry = new ResearchProviderRegistry({ researchGlobalWebSearchProvider: "tavily" }, process.cwd());
     expect(registry.isProviderAvailable("web-search")).toBe(false);
 
     registry.refreshSettings({ researchGlobalWebSearchProvider: "tavily", researchGlobalTavilyApiKey: "key" });
