@@ -24,6 +24,21 @@ The script checks for:
 
 Treat flagged candidates as recovery leads, not automatic truth: review the surviving task files, logs, and commit history, then file a follow-up recovery task for any confirmed overwrite.
 
+### Reconciling stale task title/description vs canonical PROMPT.md
+
+Use the one-shot reconciliation script only when the surviving evidence agrees on a single canonical task identity and the ambiguity is limited to stale metadata fields on that same task row:
+
+```bash
+node scripts/reconcile-fn-3909-identity.mjs [--project-root /path/to/project] [--apply]
+```
+
+The script is intentionally narrow and idempotent:
+- dry-run is the default and prints the before/after title + description diff without mutating anything
+- `--apply` only updates task `FN-3909` through `TaskStore.updateTask(...)` and appends an audit log entry referencing `FN-4194`
+- the script refuses to run if `PROMPT.md` no longer matches the expected canonical heading, if the stale heartbeat-scope row contents are not present, or if the row is already canonical without the reconciliation marker
+
+Use this path for the confirmed FN-3909 mismatch (canonical UI-fix prompt/merge history, stale heartbeat-scope title/description). Do **not** use it for allocator-collision or overwrite incidents that may involve multiple tasks or conflicting survivors; run `scripts/audit-task-id-collisions.mjs` first and treat those cases as recovery/postmortem work instead of automatic metadata repair.
+
 ## SQLite write-path lock recovery (FN-4042 / FN-4083)
 
 - Every disk-backed SQLite connection that Fusion opens for project storage (`fusion.db`), the central registry (`fusion-central.db`), archives (`archive.db`), and worktree hydration explicitly sets `PRAGMA busy_timeout = 5000` and `PRAGMA journal_mode = WAL` at connection open time before write work begins.
