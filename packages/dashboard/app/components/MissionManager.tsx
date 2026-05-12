@@ -602,7 +602,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
 
   // Detect pending mission interview sessions for resume prompt
   useEffect(() => {
-    if (!isActive || effectiveResumeSessionId) return;
+    if (!isActive) return;
     let cancelled = false;
     fetchAiSessions(projectId).then((sessions) => {
       if (cancelled) return;
