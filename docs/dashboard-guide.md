@@ -138,6 +138,7 @@ Quick Chat is an optional floating panel for fast, project-scoped assistant conv
 - Entering `/new` or `/clear` (exact match after trimming) in the Quick Chat composer uses explicit fresh-session creation for the currently selected target (`startFreshSession()`), so the current thread resets without sending the command text to the model
 - The `+` action opens an inline new-session chooser (inside the panel, not a modal) with `Model` selected by default and optional switch to `Agent`
 - Submitting the inline chooser uses explicit fresh-session creation and immediately persists/selects the new thread, then refreshes the session dropdown list
+- On open after reload, Quick Chat restores the most recently used session (newest `updatedAt`); only when no prior session exists does it fall back to the first agent / configured default model.
 - Resume lookups still use targeted session queries instead of loading the full active-session list first
 - Tool-call summaries in the floating quick-chat panel are intentionally condensed into a single-line header row (especially on small screens) so tool name + status stay scannable without multi-line wrapping
 - On mobile viewports, opening Quick Chat auto-focuses the composer as soon as it is ready so the keyboard opens immediately

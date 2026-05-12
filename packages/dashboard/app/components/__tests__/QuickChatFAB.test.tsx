@@ -53,6 +53,14 @@ const modelSession: ChatSession = {
   updatedAt: new Date().toISOString(),
 };
 
+const modelSessionAnthropic: ChatSession = {
+  ...modelSession,
+  id: "session-model-anthropic",
+  modelProvider: "anthropic",
+  modelId: "claude-3-7-sonnet",
+  title: "Claude thread",
+};
+
 const agentSession: ChatSession = {
   id: "session-agent",
   agentId: "agent-001",
@@ -64,6 +72,25 @@ const agentSession: ChatSession = {
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };
+
+const agentTwoSession: ChatSession = {
+  ...agentSession,
+  id: "session-agent-two",
+  agentId: "agent-002",
+  title: "Agent Two thread",
+};
+
+function resolveResumeSession(agentId: string, modelProvider?: string, modelId?: string): ChatSession {
+  if (agentId === "agent-002") {
+    return agentTwoSession;
+  }
+
+  if (agentId === "__fn_agent__" && modelProvider === "anthropic" && modelId === "claude-3-7-sonnet") {
+    return modelSessionAnthropic;
+  }
+
+  return modelSession;
+}
 
 function createDeferredPromise<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -89,7 +116,9 @@ describe("QuickChatFAB session-first UX", () => {
       viewportOffsetTop: 0,
       keyboardOpen: false,
     });
-    mockFetchResumeChatSession.mockResolvedValue({ session: modelSession });
+    mockFetchResumeChatSession.mockImplementation(async ({ agentId, modelProvider, modelId }) => ({
+      session: resolveResumeSession(agentId, modelProvider, modelId),
+    }));
     mockFetchChatMessages.mockResolvedValue({ messages: [] });
     mockFetchChatSessions.mockResolvedValue({ sessions: [modelSession, agentSession] });
     mockCreateChatSession.mockResolvedValue({ session: { ...modelSession, id: "session-new" } });
@@ -99,7 +128,10 @@ describe("QuickChatFAB session-first UX", () => {
       return { close: vi.fn(), isConnected: () => true };
     });
     mockFetchModels.mockResolvedValue({
-      models: [{ provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: true, contextWindow: 128000 }],
+      models: [
+        { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: true, contextWindow: 128000 },
+        { provider: "anthropic", id: "claude-3-7-sonnet", name: "Claude 3.7 Sonnet", reasoning: true, contextWindow: 200000 },
+      ],
       favoriteProviders: [],
       favoriteModels: [],
       defaultProvider: "openai",
@@ -129,6 +161,53 @@ describe("QuickChatFAB session-first UX", () => {
     expect(await screen.findByTestId("quick-chat-new-session-chooser")).toBeInTheDocument();
     expect(screen.getByTestId("quick-chat-inline-mode-model")).toHaveClass("quick-chat-mode-btn--active");
     expect(screen.getByTestId("quick-chat-new-model-select")).toBeInTheDocument();
+  });
+
+  it("restores the newest agent session target on first open after reload", async () => {
+    mockFetchChatSessions.mockResolvedValueOnce({
+      sessions: [agentTwoSession, modelSession, agentSession],
+    });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-input")).toHaveAttribute("placeholder", "Message Agent Two");
+    });
+    expect(mockFetchResumeChatSession).toHaveBeenCalledWith({ agentId: "agent-002" }, "proj-1");
+  });
+
+  it("restores the newest model session target instead of the configured default", async () => {
+    mockFetchChatSessions.mockResolvedValueOnce({
+      sessions: [modelSessionAnthropic, modelSession, agentSession],
+    });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-model-tag")).toHaveTextContent("Claude 3.7 Sonnet");
+    });
+    expect(mockFetchResumeChatSession).toHaveBeenCalledWith(
+      { agentId: "__fn_agent__", modelProvider: "anthropic", modelId: "claude-3-7-sonnet" },
+      "proj-1",
+    );
+  });
+
+  it("falls back to the existing default target when there are no prior sessions", async () => {
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [] });
+
+    render(<QuickChatFAB addToast={vi.fn()} projectId="proj-1" />);
+    fireEvent.click(screen.getByTestId("quick-chat-fab"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("quick-chat-model-tag")).toHaveTextContent("GPT-4o");
+    });
+    expect(screen.getByTestId("quick-chat-input")).toHaveAttribute("placeholder", "Message GPT-4o");
+    expect(mockFetchResumeChatSession).toHaveBeenCalledWith(
+      { agentId: "__fn_agent__", modelProvider: "openai", modelId: "gpt-4o" },
+      "proj-1",
+    );
   });
 
   it("creates fresh model session from inline chooser and closes chooser", async () => {

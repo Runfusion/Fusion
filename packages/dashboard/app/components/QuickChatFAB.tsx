@@ -937,6 +937,9 @@ export function QuickChatFAB({
   const didDragRef = useRef(false);
   const modelsRequestedRef = useRef(false);
   const prevSessionTargetRef = useRef("");
+  const hasAppliedInitialSessionRef = useRef(false);
+  const selectedAgentIdRef = useRef(selectedAgentId);
+  const selectedModelRef = useRef(selectedModel);
   const mentionCursorPosRef = useRef(0);
   const hideMentionPopupTimeoutRef = useRef<number | null>(null);
   const hideSkillMenuTimeoutRef = useRef<number | null>(null);
@@ -1109,6 +1112,18 @@ export function QuickChatFAB({
 
   const hasChatTarget = chatMode === "agent" ? Boolean(selectedAgentId) : Boolean(targetModelSelection);
   const inputDisabled = !hasChatTarget || !activeSession;
+  const hasPersistedAgentSessionSelection = useMemo(
+    () => Boolean(selectedAgentId) && sessions.some((session) => !session.modelProvider && !session.modelId && session.agentId === selectedAgentId),
+    [selectedAgentId, sessions],
+  );
+
+  useEffect(() => {
+    selectedAgentIdRef.current = selectedAgentId;
+  }, [selectedAgentId]);
+
+  useEffect(() => {
+    selectedModelRef.current = selectedModel;
+  }, [selectedModel]);
 
   useEffect(() => {
     if (agents.length === 0) {
@@ -1117,11 +1132,15 @@ export function QuickChatFAB({
       return;
     }
 
+    if (hasAppliedInitialSessionRef.current && hasPersistedAgentSessionSelection) {
+      return;
+    }
+
     const selectedStillExists = agents.some((agent) => agent.id === selectedAgentId);
     if (!selectedStillExists) {
       setSelectedAgentId(agents[0]?.id ?? "");
     }
-  }, [agents, selectedAgentId]);
+  }, [agents, hasPersistedAgentSessionSelection, selectedAgentId]);
 
   // Lazy-load models on first panel open.
   useEffect(() => {
@@ -1137,7 +1156,7 @@ export function QuickChatFAB({
         const loadedModels = response.models ?? [];
         setModels(loadedModels);
 
-        if (selectedModel || loadedModels.length === 0) {
+        if (selectedModelRef.current || loadedModels.length === 0) {
           return;
         }
 
@@ -1150,13 +1169,17 @@ export function QuickChatFAB({
           );
           if (hasDefaultModel) {
             setConfiguredDefaultModelSelection(defaultSelection);
-            setSelectedModel(defaultSelection);
+            if (!selectedModelRef.current) {
+              setSelectedModel(defaultSelection);
+            }
             // Switch to model mode regardless of whether agents are present —
             // a configured default model is an explicit user preference and
             // should drive the panel to its corresponding mode immediately,
             // otherwise the tag/dropdown auto-selection would be invisible
             // until the user manually toggles modes.
-            setChatMode("model");
+            if (!hasAppliedInitialSessionRef.current) {
+              setChatMode("model");
+            }
             return;
           }
         }
@@ -1166,7 +1189,7 @@ export function QuickChatFAB({
         // Always pre-select the first model so users can start chatting in model mode
         // without having to manually pick from the dropdown.
         const firstModel = loadedModels[0];
-        if (firstModel) {
+        if (firstModel && !selectedModelRef.current) {
           setSelectedModel(`${firstModel.provider}/${firstModel.id}`);
         }
       })
@@ -1202,6 +1225,27 @@ export function QuickChatFAB({
     if (!isOpen) return;
     void refreshSessions();
   }, [isOpen, refreshSessions]);
+
+  useEffect(() => {
+    if (!isOpen || sessionsLoading || hasAppliedInitialSessionRef.current || sessions.length === 0) {
+      return;
+    }
+
+    const latestSession = sessions[0];
+    if (!latestSession) {
+      return;
+    }
+
+    if (latestSession.modelProvider && latestSession.modelId) {
+      setChatMode("model");
+      setSelectedModel(`${latestSession.modelProvider}/${latestSession.modelId}`);
+    } else {
+      setChatMode("agent");
+      setSelectedAgentId(latestSession.agentId);
+    }
+
+    hasAppliedInitialSessionRef.current = true;
+  }, [isOpen, sessions, sessionsLoading]);
 
   // Initialize/switch quick chat session whenever the selected target changes.
   // NOTE: activeSession and sessionsLoading are in the dependency array to
@@ -1586,6 +1630,8 @@ export function QuickChatFAB({
       return;
     }
 
+    hasAppliedInitialSessionRef.current = true;
+
     if (selectedSession.modelProvider && selectedSession.modelId) {
       setChatMode("model");
       setSelectedModel(`${selectedSession.modelProvider}/${selectedSession.modelId}`);
@@ -1599,6 +1645,8 @@ export function QuickChatFAB({
 
   const handleCreateFreshSession = useCallback(async () => {
     if (sessionsLoading) return;
+
+    hasAppliedInitialSessionRef.current = true;
 
     if (newSessionMode === "agent") {
       if (!newSessionAgentId) return;
