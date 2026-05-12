@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { WorkflowResultsTab } from "../WorkflowResultsTab";
 import { fetchWorkflowSteps } from "../../api";
-import { loadAllAppCssBaseOnly } from "../../test/cssFixture";
+import { loadAllAppCss, loadAllAppCssBaseOnly } from "../../test/cssFixture";
 import type { WorkflowStep, WorkflowStepResult } from "@fusion/core";
 
 vi.mock("../../api", () => ({
@@ -817,6 +817,24 @@ describe("WorkflowResultsTab", () => {
         const match = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
         expect(match?.[1] ?? "").not.toMatch(/#[0-9a-fA-F]{3,8}|rgba?\(/);
       }
+    });
+
+    it("wraps configured workflow names and modal headers to prevent long-name overflow", () => {
+      const css = loadAllAppCssBaseOnly();
+
+      expect(css).toMatch(/\.workflow-configured-title-row\s*\{[^}]*flex-wrap:\s*wrap;[^}]*min-width:\s*0;/);
+      expect(css).toMatch(/\.workflow-configured-name\s*\{[^}]*flex-wrap:\s*wrap;[^}]*min-width:\s*0;/);
+      expect(css).toMatch(/\.workflow-configured-name-text\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/);
+      expect(css).toMatch(/\.workflow-output-modal-header\s*\{[^}]*flex-wrap:\s*wrap;/);
+      expect(css).toMatch(/\.workflow-output-modal-title\s*\{[^}]*flex-wrap:\s*wrap;[^}]*min-width:\s*0;/);
+      expect(css).toMatch(/\.workflow-output-modal-name\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/);
+    });
+
+    it("allows workflow modal controls to wrap on mobile so the close button stays visible", () => {
+      const css = loadAllAppCss();
+
+      expect(css).toMatch(/@media \(max-width: 768px\)\s*\{[\s\S]*?\.workflow-output-modal-controls\s*\{[^}]*width:\s*100%;[^}]*justify-content:\s*space-between;/);
+      expect(css).toMatch(/@media \(max-width: 768px\)\s*\{[\s\S]*?\.workflow-configured-header \.workflow-results-edit-toggle\s*\{[^}]*width:\s*100%;[^}]*justify-content:\s*center;/);
     });
   });
 

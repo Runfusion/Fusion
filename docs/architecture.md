@@ -567,6 +567,7 @@ See [Memory Plugin Contract](./memory-plugin-contract.md) for the full plan.
 - Writes are idempotent: scheduler updates `status/blockedBy` only when values change, reducing per-tick churn and audit noise.
 - Self-healing remains responsible for terminal/missing blocker cleanup (`clearStaleBlockedBy()`), while scheduler overlap stamping now focuses on stable active-overlap attribution.
 - `StepSessionExecutor` (`step-session-executor.ts`) — per-step sessions + parallel wave execution
+- `createTaskUpdateTool()` (`executor.ts`) emits a diagnostic warning when an agent marks step N `in-progress` while another step on the same task is already `in-progress`; the update still proceeds so operators get evidence without changing task semantics.
 - `TaskCompletion` (`task-completion.ts`) — completion gate helpers
 - `SpecStaleness` (`spec-staleness.ts`) — stale spec detection utilities
 - `MissionExecutionLoop` (`mission-execution-loop.ts`) — validator/fix loop orchestration

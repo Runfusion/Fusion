@@ -85,18 +85,27 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-sm);
+  flex-wrap: wrap;
 }
 
 .workflow-configured-title-row {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  flex: 1;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .workflow-configured-title-row h4 {
   margin: 0;
   font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
   color: var(--text);
+  min-width: 0;
+}
+
+.workflow-configured-header .workflow-results-edit-toggle {
+  flex-shrink: 0;
 }
 
 .workflow-configured-count {
@@ -126,9 +135,17 @@
 .workflow-configured-name {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  min-width: 0;
   font-weight: 600;
   font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
   color: var(--text);
+}
+
+.workflow-configured-name-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .workflow-configured-description {
@@ -374,18 +391,25 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-sm);
   padding: var(--space-md) var(--space-lg);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .workflow-output-modal-title {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  flex: 1;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .workflow-output-modal-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-weight: 600;
   font-size: calc(var(--space-md) + var(--space-xs) * 0.5);
   color: var(--text);
@@ -395,6 +419,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .workflow-output-modal-close {
@@ -476,6 +502,28 @@
   .workflow-results-edit-toggle {
     min-width: calc(var(--space-lg) * 2 + var(--space-xs));
     min-height: calc(var(--space-lg) * 2 + var(--space-xs));
+  }
+
+  .workflow-configured-header {
+    align-items: flex-start;
+  }
+
+  .workflow-configured-header .workflow-results-edit-toggle {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .workflow-output-modal {
+    max-height: 100%;
+  }
+
+  .workflow-output-modal-header {
+    align-items: flex-start;
+  }
+
+  .workflow-output-modal-controls {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .workflow-result-expand-toggle {

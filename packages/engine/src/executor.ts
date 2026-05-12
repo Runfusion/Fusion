@@ -4296,6 +4296,22 @@ export class TaskExecutor {
 
         const stepIndex = step - 1;
 
+        if (status === "in-progress") {
+          try {
+            const latestTask = await store.getTask(taskId);
+            const otherInProgressStepIndex = latestTask.steps.findIndex(
+              (taskStep, index) => index !== stepIndex && taskStep.status === "in-progress",
+            );
+            if (otherInProgressStepIndex !== -1) {
+              executorLog.warn(
+                `${taskId}: fn_task_update marking step ${step} in-progress while step ${otherInProgressStepIndex + 1} is already in-progress`,
+              );
+            }
+          } catch (err) {
+            executorLog.warn(`${taskId}: failed to inspect step lease state before fn_task_update: ${err}`);
+          }
+        }
+
         // Enforce code review REVISE: block advancing to "done" when the last
         // code review for this step returned REVISE. The agent must fix the
         // issues and call fn_review_step(type="code") again before proceeding.

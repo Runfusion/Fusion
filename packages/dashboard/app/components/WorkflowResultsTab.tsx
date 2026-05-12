@@ -615,7 +615,7 @@ export function WorkflowResultsTab({
                 data-testid={`workflow-configured-step-${step.id}`}
               >
                 <div className="workflow-configured-name">
-                  {step.name}
+                  <span className="workflow-configured-name-text">{step.name}</span>
                   {phaseBadge(step.phase, step.id, "workflow-configured-phase")}
                 </div>
                 <p className="workflow-configured-description">{step.description}</p>

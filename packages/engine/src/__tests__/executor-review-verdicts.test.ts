@@ -1271,6 +1271,44 @@ describe("E2E review pipeline — multi-verdict sequence", () => {
     mockedExistsSync.mockReturnValue(true);
   });
 
+  it("warns when fn_task_update marks a second step in-progress", async () => {
+    const store = createMockStore();
+    store.getTask.mockResolvedValue({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      currentStep: 0,
+      log: [],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n### Step 1: Implement\n### Step 2: Verify",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      steps: [
+        { name: "Preflight", status: "in-progress" },
+        { name: "Implement", status: "pending" },
+        { name: "Verify", status: "pending" },
+      ],
+    });
+    store.updateStep.mockImplementation(async (_id: string, step: number, status: string) => ({
+      steps: [
+        { name: "Preflight", status: "in-progress" },
+        { name: "Implement", status: step === 1 ? status : "pending" },
+        { name: "Verify", status: "pending" },
+      ],
+    }));
+
+    const { tools } = await captureE2ETools(store);
+    const result = await tools.fn_task_update("u-warn", { step: 2, status: "in-progress" });
+
+    expect(executorLog.warn).toHaveBeenCalledTimes(1);
+    expect(executorLog.warn).toHaveBeenCalledWith(
+      "FN-E2E: fn_task_update marking step 2 in-progress while step 1 is already in-progress",
+    );
+    expect(store.updateStep).toHaveBeenCalledWith("FN-E2E", 1, "in-progress");
+    expect(result.content[0].text).toContain("Step 2 (Implement) → in-progress");
+  });
+
   it("full sequence: plan APPROVE → code REVISE (blocked) → code APPROVE (unblocked) → done", async () => {
     const store = createMockStore();
     store.updateStep.mockImplementation(async (_id: string, step: number, status: string) =>
