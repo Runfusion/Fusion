@@ -9,6 +9,7 @@ import {
   streamChatResponse,
   cancelChatResponse,
   fetchAgents,
+  type ChatFailureInfo,
   type ChatSessionListResponse,
 } from "../api";
 import { subscribeSse } from "../sse-bus";
@@ -34,8 +35,8 @@ export interface ChatSessionInfo {
 
 // Re-export shared chat types so existing consumers (`import { ChatMessageInfo } from "../hooks/useChat"`)
 // keep working — single source of truth lives in chatTypes.ts.
-export type { ChatMessageInfo, FallbackInfo, ToolCallInfo } from "./chatTypes";
-import type { ChatMessageInfo, FallbackInfo, ToolCallInfo } from "./chatTypes";
+export type { ChatMessageInfo, FailureInfo, FallbackInfo, ToolCallInfo } from "./chatTypes";
+import type { ChatMessageInfo, FailureInfo, FallbackInfo, ToolCallInfo } from "./chatTypes";
 import { createChatStreamHandlers } from "./createChatStreamHandlers";
 import { isLikelyTabSuspensionError, useTabVisibilitySuspension } from "./visibilitySuspension";
 
@@ -148,6 +149,78 @@ function extractFallbackInfo(metadata: Record<string, unknown> | null | undefine
   };
 }
 
+function extractFailureInfo(metadata: Record<string, unknown> | null | undefined): FailureInfo | undefined {
+  const rawFailure = metadata?.failureInfo;
+  if (!rawFailure || typeof rawFailure !== "object") {
+    return undefined;
+  }
+
+  const record = rawFailure as Record<string, unknown>;
+  const summary = typeof record.summary === "string" ? record.summary.trim() : "";
+  if (!summary) {
+    return undefined;
+  }
+
+  const reference = (() => {
+    const rawReference = record.reference;
+    if (!rawReference || typeof rawReference !== "object") {
+      return undefined;
+    }
+    const referenceRecord = rawReference as Record<string, unknown>;
+    const kind = typeof referenceRecord.kind === "string" ? referenceRecord.kind.trim() : "";
+    const id = typeof referenceRecord.id === "string" ? referenceRecord.id.trim() : "";
+    if (!kind || !id) {
+      return undefined;
+    }
+    return {
+      kind,
+      id,
+      ...(typeof referenceRecord.label === "string" && referenceRecord.label.trim()
+        ? { label: referenceRecord.label.trim() }
+        : {}),
+    };
+  })();
+
+  return {
+    summary,
+    ...(typeof record.errorClass === "string" && record.errorClass.trim()
+      ? { errorClass: record.errorClass.trim() }
+      : {}),
+    ...(typeof record.code === "string" && record.code.trim()
+      ? { code: record.code.trim() }
+      : {}),
+    ...(typeof record.detail === "string" && record.detail.trim()
+      ? { detail: record.detail.trim() }
+      : {}),
+    ...(reference ? { reference } : {}),
+  };
+}
+
+function normalizeFailureInfo(data: string | ChatFailureInfo): FailureInfo {
+  if (typeof data === "string") {
+    const summary = data.trim() || "Failed to get response";
+    return { summary };
+  }
+
+  const summary = typeof data.summary === "string" && data.summary.trim()
+    ? data.summary.trim()
+    : "Failed to get response";
+
+  return {
+    summary,
+    ...(typeof data.errorClass === "string" && data.errorClass.trim()
+      ? { errorClass: data.errorClass.trim() }
+      : {}),
+    ...(typeof data.code === "string" && data.code.trim()
+      ? { code: data.code.trim() }
+      : {}),
+    ...(typeof data.detail === "string" && data.detail.trim()
+      ? { detail: data.detail.trim() }
+      : {}),
+    ...(data.reference ? { reference: data.reference } : {}),
+  };
+}
+
 function mapChatMessageToInfo(message: ChatMessage): ChatMessageInfo {
   return {
     id: message.id,
@@ -157,6 +230,7 @@ function mapChatMessageToInfo(message: ChatMessage): ChatMessageInfo {
     thinkingOutput: message.thinkingOutput,
     toolCalls: extractCompletedToolCalls(message.metadata),
     fallbackInfo: extractFallbackInfo(message.metadata),
+    failureInfo: extractFailureInfo(message.metadata),
     attachments: message.attachments,
     createdAt: message.createdAt,
   };
@@ -375,8 +449,8 @@ export function useChat(
         setIsStreaming(false);
         isStreamingRef.current = false;
         streamRef.current = null;
-        const errorMessage = typeof data === "string" && data.trim() ? data : "Failed to get response";
-        addToast?.(errorMessage, "error");
+        const failureInfo = normalizeFailureInfo(data);
+        addToast?.(failureInfo.summary, "error");
         void loadMessages(sessionId);
       },
     });
@@ -644,7 +718,28 @@ export function useChat(
           }
         },
         onError: (data, tempUserMessageId) => {
-          setMessages((prev) => prev.filter((m) => m.id !== tempUserMessageId));
+          const failureInfo = normalizeFailureInfo(data);
+          const shouldSuppressSuspensionError = typeof data === "string"
+            && isLikelyTabSuspensionError(data)
+            && (visibilitySuspension.isHiddenNow() || visibilitySuspension.wasRecentlyHidden(5000));
+
+          setMessages((prev) => {
+            const nextMessages = prev.filter((message) => message.id !== tempUserMessageId);
+            if (shouldSuppressSuspensionError) {
+              return nextMessages;
+            }
+            return [
+              ...nextMessages,
+              {
+                id: `error-${Date.now()}`,
+                sessionId: activeSession.id,
+                role: "assistant",
+                content: failureInfo.summary,
+                failureInfo,
+                createdAt: new Date().toISOString(),
+              },
+            ];
+          });
           setStreamingText("");
           setStreamingThinking("");
           setStreamingToolCalls([]);
@@ -652,10 +747,6 @@ export function useChat(
           isStreamingRef.current = false;
           streamRef.current = null;
           console.error("[useChat] Stream error:", data);
-          const errorMessage = typeof data === "string" && data.trim() ? data : "Failed to get response";
-          const shouldSuppressSuspensionError = typeof data === "string"
-            && isLikelyTabSuspensionError(data)
-            && (visibilitySuspension.isHiddenNow() || visibilitySuspension.wasRecentlyHidden(5000));
 
           if (shouldSuppressSuspensionError) {
             console.info("[useChat] Suppressed tab-suspension stream error:", data);
@@ -667,7 +758,8 @@ export function useChat(
               }
             }
           } else {
-            addToast?.(errorMessage, "error");
+            addToast?.(failureInfo.summary, "error");
+            void refreshSessions();
           }
 
           if (!cancelledByUserRef.current) {

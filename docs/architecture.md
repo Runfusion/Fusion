@@ -271,7 +271,12 @@ Intentional exclusions from shared snapshots:
 - `ChatManager.sendMessage()` updates that snapshot during streaming (debounced) and clears it on done/error/cancel so stale partial state does not survive completion.
 - When the active session is still generating after reload/reconnect (`isGenerating: true`), `useChat`/`useQuickChat` hydrate the UI from `inFlightGeneration` immediately, then reconnect `/api/chat/sessions/:id/stream` with `Last-Event-ID = replayFromEventId` to avoid re-appending already-known deltas.
 - Chat message submission uses SSE streaming responses from dashboard chat routes.
+- Direct-chat terminal failures now persist as a distinct assistant message with `metadata.failureInfo` (`summary`, optional `errorClass`, optional `code`, optional `detail`, optional reference metadata) so the chat thread remains the durable primary failure surface after reload/reconnect.
+- `ChatManager.sendMessage()` preserves any interrupted partial assistant output as its own message, then appends a separate persisted failure bubble instead of overwriting the partial reply.
 - Main-chat optimistic user sends are reconciled against persisted SSE user echoes by content + temp-id replacement, so one user send cannot survive as a duplicate history entry after stream completion.
+- `useChat.loadMessages()`/session restore map persisted `metadata.failureInfo` back into `ChatMessageInfo.failureInfo`, and live stream failures append the same assistant-style bubble client-side unless the error is classified as a tab-suspension false positive.
+- `ChatView` renders failure bubbles inline with shared error-surface tokens; mailbox references deep-link into the mailbox view, while other failure references keep an inline "View failure details" affordance so reload/reconnect does not strand users in agent logs.
+- `ChatView` renders those failure bubbles with inline assistant attribution even for model-only `__fn_agent__` chats, so provider/model failures still read as a response from the active model instead of an anonymous system alert.
 - `streamChatResponse()` must flush trailing buffered SSE data on EOF even without a final newline, so terminal `done`/`error` events are not dropped at chunk boundaries.
 - Chat generation ownership is isolated by `generationId` (`ChatManager.beginGeneration` + `ChatStreamManager` subscription filters + route preallocation), preventing stale generation terminal events from leaking into a newer active request.
 
@@ -771,6 +776,7 @@ Key server capabilities:
 - **Chat streaming**: `/api/chat/sessions/:id/messages` (`routes.ts` + `chat.ts`)
   - Streams assistant responses as SSE events for chat sessions
   - `done` events include the authoritative persisted assistant message snapshot (`message`) so clients can render final output even when incremental `text` deltas are absent
+  - `error` events now allow either the legacy string payload or a structured failure payload matching persisted `metadata.failureInfo`; direct-chat clients normalize both shapes and render failures inline in the thread
 - **Chat session queries**: `/api/chat/sessions` (`routes.ts`)
   - Existing list behavior is unchanged (`status=active|archived|all` returns an array)
   - Quick Chat resume uses targeted lookup params: `agentId`, optional `modelProvider` + `modelId`, plus `resume=1`

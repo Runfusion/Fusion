@@ -8422,6 +8422,82 @@ export function cancelChatResponse(
  *  When attachments are provided, the request body is sent as multipart form data;
  *  otherwise it uses the existing JSON payload path.
  */
+export interface ChatFailureReference {
+  kind: string;
+  id: string;
+  label?: string;
+}
+
+export interface ChatFailureInfo {
+  summary: string;
+  errorClass?: string;
+  code?: string;
+  detail?: string;
+  reference?: ChatFailureReference;
+}
+
+function extractChatFailureInfo(value: unknown): ChatFailureInfo | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const summary = typeof record.summary === "string" ? record.summary.trim() : "";
+  if (!summary) {
+    return null;
+  }
+
+  const reference = (() => {
+    const rawReference = record.reference;
+    if (!rawReference || typeof rawReference !== "object") {
+      return undefined;
+    }
+    const referenceRecord = rawReference as Record<string, unknown>;
+    const kind = typeof referenceRecord.kind === "string" ? referenceRecord.kind.trim() : "";
+    const id = typeof referenceRecord.id === "string" ? referenceRecord.id.trim() : "";
+    if (!kind || !id) {
+      return undefined;
+    }
+    return {
+      kind,
+      id,
+      ...(typeof referenceRecord.label === "string" && referenceRecord.label.trim()
+        ? { label: referenceRecord.label.trim() }
+        : {}),
+    } satisfies ChatFailureReference;
+  })();
+
+  return {
+    summary,
+    ...(typeof record.errorClass === "string" && record.errorClass.trim()
+      ? { errorClass: record.errorClass.trim() }
+      : {}),
+    ...(typeof record.code === "string" && record.code.trim()
+      ? { code: record.code.trim() }
+      : {}),
+    ...(typeof record.detail === "string" && record.detail.trim()
+      ? { detail: record.detail.trim() }
+      : {}),
+    ...(reference ? { reference } : {}),
+  };
+}
+
+function parseChatErrorPayload(rawData: string): string | ChatFailureInfo {
+  try {
+    const parsed = JSON.parse(rawData);
+    const structured = extractChatFailureInfo(parsed);
+    if (structured) {
+      return structured;
+    }
+    if (parsed && typeof parsed === "object" && typeof (parsed as { message?: unknown }).message === "string") {
+      return (parsed as { message: string }).message;
+    }
+    return typeof parsed === "string" ? parsed : rawData || "Stream error";
+  } catch {
+    return rawData || "Stream error";
+  }
+}
+
 export interface ChatStreamHandlers {
   onThinking?: (data: string) => void;
   onText?: (data: string) => void;
@@ -8429,7 +8505,7 @@ export interface ChatStreamHandlers {
   onToolEnd?: (data: { toolName: string; isError: boolean; result?: unknown }) => void;
   onFallback?: (data: { primaryModel: string; fallbackModel: string; triggerPoint: "session-creation" | "prompt-time" }) => void;
   onDone?: (data: { messageId: string; message?: ChatMessage }) => void;
-  onError?: (data: string) => void;
+  onError?: (data: string | ChatFailureInfo) => void;
   onConnectionStateChange?: (state: StreamConnectionState) => void;
 }
 
@@ -8522,12 +8598,7 @@ export function streamChatResponse(
         break;
       case "error":
         terminated = true;
-        try {
-          const parsed = JSON.parse(rawData);
-          handlers.onError?.(parsed.message || parsed);
-        } catch {
-          handlers.onError?.(rawData || "Stream error");
-        }
+        handlers.onError?.(parseChatErrorPayload(rawData));
         break;
     }
   };
@@ -8744,12 +8815,7 @@ export function attachChatStream(
         break;
       case "error":
         terminated = true;
-        try {
-          const parsed = JSON.parse(rawData);
-          handlers.onError?.(parsed.message || parsed);
-        } catch {
-          handlers.onError?.(rawData || "Stream error");
-        }
+        handlers.onError?.(parseChatErrorPayload(rawData));
         break;
     }
   };

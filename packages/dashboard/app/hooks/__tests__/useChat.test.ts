@@ -320,6 +320,53 @@ describe("useChat", () => {
     });
   });
 
+  it("rehydrates persisted failure metadata when loading message history", async () => {
+    const session = makeSession({ id: "session-001", agentId: "agent-001" });
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+    mockFetchChatMessages.mockResolvedValueOnce({
+      messages: [
+        makeMessage({
+          id: "msg-failure",
+          sessionId: "session-001",
+          role: "assistant",
+          content: "Model request failed",
+          metadata: {
+            failureInfo: {
+              summary: "Model request failed",
+              errorClass: "ProviderError",
+              code: "E_MODEL",
+              detail: "ProviderError: Model request failed",
+            },
+          },
+        }),
+      ],
+    });
+
+    const { result } = renderHook(() => useChat());
+
+    await waitFor(() => {
+      expect(result.current.sessions).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.selectSession("session-001");
+    });
+
+    await waitFor(() => {
+      expect(result.current.messages).toHaveLength(1);
+    });
+
+    expect(result.current.messages[0]).toEqual(expect.objectContaining({
+      id: "msg-failure",
+      failureInfo: {
+        summary: "Model request failed",
+        errorClass: "ProviderError",
+        code: "E_MODEL",
+        detail: "ProviderError: Model request failed",
+      },
+    }));
+  });
+
   it("creates a new session and selects it", async () => {
     const newSession = makeSession({ id: "session-new", agentId: "agent-001", title: "Test Chat" });
     mockCreateChatSession.mockResolvedValueOnce({ session: newSession });
@@ -606,13 +653,13 @@ describe("useChat", () => {
     });
   });
 
-  it("handles stream errors and surfaces them to the user", async () => {
+  it("handles stream errors, appends a failure bubble, and surfaces them to the user", async () => {
     const session = makeSession({ id: "session-001", agentId: "agent-001" });
     mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
     mockFetchChatMessages.mockResolvedValueOnce({ messages: [] });
     const addToast = vi.fn();
 
-    let errorHandler: ((data: string) => void) | undefined;
+    let errorHandler: ((data: string | apiModule.ChatFailureInfo) => void) | undefined;
     mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
       errorHandler = handlers.onError;
       return { close: vi.fn(), isConnected: () => true };
@@ -636,14 +683,18 @@ describe("useChat", () => {
       await result.current.sendMessage("Hello!");
     });
 
-    // Simulate error
     await act(async () => {
       errorHandler?.("Stream connection failed");
     });
 
     await waitFor(() => {
       expect(result.current.isStreaming).toBe(false);
-      expect(result.current.messages).toHaveLength(0);
+      expect(result.current.messages).toHaveLength(1);
+      expect(result.current.messages[0]).toEqual(expect.objectContaining({
+        role: "assistant",
+        content: "Stream connection failed",
+        failureInfo: { summary: "Stream connection failed" },
+      }));
       expect(addToast).toHaveBeenCalledWith("Stream connection failed", "error");
     });
   });
@@ -654,7 +705,7 @@ describe("useChat", () => {
     mockFetchChatMessages.mockResolvedValue({ messages: [] });
     const addToast = vi.fn();
 
-    let errorHandler: ((data: string) => void) | undefined;
+    let errorHandler: ((data: string | apiModule.ChatFailureInfo) => void) | undefined;
     mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
       errorHandler = handlers.onError;
       return { close: vi.fn(), isConnected: () => true };
@@ -704,7 +755,7 @@ describe("useChat", () => {
     mockFetchChatMessages.mockResolvedValue({ messages: [] });
     const addToast = vi.fn();
 
-    let errorHandler: ((data: string) => void) | undefined;
+    let errorHandler: ((data: string | apiModule.ChatFailureInfo) => void) | undefined;
     mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
       errorHandler = handlers.onError;
       return { close: vi.fn(), isConnected: () => true };
@@ -750,7 +801,7 @@ describe("useChat", () => {
     mockFetchChatMessages.mockResolvedValue({ messages: [] });
     const addToast = vi.fn();
 
-    let errorHandler: ((data: string) => void) | undefined;
+    let errorHandler: ((data: string | apiModule.ChatFailureInfo) => void) | undefined;
     mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
       errorHandler = handlers.onError;
       return { close: vi.fn(), isConnected: () => true };
@@ -787,7 +838,7 @@ describe("useChat", () => {
     mockFetchChatMessages.mockResolvedValue({ messages: [] });
     const addToast = vi.fn();
 
-    let errorHandler: ((data: string) => void) | undefined;
+    let errorHandler: ((data: string | apiModule.ChatFailureInfo) => void) | undefined;
     mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
       errorHandler = handlers.onError;
       return { close: vi.fn(), isConnected: () => true };
@@ -825,7 +876,7 @@ describe("useChat", () => {
     mockFetchChatMessages.mockResolvedValue({ messages: [] });
     const addToast = vi.fn();
 
-    let errorHandler: ((data: string) => void) | undefined;
+    let errorHandler: ((data: string | apiModule.ChatFailureInfo) => void) | undefined;
     mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
       errorHandler = handlers.onError;
       return { close: vi.fn(), isConnected: () => true };

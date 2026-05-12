@@ -148,7 +148,74 @@ function formatAttachmentSize(size: number): string {
   return `${(size / (1024 * 1024)).toFixed(1)}MB`;
 }
 
+function normalizeFailureCode(code: unknown): string | undefined {
+  if (typeof code === "string" && code.trim()) {
+    return code.trim();
+  }
+  if (typeof code === "number" && Number.isFinite(code)) {
+    return String(code);
+  }
+  return undefined;
+}
+
+function buildChatFailureInfo(error: unknown, fallbackSummary = "AI processing failed"): ChatFailureInfo {
+  if (typeof error === "string") {
+    const summary = error.trim() || fallbackSummary;
+    return { summary };
+  }
+
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const summary = typeof record.message === "string" && record.message.trim()
+      ? record.message.trim()
+      : fallbackSummary;
+    const detail = typeof record.stack === "string" && record.stack.trim() && record.stack.trim() !== summary
+      ? record.stack.trim()
+      : undefined;
+    return {
+      summary,
+      ...(typeof record.name === "string" && record.name.trim() && record.name.trim() !== "Error"
+        ? { errorClass: record.name.trim() }
+        : {}),
+      ...(normalizeFailureCode(record.code) ? { code: normalizeFailureCode(record.code) } : {}),
+      ...(detail ? { detail } : {}),
+    };
+  }
+
+  return { summary: fallbackSummary };
+}
+
+function persistFailureMessage(
+  chatStore: ChatStore,
+  sessionId: string,
+  failureInfo: ChatFailureInfo,
+  metadata?: Record<string, unknown>,
+) {
+  return chatStore.addMessage(sessionId, {
+    role: "assistant",
+    content: failureInfo.summary,
+    metadata: {
+      failureInfo,
+      ...(metadata ?? {}),
+    },
+  });
+}
+
 // ── Types ───────────────────────────────────────────────────────────────────
+
+export interface ChatFailureReference {
+  kind: string;
+  id: string;
+  label?: string;
+}
+
+export interface ChatFailureInfo {
+  summary: string;
+  errorClass?: string;
+  code?: string;
+  detail?: string;
+  reference?: ChatFailureReference;
+}
 
 /** SSE event types for chat streaming */
 export type ChatStreamEvent =
@@ -174,7 +241,7 @@ export type ChatStreamEvent =
         attachments?: ChatAttachment[];
       };
     }
-  | { type: "error"; data: string };
+  | { type: "error"; data: string | ChatFailureInfo };
 
 /** Callback function for streaming events */
 export type ChatStreamCallback = (event: ChatStreamEvent, eventId?: number) => void;
@@ -1478,9 +1545,12 @@ export class ChatManager {
       const sessionErrorMessage = (agentResult.session.state as { errorMessage?: unknown }).errorMessage;
       if (typeof sessionErrorMessage === "string" && sessionErrorMessage.trim().length > 0
           && !accumulatedText && !accumulatedThinking && toolCallsAccum.length === 0) {
+        const failureInfo = buildChatFailureInfo(sessionErrorMessage, "Model response failed");
+        persistFailureMessage(this.chatStore, sessionId, failureInfo);
+        this.flushInFlightGenerationPersist(sessionId, null);
         chatStreamManager.broadcast(sessionId, {
           type: "error",
-          data: sessionErrorMessage,
+          data: failureInfo,
         }, broadcastOptions);
         return;
       }
@@ -1555,7 +1625,7 @@ export class ChatManager {
         return;
       }
 
-      const errorMessage = err instanceof Error ? err.message : "AI processing failed";
+      const failureInfo = buildChatFailureInfo(err, "AI processing failed");
       diagnostics.error(`Error in sendMessage for session ${sessionId}:`, err);
 
       if (accumulatedText || accumulatedThinking || toolCallsAccum.length > 0) {
@@ -1575,11 +1645,17 @@ export class ChatManager {
         }
       }
 
+      try {
+        persistFailureMessage(this.chatStore, sessionId, failureInfo, fallbackInfo ? { fallback: fallbackInfo } : undefined);
+      } catch (persistErr) {
+        diagnostics.error(`Failed to persist failure message for session ${sessionId}:`, persistErr);
+      }
+
       this.flushInFlightGenerationPersist(sessionId, null);
 
       chatStreamManager.broadcast(sessionId, {
         type: "error",
-        data: errorMessage,
+        data: failureInfo,
       }, broadcastOptions);
     } finally {
       // Only clear the active-generation slot if it still belongs to us. If a

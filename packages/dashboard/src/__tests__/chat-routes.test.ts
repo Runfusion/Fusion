@@ -1324,6 +1324,43 @@ describe("Chat API Routes", () => {
         expect(output).toContain('"content":"Final reply"');
       });
 
+      it("SSE route forwards structured error payloads", async () => {
+        mockGetSession.mockReturnValue(sampleSession);
+
+        const chatModule = await import("../chat.js");
+        vi.mocked(chatModule.checkRateLimit).mockReturnValue(true);
+
+        mockSendMessage.mockImplementation(async (sessionId: string) => {
+          mockChatStreamManager.broadcast(sessionId, {
+            type: "error",
+            data: {
+              summary: "Model request failed",
+              errorClass: "ProviderError",
+              code: "E_MODEL",
+              detail: "ProviderError: Model request failed",
+            },
+          });
+        });
+
+        const req = createSSERequest();
+        const { res, chunks } = createSSEResponse();
+
+        req.body = { content: "Hello" };
+        req.params = { id: "chat-abc123" };
+        req.query = {} as any;
+        req.headers = {} as any;
+        req.ip = "127.0.0.1";
+        req.socket = { remoteAddress: "127.0.0.1" } as any;
+
+        await invokeSSEHandler(req, res, store, mockChatStore, mockChatManager);
+
+        const output = chunks.join("");
+        expect(output).toContain("event: error");
+        expect(output).toContain('"summary":"Model request failed"');
+        expect(output).toContain('"errorClass":"ProviderError"');
+        expect(output).toContain('"code":"E_MODEL"');
+      });
+
       it("uses the same generation id for subscription and sendMessage", async () => {
         mockGetSession.mockReturnValue(sampleSession);
 
