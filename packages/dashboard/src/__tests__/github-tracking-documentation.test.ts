@@ -16,8 +16,8 @@ describe("github tracking documentation contract", () => {
 
     expect(taskManagement).toContain("## GitHub Tracking Issues");
     expect(taskManagement).toContain("They are **not** the same as imported source issues (`issueInfo` / `sourceIssue`)");
-    expect(taskManagement).toContain("task creation flows (including quick create, planning output, and subtask creation paths that create tasks)");
-    expect(taskManagement).toContain("Fusion also attempts issue creation on existing-task edits that update `githubTracking`");
+    expect(taskManagement).toContain("task creation flows (including quick create, planning output, automation `create-task` workflow steps, and subtask creation paths that create tasks)");
+    expect(taskManagement).toContain("For existing tasks, PATCH first persists any `githubTracking` mutation");
     expect(taskManagement).toContain("task.githubTracking.enabled");
     expect(taskManagement).toContain("task.githubTracking.repoOverride");
     expect(taskManagement).toContain("Repository resolution order");

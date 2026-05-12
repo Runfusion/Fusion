@@ -52,6 +52,23 @@ describe("TaskStore github tracking", () => {
     });
   });
 
+  it("persists githubTracking through generic updateTask patch flow", async () => {
+    const task = await store.createTask({ description: "Patch issue" });
+
+    await store.updateTask(task.id, {
+      githubTracking: {
+        enabled: true,
+        repoOverride: "octocat/hello-world",
+      },
+    });
+
+    const updated = await store.getTask(task.id);
+    expect(updated?.githubTracking).toEqual({
+      enabled: true,
+      repoOverride: "octocat/hello-world",
+    });
+  });
+
   it("links and unlinks tracked issue while preserving other tracking fields", async () => {
     const task = await store.createTask({ description: "Link issue" });
 

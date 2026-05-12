@@ -2225,7 +2225,23 @@ describe("TaskDetailModal", () => {
     it("shows create tracking issue action for enabled but unlinked tasks outside editable columns", async () => {
       const { updateTask } = await import("../../api");
       const mockUpdate = vi.mocked(updateTask);
-      mockUpdate.mockResolvedValueOnce({ id: "FN-001" } as Task);
+      const onTaskUpdated = vi.fn();
+      const addToast = vi.fn();
+      const updatedTask = makeTask({
+        id: "FN-001",
+        column: "done",
+        githubTracking: {
+          enabled: true,
+          issue: {
+            owner: "runfusion",
+            repo: "fusion",
+            number: 77,
+            url: "https://github.com/runfusion/fusion/issues/77",
+            createdAt: "2026-01-01T00:00:00Z",
+          },
+        },
+      });
+      mockUpdate.mockResolvedValueOnce(updatedTask as Task);
 
       render(
         <TaskDetailModal
@@ -2235,7 +2251,8 @@ describe("TaskDetailModal", () => {
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
-          addToast={noop}
+          onTaskUpdated={onTaskUpdated}
+          addToast={addToast}
         />,
       );
 
@@ -2245,6 +2262,8 @@ describe("TaskDetailModal", () => {
       await waitFor(() => {
         expect(mockUpdate).toHaveBeenCalledWith("FN-001", { githubTracking: { enabled: true } }, undefined);
       });
+      expect(onTaskUpdated).toHaveBeenCalledWith(updatedTask);
+      expect(addToast).toHaveBeenCalledWith("Requested GitHub tracking issue creation", "info");
       expect(screen.queryByLabelText("Enable GitHub tracking")).toBeNull();
     });
 

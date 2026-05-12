@@ -153,7 +153,7 @@ vi.mock("@fusion/engine", async () => {
   });
 });
 
-import { AgentStore, Database, RoutineStore, isGhAvailable, isGhAuthenticated } from "@fusion/core";
+import { AgentStore, Database, RoutineStore, TaskStore as CoreTaskStore, isGhAvailable, isGhAuthenticated } from "@fusion/core";
 import { createFnAgent } from "@fusion/engine";
 
 const mockIsGhAvailable = vi.mocked(isGhAvailable);
@@ -1817,6 +1817,58 @@ describe("PATCH /tasks/:id", () => {
     expect(createIssueSpy).toHaveBeenCalledWith(expect.objectContaining({ owner: "runfusion", repo: "fusion" }));
     expect(store.linkGithubIssue).toHaveBeenCalledWith("KB-001", expect.objectContaining({ owner: "runfusion", repo: "fusion", number: 73 }));
     createIssueSpy.mockRestore();
+  });
+
+  it("PATCH persists githubTracking for existing tasks and links created issue with a real store", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "kb-routes-patch-github-tracking-"));
+    const globalDir = mkdtempSync(join(tmpdir(), "kb-routes-patch-github-tracking-global-"));
+    const realStore = new CoreTaskStore(rootDir, globalDir, { inMemoryDb: true });
+    await realStore.init();
+
+    const createIssueSpy = vi.spyOn(GitHubClient.prototype, "createIssue").mockResolvedValue({
+      owner: "runfusion",
+      repo: "fusion",
+      number: 74,
+      htmlUrl: "https://github.com/runfusion/fusion/issues/74",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    try {
+      await realStore.updateSettings({
+        githubAuthMode: "token",
+        githubAuthToken: "tok",
+        githubTrackingDefaultRepo: "runfusion/fusion",
+      });
+      const created = await realStore.createTask({ description: "route patch flow", column: "todo" });
+
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(realStore));
+
+      const res = await REQUEST(app, "PATCH", `/api/tasks/${created.id}`, JSON.stringify({
+        githubTracking: { enabled: true },
+      }), {
+        "Content-Type": "application/json",
+      });
+
+      expect(res.status).toBe(200);
+      expect(createIssueSpy).toHaveBeenCalledWith(expect.objectContaining({ owner: "runfusion", repo: "fusion" }));
+      expect(res.body.githubTracking?.enabled).toBe(true);
+      expect(res.body.githubTracking?.issue).toMatchObject({
+        owner: "runfusion",
+        repo: "fusion",
+        number: 74,
+      });
+
+      const persisted = await realStore.getTask(created.id);
+      expect(persisted.githubTracking?.enabled).toBe(true);
+      expect(persisted.githubTracking?.issue?.number).toBe(74);
+    } finally {
+      createIssueSpy.mockRestore();
+      realStore.close();
+      rmSync(rootDir, { recursive: true, force: true });
+      rmSync(globalDir, { recursive: true, force: true });
+    }
   });
 
   it("does not recreate tracking issue during explicit manual unlink patch", async () => {
