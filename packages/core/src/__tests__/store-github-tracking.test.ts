@@ -25,9 +25,35 @@ describe("TaskStore github tracking", () => {
 
   afterEach(async () => {
     store.close();
-    await rm(rootDir, { recursive: true, force: true });
-    await rm(globalDir, { recursive: true, force: true });
+    await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    await rm(globalDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
+
+  async function reopenDiskBackedStore(
+    setup: (diskStore: TaskStore) => Promise<void>,
+    assertions: (reloadedStore: TaskStore) => Promise<void>,
+  ): Promise<void> {
+    const diskRoot = makeTmpDir();
+    const diskGlobal = makeTmpDir();
+
+    try {
+      const firstStore = new TaskStore(diskRoot, diskGlobal);
+      await firstStore.init();
+      await setup(firstStore);
+      firstStore.close();
+
+      const reloadedStore = new TaskStore(diskRoot, diskGlobal);
+      await reloadedStore.init();
+      try {
+        await assertions(reloadedStore);
+      } finally {
+        reloadedStore.close();
+      }
+    } finally {
+      await rm(diskRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      await rm(diskGlobal, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  }
 
   const issue: TaskGithubTrackedIssue = {
     owner: "octocat",
@@ -137,5 +163,104 @@ describe("TaskStore github tracking", () => {
       repoOverride: "octocat/hello-world",
       issue,
     });
+  });
+
+  it("persists githubTracking across store restart for detail and non-slim listings", async () => {
+    await reopenDiskBackedStore(
+      async (diskStore) => {
+        const created = await diskStore.createTask({ description: "Restart tracking" });
+        await diskStore.updateGithubTracking(created.id, {
+          enabled: true,
+          repoOverride: "octocat/hello-world",
+          issue,
+        });
+      },
+      async (reloadedStore) => {
+        const reloadedTask = (await reloadedStore.listTasks()).find((task) => task.description === "Restart tracking");
+        expect(reloadedTask?.githubTracking).toEqual({
+          enabled: true,
+          repoOverride: "octocat/hello-world",
+          issue,
+        });
+
+        const fetched = await reloadedStore.getTask(reloadedTask!.id);
+        expect(fetched.githubTracking).toEqual({
+          enabled: true,
+          repoOverride: "octocat/hello-world",
+          issue,
+        });
+
+        const slim = await reloadedStore.listTasks({ slim: true });
+        expect(slim.find((task) => task.id === reloadedTask!.id)?.githubTracking).toBeUndefined();
+      },
+    );
+  });
+
+  it("persists disabled state, repo override, and issue mutations across repeated restarts", async () => {
+    const diskRoot = makeTmpDir();
+    const diskGlobal = makeTmpDir();
+
+    try {
+      let firstStore = new TaskStore(diskRoot, diskGlobal);
+      await firstStore.init();
+      const created = await firstStore.createTask({ description: "Restart tracking mutations" });
+      await firstStore.updateGithubTracking(created.id, {
+        enabled: false,
+        repoOverride: "octocat/hello-world",
+        issue,
+      });
+      firstStore.close();
+
+      let secondStore = new TaskStore(diskRoot, diskGlobal);
+      await secondStore.init();
+      // FN-4161 repro: SQLite restart hydration is intact; downstream dashboard layers receive the correct value from core.
+      expect((await secondStore.getTask(created.id)).githubTracking).toEqual({
+        enabled: false,
+        repoOverride: "octocat/hello-world",
+        issue,
+      });
+      expect((await secondStore.listTasks()).find((task) => task.id === created.id)?.githubTracking).toEqual({
+        enabled: false,
+        repoOverride: "octocat/hello-world",
+        issue,
+      });
+
+      await secondStore.unlinkGithubIssue(created.id);
+      expect((await secondStore.getTask(created.id)).githubTracking?.issue).toBeUndefined();
+      secondStore.close();
+
+      let thirdStore = new TaskStore(diskRoot, diskGlobal);
+      await thirdStore.init();
+      const afterUnlink = await thirdStore.getTask(created.id);
+      expect(afterUnlink.githubTracking?.enabled).toBe(false);
+      expect(afterUnlink.githubTracking?.repoOverride).toBe("octocat/hello-world");
+      expect(afterUnlink.githubTracking?.issue).toBeUndefined();
+      expect(afterUnlink.githubTracking?.unlinkedAt).toBeTruthy();
+
+      await thirdStore.linkGithubIssue(created.id, issue);
+      await thirdStore.updateGithubTracking(created.id, {
+        enabled: false,
+        repoOverride: "octocat/renamed-repo",
+        issue,
+      });
+      thirdStore.close();
+
+      const fourthStore = new TaskStore(diskRoot, diskGlobal);
+      await fourthStore.init();
+      try {
+        const fetched = await fourthStore.getTask(created.id);
+        expect(fetched.githubTracking).toEqual({
+          enabled: false,
+          repoOverride: "octocat/renamed-repo",
+          issue,
+        });
+        expect((await fourthStore.listTasks({ slim: true })).find((task) => task.id === created.id)?.githubTracking).toBeUndefined();
+      } finally {
+        fourthStore.close();
+      }
+    } finally {
+      await rm(diskRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      await rm(diskGlobal, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
   });
 });

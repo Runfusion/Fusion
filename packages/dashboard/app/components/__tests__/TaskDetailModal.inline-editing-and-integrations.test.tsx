@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { useState } from "react";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { Task } from "@fusion/core";
 import {
   makeTask,
   noop,
@@ -2186,6 +2187,54 @@ describe("TaskDetailModal", () => {
 
       expect(screen.getByRole("button", { name: "Collapse GitHub tracking details" })).toHaveAttribute("aria-expanded", "true");
       expect(screen.getByRole("link", { name: "runfusion/fusion#123" })).toHaveAttribute("href", "https://github.com/runfusion/fusion/issues/123");
+    });
+
+    it("preserves fetched githubTracking detail when the optimistic task prop came from a slim restart listing", async () => {
+      const { fetchTaskDetail } = await import("../../api");
+      vi.mocked(fetchTaskDetail).mockResolvedValueOnce(
+        makeTask({
+          id: "FN-301",
+          column: "todo",
+          prompt: "# Spec",
+          githubTracking: {
+            enabled: true,
+            repoOverride: "runfusion/fusion",
+            issue: {
+              owner: "runfusion",
+              repo: "fusion",
+              number: 301,
+              url: "https://github.com/runfusion/fusion/issues/301",
+              createdAt: "2026-01-01T00:00:00Z",
+            },
+          },
+        }),
+      );
+
+      const optimisticTask = makeTask({ id: "FN-301", column: "todo" }) as Task;
+      delete (optimisticTask as Partial<Task>).prompt;
+      delete (optimisticTask as Partial<Task>).githubTracking;
+
+      render(
+        <TaskDetailModal
+          task={optimisticTask}
+          onClose={noop}
+          onOpenDetail={noopOpenDetail}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      await waitFor(() => {
+        // FN-4161 repro: the optimistic task prop came from a slim restart listing,
+        // so fetched full detail must win when the prop omits githubTracking.
+        expect(screen.getByLabelText("GitHub tracking status")).toHaveTextContent("Linked");
+      });
+
+      expandGithubTracking();
+      expect(screen.getByDisplayValue("runfusion/fusion")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "runfusion/fusion#301" })).toHaveAttribute("href", "https://github.com/runfusion/fusion/issues/301");
     });
 
     it("shows section when tracking is disabled and task is in an eligible column", () => {
