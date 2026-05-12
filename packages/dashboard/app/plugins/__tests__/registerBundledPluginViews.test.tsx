@@ -27,6 +27,9 @@ vi.mock("@fusion-plugin-examples/cli-printing-press/manage-view", () => ({
   CliPrintingPressManageView: (...args: unknown[]) => MockCliPrintingPressManageView(...args),
 }));
 
+// The dashboard statically registers bundled views client-side, so these views can
+// render even when engine-side PluginLoader startup failed and the persisted
+// installation row is in an error state.
 describe("registerBundledPluginViews", () => {
   beforeEach(() => {
     __test_clearPluginViewRegistry();
@@ -36,6 +39,9 @@ describe("registerBundledPluginViews", () => {
   it("registers dependency graph, roadmap, and cli printing press bundled views", () => {
     registerBundledPluginViews();
 
+    // This registration is independent of engine-side plugin load success; the
+    // dashboard can still render the Graph view while the plugin install row is errored.
+    expect(isPluginViewRegistered("fusion-plugin-dependency-graph", "graph")).toBe(true);
     expect(getPluginViewComponent("fusion-plugin-dependency-graph", "graph")).toBeTruthy();
     expect(getPluginViewComponent("fusion-plugin-roadmap", "roadmaps")).toBeTruthy();
     expect(getPluginViewComponent("fusion-plugin-cli-printing-press", "wizard")).toBeTruthy();

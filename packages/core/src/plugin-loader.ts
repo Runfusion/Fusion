@@ -10,6 +10,7 @@
  */
 
 import { basename, dirname, extname, isAbsolute, resolve } from "node:path";
+import { stat } from "node:fs/promises";
 import { copyFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { EventEmitter } from "node:events";
@@ -311,6 +312,18 @@ export class PluginLoader extends EventEmitter<{
     // Check cache first (unless bypassing cache for reload)
     if (!bypassCache && this.loadedModules.has(path)) {
       return this.loadedModules.get(path)!;
+    }
+
+    let pathStats;
+    try {
+      pathStats = await stat(path);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      throw new Error(`Plugin entry does not exist: ${path} (${errorMessage})`);
+    }
+
+    if (pathStats.isDirectory()) {
+      throw new Error(`Plugin entry must be a file, got directory: ${path}`);
     }
 
     // Dynamic import - normalize to file URL so query params are honored

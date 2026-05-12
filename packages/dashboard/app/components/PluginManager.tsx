@@ -196,7 +196,17 @@ function groupSettingsSchema(settingsSchema: Record<string, PluginSettingSchema>
   return { grouped, ungrouped };
 }
 
+function renderPluginError(plugin: PluginInstallation, className = "plugin-error-text") {
+  if (plugin.state !== "error" || !plugin.error) {
+    return null;
+  }
 
+  return (
+    <p className={className} title={plugin.error}>
+      {plugin.error}
+    </p>
+  );
+}
 
 export function PluginManager({ addToast, projectId }: PluginManagerProps) {
   const [plugins, setPlugins] = useState<PluginInstallation[]>([]);
@@ -538,7 +548,10 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
             <X size={16} />
           </button>
           <div className="plugin-detail-title">
-            <h4 className="plugin-detail-name">{selectedPlugin.name}</h4>
+            <div className="plugin-detail-title-copy">
+              <h4 className="plugin-detail-name">{selectedPlugin.name}</h4>
+              {renderPluginError(selectedPlugin, "plugin-error-text plugin-error-text--detail")}
+            </div>
             <span className="plugin-state-badge" style={{ color: STATE_COLORS[selectedPlugin.state] || STATE_COLORS.installed }}>
               {selectedPlugin.state}
             </span>
@@ -982,11 +995,16 @@ export function PluginManager({ addToast, projectId }: PluginManagerProps) {
               {installedPlugins.map((plugin) => (
                 <div key={plugin.id} className="plugin-item">
                   <div className="plugin-info">
-                    <span className="plugin-name">{plugin.name}</span>
-                    <span className="plugin-version text-muted">v{plugin.version}</span>
-                    <span className="plugin-state-badge" style={{ color: STATE_COLORS[plugin.state] || STATE_COLORS.installed }}>
-                      {plugin.state}
-                    </span>
+                    <div className="plugin-copy">
+                      <div className="plugin-copy-header">
+                        <span className="plugin-name">{plugin.name}</span>
+                        <span className="plugin-version text-muted">v{plugin.version}</span>
+                        <span className="plugin-state-badge" style={{ color: STATE_COLORS[plugin.state] || STATE_COLORS.installed }}>
+                          {plugin.state}
+                        </span>
+                      </div>
+                      {renderPluginError(plugin)}
+                    </div>
                   </div>
                   <div className="plugin-actions">
                     {plugin.state === "started" && (

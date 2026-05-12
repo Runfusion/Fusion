@@ -3,18 +3,24 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ── Mocks ────────────────────────────────────────────────────────────
 // vi.mock factories are hoisted, so we use vi.hoisted() for mock references.
 
-const { mockExistsSync, mockReadFile, mockValidatePluginManifest } = vi.hoisted(() => ({
+const { mockExistsSync, mockStatSync, mockReadFile, mockFsStat, mockCopyFile, mockValidatePluginManifest } = vi.hoisted(() => ({
   mockExistsSync: vi.fn<(path: string) => boolean>(),
+  mockStatSync: vi.fn<(path: string) => { isDirectory: () => boolean }>(),
   mockReadFile: vi.fn<(path: string, encoding: string) => Promise<string>>(),
+  mockFsStat: vi.fn<(path: string) => Promise<{ isDirectory: () => boolean }>>(),
+  mockCopyFile: vi.fn<(src: string, dest: string) => Promise<void>>(),
   mockValidatePluginManifest: vi.fn<(manifest: unknown) => { valid: boolean; errors: string[] }>(),
 }));
 
 vi.mock("node:fs", () => ({
   existsSync: mockExistsSync,
+  statSync: mockStatSync,
 }));
 
 vi.mock("node:fs/promises", () => ({
   readFile: mockReadFile,
+  stat: mockFsStat,
+  copyFile: mockCopyFile,
 }));
 
 vi.mock("@fusion/core", () => ({
@@ -194,6 +200,9 @@ async function getResolvedBundledPath(): Promise<string> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockStatSync.mockImplementation(() => ({ isDirectory: () => false }));
+  mockFsStat.mockImplementation(async () => ({ isDirectory: () => false }));
+  mockCopyFile.mockResolvedValue();
 });
 
 describe("resolvePluginEntryPath", () => {
@@ -215,6 +224,11 @@ describe("resolvePluginEntryPath", () => {
   it("falls back to src/index.ts for workspace-dev plugins without build outputs", () => {
     mockExistsSync.mockImplementation((p: string) => p.endsWith("/src/index.ts"));
     expect(resolvePluginEntryPath("/tmp/plugin")).toBe("/tmp/plugin/src/index.ts");
+  });
+
+  it("returns null when no loadable entry file exists", () => {
+    mockExistsSync.mockReturnValue(false);
+    expect(resolvePluginEntryPath("/tmp/plugin")).toBeNull();
   });
 });
 
@@ -276,7 +290,7 @@ describe("ensureBundledDependencyGraphPluginInstalled", () => {
 
   it("already installed with stale path → updates path to current bundled path", async () => {
     const bundledPath = await getResolvedBundledPath();
-    const OLD_PATH = "/old/cli/dist/plugins/fusion-plugin-dependency-graph";
+    const OLD_PATH = "/old/cli/dist/plugins/fusion-plugin-dependency-graph/bundled.js";
 
     vi.clearAllMocks();
     const manifest = setupBundleExists();
@@ -341,6 +355,51 @@ describe("ensureBundledDependencyGraphPluginInstalled", () => {
     expect(result).toBe("updated");
     expect(store.updatePlugin).toHaveBeenCalled();
     // User disabled the plugin → should NOT be loaded
+    expect(loader.loadPlugin).not.toHaveBeenCalled();
+  });
+
+  it("migrates an existing directory-backed install to the resolved entry file", async () => {
+    const bundledPath = await getResolvedBundledPath();
+    const staleDirectoryPath = "/old/cli/dist/plugins/fusion-plugin-dependency-graph";
+
+    vi.clearAllMocks();
+    setupBundleExists();
+    mockStatSync.mockImplementation((path: string) => ({
+      isDirectory: () => path === staleDirectoryPath,
+    }));
+    const store = makePluginStore();
+    const loader = makePluginLoader();
+
+    store._inject(makePlugin({ path: staleDirectoryPath }));
+
+    const result = await ensureBundledDependencyGraphPluginInstalled(
+      store as unknown as import("@fusion/core").PluginStore,
+      loader as unknown as import("@fusion/core").PluginLoader,
+    );
+
+    expect(result).toBe("updated");
+    expect(store.updatePlugin).toHaveBeenCalledWith(
+      BUNDLED_PLUGIN_ID,
+      expect.objectContaining({ path: bundledPath }),
+    );
+    expect(loader.loadPlugin).toHaveBeenCalledWith(BUNDLED_PLUGIN_ID);
+  });
+
+  it("returns missing-bundle when manifest exists but no loadable entry file exists", async () => {
+    mockExistsSync.mockImplementation((p: string) => typeof p === "string" && p.endsWith("manifest.json") && p.includes("dist"));
+    mockReadFile.mockResolvedValue(JSON.stringify(makeManifest()));
+    mockValidatePluginManifest.mockReturnValue({ valid: true, errors: [] });
+    const store = makePluginStore();
+    const loader = makePluginLoader();
+
+    const result = await ensureBundledDependencyGraphPluginInstalled(
+      store as unknown as import("@fusion/core").PluginStore,
+      loader as unknown as import("@fusion/core").PluginLoader,
+    );
+
+    expect(result).toBe("missing-bundle");
+    expect(store.registerPlugin).not.toHaveBeenCalled();
+    expect(store.updatePlugin).not.toHaveBeenCalled();
     expect(loader.loadPlugin).not.toHaveBeenCalled();
   });
 
@@ -473,5 +532,66 @@ describe("ensureBundledDependencyGraphPluginInstalled", () => {
     expect(result).toBe("installed");
     const registerCall = store.registerPlugin.mock.calls[0]?.[0] as { path: string };
     expect(registerCall.path).toContain(`${HERMES_PLUGIN_ID}/bundled.js`);
+  });
+
+  it("loads the real bundled dependency graph plugin and persists a started state", async () => {
+    const { existsSync, mkdtempSync, statSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const { cp, mkdir, readFile, rm, stat, copyFile } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const { buildSync } = await import("esbuild");
+    const { PluginLoader } = await import("../../../../core/src/plugin-loader.ts");
+    const { PluginStore } = await import("../../../../core/src/plugin-store.ts");
+
+    const repoRoot = fileURLToPath(new URL("../../../../../", import.meta.url));
+    const sourceRoot = fileURLToPath(new URL("../../../../../plugins/fusion-plugin-dependency-graph", import.meta.url));
+    const stagedRoot = fileURLToPath(new URL("../../../plugins/fusion-plugin-dependency-graph", import.meta.url));
+    const pluginStateRoot = mkdtempSync(join(tmpdir(), "fn4128-bundled-plugin-"));
+
+    await rm(stagedRoot, { recursive: true, force: true });
+    await mkdir(stagedRoot, { recursive: true });
+    await cp(join(sourceRoot, "manifest.json"), join(stagedRoot, "manifest.json"));
+
+    buildSync({
+      entryPoints: [join(sourceRoot, "src", "index.ts")],
+      outfile: join(stagedRoot, "bundled.js"),
+      bundle: true,
+      format: "esm",
+      platform: "node",
+      alias: {
+        "@fusion/plugin-sdk": join(repoRoot, "packages", "plugin-sdk", "src", "index.ts"),
+      },
+      logLevel: "silent",
+    });
+
+    mockExistsSync.mockImplementation((path: string) => existsSync(path));
+    mockStatSync.mockImplementation((path: string) => statSync(path));
+    mockReadFile.mockImplementation((path: string, encoding: string) => readFile(path, encoding as BufferEncoding));
+    mockFsStat.mockImplementation((path: string) => stat(path));
+    mockCopyFile.mockImplementation((src: string, dest: string) => copyFile(src, dest));
+    mockValidatePluginManifest.mockReturnValue({ valid: true, errors: [] });
+
+    try {
+      const pluginStore = new PluginStore(pluginStateRoot, { inMemoryDb: true, centralGlobalDir: pluginStateRoot });
+      await pluginStore.init();
+      const taskStore = {
+        getRootDir: () => repoRoot,
+        logActivity: vi.fn(),
+        getPluginStore: () => pluginStore,
+      } as any;
+      const loader = new PluginLoader({ pluginStore, taskStore });
+
+      const result = await ensureBundledDependencyGraphPluginInstalled(pluginStore, loader);
+      const storedPlugin = await pluginStore.getPlugin(BUNDLED_PLUGIN_ID);
+
+      expect(result).toBe("installed");
+      expect(storedPlugin.path.endsWith("/fusion-plugin-dependency-graph/bundled.js")).toBe(true);
+      expect(storedPlugin.state).toBe("started");
+      expect(storedPlugin.error ?? null).toBeNull();
+    } finally {
+      await rm(stagedRoot, { recursive: true, force: true });
+      await rm(pluginStateRoot, { recursive: true, force: true });
+    }
   });
 });

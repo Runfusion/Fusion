@@ -425,6 +425,31 @@ describe("PluginLoader", () => {
       expect(updated.state).toBe("started");
     });
 
+    it("recovers a previously errored plugin to started and clears the stored error", async () => {
+      await pluginStore.init();
+
+      const plugin = makePlugin(makeManifest({ id: "recover-error-test" }));
+      const pluginDir = join(rootDir, "plugins");
+      const pluginPath = await writePluginModule(pluginDir, "recover-error.js", plugin);
+
+      await pluginStore.registerPlugin({
+        manifest: plugin.manifest,
+        path: pluginPath,
+      });
+      await pluginStore.updatePluginState("recover-error-test", "error", "previous load failed");
+
+      const loader = new PluginLoader({
+        pluginStore,
+        taskStore: mockTaskStore,
+      });
+
+      await loader.loadPlugin("recover-error-test");
+
+      const updated = await pluginStore.getPlugin("recover-error-test");
+      expect(updated.state).toBe("started");
+      expect(updated.error ?? null).toBeNull();
+    });
+
     it("skips disabled plugins", async () => {
       await pluginStore.init();
 

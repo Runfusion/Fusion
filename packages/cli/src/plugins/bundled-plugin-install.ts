@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,9 +69,12 @@ function resolveBundledPluginDir(pluginId: string): string | null {
  *   1. ./bundled.js   (esbuild-bundled, shipped in npm tarball)
  *   2. ./dist/index.js (legacy prebuilt fallback)
  *   3. ./src/index.ts (workspace/dev fallback when no bundle exists)
- *   4. fall back to the directory itself
+ *
+ * Returns null when the directory exists but none of the loadable entry files
+ * are present. Callers must treat that as a missing bundle rather than
+ * persisting a directory path that Node cannot import.
  */
-export function resolvePluginEntryPath(pluginDir: string): string {
+export function resolvePluginEntryPath(pluginDir: string): string | null {
   const candidates = [
     join(pluginDir, "bundled.js"),
     join(pluginDir, "dist", "index.js"),
@@ -82,7 +85,15 @@ export function resolvePluginEntryPath(pluginDir: string): string {
       return candidate;
     }
   }
-  return pluginDir;
+  return null;
+}
+
+function isDirectoryPath(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 export async function ensureBundledPluginInstalled(
@@ -105,16 +116,22 @@ export async function ensureBundledPluginInstalled(
   const manifest = await loadManifest(bundledDir);
   const entryPath = resolvePluginEntryPath(bundledDir);
 
+  if (!entryPath) {
+    console.warn(`[plugins] Bundled plugin "${pluginId}" is missing a loadable entry file in ${bundledDir}`);
+    return "missing-bundle";
+  }
+
   if (existingPlugin) {
-    const pathChanged = existingPlugin.path !== entryPath;
+    const existingPathIsDirectory = isDirectoryPath(existingPlugin.path);
+    const pathChanged = existingPathIsDirectory || existingPlugin.path !== entryPath;
     const versionChanged = existingPlugin.version !== manifest.version;
 
     if (!pathChanged && !versionChanged) {
       if (existingPlugin.enabled) {
         try {
           await pluginLoader.loadPlugin(existingPlugin.id);
-        } catch {
-          // best-effort
+        } catch (err) {
+          console.warn("[plugins] failed to load bundled plugin", existingPlugin.id, err);
         }
       }
       return "already-installed";
@@ -128,8 +145,8 @@ export async function ensureBundledPluginInstalled(
     if (existingPlugin.enabled) {
       try {
         await pluginLoader.loadPlugin(existingPlugin.id);
-      } catch {
-        // best-effort
+      } catch (err) {
+        console.warn("[plugins] failed to load bundled plugin", existingPlugin.id, err);
       }
     }
 
@@ -144,8 +161,8 @@ export async function ensureBundledPluginInstalled(
   if (plugin.enabled) {
     try {
       await pluginLoader.loadPlugin(plugin.id);
-    } catch {
-      // best-effort
+    } catch (err) {
+      console.warn("[plugins] failed to load bundled plugin", plugin.id, err);
     }
   }
 
