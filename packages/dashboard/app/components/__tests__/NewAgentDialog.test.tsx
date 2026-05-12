@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { loadAllAppCss } from "../../test/cssFixture";
 import { useState } from "react";
 import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -191,6 +192,28 @@ function getStepZeroField(label: string | RegExp) {
   return screen.getByLabelText(label);
 }
 
+function extractMobileMediaBlocks(content: string): string {
+  const blocks: string[] = [];
+  const regex = /@media\s*\(\s*max-width:\s*768px\s*\)\s*\{/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(content)) !== null) {
+    const startIdx = match.index + match[0].length;
+    let braceCount = 1;
+    let endIdx = startIdx;
+    while (braceCount > 0 && endIdx < content.length) {
+      if (content[endIdx] === "{") braceCount++;
+      if (content[endIdx] === "}") braceCount--;
+      endIdx++;
+    }
+    if (braceCount === 0) {
+      blocks.push(content.slice(startIdx, endIdx - 1));
+    }
+  }
+
+  return blocks.join("\n");
+}
+
 describe("NewAgentDialog", () => {
   const mockOnClose = vi.fn();
   const mockOnCreated = vi.fn();
@@ -203,6 +226,14 @@ describe("NewAgentDialog", () => {
     mockFetchPluginRuntimes.mockResolvedValue(MOCK_PLUGIN_RUNTIMES);
     mockUpdateGlobalSettings.mockResolvedValue({} as unknown as import("@fusion/core").Settings);
     mockFetchDiscoveredSkills.mockResolvedValue(MOCK_SKILLS_RESPONSE);
+  });
+
+  describe("mobile layout", () => {
+    it("removes the preset grid scroll cap inside the mobile media block", () => {
+      const mobileCss = extractMobileMediaBlocks(loadAllAppCss());
+
+      expect(mobileCss).toMatch(/\.agent-presets-grid\s*\{[^}]*max-height:\s*none;[^}]*overflow-y:\s*visible;/);
+    });
   });
 
   describe("modal visibility", () => {

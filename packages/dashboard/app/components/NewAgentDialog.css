@@ -670,4 +670,9 @@
   .agent-dialog-interview-btn {
     width: 100%;
   }
+
+  .agent-presets-grid {
+    max-height: none;
+    overflow-y: visible;
+  }
 }
