@@ -30,8 +30,8 @@ describe("scroll-snap CSS", () => {
     );
     const afterMedia = css.slice(mediaStart);
 
-    it("contains scroll-snap-type: x mandatory", () => {
-      expect(css).toContain("scroll-snap-type: x mandatory");
+    it("contains scroll-snap-type: x proximity", () => {
+      expect(css).toContain("scroll-snap-type: x proximity");
     });
 
     it("contains scroll-snap-align: center (not start)", () => {
@@ -53,7 +53,7 @@ describe("scroll-snap CSS", () => {
 
     it("scroll-snap rules are inside a @media block", () => {
       expect(mediaStart).toBeGreaterThanOrEqual(0);
-      expect(afterMedia).toContain("scroll-snap-type: x mandatory");
+      expect(afterMedia).toContain("scroll-snap-type: x proximity");
       expect(afterMedia).toContain("scroll-snap-align: center");
     });
   });
