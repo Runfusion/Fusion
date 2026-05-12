@@ -2203,7 +2203,90 @@ describe("TaskDetailModal", () => {
 
       expect(screen.getByText("GitHub tracking")).toBeTruthy();
       expect(screen.getByText("Tracking is currently disabled")).toBeTruthy();
-      expect(screen.queryByLabelText("Enable GitHub tracking")).toBeNull();
+      expect(screen.getByRole("button", { name: "Enable GitHub tracking" })).toBeInTheDocument();
+    });
+
+    it("enables GitHub tracking via the inline header button without expanding the disclosure", async () => {
+      const { updateTask } = await import("../../api");
+      const mockUpdate = vi.mocked(updateTask);
+      const addToast = vi.fn();
+      mockUpdate.mockResolvedValueOnce({ id: "FN-001" } as Task);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            id: "FN-001",
+            column: "todo",
+            githubTracking: {
+              enabled: false,
+            },
+          })}
+          onClose={noop}
+          onOpenDetail={noopOpenDetail}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={addToast}
+        />,
+      );
+
+      const expandButton = screen.getByRole("button", { name: "Expand GitHub tracking details" });
+      expect(expandButton).toHaveAttribute("aria-expanded", "false");
+
+      fireEvent.click(screen.getByRole("button", { name: "Enable GitHub tracking" }));
+
+      await waitFor(() => {
+        expect(mockUpdate).toHaveBeenCalledWith("FN-001", { githubTracking: { enabled: true } }, undefined);
+      });
+      expect(addToast).not.toHaveBeenCalledWith(expect.stringContaining("Failed to update FN-001"), "error");
+      expect(screen.getByRole("button", { name: "Expand GitHub tracking details" })).toHaveAttribute("aria-expanded", "false");
+      expect(screen.queryByRole("button", { name: "Collapse GitHub tracking details" })).toBeNull();
+    });
+
+    it("hides the inline enable button when tracking is already enabled", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({ column: "todo", githubTracking: { enabled: true } })}
+          onClose={noop}
+          onOpenDetail={noopOpenDetail}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByRole("button", { name: "Enable GitHub tracking" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Expand GitHub tracking details" })).toBeInTheDocument();
+    });
+
+    it("hides the inline enable button when an issue is already linked", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "todo",
+            githubTracking: {
+              enabled: false,
+              issue: {
+                owner: "runfusion",
+                repo: "fusion",
+                number: 456,
+                url: "https://github.com/runfusion/fusion/issues/456",
+                createdAt: "2026-01-01T00:00:00Z",
+              },
+            },
+          })}
+          onClose={noop}
+          onOpenDetail={noopOpenDetail}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByRole("button", { name: "Enable GitHub tracking" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Expand GitHub tracking details" })).toBeInTheDocument();
     });
 
     it("hides section when tracking is disabled and task is not in an eligible column", () => {
