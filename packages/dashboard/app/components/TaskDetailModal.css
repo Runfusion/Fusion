@@ -1592,8 +1592,16 @@
   }
 
   .detail-source-summary {
-    flex: 1 1 100%;
     flex-wrap: wrap;
+  }
+
+  .detail-source-section .detail-source-summary {
+    flex: 1 1 100%;
+  }
+
+  .detail-github-tracking-section .detail-source-summary {
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .detail-github-tracking-enable {

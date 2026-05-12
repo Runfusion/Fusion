@@ -2433,13 +2433,23 @@ describe("TaskDetailModal", () => {
       const mobileCss = getMediaBlocks(css, "@media (max-width: 768px)").join("\n");
       const enableRule = getRuleBlock(mobileCss, ".detail-github-tracking-enable");
       const headerRule = getRuleBlock(mobileCss, ".detail-source-header");
+      const githubSummaryRule = getRuleBlock(mobileCss, ".detail-github-tracking-section .detail-source-summary");
+      const sourceSummaryRule = getRuleBlock(mobileCss, ".detail-source-section .detail-source-summary");
 
       expect(mobileCss).toBeTruthy();
       expect(enableRule).toBeTruthy();
       expect(headerRule).toBeTruthy();
+      expect(githubSummaryRule).toBeTruthy();
+      expect(sourceSummaryRule).toBeTruthy();
       expect(enableRule).not.toMatch(/\border\s*:/);
       expect(enableRule).not.toMatch(/\bwidth\s*:\s*100%/);
       expect(headerRule).toMatch(/\bflex-wrap\s*:\s*wrap/);
+      expect(githubSummaryRule).toMatch(/\bflex\s*:\s*1\s+1\s+auto/);
+      expect(githubSummaryRule).toMatch(/\bmin-width\s*:\s*0/);
+      expect(githubSummaryRule).not.toMatch(/\bflex\s*:\s*1\s+1\s+100%/);
+      expect(githubSummaryRule).not.toMatch(/\bflex-basis\s*:\s*100%/);
+      expect(githubSummaryRule).not.toMatch(/\bwidth\s*:\s*100%/);
+      expect(sourceSummaryRule).toMatch(/\bflex\s*:\s*1\s+1\s+100%/);
     });
 
     it("hides section when tracking is disabled and task is not in an eligible column", () => {
