@@ -736,8 +736,13 @@ function TaskCardComponent({
 
   // Check if this card can be edited inline
   const canEdit = EDITABLE_COLUMNS.has(task.column) && !isAgentActive && !isPaused && !queued && onUpdateTask;
+  const githubTrackedIssue = task.githubTracking?.issue;
+  const hasGithubTrackingLink = Boolean(githubTrackedIssue);
   const hasGitHubBadge = Boolean(task.prInfo || task.issueInfo);
   const isGitHubImportedTask = task.sourceType === "github_import";
+  const showTrackingIndicator = hasGithubTrackingLink
+    && !isGitHubImportedTask
+    && !(task.issueInfo && task.issueInfo.number === githubTrackedIssue?.number);
   const branchMetadata = useMemo(() => getVisibleTaskCardBranches(task), [task.id, task.branch, task.baseBranch]);
   const hasBranchMetadata = Boolean(branchMetadata.branch || branchMetadata.baseBranch);
   const sourceIssueUrl = getIssueUrlFromMetadata(task.sourceMetadata);
@@ -1602,7 +1607,7 @@ function TaskCardComponent({
           </>
         );
       })()}
-      {(filesChangedButton || timeIndicator || isGitHubImportedTask) && (
+      {(filesChangedButton || timeIndicator || isGitHubImportedTask || showTrackingIndicator) && (
         <div className="card-footer-row">
           {filesChangedButton}
           {isGitHubImportedTask && (
@@ -1613,6 +1618,19 @@ function TaskCardComponent({
             >
               <ProviderIcon provider="github" size="sm" />
             </span>
+          )}
+          {showTrackingIndicator && githubTrackedIssue && (
+            <a
+              className="card-source-provenance card-github-tracking-link"
+              href={githubTrackedIssue.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`Linked GitHub issue: ${githubTrackedIssue.owner}/${githubTrackedIssue.repo}#${githubTrackedIssue.number}`}
+              aria-label={`Linked GitHub issue #${githubTrackedIssue.number}`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <ProviderIcon provider="github" size="sm" />
+            </a>
           )}
           {timeIndicator && (
             <span

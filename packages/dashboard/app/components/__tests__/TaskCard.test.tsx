@@ -1019,6 +1019,131 @@ describe("TaskCard", () => {
     expect(screen.queryByTestId("provider-icon-github")).toBeNull();
   });
 
+  it("renders a GitHub tracking link for tracked issues on non-imported tasks", () => {
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "todo",
+          sourceType: "dashboard_ui",
+          githubTracking: {
+            issue: {
+              owner: "owner",
+              repo: "repo",
+              number: 42,
+              url: "https://github.com/owner/repo/issues/42",
+              createdAt: "2026-05-12T00:00:00.000Z",
+            },
+          },
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const link = screen.getByRole("link", { name: "Linked GitHub issue #42" });
+    expect(link.getAttribute("href")).toBe("https://github.com/owner/repo/issues/42");
+    expect(link.getAttribute("title")).toBe("Linked GitHub issue: owner/repo#42");
+    expect(link).toHaveClass("card-github-tracking-link");
+    expect(screen.getByTestId("provider-icon-github")).toBeDefined();
+  });
+
+  it("does not render a GitHub tracking link when githubTracking is absent", () => {
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "todo",
+          sourceType: "dashboard_ui",
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.queryByRole("link", { name: /Linked GitHub issue/i })).toBeNull();
+  });
+
+  it("does not render a GitHub tracking link for github_import tasks", () => {
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "todo",
+          sourceType: "github_import",
+          sourceMetadata: { issueUrl: "https://github.com/owner/repo/issues/42" },
+          githubTracking: {
+            issue: {
+              owner: "owner",
+              repo: "repo",
+              number: 42,
+              url: "https://github.com/owner/repo/issues/42",
+              createdAt: "2026-05-12T00:00:00.000Z",
+            },
+          },
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.queryByRole("link", { name: /Linked GitHub issue/i })).toBeNull();
+    expect(screen.getByLabelText("Imported from GitHub")).toBeDefined();
+  });
+
+  it("does not render a GitHub tracking link when a matching issue badge is already shown", () => {
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "todo",
+          sourceType: "dashboard_ui",
+          githubTracking: {
+            issue: {
+              owner: "owner",
+              repo: "repo",
+              number: 42,
+              url: "https://github.com/owner/repo/issues/42",
+              createdAt: "2026-05-12T00:00:00.000Z",
+            },
+          },
+          issueInfo: {
+            url: "https://github.com/owner/repo/issues/42",
+            number: 42,
+            state: "open",
+            title: "Issue",
+          },
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.queryByRole("link", { name: /Linked GitHub issue/i })).toBeNull();
+  });
+
+  it("clicking the GitHub tracking link does not open the task detail modal", () => {
+    const onOpenDetail = vi.fn();
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "todo",
+          sourceType: "dashboard_ui",
+          githubTracking: {
+            issue: {
+              owner: "owner",
+              repo: "repo",
+              number: 42,
+              url: "https://github.com/owner/repo/issues/42",
+              createdAt: "2026-05-12T00:00:00.000Z",
+            },
+          },
+        })}
+        onOpenDetail={onOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "Linked GitHub issue #42" }));
+    expect(onOpenDetail).not.toHaveBeenCalled();
+  });
+
   it("renders agent-created provenance badge for automation tasks and prefers sourceMetadata.agentName", () => {
     const { container } = render(
       <TaskCard

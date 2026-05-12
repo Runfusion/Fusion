@@ -615,6 +615,30 @@
   align-items: center;
 }
 
+.card-github-tracking-link {
+  min-width: calc(var(--space-xl) + var(--space-md));
+  min-height: calc(var(--space-xl) + var(--space-md));
+  padding: var(--space-xs);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.card-github-tracking-link:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.card-github-tracking-link:focus-visible {
+  background: var(--card-hover);
+  color: var(--text);
+  box-shadow: var(--focus-ring-strong);
+  outline: none;
+}
+
 .card-time-indicator {
   display: inline-flex;
   align-items: center;
@@ -1137,6 +1161,11 @@
   .card-time-indicator {
     padding: var(--space-xs) var(--space-sm);
     font-size: 0.625rem;
+  }
+
+  .card-github-tracking-link {
+    min-width: calc(var(--space-xl) + var(--space-xl));
+    min-height: calc(var(--space-xl) + var(--space-xl));
   }
 
   /* Card: smaller status badges for 280px width */
