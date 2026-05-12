@@ -108,5 +108,12 @@
     min-width: 200px;
     max-width: min(280px, 100%);
   }
+
+  .agent-mention-popup--below,
+  .agent-mention-popup--above {
+    bottom: calc(100% + var(--space-xs));
+    top: auto;
+    left: 0;
+  }
 }
 

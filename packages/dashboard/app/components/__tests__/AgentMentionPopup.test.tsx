@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { Agent } from "@fusion/core";
 import { AgentMentionPopup } from "../AgentMentionPopup";
+import { loadAllAppCss } from "../../test/cssFixture";
 
 vi.mock("lucide-react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("lucide-react")>();
@@ -126,6 +127,44 @@ describe("AgentMentionPopup", () => {
     );
 
     expect(screen.getByText("No agents found")).toBeInTheDocument();
+  });
+
+  it("keeps the below modifier class when rendered below", () => {
+    render(
+      <AgentMentionPopup
+        agents={agents}
+        filter=""
+        highlightedIndex={0}
+        visible={true}
+        onSelect={vi.fn()}
+        position="below"
+      />,
+    );
+
+    expect(screen.getByTestId("agent-mention-popup")).toHaveClass("agent-mention-popup--below");
+  });
+
+  it("keeps the above modifier class when rendered above", () => {
+    render(
+      <AgentMentionPopup
+        agents={agents}
+        filter=""
+        highlightedIndex={0}
+        visible={true}
+        onSelect={vi.fn()}
+        position="above"
+      />,
+    );
+
+    expect(screen.getByTestId("agent-mention-popup")).toHaveClass("agent-mention-popup--above");
+  });
+
+  it("anchors the below modifier above the input inside the mobile media query", async () => {
+    const css = await loadAllAppCss();
+
+    expect(css).toMatch(
+      /@media\s*\(max-width:\s*768px\)\s*\{\s*\.agent-mention-popup\s*\{[^}]*\}\s*\.agent-mention-popup--below,\s*\.agent-mention-popup--above\s*\{[^}]*bottom:\s*calc\(100%\s*\+\s*var\(--space-xs\)\);[^}]*top:\s*auto;[^}]*\}/,
+    );
   });
 
   it("shows room sections with members first and member dot label", () => {
