@@ -28,9 +28,6 @@ jobs:
       - name: Setup Node and install dependencies
         uses: ./.github/actions/setup-node-pnpm
 
-      - name: Install Bun
-        uses: oven-sh/setup-bun@v2
-
       - name: Test (deterministic shard)
         run: pnpm test:ci:shard --shard ${{ matrix.shard }} --total 3
 
