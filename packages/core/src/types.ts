@@ -2173,6 +2173,11 @@ export interface ProjectSettings {
    *  given one shot to retry with the configured fallback model before the
    *  step is reported as failed. Default: 360_000 (6 minutes). */
   workflowStepTimeoutMs?: number;
+  /** When true (default), workflow revision feedback that explicitly names files
+   *  outside the task's declared File Scope is forked into a dependent follow-up
+   *  task instead of being appended to the original PROMPT.md. Set to false to
+   *  preserve the legacy append-and-rerun behavior. */
+  workflowRevisionForkOnScopeMismatch?: boolean;
   /** When true, out-of-scope file changes block merge instead of just logging warnings.
    *  Useful for teams that want strict enforcement of declared File Scope.
    *  Default: false (soft guardrail — warnings only). */

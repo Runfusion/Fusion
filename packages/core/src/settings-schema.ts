@@ -208,6 +208,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   worktreeRebaseLocalBase: true,
   mergeConflictStrategy: "smart-prefer-main",
   workflowStepTimeoutMs: 360_000,
+  workflowRevisionForkOnScopeMismatch: true,
   strictScopeEnforcement: false,
   buildRetryCount: 0,
   verificationFixRetries: 3,

@@ -104,10 +104,12 @@ handle the case where the user account is locked.
 
 When a revision is requested:
 
-1. The executor generates a **Workflow Revision Instructions** section in the task's `PROMPT.md`
-2. All step statuses are reset to `pending` for a fresh execution pass
-3. The task remains in `in-progress` and a fresh executor session is scheduled
-4. The agent receives the revision feedback at the start of its next session
+1. Fusion scope-checks any explicit file paths named in the feedback against the task's declared `## File Scope`
+2. In-scope feedback is appended to a **Workflow Revision Instructions** section in the task's `PROMPT.md`
+3. Explicitly out-of-scope feedback is forked into a dependent follow-up triage task instead of mutating the original task branch
+4. If both kinds are present, Fusion splits the feedback: the original task reruns only with the retained in-scope block while the follow-up captures the unrelated work
+5. If no in-scope feedback remains after splitting, the original task is left untouched and continues its normal completion path while only the follow-up task is created
+6. When the original task retains in-scope feedback, only the last implementation step is reopened and a fresh executor session is scheduled
 
 ### Feedback Format
 
@@ -120,6 +122,8 @@ REQUEST REVISION
 ```
 
 The revision block replaces any prior revision instructions (no accumulation).
+
+By default this split-and-fork behavior is enabled through the project setting `workflowRevisionForkOnScopeMismatch`. Set it to `false` to restore the legacy behavior that appends all workflow revision feedback to the original task even when it references files outside the declared File Scope.
 
 ### Hard Failures vs Revisions
 

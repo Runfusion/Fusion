@@ -175,6 +175,7 @@ const defaultSettings = {
   pushAfterMerge: false,
   pushRemote: "origin",
   verificationFixRetries: 2,
+  workflowRevisionForkOnScopeMismatch: true,
   recycleWorktrees: false,
   worktreeNaming: "random",
   includeTaskIdInCommit: true,
@@ -1965,6 +1966,34 @@ describe("SettingsModal", () => {
       await userEvent.click(moreDetailsSummaries[0]);
 
       expect(screen.getByText(/When enabled, tasks that pass review are automatically merged/i)).toBeVisible();
+    });
+
+    it("loads workflow revision fork checkbox from project settings", async () => {
+      renderModal({ initialSection: "merge" });
+      await waitForSettingsModalReady();
+
+      const checkbox = screen.getByRole("checkbox", {
+        name: /fork scope-mismatched workflow revisions into follow-up tasks/i,
+      });
+      expect(checkbox).toBeChecked();
+    });
+
+    it("saves workflow revision fork checkbox changes", async () => {
+      renderModal({ initialSection: "merge" });
+      await waitForSettingsModalReady();
+
+      const checkbox = screen.getByRole("checkbox", {
+        name: /fork scope-mismatched workflow revisions into follow-up tasks/i,
+      });
+      await userEvent.click(checkbox);
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdateSettings).toHaveBeenCalledTimes(1);
+      });
+
+      const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload.workflowRevisionForkOnScopeMismatch).toBe(false);
     });
 
     it("shows Push Remote input when push-after-merge is enabled", async () => {

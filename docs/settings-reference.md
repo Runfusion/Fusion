@@ -208,6 +208,7 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `autoResolveConflicts` | `boolean` | `true` | Enable automatic merge conflict resolution. |
 | `smartConflictResolution` | `boolean` | `true` | Alias/preferred flag for smart conflict handling. |
 | `mergerAutostashMaxAgeHours` | `number` | `24` | Maximum autostash age in hours before startup/periodic stale-stash sweep drops `fusion-merger-autostash:*` leftovers (minimum `1`). |
+| `workflowRevisionForkOnScopeMismatch` | `boolean` | `true` | When enabled, workflow revision feedback that explicitly names files outside the task's declared File Scope is forked into a dependent follow-up triage task instead of being appended to the original task's `PROMPT.md`. Set to `false` to keep the legacy append-and-rerun behavior. |
 | `strictScopeEnforcement` | `boolean` | `false` | Block merges on out-of-scope file changes. |
 | `buildRetryCount` | `number` | `0` | Build retry attempts during merge. |
 | `verificationFixRetries` | `number` | `3` | In-merge auto-fix retry attempts after deterministic test/build verification failures (0-3). |

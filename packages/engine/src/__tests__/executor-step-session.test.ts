@@ -2137,6 +2137,7 @@ describe("Workflow Steps Execution", () => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
+    store.parseFileScopeFromPrompt.mockResolvedValue(["src/auth.ts"]);
 
     // First call: main agent with fn_task_done
     // Second call: workflow step agent that returns REQUEST REVISION
@@ -2206,7 +2207,9 @@ describe("Workflow Steps Execution", () => {
       "FN-001",
       expect.stringContaining("requested revision"),
       expect.stringContaining("SQL injection"),
+      expect.objectContaining({ agentId: "executor" }),
     );
+    expect(store.createTask).not.toHaveBeenCalled();
 
     // Workflow step result should be marked as failed
     expect(store.updateTask).toHaveBeenCalledWith(
@@ -2227,6 +2230,294 @@ describe("Workflow Steps Execution", () => {
       "FN-001",
       expect.objectContaining({ status: "failed", error: "Workflow step failed" }),
     );
+  });
+
+  it("forks out-of-scope workflow revision feedback into a follow-up task and leaves the original task untouched", async () => {
+    const store = createMockStore();
+
+    store.getTask.mockResolvedValue({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Implement", status: "done" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      prompt: "# test\n## File Scope\n- `packages/engine/src/executor.ts`\n## Steps\n### Step 0: Implement\n- [x] check",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    store.parseFileScopeFromPrompt.mockResolvedValue(["packages/engine/src/executor.ts"]);
+
+    store.getWorkflowStep.mockResolvedValue({
+      id: "WS-001",
+      name: "Security Audit",
+      description: "Check for vulnerabilities",
+      prompt: "Scan for security issues.",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    let callIdx = 0;
+    let subscribeHandler: any;
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      callIdx++;
+      if (callIdx === 1) {
+        const customTools = opts.customTools || [];
+        return {
+          session: {
+            prompt: vi.fn().mockImplementation(async () => {
+              const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
+              if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
+            }),
+            dispose: vi.fn(),
+            subscribe: vi.fn(),
+            on: vi.fn(),
+            sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+            state: {},
+          },
+        };
+      }
+
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            subscribeHandler?.({
+              type: "message_update",
+              assistantMessageEvent: { type: "text_delta", delta: "REQUEST REVISION\n\nFix `packages/core/src/types.ts` before merge." },
+            });
+          }),
+          dispose: vi.fn(),
+          subscribe: vi.fn((handler: any) => {
+            subscribeHandler = handler;
+          }),
+          state: {},
+        },
+      };
+    }) as any);
+
+    const onComplete = vi.fn();
+    const executor = new TaskExecutor(store, "/tmp/test", { onComplete });
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Implement", status: "done" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(store.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      title: expect.stringContaining("workflow follow-up"),
+      dependencies: ["FN-001"],
+      source: expect.objectContaining({
+        sourceType: "workflow_step",
+        sourceParentTaskId: "FN-001",
+      }),
+    }));
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", expect.objectContaining({ status: null, sessionFile: null }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+    expect(onComplete).toHaveBeenCalled();
+  });
+
+  it("splits mixed workflow revision feedback between the original task and a follow-up task", async () => {
+    const store = createMockStore();
+
+    store.getTask.mockResolvedValue({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Implement", status: "done" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      prompt: "# test\n## File Scope\n- `packages/engine/src/executor.ts`\n## Steps\n### Step 0: Implement\n- [x] check",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    store.parseFileScopeFromPrompt.mockResolvedValue(["packages/engine/src/executor.ts"]);
+
+    store.getWorkflowStep.mockResolvedValue({
+      id: "WS-001",
+      name: "Security Audit",
+      description: "Check for vulnerabilities",
+      prompt: "Scan for security issues.",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    let callIdx = 0;
+    let subscribeHandler: any;
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      callIdx++;
+      if (callIdx === 1) {
+        const customTools = opts.customTools || [];
+        return {
+          session: {
+            prompt: vi.fn().mockImplementation(async () => {
+              const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
+              if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
+            }),
+            dispose: vi.fn(),
+            subscribe: vi.fn(),
+            on: vi.fn(),
+            sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+            state: {},
+          },
+        };
+      }
+
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            subscribeHandler?.({
+              type: "message_update",
+              assistantMessageEvent: {
+                type: "text_delta",
+                delta: "REQUEST REVISION\n\nTighten `packages/engine/src/executor.ts`.\n\nAdd the setting in `packages/core/src/settings-schema.ts`.",
+              },
+            });
+          }),
+          dispose: vi.fn(),
+          subscribe: vi.fn((handler: any) => {
+            subscribeHandler = handler;
+          }),
+          state: {},
+        },
+      };
+    }) as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Implement", status: "done" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(store.createTask).toHaveBeenCalledTimes(1);
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-001",
+      expect.stringContaining("split feedback"),
+      expect.stringContaining("packages/engine/src/executor.ts"),
+      expect.objectContaining({ agentId: "executor" }),
+    );
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({ status: null, sessionFile: null }));
+  });
+
+  it("preserves legacy append-and-rerun behavior when workflow revision forking is disabled", async () => {
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      workflowRevisionForkOnScopeMismatch: false,
+      worktreeInitCommand: undefined,
+    });
+
+    store.getTask.mockResolvedValue({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Implement", status: "done" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      prompt: "# test\n## File Scope\n- `packages/engine/src/executor.ts`\n## Steps\n### Step 0: Implement\n- [x] check",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    store.parseFileScopeFromPrompt.mockResolvedValue(["packages/engine/src/executor.ts"]);
+    store.getWorkflowStep.mockResolvedValue({
+      id: "WS-001",
+      name: "Security Audit",
+      description: "Check for vulnerabilities",
+      prompt: "Scan for security issues.",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    let callIdx = 0;
+    let subscribeHandler: any;
+    mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+      callIdx++;
+      if (callIdx === 1) {
+        const customTools = opts.customTools || [];
+        return {
+          session: {
+            prompt: vi.fn().mockImplementation(async () => {
+              const taskDoneTool = customTools.find((t: any) => t.name === "fn_task_done");
+              if (taskDoneTool) await taskDoneTool.execute("tool-1", {});
+            }),
+            dispose: vi.fn(),
+            subscribe: vi.fn(),
+            on: vi.fn(),
+            sessionManager: { getLeafId: vi.fn().mockReturnValue("leaf-1") },
+            state: {},
+          },
+        };
+      }
+
+      return {
+        session: {
+          prompt: vi.fn().mockImplementation(async () => {
+            subscribeHandler?.({
+              type: "message_update",
+              assistantMessageEvent: { type: "text_delta", delta: "REQUEST REVISION\n\nFix `packages/core/src/types.ts` before merge." },
+            });
+          }),
+          dispose: vi.fn(),
+          subscribe: vi.fn((handler: any) => {
+            subscribeHandler = handler;
+          }),
+          state: {},
+        },
+      };
+    }) as any);
+
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await executor.execute({
+      id: "FN-001",
+      title: "Test",
+      description: "Test task",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ name: "Implement", status: "done" }],
+      currentStep: 0,
+      log: [],
+      enabledWorkflowSteps: ["WS-001"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    expect(store.createTask).not.toHaveBeenCalled();
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({ status: null, sessionFile: null }));
   });
 
   it("passing workflow step moves task to in-review normally", async () => {

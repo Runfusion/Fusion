@@ -3581,6 +3581,25 @@ export function SettingsModal({
               </details>
             </div>
             <div className="form-group">
+              <label htmlFor="workflowRevisionForkOnScopeMismatch" className="checkbox-label">
+                <input
+                  id="workflowRevisionForkOnScopeMismatch"
+                  type="checkbox"
+                  checked={form.workflowRevisionForkOnScopeMismatch !== false}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, workflowRevisionForkOnScopeMismatch: e.target.checked }))
+                  }
+                />
+                Fork scope-mismatched workflow revisions into follow-up tasks
+              </label>
+              <details className="settings-option-details">
+                <summary>More details</summary>
+                <small>
+                  When enabled, workflow revision feedback that explicitly names files outside the original task&apos;s declared File Scope is split into a dependent follow-up task instead of being appended to the current task&apos;s PROMPT.md.
+                </small>
+              </details>
+            </div>
+            <div className="form-group">
               <label htmlFor="verificationFixRetries">Verification auto-fix retries</label>
               <input
                 id="verificationFixRetries"
