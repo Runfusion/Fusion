@@ -1975,6 +1975,32 @@ describe("AgentStore", () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.reason).toMatch(/requires an "executor"-role agent/);
+      expect(result.reason).toMatch(/durable "engineer" supported only for explicit routing/);
+
+      const claimedTask = await taskStore.getTask(taskId);
+      expect(claimedTask?.assignedAgentId).toBeUndefined();
+    });
+
+    it("claimTaskForAgent allows engineer claim for explicitly assigned implementation tasks", async () => {
+      const engineer = await store.createAgent({ name: "Engineer", role: "engineer" });
+      await taskStore.updateTask(taskId, { assignedAgentId: engineer.id });
+
+      const result = await store.claimTaskForAgent(engineer.id, taskId);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const claimedTask = await taskStore.getTask(taskId);
+      expect(claimedTask?.assignedAgentId).toBe(engineer.id);
+      expect(claimedTask?.checkedOutBy).toBe(engineer.id);
+    });
+
+    it("claimTaskForAgent rejects engineer auto-claim for unassigned implementation tasks", async () => {
+      const engineer = await store.createAgent({ name: "Engineer", role: "engineer" });
+
+      const result = await store.claimTaskForAgent(engineer.id, taskId);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toMatch(/requires an "executor"-role agent/);
 
       const claimedTask = await taskStore.getTask(taskId);
       expect(claimedTask?.assignedAgentId).toBeUndefined();

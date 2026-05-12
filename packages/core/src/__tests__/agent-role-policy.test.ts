@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   canAgentTakeImplementationTask,
+  canAgentTakeImplementationTaskForBacklogPickup,
+  canAgentTakeImplementationTaskForExplicitRouting,
   formatRoleMismatchReason,
+  isEngineerRoleAgent,
   isExecutorRoleAgent,
   isImplementationTask,
 } from "../agent-role-policy.js";
@@ -19,17 +22,36 @@ describe("agent-role-policy", () => {
     expect(isImplementationTask({ column: "archived" })).toBe(false);
   });
 
-  it("allows executor agents to take implementation tasks", () => {
+  it("allows executor agents in both explicit routing and backlog pickup", () => {
     expect(isExecutorRoleAgent({ role: "executor" })).toBe(true);
+    expect(
+      canAgentTakeImplementationTaskForExplicitRouting({ role: "executor" }, { column: "todo" }),
+    ).toBe(true);
+    expect(
+      canAgentTakeImplementationTaskForBacklogPickup({ role: "executor" }, { column: "todo" }),
+    ).toBe(true);
     expect(
       canAgentTakeImplementationTask({ role: "executor" }, { column: "todo" }),
     ).toBe(true);
   });
 
-  it("rejects non-executor agents for implementation tasks", () => {
+  it("allows durable engineer only for explicit routing", () => {
+    expect(isEngineerRoleAgent({ role: "engineer" })).toBe(true);
+    expect(
+      canAgentTakeImplementationTaskForExplicitRouting({ role: "engineer" }, { column: "todo" }),
+    ).toBe(true);
+    expect(
+      canAgentTakeImplementationTaskForBacklogPickup({ role: "engineer" }, { column: "todo" }),
+    ).toBe(false);
+  });
+
+  it("keeps reviewer blocked by default", () => {
     expect(isExecutorRoleAgent({ role: "reviewer" })).toBe(false);
     expect(
-      canAgentTakeImplementationTask({ role: "reviewer" }, { column: "todo" }),
+      canAgentTakeImplementationTaskForExplicitRouting({ role: "reviewer" }, { column: "todo" }),
+    ).toBe(false);
+    expect(
+      canAgentTakeImplementationTaskForBacklogPickup({ role: "reviewer" }, { column: "todo" }),
     ).toBe(false);
   });
 
@@ -41,5 +63,7 @@ describe("agent-role-policy", () => {
     expect(reason).toContain("agent-1");
     expect(reason).toContain("reviewer");
     expect(reason).toContain("FN-123");
+    expect(reason).toContain("requires an \"executor\"-role agent by default");
+    expect(reason).toContain("durable \"engineer\" supported only for explicit routing");
   });
 });

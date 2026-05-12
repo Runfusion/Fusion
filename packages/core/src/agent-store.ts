@@ -62,7 +62,7 @@ interface CheckoutLeaseContext {
   renewedAt?: string;
 }
 import { computeAccessState } from "./agent-permissions.js";
-import { canAgentTakeImplementationTask, formatRoleMismatchReason } from "./agent-role-policy.js";
+import { canAgentTakeImplementationTask, canAgentTakeImplementationTaskForExplicitRouting, formatRoleMismatchReason } from "./agent-role-policy.js";
 import { resolveEffectiveAgentPermissionPolicy } from "./agent-permission-policy.js";
 import { Database } from "./db.js";
 import { createAgentRunSnapshot, createAgentSnapshot, validateSnapshotEnvelope, type AgentRunSnapshot, type AgentSnapshot } from "./shared-mesh-state.js";
@@ -1331,7 +1331,11 @@ export class AgentStore extends EventEmitter {
       return { ok: false, reason: "paused", task };
     }
 
-    if (!canAgentTakeImplementationTask(agent, task)) {
+    const isExplicitlyAssignedToAgent = task.assignedAgentId === agentId;
+    const roleAllowed = isExplicitlyAssignedToAgent
+      ? canAgentTakeImplementationTaskForExplicitRouting(agent, task)
+      : canAgentTakeImplementationTask(agent, task);
+    if (!roleAllowed) {
       return { ok: false, reason: formatRoleMismatchReason(agent, task), task };
     }
 

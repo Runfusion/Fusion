@@ -2371,6 +2371,7 @@ describe("PATCH /tasks/:id/assign and GET /agents/:id/tasks", () => {
   let fusionDir: string;
   let agentId: string;
   let reviewerAgentId: string;
+  let engineerAgentId: string;
   let store: TaskStore;
 
   // Agent store init + createAgent is ~50ms per call; hoisted to beforeAll
@@ -2391,8 +2392,13 @@ describe("PATCH /tasks/:id/assign and GET /agents/:id/tasks", () => {
       name: "Assignment reviewer agent",
       role: "reviewer",
     });
+    const engineer = await agentStore.createAgent({
+      name: "Assignment engineer agent",
+      role: "engineer",
+    });
     agentId = agent.id;
     reviewerAgentId = reviewer.id;
+    engineerAgentId = engineer.id;
   }, 30_000);
 
   beforeEach(() => {
@@ -2432,7 +2438,26 @@ describe("PATCH /tasks/:id/assign and GET /agents/:id/tasks", () => {
     expect(res.body.assignedAgentId).toBe(agentId);
   }, 20000);
 
-  it("returns 409 when assigning implementation task to non-executor without override", async () => {
+  it("allows assigning implementation task to durable engineer without override", async () => {
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...FAKE_TASK_DETAIL,
+      id: "FN-200",
+      assignedAgentId: engineerAgentId,
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "PATCH",
+      "/api/tasks/FN-200/assign",
+      JSON.stringify({ agentId: engineerAgentId }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-200", { assignedAgentId: engineerAgentId });
+  }, 20000);
+
+  it("returns 409 when assigning implementation task to reviewer without override", async () => {
     const res = await REQUEST(
       buildApp(),
       "PATCH",

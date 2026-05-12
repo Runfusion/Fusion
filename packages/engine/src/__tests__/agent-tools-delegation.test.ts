@@ -256,7 +256,34 @@ describe("createDelegateTaskTool", () => {
     expect(taskStore.createTask).not.toHaveBeenCalled();
   });
 
-  it("rejects non-executor target without override", async () => {
+  it("allows durable engineer target without override", async () => {
+    const engineer = createAgent({ id: "agent-009", name: "Eli", role: "engineer" });
+    vi.mocked(agentStore.getAgent).mockResolvedValue(engineer);
+    vi.mocked(taskStore.createTask).mockResolvedValue({
+      id: "FN-053",
+      description: "Do something",
+      dependencies: [],
+      column: "todo" as const,
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    const tool = createDelegateTaskTool(agentStore, taskStore);
+    await tool.execute("session-1", {
+      agent_id: "agent-009",
+      description: "Do something",
+    }, undefined as any, undefined as any, undefined as any);
+
+    expect(taskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      assignedAgentId: "agent-009",
+      source: { sourceType: "api" },
+    }), expect.anything());
+  });
+
+  it("rejects reviewer target without override", async () => {
     const reviewer = createAgent({ id: "agent-002", name: "Rita", role: "reviewer" });
     vi.mocked(agentStore.getAgent).mockResolvedValue(reviewer);
 

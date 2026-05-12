@@ -883,7 +883,7 @@ Create a new task and assign it to a specific agent for execution. The task goes
 **Error cases:**
 - `"ERROR: Agent {agent_id} not found"`
 - `"ERROR: Cannot delegate to ephemeral/runtime agent {agent_id}"`
-- `"ERROR: Agent {agent_id} has role \"...\"; implementation task <new> requires an \"executor\"-role agent. Pass override=true to bypass."`
+- `"ERROR: Agent {agent_id} has role \"...\"; implementation task <new> requires an \"executor\"-role agent by default, with durable \"engineer\" supported only for explicit routing. Pass override=true to bypass."`
 
 ### `agent_create`
 
@@ -927,11 +927,11 @@ Delete a non-ephemeral direct-report agent. Deletion is blocked when the target 
 
 ### Role-based assignment policy
 
-Implementation tasks require an agent with `role: "executor"`.
+Implementation-task routing distinguishes explicit specialist assignment from generic backlog pickup:
 
-- Heartbeat inbox and auto-claim paths filter out role-incompatible implementation tasks.
-- `PATCH /api/tasks/:id/assign` returns `409` for non-executor assignment attempts unless `override: true` is provided in the request body.
-- `fn_delegate_task` enforces the same policy and supports `override: true` when intentional.
+- **Explicit assignment/delegation** (`PATCH /api/tasks/:id/assign`, `fn_delegate_task`, `fn_task_create`/`fn_task_update` with `agentId`): `role: "executor"` is always supported, and durable `role: "engineer"` is also supported without override.
+- **Backlog pickup/auto-claim** (unassigned implementation work): remains executor-only by default; durable engineer agents do not auto-claim generic unassigned implementation backlog.
+- Other non-executor roles (for example `reviewer`, `merger`, `custom`) still require an explicit override path on that surface (`override: true`) when intentional.
 - Override delegations are persisted with task source metadata (`executorRoleOverride`) so inbox selection and heartbeat execution can intentionally run that assigned implementation task on the targeted durable non-executor agent.
 
 ## Heartbeat Monitoring and Trigger Scheduling

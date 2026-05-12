@@ -16,7 +16,7 @@ import {
   RESEARCH_RUN_STATUSES,
   isResearchExperimentalEnabled,
   resolveResearchSettings,
-  canAgentTakeImplementationTask,
+  canAgentTakeImplementationTaskForExplicitRouting,
   formatRoleMismatchReason,
   resolveAgentProvisioningPolicy,
 } from "@fusion/core";
@@ -106,7 +106,7 @@ async function validateAssignableAgentId(
   if (isEphemeralAgent(agent)) {
     return `Cannot assign task to ephemeral/runtime agent ${agentId}`;
   }
-  if (task && !override && !canAgentTakeImplementationTask(agent, task)) {
+  if (task && !override && !canAgentTakeImplementationTaskForExplicitRouting(agent, task)) {
     return formatRoleMismatchReason(agent, task);
   }
   return null;
@@ -414,7 +414,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       const normalizedAgentId = normalizeNullableStringInput(params.agentId);
 
       if (normalizedAgentId !== undefined && normalizedAgentId !== null) {
-        const candidateTask: Pick<Task, "id" | "column"> = { id: "<new>", column: "triage" };
+        const candidateTask: Pick<Task, "id" | "column"> = { id: "<new>", column: "todo" };
         const error = await validateAssignableAgentId(ctx.cwd ?? process.cwd(), normalizedAgentId, candidateTask);
         if (error) {
           return {
@@ -2732,7 +2732,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       "Use fn_list_agents first to find available agents and their capabilities",
       "The task is created in 'todo' and assigned to the target agent",
       "Cannot delegate to ephemeral/runtime agents",
-      "Implementation tasks require an executor-role agent unless override=true",
+      "Implementation tasks use executor by default; durable engineer supports explicit routing without override, other non-executor roles require override=true",
       "Optionally specify dependencies on other tasks",
     ],
     parameters: Type.Object({

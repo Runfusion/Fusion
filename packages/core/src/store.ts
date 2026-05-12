@@ -7,7 +7,7 @@ import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, 
 import { createActivityLogSnapshot, createRunAuditSnapshot, createTaskMetadataSnapshot, toTaskMetadataRecord, validateSnapshotEnvelope, type ActivityLogSnapshot, type RunAuditSnapshot, type TaskMetadataSnapshot } from "./shared-mesh-state.js";
 import { VALID_TRANSITIONS, DEFAULT_SETTINGS, isGlobalOnlySettingsKey, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { normalizeTaskPriority } from "./task-priority.js";
-import { canAgentTakeImplementationTask } from "./agent-role-policy.js";
+import { canAgentTakeImplementationTaskForExplicitRouting } from "./agent-role-policy.js";
 import { GlobalSettingsStore } from "./global-settings.js";
 import { Database, toJson, toJsonNullable, fromJson } from "./db.js";
 import { ArchiveDatabase } from "./archive-db.js";
@@ -3117,7 +3117,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
           if (task.column === "in-progress" || hasExecutorRoleOverride(task)) {
             return true;
           }
-          return canAgentTakeImplementationTask(agent, task);
+          return canAgentTakeImplementationTaskForExplicitRouting(agent, task);
         })
       : assignedTasks;
 

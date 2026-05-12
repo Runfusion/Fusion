@@ -296,6 +296,33 @@ describe("TaskStore", () => {
       expect(selected?.priority).toBe("todo");
     });
 
+    it("returns assigned implementation todos for engineer role agents", async () => {
+      const todo = await store.createTask({
+        description: "Assigned engineer todo",
+        column: "todo",
+        assignedAgentId: "agent-1",
+      });
+
+      const selected = await store.selectNextTaskForAgent("agent-1", {
+        id: "agent-1",
+        role: "engineer",
+      });
+
+      expect(selected?.task.id).toBe(todo.id);
+      expect(selected?.priority).toBe("todo");
+    });
+
+    it("does not auto-claim unassigned implementation backlog for engineer role agents", async () => {
+      await store.createTask({
+        description: "Unassigned todo",
+        column: "todo",
+      });
+
+      await expect(
+        store.selectNextTaskForAgent("agent-1", { id: "agent-1", role: "engineer" }),
+      ).resolves.toBeNull();
+    });
+
     it("allows non-executor role agents to pick assigned todos when override metadata is set", async () => {
       const delegated = await store.createTask({
         description: "Assigned todo override",

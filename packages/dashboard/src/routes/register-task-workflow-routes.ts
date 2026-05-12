@@ -10,7 +10,7 @@ import {
   resolveTitleSummarizerSettingsModel,
   toReplicatedCreateInput,
   validateNodeOverrideChange,
-  canAgentTakeImplementationTask,
+  canAgentTakeImplementationTaskForExplicitRouting,
   formatRoleMismatchReason,
   getCurrentRepo,
 } from "@fusion/core";
@@ -1880,7 +1880,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           throw notFound("Task not found");
         }
 
-        if (override !== true && !canAgentTakeImplementationTask(agent, targetTask)) {
+        if (override !== true && !canAgentTakeImplementationTaskForExplicitRouting(agent, targetTask)) {
           throw new ApiError(409, formatRoleMismatchReason(agent, targetTask));
         }
       }

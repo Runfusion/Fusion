@@ -68,6 +68,8 @@ export {
   isImplementationTask,
   isExecutorRoleAgent,
   canAgentTakeImplementationTask,
+  canAgentTakeImplementationTaskForExplicitRouting,
+  canAgentTakeImplementationTaskForBacklogPickup,
   formatRoleMismatchReason,
 } from "./agent-role-policy.js";
 export { ReflectionStore } from "./reflection-store.js";
