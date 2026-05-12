@@ -177,6 +177,7 @@ export class ProjectEngine {
   private mergeAbortController: AbortController | null = null;
   private mergeRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private autostashSweepTimer: ReturnType<typeof setTimeout> | null = null;
+  private mergeActiveReconcileTimer: ReturnType<typeof setInterval> | null = null;
 
   /**
    * Pending manual merge resolvers — keyed by taskId.
@@ -245,7 +246,10 @@ export class ProjectEngine {
         this.activeMergeTaskId = null;
       }
       this.mergeActive.delete(taskId);
-      this.internalEnqueueMerge(taskId);
+      return this.internalEnqueueMerge(taskId);
+    });
+    this.runtime.setMergeActiveClearer?.((taskId) => {
+      this.mergeActive.delete(taskId);
     });
   }
 
@@ -452,6 +456,7 @@ export class ProjectEngine {
 
     // 8. Start periodic merge retry sweep
     this.scheduleMergeRetry(store);
+    this.scheduleMergeActiveReconciliation(settings.maintenanceIntervalMs ?? 900_000);
 
     // 9. Startup + periodic stale autostash sweeps (independent of autoMerge)
     void this.runStaleAutostashSweep(store, "startup");
@@ -483,6 +488,10 @@ export class ProjectEngine {
     if (this.autostashSweepTimer) {
       clearTimeout(this.autostashSweepTimer);
       this.autostashSweepTimer = null;
+    }
+    if (this.mergeActiveReconcileTimer) {
+      clearInterval(this.mergeActiveReconcileTimer);
+      this.mergeActiveReconcileTimer = null;
     }
 
     // Abort active/pending merge work before tearing down sessions.
@@ -758,8 +767,8 @@ export class ProjectEngine {
    * Exposed publicly so callers can integrate the engine's merge queue with
    * an external `onMerge` callback (e.g. dashboard's createServer call).
    */
-  enqueueMerge(taskId: string): void {
-    this.internalEnqueueMerge(taskId);
+  enqueueMerge(taskId: string): boolean {
+    return this.internalEnqueueMerge(taskId);
   }
 
   /**
@@ -781,7 +790,10 @@ export class ProjectEngine {
 
     return new Promise<MergeResult>((resolve, reject) => {
       this.manualMergeResolvers.set(taskId, { resolve, reject });
-      this.internalEnqueueMerge(taskId);
+      if (!this.internalEnqueueMerge(taskId)) {
+        this.manualMergeResolvers.delete(taskId);
+        reject(new Error(`Merge enqueue rejected for ${taskId}`));
+      }
     });
   }
 
@@ -1145,23 +1157,23 @@ export class ProjectEngine {
     return undefined;
   }
 
-  private internalEnqueueMerge(taskId: string): void {
-    if (this.shuttingDown) return;
+  private internalEnqueueMerge(taskId: string): boolean {
+    if (this.shuttingDown) return false;
     if (this.mergeActive.has(taskId)) {
       // Distinguish "actually being processed" (queued or active) from a
-      // leaked entry. Leaks are dropped by reconcileStaleMergeActive() on the
-      // next 15s sweep, so we only log the genuinely-busy case at debug
-      // verbosity. Without this log the de-dup was invisible — a leaked
-      // entry made every subsequent enqueue silently no-op until the 15-min
-      // maintenance loop woke up.
+      // leaked entry. Reconcile leaks immediately so recovery paths and fresh
+      // in-review handoffs can make forward progress without waiting for the
+      // periodic maintenance sweep.
       const isActuallyLive =
         this.mergeQueue.includes(taskId) || this.activeMergeTaskId === taskId;
       if (!isActuallyLive) {
         runtimeLog.warn(
-          `internalEnqueueMerge(${taskId}): skipped — mergeActive entry is leaked (not queued, not active). reconcileStaleMergeActive() will clear it on the next sweep.`,
+          `internalEnqueueMerge(${taskId}): skipped — mergeActive entry is leaked (not queued, not active). Reconciling stale entry and retrying enqueue now.`,
         );
+        this.mergeActive.delete(taskId);
+      } else {
+        return false;
       }
-      return;
     }
     this.mergeActive.add(taskId);
     this.mergeQueue.push(taskId);
@@ -1170,6 +1182,7 @@ export class ProjectEngine {
         `Merge queue drain failed unexpectedly: ${err instanceof Error ? err.message : String(err)}`,
       );
     });
+    return true;
   }
 
   /**
@@ -1188,6 +1201,29 @@ export class ProjectEngine {
       this.internalEnqueueMerge(t.id);
     }
     return eligible.length;
+  }
+
+  private reconcileStaleMergeActive(): number {
+    let cleared = 0;
+    for (const taskId of [...this.mergeActive]) {
+      if (taskId === this.activeMergeTaskId) continue;
+      if (this.mergeQueue.includes(taskId)) continue;
+      this.mergeActive.delete(taskId);
+      cleared++;
+    }
+    return cleared;
+  }
+
+  private scheduleMergeActiveReconciliation(intervalMs: number): void {
+    if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+      return;
+    }
+    this.mergeActiveReconcileTimer = setInterval(() => {
+      const cleared = this.reconcileStaleMergeActive();
+      if (cleared > 0) {
+        runtimeLog.warn(`Reconciled ${cleared} stale mergeActive entr${cleared === 1 ? "y" : "ies"}`);
+      }
+    }, intervalMs);
   }
 
   private async findActiveRecoveryFollowUp(
@@ -1221,6 +1257,7 @@ export class ProjectEngine {
     this.mergeRunning = true;
 
     try {
+      this.reconcileStaleMergeActive();
       const store = this.runtime.getTaskStore();
       const cwd = this.config.workingDirectory;
 
@@ -1872,11 +1909,9 @@ export class ProjectEngine {
             runtimeLog.log(`Auto-merge handoff (${task.id}) skipped: autoMerge disabled`);
             return;
           }
-          // Belt-and-braces: clear any stale mergeActive entry from a wedged
-          // prior attempt so this enqueue isn't silently no-op'd. The 15s
-          // sweep also reconciles via reconcileStaleMergeActive(), but waiting
-          // up to 15s for a fresh in-review task to start merging is the
-          // exact regression we're fixing.
+          // Belt-and-braces: eager handoff still clears a stale mergeActive
+          // entry before enqueue so freshly completed review tasks do not wait
+          // for a later queue reconciliation pass before their merge starts.
           if (
             this.mergeActive.has(task.id) &&
             !this.mergeQueue.includes(task.id) &&
@@ -2228,7 +2263,27 @@ export class ProjectEngine {
     store.on("settings:updated", onEngineUnpause);
     this.settingsHandlers.push(onEngineUnpause);
 
-    // 5. Stuck task timeout change — trigger immediate check
+    // 5. Maintenance interval change — reschedule mergeActive reconciliation
+    const onMaintenanceIntervalChange = ({
+      settings: s,
+      previous: prev,
+    }: {
+      settings: Settings;
+      previous: Settings;
+    }) => {
+      if (s.maintenanceIntervalMs === prev.maintenanceIntervalMs) {
+        return;
+      }
+      if (this.mergeActiveReconcileTimer) {
+        clearInterval(this.mergeActiveReconcileTimer);
+        this.mergeActiveReconcileTimer = null;
+      }
+      this.scheduleMergeActiveReconciliation(s.maintenanceIntervalMs ?? 900_000);
+    };
+    store.on("settings:updated", onMaintenanceIntervalChange);
+    this.settingsHandlers.push(onMaintenanceIntervalChange);
+
+    // 6. Stuck task timeout change — trigger immediate check
     const onStuckTimeoutChange = async ({
       settings: s,
       previous: prev,
@@ -2254,7 +2309,7 @@ export class ProjectEngine {
     store.on("settings:updated", onStuckTimeoutChange);
     this.settingsHandlers.push(onStuckTimeoutChange);
 
-    // 5. Memory maintenance settings change — sync automations
+    // 7. Memory maintenance settings change — sync automations
     const onInsightSettingsChange = async ({
       settings: s,
       previous: prev,
@@ -2300,7 +2355,7 @@ export class ProjectEngine {
     store.on("settings:updated", onInsightSettingsChange);
     this.settingsHandlers.push(onInsightSettingsChange);
 
-    // 6. Auto-summarize settings change — sync automation
+    // 8. Auto-summarize settings change — sync automation
     const onAutoSummarizeSettingsChange = async ({
       settings: s,
       previous: prev,
@@ -2336,7 +2391,7 @@ export class ProjectEngine {
     store.on("settings:updated", onAutoSummarizeSettingsChange);
     this.settingsHandlers.push(onAutoSummarizeSettingsChange);
 
-    // 7. Scheduled eval settings change — sync automation
+    // 9. Scheduled eval settings change — sync automation
     const onScheduledEvalSettingsChange = async ({
       settings: s,
       previous: prev,

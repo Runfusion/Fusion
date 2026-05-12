@@ -81,7 +81,8 @@ export interface SelfHealingOptions {
    * refreshed (otherwise a leftover entry from a SIGKILL'd merge would cause
    * the polling sweep's enqueue to silently no-op).
    */
-  enqueueMerge?: (taskId: string) => void;
+  enqueueMerge?: (taskId: string) => boolean;
+  clearMergeActive?: (taskId: string) => void;
   /**
    * Minimum age before a transient merge status is considered stale when no
    * active merge session is associated with that task.
@@ -125,6 +126,7 @@ const ORPHANED_WITH_WORKTREE_GRACE_MS = 300_000;
  */
 const MAX_TASK_DONE_RETRIES = 3;
 const MAX_AUTO_MERGE_RETRIES = 3;
+const MAX_STARVATION_DROPS = 3;
 const DEADLOCK_RECOVERY_COOLDOWN_MS = 15 * 60_000;
 const DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS = 5 * 60_000;
 const DURABLE_ERROR_RECOVERY_MAX_RETRIES = 5;
@@ -256,6 +258,7 @@ export class SelfHealingManager {
 
   // ── Per-task deadlock recovery cooldown ─────────────────────────────
   private deadlockRecoveryCooldown: Map<string, number> = new Map();
+  private mergeStarvationDrops: Map<string, number> = new Map();
 
   constructor(
     private store: TaskStore,
@@ -1158,6 +1161,7 @@ export class SelfHealingManager {
         try {
           log.warn(`Clearing stale merge status for ${task.id}: ${previousStatus}`);
           await this.store.updateTask(task.id, { status: null });
+          this.options.clearMergeActive?.(task.id);
           await this.store.logEntry(
             task.id,
             `Auto-recovered: cleared stale '${previousStatus}' status (no active merger)`,
@@ -1388,6 +1392,7 @@ export class SelfHealingManager {
       const mergeable = tasks.filter((t) =>
         t.column === "in-review" &&
         !t.paused &&
+        t.status !== "failed" &&
         // Exclude transient merge statuses. Active merges should be left alone;
         // stale ones are handled by recoverStaleMergingStatus().
         t.status !== "merging" &&
@@ -1405,6 +1410,14 @@ export class SelfHealingManager {
         getTaskMergeBlocker(t) === undefined,
       );
 
+      const inReviewIds = new Set(tasks.map((task) => task.id));
+      const mergeableIds = new Set(mergeable.map((task) => task.id));
+      for (const taskId of [...this.mergeStarvationDrops.keys()]) {
+        if (!inReviewIds.has(taskId) || !mergeableIds.has(taskId)) {
+          this.mergeStarvationDrops.delete(taskId);
+        }
+      }
+
       if (mergeable.length === 0) return 0;
 
       log.warn(`Found ${mergeable.length} mergeable review task(s) stuck in in-review`);
@@ -1417,7 +1430,23 @@ export class SelfHealingManager {
       for (const task of mergeable) {
         try {
           if (enqueueMerge) {
-            enqueueMerge(task.id);
+            const queued = enqueueMerge(task.id);
+            if (!queued) {
+              const drops = (this.mergeStarvationDrops.get(task.id) ?? 0) + 1;
+              this.mergeStarvationDrops.set(task.id, drops);
+              log.warn(
+                `Auto-recovery enqueue dropped for ${task.id} (${drops}/${MAX_STARVATION_DROPS}); engine merge queue rejected re-enqueue`,
+              );
+              if (drops >= MAX_STARVATION_DROPS) {
+                const error = `Auto-merge starvation: ${MAX_STARVATION_DROPS} consecutive enqueue attempts were dropped by the engine merge queue; task requires manual intervention.`;
+                await this.store.updateTask(task.id, { status: "failed", error });
+                await this.store.logEntry(task.id, error);
+                this.mergeStarvationDrops.delete(task.id);
+                recovered++;
+              }
+              continue;
+            }
+            this.mergeStarvationDrops.delete(task.id);
           } else {
             await this.store.mergeTask(task.id);
           }

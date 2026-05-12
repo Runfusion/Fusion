@@ -2053,7 +2053,7 @@ describe("ProjectEngine stale mergeActive rescue (FN-3900)", () => {
     await engine.stop();
   });
 
-  it("internalEnqueueMerge warns and skips direct leaked mergeActive entries", async () => {
+  it("FN-4084: internalEnqueueMerge reconciles leaked mergeActive entries", async () => {
     const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
     mocks.currentStore = mockStore.store;
 
@@ -2062,6 +2062,7 @@ describe("ProjectEngine stale mergeActive rescue (FN-3900)", () => {
       mergeQueue: string[];
       mergeActive: Set<string>;
       activeMergeTaskId: string | null;
+      mergeRunning: boolean;
       internalEnqueueMerge: (taskId: string) => void;
     };
     const warnSpy = vi.spyOn(runtimeLog, "warn").mockImplementation(() => {});
@@ -2071,12 +2072,13 @@ describe("ProjectEngine stale mergeActive rescue (FN-3900)", () => {
     privateEngine.mergeActive = new Set(["FN-leaked2"]);
     privateEngine.mergeQueue = [];
     privateEngine.activeMergeTaskId = null;
+    privateEngine.mergeRunning = true;
 
     privateEngine.internalEnqueueMerge("FN-leaked2");
 
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("mergeActive entry is leaked"));
-    expect(privateEngine.mergeQueue).toEqual([]);
-    expect(mocks.aiMergeTask).not.toHaveBeenCalled();
+    expect(privateEngine.mergeQueue).toEqual(["FN-leaked2"]);
+    expect(privateEngine.mergeActive.has("FN-leaked2")).toBe(true);
 
     await engine.stop();
   });

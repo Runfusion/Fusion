@@ -2243,6 +2243,38 @@ describe("SelfHealingManager", () => {
       managerWithRecovery.stop();
     });
 
+    it("FN-4084: stale merging recovery clears mergeActive via callback", async () => {
+      const clearMergeActive = vi.fn();
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        clearMergeActive,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        globalPause: false,
+        enginePaused: false,
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-4084-stale",
+          column: "in-review",
+          paused: false,
+          status: "merging-pr",
+          updatedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+          steps: [{ name: "Ship it", status: "done" }],
+          workflowStepResults: [],
+          log: [],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverStaleMergingStatus();
+
+      expect(result).toBe(1);
+      expect(clearMergeActive).toHaveBeenCalledTimes(1);
+      expect(clearMergeActive).toHaveBeenCalledWith("FN-4084-stale");
+
+      managerWithRecovery.stop();
+    });
+
     it("keeps transient merge status when task is actively merging", async () => {
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
@@ -2340,7 +2372,7 @@ describe("SelfHealingManager", () => {
     });
 
     it("routes through enqueueMerge when wired so mergeStrategy is honored", async () => {
-      const enqueueMerge = vi.fn();
+      const enqueueMerge = vi.fn().mockReturnValue(true);
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
         enqueueMerge,
@@ -2371,6 +2403,105 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(1);
       expect(enqueueMerge).toHaveBeenCalledWith("FN-352-pr");
       expect(store.mergeTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("FN-4084: recoverMergeableReviewTasks escalates after repeated no-op re-enqueues", async () => {
+      const enqueueMerge = vi.fn().mockReturnValue(false);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        enqueueMerge,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        globalPause: false,
+        enginePaused: false,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-4084-starved",
+          column: "in-review",
+          paused: false,
+          status: null,
+          error: null,
+          mergeRetries: 0,
+          worktree: "/tmp/test-project/.worktrees/fn-4084-starved",
+          steps: [{ name: "Ship it", status: "done" }],
+          workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
+          mergeDetails: undefined,
+          log: [],
+        },
+      ]);
+
+      expect(await managerWithRecovery.recoverMergeableReviewTasks()).toBe(0);
+      expect(await managerWithRecovery.recoverMergeableReviewTasks()).toBe(0);
+      expect(await managerWithRecovery.recoverMergeableReviewTasks()).toBe(1);
+
+      expect(enqueueMerge).toHaveBeenCalledTimes(3);
+      expect(store.updateTask).toHaveBeenCalledWith(
+        "FN-4084-starved",
+        expect.objectContaining({
+          status: "failed",
+          error: expect.stringContaining("Auto-merge starvation: 3 consecutive enqueue attempts"),
+        }),
+      );
+      expect(store.logEntry).toHaveBeenCalledTimes(1);
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-4084-starved",
+        expect.stringContaining("Auto-merge starvation"),
+      );
+      expect(store.logEntry).not.toHaveBeenCalledWith(
+        "FN-4084-starved",
+        expect.stringContaining("re-enqueued for merge"),
+      );
+
+      managerWithRecovery.stop();
+    });
+
+    it("FN-4084: recoverMergeableReviewTasks resets starvation counters after successful enqueue", async () => {
+      const enqueueMerge = vi.fn().mockReturnValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        enqueueMerge,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        autoMerge: true,
+        globalPause: false,
+        enginePaused: false,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-4084-healthy",
+          column: "in-review",
+          paused: false,
+          status: null,
+          error: null,
+          mergeRetries: 0,
+          worktree: "/tmp/test-project/.worktrees/fn-4084-healthy",
+          steps: [{ name: "Ship it", status: "done" }],
+          workflowStepResults: [{ id: "ws-1", status: "passed", phase: "pre-merge" }],
+          mergeDetails: undefined,
+          log: [],
+        },
+      ]);
+
+      for (let i = 0; i < 5; i++) {
+        expect(await managerWithRecovery.recoverMergeableReviewTasks()).toBe(1);
+      }
+
+      expect(enqueueMerge).toHaveBeenCalledTimes(5);
+      expect(store.updateTask).not.toHaveBeenCalledWith(
+        "FN-4084-healthy",
+        expect.objectContaining({ status: "failed" }),
+      );
+      expect(store.logEntry).toHaveBeenCalledTimes(5);
+      expect(store.logEntry).not.toHaveBeenCalledWith(
+        "FN-4084-healthy",
+        expect.stringContaining("Auto-merge starvation"),
+      );
 
       managerWithRecovery.stop();
     });

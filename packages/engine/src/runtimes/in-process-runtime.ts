@@ -120,7 +120,8 @@ export class InProcessRuntime
    * stale-merge recovery can re-enqueue tasks immediately. Set by ProjectEngine
    * before `start()` via `setMergeEnqueuer`.
    */
-  private mergeEnqueuer?: (taskId: string) => void;
+  private mergeEnqueuer?: (taskId: string) => boolean;
+  private clearMergeActive?: (taskId: string) => void;
   private activeMergeTaskIdProvider?: () => string | null;
   /** Tracks whether startup recovery was intentionally deferred due to pause state. */
   private startupRecoveryDeferred = false;
@@ -632,7 +633,8 @@ export class InProcessRuntime
         recoverApprovedTriageTask: (task) => this.triageProcessor?.recoverApprovedTask(task) ?? Promise.resolve(false),
         getPlanningTaskIds: () => this.triageProcessor?.getProcessingTaskIds() ?? new Set<string>(),
         evictStaleTriageProcessing: () => this.triageProcessor?.evictStaleProcessing() ?? new Set<string>(),
-        enqueueMerge: this.mergeEnqueuer ? (taskId: string) => this.mergeEnqueuer?.(taskId) : undefined,
+        enqueueMerge: this.mergeEnqueuer ? (taskId: string) => this.mergeEnqueuer?.(taskId) ?? false : undefined,
+        clearMergeActive: this.clearMergeActive ? (taskId: string) => this.clearMergeActive?.(taskId) : undefined,
         getActiveMergeTaskId: () => this.activeMergeTaskIdProvider?.() ?? null,
         leaseManager: this.leaseManager,
         hasActiveAgentExecution: (agentId: string) => this.heartbeatMonitor?.getTrackedAgents().includes(agentId) ?? false,
@@ -887,8 +889,12 @@ export class InProcessRuntime
    * auto-merge after clearing a stale `merging` status. Must be called before
    * `start()` because SelfHealingManager is constructed during startup.
    */
-  setMergeEnqueuer(enqueueMerge: (taskId: string) => void): void {
+  setMergeEnqueuer(enqueueMerge: (taskId: string) => boolean): void {
     this.mergeEnqueuer = enqueueMerge;
+  }
+
+  setMergeActiveClearer(clearMergeActive: (taskId: string) => void): void {
+    this.clearMergeActive = clearMergeActive;
   }
 
   setActiveMergeTaskIdProvider(getActiveMergeTaskId: () => string | null): void {
