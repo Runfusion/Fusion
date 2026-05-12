@@ -51,6 +51,7 @@ import {
   type Settings,
   type AgentPromptsConfig,
   type CanonicalMergeConflictStrategy,
+  type DirectMergeCommitStrategy,
   type TaskSourceIssue,
   type Task,
   type AutostashOrphanRecord,
@@ -71,7 +72,7 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext } from "./run-audit.js";
 import { createWebFetchTool } from "./agent-tools.js";
-import { auditSquashMerge, MERGER_MAIN_OVERLAP_LOOKBACK_COMMITS, type SquashAuditFindings } from "./merger-squash-audit.js";
+import { auditSquashMerge, MERGER_MAIN_OVERLAP_LOOKBACK_COMMITS, type PostMergeAuditStrategy, type SquashAuditFindings } from "./merger-squash-audit.js";
 import { detectMergeOverlap, restoreBranchWinsFiles } from "./merger-overlap-guard.js";
 
 /** Conflict type classification for merge conflict resolution */
@@ -484,7 +485,7 @@ export class SquashAuditError extends Error {
     public readonly squashSha: string,
     public readonly findings: SquashAuditFindings,
   ) {
-    super(buildSquashAuditBlockingMessage(taskId, squashSha, findings));
+    super(buildPostMergeAuditBlockingMessage(taskId, findings));
     this.name = "SquashAuditError";
   }
 }
@@ -3957,6 +3958,126 @@ async function ensureTaskTrailersOnHead(rootDir: string, task: Pick<Task, "id"> 
   }
 }
 
+async function cherryPickCommitPreservingTaskTrailers(
+  rootDir: string,
+  commitSha: string,
+  task: Pick<Task, "id"> & { lineageId?: string },
+  mergeConflictStrategy: CanonicalMergeConflictStrategy,
+  smartConflictResolution: boolean,
+  result: MergeResult,
+): Promise<void> {
+  try {
+    await execAsync(`git cherry-pick ${quoteArg(commitSha)}`, { cwd: rootDir });
+  } catch (error) {
+    const conflictedFiles = await getConflictedFiles(rootDir);
+    if (conflictedFiles.length === 0) {
+      throw error;
+    }
+
+    if (smartConflictResolution) {
+      let unresolvedComplex = 0;
+      for (const file of conflictedFiles) {
+        const type = await classifyConflict(file, rootDir);
+        if (type === "lockfile-ours") {
+          await resolveWithOurs(file, rootDir);
+          result.autoResolvedCount = (result.autoResolvedCount ?? 0) + 1;
+        } else if (type === "generated-theirs") {
+          await resolveWithTheirs(file, rootDir);
+          result.autoResolvedCount = (result.autoResolvedCount ?? 0) + 1;
+        } else if (type === "trivial-whitespace") {
+          await resolveTrivialWhitespace(file, rootDir);
+          result.autoResolvedCount = (result.autoResolvedCount ?? 0) + 1;
+        } else {
+          unresolvedComplex += 1;
+        }
+      }
+
+      if (unresolvedComplex === 0) {
+        await execAsync("git cherry-pick --continue", { cwd: rootDir });
+        await ensureTaskTrailersOnHead(rootDir, task);
+        return;
+      }
+    }
+
+    try {
+      await execAsync("git cherry-pick --abort", { cwd: rootDir });
+    } catch {
+      // best effort
+    }
+
+    if (mergeConflictStrategy === "smart-prefer-main") {
+      await execAsync(`git cherry-pick -X ours ${quoteArg(commitSha)}`, { cwd: rootDir });
+    } else if (mergeConflictStrategy === "smart-prefer-branch") {
+      await execAsync(`git cherry-pick -X theirs ${quoteArg(commitSha)}`, { cwd: rootDir });
+    } else {
+      throw error;
+    }
+  }
+
+  await ensureTaskTrailersOnHead(rootDir, task);
+}
+
+async function applyBranchCommitsPreservingHistory(params: {
+  rootDir: string;
+  baseRef: string;
+  branch: string;
+  task: Pick<Task, "id"> & { lineageId?: string };
+  taskId: string;
+  store: TaskStore;
+  mergeConflictStrategy: CanonicalMergeConflictStrategy;
+  smartConflictResolution: boolean;
+  result: MergeResult;
+  testCommand?: string;
+  buildCommand?: string;
+  testSource?: "explicit" | "inferred";
+  buildSource?: "explicit" | "inferred";
+  signal?: AbortSignal;
+}): Promise<{ landedCommitCount: number; landedCommitShas: string[]; baseSha: string }> {
+  const { rootDir, baseRef, branch, task, taskId, store, mergeConflictStrategy, smartConflictResolution, result, testCommand, buildCommand, testSource, buildSource, signal } = params;
+  const { stdout: baseShaStdout } = await execAsync(`git rev-parse ${quoteArg(baseRef)}`, { cwd: rootDir, encoding: "utf-8" });
+  const baseSha = baseShaStdout.trim();
+  const { stdout: commitStdout } = await execAsync(`git rev-list --reverse ${quoteArg(`${baseSha}..${branch}`)}`, {
+    cwd: rootDir,
+    encoding: "utf-8",
+  });
+  const commitShas = commitStdout.trim().split("\n").map((line) => line.trim()).filter(Boolean);
+  const landedCommitShas: string[] = [];
+
+  for (const commitSha of commitShas) {
+    throwIfAborted(signal, taskId);
+    await cherryPickCommitPreservingTaskTrailers(
+      rootDir,
+      commitSha,
+      task,
+      mergeConflictStrategy,
+      smartConflictResolution,
+      result,
+    );
+    const { stdout: landedShaOut } = await execAsync("git rev-parse HEAD", { cwd: rootDir, encoding: "utf-8" });
+    landedCommitShas.push(landedShaOut.trim());
+  }
+
+  if (testCommand || buildCommand) {
+    throwIfAborted(signal, taskId);
+    await runDeterministicVerification(
+      store,
+      rootDir,
+      taskId,
+      testCommand,
+      buildCommand,
+      testSource,
+      buildSource,
+      signal,
+    );
+  }
+
+  return {
+    landedCommitCount: landedCommitShas.length,
+    landedCommitShas,
+    baseSha,
+  };
+}
+
 /** Build the --author flag for git commits based on project settings. */
 function getCommitAuthorArg(settings: {
   commitAuthorEnabled?: boolean;
@@ -4157,14 +4278,115 @@ function quoteArg(value: string): string {
   return `"${value.replace(/(["\\$`])/g, "\\$1")}"`;
 }
 
-function shouldRunPostSquashAudit(result: MergeResult, mergeWasEmpty: boolean, isEmptyCommit: boolean, commitSha?: string): boolean {
+function parseDirectMergeCommitStrategyOverride(prompt: string | undefined): DirectMergeCommitStrategy | undefined {
+  if (!prompt) return undefined;
+  const match = prompt.match(/^\*\*Direct Merge Commit Strategy:\*\*\s*(auto|always-squash|always-rebase)\s*$/im);
+  return match?.[1] as DirectMergeCommitStrategy | undefined;
+}
+
+function resolveDirectMergeCommitStrategy(
+  settings: Pick<Settings, "directMergeCommitStrategy">,
+  prompt: string | undefined,
+): { strategy: DirectMergeCommitStrategy; source: "project" | "prompt" } {
+  const promptOverride = parseDirectMergeCommitStrategyOverride(prompt);
+  if (promptOverride) {
+    return { strategy: promptOverride, source: "prompt" };
+  }
+  return {
+    strategy: settings.directMergeCommitStrategy ?? "auto",
+    source: "project",
+  };
+}
+
+interface BranchCommitClassification {
+  sha: string;
+  subject: string;
+  substantive: boolean;
+}
+
+function isGeneratedOnlyPath(filePath: string): boolean {
+  return GENERATED_PATTERNS.some((pattern) => matchGlob(filePath, pattern))
+    || LOCKFILE_PATTERNS.some((pattern) => matchGlob(filePath, pattern));
+}
+
+function isNonSubstantiveCommitChange(change: { status: string; filePath: string }): boolean {
+  if (change.filePath.startsWith(".changeset/")) {
+    return change.status === "A";
+  }
+  return isGeneratedOnlyPath(change.filePath);
+}
+
+async function classifyBranchCommitsForDirectMerge(
+  rootDir: string,
+  baseRef: string,
+  branch: string,
+): Promise<{ commits: BranchCommitClassification[]; substantiveCommitCount: number }> {
+  const { stdout: commitStdout } = await execAsync(`git rev-list --reverse ${quoteArg(`${baseRef}..${branch}`)}`, {
+    cwd: rootDir,
+    encoding: "utf-8",
+  });
+  const commitShas = commitStdout.trim().split("\n").map((line) => line.trim()).filter(Boolean);
+  const commits: BranchCommitClassification[] = [];
+
+  for (const sha of commitShas) {
+    let subject = sha;
+    try {
+      const { stdout } = await execAsync(`git log -1 --format=%s ${quoteArg(sha)}`, {
+        cwd: rootDir,
+        encoding: "utf-8",
+      });
+      subject = stdout.trim() || sha;
+    } catch {
+      // best-effort subject lookup
+    }
+
+    let substantive = true;
+    try {
+      const { stdout } = await execAsync(`git diff-tree --root --no-commit-id --name-status -r ${quoteArg(sha)}`, {
+        cwd: rootDir,
+        encoding: "utf-8",
+      });
+      const changes = stdout
+        .trim()
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const [status, ...pathParts] = line.split(/\s+/);
+          return { status: status ?? "", filePath: pathParts[pathParts.length - 1] ?? "" };
+        })
+        .filter((change) => change.filePath);
+      substantive = changes.length === 0 || changes.some((change) => !isNonSubstantiveCommitChange(change));
+    } catch {
+      substantive = true;
+    }
+
+    commits.push({ sha, subject, substantive });
+  }
+
+  return {
+    commits,
+    substantiveCommitCount: commits.filter((commit) => commit.substantive).length,
+  };
+}
+
+function shouldRunPostMergeAudit(
+  strategy: PostMergeAuditStrategy,
+  result: MergeResult,
+  mergeWasEmpty: boolean,
+  isEmptyCommit: boolean,
+  commitSha?: string,
+): boolean {
   if (mergeWasEmpty || isEmptyCommit || !commitSha) {
     return false;
+  }
+  if (strategy === "rebase") {
+    return true;
   }
   return (result.autoResolvedCount ?? 0) > 0 || result.attemptsMade === 3;
 }
 
-function buildSquashAuditBlockingMessage(taskId: string, squashSha: string, findings: SquashAuditFindings): string {
+function buildPostMergeAuditBlockingMessage(taskId: string, findings: SquashAuditFindings): string {
   const riskParts: string[] = [];
   if (findings.duplicateSubjects.length > 0) {
     riskParts.push(`${findings.duplicateSubjects.length} duplicate-subject risk${findings.duplicateSubjects.length === 1 ? "" : "s"}`);
@@ -4173,7 +4395,8 @@ function buildSquashAuditBlockingMessage(taskId: string, squashSha: string, find
     riskParts.push(`${findings.touchedFileOverlaps.length} touched-file overlap risk${findings.touchedFileOverlaps.length === 1 ? "" : "s"}`);
   }
   const summary = riskParts.length > 0 ? riskParts.join(", ") : `${findings.issueCount} audit finding(s)`;
-  return `${taskId}: post-squash audit blocked auto-completion for ${squashSha.slice(0, 8)} (${summary})`;
+  const label = findings.strategy === "rebase" ? "post-rebase range audit" : "post-squash audit";
+  return `${taskId}: ${label} blocked auto-completion for ${findings.auditTargetLabel.slice(0, 8)} (${summary})`;
 }
 
 function formatSquashAuditAgentLog(findings: SquashAuditFindings): string {
@@ -5607,6 +5830,37 @@ export async function aiMergeTask(
     diffStat = "(unable to read diff)";
   }
 
+  let selectedPostMergeAuditStrategy: PostMergeAuditStrategy = "squash";
+  let classifiedBranchCommits: BranchCommitClassification[] = [];
+  if (settings.mergeStrategy !== "pull-request") {
+    const configuredRoute = resolveDirectMergeCommitStrategy(settings, task.prompt);
+    if (configuredRoute.strategy === "auto") {
+      try {
+        const classification = await classifyBranchCommitsForDirectMerge(
+          rootDir,
+          diffBaseRef || mergeTarget.branch,
+          branch,
+        );
+        classifiedBranchCommits = classification.commits;
+        selectedPostMergeAuditStrategy = classification.substantiveCommitCount >= 2 ? "rebase" : "squash";
+      } catch (error) {
+        mergerLog.warn(`${taskId}: failed to classify branch commits for direct-merge routing: ${getCommandErrorMessage(error)}`);
+        selectedPostMergeAuditStrategy = "squash";
+      }
+    } else {
+      selectedPostMergeAuditStrategy = configuredRoute.strategy === "always-rebase" ? "rebase" : "squash";
+    }
+
+    const classificationSummary = classifiedBranchCommits.length > 0
+      ? ` [${classifiedBranchCommits.map((commit) => `${commit.substantive ? "substantive" : "generated-only"}:${commit.subject}`).join("; ")}]`
+      : "";
+    const routeMessage =
+      `Direct merge commit routing: ${selectedPostMergeAuditStrategy} ` +
+      `(setting ${configuredRoute.strategy} from ${configuredRoute.source})${classificationSummary}`;
+    mergerLog.log(`${taskId}: ${routeMessage}`);
+    await store.appendAgentLog(taskId, routeMessage, "text", undefined, "merger");
+  }
+
   const aiMergeSummary = settings.useAiMergeCommitSummary
     ? await generateAiMergeSummary(commitLog, diffStat, settings, rootDir)
     : null;
@@ -6061,48 +6315,70 @@ export async function aiMergeTask(
 
   // Track AI agent invocation for resolutionMethod calculation
   const aiTracker: AiInvocationTracker = { aiWasInvoked: false };
+  let rebaseMergeBaseSha: string | undefined;
 
   // Execute attempts with escalation
   let merged = false;
 
-  // Attempt 1: Standard AI merge
-  merged = await mergeAttempt(1);
-
-  // Attempt 2: Auto-resolve lock/generated files, then AI (if enabled).
-  // Skipped for "abort" — that strategy gives the user one AI shot, no more.
-  if (!merged && smartConflictResolution && mergeConflictStrategy !== "abort") {
-    merged = await mergeAttempt(2);
-  }
-
-  // Attempt 3: -X theirs (smart-prefer-branch) or -X ours (smart-prefer-main) fallback.
-  // Skipped for "ai-only" (no silent side-pick) and "abort" (one shot only).
-  //
-  // Also skipped when `preMergeRebaseFallthrough` is set: under prefer-main
-  // the whole purpose of refusing -X ours after a failed rebase is to
-  // prevent silent re-introduction of main's deletions. Layers 1+2 couldn't
-  // unblock the rebase, so the worktree is still in a state where -X ours
-  // would re-introduce branch-only content. Trust only AI Attempts 1+2 here
-  // — their output is gated by deterministic verification (test + build),
-  // which is what enforces the prefer-main safety contract.
-  if (
-    !merged
-    && smartConflictResolution
-    && mergeConflictStrategy !== "ai-only"
-    && mergeConflictStrategy !== "abort"
-    && !preMergeRebaseFallthrough
-  ) {
-    merged = await mergeAttempt(3);
-  } else if (!merged && preMergeRebaseFallthrough) {
-    await store.logEntry(
+  if (selectedPostMergeAuditStrategy === "rebase") {
+    const rebaseResult = await applyBranchCommitsPreservingHistory({
+      rootDir,
+      baseRef: diffBaseRef || mergeTarget.branch,
+      branch,
+      task,
       taskId,
-      `Attempt 3 (-X ours fallback) suppressed: pre-merge rebase recovery layers 1+2 failed under smart-prefer-main, so the unsafe ours-side fallback is skipped to honor the strategy's safety contract. Verification-gated AI Attempts 1+2 already exhausted; merge cannot complete safely without manual intervention.`,
-      "PreMergeRebaseFallthrough",
-    );
-  }
+      store,
+      mergeConflictStrategy,
+      smartConflictResolution,
+      result,
+      testCommand: effectiveTestCommand,
+      buildCommand: effectiveBuildCommand,
+      testSource: effectiveTestSource,
+      buildSource: effectiveBuildSource,
+      signal: options.signal,
+    });
+    rebaseMergeBaseSha = rebaseResult.baseSha;
+    merged = true;
+  } else {
+    // Attempt 1: Standard AI merge
+    merged = await mergeAttempt(1);
 
-  // Bubble the empty-merge flag up to the metadata block.
-  if (aiTracker.mergeWasEmpty) {
-    mergeWasEmpty = true;
+    // Attempt 2: Auto-resolve lock/generated files, then AI (if enabled).
+    // Skipped for "abort" — that strategy gives the user one AI shot, no more.
+    if (!merged && smartConflictResolution && mergeConflictStrategy !== "abort") {
+      merged = await mergeAttempt(2);
+    }
+
+    // Attempt 3: -X theirs (smart-prefer-branch) or -X ours (smart-prefer-main) fallback.
+    // Skipped for "ai-only" (no silent side-pick) and "abort" (one shot only).
+    //
+    // Also skipped when `preMergeRebaseFallthrough` is set: under prefer-main
+    // the whole purpose of refusing -X ours after a failed rebase is to
+    // prevent silent re-introduction of main's deletions. Layers 1+2 couldn't
+    // unblock the rebase, so the worktree is still in a state where -X ours
+    // would re-introduce branch-only content. Trust only AI Attempts 1+2 here
+    // — their output is gated by deterministic verification (test + build),
+    // which is what enforces the prefer-main safety contract.
+    if (
+      !merged
+      && smartConflictResolution
+      && mergeConflictStrategy !== "ai-only"
+      && mergeConflictStrategy !== "abort"
+      && !preMergeRebaseFallthrough
+    ) {
+      merged = await mergeAttempt(3);
+    } else if (!merged && preMergeRebaseFallthrough) {
+      await store.logEntry(
+        taskId,
+        `Attempt 3 (-X ours fallback) suppressed: pre-merge rebase recovery layers 1+2 failed under smart-prefer-main, so the unsafe ours-side fallback is skipped to honor the strategy's safety contract. Verification-gated AI Attempts 1+2 already exhausted; merge cannot complete safely without manual intervention.`,
+        "PreMergeRebaseFallthrough",
+      );
+    }
+
+    // Bubble the empty-merge flag up to the metadata block.
+    if (aiTracker.mergeWasEmpty) {
+      mergeWasEmpty = true;
+    }
   }
 
   // If all attempts failed
@@ -6134,7 +6410,10 @@ export async function aiMergeTask(
     let deletions: number | undefined;
 
     try {
-      const { stdout: statsOutput } = await execAsync("git show --shortstat --format= HEAD", {
+      const statsCommand = selectedPostMergeAuditStrategy === "rebase" && rebaseMergeBaseSha
+        ? `git diff --shortstat ${quoteArg(`${rebaseMergeBaseSha}..HEAD`)}`
+        : "git show --shortstat --format= HEAD";
+      const { stdout: statsOutput } = await execAsync(statsCommand, {
         cwd: rootDir,
         encoding: "utf-8",
       });
@@ -6163,11 +6442,19 @@ export async function aiMergeTask(
     const recordedSha = (isEmptyCommit || mergeWasEmpty) ? undefined : commitSha;
 
     const auditSha = recordedSha;
-    if (auditSha && shouldRunPostSquashAudit(result, mergeWasEmpty, isEmptyCommit, auditSha)) {
-      const auditFindings = await auditSquashMerge({
-        rootDir,
-        squashSha: auditSha,
-      });
+    if (auditSha && shouldRunPostMergeAudit(selectedPostMergeAuditStrategy, result, mergeWasEmpty, isEmptyCommit, auditSha)) {
+      const auditFindings = selectedPostMergeAuditStrategy === "rebase" && rebaseMergeBaseSha
+        ? await auditSquashMerge({
+          rootDir,
+          strategy: "rebase",
+          rangeBaseSha: rebaseMergeBaseSha,
+          rangeHeadSha: auditSha,
+        })
+        : await auditSquashMerge({
+          rootDir,
+          strategy: "squash",
+          squashSha: auditSha,
+        });
       if (!auditFindings.clean) {
         const auditError = new SquashAuditError(taskId, auditSha, auditFindings);
         await store.appendAgentLog(
@@ -6180,7 +6467,13 @@ export async function aiMergeTask(
         await store.updateTask(taskId, { status: null });
         throw auditError;
       }
-      await store.appendAgentLog(taskId, "post-squash audit clean", "text", undefined, "merger");
+      await store.appendAgentLog(
+        taskId,
+        selectedPostMergeAuditStrategy === "rebase" ? "post-rebase range audit clean" : "post-squash audit clean",
+        "text",
+        undefined,
+        "merger",
+      );
     }
     if (isEmptyCommit) {
       mergerLog.warn(

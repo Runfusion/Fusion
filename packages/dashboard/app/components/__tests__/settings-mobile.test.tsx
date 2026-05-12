@@ -15,6 +15,7 @@ const defaultSettings = {
   groupOverlappingFiles: false,
   autoMerge: true,
   mergeStrategy: "direct",
+  directMergeCommitStrategy: "auto",
   pushAfterMerge: false,
   pushRemote: "origin",
   recycleWorktrees: false,

@@ -1,6 +1,7 @@
-import type { GithubAuthMode, UnavailableNodePolicy } from "./types.js";
+import type { DirectMergeCommitStrategy, GithubAuthMode, UnavailableNodePolicy } from "./types.js";
 
 const UNAVAILABLE_NODE_POLICIES: readonly UnavailableNodePolicy[] = ["block", "fallback-local"] as const;
+const DIRECT_MERGE_COMMIT_STRATEGIES: readonly DirectMergeCommitStrategy[] = ["auto", "always-squash", "always-rebase"] as const;
 const GITHUB_AUTH_MODES: readonly GithubAuthMode[] = ["gh-cli", "token"] as const;
 const GITHUB_REPO_SLUG_PATTERN = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
@@ -18,6 +19,19 @@ export function validateUnavailableNodePolicy(value: unknown): UnavailableNodePo
   }
   return (UNAVAILABLE_NODE_POLICIES as readonly string[]).includes(value)
     ? (value as UnavailableNodePolicy)
+    : undefined;
+}
+
+/** Returns a validated direct-merge commit strategy for project settings, otherwise undefined. */
+export function validateDirectMergeCommitStrategy(value: unknown): DirectMergeCommitStrategy | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  return (DIRECT_MERGE_COMMIT_STRATEGIES as readonly string[]).includes(value)
+    ? (value as DirectMergeCommitStrategy)
     : undefined;
 }
 

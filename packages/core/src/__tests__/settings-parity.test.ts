@@ -77,6 +77,12 @@ describe("settings key parity", () => {
     expect(DEFAULT_PROJECT_SETTINGS.completionDocumentationMode).toBe("off");
   });
 
+  it("keeps directMergeCommitStrategy project-scoped with auto default", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.directMergeCommitStrategy).toBe("auto");
+    expect(isProjectSettingsKey("directMergeCommitStrategy")).toBe(true);
+    expect(isGlobalSettingsKey("directMergeCommitStrategy")).toBe(false);
+  });
+
   it("keeps task stuck timeout active by default without coupling to workflow step timeout", () => {
     expect(DEFAULT_PROJECT_SETTINGS.taskStuckTimeoutMs).toBe(600_000);
     expect(DEFAULT_PROJECT_SETTINGS.workflowStepTimeoutMs).toBe(360_000);

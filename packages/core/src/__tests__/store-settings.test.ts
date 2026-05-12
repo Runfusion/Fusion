@@ -61,6 +61,15 @@ describe("TaskStore", () => {
       const settings = await harness.store().getSettings();
       expect(settings.mergeStrategy).toBe("pull-request");
     });
+
+    it("defaults directMergeCommitStrategy to auto and persists updates", async () => {
+      const defaults = await harness.store().getSettings();
+      expect(defaults.directMergeCommitStrategy).toBe("auto");
+
+      await harness.store().updateSettings({ directMergeCommitStrategy: "always-rebase" });
+      const settings = await harness.store().getSettings();
+      expect(settings.directMergeCommitStrategy).toBe("always-rebase");
+    });
   });
 
   // ── Planning/Validator Model Settings ────────────────────────────

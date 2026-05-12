@@ -118,6 +118,8 @@ export type ColorTheme = (typeof COLOR_THEMES)[number];
 
 export type PrStatus = "open" | "closed" | "merged";
 export type MergeStrategy = "direct" | "pull-request";
+export const DIRECT_MERGE_COMMIT_STRATEGIES = ["auto", "always-squash", "always-rebase"] as const;
+export type DirectMergeCommitStrategy = (typeof DIRECT_MERGE_COMMIT_STRATEGIES)[number];
 /** How merge conflicts are resolved when the AI agent can't (or shouldn't) decide.
  *
  *  Both `smart-*` strategies share the same cascade: pre-merge fetch +
@@ -2013,6 +2015,12 @@ export interface ProjectSettings {
    *  be enforced server-side. Only applies when `mergeStrategy === "pull-request"`.
    *  Default: false. */
   requirePrApproval?: boolean;
+  /** Direct-merge commit routing mode.
+   *  - "auto": squash single-substantive branches, preserve history for multi-substantive branches
+   *  - "always-squash": always use the legacy squash path for direct merges
+   *  - "always-rebase": always preserve individual branch commits during direct merges
+   *  Only applies when mergeStrategy is "direct". Default: "auto". */
+  directMergeCommitStrategy?: DirectMergeCommitStrategy;
   /** When true, automatically push to the configured remote after a successful direct merge.
    *  The push process includes pulling the latest from the remote (rebase) first.
    *  If conflicts arise during the pull, they are resolved using the AI conflict resolution pipeline.

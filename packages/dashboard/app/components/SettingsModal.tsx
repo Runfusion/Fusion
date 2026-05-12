@@ -3682,10 +3682,36 @@ export function SettingsModal({
               <details className="settings-option-details">
                 <summary>More details</summary>
                 <small>
-                  Controls what happens after a task reaches In Review. Direct mode preserves Fusion&apos;s current local squash-merge behavior. Pull request mode keeps the task in In Review while Fusion waits for GitHub reviews and required checks before merging the PR.
+                  Controls what happens after a task reaches In Review. Direct mode merges into the current branch locally. Pull request mode keeps the task in In Review while Fusion waits for GitHub reviews and required checks before merging the PR.
                 </small>
               </details>
             </div>
+            {form.mergeStrategy !== "pull-request" && (
+              <div className="form-group">
+                <label htmlFor="directMergeCommitStrategy">Direct merge commit routing</label>
+                <select
+                  id="directMergeCommitStrategy"
+                  className="select"
+                  value={form.directMergeCommitStrategy ?? "auto"}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      directMergeCommitStrategy: e.target.value as "auto" | "always-squash" | "always-rebase",
+                    }))
+                  }
+                >
+                  <option value="auto">Auto — squash single-substantive branches, preserve multi-substantive history</option>
+                  <option value="always-squash">Always squash direct merges</option>
+                  <option value="always-rebase">Always preserve direct-merge commit history</option>
+                </select>
+                <details className="settings-option-details">
+                  <summary>More details</summary>
+                  <small>
+                    Auto keeps today&apos;s squash behavior for branches with zero or one substantive commit, but switches multi-substantive branches to a history-preserving rebase-and-merge path. Individual tasks can override this in PROMPT.md with <code>**Direct Merge Commit Strategy:** auto|always-squash|always-rebase</code>.
+                  </small>
+                </details>
+              </div>
+            )}
             {form.mergeStrategy === "pull-request" && (
               <div className="form-group">
                 <label htmlFor="requirePrApproval" className="checkbox-label">
