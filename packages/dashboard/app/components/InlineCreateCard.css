@@ -3,7 +3,7 @@
   background: var(--card);
   border: 1px solid var(--todo);
   border-left: 3px solid var(--todo);
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
@@ -199,7 +199,7 @@
   font-size: 10px;
   line-height: 1;
   padding: 0;
-  transition: background 0.15s ease;
+  transition: background var(--transition-fast);
 }
 
 .inline-create-preview-remove:hover {
