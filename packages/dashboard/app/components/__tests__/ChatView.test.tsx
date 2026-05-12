@@ -3304,6 +3304,51 @@ describe("ChatView mobile behavior", () => {
     }
   });
 
+  it("mobile mode: room send button sends on first touch and keeps composer focused", async () => {
+    const restoreMatchMedia = mockMobileViewport();
+    const sendRoomMessage = vi.fn().mockResolvedValue(undefined);
+    const sendMessage = vi.fn();
+
+    try {
+      localStorage.setItem("fusion:chat-scope", "rooms");
+      setupMockChat({
+        activeSession: activeSessionFixture,
+        messages: [],
+        sendMessage,
+      });
+      setupMockRooms({
+        activeRoom: {
+          id: "room-001",
+          projectId: "proj-123",
+          name: "backend",
+          createdAt: "2026-04-08T00:00:00.000Z",
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        },
+        sendRoomMessage,
+      });
+
+      render(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+
+      const input = screen.getByTestId("chat-input") as HTMLTextAreaElement;
+      fireEvent.change(input, { target: { value: "Hello mobile room" } });
+      input.focus();
+
+      const sendButton = screen.getByTestId("chat-send-btn");
+      fireEvent.touchStart(sendButton);
+      fireEvent.click(sendButton);
+
+      await waitFor(() => {
+        expect(sendRoomMessage).toHaveBeenCalledTimes(1);
+        expect(sendRoomMessage).toHaveBeenCalledWith("Hello mobile room");
+      });
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(input);
+    } finally {
+      localStorage.removeItem("fusion:chat-scope");
+      restoreMatchMedia.mockRestore();
+    }
+  });
+
   it("mobile mode: sets and clears keyboard overlap CSS vars on chat thread", async () => {
     const restoreMatchMedia = mockMobileViewport();
     const { listeners, mockVV } = mockMobileVisualViewport({

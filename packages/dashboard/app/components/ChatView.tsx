@@ -2461,6 +2461,22 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
                 <button
                   type="button"
                   className="chat-input-send"
+                  // Keep keyboard up when sending. preventDefault fires on
+                  // pointerdown for touch pointers (BEFORE iOS blurs the
+                  // textarea — the synthesized mousedown is too late on
+                  // iOS), and on mousedown for desktop. Crucially we do NOT
+                  // call preventDefault on touchstart and we do NOT run the
+                  // action here — both of those broke quick taps. Click
+                  // still fires from the iOS touch sequence and runs the
+                  // action reliably.
+                  onPointerDown={(event) => {
+                    if (event.pointerType && event.pointerType !== "mouse") {
+                      event.preventDefault();
+                    }
+                  }}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                  }}
                   onClick={() => {
                     void handleSendDispatch();
                   }}
