@@ -168,7 +168,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   groupOverlappingFiles: true,
   overlapIgnorePaths: [],
   autoMerge: true,
-  mergeStrategy: "direct",
+  mergeStrategy: "pull-request",
   requirePrApproval: false,
   pushAfterMerge: false,
   pushRemote: "origin",

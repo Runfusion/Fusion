@@ -51,9 +51,9 @@ describe("TaskStore", () => {
   });
 
   describe("mergeStrategy setting", () => {
-    it("defaults mergeStrategy to direct for backward compatibility", async () => {
+    it("defaults mergeStrategy to pull-request", async () => {
       const settings = await harness.store().getSettings();
-      expect(settings.mergeStrategy).toBe("direct");
+      expect(settings.mergeStrategy).toBe("pull-request");
     });
 
     it("persists mergeStrategy and returns it via getSettings", async () => {

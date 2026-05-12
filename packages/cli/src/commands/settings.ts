@@ -17,6 +17,11 @@ export const VALID_SETTINGS = [
   "maxParallelSteps",
   "defaultNodeId",
   "unavailableNodePolicy",
+  "mergeStrategy",
+  "requirePrApproval",
+  "autoMerge",
+  "pushAfterMerge",
+  "pushRemote",
 ] as const;
 
 const GLOBAL_ONLY_SETTINGS = ["ntfyEnabled", "ntfyTopic", "defaultModel"] as const;
