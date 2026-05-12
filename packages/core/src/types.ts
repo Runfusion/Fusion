@@ -258,7 +258,8 @@ export type NtfyNotificationEvent =
   | "fallback-used"
   | "memory-dreams-processed"
   | "message:agent-to-user"
-  | "message:agent-to-agent";
+  | "message:agent-to-agent"
+  | "message:room";
 
 /** Known notification event types. Providers may support additional custom events. */
 export const NOTIFICATION_EVENTS = [
@@ -273,6 +274,7 @@ export const NOTIFICATION_EVENTS = [
   "memory-dreams-processed",
   "message:agent-to-user",
   "message:agent-to-agent",
+  "message:room",
 ] as const;
 
 /** Notification event type. Known events plus provider-specific custom events. */

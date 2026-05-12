@@ -39,7 +39,8 @@ type SupportedNtfyEvent =
   | "planning-awaiting-input"
   | "fallback-used"
   | "message:agent-to-user"
-  | "message:agent-to-agent";
+  | "message:agent-to-agent"
+  | "message:room";
 
 const SUPPORTED_EVENTS = new Set<SupportedNtfyEvent>([
   "in-review",
@@ -51,6 +52,7 @@ const SUPPORTED_EVENTS = new Set<SupportedNtfyEvent>([
   "fallback-used",
   "message:agent-to-user",
   "message:agent-to-agent",
+  "message:room",
 ]);
 
 export function resolveParticipantLabel(
@@ -65,6 +67,24 @@ export function resolveParticipantLabel(
   }
   const id = typeof metadata?.[idKey] === "string" ? metadata[idKey].trim() : "";
   return id.length > 0 ? id : kind === "from" ? "agent" : "recipient";
+}
+
+function resolveRoomSenderLabel(metadata: NotificationPayload["metadata"] | undefined): string {
+  const senderName = typeof metadata?.senderName === "string" ? metadata.senderName.trim() : "";
+  if (senderName.length > 0) {
+    return senderName;
+  }
+  const senderAgentId = typeof metadata?.senderAgentId === "string" ? metadata.senderAgentId.trim() : "";
+  return senderAgentId.length > 0 ? senderAgentId : "agent";
+}
+
+function resolveRoomLabel(metadata: NotificationPayload["metadata"] | undefined): string {
+  const roomName = typeof metadata?.roomName === "string" ? metadata.roomName.trim() : "";
+  if (roomName.length > 0) {
+    return roomName;
+  }
+  const roomId = typeof metadata?.roomId === "string" ? metadata.roomId.trim() : "";
+  return roomId.length > 0 ? roomId : "room";
 }
 
 export class NtfyNotificationProvider implements NotificationProvider {
@@ -137,14 +157,25 @@ export class NtfyNotificationProvider implements NotificationProvider {
     const replyToMessageId = typeof payload.metadata?.replyToMessageId === "string"
       ? payload.metadata.replyToMessageId
       : undefined;
+    const roomSenderLabel = resolveRoomSenderLabel(payload.metadata);
+    const roomLabel = resolveRoomLabel(payload.metadata);
+    const roomId = typeof payload.metadata?.roomId === "string" ? payload.metadata.roomId : undefined;
 
-    const clickUrl = buildNtfyClickUrl({
-      dashboardHost: this.config.dashboardHost,
-      projectId: this.config.projectId,
-      taskId: payload.taskId,
-      messageId,
-      view: "mailbox",
-    });
+    const clickUrl = event === "message:room"
+      ? buildNtfyClickUrl({
+        dashboardHost: this.config.dashboardHost,
+        projectId: this.config.projectId,
+        roomId,
+        messageId,
+        view: "rooms",
+      })
+      : buildNtfyClickUrl({
+        dashboardHost: this.config.dashboardHost,
+        projectId: this.config.projectId,
+        taskId: payload.taskId,
+        messageId,
+        view: "mailbox",
+      });
 
     const contentByEvent: Record<SupportedNtfyEvent, { title: string; message: string; priority: "default" | "high" }> = {
       "in-review": {
@@ -190,6 +221,11 @@ export class NtfyNotificationProvider implements NotificationProvider {
       "message:agent-to-agent": {
         title: replyToMessageId ? `Re: ${preview}` : `${senderLabel} → ${recipientLabel}`,
         message: `${senderLabel} messaged ${recipientLabel}: ${preview}`,
+        priority: "default",
+      },
+      "message:room": {
+        title: `#${roomLabel} — ${roomSenderLabel}`,
+        message: `${roomSenderLabel} in #${roomLabel}: ${preview}`,
         priority: "default",
       },
     };

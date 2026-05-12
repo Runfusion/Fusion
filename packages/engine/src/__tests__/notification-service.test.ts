@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import type { Message, NotificationProvider, Settings, Task } from "@fusion/core";
+import type { ChatRoomMessage, Message, NotificationProvider, Settings, Task } from "@fusion/core";
 import { NotificationService } from "../notification/notification-service.js";
 import { NtfyNotificationProvider } from "../notification/ntfy-provider.js";
 import { schedulerLog } from "../logger.js";
@@ -63,6 +63,22 @@ function createMessage(overrides: Partial<Message> = {}): Message {
     updatedAt: new Date().toISOString(),
     ...overrides,
   } as Message;
+}
+
+function createRoomMessage(overrides: Partial<ChatRoomMessage> = {}): ChatRoomMessage {
+  return {
+    id: "rmsg-1",
+    roomId: "room-1",
+    role: "assistant",
+    content: "hello from room agent",
+    thinkingOutput: null,
+    metadata: null,
+    attachments: [],
+    senderAgentId: "agent-1",
+    mentions: [],
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
 }
 
 describe("NotificationService", () => {
@@ -261,6 +277,98 @@ describe("NotificationService", () => {
         metadata: expect.objectContaining({ fromName: "Triage Bot", toName: "Executor Bot" }),
       }),
     );
+  });
+
+  it("dispatches message:room from chat:room:message:added", async () => {
+    const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic" });
+    const chatStore = new EventEmitter() as EventEmitter & {
+      getRoom: (id: string) => { id: string; name: string } | undefined;
+    };
+    chatStore.getRoom = (id: string) => (id === "room-1" ? { id, name: "Incident Room" } : undefined);
+    const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
+    const provider: NotificationProvider = {
+      getProviderId: () => "mock",
+      isEventSupported: () => true,
+      sendNotification,
+    };
+
+    const service = new NotificationService(store as any, {
+      chatStore: chatStore as any,
+      agentNameResolver: (agentId) => (agentId === "agent-1" ? "Triage Bot" : null),
+    });
+    service.registerProvider(provider);
+    await service.start();
+
+    chatStore.emit("chat:room:message:added", createRoomMessage());
+    await vi.waitFor(() => {
+      expect(sendNotification).toHaveBeenCalled();
+    });
+
+    expect(sendNotification).toHaveBeenCalledWith(
+      "message:room",
+      expect.objectContaining({
+        event: "message:room",
+        metadata: expect.objectContaining({
+          messageId: "rmsg-1",
+          roomId: "room-1",
+          roomName: "Incident Room",
+          senderAgentId: "agent-1",
+          senderName: "Triage Bot",
+          preview: "hello from room agent",
+          type: "room-assistant",
+        }),
+      }),
+    );
+  });
+
+  it("dispatches room notifications when chat store attaches after start", async () => {
+    const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic" });
+    const chatStore = new EventEmitter() as EventEmitter & {
+      getRoom: (id: string) => { id: string; name: string } | undefined;
+    };
+    chatStore.getRoom = (id: string) => (id === "room-1" ? { id, name: "Incident Room" } : undefined);
+    const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
+    const provider: NotificationProvider = {
+      getProviderId: () => "mock",
+      isEventSupported: () => true,
+      sendNotification,
+    };
+
+    const service = new NotificationService(store as any, {
+      agentNameResolver: () => "Triage Bot",
+    });
+    service.registerProvider(provider);
+    await service.start();
+    service.attachChatStore(chatStore as any);
+
+    chatStore.emit("chat:room:message:added", createRoomMessage());
+    await vi.waitFor(() => {
+      expect(sendNotification).toHaveBeenCalledWith(
+        "message:room",
+        expect.objectContaining({ event: "message:room" }),
+      );
+    });
+  });
+
+  it("ignores non-agent or non-assistant room messages", async () => {
+    const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic" });
+    const chatStore = new EventEmitter();
+    const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
+    const provider: NotificationProvider = {
+      getProviderId: () => "mock",
+      isEventSupported: () => true,
+      sendNotification,
+    };
+
+    const service = new NotificationService(store as any, { chatStore: chatStore as any });
+    service.registerProvider(provider);
+    await service.start();
+
+    chatStore.emit("chat:room:message:added", createRoomMessage({ role: "user" }));
+    chatStore.emit("chat:room:message:added", createRoomMessage({ id: "rmsg-2", senderAgentId: null }));
+    await Promise.resolve();
+
+    expect(sendNotification).not.toHaveBeenCalled();
   });
 
   it("dispatches even when agent name resolution fails", async () => {

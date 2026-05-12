@@ -1939,8 +1939,9 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
           if (
             requestedMessageEventType !== "message:agent-to-user"
             && requestedMessageEventType !== "message:agent-to-agent"
+            && requestedMessageEventType !== "message:room"
           ) {
-            throw badRequest("messageEventType must be message:agent-to-user or message:agent-to-agent");
+            throw badRequest("messageEventType must be message:agent-to-user, message:agent-to-agent, or message:room");
           }
 
           const notificationService = getActiveNotificationService();
@@ -1949,21 +1950,39 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
           }
 
           try {
-            const messageType = requestedMessageEventType.split(":")[1] ?? "agent-to-user";
-            await notificationService.dispatch(requestedMessageEventType, {
-              taskId: undefined,
-              taskTitle: undefined,
-              event: requestedMessageEventType,
-              metadata: {
-                messageId: `test-${crypto.randomUUID()}`,
-                fromId: "system",
-                fromType: "agent",
-                toId: "user",
-                toType: "user",
-                type: messageType,
-                preview: "Fusion test message notification",
-              },
-            });
+            const messageId = `test-${crypto.randomUUID()}`;
+            if (requestedMessageEventType === "message:room") {
+              await notificationService.dispatch(requestedMessageEventType, {
+                taskId: undefined,
+                taskTitle: undefined,
+                event: requestedMessageEventType,
+                metadata: {
+                  messageId,
+                  roomId: "test-room",
+                  roomName: "Test Room",
+                  senderAgentId: "system",
+                  senderName: "Fusion",
+                  preview: "Fusion test room notification",
+                  type: "room-assistant",
+                },
+              });
+            } else {
+              const messageType = requestedMessageEventType.split(":")[1] ?? "agent-to-user";
+              await notificationService.dispatch(requestedMessageEventType, {
+                taskId: undefined,
+                taskTitle: undefined,
+                event: requestedMessageEventType,
+                metadata: {
+                  messageId,
+                  fromId: "system",
+                  fromType: "agent",
+                  toId: "user",
+                  toType: "user",
+                  type: messageType,
+                  preview: "Fusion test message notification",
+                },
+              });
+            }
             res.json({ success: true });
             return;
           } catch (error) {

@@ -3071,7 +3071,7 @@ describe("SettingsModal", () => {
       expect(screen.getByLabelText("Access token (optional)")).toBeInTheDocument();
     });
 
-    it("shows fallback, dreams, and mailbox message events for both providers", async () => {
+    it("shows fallback, dreams, and mailbox/room message events for both providers", async () => {
       mockFetchSettings.mockResolvedValueOnce({ ...defaultSettings, ntfyEnabled: true, ntfyTopic: "test-topic" });
       renderModal();
       await waitForSettingsModalReady();
@@ -3081,16 +3081,20 @@ describe("SettingsModal", () => {
       expect(screen.getByLabelText("DREAMS.md entry added")).toBeInTheDocument();
       const agentToUserNtfy = screen.getByLabelText("Agent → user message") as HTMLInputElement;
       const agentToAgentNtfy = screen.getByLabelText("Agent → agent message") as HTMLInputElement;
+      const roomMessageNtfy = screen.getByLabelText("Agent message in room") as HTMLInputElement;
       expect(agentToUserNtfy.checked).toBe(true);
       expect(agentToAgentNtfy.checked).toBe(true);
+      expect(roomMessageNtfy.checked).toBe(true);
 
       await userEvent.click(screen.getByLabelText("Webhook notifications"));
       expect(screen.getAllByLabelText("Fallback model used (recovered)").length).toBeGreaterThan(0);
       expect(screen.getAllByLabelText("DREAMS.md entry added").length).toBeGreaterThan(0);
       const [agentToUserWebhook] = screen.getAllByLabelText("Agent → user message") as HTMLInputElement[];
       const [agentToAgentWebhook] = screen.getAllByLabelText("Agent → agent message") as HTMLInputElement[];
+      const [roomMessageWebhook] = screen.getAllByLabelText("Agent message in room") as HTMLInputElement[];
       expect(agentToUserWebhook.checked).toBe(true);
       expect(agentToAgentWebhook.checked).toBe(true);
+      expect(roomMessageWebhook.checked).toBe(true);
     });
 
     it("shows webhook fields when webhook provider is enabled", async () => {
@@ -3185,6 +3189,28 @@ describe("SettingsModal", () => {
       );
       expect(screen.getByText("Test notification sent — check your ntfy app inbox!")).toBeInTheDocument();
       expect(screen.getAllByText("Test notification sent — check your ntfy app inbox!")[0].closest(".notification-test-feedback")).toHaveAttribute("aria-live", "polite");
+    });
+
+    it("calls testNotification with ntfy room-event config when room test button clicked", async () => {
+      const addToast = vi.fn();
+      mockFetchSettings.mockResolvedValueOnce({ ...defaultSettings, ntfyEnabled: true, ntfyTopic: "test-topic" });
+      renderModal({ addToast });
+      await waitForSettingsModalReady();
+      await openNotificationsSection();
+
+      await userEvent.click(screen.getByRole("button", { name: /Send test room notification/ }));
+
+      await waitFor(() => {
+        expect(mockTestNotification).toHaveBeenCalledWith(
+          "ntfy",
+          { messageEventType: "message:room" },
+          undefined,
+        );
+      });
+      expect(addToast).toHaveBeenCalledWith(
+        "Test notification sent — check your ntfy app inbox!",
+        "success",
+      );
     });
 
     it("calls testNotification with webhook provider ID when webhook test button clicked", async () => {

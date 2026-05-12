@@ -248,6 +248,7 @@ const DEFAULT_NTFY_EVENTS: NtfyNotificationEvent[] = [
   "memory-dreams-processed",
   "message:agent-to-user",
   "message:agent-to-agent",
+  "message:room",
 ];
 
 const NOTIFICATION_EVENT_OPTIONS: Array<{ event: NtfyNotificationEvent; label: string; description: string }> = [
@@ -262,6 +263,7 @@ const NOTIFICATION_EVENT_OPTIONS: Array<{ event: NtfyNotificationEvent; label: s
   { event: "memory-dreams-processed", label: "DREAMS.md entry added", description: "When manual dream processing writes a new entry to project or agent DREAMS.md" },
   { event: "message:agent-to-user", label: "Agent → user message", description: "An agent sent you a direct message" },
   { event: "message:agent-to-agent", label: "Agent → agent message", description: "Agents are talking to each other (including replies)" },
+  { event: "message:room", label: "Agent message in room", description: "An agent posted a reply in a chat room you're watching" },
 ];
 
 /** Well-known experimental feature flags with display labels.
@@ -1168,8 +1170,8 @@ export function SettingsModal({
     }
   }, [addToast, loadAuthStatus]);
 
-  const handleTestProviderNotification = useCallback(async (providerId: "ntfy" | "webhook" | "ntfy-message") => {
-    if (providerId === "ntfy" || providerId === "ntfy-message") {
+  const handleTestProviderNotification = useCallback(async (providerId: "ntfy" | "webhook" | "ntfy-message" | "ntfy-room") => {
+    if (providerId === "ntfy" || providerId === "ntfy-message" || providerId === "ntfy-room") {
       if (!form.ntfyEnabled || !form.ntfyTopic || !/^[a-zA-Z0-9_-]{1,64}$/.test(form.ntfyTopic)) {
         return;
       }
@@ -1205,15 +1207,21 @@ export function SettingsModal({
         }
         : providerId === "ntfy-message"
           ? { messageEventType: "message:agent-to-user" }
-          : {
-            webhookUrl: form.webhookUrl,
-            webhookFormat: form.webhookFormat || "generic",
-          };
-      const result = await testNotification(providerId === "ntfy-message" ? "ntfy" : providerId, config, projectId);
+          : providerId === "ntfy-room"
+            ? { messageEventType: "message:room" }
+            : {
+              webhookUrl: form.webhookUrl,
+              webhookFormat: form.webhookFormat || "generic",
+            };
+      const result = await testNotification(
+        providerId === "ntfy-message" || providerId === "ntfy-room" ? "ntfy" : providerId,
+        config,
+        projectId,
+      );
       if (result.success) {
         const providerName = providerId === "ntfy"
           ? "ntfy app"
-          : providerId === "ntfy-message"
+          : providerId === "ntfy-message" || providerId === "ntfy-room"
             ? "ntfy app inbox"
             : "webhook endpoint";
         const successMessage = `Test notification sent — check your ${providerName}!`;
@@ -4987,6 +4995,7 @@ export function SettingsModal({
                       disabled={
                         testNotificationLoading["ntfy"] ||
                         testNotificationLoading["ntfy-message"] ||
+                        testNotificationLoading["ntfy-room"] ||
                         !form.ntfyEnabled ||
                         !form.ntfyTopic ||
                         !/^[a-zA-Z0-9_-]{1,64}$/.test(form.ntfyTopic)
@@ -5001,6 +5010,7 @@ export function SettingsModal({
                       disabled={
                         testNotificationLoading["ntfy"] ||
                         testNotificationLoading["ntfy-message"] ||
+                        testNotificationLoading["ntfy-room"] ||
                         !form.ntfyEnabled ||
                         !form.ntfyTopic ||
                         !/^[a-zA-Z0-9_-]{1,64}$/.test(form.ntfyTopic)
@@ -5008,8 +5018,23 @@ export function SettingsModal({
                     >
                       {testNotificationLoading["ntfy-message"] ? "Sending…" : "Test message notification"}
                     </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => handleTestProviderNotification("ntfy-room")}
+                      disabled={
+                        testNotificationLoading["ntfy"] ||
+                        testNotificationLoading["ntfy-message"] ||
+                        testNotificationLoading["ntfy-room"] ||
+                        !form.ntfyEnabled ||
+                        !form.ntfyTopic ||
+                        !/^[a-zA-Z0-9_-]{1,64}$/.test(form.ntfyTopic)
+                      }
+                    >
+                      {testNotificationLoading["ntfy-room"] ? "Sending…" : "Send test room notification"}
+                    </button>
                   </div>
-                  {(testNotificationResult["ntfy"] || testNotificationResult["ntfy-message"]) && (
+                  {(testNotificationResult["ntfy"] || testNotificationResult["ntfy-message"] || testNotificationResult["ntfy-room"]) && (
                     <div className="notification-test-feedback" aria-live="polite">
                       {testNotificationResult["ntfy"] && (
                         <small className={`notification-test-feedback-item notification-test-feedback-item--${testNotificationResult["ntfy"].status}`}>
@@ -5019,6 +5044,11 @@ export function SettingsModal({
                       {testNotificationResult["ntfy-message"] && (
                         <small className={`notification-test-feedback-item notification-test-feedback-item--${testNotificationResult["ntfy-message"].status}`}>
                           {testNotificationResult["ntfy-message"].message}
+                        </small>
+                      )}
+                      {testNotificationResult["ntfy-room"] && (
+                        <small className={`notification-test-feedback-item notification-test-feedback-item--${testNotificationResult["ntfy-room"].status}`}>
+                          {testNotificationResult["ntfy-room"].message}
                         </small>
                       )}
                     </div>

@@ -167,6 +167,7 @@ describe("WebhookNotificationProvider", () => {
     ["fallback-used", "Fusion recovered by switching from"],
     ["message:agent-to-user", "From: Triage Bot → You: hello"],
     ["message:agent-to-agent", "From: Triage Bot → To: Executor Bot: hello"],
+    ["message:room", "In #Incident Room: Triage Bot: hello"],
     ["unknown-event", 'Event "unknown-event" for task My Task'],
   ])("message formatting for %s", async (event, expectedPart) => {
     fetchMock.mockResolvedValue({ ok: true, status: 200, statusText: "OK" });
@@ -176,12 +177,56 @@ describe("WebhookNotificationProvider", () => {
       taskId: "FN-1",
       taskTitle: "My Task",
       event,
-      metadata: { fromId: "agent-1", toId: "agent-2", fromName: "Triage Bot", toName: "Executor Bot", preview: "hello" },
+      metadata: {
+        fromId: "agent-1",
+        toId: "agent-2",
+        fromName: "Triage Bot",
+        toName: "Executor Bot",
+        senderAgentId: "agent-1",
+        senderName: "Triage Bot",
+        roomId: "room-1",
+        roomName: "Incident Room",
+        preview: "hello",
+      },
     });
 
     const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(String(requestInit.body));
     expect(body.text).toContain(expectedPart);
+  });
+
+  it("includes room metadata and room deep link for room notifications", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, statusText: "OK" });
+    await provider.initialize({
+      webhookUrl: "https://example.com/hook",
+      webhookFormat: "generic",
+      dashboardHost: "http://dash",
+      projectId: "p1",
+    });
+
+    await provider.sendNotification("message:room", {
+      event: "message:room",
+      metadata: {
+        messageId: "msg-room",
+        roomId: "room-1",
+        roomName: "Incident Room",
+        senderAgentId: "agent-1",
+        senderName: "Triage Bot",
+        preview: "hello",
+      },
+    });
+
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(String(requestInit.body));
+    expect(payload.metadata).toEqual(
+      expect.objectContaining({
+        roomId: "room-1",
+        roomName: "Incident Room",
+        senderAgentId: "agent-1",
+        senderName: "Triage Bot",
+      }),
+    );
+    expect(payload.clickUrl).toBe("http://dash/?project=p1&view=rooms&room=room-1#message-msg-room");
   });
 
   it("title fallback uses taskId and truncated description snippet", async () => {

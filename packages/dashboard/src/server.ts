@@ -610,6 +610,12 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
   // Create ChatStore for chat session management (available for SSE event forwarding)
   const chatStore = options?.chatStore ?? new ChatStore(store.getFusionDir(), store.getDatabase());
+  options?.engine?.attachChatStore?.(chatStore);
+  if (typeof options?.engineManager?.getAllEngines === "function") {
+    for (const engine of options.engineManager.getAllEngines().values()) {
+      engine.attachChatStore?.(chatStore);
+    }
+  }
 
   // Lets the browser explicitly release server-side SSE listeners during page
   // unload. EventSource.close() is not enough in Chrome refresh paths because

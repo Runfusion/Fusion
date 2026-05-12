@@ -73,6 +73,7 @@ describe("Ntfy notifier helpers", () => {
     expect(DEFAULT_NTFY_EVENTS).toContain("fallback-used");
     expect(DEFAULT_NTFY_EVENTS).toContain("message:agent-to-user");
     expect(DEFAULT_NTFY_EVENTS).toContain("message:agent-to-agent");
+    expect(DEFAULT_NTFY_EVENTS).toContain("message:room");
   });
 
   it("checks planning-awaiting-input event enablement", () => {
@@ -105,6 +106,18 @@ describe("Ntfy notifier helpers", () => {
         messageId: "msg-1",
       }),
     ).toBe("http://localhost:4040/?project=proj-1&view=mailbox&mailbox-message=msg-1#message-msg-1");
+  });
+
+  it("builds room message deep links", () => {
+    expect(
+      buildNtfyClickUrl({
+        dashboardHost: "http://localhost:4040/",
+        projectId: "proj-1",
+        roomId: "room-1",
+        messageId: "msg-1",
+        view: "rooms",
+      }),
+    ).toBe("http://localhost:4040/?project=proj-1&view=rooms&room=room-1#message-msg-1");
   });
 });
 

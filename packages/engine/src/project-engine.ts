@@ -19,6 +19,7 @@ import { PrMonitor } from "./pr-monitor.js";
 import { PrCommentHandler } from "./pr-comment-handler.js";
 import { NtfyNotifier } from "./notifier.js";
 import { NotificationService } from "./notification/index.js";
+import type { NotificationChatStore } from "./notification/notification-service.js";
 import { GridlockDetector } from "./gridlock-detector.js";
 import { CronRunner, createAiPromptExecutor } from "./cron-runner.js";
 import type { RoutineRunner } from "./routine-runner.js";
@@ -599,6 +600,10 @@ export class ProjectEngine {
   /** Get the MessageStore (if initialized). Returns undefined before start(). */
   getMessageStore(): import("@fusion/core").MessageStore | undefined {
     return this.runtime.getMessageStore();
+  }
+
+  attachChatStore(chatStore: NotificationChatStore): void {
+    this.notificationService?.attachChatStore(chatStore);
   }
 
   /** Get the HeartbeatMonitor (if initialized). */

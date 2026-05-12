@@ -1,4 +1,5 @@
 import type {
+  ChatRoomMessage,
   Column,
   MergeResult,
   Message,
@@ -21,6 +22,8 @@ export interface NotificationServiceOptions {
   ntfyBaseUrl?: string;
   /** Optional message store for mailbox message notifications */
   messageStore?: NotificationMessageStore;
+  /** Optional chat store for room message notifications */
+  chatStore?: NotificationChatStore;
   /** Resolve human-readable name for an agent ID used in message notifications */
   agentNameResolver?: (agentId: string) => Promise<string | null> | string | null;
 }
@@ -36,10 +39,17 @@ interface NotificationMessageStore {
   off?(event: "message:sent", listener: (message: Message) => void): void;
 }
 
+export interface NotificationChatStore {
+  on(event: "chat:room:message:added", listener: (message: ChatRoomMessage) => void): void;
+  off?(event: "chat:room:message:added", listener: (message: ChatRoomMessage) => void): void;
+  getRoom?(id: string): { id: string; name: string } | undefined;
+}
+
 export class NotificationService {
   private readonly dispatcher = new NotificationDispatcher();
   private readonly notifiedEvents = new Set<string>();
   private started = false;
+  private chatStore: NotificationChatStore | undefined;
   private notificationsEnabled = false;
   private ntfyProvider?: NtfyNotificationProvider;
   private webhookProvider?: WebhookNotificationProvider;
@@ -48,7 +58,19 @@ export class NotificationService {
   constructor(
     private readonly store: NotificationServiceStore,
     private readonly options: NotificationServiceOptions = {},
-  ) {}
+  ) {
+    this.chatStore = options.chatStore;
+  }
+
+  attachChatStore(chatStore: NotificationChatStore): void {
+    if (this.chatStore && this.chatStore !== chatStore) {
+      this.detachChatStoreListener(this.chatStore);
+    }
+    this.chatStore = chatStore;
+    if (this.started) {
+      this.chatStore.on("chat:room:message:added", this.handleRoomMessageAdded);
+    }
+  }
 
   registerProvider(provider: NotificationProvider): void {
     this.dispatcher.registerProvider(provider);
@@ -71,8 +93,8 @@ export class NotificationService {
     this.store.on("task:merged", this.handleTaskMerged);
     this.store.on("settings:updated", this.handleSettingsUpdated);
     this.options.messageStore?.on("message:sent", this.handleMessageSent);
-
     this.started = true;
+    this.chatStore?.on("chat:room:message:added", this.handleRoomMessageAdded);
     schedulerLog.log("NotificationService started");
   }
 
@@ -89,6 +111,7 @@ export class NotificationService {
       if (typeof this.options.messageStore?.off === "function") {
         this.options.messageStore.off("message:sent", this.handleMessageSent);
       }
+      this.detachChatStoreListener(this.chatStore);
     }
 
     await this.dispatcher.shutdownAll();
@@ -246,6 +269,10 @@ export class NotificationService {
     void this.handleMessageSentAsync(message);
   };
 
+  private handleRoomMessageAdded = (message: ChatRoomMessage): void => {
+    void this.handleRoomMessageAddedAsync(message);
+  };
+
   private async handleMessageSentAsync(message: Message): Promise<void> {
     schedulerLog.log(
       `NotificationService.handleMessageSent messageId=${message.id} type=${message.type} notificationsEnabled=${String(this.notificationsEnabled)} hasNtfyProvider=${String(Boolean(this.ntfyProvider))}`,
@@ -267,9 +294,7 @@ export class NotificationService {
       return;
     }
 
-    const preview = message.content.length > 100
-      ? `${message.content.slice(0, 100)}…`
-      : message.content;
+    const preview = this.createPreview(message.content);
 
     const taskId = typeof message.metadata?.taskId === "string" ? message.metadata.taskId : undefined;
 
@@ -299,6 +324,44 @@ export class NotificationService {
     );
   }
 
+  private async handleRoomMessageAddedAsync(message: ChatRoomMessage): Promise<void> {
+    schedulerLog.log(
+      `NotificationService.handleRoomMessageAdded messageId=${message.id} roomId=${message.roomId} role=${message.role} notificationsEnabled=${String(this.notificationsEnabled)}`,
+    );
+
+    if (message.role !== "assistant" || message.senderAgentId == null) {
+      return;
+    }
+
+    if (!this.notificationsEnabled) {
+      await this.refreshNotificationState("chat:room:message:added");
+      if (!this.notificationsEnabled) {
+        return;
+      }
+    }
+
+    const senderName = await this.resolveAgentName("agent", message.senderAgentId, "from");
+    const roomName = this.chatStore?.getRoom?.(message.roomId)?.name;
+    const preview = this.createPreview(message.content);
+
+    this.maybeNotify(message.id, "message:room", {
+      event: "message:room",
+      metadata: {
+        messageId: message.id,
+        roomId: message.roomId,
+        ...(roomName ? { roomName } : {}),
+        senderAgentId: message.senderAgentId,
+        ...(senderName ? { senderName } : {}),
+        preview,
+        type: "room-assistant",
+      },
+    });
+
+    schedulerLog.log(
+      `NotificationService.handleRoomMessageAdded scheduled eventType=message:room messageId=${message.id}`,
+    );
+  }
+
   private async resolveAgentName(
     participantType: Message["fromType"],
     participantId: string,
@@ -323,6 +386,16 @@ export class NotificationService {
         `NotificationService.handleMessageSent failed to resolve ${direction} agent name agentId=${participantId} error=${message}`,
       );
       return null;
+    }
+  }
+
+  private createPreview(content: string): string {
+    return content.length > 100 ? `${content.slice(0, 100)}…` : content;
+  }
+
+  private detachChatStoreListener(chatStore: NotificationChatStore | undefined): void {
+    if (typeof chatStore?.off === "function") {
+      chatStore.off("chat:room:message:added", this.handleRoomMessageAdded);
     }
   }
 

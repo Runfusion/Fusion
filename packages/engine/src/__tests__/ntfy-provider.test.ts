@@ -46,6 +46,7 @@ describe("NtfyNotificationProvider", () => {
     ["fallback-used", "Fallback model used for FN-1", "switched from", "high"],
     ["message:agent-to-user", "New message from Triage Bot", "Triage Bot → you: preview text", "high"],
     ["message:agent-to-agent", "Triage Bot → Executor Bot", "Triage Bot messaged Executor Bot: preview text", "default"],
+    ["message:room", "#Incident Room — Triage Bot", "Triage Bot in #Incident Room: preview text", "default"],
   ])("maps %s event correctly", async (event, expectedTitle, messagePart, priority) => {
     await provider.sendNotification(event as any, {
       taskId: "FN-1",
@@ -56,8 +57,12 @@ describe("NtfyNotificationProvider", () => {
         toId: "agent-2",
         fromName: "Triage Bot",
         toName: "Executor Bot",
+        senderAgentId: "agent-1",
+        senderName: "Triage Bot",
         preview: "preview text",
         messageId: "msg-1",
+        roomId: "room-1",
+        roomName: "Incident Room",
       },
     });
 
@@ -87,6 +92,7 @@ describe("NtfyNotificationProvider", () => {
     expect(provider.isEventSupported("fallback-used" as any)).toBe(true);
     expect(provider.isEventSupported("message:agent-to-user" as any)).toBe(true);
     expect(provider.isEventSupported("message:agent-to-agent" as any)).toBe(true);
+    expect(provider.isEventSupported("message:room" as any)).toBe(true);
     expect(provider.isEventSupported("custom-event" as any)).toBe(false);
   });
 
@@ -122,6 +128,28 @@ describe("NtfyNotificationProvider", () => {
       messageId: "msg-1",
       view: "mailbox",
     });
+  });
+
+  it("uses room deep link for room notifications", async () => {
+    await provider.sendNotification("message:room" as any, {
+      event: "message:room" as any,
+      metadata: {
+        messageId: "msg-room",
+        roomId: "room-1",
+        roomName: "Incident Room",
+        senderAgentId: "agent-1",
+        senderName: "Triage Bot",
+        preview: "hello",
+      },
+    });
+
+    expect(mocks.buildNtfyClickUrl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        roomId: "room-1",
+        messageId: "msg-room",
+        view: "rooms",
+      }),
+    );
   });
 
   it("uses mailbox deep link when message is not task-bound", async () => {

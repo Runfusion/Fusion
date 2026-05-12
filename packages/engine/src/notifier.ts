@@ -31,6 +31,7 @@ export const DEFAULT_NTFY_EVENTS: readonly NtfyNotificationEvent[] = [
   "fallback-used",
   "message:agent-to-user",
   "message:agent-to-agent",
+  "message:room",
 ] as const;
 
 export interface NtfyNotificationConfigInput {
@@ -150,9 +151,10 @@ export function buildNtfyClickUrl(options: {
   projectId?: string;
   taskId?: string;
   messageId?: string;
+  roomId?: string;
   view?: string;
 }): string | undefined {
-  const { dashboardHost, projectId, taskId, messageId, view } = options;
+  const { dashboardHost, projectId, taskId, messageId, roomId, view } = options;
   if (!dashboardHost) {
     return undefined;
   }
@@ -165,6 +167,9 @@ export function buildNtfyClickUrl(options: {
   }
   if (taskId) {
     queryParts.push(`task=${encodeURIComponent(taskId)}`);
+  } else if (roomId) {
+    queryParts.push(`view=${encodeURIComponent(view ?? "rooms")}`);
+    queryParts.push(`room=${encodeURIComponent(roomId)}`);
   } else if (messageId) {
     queryParts.push(`view=${encodeURIComponent(view ?? "mailbox")}`);
     queryParts.push(`mailbox-message=${encodeURIComponent(messageId)}`);

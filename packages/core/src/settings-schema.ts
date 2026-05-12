@@ -33,6 +33,7 @@ export const DEFAULT_GLOBAL_SETTINGS = {
     "planning-awaiting-input",
     "message:agent-to-user",
     "message:agent-to-agent",
+    "message:room",
     "gridlock",
     "fallback-used",
     "memory-dreams-processed",

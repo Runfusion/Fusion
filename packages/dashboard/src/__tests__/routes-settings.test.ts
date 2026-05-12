@@ -1872,6 +1872,39 @@ describe("POST /settings/test-notification", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("ntfy provider dispatches a room message-event pipeline test when messageEventType is message:room", async () => {
+    const dispatchSpy = vi.fn().mockResolvedValue(undefined);
+    mockGetActiveNotificationService.mockReturnValue({ dispatch: dispatchSpy });
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ntfyEnabled: true,
+      ntfyTopic: "test-topic",
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/settings/test-notification",
+      JSON.stringify({ providerId: "ntfy", messageEventType: "message:room" }),
+      { "content-type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true });
+    expect(dispatchSpy).toHaveBeenCalledWith(
+      "message:room",
+      expect.objectContaining({
+        event: "message:room",
+        metadata: expect.objectContaining({
+          roomId: "test-room",
+          roomName: "Test Room",
+          senderName: "Fusion",
+          preview: "Fusion test room notification",
+        }),
+      }),
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("ntfy provider uses config override for baseUrl", async () => {
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ntfyEnabled: true,

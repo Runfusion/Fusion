@@ -34,6 +34,24 @@ function resolveParticipantLabel(
   return id.length > 0 ? id : kind === "from" ? "agent" : "recipient";
 }
 
+function resolveRoomSenderLabel(metadata: NotificationPayload["metadata"] | undefined): string {
+  const senderName = typeof metadata?.senderName === "string" ? metadata.senderName.trim() : "";
+  if (senderName.length > 0) {
+    return senderName;
+  }
+  const senderAgentId = typeof metadata?.senderAgentId === "string" ? metadata.senderAgentId.trim() : "";
+  return senderAgentId.length > 0 ? senderAgentId : "agent";
+}
+
+function resolveRoomLabel(metadata: NotificationPayload["metadata"] | undefined): string {
+  const roomName = typeof metadata?.roomName === "string" ? metadata.roomName.trim() : "";
+  if (roomName.length > 0) {
+    return roomName;
+  }
+  const roomId = typeof metadata?.roomId === "string" ? metadata.roomId.trim() : "";
+  return roomId.length > 0 ? roomId : "room";
+}
+
 export class WebhookNotificationProvider implements NotificationProvider {
   private config: WebhookProviderConfig | null = null;
   private abortController: AbortController | null = null;
@@ -167,6 +185,12 @@ export class WebhookNotificationProvider implements NotificationProvider {
         const preview = typeof payload.metadata?.preview === "string" ? payload.metadata.preview : "(no preview)";
         return `From: ${from} → To: ${to}: ${preview}`;
       }
+      case "message:room": {
+        const roomName = resolveRoomLabel(payload.metadata);
+        const senderLabel = resolveRoomSenderLabel(payload.metadata);
+        const preview = typeof payload.metadata?.preview === "string" ? payload.metadata.preview : "(no preview)";
+        return `In #${roomName}: ${senderLabel}: ${preview}`;
+      }
       default:
         return `Event "${event}" for task ${identifier}`;
     }
@@ -196,9 +220,12 @@ export class WebhookNotificationProvider implements NotificationProvider {
     }
 
     const messageId = typeof payload.metadata?.messageId === "string" ? payload.metadata.messageId : undefined;
+    const roomId = typeof payload.metadata?.roomId === "string" ? payload.metadata.roomId : undefined;
 
     const fromLabel = resolveParticipantLabel(payload.metadata, "from");
     const toLabel = resolveParticipantLabel(payload.metadata, "to");
+    const roomLabel = resolveRoomLabel(payload.metadata);
+    const roomSenderLabel = resolveRoomSenderLabel(payload.metadata);
 
     return {
       event: payload.event,
@@ -215,14 +242,28 @@ export class WebhookNotificationProvider implements NotificationProvider {
             toName: typeof payload.metadata?.toName === "string" ? payload.metadata.toName : toLabel,
           }
           : {}),
+        ...(payload.event === "message:room"
+          ? {
+            roomName: typeof payload.metadata?.roomName === "string" ? payload.metadata.roomName : roomLabel,
+            senderName: typeof payload.metadata?.senderName === "string" ? payload.metadata.senderName : roomSenderLabel,
+          }
+          : {}),
       },
-      clickUrl: buildNtfyClickUrl({
-        dashboardHost: this.config.dashboardHost,
-        projectId: this.config.projectId,
-        taskId: payload.taskId,
-        messageId,
-        view: "mailbox",
-      }),
+      clickUrl: payload.event === "message:room"
+        ? buildNtfyClickUrl({
+          dashboardHost: this.config.dashboardHost,
+          projectId: this.config.projectId,
+          roomId,
+          messageId,
+          view: "rooms",
+        })
+        : buildNtfyClickUrl({
+          dashboardHost: this.config.dashboardHost,
+          projectId: this.config.projectId,
+          taskId: payload.taskId,
+          messageId,
+          view: "mailbox",
+        }),
     };
   }
 }
