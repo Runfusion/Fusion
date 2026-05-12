@@ -673,8 +673,51 @@ export class SelfHealingManager {
     }
 
     // (4) Subject grep fallback (legacy commits).
+    // git log --grep searches both subject and body; to avoid false
+    // matches from commit bodies mentioning unrelated task IDs, we
+    // pipe git log --format='%H%x1f%s' through grep on the subject only.
     if (!stdout.trim()) {
-      stdout = await search(shellQuote(task.id), true);
+      const range = task.baseCommitSha ? `${task.baseCommitSha}..HEAD` : "HEAD";
+      const subjectOnlyCommand = [
+        "git log",
+        shellQuote(range),
+        "--format=%H%x1f%s",
+        "--max-count=20",
+        ...(options?.preferEarliestOwnedCommit ? ["--reverse"] : []),
+        "|",
+        "grep",
+        "-F",
+        shellQuote(task.id),
+      ].join(" ");
+      try {
+        const r = await execAsync(subjectOnlyCommand, {
+          cwd: this.options.rootDir,
+          maxBuffer: 1024 * 1024,
+        });
+        stdout = r.stdout;
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        log.warn(
+          `Failed to read git log for subject-only landed commit lookup (${task.id}): ${errorMessage}`,
+        );
+        stdout = "";
+      }
+      // Bounded range may exclude the landed commit; re-scan all of HEAD if empty.
+      if (!stdout.trim() && task.baseCommitSha) {
+        const headCommand = subjectOnlyCommand.replace(
+          shellQuote(`${task.baseCommitSha}..HEAD`),
+          "HEAD",
+        );
+        try {
+          const r = await execAsync(headCommand, {
+            cwd: this.options.rootDir,
+            maxBuffer: 1024 * 1024,
+          });
+          stdout = r.stdout;
+        } catch {
+          stdout = "";
+        }
+      }
     }
 
     const firstLine = stdout.trim().split("\n").find(Boolean);
