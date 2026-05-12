@@ -20,6 +20,20 @@ export interface FallbackInfo {
   triggerPoint: "session-creation" | "prompt-time";
 }
 
+export interface FailureReferenceInfo {
+  kind: string;
+  id: string;
+  label?: string;
+}
+
+export interface FailureInfo {
+  summary: string;
+  errorClass?: string;
+  code?: string;
+  detail?: string;
+  reference?: FailureReferenceInfo;
+}
+
 export interface ChatMessageInfo {
   id: string;
   sessionId: string;
@@ -28,6 +42,7 @@ export interface ChatMessageInfo {
   thinkingOutput?: string | null;
   toolCalls?: ToolCallInfo[];
   fallbackInfo?: FallbackInfo;
+  failureInfo?: FailureInfo;
   attachments?: Array<{
     id: string;
     filename: string;

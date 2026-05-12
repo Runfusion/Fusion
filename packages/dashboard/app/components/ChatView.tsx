@@ -22,8 +22,9 @@ import {
   ChevronDown,
   Copy,
   Check,
+  TriangleAlert,
 } from "lucide-react";
-import { useChat, type ChatMessageInfo, type ToolCallInfo } from "../hooks/useChat";
+import { useChat, type ChatMessageInfo, type FailureInfo, type ToolCallInfo } from "../hooks/useChat";
 import { useChatRooms } from "../hooks/useChatRooms";
 import { useViewportMode } from "./Header";
 import { fetchAgents, fetchDiscoveredSkills, fetchModels, updateGlobalSettings } from "../api";
@@ -164,6 +165,66 @@ function formatToolResultSummary(result: unknown): string | null {
   } catch {
     return truncateToolValue(String(result), 200);
   }
+}
+
+function buildFailureReferenceHref(reference: FailureInfo["reference"]): string | null {
+  if (!reference) {
+    return null;
+  }
+
+  if (reference.kind === "mailbox" || reference.kind === "mailbox-message") {
+    const pathname = typeof window === "undefined" ? "/" : window.location.pathname || "/";
+    const params = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
+    params.set("view", "mailbox");
+    params.set("mailbox-message", reference.id);
+    return `${pathname}?${params.toString()}#message-${encodeURIComponent(reference.id)}`;
+  }
+
+  return null;
+}
+
+function renderFailureReference(reference: FailureInfo["reference"]): ReactNode {
+  if (!reference) {
+    return null;
+  }
+
+  const referenceLabel = reference.label ?? `${reference.kind} ${reference.id}`;
+  const referenceHref = buildFailureReferenceHref(reference);
+  const referenceDetailsId = `chat-failure-reference-${reference.kind}-${reference.id}`
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .toLowerCase();
+
+  return (
+    <div className="chat-message-failure-reference">
+      <span className="chat-message-failure-reference-label">Reference</span>
+      <span className="chat-message-failure-reference-value">{referenceLabel}</span>
+      {referenceHref ? (
+        <a className="btn btn-sm chat-message-failure-reference-link" href={referenceHref}>
+          Open mailbox message
+        </a>
+      ) : (
+        <details className="chat-message-failure-reference-details">
+          <summary className="btn btn-sm chat-message-failure-reference-link">View failure details</summary>
+          <dl className="chat-message-failure-reference-meta" id={referenceDetailsId}>
+            <div>
+              <dt>Kind</dt>
+              <dd>{reference.kind}</dd>
+            </div>
+            <div>
+              <dt>ID</dt>
+              <dd>{reference.id}</dd>
+            </div>
+            {reference.label && (
+              <div>
+                <dt>Label</dt>
+                <dd>{reference.label}</dd>
+              </div>
+            )}
+          </dl>
+        </details>
+      )}
+    </div>
+  );
 }
 
 function renderToolCalls(toolCalls?: ToolCallInfo[]): ReactNode {
@@ -599,6 +660,8 @@ const ChatMessageItem = memo(function ChatMessageItem({
   copyAction,
 }: ChatMessageItemProps) {
   const isAssistantMessage = message.role === "assistant";
+  const failureInfo = isAssistantMessage ? message.failureInfo : undefined;
+  const showAssistantIdentity = isAssistantMessage && (!hideAssistantIdentity || Boolean(failureInfo));
 
   const renderedUserContent = useMemo<ReactNode>(() => {
     if (isAssistantMessage) return null;
@@ -684,6 +747,33 @@ const ChatMessageItem = memo(function ChatMessageItem({
 
   const assistantBody = useMemo<ReactNode>(() => {
     if (!isAssistantMessage) return null;
+    if (failureInfo) {
+      return (
+        <div className="chat-message-content chat-message-content--failure">
+          <div className="chat-message-failure-summary-row">
+            <span className="status-dot status-dot--error" aria-hidden="true" />
+            <span className="chat-message-failure-label">Response failed</span>
+          </div>
+          <div className="chat-message-failure-summary">{failureInfo.summary}</div>
+          {(failureInfo.errorClass || failureInfo.code) && (
+            <div className="chat-message-failure-badges">
+              {failureInfo.errorClass && <span className="chat-message-failure-badge">{failureInfo.errorClass}</span>}
+              {failureInfo.code && <span className="chat-message-failure-badge">{failureInfo.code}</span>}
+            </div>
+          )}
+          {(failureInfo.detail || failureInfo.reference) && (
+            <details className="chat-message-failure-details">
+              <summary>
+                <TriangleAlert size={14} aria-hidden="true" />
+                <span>Failure details</span>
+              </summary>
+              {failureInfo.detail && <pre className="chat-message-failure-detail">{failureInfo.detail}</pre>}
+              {renderFailureReference(failureInfo.reference)}
+            </details>
+          )}
+        </div>
+      );
+    }
     if (forcePlain) {
       return <div className="chat-message-content chat-message-content--plain">{message.content}</div>;
     }
@@ -694,14 +784,14 @@ const ChatMessageItem = memo(function ChatMessageItem({
         </ReactMarkdown>
       </div>
     );
-  }, [isAssistantMessage, forcePlain, message.content]);
+  }, [failureInfo, forcePlain, isAssistantMessage, message.content]);
 
   return (
     <div
-      className={`chat-message chat-message--${message.role}`}
+      className={`chat-message chat-message--${message.role}${failureInfo ? " chat-message--failure" : ""}`}
       data-testid={`chat-message-${message.id}`}
     >
-      {isAssistantMessage && !hideAssistantIdentity && (
+      {showAssistantIdentity && (
         <div className="chat-message-avatar">
           {activeModelProvider ? <ProviderIcon provider={activeModelProvider} size="sm" /> : <Bot size={14} />}
           <span>{agentName}</span>
@@ -711,7 +801,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
       {isAssistantMessage
         ? assistantBody
         : <div className="chat-message-content">{renderedUserContent}</div>}
-      {copyAction}
+      {!failureInfo && copyAction}
       {renderToolCalls(message.toolCalls)}
       {message.thinkingOutput && (
         <details className="chat-message-thinking">

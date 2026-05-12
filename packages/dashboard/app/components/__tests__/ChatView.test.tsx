@@ -1009,6 +1009,95 @@ describe("ChatView", () => {
     expect(screen.getByLabelText("Copy failed")).toBeInTheDocument();
   });
 
+  it("renders assistant failure bubbles inline with detail affordances", async () => {
+    setupMockChat({
+      activeSession: {
+        id: "session-001",
+        agentId: "__fn_agent__",
+        status: "active",
+        title: "Fusion Chat",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        createdAt: "2026-04-08T00:00:00.000Z",
+        updatedAt: "2026-04-08T00:00:00.000Z",
+      },
+      messages: [
+        {
+          id: "msg-failure",
+          sessionId: "session-001",
+          role: "assistant",
+          content: "Model request failed",
+          failureInfo: {
+            summary: "Model request failed",
+            errorClass: "ProviderError",
+            code: "E_MODEL",
+            detail: "ProviderError: Model request failed",
+            reference: { kind: "mailbox", id: "msg-42", label: "Mailbox message msg-42" },
+          },
+          createdAt: "2026-04-08T00:00:01.000Z",
+        },
+      ],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const messageBubble = screen.getByTestId("chat-message-msg-failure");
+    expect(messageBubble).toHaveClass("chat-message--failure");
+    expect(within(messageBubble).getByText("Claude Sonnet 4.5")).toBeInTheDocument();
+    expect(within(messageBubble).getByText("Response failed")).toBeInTheDocument();
+    expect(within(messageBubble).getByText("ProviderError")).toBeInTheDocument();
+    expect(within(messageBubble).getByText("E_MODEL")).toBeInTheDocument();
+    expect(within(messageBubble).queryByTestId("chat-copy-response-msg-failure")).not.toBeInTheDocument();
+
+    await userEvent.click(within(messageBubble).getByText("Failure details"));
+
+    expect(within(messageBubble).getByText("ProviderError: Model request failed")).toBeInTheDocument();
+    expect(within(messageBubble).getByText("Mailbox message msg-42")).toBeInTheDocument();
+    expect(within(messageBubble).getByRole("link", { name: "Open mailbox message" })).toHaveAttribute(
+      "href",
+      "/?view=mailbox&mailbox-message=msg-42#message-msg-42",
+    );
+    expect(messageBubble.querySelector(".status-dot.status-dot--error")).toBeInTheDocument();
+  });
+
+  it("renders a generic failure reference details affordance for non-mailbox references", async () => {
+    setupMockChat({
+      activeSession: {
+        id: "session-001",
+        agentId: "agent-001",
+        status: "active",
+        title: "Agent Chat",
+        createdAt: "2026-04-08T00:00:00.000Z",
+        updatedAt: "2026-04-08T00:00:00.000Z",
+      },
+      messages: [
+        {
+          id: "msg-run-failure",
+          sessionId: "session-001",
+          role: "assistant",
+          content: "Run failed",
+          failureInfo: {
+            summary: "Run failed",
+            reference: { kind: "agent-run", id: "run-42", label: "Agent run 42" },
+          },
+          createdAt: "2026-04-08T00:00:02.000Z",
+        },
+      ],
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const messageBubble = screen.getByTestId("chat-message-msg-run-failure");
+    await userEvent.click(within(messageBubble).getByText("Failure details"));
+    await userEvent.click(within(messageBubble).getByText("View failure details"));
+
+    expect(within(messageBubble).getAllByText("Agent run 42")).toHaveLength(2);
+    expect(within(messageBubble).getByText("Kind")).toBeInTheDocument();
+    expect(within(messageBubble).getByText("agent-run")).toBeInTheDocument();
+    expect(within(messageBubble).getByText("ID")).toBeInTheDocument();
+    expect(within(messageBubble).getByText("run-42")).toBeInTheDocument();
+  });
+
   it("shows streaming copy action for provider chats", () => {
     setupMockChat({
       activeSession: {
@@ -2428,6 +2517,23 @@ describe("Chat Session Delete Button", () => {
     await userEvent.click(within(dialog!).getByText("Delete"));
 
     expect(deleteSession).toHaveBeenCalledWith("session-001");
+  });
+});
+
+describe("ChatView CSS — failure bubble contracts", () => {
+  const css = loadAllAppCss();
+
+  it("uses shared error surface tokens for failure bubbles and detail affordances", () => {
+    const bubbleMatch = css.match(/\.chat-message--failure\s*\{([^}]*)\}/);
+    const badgeMatch = css.match(/\.chat-message-failure-badge\s*\{([^}]*)\}/);
+    const detailsMatch = css.match(/\.chat-message-failure-details\s*\{([^}]*)\}/);
+    const linkMatch = css.match(/\.chat-message-failure-reference-link\s*\{([^}]*)\}/);
+
+    expect(bubbleMatch?.[1]).toContain("background: var(--status-error-bg)");
+    expect(bubbleMatch?.[1]).toContain("border: var(--btn-border-width) solid var(--status-error-bg-deep)");
+    expect(badgeMatch?.[1]).toContain("background: var(--status-error-bg-deep)");
+    expect(detailsMatch?.[1]).toContain("background: var(--status-error-bg-deep)");
+    expect(linkMatch?.[1]).toContain("background: var(--status-error-bg-deep)");
   });
 });
 

@@ -604,7 +604,7 @@ describe("ChatManager.sendMessage", () => {
     unsubscribe();
 
     const assistantCalls = mockChatStore.addMessage.mock.calls.filter((call) => call[1].role === "assistant");
-    expect(assistantCalls).toHaveLength(1);
+    expect(assistantCalls).toHaveLength(2);
     expect(assistantCalls[0]).toEqual([
       "chat-001",
       expect.objectContaining({
@@ -614,10 +614,20 @@ describe("ChatManager.sendMessage", () => {
         metadata: { interrupted: true },
       }),
     ]);
-    expect(events).toContainEqual({ type: "error", data: "Tool execution failed" });
+    expect(assistantCalls[1]).toEqual([
+      "chat-001",
+      expect.objectContaining({
+        role: "assistant",
+        content: "Tool execution failed",
+        metadata: expect.objectContaining({
+          failureInfo: expect.objectContaining({ summary: "Tool execution failed" }),
+        }),
+      }),
+    ]);
+    expect(events).toContainEqual({ type: "error", data: expect.objectContaining({ summary: "Tool execution failed" }) });
   });
 
-  it("does not persist empty assistant response on immediate failure", async () => {
+  it("persists a structured assistant failure message on immediate failure", async () => {
     __setCreateFnAgent(async () => {
       return {
         session: {
@@ -632,10 +642,20 @@ describe("ChatManager.sendMessage", () => {
     await chatManager.sendMessage("chat-001", "Hello");
 
     const assistantCalls = mockChatStore.addMessage.mock.calls.filter((call) => call[1].role === "assistant");
-    expect(assistantCalls).toHaveLength(0);
+    expect(assistantCalls).toHaveLength(1);
+    expect(assistantCalls[0]).toEqual([
+      "chat-001",
+      expect.objectContaining({
+        role: "assistant",
+        content: "Immediate failure",
+        metadata: expect.objectContaining({
+          failureInfo: expect.objectContaining({ summary: "Immediate failure" }),
+        }),
+      }),
+    ]);
   });
 
-  it("surfaces provider errors stored on session.state.errorMessage instead of persisting a blank assistant reply", async () => {
+  it("surfaces provider errors stored on session.state.errorMessage and persists a failure bubble", async () => {
     const events: Array<{ type: string; data: unknown }> = [];
     const unsubscribe = chatStreamManager.subscribe("chat-001", (event) => {
       events.push(event);
@@ -657,8 +677,18 @@ describe("ChatManager.sendMessage", () => {
     unsubscribe();
 
     const assistantCalls = mockChatStore.addMessage.mock.calls.filter((call) => call[1].role === "assistant");
-    expect(assistantCalls).toHaveLength(0);
-    expect(events).toContainEqual({ type: "error", data: "Codex error: provider request failed" });
+    expect(assistantCalls).toHaveLength(1);
+    expect(assistantCalls[0]).toEqual([
+      "chat-001",
+      expect.objectContaining({
+        role: "assistant",
+        content: "Codex error: provider request failed",
+        metadata: expect.objectContaining({
+          failureInfo: expect.objectContaining({ summary: "Codex error: provider request failed" }),
+        }),
+      }),
+    ]);
+    expect(events).toContainEqual({ type: "error", data: expect.objectContaining({ summary: "Codex error: provider request failed" }) });
   });
 
   it("uses the agent runtime path when the agent has a runtimeHint configured", async () => {
@@ -960,7 +990,7 @@ describe("ChatManager.sendMessage", () => {
     await chatManager.sendMessage("chat-001", "Hello");
 
     const assistantCalls = mockChatStore.addMessage.mock.calls.filter((call) => call[1].role === "assistant");
-    expect(assistantCalls).toHaveLength(1);
+    expect(assistantCalls).toHaveLength(2);
     expect(assistantCalls[0]).toEqual([
       "chat-001",
       expect.objectContaining({
@@ -968,6 +998,16 @@ describe("ChatManager.sendMessage", () => {
         content: "(response interrupted before text generation)",
         thinkingOutput: "Working through tools",
         metadata: { interrupted: true },
+      }),
+    ]);
+    expect(assistantCalls[1]).toEqual([
+      "chat-001",
+      expect.objectContaining({
+        role: "assistant",
+        content: "Interrupted during tool call",
+        metadata: expect.objectContaining({
+          failureInfo: expect.objectContaining({ summary: "Interrupted during tool call" }),
+        }),
       }),
     ]);
   });
