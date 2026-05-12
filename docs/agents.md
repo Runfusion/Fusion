@@ -1093,9 +1093,32 @@ Effects:
 
 This covers the untracked timer-loss failure mode where no `agent:updated` event fires after a timer entry disappears. Manual stop/start is no longer required to re-arm the timer in that case.
 
+### Stale Active-Run Reaper (FN-4119)
+
+`HeartbeatTriggerScheduler` also reaps **stale persisted `status="active"` heartbeat runs** before they can block future timer progress forever.
+
+When it fires:
+- `onTimerTick()` finds an active run row for a durable, tickable agent
+- or `auditTimerRegistrations()` finds a missing timer plus an active run row for that same durable agent
+- the persisted run has no fresh heartbeat for longer than **`heartbeatTimeoutMs × heartbeatRepairStaleMultiplier`**
+- the engine is not globally paused and not timer-paused via `enginePaused`
+
+Threshold semantics:
+- The reaper reuses the same `heartbeatRepairStaleMultiplier` setting that timer-audit repair already uses; no extra stale-run knob exists
+- The base signal is the agent's `lastHeartbeatAt` / `recordHeartbeat(...)` freshness, not the scheduled timer interval
+- Default threshold is therefore **`2 × heartbeatTimeoutMs`** (default timeout `60s` → default reap threshold `120s`)
+
+Layering with the existing recovery paths:
+- **`HeartbeatMonitor.reconcileOrphanedRunningAgents()`** still handles monitor-owned stale `running` agents and other tracked-session cleanup
+- **`HeartbeatTriggerScheduler.onTimerTick()`** now reaps a stale active run, logs `reason=tick-proceeded-after-reap`, and proceeds with the scheduled callback in the same tick
+- **`HeartbeatTriggerScheduler.auditTimerRegistrations()`** now reaps the stale active run first, then re-arms the missing timer in the same audit pass and logs `reason=timer-audit-rearmed`
+- Healthy active runs within threshold still keep the old `(active run)` skip behavior
+- Ephemeral/task-worker agents are never reaped by this path
+
 Separation of responsibilities:
 - **HeartbeatMonitor recovery** handles **tracked stale sessions** (stuck in-memory run/session cleanup + pause/resume restart)
 - **HeartbeatTriggerScheduler audit** handles **untracked missing-timer registration drift** (re-arm scheduling)
+- **HeartbeatTriggerScheduler stale-run reaper** handles **orphaned persisted active runs** that would otherwise cause both tick and audit to skip forever on `(active run)`
 
 ## Dashboard Health Status
 

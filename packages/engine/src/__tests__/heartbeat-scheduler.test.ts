@@ -37,6 +37,9 @@ describe("HeartbeatTriggerScheduler", () => {
       getActiveHeartbeatRun: vi.fn().mockResolvedValue(null),
       getBudgetStatus: vi.fn().mockResolvedValue(createBudgetStatus()),
       listAgents: vi.fn().mockResolvedValue([]),
+      getRunDetail: vi.fn().mockResolvedValue(null),
+      saveRun: vi.fn().mockResolvedValue(undefined),
+      endHeartbeatRun: vi.fn().mockResolvedValue(undefined),
       on: vi.fn(),
       off: vi.fn(),
       updateAgent: vi.fn().mockImplementation(async (_id: string, updates: { metadata: Record<string, unknown> }) => ({
@@ -231,6 +234,94 @@ describe("HeartbeatTriggerScheduler", () => {
 
       await vi.advanceTimersByTimeAsync(60_000);
       expect(scheduler.getRegisteredAgents()).not.toContain("agent-001");
+    });
+
+    it("FN-4119 reaps a stale active run and re-arms the timer when audit finds a lost registration", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-01-01T02:00:00.000Z"));
+      const agent = {
+        id: "agent-001",
+        name: "Agent 001",
+        role: "executor",
+        state: "active",
+        lastHeartbeatAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { enabled: true, heartbeatIntervalMs: 3_600_000, heartbeatTimeoutMs: 10_000 },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      } as Agent;
+      const activeRun = {
+        id: "run-stale",
+        agentId: "agent-001",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        status: "active",
+      } as any;
+      vi.mocked(store.listAgents).mockResolvedValue([agent]);
+      vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(activeRun);
+      vi.mocked(store.getRunDetail).mockResolvedValue(activeRun);
+
+      scheduler = new HeartbeatTriggerScheduler(store, callback);
+      scheduler.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(store.endHeartbeatRun).toHaveBeenCalledOnce();
+      expect(store.endHeartbeatRun).toHaveBeenCalledWith("run-stale", "terminated");
+      expect(scheduler.getRegisteredAgents()).toContain("agent-001");
+      expect(heartbeatLog.warn).toHaveBeenCalledWith(expect.stringContaining("reason=orphaned-run-reaped agentId=agent-001 runId=run-stale"));
+      expect(heartbeatLog.log).toHaveBeenCalledWith(expect.stringContaining("reason=timer-audit-rearmed agentId=agent-001 runId=run-stale"));
+
+      vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(store.endHeartbeatRun).toHaveBeenCalledTimes(1);
+    });
+
+    it("FN-4119 leaves healthy active runs alone during audit", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-01-01T00:00:15.000Z"));
+      const agent = {
+        id: "agent-001",
+        name: "Agent 001",
+        role: "executor",
+        state: "active",
+        lastHeartbeatAt: "2026-01-01T00:00:10.000Z",
+        runtimeConfig: { enabled: true, heartbeatIntervalMs: 3_600_000, heartbeatTimeoutMs: 10_000 },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:10.000Z",
+        metadata: {},
+      } as Agent;
+      vi.mocked(store.listAgents).mockResolvedValue([agent]);
+      vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue({ id: "run-healthy", status: "active" } as any);
+
+      scheduler = new HeartbeatTriggerScheduler(store, callback);
+      scheduler.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(store.endHeartbeatRun).not.toHaveBeenCalled();
+      expect(scheduler.getRegisteredAgents()).not.toContain("agent-001");
+      expect(heartbeatLog.log).toHaveBeenCalledWith("Timer audit skipped re-arm for agent-001 (active run)");
+    });
+
+    it("FN-4119 does not reap task-worker runs during audit", async () => {
+      vi.useFakeTimers();
+      const agent = {
+        id: "executor-FN-999",
+        name: "executor-FN-999",
+        role: "executor",
+        state: "active",
+        runtimeConfig: { enabled: true, heartbeatIntervalMs: 30_000, heartbeatTimeoutMs: 10_000 },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: { agentKind: "task-worker" },
+      } as Agent;
+      vi.mocked(store.listAgents).mockResolvedValue([agent]);
+
+      scheduler = new HeartbeatTriggerScheduler(store, callback);
+      scheduler.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(store.getActiveHeartbeatRun).not.toHaveBeenCalled();
+      expect(store.endHeartbeatRun).not.toHaveBeenCalled();
+      expect(scheduler.getRegisteredAgents()).not.toContain("executor-FN-999");
     });
   });
 
@@ -530,6 +621,100 @@ describe("HeartbeatTriggerScheduler", () => {
       await vi.advanceTimersByTimeAsync(5000);
 
       expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("FN-4119 reaps a stale active run and proceeds with the timer tick", async () => {
+      const staleAgent = {
+        id: "agent-001",
+        name: "Agent 001",
+        role: "executor",
+        state: "active",
+        lastHeartbeatAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { enabled: true, heartbeatIntervalMs: 30_000, heartbeatTimeoutMs: 10_000 },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      } as Agent;
+      const activeRun = {
+        id: "run-stale",
+        agentId: "agent-001",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        status: "active",
+      } as any;
+      vi.setSystemTime(new Date("2026-01-01T02:00:00.000Z"));
+      vi.mocked(store.getAgent).mockResolvedValue(staleAgent);
+      vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(activeRun);
+      vi.mocked(store.getRunDetail).mockResolvedValue(activeRun);
+
+      await (scheduler as any).onTimerTick("agent-001", 30_000);
+
+      expect(store.endHeartbeatRun).toHaveBeenCalledOnce();
+      expect(store.endHeartbeatRun).toHaveBeenCalledWith("run-stale", "terminated");
+      expect(callback).toHaveBeenCalledOnce();
+      expect(callback).toHaveBeenCalledWith("agent-001", "timer", {
+        wakeReason: "timer",
+        triggerDetail: "scheduled",
+        intervalMs: 30_000,
+      });
+      expect(heartbeatLog.log).toHaveBeenCalledWith(expect.stringContaining("reason=tick-proceeded-after-reap agentId=agent-001 runId=run-stale"));
+    });
+
+    it("FN-4119 preserves the active-run skip when the run is still healthy", async () => {
+      const healthyAgent = {
+        id: "agent-001",
+        name: "Agent 001",
+        role: "executor",
+        state: "active",
+        lastHeartbeatAt: "2026-01-01T00:00:12.000Z",
+        runtimeConfig: { enabled: true, heartbeatIntervalMs: 30_000, heartbeatTimeoutMs: 10_000 },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:12.000Z",
+        metadata: {},
+      } as Agent;
+      vi.setSystemTime(new Date("2026-01-01T00:00:15.000Z"));
+      vi.mocked(store.getAgent).mockResolvedValue(healthyAgent);
+      vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue({ id: "run-healthy", status: "active" } as any);
+
+      await (scheduler as any).onTimerTick("agent-001", 30_000);
+
+      expect(store.endHeartbeatRun).not.toHaveBeenCalled();
+      expect(callback).not.toHaveBeenCalled();
+      expect(heartbeatLog.log).toHaveBeenCalledWith("Timer tick skipped for agent-001 (active run)");
+    });
+
+    it.each([
+      { name: "paused agent state", agentState: "paused" as const, settings: null, expectedLog: "Timer tick skipped for agent-001 (state=paused)" },
+      { name: "global pause", agentState: "active" as const, settings: { globalPause: true, enginePaused: false }, expectedLog: "Timer tick skipped for agent-001 (global pause active)" },
+      { name: "engine pause", agentState: "active" as const, settings: { globalPause: false, enginePaused: true }, expectedLog: "Timer tick skipped for agent-001 (engine paused)" },
+    ])("FN-4119 does not reap stale runs during $name", async ({ agentState, settings, expectedLog }) => {
+      scheduler.stop();
+      const taskStore = settings
+        ? ({ getSettings: vi.fn().mockResolvedValue(settings) } as unknown as TaskStore)
+        : undefined;
+      scheduler = new HeartbeatTriggerScheduler(store, callback, taskStore);
+      scheduler.start();
+
+      const agent = {
+        id: "agent-001",
+        name: "Agent 001",
+        role: "executor",
+        state: agentState,
+        lastHeartbeatAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { enabled: true, heartbeatIntervalMs: 30_000, heartbeatTimeoutMs: 10_000 },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      } as Agent;
+      vi.setSystemTime(new Date("2026-01-01T02:00:00.000Z"));
+      vi.mocked(store.getAgent).mockResolvedValue(agent);
+      vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue({ id: "run-stale", status: "active" } as any);
+
+      await (scheduler as any).onTimerTick("agent-001", 30_000);
+
+      expect(store.getActiveHeartbeatRun).not.toHaveBeenCalled();
+      expect(store.endHeartbeatRun).not.toHaveBeenCalled();
+      expect(callback).not.toHaveBeenCalled();
+      expect(heartbeatLog.log).toHaveBeenCalledWith(expectedLog);
     });
 
     it("skips timer dispatch when global pause is active", async () => {

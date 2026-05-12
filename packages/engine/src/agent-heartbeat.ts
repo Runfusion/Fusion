@@ -177,6 +177,30 @@ function formatRelativeTime(iso?: string | null): string {
   return `${formatDuration(elapsed)} ago`;
 }
 
+function getHeartbeatAgeMs(agent: Agent, now: number = Date.now()): number {
+  const lastTs = agent.lastHeartbeatAt ? Date.parse(agent.lastHeartbeatAt) : Number.NaN;
+  return Number.isFinite(lastTs) ? Math.max(0, now - lastTs) : Number.NaN;
+}
+
+async function terminatePersistedHeartbeatRun(
+  store: AgentStore,
+  agentId: string,
+  runId: string,
+  stderrExcerpt: string,
+): Promise<boolean> {
+  const detail = await store.getRunDetail(agentId, runId);
+  if (detail && detail.status !== "completed" && detail.status !== "failed" && detail.status !== "terminated") {
+    await store.saveRun({
+      ...detail,
+      endedAt: new Date().toISOString(),
+      status: "terminated",
+      stderrExcerpt,
+    });
+  }
+  await store.endHeartbeatRun(runId, "terminated");
+  return true;
+}
+
 function isAutoClaimRelevantTasksEnabled(agent: Agent): boolean {
   const runtimeConfig = (agent.runtimeConfig ?? {}) as Record<string, unknown>;
   return runtimeConfig.autoClaimRelevantTasks !== false;
@@ -750,24 +774,19 @@ export class HeartbeatMonitor {
           reason = "no active run";
         } else if (!this.trackedAgents.has(agent.id)) {
           const timeoutMs = this.resolveAgentConfig(agent.id).heartbeatTimeoutMs;
-          const lastTs = agent.lastHeartbeatAt ? Date.parse(agent.lastHeartbeatAt) : NaN;
-          const heartbeatAgeMs = Number.isFinite(lastTs) ? Math.max(0, now - lastTs) : Infinity;
-          if (heartbeatAgeMs > timeoutMs * 3) {
+          const heartbeatAgeMs = getHeartbeatAgeMs(agent, now);
+          if (!Number.isFinite(heartbeatAgeMs) || heartbeatAgeMs > timeoutMs * 3) {
             try {
-              const detail = await this.store.getRunDetail(agent.id, activeRun.id);
-              if (detail && detail.status !== "completed" && detail.status !== "failed" && detail.status !== "terminated") {
-                await this.store.saveRun({
-                  ...detail,
-                  endedAt: new Date().toISOString(),
-                  status: "terminated",
-                  stderrExcerpt: `Reconciled stale run (no heartbeat for ${formatDuration(heartbeatAgeMs)}; threshold ${formatDuration(timeoutMs * 3)})`,
-                });
-              }
-              await this.store.endHeartbeatRun(activeRun.id, "terminated");
+              await terminatePersistedHeartbeatRun(
+                this.store,
+                agent.id,
+                activeRun.id,
+                `Reconciled stale run (no heartbeat for ${Number.isFinite(heartbeatAgeMs) ? formatDuration(heartbeatAgeMs) : "unknown"}; threshold ${formatDuration(timeoutMs * 3)})`,
+              );
             } catch (runEndErr) {
               heartbeatLog.warn(`Failed to terminate stale run ${activeRun.id} for ${agent.id}: ${runEndErr instanceof Error ? runEndErr.message : String(runEndErr)}`);
             }
-            reason = `stale heartbeat (${formatDuration(heartbeatAgeMs)} since lastHeartbeatAt)`;
+            reason = `stale heartbeat (${Number.isFinite(heartbeatAgeMs) ? formatDuration(heartbeatAgeMs) : "unknown"} since lastHeartbeatAt)`;
           }
         }
         if (!reason) continue;
@@ -2894,6 +2913,7 @@ export class HeartbeatTriggerScheduler {
 
   private static readonly TIMER_AUDIT_INTERVAL_MS = 60_000;
   private static readonly DEFAULT_REPAIR_STALE_MULTIPLIER = 2;
+  private static readonly DEFAULT_HEARTBEAT_TIMEOUT_MS = 60_000;
 
   constructor(store: AgentStore, callback: TriggerCallback, taskStore?: TaskStore, options?: { isTaskExecuting?: (taskId: string) => boolean }) {
     this.store = store;
@@ -3405,6 +3425,43 @@ export class HeartbeatTriggerScheduler {
     return Math.round(intervalMs * staleMultiplier);
   }
 
+  private getActiveRunStaleThresholdMs(agent: Agent, staleMultiplier: number): number {
+    const runtimeConfig = (agent.runtimeConfig ?? {}) as { heartbeatTimeoutMs?: number };
+    const rawTimeoutMs = runtimeConfig.heartbeatTimeoutMs;
+    const timeoutMs = typeof rawTimeoutMs === "number" && Number.isFinite(rawTimeoutMs) && rawTimeoutMs > 0
+      ? Math.max(5000, Math.round(rawTimeoutMs))
+      : HeartbeatTriggerScheduler.DEFAULT_HEARTBEAT_TIMEOUT_MS;
+    return Math.round(timeoutMs * staleMultiplier);
+  }
+
+  private async maybeReapStaleActiveRun(
+    agent: Agent,
+    activeRun: AgentHeartbeatRun,
+    reason: "audit" | "timer",
+    staleMultiplier: number,
+  ): Promise<{ reaped: boolean; elapsedMs: number; thresholdMs: number }> {
+    if (!isHeartbeatManaged(agent)) {
+      return { reaped: false, elapsedMs: Number.NaN, thresholdMs: Number.NaN };
+    }
+
+    const thresholdMs = this.getActiveRunStaleThresholdMs(agent, staleMultiplier);
+    const elapsedMs = getHeartbeatAgeMs(agent);
+    if (!Number.isFinite(elapsedMs) || elapsedMs <= thresholdMs) {
+      return { reaped: false, elapsedMs, thresholdMs };
+    }
+
+    await terminatePersistedHeartbeatRun(
+      this.store,
+      agent.id,
+      activeRun.id,
+      `Reaped stale heartbeat run before next tick (no heartbeat for ${formatDuration(elapsedMs)}; threshold ${formatDuration(thresholdMs)})`,
+    );
+    heartbeatLog.warn(
+      `Heartbeat stale-run reaped reason=orphaned-run-reaped agentId=${agent.id} runId=${activeRun.id} elapsedMs=${elapsedMs} thresholdMs=${thresholdMs} source=${reason}`,
+    );
+    return { reaped: true, elapsedMs, thresholdMs };
+  }
+
   private async markRepairMetadata(agent: Agent, staleAtRepair: boolean, staleRepairReason?: string): Promise<void> {
     const updater = (this.store as { updateAgent?: (agentId: string, updates: { metadata: Record<string, unknown> }) => Promise<unknown> }).updateAgent;
     if (typeof updater !== "function") {
@@ -3447,9 +3504,23 @@ export class HeartbeatTriggerScheduler {
         if (this.timers.has(agent.id)) continue;
 
         const activeRun = await this.store.getActiveHeartbeatRun(agent.id);
+        const activeRunId = activeRun?.id ?? null;
+        let reapedActiveRun = false;
+        let activeRunElapsedMs = Number.NaN;
+        let activeRunThresholdMs = Number.NaN;
         if (activeRun) {
-          heartbeatLog.log(`Timer audit skipped re-arm for ${agent.id} (active run)`);
-          continue;
+          if (settings?.globalPause || settings?.enginePaused) {
+            heartbeatLog.log(`Timer audit skipped re-arm for ${agent.id} (active run)`);
+            continue;
+          }
+          const reapResult = await this.maybeReapStaleActiveRun(agent, activeRun, "audit", staleMultiplier);
+          reapedActiveRun = reapResult.reaped;
+          activeRunElapsedMs = reapResult.elapsedMs;
+          activeRunThresholdMs = reapResult.thresholdMs;
+          if (!reapedActiveRun) {
+            heartbeatLog.log(`Timer audit skipped re-arm for ${agent.id} (active run)`);
+            continue;
+          }
         }
 
         this.registerAgent(agent.id, this.getAgentTimerConfig(agent), {
@@ -3457,8 +3528,7 @@ export class HeartbeatTriggerScheduler {
         });
 
         const staleThresholdMs = this.getRepairStaleThresholdMs(agent, staleMultiplier);
-        const lastHeartbeatMs = agent.lastHeartbeatAt ? Date.parse(agent.lastHeartbeatAt) : Number.NaN;
-        const elapsedMs = Number.isFinite(lastHeartbeatMs) ? Date.now() - lastHeartbeatMs : Number.NaN;
+        const elapsedMs = getHeartbeatAgeMs(agent);
         const staleAtRepair = Number.isFinite(elapsedMs) && elapsedMs > staleThresholdMs;
         const staleRepairReason = staleAtRepair
           ? `No heartbeat for ${Math.round(elapsedMs / 1000)}s before timer audit repair (threshold ${Math.round(staleThresholdMs / 1000)}s)`
@@ -3466,6 +3536,11 @@ export class HeartbeatTriggerScheduler {
         await this.markRepairMetadata(agent, staleAtRepair, staleRepairReason);
 
         rearmedCount++;
+        if (reapedActiveRun && activeRunId) {
+          heartbeatLog.log(
+            `Timer audit re-armed after stale-run reap reason=timer-audit-rearmed agentId=${agent.id} runId=${activeRunId} elapsedMs=${activeRunElapsedMs} thresholdMs=${activeRunThresholdMs}`,
+          );
+        }
         if (staleAtRepair) {
           heartbeatLog.warn(`Timer re-armed stale agent ${agent.id} (audit:${reason}): ${staleRepairReason ?? "heartbeat exceeded stale threshold before repair"}`);
         } else {
@@ -3501,13 +3576,6 @@ export class HeartbeatTriggerScheduler {
         return;
       }
 
-      // Check for active runs
-      const activeRun = await this.store.getActiveHeartbeatRun(agentId);
-      if (activeRun) {
-        heartbeatLog.log(`Timer tick skipped for ${agentId} (active run)`);
-        return;
-      }
-
       // Guard: when parallel execution is disabled, skip if the agent's bound task is actively executing
       const timerRc = (agent.runtimeConfig ?? {}) as { allowParallelExecution?: boolean };
       if (timerRc.allowParallelExecution === false && agent.taskId && this.isTaskExecuting?.(agent.taskId)) {
@@ -3517,16 +3585,28 @@ export class HeartbeatTriggerScheduler {
 
       // Global/engine pause guard: scheduler should not dispatch timer callbacks
       // while globally paused (hard stop) or engine paused (soft stop for timers).
-      if (this.taskStore) {
-        const settings = await this.taskStore.getSettings();
-        if (settings.globalPause) {
-          heartbeatLog.log(`Timer tick skipped for ${agentId} (global pause active)`);
+      const settings = this.taskStore ? await this.taskStore.getSettings() : null;
+      if (settings?.globalPause) {
+        heartbeatLog.log(`Timer tick skipped for ${agentId} (global pause active)`);
+        return;
+      }
+      if (settings?.enginePaused) {
+        heartbeatLog.log(`Timer tick skipped for ${agentId} (engine paused)`);
+        return;
+      }
+
+      // Check for active runs
+      const activeRun = await this.store.getActiveHeartbeatRun(agentId);
+      if (activeRun) {
+        const staleMultiplier = this.resolveRepairStaleMultiplier(settings);
+        const reapResult = await this.maybeReapStaleActiveRun(agent, activeRun, "timer", staleMultiplier);
+        if (!reapResult.reaped) {
+          heartbeatLog.log(`Timer tick skipped for ${agentId} (active run)`);
           return;
         }
-        if (settings.enginePaused) {
-          heartbeatLog.log(`Timer tick skipped for ${agentId} (engine paused)`);
-          return;
-        }
+        heartbeatLog.log(
+          `Heartbeat tick resumed after stale-run reap reason=tick-proceeded-after-reap agentId=${agentId} runId=${activeRun.id} elapsedMs=${reapResult.elapsedMs} thresholdMs=${reapResult.thresholdMs}`,
+        );
       }
 
       // Budget enforcement is handled in HeartbeatMonitor.executeHeartbeat() for timer sources.
