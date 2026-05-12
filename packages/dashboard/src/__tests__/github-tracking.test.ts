@@ -264,6 +264,68 @@ describe("maybeCreateTrackingIssue", () => {
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("AI title summarizer failed"));
   });
 
+  it("returns no_title_available and records activity when no title can be derived", async () => {
+    const recordActivity = vi.fn();
+    const logger = { warn: vi.fn(), info: vi.fn() };
+
+    const result = await maybeCreateTrackingIssue(buildTask({ title: "   ", description: "\n```ts\nconst hidden = true;\n```\n\n  ", githubTracking: { enabled: true } }), {
+      taskStore: { recordActivity } as any,
+      projectSettings: {},
+      globalSettings: { githubTrackingDefaultRepo: "o/r" } as any,
+      rootDir,
+      logger,
+    });
+
+    expect(result).toEqual({ created: false, reason: "no_title_available" });
+    expect(createIssueMock).not.toHaveBeenCalled();
+    expect(recordActivity).toHaveBeenCalledWith(expect.objectContaining({
+      type: "task:updated",
+      details: "GitHub tracking issue not created: task has no title yet",
+      metadata: expect.objectContaining({ type: "github-tracking-no-title" }),
+    }));
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("deferred — no usable title"));
+  });
+
+  it("returns no_title_available when the summarizer yields no title and no fallback exists", async () => {
+    const recordActivity = vi.fn();
+
+    const result = await maybeCreateTrackingIssue(buildTask({
+      title: "",
+      description: `${" ".repeat(MIN_DESCRIPTION_LENGTH)}\n` + "```md\nignored\n```",
+      githubTracking: { enabled: true },
+    }), {
+      taskStore: { recordActivity, updateTask: vi.fn() } as any,
+      projectSettings: { titleSummarizerProvider: "anthropic", titleSummarizerModelId: "claude" } as any,
+      globalSettings: { githubTrackingDefaultRepo: "o/r" } as any,
+      rootDir,
+      logger: { warn: vi.fn(), info: vi.fn() },
+    });
+
+    expect(summarizeTitleMock).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ created: false, reason: "no_title_available" });
+    expect(createIssueMock).not.toHaveBeenCalled();
+    expect(recordActivity).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ type: "github-tracking-no-title" }),
+    }));
+  });
+
+  it("still creates an issue when the summarizer fails but a description fallback exists", async () => {
+    const logger = { warn: vi.fn(), info: vi.fn() };
+    summarizeTitleMock.mockRejectedValue(new AiServiceError("model unavailable"));
+
+    const result = await maybeCreateTrackingIssue(buildTask({ title: "", description: longDescription, githubTracking: { enabled: true } }), {
+      taskStore: { linkGithubIssue: vi.fn(), recordActivity: vi.fn(), updateTask: vi.fn() } as any,
+      projectSettings: { titleSummarizerProvider: "anthropic", titleSummarizerModelId: "claude" } as any,
+      globalSettings: { githubTrackingDefaultRepo: "o/r" } as any,
+      rootDir,
+      logger,
+    });
+
+    expect(result.created).toBe(true);
+    expect(createIssueMock).toHaveBeenCalledWith(expect.objectContaining({ title: "[FN-1] Derived fallback title." }));
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("AI title summarizer failed"));
+  });
+
   it("does not invoke the summarizer when the description is too short", async () => {
     await maybeCreateTrackingIssue(buildTask({ title: "", description: "Short title fallback", githubTracking: { enabled: true } }), {
       taskStore: { linkGithubIssue: vi.fn(), recordActivity: vi.fn(), updateTask: vi.fn() } as any,
