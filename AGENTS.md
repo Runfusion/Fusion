@@ -217,7 +217,7 @@ Two rules, learned the hard way (FN-2370 silently reverted three commits' work):
 
 1. **If a branch contains commits that duplicate work already on main, rebase the branch onto main and drop the duplicates *before* merging.** This usually happens when a branch was rebased from a stale base while the same work was also landed directly on main. Subjects that match recent main commits are the tell — `git log main..branch --format=%s` should not overlap with `git log <base>..main --format=%s`. Auto-resolvers cannot tell which side of a duplicated change is canonical and will silently drop refinements from the newer side.
 
-2. **Prefer rebase-and-merge over squash for branches spanning multiple feature commits.** Squash collapses authorship and makes per-commit reverts impossible. Rebase-and-merge preserves the commit boundary so a regression can be reverted cleanly without losing the rest of the branch.
+2. **Prefer rebase-and-merge over squash for branches spanning multiple substantive commits.** Fusion's direct merger now defaults `directMergeCommitStrategy="auto"`, which keeps squash for branches with 0–1 substantive commits but automatically switches multi-substantive branches to a history-preserving rebase/cherry-pick path. Use the project setting `directMergeCommitStrategy` or the task-level `**Direct Merge Commit Strategy:** auto|always-squash|always-rebase` PROMPT line when you need to force a route.
 
 After any squash that auto-resolved conflicts, the merger now runs the post-squash audit as a blocking gate before auto-completing the task. Flagged merges stay in `in-review` for inspection, and only a clean audit proceeds to `done`.
 

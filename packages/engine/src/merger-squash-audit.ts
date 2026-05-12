@@ -23,10 +23,34 @@ export interface SquashAuditTouchedFileOverlapFinding {
 
 export type SquashAuditFinding = SquashAuditDuplicateSubjectFinding | SquashAuditTouchedFileOverlapFinding;
 
-export interface SquashAuditFindings {
+export type PostMergeAuditStrategy = "squash" | "rebase";
+
+interface PostMergeAuditBaseInput {
+  rootDir: string;
+  lookback?: number;
+}
+
+export interface PostSquashAuditInput extends PostMergeAuditBaseInput {
+  strategy?: "squash";
   squashSha: string;
+}
+
+export interface PostRebaseAuditInput extends PostMergeAuditBaseInput {
+  strategy: "rebase";
+  rangeBaseSha: string;
+  rangeHeadSha: string;
+}
+
+export type PostMergeAuditInput = PostSquashAuditInput | PostRebaseAuditInput;
+
+export interface SquashAuditFindings {
+  strategy: PostMergeAuditStrategy;
+  squashSha?: string;
+  rangeBaseSha?: string;
+  rangeHeadSha?: string;
   parentSha: string;
-  squashSubject: string;
+  squashSubject?: string;
+  auditTargetLabel: string;
   lookback: number;
   branchSubjects: string[];
   recentMainSubjects: string[];
@@ -38,30 +62,137 @@ export interface SquashAuditFindings {
   clean: boolean;
 }
 
-export async function auditSquashMerge({
-  rootDir,
-  squashSha,
-  lookback = MERGER_MAIN_OVERLAP_LOOKBACK_COMMITS,
-}: {
-  rootDir: string;
-  squashSha: string;
-  lookback?: number;
-}): Promise<SquashAuditFindings> {
-  const normalizedLookback = normalizeMergeOverlapLookback(lookback);
-  const parentSha = await git(rootDir, ["rev-parse", `${squashSha}^`]);
-  const squashSubject = await git(rootDir, ["log", "-1", "--format=%s", squashSha]);
-  const branchSubjects = normalizeLines(await git(rootDir, ["log", "-1", "--format=%b", squashSha]))
+/**
+ * Strategy-aware post-merge audit.
+ *
+ * - squash: audit the synthetic squash commit and compare its branch-subject list
+ *   against recent pre-squash main history.
+ * - rebase: audit the landed commit range base..head and compare those preserved
+ *   commit subjects/files against recent pre-merge main history.
+ */
+export async function auditSquashMerge(input: PostMergeAuditInput): Promise<SquashAuditFindings> {
+  const normalizedLookback = normalizeMergeOverlapLookback(input.lookback);
+
+  if (input.strategy === "rebase") {
+    const parentSha = input.rangeBaseSha;
+    const auditTargetLabel = `${input.rangeBaseSha.slice(0, 8)}..${input.rangeHeadSha.slice(0, 8)}`;
+    const branchSubjects = normalizeLines(
+      await git(input.rootDir, ["log", "--format=%s", `${input.rangeBaseSha}..${input.rangeHeadSha}`]),
+    );
+    const recentMainCommits = await listRecentMainCommits(input.rootDir, parentSha, normalizedLookback);
+    const recentMainSubjects = recentMainCommits.map((entry) => entry.subject);
+    const duplicateSubjects = branchSubjects
+      .filter((subject) => recentMainSubjects.includes(subject))
+      .map((subject) => ({ type: "duplicate-subject", subject }) satisfies SquashAuditDuplicateSubjectFinding);
+    const touchedFiles = normalizeLines(await git(input.rootDir, ["diff", "--name-only", input.rangeBaseSha, input.rangeHeadSha]));
+    const touchedFileOverlaps = await collectTouchedFileOverlaps(input.rootDir, touchedFiles, recentMainCommits);
+    const findings: SquashAuditFinding[] = [...duplicateSubjects, ...touchedFileOverlaps];
+
+    return {
+      strategy: "rebase",
+      rangeBaseSha: input.rangeBaseSha,
+      rangeHeadSha: input.rangeHeadSha,
+      parentSha,
+      auditTargetLabel,
+      lookback: normalizedLookback,
+      branchSubjects,
+      recentMainSubjects,
+      duplicateSubjects,
+      touchedFiles,
+      touchedFileOverlaps,
+      findings,
+      issueCount: findings.length,
+      clean: findings.length === 0,
+    };
+  }
+
+  const squashSha = input.squashSha;
+  const parentSha = await git(input.rootDir, ["rev-parse", `${squashSha}^`]);
+  const squashSubject = await git(input.rootDir, ["log", "-1", "--format=%s", squashSha]);
+  const branchSubjects = normalizeLines(await git(input.rootDir, ["log", "-1", "--format=%b", squashSha]))
     .map((line) => line.replace(/^- /, "").trim())
     .filter(Boolean);
 
-  const recentMainCommits = await listRecentMainCommits(rootDir, parentSha, normalizedLookback);
+  const recentMainCommits = await listRecentMainCommits(input.rootDir, parentSha, normalizedLookback);
   const recentMainSubjects = recentMainCommits.map((entry) => entry.subject);
 
   const duplicateSubjects = branchSubjects
     .filter((subject) => recentMainSubjects.includes(subject))
     .map((subject) => ({ type: "duplicate-subject", subject }) satisfies SquashAuditDuplicateSubjectFinding);
 
-  const touchedFiles = normalizeLines(await git(rootDir, ["diff", "--name-only", parentSha, squashSha]));
+  const touchedFiles = normalizeLines(await git(input.rootDir, ["diff", "--name-only", parentSha, squashSha]));
+  const touchedFileOverlaps = await collectTouchedFileOverlaps(input.rootDir, touchedFiles, recentMainCommits);
+  const findings: SquashAuditFinding[] = [...duplicateSubjects, ...touchedFileOverlaps];
+
+  return {
+    strategy: "squash",
+    squashSha,
+    parentSha,
+    squashSubject,
+    auditTargetLabel: squashSha,
+    lookback: normalizedLookback,
+    branchSubjects,
+    recentMainSubjects,
+    duplicateSubjects,
+    touchedFiles,
+    touchedFileOverlaps,
+    findings,
+    issueCount: findings.length,
+    clean: findings.length === 0,
+  };
+}
+
+export function formatSquashAuditReport(findings: SquashAuditFindings): string {
+  const heading = findings.strategy === "rebase"
+    ? `Auditing landed range: ${findings.auditTargetLabel}`
+    : `Auditing squash: ${findings.squashSha} — ${findings.squashSubject}`;
+  const parentLabel = findings.strategy === "rebase"
+    ? `Base (main before preserved-commit landing): ${findings.parentSha}`
+    : `Parent (main before squash): ${findings.parentSha}`;
+  const lines: string[] = [heading, parentLabel, `Lookback window on main: ${findings.lookback} commits`, "", "=== Duplicate-cherry-pick risk ==="];
+
+  if (findings.duplicateSubjects.length === 0) {
+    lines.push("(none — no branch commit subjects match recent main commits)", "");
+  } else {
+    lines.push(
+      "WARN: branch contains commits whose subjects match recent main commits.",
+      "Auto-resolve may have picked the older side, dropping refinements.",
+      "Action: diff each main commit below against HEAD and confirm its",
+      "net contribution survived. Restore anything dropped as a follow-up.",
+      "",
+      ...findings.duplicateSubjects.map((entry) => `  - ${entry.subject}`),
+      "",
+    );
+  }
+
+  lines.push(`=== Touched-file overlap (${findings.touchedFiles.length} files in ${findings.strategy === "rebase" ? "landed range" : "squash"}) ===`);
+  if (findings.touchedFileOverlaps.length === 0) {
+    lines.push("(none — merged result touches files no recent main commit touched)", "");
+  } else {
+    lines.push(
+      "Files the merged result touched that also have recent main activity.",
+      "Action: for each commit below, verify its changes still appear",
+      "in HEAD. Reapply any silently dropped changes on the same branch.",
+      "",
+    );
+    for (const overlap of findings.touchedFileOverlaps) {
+      lines.push(`  ${overlap.file}`);
+      for (const commit of overlap.recentMainCommits) {
+        lines.push(`    - ${commit.sha}  ${commit.subject}`);
+      }
+    }
+    lines.push("");
+  }
+
+  lines.push(`Audit complete. ${findings.issueCount} item(s) for the calling agent to review.`);
+  return lines.join("\n");
+}
+
+async function collectTouchedFileOverlaps(
+  rootDir: string,
+  touchedFiles: string[],
+  recentMainCommits: Array<{ sha: string; shortSha: string; subject: string }>,
+): Promise<SquashAuditTouchedFileOverlapFinding[]> {
   const touchedFileOverlaps: SquashAuditTouchedFileOverlapFinding[] = [];
 
   for (const file of touchedFiles) {
@@ -82,68 +213,7 @@ export async function auditSquashMerge({
     }
   }
 
-  const findings: SquashAuditFinding[] = [...duplicateSubjects, ...touchedFileOverlaps];
-
-  return {
-    squashSha,
-    parentSha,
-    squashSubject,
-    lookback: normalizedLookback,
-    branchSubjects,
-    recentMainSubjects,
-    duplicateSubjects,
-    touchedFiles,
-    touchedFileOverlaps,
-    findings,
-    issueCount: findings.length,
-    clean: findings.length === 0,
-  };
-}
-
-export function formatSquashAuditReport(findings: SquashAuditFindings): string {
-  const lines: string[] = [
-    `Auditing squash: ${findings.squashSha} — ${findings.squashSubject}`,
-    `Parent (main before squash): ${findings.parentSha}`,
-    `Lookback window on main: ${findings.lookback} commits`,
-    "",
-    "=== Duplicate-cherry-pick risk ===",
-  ];
-
-  if (findings.duplicateSubjects.length === 0) {
-    lines.push("(none — no branch commit subjects match recent main commits)", "");
-  } else {
-    lines.push(
-      "WARN: branch contains commits whose subjects match recent main commits.",
-      "Auto-resolve may have picked the older side, dropping refinements.",
-      "Action: diff each main commit below against HEAD and confirm its",
-      "net contribution survived. Restore anything dropped as a follow-up.",
-      "",
-      ...findings.duplicateSubjects.map((entry) => `  - ${entry.subject}`),
-      "",
-    );
-  }
-
-  lines.push(`=== Touched-file overlap (${findings.touchedFiles.length} files in squash) ===`);
-  if (findings.touchedFileOverlaps.length === 0) {
-    lines.push("(none — squash touches files no recent main commit touched)", "");
-  } else {
-    lines.push(
-      "Files the squash touched that also have recent main activity.",
-      "Action: for each commit below, verify its changes still appear",
-      "in HEAD. Reapply any silently dropped changes on the same branch.",
-      "",
-    );
-    for (const overlap of findings.touchedFileOverlaps) {
-      lines.push(`  ${overlap.file}`);
-      for (const commit of overlap.recentMainCommits) {
-        lines.push(`    - ${commit.sha}  ${commit.subject}`);
-      }
-    }
-    lines.push("");
-  }
-
-  lines.push(`Audit complete. ${findings.issueCount} item(s) for the calling agent to review.`);
-  return lines.join("\n");
+  return touchedFileOverlaps;
 }
 
 async function git(rootDir: string, args: string[]): Promise<string> {

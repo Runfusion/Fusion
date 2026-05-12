@@ -170,6 +170,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   overlapIgnorePaths: [],
   autoMerge: true,
   mergeStrategy: "direct",
+  directMergeCommitStrategy: "auto",
   requirePrApproval: false,
   pushAfterMerge: false,
   pushRemote: "origin",

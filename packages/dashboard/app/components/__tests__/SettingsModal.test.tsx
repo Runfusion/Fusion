@@ -177,6 +177,7 @@ const defaultSettings = {
   overlapIgnorePaths: [],
   autoMerge: true,
   mergeStrategy: "direct",
+  directMergeCommitStrategy: "auto",
   pushAfterMerge: false,
   pushRemote: "origin",
   verificationFixRetries: 2,
@@ -246,6 +247,17 @@ describe("SettingsModal", () => {
     const generalHeading = screen.getByRole("heading", { name: "General" });
     expect(generalHeading).toHaveClass("settings-section-heading");
     expect(container.querySelectorAll(".settings-section-heading").length).toBeGreaterThan(0);
+  });
+
+  it("shows direct merge commit routing only for direct merges", async () => {
+    renderModal();
+    await waitForSettingsModalReady();
+
+    await userEvent.click(screen.getByRole("button", { name: /^Merge$/ }));
+    expect(screen.getByLabelText("Direct merge commit routing")).toHaveValue("auto");
+
+    await userEvent.selectOptions(screen.getByLabelText("Auto-completion mode"), "pull-request");
+    expect(screen.queryByLabelText("Direct merge commit routing")).not.toBeInTheDocument();
   });
 
   beforeEach(() => {

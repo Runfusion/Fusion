@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  validateDirectMergeCommitStrategy,
   validateGithubAuthMode,
   validateGithubRepoSlug,
   validateUnavailableNodePolicy,
@@ -16,6 +17,20 @@ describe("settings-validation", () => {
       expect(validateUnavailableNodePolicy("fallback")).toBeUndefined();
       expect(validateUnavailableNodePolicy(123)).toBeUndefined();
       expect(validateUnavailableNodePolicy(undefined)).toBeUndefined();
+    });
+  });
+
+  describe("validateDirectMergeCommitStrategy", () => {
+    it("accepts supported direct-merge routing values", () => {
+      expect(validateDirectMergeCommitStrategy("auto")).toBe("auto");
+      expect(validateDirectMergeCommitStrategy("always-squash")).toBe("always-squash");
+      expect(validateDirectMergeCommitStrategy("always-rebase")).toBe("always-rebase");
+    });
+
+    it("returns undefined for invalid routing values", () => {
+      expect(validateDirectMergeCommitStrategy("squash")).toBeUndefined();
+      expect(validateDirectMergeCommitStrategy(123)).toBeUndefined();
+      expect(validateDirectMergeCommitStrategy(undefined)).toBeUndefined();
     });
   });
 
