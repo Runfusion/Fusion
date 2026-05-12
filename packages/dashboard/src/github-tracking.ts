@@ -144,6 +144,7 @@ export type MaybeCreateTrackingIssueReason =
   | "issue_already_linked"
   | "github_import_source"
   | "no_repo_configured"
+  | "no_title_available"
   | "github_error"
   | "auth_token_missing"
   | "auth_gh_not_installed"
@@ -244,6 +245,21 @@ export async function maybeCreateTrackingIssue(
         : "Title summarizer failed";
       deps.logger?.warn?.(`[github-tracking] ${task.id}: ${prefix}: ${message}`);
     }
+  }
+
+  const effectiveTitle = collapseWhitespace(task.title ?? "")
+    || deriveTitleFromDescription(task.description, TRACKING_ISSUE_TITLE_LIMIT - `[${task.id}] `.length);
+
+  if (!effectiveTitle) {
+    deps.logger?.info?.(`[github-tracking] ${task.id}: deferred — no usable title; waiting for title or summarizer`);
+    await deps.taskStore.recordActivity({
+      type: "task:updated",
+      taskId: task.id,
+      taskTitle: task.title,
+      details: "GitHub tracking issue not created: task has no title yet",
+      metadata: { type: "github-tracking-no-title" },
+    });
+    return { created: false, reason: "no_title_available" };
   }
 
   const resolution = resolveGithubTrackingAuth({
