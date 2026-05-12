@@ -98,6 +98,7 @@ export function DependencyGraph({
     onPointerDown,
     onPointerMove,
     onPointerUp,
+    onWheelPan,
     onWheelZoom,
     handleKeyDown,
     setGraphBounds,
@@ -210,8 +211,14 @@ export function DependencyGraph({
           event.preventDefault();
           const viewport = viewportRef.current;
           if (!viewport) return;
-          const rect = viewport.getBoundingClientRect();
-          onWheelZoom(event.deltaY, { x: event.clientX - rect.left, y: event.clientY - rect.top }, viewport.clientWidth, viewport.clientHeight);
+
+          if (event.ctrlKey || event.metaKey) {
+            const rect = viewport.getBoundingClientRect();
+            onWheelZoom(event.deltaY, { x: event.clientX - rect.left, y: event.clientY - rect.top }, viewport.clientWidth, viewport.clientHeight);
+            return;
+          }
+
+          onWheelPan(event.deltaX, event.deltaY, viewport.clientWidth, viewport.clientHeight);
         }}
         onKeyDown={(event) => {
           const viewport = viewportRef.current;

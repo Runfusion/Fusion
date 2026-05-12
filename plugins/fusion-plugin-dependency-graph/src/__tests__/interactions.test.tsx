@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import type { Task } from "@fusion/core";
 import { DependencyGraph } from "../DependencyGraph";
@@ -26,8 +26,27 @@ function createTask(id: string, column: Task["column"] = "todo", dependencies: s
   } as Task;
 }
 
+function parseTransform(transform: string) {
+  const match = /translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([-\d.]+)\)/.exec(transform);
+  if (!match) throw new Error(`Unexpected transform: ${transform}`);
+  return {
+    x: Number(match[1]),
+    y: Number(match[2]),
+    scale: Number(match[3]),
+  };
+}
+
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    () => ({ x: 0, y: 0, left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600, toJSON: () => ({}) }) as DOMRect,
+  );
+});
+
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
 });
 
 describe("dependency graph interactions", () => {
@@ -70,6 +89,38 @@ describe("dependency graph interactions", () => {
     expect(result.current.zoom).toBeCloseTo(0.6, 3);
     expect(result.current.pan.x).toBeCloseTo(40, 3);
     expect(result.current.pan.y).toBeCloseTo(150, 3);
+  });
+
+  it("wheel pan updates pan by negated delta", () => {
+    const { result } = renderHook(() => useGraphInteraction());
+
+    act(() => {
+      result.current.onWheelPan(50, 30, 800, 600);
+    });
+
+    expect(result.current.pan).toEqual({ x: -50, y: -30 });
+  });
+
+  it("wheel pan does not change zoom", () => {
+    const { result } = renderHook(() => useGraphInteraction());
+
+    act(() => {
+      result.current.onWheelPan(50, 30, 800, 600);
+    });
+
+    expect(result.current.zoom).toBe(1);
+  });
+
+  it("wheel pan is clamped by graph bounds", () => {
+    const { result } = renderHook(() => useGraphInteraction());
+
+    act(() => {
+      result.current.setGraphBounds({ minX: 0, minY: 0, maxX: 2000, maxY: 1500 });
+      result.current.onWheelPan(99999, 99999, 800, 600);
+    });
+
+    expect(result.current.pan.x).toBe(800 - 2000);
+    expect(result.current.pan.y).toBe(600 - 1500);
   });
 
   it("double-clicking a node opens task detail", () => {
@@ -146,5 +197,27 @@ describe("dependency graph interactions", () => {
     const minPanX = 800 - 2600 * result.current.zoom;
     expect(result.current.pan.x).toBeGreaterThanOrEqual(minPanX);
     expect(result.current.pan.x).toBeLessThanOrEqual(0);
+  });
+
+  it("uses wheel pan without modifiers and keeps modifier wheel zoom", () => {
+    render(<DependencyGraph tasks={[createTask("A"), createTask("B", "todo", ["A"])]} onOpenDetail={vi.fn()} />);
+
+    const graph = screen.getByTestId("dependency-graph");
+    const viewport = graph.querySelector(".dependency-graph__viewport");
+    const canvas = graph.querySelector(".graph-canvas-transform") as HTMLElement | null;
+    if (!viewport || !canvas) throw new Error("missing graph viewport or canvas");
+
+    const initial = parseTransform(canvas.style.transform);
+
+    fireEvent.wheel(viewport, { deltaX: 50, deltaY: 30, clientX: 300, clientY: 250 });
+
+    const afterPan = parseTransform(canvas.style.transform);
+    expect(afterPan.x !== initial.x || afterPan.y !== initial.y).toBe(true);
+    expect(afterPan.scale).toBeCloseTo(initial.scale, 5);
+
+    fireEvent.wheel(viewport, { deltaY: -120, ctrlKey: true, clientX: 300, clientY: 250 });
+
+    const afterZoom = parseTransform(canvas.style.transform);
+    expect(afterZoom.scale).toBeGreaterThan(afterPan.scale);
   });
 });

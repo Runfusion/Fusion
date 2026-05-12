@@ -19,7 +19,7 @@ The dependency graph view is registered as a **bundled plugin view** in the dash
 - **Orphan dependency handling**: if a visible task depends on an excluded/missing dependency (for example `done`/`archived` after filtering), the missing edge is silently dropped and graph rendering continues without broken connectors
 - **Auto-layout**: Sugiyama-style layered layout (`computeAutoLayout`) groups nodes by dependency depth and spaces layers consistently
 - **Edge drawing**: SVG bezier curves from source bottom-center to target top-center, with arrowheads showing dependent → dependency direction
-- **Interaction**: drag-to-pan canvas background, drag-to-reposition nodes, cursor-centered wheel zoom, pinch-to-zoom with stationary midpoint, keyboard shortcuts, zoom toolbar, reset, and fit-to-graph
+- **Interaction**: drag-to-pan canvas background, scroll/two-finger pan, Ctrl/Cmd-wheel zoom, pinch-to-zoom with stationary midpoint, drag-to-reposition nodes, keyboard shortcuts, zoom toolbar, reset, and fit-to-graph
 - **Zoomed navigation reachability**: pan clamping now scales with the full rendered graph bounds (min/max node extents) at the active zoom level, so zooming in no longer traps off-screen content behind fixed viewport-only limits
 - **Fit-to-graph**: computes node bounding box from both minimum and maximum node coordinates (including negative auto-layout origins) with layout node dimensions and applies zoom/pan so the graph fits in viewport with padding
 - **Initial auto-fit**: when no saved scoped positions exist, the first non-empty render auto-fits once; subsequent updates preserve user navigation state

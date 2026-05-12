@@ -254,6 +254,15 @@ export function useGraphInteraction() {
     }
   }, []);
 
+  const onWheelPan = useCallback((deltaX: number, deltaY: number, viewportWidth: number, viewportHeight: number) => {
+    setAnimate(false);
+    const nextPan = {
+      x: panRef.current.x - deltaX,
+      y: panRef.current.y - deltaY,
+    };
+    setPan(clampPan(nextPan, viewportWidth, viewportHeight));
+  }, [clampPan, setAnimate]);
+
   const onWheelZoom = useCallback((
     deltaY: number,
     point: PointerPoint,
@@ -325,6 +334,7 @@ export function useGraphInteraction() {
     onPointerDown,
     onPointerMove,
     onPointerUp,
+    onWheelPan,
     onWheelZoom,
     handleKeyDown,
     setGraphBounds,
