@@ -36,6 +36,7 @@ const BUNDLED_PLUGIN_ID = "fusion-plugin-dependency-graph";
 const HERMES_PLUGIN_ID = "fusion-plugin-hermes-runtime";
 const CURSOR_PLUGIN_ID = "fusion-plugin-cursor-runtime";
 const ROADMAP_PLUGIN_ID = "fusion-plugin-roadmap";
+const REPORTS_PLUGIN_ID = "fusion-plugin-reports";
 const CLI_PRINTING_PRESS_PLUGIN_ID = "fusion-plugin-cli-printing-press";
 
 function makeManifest(overrides?: Partial<{ id: string; version: string; name: string }>) {
@@ -224,6 +225,10 @@ describe("ensureBundledDependencyGraphPluginInstalled", () => {
 
   it("includes CLI printing press plugin in bundled plugin ids", () => {
     expect(BUNDLED_PLUGIN_IDS).toContain(CLI_PRINTING_PRESS_PLUGIN_ID);
+  });
+
+  it("includes reports plugin in bundled plugin ids", () => {
+    expect(BUNDLED_PLUGIN_IDS).toContain(REPORTS_PLUGIN_ID);
   });
   it("fresh install: registers and loads the plugin when not in DB", async () => {
     setupBundleExists();
@@ -415,6 +420,33 @@ describe("ensureBundledDependencyGraphPluginInstalled", () => {
     expect(store.registerPlugin).toHaveBeenCalledWith(
       expect.objectContaining({ manifest: expect.objectContaining({ id: ROADMAP_PLUGIN_ID }) }),
     );
+  });
+
+  it("registers reports plugin via generic bundled installer", async () => {
+    const manifest = makeManifest({ id: REPORTS_PLUGIN_ID, name: "Reports" });
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p.endsWith("manifest.json") && p.includes(REPORTS_PLUGIN_ID)) return true;
+      if (p.endsWith("/src/index.ts") && p.includes(REPORTS_PLUGIN_ID)) return true;
+      return false;
+    });
+    mockReadFile.mockResolvedValue(JSON.stringify(manifest));
+    mockValidatePluginManifest.mockReturnValue({ valid: true, errors: [] });
+
+    const store = makePluginStore();
+    const loader = makePluginLoader();
+
+    const result = await ensureBundledPluginInstalled(
+      store as unknown as import("@fusion/core").PluginStore,
+      loader as unknown as import("@fusion/core").PluginLoader,
+      REPORTS_PLUGIN_ID,
+    );
+
+    expect(result).toBe("installed");
+    expect(store.registerPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ manifest: expect.objectContaining({ id: REPORTS_PLUGIN_ID }) }),
+    );
+    const registerCall = store.registerPlugin.mock.calls[0]?.[0] as { path: string };
+    expect(registerCall.path).toContain(REPORTS_PLUGIN_ID);
   });
 
   it("registers Hermes from bundled.js when bundled, src, and dist entries all exist", async () => {

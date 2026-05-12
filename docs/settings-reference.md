@@ -638,7 +638,7 @@ fn plugin install ./plugins/fusion-plugin-hermes-runtime
 fn plugin install ./plugins/fusion-plugin-openclaw-runtime
 ```
 
-> 💡 In the dashboard, go to **Settings → Plugins → Fusion Plugins**. The **Bundled Plugins** section surfaces Agent Browser, Hermes, Paperclip, OpenClaw, Droid, and Dependency Graph directly from shipped manifests, shows install status, and provides one-click install actions for plugins that are not yet installed.
+> 💡 In the dashboard, go to **Settings → Plugins → Fusion Plugins**. The **Bundled Plugins** section surfaces Agent Browser, Hermes, Paperclip, OpenClaw, Droid, Dependency Graph, and Reports directly from shipped manifests, shows install status, and provides one-click install actions for plugins that are not yet installed.
 >
 > ℹ️ Bundled runtime plugins (`fusion-plugin-paperclip-runtime`, `fusion-plugin-hermes-runtime`, `fusion-plugin-openclaw-runtime`) support lazy install semantics in settings: the card can open before installation (initial `GET /api/plugins/:id/settings` returns empty/default settings instead of 404), and the first save triggers auto-install (`PUT /api/plugins/:id/settings`). They are **not** auto-installed at app boot or npm install time. If a bundled asset is genuinely unavailable in the current build, save returns an explicit server error instead of a late plugin-not-found 404.
 

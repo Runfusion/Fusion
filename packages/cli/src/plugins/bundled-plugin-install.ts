@@ -9,6 +9,7 @@ const CURSOR_RUNTIME_PLUGIN_ID = "fusion-plugin-cursor-runtime";
 
 export const BUNDLED_PLUGIN_IDS = [
   "fusion-plugin-dependency-graph",
+  "fusion-plugin-reports",
   "fusion-plugin-whatsapp-chat",
   "fusion-plugin-roadmap",
   "fusion-plugin-hermes-runtime",

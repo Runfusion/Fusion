@@ -517,6 +517,38 @@ describe("POST /api/plugins mode:install — bundled plugin path fallback", () =
     );
   });
 
+  it("installs bundled reports plugin when relative path misses cwd", async () => {
+    const bundledManifest = {
+      ...VALID_MANIFEST,
+      id: "fusion-plugin-reports",
+      name: "Reports",
+    };
+    mockExistsSync.mockImplementation((p: string) => p.includes("fusion-plugin-reports/manifest.json"));
+    mockAccess.mockImplementation((p: string) => {
+      if (p.includes("fusion-plugin-reports")) return Promise.resolve();
+      return Promise.reject(new Error("not found"));
+    });
+    mockReadFile.mockResolvedValue(JSON.stringify(bundledManifest));
+    (pluginStore.registerPlugin as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...INSTALLED_PLUGIN,
+      id: "fusion-plugin-reports",
+      name: "Reports",
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/plugins", {
+      mode: "install",
+      path: "./plugins/fusion-plugin-reports",
+    });
+
+    expect(res.status).toBe(201);
+    expect(pluginStore.registerPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        manifest: expect.objectContaining({ id: "fusion-plugin-reports" }),
+        path: expect.stringContaining("fusion-plugin-reports"),
+      }),
+    );
+  });
+
   it("returns 404 with helpful message when local and bundled paths are unresolved", async () => {
     mockExistsSync.mockReturnValue(false);
     mockAccess.mockRejectedValue(new Error("not found"));

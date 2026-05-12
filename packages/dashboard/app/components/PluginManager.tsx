@@ -124,6 +124,13 @@ const BUILTIN_PLUGINS: BuiltinPlugin[] = [
     path: "./plugins/fusion-plugin-dependency-graph",
   },
   {
+    id: "fusion-plugin-reports",
+    name: "Reports",
+    description: "View report history, compare runs side-by-side, and export standalone HTML summaries.",
+    category: "integration",
+    path: "./plugins/fusion-plugin-reports",
+  },
+  {
     id: "fusion-plugin-whatsapp-chat",
     name: "WhatsApp Chat",
     description: "Pairs to WhatsApp Web (multi-device) with QR or pairing code, then bridges direct chats to a Fusion agent.",

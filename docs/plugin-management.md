@@ -58,7 +58,7 @@ For full multi-project details, see [Plugin Scope in Multi-Project Mode](./multi
 2. Review bundled entries in **Bundled Plugins** and currently installed entries.
 3. Check each plugin’s status/state in the manager.
 
-First-party bundled entries include runtime plugins plus integrations like **Dependency Graph**, **Roadmap**, **WhatsApp Chat**, and **CLI Printing Press**.
+First-party bundled entries include runtime plugins plus integrations like **Dependency Graph**, **Reports**, **Roadmap**, **WhatsApp Chat**, and **CLI Printing Press**.
 
 Expected outcome: You can see what is already installed, what is bundled and available, and each plugin’s current lifecycle state.
 

@@ -267,6 +267,7 @@ describe("PluginManager", () => {
     expect(screen.getByText("OpenClaw Runtime")).toBeTruthy();
     expect(screen.getByText("Droid Runtime")).toBeTruthy();
     expect(screen.getByText("Dependency Graph")).toBeTruthy();
+    expect(screen.getByText("Reports")).toBeTruthy();
     expect(screen.getByText("WhatsApp Chat")).toBeTruthy();
     expect(screen.getByText("CLI Printing Press")).toBeTruthy();
     expect(screen.getByText(/Pairs to WhatsApp Web \(multi-device\) with QR or pairing code/i)).toBeTruthy();
@@ -423,6 +424,26 @@ describe("PluginManager", () => {
     await waitFor(() => {
       expect(installPlugin).toHaveBeenCalledWith({ path: "./plugins/fusion-plugin-dependency-graph" }, undefined);
       expect(addToast).toHaveBeenCalledWith("Dependency Graph installed globally", "success");
+    });
+  });
+
+  it("installs reports from the built-in section", async () => {
+    render(<PluginManager addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(fetchPlugins).toHaveBeenCalled();
+    });
+
+    const reportsLabel = await screen.findByText("Reports");
+    const reportsCard = reportsLabel.closest(".plugin-builtins-item");
+    expect(reportsCard).toBeTruthy();
+
+    const installButton = within(reportsCard as HTMLElement).getByRole("button", { name: /Install Reports/i });
+    await userEvent.click(installButton);
+
+    await waitFor(() => {
+      expect(installPlugin).toHaveBeenCalledWith({ path: "./plugins/fusion-plugin-reports" }, undefined);
+      expect(addToast).toHaveBeenCalledWith("Reports installed globally", "success");
     });
   });
 
@@ -837,6 +858,37 @@ describe("PluginManager", () => {
 
     await waitFor(() => {
       expect(fetchPluginSettings).toHaveBeenCalledWith("fusion-plugin-dependency-graph", undefined);
+    });
+
+    expect(screen.getByTestId("plugin-manager-detail")).toBeTruthy();
+  });
+
+  it("shows Manage for installed reports in built-in section", async () => {
+    vi.mocked(fetchPlugins).mockResolvedValueOnce([
+      {
+        ...mockPlugins[0],
+        id: "fusion-plugin-reports",
+        name: "Reports",
+      },
+    ]);
+
+    render(<PluginManager addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Reports").length).toBeGreaterThanOrEqual(2);
+    });
+
+    const reportsCard = screen.getAllByText("Reports")[1]?.closest(".plugin-builtins-item");
+    expect(reportsCard).toBeTruthy();
+
+    const manageButton = within(reportsCard as HTMLElement).getByRole("button", { name: /^Manage$/i });
+    expect(manageButton).not.toBeDisabled();
+    expect(within(reportsCard as HTMLElement).getAllByText("Installed").length).toBeGreaterThanOrEqual(1);
+
+    await userEvent.click(manageButton);
+
+    await waitFor(() => {
+      expect(fetchPluginSettings).toHaveBeenCalledWith("fusion-plugin-reports", undefined);
     });
 
     expect(screen.getByTestId("plugin-manager-detail")).toBeTruthy();

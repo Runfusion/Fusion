@@ -90,6 +90,7 @@ const BUNDLED_PLUGIN_RUNTIMES: Array<{
 ];
 const BUNDLED_PLUGIN_IDS = new Set([
   "fusion-plugin-dependency-graph",
+  "fusion-plugin-reports",
   "fusion-plugin-whatsapp-chat",
   "fusion-plugin-roadmap",
   "fusion-plugin-hermes-runtime",

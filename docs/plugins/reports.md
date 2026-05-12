@@ -1,5 +1,13 @@
 # Reports Plugin
 
+## Install
+
+1. Open **Settings → Plugins → Fusion Plugins**.
+2. In **Bundled Plugins**, click **Install** for **Reports**.
+3. Enable the plugin if it is not already started.
+
+When installed and enabled, the plugin registers the **Reports** dashboard view destination.
+
 ## Rendering & Export
 
 The reports plugin renders deterministic HTML via `src/render/html-template.ts` using ordered `data-section` blocks and tokenized styles from `src/render/html-styles.ts`. Section toggles and `sectionOrder` are respected from report settings metadata, and both dark/light themes are embedded directly in the output document (no dashboard stylesheet dependency).

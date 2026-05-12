@@ -2,6 +2,14 @@
 
 Generates HTML system activity reports with multi-agent review.
 
+## Install (one-click)
+
+1. Open **Settings → Plugins → Fusion Plugins**.
+2. In **Bundled Plugins**, click **Install** on **Reports**.
+3. Enable the plugin if prompted.
+
+Once installed and enabled, Fusion registers the **Reports** dashboard destination automatically.
+
 ## Scaffold seams (interim)
 
 The plugin currently exports four interim scaffold seams to unblock downstream implementation work:
