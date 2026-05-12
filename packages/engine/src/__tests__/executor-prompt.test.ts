@@ -2108,8 +2108,11 @@ describe("TaskExecutor global pause behavior", () => {
     const executor = new TaskExecutor(store, "/tmp/test");
     await executor.execute(todoTask as any);
 
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-001", { paused: false, status: null });
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
+      paused: false,
+      pausedByAgentId: null,
+      status: null,
+    });
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
     expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-review");
     expect(store.logEntry).toHaveBeenCalledWith(
@@ -2122,6 +2125,143 @@ describe("TaskExecutor global pause behavior", () => {
           id === "FN-001" && action.includes("Completion handoff deferred — global pause active"),
       ),
     ).toBe(true);
+  });
+
+  describe("fn_task_done with paused state (FN-3964 / FN-4167 regression)", () => {
+    it("advances todo + paused tasks through normal completion handoff", async () => {
+      const store = createMockStore();
+      let capturedCustomTools: any[] = [];
+      const todoTask = {
+        id: "FN-001",
+        title: "Paused todo task",
+        description: "T",
+        prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+        column: "todo",
+        paused: true,
+        pausedByAgentId: "agent-123",
+        dependencies: [],
+        steps: [{ name: "Step 1", status: "pending" }],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      store.getTask.mockResolvedValue(todoTask);
+      store.getSettings.mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 15000,
+        autoMerge: false,
+        globalPause: false,
+        enginePaused: false,
+      });
+      store.moveTask.mockImplementation(async (_id: string, to: string) => ({ ...todoTask, column: to, paused: false }));
+
+      mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+        capturedCustomTools = opts.customTools || [];
+        return {
+          session: {
+            prompt: vi.fn().mockImplementation(async () => {
+              const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "fn_task_done");
+              if (taskDoneTool) {
+                await taskDoneTool.execute("call-1", { summary: "done" });
+              }
+            }),
+            dispose: vi.fn(),
+          },
+        };
+      }) as any);
+
+      const executor = new TaskExecutor(store, "/tmp/test");
+      const watchdogSpy = vi.spyOn(executor as any, "scheduleCompletedTaskWatchdog");
+
+      await executor.execute(todoTask as any);
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
+        paused: false,
+        pausedByAgentId: null,
+        status: null,
+      });
+      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress");
+      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+      expect(watchdogSpy).toHaveBeenCalledWith("FN-001", "fn_task_done");
+      expect(
+        store.logEntry.mock.calls.some(
+          ([id, action]: [string, string]) =>
+            id === "FN-001" && action.includes("Completion handoff deferred — global pause active"),
+        ),
+      ).toBe(false);
+      // globalPause:true deferred behavior is intentionally covered by the test above.
+    });
+
+    it("completes in-progress + paused tasks after clearing task-level pause state", async () => {
+      const store = createMockStore();
+      let capturedCustomTools: any[] = [];
+      const inProgressTask = {
+        id: "FN-001",
+        title: "Paused in-progress task",
+        description: "T",
+        prompt: "# test\n## Steps\n### Step 0: Preflight\n- [ ] check",
+        column: "in-progress",
+        paused: true,
+        pausedByAgentId: "agent-123",
+        dependencies: [],
+        steps: [{ name: "Step 1", status: "pending" }],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      store.getTask.mockResolvedValue(inProgressTask);
+      store.getSettings.mockResolvedValue({
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 15000,
+        autoMerge: false,
+        globalPause: false,
+        enginePaused: false,
+      });
+
+      mockedCreateFnAgent.mockImplementation((async (opts: any) => {
+        capturedCustomTools = opts.customTools || [];
+        return {
+          session: {
+            prompt: vi.fn().mockImplementation(async () => {
+              const taskDoneTool = capturedCustomTools.find((tool: any) => tool.name === "fn_task_done");
+              if (taskDoneTool) {
+                await taskDoneTool.execute("call-1", { summary: "done" });
+              }
+            }),
+            dispose: vi.fn(),
+          },
+        };
+      }) as any);
+
+      const executor = new TaskExecutor(store, "/tmp/test");
+      const watchdogSpy = vi.spyOn(executor as any, "scheduleCompletedTaskWatchdog");
+
+      await executor.execute(inProgressTask as any);
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
+        paused: false,
+        pausedByAgentId: null,
+        status: null,
+      });
+      expect(watchdogSpy).toHaveBeenCalledWith("FN-001", "fn_task_done");
+      expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "todo");
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-001", "in-progress");
+      expect(
+        store.logEntry.mock.calls.some(
+          ([id, action]: [string, string]) =>
+            id === "FN-001" && action.includes("Completion handoff deferred — global pause active"),
+        ),
+      ).toBe(false);
+      // globalPause:true deferred behavior is intentionally covered by
+      // "parks todo tasks in in-progress when fn_task_done is called during global pause".
+    });
   });
 
   it("takes no action when globalPause remains false", async () => {

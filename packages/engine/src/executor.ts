@@ -4567,12 +4567,8 @@ export class TaskExecutor {
           }
         }
         const settings = await store.getSettings();
-        const hardPauseActive = Boolean(task.paused || settings.globalPause);
-        if (hardPauseActive) {
-          await store.updateTask(taskId, { status: null });
-        } else {
-          await store.updateTask(taskId, { paused: false, status: null });
-        }
+        const hardPauseActive = Boolean(settings.globalPause);
+        await store.updateTask(taskId, { paused: false, pausedByAgentId: null, status: null });
         await store.logEntry(taskId, "Task marked done by agent");
 
         const latestTask = await store.getTask(taskId);
