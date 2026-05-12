@@ -216,6 +216,15 @@
   padding: 4px 8px;
 }
 
+.chat-status-copy {
+  color: var(--text-muted);
+  font-size: var(--space-md);
+}
+
+.chat-status-copy--padded {
+  padding: var(--space-md);
+}
+
 .chat-session-item {
   padding: 10px 12px;
   border-radius: var(--radius-md);

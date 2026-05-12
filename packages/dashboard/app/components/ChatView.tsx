@@ -2133,13 +2133,9 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
             {/* Session list section */}
             <div className="chat-session-list chat-sidebar-list">
               {sessionsLoading ? (
-                <div style={{ padding: "12px", color: "var(--text-secondary)", fontSize: "13px" }}>
-                  Loading...
-                </div>
+                <div className="chat-status-copy chat-status-copy--padded">Loading...</div>
               ) : filteredSessions.length === 0 ? (
-                <div style={{ padding: "12px", color: "var(--text-secondary)", fontSize: "13px" }}>
-                  No conversations yet
-                </div>
+                <div className="chat-status-copy chat-status-copy--padded">No conversations yet</div>
               ) : (
                 filteredSessions.map((session) => (
                   <div
@@ -2390,9 +2386,9 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
               </div>
               <div className="chat-messages" ref={messagesContainerRef} onScroll={updateScrollState}>
                 {rooms.messagesLoading ? (
-                  <div style={{ color: "var(--text-secondary)", fontSize: "13px" }}>Loading messages...</div>
+                  <div className="chat-status-copy">Loading messages...</div>
                 ) : rooms.messages.length === 0 ? (
-                  <div style={{ color: "var(--text-secondary)", fontSize: "13px" }}>No messages yet. Start the conversation!</div>
+                  <div className="chat-status-copy">No messages yet. Start the conversation!</div>
                 ) : (
                   rooms.messages.map((message) => {
                     const senderName = message.senderAgentId ? (agentsMap.get(message.senderAgentId)?.name ?? message.senderAgentId.slice(0, 30)) : "You";
@@ -2626,13 +2622,11 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
               </div>
             </>
           ) : messagesLoading ? (
-            <div style={{ color: "var(--text-secondary)", fontSize: "13px" }}>Loading messages...</div>
+            <div className="chat-status-copy">Loading messages...</div>
           ) : messages.length === 0 && !activeSession ? (
             renderEmptyState()
           ) : messages.length === 0 && activeSession ? (
-            <div style={{ color: "var(--text-secondary)", fontSize: "13px" }}>
-              No messages yet. Start the conversation!
-            </div>
+            <div className="chat-status-copy">No messages yet. Start the conversation!</div>
           ) : (
             <>
               {messages.map((message) => (

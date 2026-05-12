@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+function serializeRow(value: unknown): string {
+  return JSON.stringify(value, Object.keys((value as Record<string, unknown>) ?? {}).sort());
+}
+
 import { createTaskStoreTestHarness } from "./store-test-helpers.js";
 
 describe("TaskStore collision guards", () => {
@@ -46,10 +50,13 @@ describe("TaskStore collision guards", () => {
     });
   };
 
-  it("createTask throws and preserves the existing task when the allocator returns a colliding id", async () => {
+  it("FN-4055: createTask throws and preserves the existing task row and files when the allocator returns a colliding id", async () => {
     const original = await store.createTask({ title: "Original", description: "original task", column: "todo" });
     const originalPromptPath = join(rootDir, ".fusion", "tasks", original.id, "PROMPT.md");
+    const originalTaskJsonPath = join(rootDir, ".fusion", "tasks", original.id, "task.json");
     const originalPrompt = await readFile(originalPromptPath, "utf8");
+    const originalTaskJson = await readFile(originalTaskJsonPath, "utf8");
+    const originalRow = store.getDatabase().prepare("SELECT * FROM tasks WHERE id = ?").get(original.id);
 
     forceAllocatorCollision(original.id);
     await expect(
@@ -58,10 +65,14 @@ describe("TaskStore collision guards", () => {
 
     const persisted = await store.getTask(original.id);
     const promptAfter = await readFile(originalPromptPath, "utf8");
+    const taskJsonAfter = await readFile(originalTaskJsonPath, "utf8");
+    const rowAfter = store.getDatabase().prepare("SELECT * FROM tasks WHERE id = ?").get(original.id);
 
+    expect(serializeRow(rowAfter)).toBe(serializeRow(originalRow));
     expect(persisted.title).toBe("Original");
     expect(persisted.description).toBe("original task");
     expect(promptAfter).toBe(originalPrompt);
+    expect(taskJsonAfter).toBe(originalTaskJson);
   });
 
   it("duplicateTask throws and preserves the unrelated task when its reserved id collides", async () => {

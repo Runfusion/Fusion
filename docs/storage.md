@@ -8,6 +8,22 @@
 - Startup/store-open allocator reconciliation bumps each active prefix sequence to `max(current nextSequence, max(tasks suffix)+1, max(archivedTasks suffix)+1, max(reservation sequence)+1)` so stale allocator rows self-heal before local task creation resumes.
 - Create-class task persistence is intentionally non-destructive: new tasks use plain `INSERT` semantics, while `ON CONFLICT(id) DO UPDATE` remains update-only. If counters drift and a reserved ID still collides, the create fails and the existing SQLite row / task directory stays intact.
 
+### Detecting historical task-ID overwrites
+
+If allocator state drifted before the current guards landed, historical task records may still contain overwrite evidence. Run the audit script from the project root:
+
+```bash
+node scripts/audit-task-id-collisions.mjs [--project-root /path/to/project]
+```
+
+The script checks for:
+- `task.json.history` timestamps older than the active DB row's `createdAt`
+- task-title mismatches between SQLite and the first `#` heading in `PROMPT.md`
+- task-title mismatches against the latest `Fusion-Task-Id` commit subject on `main`
+- active tasks that share an ID with an `archivedTasks` row
+
+Treat flagged candidates as recovery leads, not automatic truth: review the surviving task files, logs, and commit history, then file a follow-up recovery task for any confirmed overwrite.
+
 ## SQLite write-path lock recovery (FN-4042 / FN-4083)
 
 - Every disk-backed SQLite connection that Fusion opens for project storage (`fusion.db`), the central registry (`fusion-central.db`), archives (`archive.db`), and worktree hydration explicitly sets `PRAGMA busy_timeout = 5000` and `PRAGMA journal_mode = WAL` at connection open time before write work begins.
