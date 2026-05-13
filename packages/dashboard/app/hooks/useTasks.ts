@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { Task, Column, TaskCreateInput, MergeResult } from "@fusion/core";
+import type { Task, Column, TaskCreateInput, MergeResult, GithubIssueAction } from "@fusion/core";
 import { normalizeColumn } from "@fusion/core";
 import * as api from "../api";
 import { subscribeSse } from "../sse-bus";
@@ -367,7 +367,7 @@ export function useTasks(options?: UseTasksOptions) {
 
   const deleteTask = useCallback(async (
     id: string,
-    options?: { removeDependencyReferences?: boolean },
+    options?: { removeDependencyReferences?: boolean; githubIssueAction?: GithubIssueAction },
   ): Promise<Task> => {
     return normalizeTask(await api.deleteTask(id, projectId, options));
   }, [projectId]);

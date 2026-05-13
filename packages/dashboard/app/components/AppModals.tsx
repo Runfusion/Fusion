@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, lazy, Suspense } from "react";
 import type { ProjectInfo } from "../api";
-import type { ColorTheme, Column, MergeResult, Task, TaskCreateInput, ThemeMode } from "@fusion/core";
+import type { ColorTheme, Column, MergeResult, Task, TaskCreateInput, ThemeMode, GithubIssueAction } from "@fusion/core";
 import type { UseProjectActionsResult } from "../hooks/useProjectActions";
 import type { ModalManager } from "../hooks/useModalManager";
 import type { UseTaskHandlersResult } from "../hooks/useTaskHandlers";
@@ -54,7 +54,7 @@ interface AppModalsProps {
   taskHandlers: Pick<UseTaskHandlersResult, "handleModalCreate" | "handlePlanningTaskCreated" | "handlePlanningTasksCreated" | "handleSubtaskTasksCreated" | "handleGitHubImport">;
   taskOperations: {
     moveTask: (taskId: string, column: Column, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
-    deleteTask: (taskId: string, options?: { removeDependencyReferences?: boolean }) => Promise<Task>;
+    deleteTask: (taskId: string, options?: { removeDependencyReferences?: boolean; githubIssueAction?: GithubIssueAction }) => Promise<Task>;
     mergeTask: (taskId: string) => Promise<MergeResult>;
     retryTask: (taskId: string) => Promise<Task>;
     resetTask: (taskId: string) => Promise<Task>;
