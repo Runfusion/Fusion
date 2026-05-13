@@ -1227,7 +1227,7 @@ export function SettingsModal({
         const successMessage = providerId === "ntfy"
           ? "Test notification sent — check your ntfy app!"
           : providerId === "ntfy-message"
-            ? "Direct-message test sent — check your ntfy inbox for the agent-to-user message."
+            ? "Message inbox test sent — check your ntfy inbox for the agent-to-user message."
             : providerId === "ntfy-room"
               ? "Room reply test sent — check your ntfy inbox for the room reply."
               : "Test notification sent — check your webhook endpoint!";
@@ -1235,7 +1235,7 @@ export function SettingsModal({
         addToast(successMessage, "success");
       } else {
         const failureMessage = providerId === "ntfy-message"
-          ? "Failed to send direct-message test"
+          ? "Failed to send message inbox test"
           : providerId === "ntfy-room"
             ? "Failed to send room reply test"
             : "Failed to send test notification";
@@ -5108,7 +5108,7 @@ export function SettingsModal({
                         !/^[a-zA-Z0-9_-]{1,64}$/.test(form.ntfyTopic)
                       }
                     >
-                      {testNotificationLoading["ntfy-message"] ? "Sending…" : "Test direct message"}
+                      {testNotificationLoading["ntfy-message"] ? "Sending…" : "Test message inbox"}
                     </button>
                     <button
                       type="button"
@@ -5135,7 +5135,7 @@ export function SettingsModal({
                       )}
                       {testNotificationResult["ntfy-message"] && (
                         <small className={`notification-test-feedback-item notification-test-feedback-item--${testNotificationResult["ntfy-message"].status}`}>
-                          Direct message: {testNotificationResult["ntfy-message"].message}
+                          Message inbox: {testNotificationResult["ntfy-message"].message}
                         </small>
                       )}
                       {testNotificationResult["ntfy-room"] && (

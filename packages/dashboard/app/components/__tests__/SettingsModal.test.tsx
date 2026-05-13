@@ -3344,7 +3344,7 @@ describe("SettingsModal", () => {
       await waitForSettingsModalReady();
       await openNotificationsSection();
 
-      await userEvent.click(screen.getByRole("button", { name: /Test direct message/ }));
+      await userEvent.click(screen.getByRole("button", { name: /Test message inbox/ }));
 
       await waitFor(() => {
         expect(mockTestNotification).toHaveBeenCalledWith(
@@ -3354,11 +3354,11 @@ describe("SettingsModal", () => {
         );
       });
       expect(addToast).toHaveBeenCalledWith(
-        "Direct-message test sent — check your ntfy inbox for the agent-to-user message.",
+        "Message inbox test sent — check your ntfy inbox for the agent-to-user message.",
         "success",
       );
-      expect(screen.getByText("Direct message: Direct-message test sent — check your ntfy inbox for the agent-to-user message.")).toBeInTheDocument();
-      expect(screen.getByText("Direct message: Direct-message test sent — check your ntfy inbox for the agent-to-user message.").closest(".notification-test-feedback")).toHaveAttribute("aria-live", "polite");
+      expect(screen.getByText("Message inbox: Message inbox test sent — check your ntfy inbox for the agent-to-user message.")).toBeInTheDocument();
+      expect(screen.getByText("Message inbox: Message inbox test sent — check your ntfy inbox for the agent-to-user message.").closest(".notification-test-feedback")).toHaveAttribute("aria-live", "polite");
     });
 
     it("calls testNotification with ntfy room-event config when room test button clicked", async () => {
