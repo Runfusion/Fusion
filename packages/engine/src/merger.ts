@@ -39,6 +39,7 @@ import {
   resolveTaskMergeTarget,
   resolveTitleSummarizerSettingsModel,
   resolveAgentPrompt,
+  resolvePersistAgentThinkingLog,
   summarizeCommitBody,
   summarizeCommitSubject,
   summarizeMergeCommit,
@@ -1006,7 +1007,8 @@ async function attemptInMergeVerificationFix(
       taskId,
       agent: "merger",
       persistAgentToolOutput: settings.persistAgentToolOutput,
-      persistAgentThinkingLog: settings.persistAgentThinkingLog,
+      // Merger agents are task-scoped ephemeral workers.
+    persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
       onAgentText: options.onAgentText,
       onAgentTool: options.onAgentTool,
     });
@@ -2116,7 +2118,8 @@ async function runAiAgentForAutostashConflict(params: {
     taskId,
     agent: "merger",
     persistAgentToolOutput: settings.persistAgentToolOutput,
-    persistAgentThinkingLog: settings.persistAgentThinkingLog,
+    // Merger agents are task-scoped ephemeral workers.
+    persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
     onAgentText: options.onAgentText
       ? (_id: string, delta: string) => options.onAgentText!(delta)
       : undefined,
@@ -2486,7 +2489,8 @@ async function runAiAgentForAutostashHardFail(params: {
     taskId,
     agent: "merger",
     persistAgentToolOutput: settings.persistAgentToolOutput,
-    persistAgentThinkingLog: settings.persistAgentThinkingLog,
+    // Merger agents are task-scoped ephemeral workers.
+    persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
     onAgentText: options.onAgentText
       ? (_id: string, delta: string) => options.onAgentText!(delta)
       : undefined,
@@ -4931,7 +4935,8 @@ You are assisting with a paused \`git pull --rebase\`.
     taskId,
     agent: "merger",
     persistAgentToolOutput: settings.persistAgentToolOutput,
-    persistAgentThinkingLog: settings.persistAgentThinkingLog,
+    // Merger agents are task-scoped ephemeral workers.
+    persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
     onAgentText: options?.onAgentText
       ? (_id, delta) => options.onAgentText?.(delta)
       : undefined,
@@ -7878,7 +7883,8 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     taskId,
     agent: "merger",
     persistAgentToolOutput: settings.persistAgentToolOutput,
-    persistAgentThinkingLog: settings.persistAgentThinkingLog,
+    // Merger agents are task-scoped ephemeral workers.
+    persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
     onAgentText: options.onAgentText
       ? (_id, delta) => options.onAgentText!(delta)
       : undefined,
@@ -8492,7 +8498,8 @@ If issues are found that need attention, describe them clearly and include concr
     taskId,
     agent: "merger",
     persistAgentToolOutput: settings.persistAgentToolOutput,
-    persistAgentThinkingLog: settings.persistAgentThinkingLog,
+    // Merger agents are task-scoped ephemeral workers.
+    persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
   });
 
   try {

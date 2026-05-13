@@ -9,6 +9,7 @@ import type {
 import {
   buildTriageMemoryInstructions,
   resolveAgentPrompt,
+  resolvePersistAgentThinkingLog,
   sortTasksByPriorityThenAgeAndId,
 } from "@fusion/core";
 import type { ImageContent } from "@mariozechner/pi-ai";
@@ -928,7 +929,8 @@ export class TriageProcessor {
           taskId: task.id,
           agent: "triage",
           persistAgentToolOutput: settings.persistAgentToolOutput,
-          persistAgentThinkingLog: settings.persistAgentThinkingLog,
+          // Triage runs in a task-scoped ephemeral worker session.
+          persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
           onAgentText: (id, delta) => {
             stuckDetector?.recordActivity(task.id);
             this.options.onAgentText?.(id, delta);

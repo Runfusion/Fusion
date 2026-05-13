@@ -18,7 +18,7 @@
  */
 
 import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask, RunMutationContext, Settings, AgentConfigRevision, ReflectionStore, ChatStore, ChatRoom, ChatRoomMessage } from "@fusion/core";
-import { ApprovalRequestStore, buildExecutionMemoryInstructions, isEphemeralAgent, hasAgentIdentity, resolveEffectiveAgentPermissionPolicy, canAgentTakeImplementationTask, canAgentTakeImplementationTaskForExplicitRouting } from "@fusion/core";
+import { ApprovalRequestStore, buildExecutionMemoryInstructions, isEphemeralAgent, hasAgentIdentity, resolveEffectiveAgentPermissionPolicy, canAgentTakeImplementationTask, canAgentTakeImplementationTaskForExplicitRouting, resolvePersistAgentThinkingLog } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import { createHash } from "node:crypto";
@@ -2029,7 +2029,7 @@ export class HeartbeatMonitor {
             appendLog: (entry) => this.store.appendRunLog(agentId, run.id, entry),
             agent: agent.role as AgentRole,
             persistAgentToolOutput: memorySettings?.persistAgentToolOutput,
-            persistAgentThinkingLog: memorySettings?.persistAgentThinkingLog,
+            persistAgentThinkingLog: resolvePersistAgentThinkingLog(memorySettings, { ephemeral: isAgentEphemeral }),
           });
         } else if (taskId) {
           agentLogger = new AgentLogger({
@@ -2038,7 +2038,7 @@ export class HeartbeatMonitor {
             agent: agent.role as AgentRole,
             appendLog: (entry) => this.store.appendRunLog(agentId, run.id, entry),
             persistAgentToolOutput: memorySettings?.persistAgentToolOutput,
-            persistAgentThinkingLog: memorySettings?.persistAgentThinkingLog,
+            persistAgentThinkingLog: resolvePersistAgentThinkingLog(memorySettings, { ephemeral: isAgentEphemeral }),
           });
         }
 

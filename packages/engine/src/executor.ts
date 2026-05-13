@@ -12,6 +12,7 @@ import {
   getTaskMergeBlocker,
   isEphemeralAgent,
   resolveAgentPrompt,
+  resolvePersistAgentThinkingLog,
   resolveEffectiveAgentPermissionPolicy,
   resolveProjectDefaultModel,
   type RunCommandResult,
@@ -3160,7 +3161,8 @@ export class TaskExecutor {
         taskId: task.id,
         agent: "executor",
         persistAgentToolOutput: settings.persistAgentToolOutput,
-        persistAgentThinkingLog: settings.persistAgentThinkingLog,
+        // Executor sessions are task-scoped ephemeral workers.
+        persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
         onAgentText: (taskId, delta) => {
           lastAssistantText += delta;
           stuckDetector?.recordActivity(taskId);
@@ -5290,7 +5292,8 @@ ${feedback}
         taskId: task.id,
         agent: "executor",
         persistAgentToolOutput: settings.persistAgentToolOutput,
-        persistAgentThinkingLog: settings.persistAgentThinkingLog,
+        // Executor sessions are task-scoped ephemeral workers.
+        persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
         onAgentText: this.options.onAgentText,
         onAgentTool: this.options.onAgentTool,
       });
@@ -6100,7 +6103,8 @@ and show an appropriate message to the user.\`
       taskId: task.id,
       agent: "reviewer",
       persistAgentToolOutput: settings.persistAgentToolOutput,
-      persistAgentThinkingLog: settings.persistAgentThinkingLog,
+      // Review-in-executor sessions are task-scoped ephemeral workers.
+      persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
       onAgentText: (taskId, delta) => {
         this.options.onAgentText?.(taskId, delta);
       },

@@ -18,6 +18,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import type { AgentStore, MessageStore, PermanentAgentGatingContext, TaskDetail, Settings, TaskStore } from "@fusion/core";
+import { resolvePersistAgentThinkingLog } from "@fusion/core";
 
 import {
   createResolvedAgentSession,
@@ -890,7 +891,8 @@ export class StepSessionExecutor {
           taskId: taskDetail.id,
           agent: "executor",
           persistAgentToolOutput: settings.persistAgentToolOutput,
-          persistAgentThinkingLog: settings.persistAgentThinkingLog,
+          // Step-session workers are task-scoped ephemeral agents.
+          persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
         });
         let session: AgentSession | null = null;
 

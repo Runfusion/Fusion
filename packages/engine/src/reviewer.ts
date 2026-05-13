@@ -9,7 +9,7 @@
  */
 
 import type { TaskStore, TaskComment, AgentPromptsConfig, Settings } from "@fusion/core";
-import { buildReviewerMemoryInstructions, resolveAgentPrompt } from "@fusion/core";
+import { buildReviewerMemoryInstructions, resolveAgentPrompt, resolvePersistAgentThinkingLog } from "@fusion/core";
 import { describeModel, promptWithFallback } from "./pi.js";
 import { isContextLimitError } from "./context-limit-detector.js";
 import { createResolvedAgentSession, extractRuntimeHint } from "./agent-session-helpers.js";
@@ -350,7 +350,8 @@ export async function reviewStep(
           ? (_id, delta) => options.onText!(delta)
           : undefined,
         persistAgentToolOutput: liveSettings?.persistAgentToolOutput,
-        persistAgentThinkingLog: liveSettings?.persistAgentThinkingLog,
+        // Reviewer sessions are task-scoped ephemeral workers.
+        persistAgentThinkingLog: resolvePersistAgentThinkingLog(liveSettings, { ephemeral: true }),
       })
     : null;
 
