@@ -4057,8 +4057,8 @@ export interface AgentHeartbeatRun {
   systemPrompt?: string;
   /** Full per-tick execution prompt sent to the LLM for this run (truncated to 100,000 chars). */
   executionPrompt?: string;
-  /** Whether a custom heartbeat procedure was loaded ("custom") or the built-in default was used ("default"). */
-  heartbeatProcedureSource?: "default" | "custom";
+  /** Whether the run used a custom heartbeat procedure, the built-in default, or the no-task default override. */
+  heartbeatProcedureSource?: "default" | "custom" | "default-no-task-override";
 }
 
 /** Capabilities/roles an agent can have */

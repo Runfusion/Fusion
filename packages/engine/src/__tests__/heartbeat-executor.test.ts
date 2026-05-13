@@ -855,6 +855,57 @@ describe("executeHeartbeat", () => {
       expect(executionPrompt).toContain(HEARTBEAT_NO_TASK_PROCEDURE);
     });
 
+    it("no-task run overrides a seeded task-scoped heartbeatProcedurePath in the assembled prompt", async () => {
+      const tmpRoot = mkdtempSync(join(tmpdir(), "fn-hb-no-task-procedure-"));
+      try {
+        writeFileSync(join(tmpRoot, "HEARTBEAT.md"), HEARTBEAT_PROCEDURE, "utf-8");
+
+        const store = createStoreWithAgentForExec({
+          taskId: undefined,
+          soul: "I am a coordinator",
+          heartbeatProcedurePath: "HEARTBEAT.md",
+        });
+        const mockSession = createMockAgentSession();
+        mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
+
+        const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: tmpRoot });
+        const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+        expect(result.status).toBe("completed");
+        const executionPrompt = mockSession.prompt.mock.calls.at(-1)?.[0];
+        expect(executionPrompt).toBeDefined();
+        expect(executionPrompt).not.toContain("fn_task_log");
+        expect(executionPrompt).not.toContain("fn_task_document_write");
+        expect(executionPrompt).not.toContain("do not re-read PROMPT.md to advance it");
+        expect(executionPrompt).toContain("Implementation-scope discovery");
+
+        const savedRun = await store.getRunDetail("agent-001", result.id);
+        expect(savedRun?.heartbeatProcedureSource).toBe("default-no-task-override");
+      } finally {
+        rmSync(tmpRoot, { recursive: true, force: true });
+      }
+    });
+
+    it("no-task run without a custom heartbeatProcedurePath still uses the ambient procedure", async () => {
+      const store = createStoreWithAgentForExec({ taskId: undefined, soul: "I am a coordinator" });
+      const mockSession = createMockAgentSession();
+      mockedCreateFnAgent.mockResolvedValue({ session: mockSession as any });
+
+      const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
+      const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "timer" });
+
+      expect(result.status).toBe("completed");
+      const executionPrompt = mockSession.prompt.mock.calls.at(-1)?.[0];
+      expect(executionPrompt).toBeDefined();
+      expect(executionPrompt).not.toContain("fn_task_log");
+      expect(executionPrompt).not.toContain("fn_task_document_write");
+      expect(executionPrompt).not.toContain("do not re-read PROMPT.md to advance it");
+      expect(executionPrompt).toContain("Implementation-scope discovery");
+
+      const savedRun = await store.getRunDetail("agent-001", result.id);
+      expect(savedRun?.heartbeatProcedureSource).toBe("default");
+    });
+
     it("task-scoped run receives HEARTBEAT_SYSTEM_PROMPT as system prompt", async () => {
       const store = createStoreWithAgentForExec({ taskId: "FN-001" });
       const mockSession = createMockAgentSession();
@@ -1305,6 +1356,9 @@ describe("executeHeartbeat", () => {
         expect(executionPrompt).not.toContain(HEARTBEAT_PROCEDURE);
         // Wake Delta still rendered.
         expect(executionPrompt).toContain("## Wake Delta");
+
+        const savedRun = await store.getRunDetail("agent-001", result.id);
+        expect(savedRun?.heartbeatProcedureSource).toBe("custom");
       } finally {
         rmSync(tmpRoot, { recursive: true, force: true });
       }

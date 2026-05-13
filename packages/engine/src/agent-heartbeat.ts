@@ -2163,8 +2163,19 @@ export class HeartbeatMonitor {
           // existing instructionsPath/instructionsText reload contract) so an
           // operator can iterate on procedure text without restarting agents.
           const customProcedure = await resolveAgentHeartbeatProcedure(agent, rootDir);
-          const heartbeatProcedureText = customProcedure
-            ?? (isNoTaskRun ? HEARTBEAT_NO_TASK_PROCEDURE : HEARTBEAT_PROCEDURE);
+          const customProcedureConfigured = Boolean(customProcedure);
+          const shouldOverrideCustomProcedureForNoTaskRun = isNoTaskRun && customProcedureConfigured;
+          if (shouldOverrideCustomProcedureForNoTaskRun) {
+            heartbeatLog.log(
+              `Agent ${agentId} no-task heartbeat bypassed configured heartbeatProcedurePath and used HEARTBEAT_NO_TASK_PROCEDURE to keep prompt guidance aligned with ambient tools`,
+            );
+          }
+          const heartbeatProcedureText = shouldOverrideCustomProcedureForNoTaskRun
+            ? HEARTBEAT_NO_TASK_PROCEDURE
+            : (customProcedure ?? (isNoTaskRun ? HEARTBEAT_NO_TASK_PROCEDURE : HEARTBEAT_PROCEDURE));
+          const heartbeatProcedureSource = shouldOverrideCustomProcedureForNoTaskRun
+            ? "default-no-task-override"
+            : (customProcedure ? "custom" : "default");
           const reportsHealthSection = await this.buildReportsHealthSection(agent.id, this.store);
 
           if (isNoTaskRun) {
@@ -2360,7 +2371,7 @@ export class HeartbeatMonitor {
               ...run,
               systemPrompt: truncatePrompt(systemPromptFinal, 100_000),
               executionPrompt: truncatePrompt(executionPrompt, 100_000),
-              heartbeatProcedureSource: customProcedure ? "custom" : "default",
+              heartbeatProcedureSource,
             };
             await this.store.saveRun(runWithPrompts);
             // Update local run reference so completeRun merges correctly

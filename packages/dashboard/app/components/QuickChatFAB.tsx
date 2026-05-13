@@ -936,6 +936,7 @@ export function QuickChatFAB({
   // Track if we just finished a drag (to prevent click from firing after drag)
   const didDragRef = useRef(false);
   const modelsRequestedRef = useRef(false);
+  const modelsInitSettledRef = useRef(false);
   const prevSessionTargetRef = useRef("");
   const hasAppliedInitialSessionRef = useRef(false);
   const selectedAgentIdRef = useRef(selectedAgentId);
@@ -1149,6 +1150,7 @@ export function QuickChatFAB({
     }
 
     modelsRequestedRef.current = true;
+    modelsInitSettledRef.current = false;
     setModelsLoading(true);
 
     fetchModels()
@@ -1199,6 +1201,7 @@ export function QuickChatFAB({
         setConfiguredDefaultModelSelection("");
       })
       .finally(() => {
+        modelsInitSettledRef.current = true;
         setModelsLoading(false);
       });
   }, [isOpen, agents.length, selectedModel]);
@@ -1255,6 +1258,14 @@ export function QuickChatFAB({
   useEffect(() => {
     if (!isOpen) {
       prevSessionTargetRef.current = "";
+      return;
+    }
+
+    const waitingForInitialModelResolution = !hasAppliedInitialSessionRef.current
+      && sessions.length === 0
+      && modelsRequestedRef.current
+      && !modelsInitSettledRef.current;
+    if (waitingForInitialModelResolution) {
       return;
     }
 
