@@ -3672,7 +3672,7 @@ export function extractFileScope(promptContent: string): string[] {
  * inside a directory that's in scope (e.g., scope has `src/utils/*` and
  * file is `src/utils/helpers.ts`).
  */
-function matchesScope(filePath: string, scopePatterns: string[]): boolean {
+export function matchesScope(filePath: string, scopePatterns: string[]): boolean {
   for (const pattern of scopePatterns) {
     if (matchGlob(filePath, pattern)) return true;
     // Directory match: if pattern ends with /* or /**, check prefix
@@ -3757,7 +3757,7 @@ export async function assertSquashOverlapsFileScope(params: {
   }
 }
 
-function formatFileScopeViolationAgentLog(error: FileScopeViolationError): string {
+export function formatFileScopeViolationAgentLog(error: FileScopeViolationError): string {
   const stagedFiles = error.stagedFiles.length > 0 ? error.stagedFiles.join("\n") : "<none>";
   return [
     `taskId: ${error.taskId}`,

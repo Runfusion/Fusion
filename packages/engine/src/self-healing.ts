@@ -27,6 +27,53 @@ import { classifyError, extractMissingModulePath, isOperatorActionableAgentError
 const log = createLogger("self-healing");
 const execAsync = promisify(exec);
 
+function matchGlob(path: string, pattern: string): boolean {
+  if (pattern.includes("**")) {
+    const regexPattern = pattern
+      .replace(/\./g, "\\.")
+      .replace(/\*\*/g, "<<<DOUBLESTAR>>>")
+      .replace(/\*/g, "[^/]*")
+      .replace(/<<<DOUBLESTAR>>>/g, ".*");
+    const regex = new RegExp(`^${regexPattern}$`);
+    return regex.test(path);
+  }
+
+  const lastSlash = pattern.lastIndexOf("/");
+  if (lastSlash !== -1) {
+    const patternDir = pattern.slice(0, lastSlash);
+    const patternFile = pattern.slice(lastSlash + 1);
+    const pathDir = path.lastIndexOf("/") !== -1 ? path.slice(0, path.lastIndexOf("/")) : "";
+    const pathFile = path.lastIndexOf("/") !== -1 ? path.slice(path.lastIndexOf("/")) : path;
+
+    if (patternDir.includes("*")) {
+      const dirRegex = new RegExp(`^${patternDir.replace(/\./g, "\\.").replace(/\*/g, "[^/]*")}$`);
+      if (!dirRegex.test(pathDir)) return false;
+    } else if (!pathDir.endsWith(patternDir) && patternDir !== pathDir) {
+      return false;
+    }
+
+    return matchGlob(pathFile, patternFile);
+  }
+
+  const fileName = path.lastIndexOf("/") !== -1 ? path.slice(path.lastIndexOf("/") + 1) : path;
+  const regexPattern = pattern.replace(/\./g, "\\.").replace(/\*/g, "[^/]*");
+  const regex = new RegExp(`^${regexPattern}$`);
+  return regex.test(fileName) || regex.test(path);
+}
+
+function matchesScope(filePath: string, scopePatterns: string[]): boolean {
+  for (const pattern of scopePatterns) {
+    if (matchGlob(filePath, pattern)) return true;
+    const dirPattern = pattern.replace(/\/\*+$/, "");
+    if (dirPattern !== pattern && filePath.startsWith(dirPattern + "/")) return true;
+    if (pattern.endsWith("/") && filePath.startsWith(pattern)) return true;
+    const patternDir = pattern.lastIndexOf("/") >= 0 ? pattern.slice(0, pattern.lastIndexOf("/")) : "";
+    const fileDir = filePath.lastIndexOf("/") >= 0 ? filePath.slice(0, filePath.lastIndexOf("/")) : "";
+    if (patternDir && fileDir === patternDir) return true;
+  }
+  return false;
+}
+
 export interface SelfHealingOptions {
   /** Project root directory (parent of .worktrees/) */
   rootDir: string;
@@ -314,6 +361,7 @@ export class SelfHealingManager {
       { name: "interrupted-merging", fn: () => this.recoverInterruptedMergingTasks().then(() => undefined) },
       { name: "done-merge-metadata", fn: () => this.recoverDoneTaskMergeMetadata().then(() => undefined) },
       { name: "recover-already-merged-review", fn: () => this.recoverAlreadyMergedReviewTasks().then(() => undefined) },
+      { name: "recover-orphan-only-scope-violations", fn: () => this.recoverOrphanOnlyScopeViolations().then(() => undefined) },
       { name: "recover-stuck-merge-deadlocks", fn: () => this.recoverStuckMergeDeadlocks().then(() => undefined) },
       { name: "misclassified-failures", fn: () => this.recoverMisclassifiedFailures().then(() => undefined) },
       { name: "missing-worktree-review-failures", fn: () => this.recoverMissingWorktreeReviewFailures().then(() => undefined) },
@@ -1010,6 +1058,7 @@ export class SelfHealingManager {
           { name: "recover-mergeable-review", fn: () => this.recoverMergeableReviewTasks() },
           { name: "recover-merged-review", fn: () => this.recoverMergedReviewTasks() },
           { name: "recover-already-merged-review", fn: () => this.recoverAlreadyMergedReviewTasks() },
+          { name: "recover-orphan-only-scope-violations", fn: () => this.recoverOrphanOnlyScopeViolations() },
           { name: "recover-stuck-merge-deadlocks", fn: () => this.recoverStuckMergeDeadlocks() },
           { name: "recover-misclassified-failures", fn: () => this.recoverMisclassifiedFailures() },
           { name: "recover-missing-worktree-review-failures", fn: () => this.recoverMissingWorktreeReviewFailures() },
@@ -2215,6 +2264,162 @@ export class SelfHealingManager {
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.error(`Stuck merge deadlock recovery failed: ${errorMessage}`);
+      return 0;
+    }
+  }
+
+  private parseScopeViolationPayload(detail: string): { declaredScope: string[]; stagedFiles: string[] } | null {
+    const lines = detail.split("\n");
+    const declaredScope: string[] = [];
+    const stagedFiles: string[] = [];
+    let section: "declared" | "staged" | null = null;
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (line === "declaredScope:") {
+        section = "declared";
+        continue;
+      }
+      if (line === "stagedFiles:") {
+        section = "staged";
+        continue;
+      }
+      if (!line.startsWith("- ")) continue;
+      const value = line.slice(2).trim();
+      if (!value || value === "<none>") continue;
+      if (section === "declared") declaredScope.push(value);
+      if (section === "staged") stagedFiles.push(value);
+    }
+
+    if (declaredScope.length === 0 && stagedFiles.length === 0) return null;
+    return { declaredScope, stagedFiles };
+  }
+
+  private parseScopeViolationFromError(errorMessage: string | null | undefined): { declaredScope: string[]; stagedFiles: string[] } | null {
+    if (!errorMessage?.startsWith("File-scope invariant violation for ")) {
+      return null;
+    }
+    const stagedMatch = errorMessage.match(/staged files \[(.*?)\] have zero overlap/s);
+    const scopeMatch = errorMessage.match(/declared File Scope \[(.*?)\]\./s);
+    if (!stagedMatch || !scopeMatch) return null;
+    const stagedFiles = stagedMatch[1]
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => Boolean(entry) && entry !== "<none outside .changeset/>");
+    const declaredScope = scopeMatch[1]
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    return { declaredScope, stagedFiles };
+  }
+
+  async recoverOrphanOnlyScopeViolations(): Promise<number> {
+    try {
+      const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return 0;
+
+      const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+      const tasks = await this.store.listTasks({ column: "in-review", slim: true });
+      const candidates = tasks.filter((task) =>
+        task.column === "in-review" &&
+        task.status === "failed" &&
+        task.scopeOverride !== true &&
+        task.mergeDetails?.mergeConfirmed !== true &&
+        !executingIds.has(task.id),
+      );
+
+      if (candidates.length === 0) return 0;
+
+      let recovered = 0;
+      for (const task of candidates) {
+        try {
+          const getAgentLogs = (this.store as { getAgentLogs?: (taskId: string, options?: { limit?: number; offset?: number }) => Promise<Array<{ type: string; detail?: string }>> }).getAgentLogs;
+          const recentLogs = typeof getAgentLogs === "function"
+            ? await getAgentLogs.call(this.store, task.id, { limit: 50 })
+            : [];
+          const scopeViolationLog = recentLogs.find((entry) =>
+            entry.type === "tool_error" &&
+            entry.detail?.includes("declaredScope:") &&
+            entry.detail?.includes("stagedFiles:"),
+          );
+
+          const parsed = (scopeViolationLog?.detail ? this.parseScopeViolationPayload(scopeViolationLog.detail) : null)
+            ?? this.parseScopeViolationFromError(task.error);
+          if (!parsed) continue;
+
+          const { declaredScope, stagedFiles } = parsed;
+          if (declaredScope.length === 0) continue;
+
+          const orphanFiles = stagedFiles.filter((file) => !file.startsWith(".changeset/"));
+          if (orphanFiles.length === 0) continue;
+          const hasDeclaredOverlap = orphanFiles.some((file) => matchesScope(file, declaredScope));
+          if (hasDeclaredOverlap) continue;
+
+          const baseBranch = task.baseBranch || task.executionStartBranch || "main";
+          const landed = await this.findAlreadyMergedTaskCommit({
+            taskId: task.id,
+            lineageId: task.lineageId,
+            repoDir: this.options.rootDir,
+            baseBranch,
+            taskBranch: task.branch,
+            baseCommitSha: task.baseCommitSha,
+          });
+          if (!landed) continue;
+
+          const mergeDetails: MergeDetails = {
+            commitSha: landed.sha,
+            mergedAt: new Date().toISOString(),
+            mergeConfirmed: true,
+            resolutionStrategy: "orphan-discard-no-op",
+          };
+
+          const blocker = getTaskMergeBlocker({
+            ...task,
+            status: undefined,
+            error: undefined,
+            steps: task.steps ?? [],
+            workflowStepResults: task.workflowStepResults,
+          });
+          if (blocker) {
+            await this.store.updateTask(task.id, {
+              status: "failed",
+              error: `Merge confirmed but finalization blocked: ${blocker}`,
+              mergeDetails,
+            });
+            await this.store.logEntry(
+              task.id,
+              `Auto-recovery parked task in in-review: merged content found on ${baseBranch} (${landed.sha.slice(0, 8)}) but finalization blocked — ${blocker}`,
+            );
+            continue;
+          }
+
+          await this.store.updateTask(task.id, {
+            status: null,
+            error: null,
+            mergeRetries: 0,
+            mergeDetails,
+          });
+          await this.store.moveTask(task.id, "done");
+          await this.store.logEntry(
+            task.id,
+            `Auto-recovered: FileScopeViolationError treated as orphan-only — task work already on main (commit: ${landed.sha.slice(0, 8)} via ${landed.strategy}; rejected orphans: ${orphanFiles.join(", ")})`,
+          );
+          await this.cleanupWorktreeOnly(task);
+          recovered++;
+        } catch (err: unknown) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          log.warn(`recoverOrphanOnlyScopeViolations: failed for ${task.id}: ${errorMessage}`);
+        }
+      }
+
+      if (recovered > 0) {
+        log.log(`Recovered ${recovered} orphan-only scope-violation task(s) → done`);
+      }
+
+      return recovered;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error(`Orphan-only scope violation recovery failed: ${errorMessage}`);
       return 0;
     }
   }
