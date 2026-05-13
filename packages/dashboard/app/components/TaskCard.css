@@ -130,21 +130,28 @@
   z-index: 1;
 }
 
-.card-status-badge {
+.card-status-badge,
+.card-priority-badge,
+.card-size-badge {
   display: inline-flex;
   align-items: center;
   font-size: 0.625rem;
   font-weight: 600;
+  line-height: 1;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: 2px 8px;
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+  border: var(--btn-border-width) solid transparent;
   border-radius: var(--radius-pill);
+}
+
+.card-status-badge {
+  letter-spacing: 0.5px;
 }
 
 .card-status-badge.stalled-review {
   background: color-mix(in srgb, var(--color-warning) 18%, transparent);
   color: var(--color-warning);
-  border: var(--btn-border-width) solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
 }
 
 .card-stalled-review-reason {
@@ -227,14 +234,7 @@
 
 /* Size badge: positioned in card header, subtle color coding for effort estimation */
 .card-size-badge {
-  display: inline-flex;
-  align-items: center;
-  font-size: 0.625rem;
-  font-weight: 600;
-  text-transform: uppercase;
   letter-spacing: 0.5px;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
 }
 
 /* Size S: subtle green tint (low effort) */
@@ -256,14 +256,7 @@
 }
 
 .card-priority-badge {
-  display: inline-flex;
-  align-items: center;
-  font-size: 0.625rem;
-  font-weight: 600;
-  text-transform: uppercase;
   letter-spacing: 0.4px;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
 }
 
 .card-priority-badge--low {
@@ -1215,9 +1208,11 @@
   }
 
   /* Card: smaller status badges for 280px width */
-  .card-status-badge {
+  .card-status-badge,
+  .card-priority-badge,
+  .card-size-badge {
     font-size: 0.5625rem;
-    padding: 1px 6px;
+    padding: calc(var(--space-xs) / 4) calc((var(--space-xs) * 3) / 2);
   }
 
   .card-stalled-review-reason {
