@@ -30,6 +30,7 @@ export interface NotificationServiceOptions {
 
 interface NotificationServiceStore {
   getSettings(): Promise<Settings> | Settings;
+  getTask?(id: string): Promise<Task | undefined> | Task | undefined;
   on(event: string, listener: (...args: any[]) => void): void;
   off(event: string, listener: (...args: any[]) => void): void;
 }
@@ -54,6 +55,11 @@ export class NotificationService {
   private ntfyProvider?: NtfyNotificationProvider;
   private webhookProvider?: WebhookNotificationProvider;
   private refreshInFlight: Promise<void> | null = null;
+  private readonly pendingFailureNotifications = new Map<string, NodeJS.Timeout>();
+  private readonly pendingFailureStartTimes = new Map<string, number>();
+  private failureNotificationSuppressedCount = 0;
+  private failureNotificationDelayMs = 30000;
+  private failureNotificationMode: "sticky-only" | "all" = "sticky-only";
 
   constructor(
     private readonly store: NotificationServiceStore,
@@ -83,6 +89,7 @@ export class NotificationService {
 
     const settings = await this.store.getSettings();
     this.setNotificationsEnabledFromSettings(settings);
+    this.refreshFailureNotificationSettings(settings);
     await this.syncNtfyProvider(settings);
     await this.syncWebhookProvider(settings);
 
@@ -114,6 +121,12 @@ export class NotificationService {
       this.detachChatStoreListener(this.chatStore);
     }
 
+    for (const timeout of this.pendingFailureNotifications.values()) {
+      clearTimeout(timeout);
+    }
+    this.pendingFailureNotifications.clear();
+    this.pendingFailureStartTimes.clear();
+
     await this.dispatcher.shutdownAll();
     this.started = false;
 
@@ -121,6 +134,10 @@ export class NotificationService {
   }
 
   private handleTaskMoved = (data: { task: Task; from: Column; to: Column }): void => {
+    if (["in-review", "done", "archived"].includes(data.to)) {
+      this.cancelPendingFailureNotification(data.task.id, `moved to ${data.to}`);
+    }
+
     if (!this.notificationsEnabled || data.to !== "in-review") {
       return;
     }
@@ -130,12 +147,20 @@ export class NotificationService {
   };
 
   private handleTaskUpdated = (task: Task): void => {
+    if (task.status !== "failed") {
+      this.cancelPendingFailureNotification(task.id, `status=${task.status ?? "undefined"}`);
+    }
+
     if (!this.notificationsEnabled) {
       return;
     }
 
     if (task.status === "failed") {
-      this.maybeNotify(task.id, "failed", this.createTaskPayload(task, "failed"));
+      if (this.failureNotificationMode === "all" || this.failureNotificationDelayMs === 0) {
+        this.maybeNotify(task.id, "failed", this.createTaskPayload(task, "failed"));
+      } else {
+        this.scheduleFailureNotification(task);
+      }
     }
 
     if (task.status === "awaiting-approval") {
@@ -170,6 +195,7 @@ export class NotificationService {
   private handleSettingsUpdated = async (data: { settings: Settings; previous: Settings }): Promise<void> => {
     const { settings, previous } = data;
     this.setNotificationsEnabledFromSettings(settings);
+    this.refreshFailureNotificationSettings(settings);
 
     if (
       settings.ntfyEnabled !== previous.ntfyEnabled ||
@@ -427,6 +453,7 @@ export class NotificationService {
     this.refreshInFlight = (async () => {
       const settings = await this.store.getSettings();
       this.setNotificationsEnabledFromSettings(settings);
+      this.refreshFailureNotificationSettings(settings);
       await this.syncNtfyProvider(settings);
       await this.syncWebhookProvider(settings);
       schedulerLog.log(`NotificationService refreshed notification state reason=${reason} enabled=${String(this.notificationsEnabled)}`);
@@ -437,6 +464,78 @@ export class NotificationService {
     } finally {
       this.refreshInFlight = null;
     }
+  }
+
+  private refreshFailureNotificationSettings(settings: Settings): void {
+    this.failureNotificationDelayMs =
+      typeof settings.failureNotificationDelayMs === "number" && settings.failureNotificationDelayMs >= 0
+        ? settings.failureNotificationDelayMs
+        : 30000;
+    this.failureNotificationMode = settings.failureNotificationMode ?? "sticky-only";
+  }
+
+  private scheduleFailureNotification(task: Task): void {
+    if (this.pendingFailureNotifications.has(task.id)) {
+      return;
+    }
+
+    this.pendingFailureStartTimes.set(task.id, Date.now());
+    const timeout = setTimeout(() => {
+      void this.fireDeferredFailureNotification(task.id);
+    }, this.failureNotificationDelayMs);
+    timeout.unref?.();
+    this.pendingFailureNotifications.set(task.id, timeout);
+  }
+
+  private cancelPendingFailureNotification(taskId: string, reason: string): void {
+    const timeout = this.pendingFailureNotifications.get(taskId);
+    if (!timeout) {
+      return;
+    }
+
+    clearTimeout(timeout);
+    this.pendingFailureNotifications.delete(taskId);
+    const startedAt = this.pendingFailureStartTimes.get(taskId);
+    this.pendingFailureStartTimes.delete(taskId);
+    const elapsedMs = typeof startedAt === "number" ? Math.max(0, Date.now() - startedAt) : 0;
+    this.failureNotificationSuppressedCount += 1;
+    schedulerLog.log(`[notify] ${taskId} failed-state cleared within ${elapsedMs}ms — suppressed notification (${reason})`);
+  }
+
+  private async fireDeferredFailureNotification(taskId: string): Promise<void> {
+    this.pendingFailureNotifications.delete(taskId);
+    this.pendingFailureStartTimes.delete(taskId);
+
+    const task = await this.store.getTask?.(taskId);
+    if (!task) {
+      return;
+    }
+
+    if (task.status !== "failed") {
+      this.failureNotificationSuppressedCount += 1;
+      schedulerLog.log(`[notify] ${taskId} no longer failed at dispatch time — suppressed notification`);
+      return;
+    }
+
+    const pausedTask = task as Task & { pausedReason?: string };
+    let eventType: NotificationEvent = "failed";
+    if (
+      pausedTask.paused === true &&
+      pausedTask.pausedReason === "dispatch-storm" &&
+      DEFAULT_NTFY_EVENTS.includes("failed:auto-paused" as (typeof DEFAULT_NTFY_EVENTS)[number])
+    ) {
+      eventType = "failed:auto-paused" as NotificationEvent;
+    }
+
+    this.maybeNotify(task.id, eventType, this.createTaskPayload(task, eventType));
+  }
+
+  getMetrics(): { failureNotificationSuppressedCount: number } {
+    return { failureNotificationSuppressedCount: this.failureNotificationSuppressedCount };
+  }
+
+  getPendingFailureCount(): number {
+    return this.pendingFailureNotifications.size;
   }
 
   private createTaskPayload(task: Task, event: NotificationEvent): NotificationPayload {

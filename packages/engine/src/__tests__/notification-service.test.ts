@@ -105,7 +105,11 @@ describe("NotificationService", () => {
   });
 
   it("deduplicates same task+event but not different event types", async () => {
-    const store = createStore({ ntfyEnabled: true, ntfyTopic: "topic" });
+    const store = createStore({
+      ntfyEnabled: true,
+      ntfyTopic: "topic",
+      failureNotificationMode: "all",
+    });
     const sendNotification = vi.fn(async () => ({ success: true, providerId: "mock" }));
     const provider: NotificationProvider = {
       getProviderId: () => "mock",
