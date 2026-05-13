@@ -78,6 +78,7 @@ For a full walkthrough (installation, onboarding, first task, and daily workflow
 | [Even Realities Integration Research (FN-3737)](./even-realities-integration-research.md) | Research summary and recommended integration topology for Even Realities glasses + Fusion |
 | [Agent Gap Analysis](./agent-paperclip-gap-analysis.md) | Gap analysis for agent Paperclip integration |
 | [pi-autoresearch Analysis for Fusion Port](./research/pi-autoresearch-analysis.md) | Upstream architecture/license analysis and Fusion integration mapping for autoresearch capabilities |
+| [pi-autoresearch Audit vs Fusion Research](./research/pi-autoresearch-audit-2026-05.md) | Audit comparing Fusion's research subsystem against upstream pi-autoresearch capabilities and parity gaps (FN-4136) |
 | [Research Hardening Preflight Baseline](./research/research-hardening-preflight.md) | Verified research subsystem baseline, lifecycle contracts, and hardening pressure points |
 | [Test Audit Report](./test-audit-report.md) | Test coverage and effectiveness audit with recommendations |
 | [Skipped Test Inventory](./skipped-test-inventory.md) | Current intentional test-skip inventory and reconciliation status for older skip follow-ups |
