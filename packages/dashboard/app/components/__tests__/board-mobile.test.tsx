@@ -251,6 +251,35 @@ describe("TaskCard mobile", () => {
     }
   });
 
+  it("FN-4351: archive/unarchive/send-back buttons have no min-height in the mobile media block", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    const selectors = [
+      ".card-archive-btn",
+      ".card-unarchive-btn",
+      ".card-send-back-btn",
+    ];
+    const pattern = /([^{}]+)\{([\s\S]*?)\}/g;
+
+    for (const selector of selectors) {
+      let found = false;
+      for (const match of mobileSection.matchAll(pattern)) {
+        const blockSelector = match[1].trim();
+        const block = match[2];
+        if (blockSelector !== selector) continue;
+        found = true;
+        expect(block).not.toContain("min-height:");
+      }
+      expect(found).toBe(true);
+    }
+
+    expectRuleToContain(mobileSection, ".card-edit-btn", "width: 28px;");
+    expectRuleToContain(mobileSection, ".card-edit-btn", "height: 28px;");
+    expectRuleToContain(mobileSection, ".card-delete-btn", "width: 28px;");
+    expectRuleToContain(mobileSection, ".card-delete-btn", "height: 28px;");
+  });
+
   it("does not force .card-steps-toggle min-height in the mobile media block", () => {
     const css = loadAllAppCss();
     const mobileSection = getMainMobileSection(css);
