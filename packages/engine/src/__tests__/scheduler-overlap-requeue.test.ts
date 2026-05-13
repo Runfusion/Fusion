@@ -79,7 +79,7 @@ function createAgentStore(agents: MutableAgent[]): AgentStore {
 
   return {
     getAgent: vi.fn(async (id: string) => byId.get(id) ?? null),
-    listAgents: vi.fn(async (filters?: { state?: Agent["state"] }) => {
+    listAgents: vi.fn(async (filters?: { state?: Agent["state"]; includeEphemeral?: boolean }) => {
       const agents = Array.from(byId.values());
       if (filters?.state) return agents.filter((agent) => agent.state === filters.state);
       return agents;
