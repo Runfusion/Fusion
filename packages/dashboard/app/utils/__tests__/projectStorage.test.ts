@@ -98,11 +98,12 @@ describe("projectStorage", () => {
         "kb-chat-active-session",
         "kb-dashboard-working-branch-filter",
         "kb-dashboard-base-branch-filter",
+        "kb-capacity-risk-banner-dismissed",
         "kb-files-line-numbers",
         "fusion-plugin-dependency-graph:positions",
       ]),
     );
-    expect(PROJECT_STORAGE_KEYS).toHaveLength(24);
+    expect(PROJECT_STORAGE_KEYS).toHaveLength(25);
   });
 
   it("stores branch filter values as scoped strings per project", () => {
