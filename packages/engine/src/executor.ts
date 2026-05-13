@@ -4458,6 +4458,44 @@ export class TaskExecutor {
           };
         }
 
+        const invariantCheck = await this.verifyWorktreeInvariants(task);
+        if (!invariantCheck.ok) {
+          const refusalMessage = `fn_task_done refused: ${invariantCheck.reason} — observed=${invariantCheck.observed}, expected=${invariantCheck.expected}`;
+          await store.logEntry(taskId, refusalMessage, undefined, this.currentRunContext);
+          executorLog.error(`${taskId}: fn_task_done refused (${invariantCheck.reason}) — observed=${invariantCheck.observed}, expected=${invariantCheck.expected}`);
+
+          const priorRequeues = task.taskDoneRetryCount ?? 0;
+          const nextRequeueCount = priorRequeues + 1;
+          if (priorRequeues < MAX_TASK_DONE_REQUEUE_RETRIES) {
+            await store.updateTask(taskId, {
+              status: "failed",
+              error: refusalMessage,
+              taskDoneRetryCount: nextRequeueCount,
+            });
+            await store.logEntry(
+              taskId,
+              `${refusalMessage} — requeued to todo immediately (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`,
+              undefined,
+              this.currentRunContext,
+            );
+            await store.moveTask(taskId, "todo", { preserveProgress: true });
+            executorLog.log(`✗ ${taskId} failed invariant check — requeued to todo (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`);
+          } else {
+            await store.updateTask(taskId, { status: "failed", error: refusalMessage });
+            await store.logEntry(taskId, `${refusalMessage} — moved to in-review for inspection`, undefined, this.currentRunContext);
+            await this.persistTokenUsage(taskId);
+            await store.moveTask(taskId, "in-review");
+            executorLog.log(`✗ ${taskId} failed invariant check — moved to in-review`);
+          }
+
+          return {
+            content: [{ type: "text" as const, text: refusalMessage }],
+            details: {
+              error: refusalMessage,
+            },
+          };
+        }
+
         onDone();
 
         // Mark all pending/in-progress steps as done
