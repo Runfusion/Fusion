@@ -336,11 +336,9 @@ describe("SettingsModal mobile adaptations", () => {
     expectBaseRule(css, ".remote-status-bar", "margin: 0 var(--space-xl) var(--space-md);");
     expectBaseRule(css, ".remote-share-block", "margin: 0 var(--space-xl) var(--space-md);");
 
-    // Settings header actions keep Help/Star controls on a shared height contract.
+    // Settings header actions keep Help/Star controls on a shared height contract on desktop; mobile inherits this height (FN-4354 reverted prior mobile inflation).
     expectBaseRule(css, ".settings-header-actions", "--settings-header-action-height: calc(var(--space-md) * 2 + var(--space-xs) / 2);");
     expectBaseRule(css, ".settings-header-actions > .settings-header-help-btn", "height: var(--settings-header-action-height);");
-    expectMobileRule(css, ".settings-header-actions", "--settings-header-action-height: calc(var(--space-md) * 3);");
-    expectMobileRule(css, ".settings-header-actions > .settings-header-help-btn", "min-height: var(--settings-header-action-height);");
   });
 
   it("styles settings scrollbar rules for sidebar and content", () => {
