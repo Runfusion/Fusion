@@ -592,14 +592,15 @@ describe("SettingsModal", () => {
       expect(screen.getByRole("checkbox", { name: "Save tool output in agent logs" })).not.toBeChecked();
     });
 
-    it("defaults persistAgentThinkingLog checkbox to unchecked", async () => {
+    it("defaults thinking-log checkboxes to unchecked", async () => {
       renderModal({ initialSection: "global-general" });
       await waitForSettingsModalReady();
 
-      expect(screen.getByRole("checkbox", { name: "Save AI thinking/reasoning in agent logs" })).not.toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "Save AI thinking for permanent agents" })).not.toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "Save AI thinking for ephemeral / task-worker agents" })).not.toBeChecked();
     });
 
-    it("reflects persisted checked thinking-log value from global settings", async () => {
+    it("falls back to legacy thinking-log flag when granular fields are unset", async () => {
       mockFetchSettings.mockResolvedValue({
         ...defaultSettings,
         persistAgentThinkingLog: true,
@@ -612,7 +613,8 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "global-general" });
       await waitForSettingsModalReady();
 
-      expect(screen.getByRole("checkbox", { name: "Save AI thinking/reasoning in agent logs" })).toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "Save AI thinking for permanent agents" })).toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "Save AI thinking for ephemeral / task-worker agents" })).toBeChecked();
     });
 
     it("saves persistAgentToolOutput only via global settings payload", async () => {
@@ -634,11 +636,12 @@ describe("SettingsModal", () => {
       }
     });
 
-    it("saves persistAgentThinkingLog only via global settings payload", async () => {
+    it("saves granular thinking-log flags only via global settings payload", async () => {
       renderModal({ initialSection: "global-general" });
       await waitForSettingsModalReady();
 
-      await userEvent.click(screen.getByRole("checkbox", { name: "Save AI thinking/reasoning in agent logs" }));
+      await userEvent.click(screen.getByRole("checkbox", { name: "Save AI thinking for permanent agents" }));
+      await userEvent.click(screen.getByRole("checkbox", { name: "Save AI thinking for ephemeral / task-worker agents" }));
       await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => {
@@ -646,9 +649,13 @@ describe("SettingsModal", () => {
       });
 
       const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
-      expect(globalPayload.persistAgentThinkingLog).toBe(true);
+      expect(globalPayload.persistAgentThinkingLogPermanent).toBe(true);
+      expect(globalPayload.persistAgentThinkingLogEphemeral).toBe(true);
+      expect(globalPayload.persistAgentThinkingLog).toBeUndefined();
       if (mockUpdateSettings.mock.calls.length > 0) {
         const projectPayload = mockUpdateSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(projectPayload.persistAgentThinkingLogPermanent).toBeUndefined();
+        expect(projectPayload.persistAgentThinkingLogEphemeral).toBeUndefined();
         expect(projectPayload.persistAgentThinkingLog).toBeUndefined();
       }
     });

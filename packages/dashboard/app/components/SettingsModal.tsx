@@ -6,6 +6,7 @@ import {
   isGlobalSettingsKey,
   isProjectSettingsKey,
   resolvePlanningSettingsModel,
+  resolvePersistAgentThinkingLog,
   resolveProjectDefaultModel,
   resolveTitleSummarizerSettingsModel,
 } from "@fusion/core";
@@ -1666,6 +1667,9 @@ export function SettingsModal({
         if (key === "githubTrackingDefaultRepo" && activeSection !== "global-general") {
           continue;
         }
+        if (key === "persistAgentThinkingLog") {
+          continue;
+        }
         if (isGlobalSettingsKey(key)) {
           // Implement null-as-delete semantics for global settings:
           // - undefined values are dropped during JSON serialization
@@ -2129,20 +2133,33 @@ export function SettingsModal({
               </div>
             </div>
             <div className="form-group">
-              <label htmlFor="persistAgentThinkingLog" className="checkbox-label">
+              <label htmlFor="persistAgentThinkingLogPermanent" className="checkbox-label">
                 <input
-                  id="persistAgentThinkingLog"
+                  id="persistAgentThinkingLogPermanent"
                   type="checkbox"
-                  checked={form.persistAgentThinkingLog === true}
+                  checked={resolvePersistAgentThinkingLog(form, { ephemeral: false })}
                   onChange={(e) =>
-                    setForm((f) => ({ ...f, persistAgentThinkingLog: e.target.checked }))
+                    setForm((f) => ({ ...f, persistAgentThinkingLogPermanent: e.target.checked }))
                   }
                 />
-                Save AI thinking/reasoning in agent logs
+                Save AI thinking for permanent agents
+              </label>
+            </div>
+            <div className="form-group">
+              <label htmlFor="persistAgentThinkingLogEphemeral" className="checkbox-label">
+                <input
+                  id="persistAgentThinkingLogEphemeral"
+                  type="checkbox"
+                  checked={resolvePersistAgentThinkingLog(form, { ephemeral: true })}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, persistAgentThinkingLogEphemeral: e.target.checked }))
+                  }
+                />
+                Save AI thinking for ephemeral / task-worker agents
               </label>
               <div className="settings-field-help">
-                When disabled (default), internal thinking deltas are not persisted as log rows.
-                Assistant text output and tool timeline entries are unchanged.
+                Leave both thinking toggles off to keep the original default behavior.
+                This only controls persisted <code>thinking</code> rows and does not affect assistant text or tool rows.
               </div>
             </div>
             <div className="form-group">
