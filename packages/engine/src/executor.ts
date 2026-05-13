@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
 import { delimiter, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent } from "@fusion/core";
 import {
@@ -36,7 +36,7 @@ import { buildSessionSkillContext } from "./session-skill-context.js";
 import { reviewStep, type ReviewVerdict } from "./reviewer.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@mariozechner/pi-coding-agent";
 import { PRIORITY_EXECUTE, type AgentSemaphore } from "./concurrency.js";
-import { getRegisteredWorktreePaths, isGitRepository, isRegisteredGitWorktree, type WorktreePool } from "./worktree-pool.js";
+import { getRegisteredWorktreePaths, isGitRepository, isInsideWorktreesDir, isRegisteredGitWorktree, type WorktreePool } from "./worktree-pool.js";
 import { BranchConflictError, isBranchConflictError, inspectBranchConflict } from "./branch-conflicts.js";
 import { AgentLogger } from "./agent-logger.js";
 import { executorLog, reviewerLog, formatError } from "./logger.js";
@@ -4310,6 +4310,124 @@ export class TaskExecutor {
         addressing,
       },
     });
+  }
+
+  private async verifyWorktreeInvariants(
+    task: Task,
+  ): Promise<{ ok: true } | { ok: false; reason: "wrong_toplevel" | "wrong_branch" | "no_commits"; observed: string; expected: string }> {
+    const branchName = task.branch || `fusion/${task.id.toLowerCase()}`;
+    const worktreePath = task.worktree;
+
+    if (!worktreePath) {
+      return {
+        ok: false,
+        reason: "wrong_toplevel",
+        observed: "missing task.worktree",
+        expected: "registered task worktree under <repo>/.worktrees/*",
+      };
+    }
+
+    const expectedRoot = realpathSync(this.rootDir);
+    let expectedWorktreeRealpath: string;
+    try {
+      expectedWorktreeRealpath = realpathSync(worktreePath);
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "wrong_toplevel",
+        observed: `unresolvable task.worktree (${worktreePath}): ${error instanceof Error ? error.message : String(error)}`,
+        expected: "resolvable task worktree under <repo>/.worktrees/*",
+      };
+    }
+
+    try {
+      const { stdout } = await execAsync("git rev-parse --show-toplevel", {
+        cwd: worktreePath,
+        encoding: "utf-8",
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+      });
+      const observedTopLevelRaw = stdout.trim();
+      const observedTopLevel = realpathSync(observedTopLevelRaw);
+
+      if (
+        observedTopLevel === expectedRoot ||
+        !isInsideWorktreesDir(this.rootDir, observedTopLevel) ||
+        observedTopLevel !== expectedWorktreeRealpath
+      ) {
+        return {
+          ok: false,
+          reason: "wrong_toplevel",
+          observed: observedTopLevel,
+          expected: expectedWorktreeRealpath,
+        };
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "wrong_toplevel",
+        observed: error instanceof Error ? error.message : String(error),
+        expected: expectedWorktreeRealpath,
+      };
+    }
+
+    try {
+      const { stdout } = await execAsync("git rev-parse --abbrev-ref HEAD", {
+        cwd: worktreePath,
+        encoding: "utf-8",
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+      });
+      const observedBranch = stdout.trim();
+      if (observedBranch !== branchName) {
+        return {
+          ok: false,
+          reason: "wrong_branch",
+          observed: observedBranch,
+          expected: branchName,
+        };
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "wrong_branch",
+        observed: error instanceof Error ? error.message : String(error),
+        expected: branchName,
+      };
+    }
+
+    const baseRef = await this.resolveDiffBaseRef(worktreePath, task.baseCommitSha);
+    if (!baseRef) {
+      executorLog.warn(`${task.id}: unable to resolve diff base for invariant commit-count check; skipping no_commits guard`);
+      return { ok: true };
+    }
+
+    try {
+      const { stdout } = await execAsync(`git rev-list --count ${baseRef}..HEAD`, {
+        cwd: worktreePath,
+        encoding: "utf-8",
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+      });
+      const count = Number.parseInt(stdout.trim(), 10);
+      if (!Number.isFinite(count) || count <= 0) {
+        return {
+          ok: false,
+          reason: "no_commits",
+          observed: Number.isFinite(count) ? String(count) : stdout.trim(),
+          expected: "> 0",
+        };
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        reason: "no_commits",
+        observed: error instanceof Error ? error.message : String(error),
+        expected: `git rev-list --count ${baseRef}..HEAD > 0`,
+      };
+    }
+
+    return { ok: true };
   }
 
   private createTaskDoneTool(taskId: string, onDone: () => void): ToolDefinition {

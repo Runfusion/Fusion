@@ -67,7 +67,7 @@ export async function isUsableTaskWorktree(rootDir: string, worktreePath: string
     hasRequiredWorktreeFiles(worktreePath);
 }
 
-function isInsideWorktreesDir(rootDir: string, worktreePath: string): boolean {
+export function isInsideWorktreesDir(rootDir: string, worktreePath: string): boolean {
   const worktreesDir = resolve(rootDir, ".worktrees");
   const target = resolve(worktreePath);
   const rel = relative(worktreesDir, target);
