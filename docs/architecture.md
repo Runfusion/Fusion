@@ -1268,6 +1268,16 @@ Dashboard session-diff route registration (`packages/dashboard/src/routes/regist
 - `legacy` = recovered via legacy task-id/subject matching
 - `ambiguous` = manual reconciliation where historical task-id attribution could be misleading
 
+### Done-task changed-file aggregation provenance
+
+Done-task `files changed` data shown on Task Cards and Task Changes tabs comes from the dashboard diff endpoints (`/api/tasks/:id/diff` and `/api/tasks/:id/file-diffs`) using this precedence:
+
+1. If the task has a `lineageId`, aggregate the union of file changes across reachable commits from `task_commit_associations` for that lineage (plus `mergeDetails.commitSha` when missing from associations).
+2. If no lineage commits are usable, fall back to legacy single-commit behavior based on `mergeDetails.commitSha^..mergeDetails.commitSha`.
+3. If no commit SHA is available, return merge summary numbers only (`mergeDetails.filesChanged/insertions/deletions`) without file patches.
+
+This keeps multi-commit landed tasks accurate while preserving compatibility for legacy/self-healed done tasks.
+
 ### Task branch field plumbing (`branch` + `baseBranch`)
 
 Task create/update now preserves both branch fields end-to-end:
