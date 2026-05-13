@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, TaskCommitAssociationMatchSource, TaskCommitAssociationConfidence } from "./types.js";
+import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, TaskCommitAssociationMatchSource, TaskCommitAssociationConfidence, GithubIssueAction } from "./types.js";
 import { createActivityLogSnapshot, createRunAuditSnapshot, createTaskMetadataSnapshot, toTaskMetadataRecord, validateSnapshotEnvelope, type ActivityLogSnapshot, type RunAuditSnapshot, type TaskMetadataSnapshot } from "./shared-mesh-state.js";
 import { VALID_TRANSITIONS, DEFAULT_SETTINGS, isGlobalOnlySettingsKey, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { DEFAULT_PROJECT_SETTINGS } from "./settings-schema.js";
@@ -486,7 +486,7 @@ export interface TaskStoreEvents {
   "task:created": [task: Task];
   "task:moved": [data: { task: Task; from: Column; to: Column }];
   "task:updated": [task: Task];
-  "task:deleted": [task: Task];
+  "task:deleted": [task: Task, meta?: { githubIssueAction?: GithubIssueAction }];
   "task:merged": [result: MergeResult];
   "settings:updated": [data: { settings: Settings; previous: Settings }];
   "agent:log": [entry: AgentLogEntry];
@@ -4636,7 +4636,10 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return paths;
   }
 
-  async deleteTask(id: string, options?: { removeDependencyReferences?: boolean }): Promise<Task> {
+  async deleteTask(
+    id: string,
+    options?: { removeDependencyReferences?: boolean; githubIssueAction?: GithubIssueAction },
+  ): Promise<Task> {
     return this.withTaskLock(id, async () => {
       // Flush buffered agent logs inside the lock so no new appends for this
       // task can sneak in between flush and DELETE.
@@ -4680,7 +4683,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         this.emit("task:updated", dependentTask);
       }
 
-      this.emit("task:deleted", task);
+      this.emit("task:deleted", task, { githubIssueAction: options?.githubIssueAction ?? "auto" });
       return task;
     });
   }

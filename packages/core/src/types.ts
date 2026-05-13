@@ -638,6 +638,8 @@ export interface TaskGithubTrackedIssue {
   lastSyncedAt?: string;
 }
 
+export type GithubIssueAction = "close" | "delete" | "leave" | "auto";
+
 export interface TaskGithubTracking {
   /** Per-task enabled override. When undefined, project/global default applies. */
   enabled?: boolean;
