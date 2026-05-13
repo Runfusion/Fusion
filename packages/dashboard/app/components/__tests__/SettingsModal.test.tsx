@@ -184,6 +184,7 @@ const defaultSettings = {
   verificationFixRetries: 2,
   workflowRevisionForkOnScopeMismatch: true,
   recycleWorktrees: false,
+  ephemeralAgentsEnabled: true,
   executorAllowSiblingBranchRename: false,
   worktreeNaming: "random",
   includeTaskIdInCommit: true,
@@ -715,6 +716,24 @@ describe("SettingsModal", () => {
         const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
         expect(globalPayload.completionDocumentationMode).toBeUndefined();
       }
+    });
+
+    it("saves ephemeral agent toggle in project settings payload", async () => {
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+
+      const ephemeralToggle = screen.getByLabelText("Use ephemeral task-worker agents") as HTMLInputElement;
+      expect(ephemeralToggle.checked).toBe(true);
+
+      await userEvent.click(ephemeralToggle);
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdateSettings).toHaveBeenCalled();
+      });
+
+      const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload.ephemeralAgentsEnabled).toBe(false);
     });
 
     it("renders and saves GitHub tracking controls in the General section", async () => {
