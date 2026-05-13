@@ -40,6 +40,8 @@ Defaults from `DEFAULT_GLOBAL_SETTINGS`; key scope from `GLOBAL_SETTINGS_KEYS`.
 | `fallbackModelId` | `string` | `undefined` | Fallback model ID (must pair with `fallbackProvider`). |
 | `defaultThinkingLevel` | `"off" \| "minimal" \| "low" \| "medium" \| "high"` | `undefined` | Default reasoning effort for AI sessions. If a provider/runtime rejects simultaneous `thinking` and `reasoning_effort` parameters, Fusion retries without the explicit thinking override instead of failing the run. |
 | `ntfyEnabled` | `boolean` | `false` | Enable ntfy push notifications. |
+| `failureNotificationMode` | `"sticky-only" \| "all"` | `"sticky-only"` | Failure notification behavior. `sticky-only` defers failed-task notifications by `failureNotificationDelayMs` and suppresses transient self-recoveries. `all` restores legacy immediate failure notifications. |
+| `failureNotificationDelayMs` | `number` | `30000` | Delay window (ms) before sending a `failed` notification in `sticky-only` mode. Set `0` for immediate dispatch (legacy behavior). |
 | `ntfyTopic` | `string` | `undefined` | ntfy topic name. |
 | `ntfyBaseUrl` | `string` | `undefined` | Optional custom ntfy server base URL (must use `http://` or `https://`). If blank/unset, Fusion uses `https://ntfy.sh` for both runtime and test notifications. |
 | `ntfyAccessToken` | `string` | `undefined` | Optional ntfy access token. When set, Fusion sends `Authorization: Bearer <token>` with ntfy publish requests, including Settings → Notifications test sends. Leave blank/unset to publish without authentication. |
