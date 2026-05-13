@@ -559,6 +559,7 @@ describe("bin command routing and fallbacks", () => {
       host: "127.0.0.1",
       token: "fn_abc123",
       tokenOnly: true,
+      noAutoRegister: false,
     });
   });
 
@@ -572,6 +573,7 @@ describe("bin command routing and fallbacks", () => {
       host: undefined,
       token: undefined,
       tokenOnly: false,
+      noAutoRegister: false,
     });
   });
 
