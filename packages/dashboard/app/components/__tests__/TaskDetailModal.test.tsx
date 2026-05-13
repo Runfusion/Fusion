@@ -117,6 +117,7 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
     expect(screen.getByText("Open the Review tab to see which step is blocking, then fix the failure or override the step.")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "View activity log" }));
+    expect(screen.getByRole("button", { name: "Logs" })).toHaveClass("detail-tab-active");
     expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("log-subview-btn-active");
     const highlighted = document.querySelector(".detail-log-entry--stall-highlight .detail-log-action");
     expect(highlighted?.textContent).toContain("In-review stall surfaced [merge-blocker]");
