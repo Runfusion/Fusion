@@ -4639,20 +4639,22 @@ export class TaskExecutor {
               break;
             }
             default:
-              if (reviewType === "plan" || reviewType === "spec") {
+              const isAdvisoryReview = reviewType === "plan" || reviewType === ("spec" as typeof reviewType);
+              if (isAdvisoryReview) {
                 const key = `${reviewType}:${step}`;
                 const count = (planSpecUnavailableCounts.get(key) ?? 0) + 1;
                 planSpecUnavailableCounts.set(key, count);
-                const advisoryMessage = `${reviewType} review Step ${step}: UNAVAILABLE — proceeding advisory after fallback retry exhausted`;
+                const advisoryType = reviewType === "plan" ? "plan" : "spec";
+                const advisoryMessage = `${advisoryType} review Step ${step}: UNAVAILABLE — proceeding advisory after fallback retry exhausted`;
                 await store.logEntry(taskId, advisoryMessage);
                 reviewerLog.warn(`${taskId}: ${advisoryMessage}`);
                 if (count >= 2) {
                   await store.logEntry(
                     taskId,
-                    `${reviewType} review Step ${step}: repeated UNAVAILABLE (${count}) — advisory continuation active; operator may inspect reviewer logs in dashboard`,
+                    `${advisoryType} review Step ${step}: repeated UNAVAILABLE (${count}) — advisory continuation active; operator may inspect reviewer logs in dashboard`,
                   );
                 }
-                text = `UNAVAILABLE (advisory) — reviewer could not produce a verdict after fallback retry. ${reviewType === "plan" ? "Plan" : "Spec"} reviews are advisory; proceed with implementation. Do NOT re-call fn_review_step for the ${reviewType} of Step ${step}.`;
+                text = `UNAVAILABLE (advisory) — reviewer could not produce a verdict after fallback retry. ${advisoryType === "plan" ? "Plan" : "Spec"} reviews are advisory; proceed with implementation. Do NOT re-call fn_review_step for the ${advisoryType} of Step ${step}.`;
               } else {
                 const blockingMessage = `code review Step ${step}: UNAVAILABLE — blocking until reviewer returns a usable verdict`;
                 await store.logEntry(taskId, blockingMessage);

@@ -634,7 +634,7 @@ export async function reviewStep(
     return { verdict, review: reviewText, summary };
   };
 
-  const fallbackReviewRequest = `${request}\n\nIMPORTANT: Respond with exactly one of: APPROVE | REVISE | RETHINK on a line starting with \"Verdict:\".`;
+  const fallbackReviewRequest = `${request}\n\nIMPORTANT: Respond with exactly one of: APPROVE | REVISE | RETHINK on a line starting with "Verdict:".`;
 
   const logFallbackRetry = async (reason: string, mode: string): Promise<void> => {
     const message = `${reviewType} review retry with fallback model after ${reason} (${mode})`;
