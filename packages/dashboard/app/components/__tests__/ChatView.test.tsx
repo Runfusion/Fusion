@@ -2654,22 +2654,21 @@ describe("Chat Session Delete Button CSS", () => {
     expect(match![1]).toContain("opacity: 1");
   });
 
-  it("mobile override makes delete button always visible", () => {
-    // Find all mobile media query blocks and check if any has chat-session-delete-btn with opacity: 1
+  it("FN-4352: mobile delete button stays visible without min-size inflation", () => {
     const mobileRegex = /@media\s*\(max-width:\s*768px\)\s*\{([\s\S]*?)\n\}/g;
     let match;
-    let foundMobileDeleteBtn = false;
+    let deleteRule = "";
     while ((match = mobileRegex.exec(css)) !== null) {
       const mediaContent = match[1];
       if (mediaContent.includes(".chat-session-delete-btn")) {
-        const deleteBtnMatch = mediaContent.match(/\.chat-session-delete-btn\s*\{([^}]*)\}/);
-        if (deleteBtnMatch && deleteBtnMatch[1].includes("opacity: 1")) {
-          foundMobileDeleteBtn = true;
-          break;
-        }
+        deleteRule = mediaContent.match(/\.chat-session-delete-btn\s*\{([^}]*)\}/)?.[1] ?? "";
+        if (deleteRule) break;
       }
     }
-    expect(foundMobileDeleteBtn).toBe(true);
+
+    expect(deleteRule).toContain("opacity: 1");
+    expect(deleteRule).not.toContain("min-width:");
+    expect(deleteRule).not.toContain("min-height:");
   });
 });
 
