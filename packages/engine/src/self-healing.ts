@@ -17,7 +17,7 @@ import { exec, execSync } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { getTaskMergeBlocker, isEphemeralAgent, type AgentStore, type TaskStore, type Settings, type Task, type MergeDetails } from "@fusion/core";
+import { getInReviewStallReason, getTaskMergeBlocker, isEphemeralAgent, type AgentStore, type TaskStore, type Settings, type Task, type MergeDetails } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger } from "./logger.js";
 import { getRegisteredWorktreePaths, scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
@@ -325,6 +325,7 @@ export class SelfHealingManager {
       { name: "recover-stale-heartbeat-runs", fn: () => this.recoverStaleHeartbeatRuns().then(() => undefined) },
       { name: "recover-running-on-inactive-tasks", fn: () => this.recoverAgentsRunningOnInactiveTasks().then(() => undefined) },
       { name: "clear-stale-blocked-by", fn: () => this.clearStaleBlockedBy().then(() => undefined) },
+      { name: "surface-in-review-stalls", fn: () => this.surfaceInReviewStalls().then(() => undefined) },
     ];
 
     for (const step of steps) {
@@ -968,6 +969,7 @@ export class SelfHealingManager {
           { name: "recover-stale-heartbeat-runs", fn: () => this.recoverStaleHeartbeatRuns() },
           { name: "recover-running-on-inactive-tasks", fn: () => this.recoverAgentsRunningOnInactiveTasks() },
           { name: "clear-stale-blocked-by", fn: () => this.clearStaleBlockedBy() },
+          { name: "surface-in-review-stalls", fn: () => this.surfaceInReviewStalls() },
         ];
         for (const fn of batch2Fns) {
           try {
@@ -1696,6 +1698,58 @@ export class SelfHealingManager {
    *
    * @returns Number of tasks kicked back to todo
    */
+  async surfaceInReviewStalls(): Promise<number> {
+    try {
+      const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return 0;
+
+      const cycleStartMs = Date.now();
+      const timeoutMs = settings.taskStuckTimeoutMs;
+      if (!timeoutMs || timeoutMs <= 0) return 0;
+
+      const activeMergeTaskId = this.options.getActiveMergeTaskId?.() ?? null;
+      const executingTaskIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+      const tasks = await this.store.listTasks({ column: "in-review", slim: false });
+      let surfaced = 0;
+
+      for (const task of tasks) {
+        const signal = getInReviewStallReason(task, {
+          now: cycleStartMs,
+          activeMergeTaskId,
+          executingTaskIds,
+          staleMergingMinAgeMs: this.options.staleMergingStatusMinAgeMs ?? DEFAULT_STALE_MERGING_STATUS_MIN_AGE_MS,
+          maxAutoMergeRetries: MAX_AUTO_MERGE_RETRIES,
+        });
+        if (!signal) continue;
+
+        if (Date.parse(task.updatedAt) >= cycleStartMs) {
+          continue;
+        }
+
+        const previous = [...(task.log ?? [])]
+          .reverse()
+          .find((entry) => entry.action.startsWith("In-review stall surfaced ["));
+        if (previous) {
+          const parsed = /^In-review stall surfaced \[([^\]]+)\]/.exec(previous.action);
+          const previousCode = parsed?.[1];
+          const previousAt = Date.parse(previous.timestamp);
+          if (Number.isFinite(previousAt) && previousAt >= cycleStartMs - timeoutMs && previousCode === signal.code) {
+            continue;
+          }
+        }
+
+        await this.store.logEntry(task.id, `In-review stall surfaced [${signal.code}]: ${signal.reason}`);
+        surfaced += 1;
+      }
+
+      return surfaced;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error(`In-review stall surfacing failed: ${errorMessage}`);
+      return 0;
+    }
+  }
+
   async recoverGhostReviewTasks(): Promise<number> {
     try {
       const settings = await this.store.getSettings();

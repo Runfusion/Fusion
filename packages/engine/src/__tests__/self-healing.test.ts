@@ -442,6 +442,7 @@ describe("SelfHealingManager", () => {
       const recoverOrphanedAgents = vi.spyOn(manager, "recoverOrphanedAgents").mockResolvedValue(1);
       const recoverAgentsRunningOnInactiveTasks = vi.spyOn(manager, "recoverAgentsRunningOnInactiveTasks").mockResolvedValue(1);
       const clearStaleBlockedBy = vi.spyOn(manager, "clearStaleBlockedBy").mockResolvedValue(1);
+      const surfaceInReviewStalls = vi.spyOn(manager, "surfaceInReviewStalls").mockResolvedValue(1);
 
       await manager.runStartupRecovery();
 
@@ -455,6 +456,7 @@ describe("SelfHealingManager", () => {
       expect(recoverOrphanedAgents).toHaveBeenCalledTimes(1);
       expect(recoverAgentsRunningOnInactiveTasks).toHaveBeenCalledTimes(1);
       expect(clearStaleBlockedBy).toHaveBeenCalledTimes(1);
+      expect(surfaceInReviewStalls).toHaveBeenCalledTimes(1);
     });
 
     it("runStartupRecovery clears stale blockedBy rows", async () => {
@@ -3801,6 +3803,116 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(0);
       expect(recoverFn).not.toHaveBeenCalled();
 
+      managerWithRecovery.stop();
+    });
+  });
+
+  describe("surfaceInReviewStalls", () => {
+    function staleMergingTask(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "FN-4110",
+        column: "in-review",
+        paused: false,
+        status: "merging",
+        mergeRetries: 0,
+        mergeDetails: {},
+        worktree: "/tmp/FN-4110",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        steps: [{ name: "step", status: "done" }],
+        workflowStepResults: [],
+        log: [],
+        ...overrides,
+      };
+    }
+
+    it("logs FN-4110 stale transient merge status once without moving task", async () => {
+      vi.setSystemTime(new Date("2026-01-01T00:10:00.000Z"));
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ taskStuckTimeoutMs: 60_000 });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([staleMergingTask()]);
+
+      const result = await managerWithRecovery.surfaceInReviewStalls();
+
+      expect(result).toBe(1);
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-4110",
+        expect.stringContaining("In-review stall surfaced [transient-merge-status-no-owner]:"),
+      );
+      expect(store.updateTask).not.toHaveBeenCalled();
+      expect(store.moveTask).not.toHaveBeenCalled();
+      managerWithRecovery.stop();
+    });
+
+    it("deduplicates same code inside stuck-timeout window", async () => {
+      vi.setSystemTime(new Date("2026-01-01T00:10:00.000Z"));
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ taskStuckTimeoutMs: 60_000 });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        staleMergingTask({
+          log: [{
+            timestamp: "2026-01-01T00:09:30.000Z",
+            action: "In-review stall surfaced [transient-merge-status-no-owner]: already surfaced",
+          }],
+        }),
+      ]);
+
+      expect(await managerWithRecovery.surfaceInReviewStalls()).toBe(0);
+      expect(store.logEntry).not.toHaveBeenCalled();
+      managerWithRecovery.stop();
+    });
+
+    it("re-logs after window expiry and on code transitions", async () => {
+      vi.setSystemTime(new Date("2026-01-01T00:10:00.000Z"));
+      const managerWithRecovery = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ taskStuckTimeoutMs: 60_000 });
+      (store.listTasks as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce([
+          staleMergingTask({
+            log: [{
+              timestamp: "2026-01-01T00:08:00.000Z",
+              action: "In-review stall surfaced [transient-merge-status-no-owner]: old",
+            }],
+          }),
+        ])
+        .mockResolvedValueOnce([
+          staleMergingTask({
+            status: undefined,
+            mergeRetries: 3,
+            log: [{
+              timestamp: "2026-01-01T00:09:30.000Z",
+              action: "In-review stall surfaced [transient-merge-status-no-owner]: recent",
+            }],
+          }),
+        ]);
+
+      expect(await managerWithRecovery.surfaceInReviewStalls()).toBe(1);
+      expect(await managerWithRecovery.surfaceInReviewStalls()).toBe(1);
+      expect(store.logEntry).toHaveBeenLastCalledWith(
+        "FN-4110",
+        expect.stringContaining("In-review stall surfaced [merge-retries-exhausted]:"),
+      );
+      managerWithRecovery.stop();
+    });
+
+    it("skips per-cycle dedup, paused, active merge owner, executing, awaiting-user-review, and mergeConfirmed", async () => {
+      vi.setSystemTime(new Date("2026-01-01T00:10:00.000Z"));
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        getActiveMergeTaskId: () => "FN-ACTIVE",
+        getExecutingTaskIds: () => new Set(["FN-EXEC"]),
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ taskStuckTimeoutMs: 60_000 });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        staleMergingTask({ id: "FN-CYCLE", updatedAt: "2026-01-01T00:10:00.000Z" }),
+        staleMergingTask({ id: "FN-PAUSED", paused: true }),
+        staleMergingTask({ id: "FN-ACTIVE" }),
+        staleMergingTask({ id: "FN-EXEC" }),
+        staleMergingTask({ id: "FN-AWAIT", status: "awaiting-user-review" }),
+        staleMergingTask({ id: "FN-MERGED", mergeDetails: { mergeConfirmed: true } }),
+      ]);
+
+      expect(await managerWithRecovery.surfaceInReviewStalls()).toBe(0);
+      expect(store.logEntry).not.toHaveBeenCalled();
       managerWithRecovery.stop();
     });
   });
