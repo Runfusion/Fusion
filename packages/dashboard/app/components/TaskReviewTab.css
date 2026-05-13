@@ -175,11 +175,8 @@
 
   .task-review-tab__actions {
     width: 100%;
+    gap: var(--space-sm);
     flex-wrap: wrap;
-  }
-
-  .task-review-tab__actions .btn {
-    flex: 0 1 auto;
   }
 
   .task-review-tab__refresh-meta {
