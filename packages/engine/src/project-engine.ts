@@ -1816,10 +1816,10 @@ export class ProjectEngine {
                   mergeRetries: ProjectEngine.MAX_AUTO_MERGE_RETRIES,
                   error: errorMsg,
                 });
-                await store.addTaskComment(
+                await store.logEntry(
                   taskId,
                   `Auto-merge failed with a non-conflict error and stopped retrying: ${errorMsg}`,
-                  "agent",
+                  "MergeNonConflictFailure",
                 );
               } catch (recoveryErr) {
                 runtimeLog.error(

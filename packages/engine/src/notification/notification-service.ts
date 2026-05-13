@@ -61,6 +61,8 @@ export class NotificationService {
   private readonly pendingFailureStartTimes = new Map<string, number>();
   private readonly failedNotificationGraceMs: number;
   private failureNotificationSuppressedCount = 0;
+  private failureNotificationDelayMs = 60_000;
+  private failureNotificationMode: "sticky-only" | "all" = "sticky-only";
 
   constructor(
     private readonly store: NotificationServiceStore,
@@ -68,6 +70,7 @@ export class NotificationService {
   ) {
     this.chatStore = options.chatStore;
     this.failedNotificationGraceMs = options.failedNotificationGraceMs ?? 60_000;
+    this.failureNotificationDelayMs = this.failedNotificationGraceMs;
   }
 
   attachChatStore(chatStore: NotificationChatStore): void {
@@ -91,6 +94,7 @@ export class NotificationService {
 
     const settings = await this.store.getSettings();
     this.setNotificationsEnabledFromSettings(settings);
+    this.refreshFailureNotificationSettings(settings);
     await this.syncNtfyProvider(settings);
     await this.syncWebhookProvider(settings);
 
@@ -153,7 +157,11 @@ export class NotificationService {
     }
 
     if (task.status === "failed") {
-      this.scheduleFailureNotification(task);
+      if (this.failureNotificationMode === "all" || this.failureNotificationDelayMs === 0) {
+        this.maybeNotify(task.id, "failed", this.createTaskPayload(task, "failed"));
+      } else {
+        this.scheduleFailureNotification(task);
+      }
     }
 
     if (task.status === "awaiting-approval") {
@@ -188,6 +196,7 @@ export class NotificationService {
   private handleSettingsUpdated = async (data: { settings: Settings; previous: Settings }): Promise<void> => {
     const { settings, previous } = data;
     this.setNotificationsEnabledFromSettings(settings);
+    this.refreshFailureNotificationSettings(settings);
 
     if (
       settings.ntfyEnabled !== previous.ntfyEnabled ||
@@ -445,6 +454,7 @@ export class NotificationService {
     this.refreshInFlight = (async () => {
       const settings = await this.store.getSettings();
       this.setNotificationsEnabledFromSettings(settings);
+      this.refreshFailureNotificationSettings(settings);
       await this.syncNtfyProvider(settings);
       await this.syncWebhookProvider(settings);
       schedulerLog.log(`NotificationService refreshed notification state reason=${reason} enabled=${String(this.notificationsEnabled)}`);
@@ -457,6 +467,14 @@ export class NotificationService {
     }
   }
 
+  private refreshFailureNotificationSettings(settings: Settings): void {
+    this.failureNotificationDelayMs =
+      typeof settings.failureNotificationDelayMs === "number" && settings.failureNotificationDelayMs >= 0
+        ? settings.failureNotificationDelayMs
+        : this.failedNotificationGraceMs;
+    this.failureNotificationMode = settings.failureNotificationMode ?? "sticky-only";
+  }
+
   private scheduleFailureNotification(task: Task): void {
     if (this.pendingFailureNotifications.has(task.id)) {
       return;
@@ -466,7 +484,7 @@ export class NotificationService {
     const payload = this.createTaskPayload(task, "failed");
     const timer = setTimeout(() => {
       void this.fireDeferredFailureNotification(task.id);
-    }, this.failedNotificationGraceMs);
+    }, this.failureNotificationDelayMs);
     timer.unref?.();
     this.pendingFailureNotifications.set(task.id, { timer, payload });
   }
