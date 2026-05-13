@@ -330,6 +330,7 @@ This file is the contract for execution and review.
   - Pull-request mode refreshes live GitHub-backed review decision/thread/comment state and updates PR metadata freshness.
   - Direct/non-PR mode refreshes normalized reviewer-agent feedback from persisted task review artifacts and does not call GitHub.
 - In direct/non-PR auto-merge mode, the Review tab shows parsed reviewer-agent feedback with explicit loading/error/empty states instead of sending users to raw comments or agent logs.
+- Review item bodies render markdown by default, and users can switch between **Markdown** and **Plain** modes from the Review tab action bar; the preference persists locally per user.
 - **Comments remains the general discussion surface**; Review remains the actionable review surface.
 - **Steering comments** (`fn task steer`) are execution guidance for the running agent.
 

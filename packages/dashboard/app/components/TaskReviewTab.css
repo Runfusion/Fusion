@@ -63,6 +63,12 @@
   padding: var(--space-md);
 }
 
+.task-review-tab__item-inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
 .task-review-tab__row {
   display: grid;
   grid-template-columns: auto 1fr auto;
@@ -88,7 +94,26 @@
   background: var(--surface);
   color: var(--text);
   white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 100%;
   font-family: var(--font-primary);
+}
+
+.task-review-tab__body.markdown-body {
+  overflow-wrap: anywhere;
+}
+
+.task-review-tab__body.markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.task-review-tab__body.markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+.task-review-tab__body.markdown-body pre,
+.task-review-tab__body.markdown-body table {
+  max-width: 100%;
 }
 
 .task-review-tab__status {
@@ -150,10 +175,11 @@
 
   .task-review-tab__actions {
     width: 100%;
+    flex-wrap: wrap;
   }
 
   .task-review-tab__actions .btn {
-    flex: 1;
+    flex: 0 1 auto;
   }
 
   .task-review-tab__refresh-meta {

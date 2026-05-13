@@ -884,6 +884,7 @@ describe("WorkflowResultsTab", () => {
       expect(allCss).toMatch(/@media \(max-width: 768px\)\s*\{[\s\S]*?\.workflow-result-mode-toggle\s*\{[^}]*margin-left:\s*0;/);
     });
 
+
     it("allows workflow modal controls to wrap on mobile so the close button stays visible", () => {
       const css = loadAllAppCss();
 

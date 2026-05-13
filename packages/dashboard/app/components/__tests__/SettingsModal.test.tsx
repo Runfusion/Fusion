@@ -282,6 +282,7 @@ describe("SettingsModal", () => {
     expect(screen.getByText(/restores the legacy behavior/i)).toBeInTheDocument();
   });
 
+
   beforeEach(() => {
     vi.clearAllMocks();
     clearPluginUiSlotsCache();

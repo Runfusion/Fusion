@@ -4599,8 +4599,8 @@ export class TaskExecutor {
         // in-flight work. Always clear it on explicit agent completion so the
         // board cannot strand a completed task in a paused state.
         await store.updateTask(taskId, {
-          paused: undefined,
-          pausedByAgentId: undefined,
+          paused: false,
+          pausedByAgentId: null,
           status: null,
         });
         await store.logEntry(taskId, "Task marked done by agent");

@@ -135,7 +135,7 @@ describe("TaskExecutor enginePaused soft pause (no agent termination)", () => {
     expect(watchdogSpy).toHaveBeenCalledWith("FN-001", "fn_task_done");
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-001",
-      expect.objectContaining({ paused: undefined, pausedByAgentId: undefined, status: null }),
+      expect.objectContaining({ paused: false, pausedByAgentId: null, status: null }),
     );
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
   });
