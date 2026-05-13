@@ -2551,6 +2551,8 @@ export class TaskExecutor {
             branch: null,
             sessionFile: null,
             taskDoneRetryCount: nextRequeueCount,
+            paused: false,
+            pausedByAgentId: null,
           });
           await this.store.logEntry(
             task.id,
@@ -2567,6 +2569,8 @@ export class TaskExecutor {
             worktree: null,
             branch: null,
             sessionFile: null,
+            paused: false,
+            pausedByAgentId: null,
           });
           await this.store.logEntry(task.id, `${failureMessage} — moved to in-review for inspection`, undefined, this.currentRunContext);
           await this.persistTokenUsage(task.id);
@@ -4538,6 +4542,11 @@ export class TaskExecutor {
               status: "failed",
               error: refusalMessage,
               taskDoneRetryCount: nextRequeueCount,
+              paused: false,
+              pausedByAgentId: null,
+              worktree: null,
+              branch: null,
+              sessionFile: null,
             });
             await store.logEntry(
               taskId,
@@ -4548,7 +4557,15 @@ export class TaskExecutor {
             await store.moveTask(taskId, "todo", { preserveProgress: true });
             executorLog.log(`✗ ${taskId} failed invariant check — requeued to todo (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`);
           } else {
-            await store.updateTask(taskId, { status: "failed", error: refusalMessage });
+            await store.updateTask(taskId, {
+              status: "failed",
+              error: refusalMessage,
+              paused: false,
+              pausedByAgentId: null,
+              worktree: null,
+              branch: null,
+              sessionFile: null,
+            });
             await store.logEntry(taskId, `${refusalMessage} — moved to in-review for inspection`, undefined, this.currentRunContext);
             await this.persistTokenUsage(taskId);
             await store.moveTask(taskId, "in-review");
