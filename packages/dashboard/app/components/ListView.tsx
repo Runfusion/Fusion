@@ -1,7 +1,7 @@
 import "./ListView.css";
 import { useState, useCallback, useMemo, Fragment, useEffect, useRef } from "react";
 import { ArrowUpDown, ArrowUp, ArrowDown, Link, Columns3, EyeOff, Eye, ChevronRight, Zap, Trash2 } from "lucide-react";
-import type { Task, TaskDetail, Column, TaskCreateInput, MergeResult } from "@fusion/core";
+import type { Task, TaskDetail, Column, TaskCreateInput, MergeResult, GithubIssueAction } from "@fusion/core";
 import { COLUMN_LABELS, COLUMNS, DEFAULT_COLUMN, getErrorMessage, isColumn } from "@fusion/core";
 import { sortTasksForDisplayColumn } from "./taskSorting";
 import { batchUpdateTaskModels, fetchNodes, fetchTaskDetail } from "../api";
@@ -167,7 +167,7 @@ interface ListViewProps {
   tasks: Task[];
   onMoveTask: (id: string, column: Column, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
-  onDeleteTask: (id: string, options?: { removeDependencyReferences?: boolean }) => Promise<Task>;
+  onDeleteTask: (id: string, options?: { removeDependencyReferences?: boolean; githubIssueAction?: GithubIssueAction }) => Promise<Task>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onResetTask?: (id: string) => Promise<Task>;
   onDuplicateTask?: (id: string) => Promise<Task>;

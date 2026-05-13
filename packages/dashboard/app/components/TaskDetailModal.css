@@ -193,14 +193,14 @@
     align-items: flex-start;
   }
 
-  .detail-provenance-context {
-    max-width: 20ch;
-  }
-
   .detail-timestamps {
     display: flex;
     align-items: center;
     flex-wrap: nowrap;
+  }
+
+  .detail-provenance-context {
+    max-width: 20ch;
   }
 
   .detail-timestamp-item {

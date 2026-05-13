@@ -1,7 +1,7 @@
 import "./TaskCard.css";
 import { memo, useCallback, useState, useRef, useEffect, useMemo } from "react";
 import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch } from "lucide-react";
-import type { Task, TaskDetail, Column, PrInfo, IssueInfo, TaskPriority } from "@fusion/core";
+import type { Task, TaskDetail, Column, PrInfo, IssueInfo, TaskPriority, GithubIssueAction } from "@fusion/core";
 import {
   COLUMN_LABELS,
   DEFAULT_TASK_PRIORITY,
@@ -271,7 +271,7 @@ interface TaskCardProps {
   ) => Promise<Task>;
   onArchiveTask?: (id: string) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
-  onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean }) => Promise<Task>;
+  onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean; githubIssueAction?: GithubIssueAction }) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
   onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes") => void;
   /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
@@ -1125,9 +1125,41 @@ function TaskCardComponent({
       return;
     }
 
+    const trackedIssue = task.githubTracking?.enabled === true ? task.githubTracking.issue : undefined;
+    let githubIssueAction: GithubIssueAction | undefined;
+    if (trackedIssue?.owner && trackedIssue.repo && trackedIssue.number) {
+      const issueRef = `${trackedIssue.owner}/${trackedIssue.repo}#${trackedIssue.number}`;
+      const shouldCloseIssue = await confirm({
+        title: "Linked GitHub Issue",
+        message: `Choose what to do with ${issueRef} when deleting ${task.id}.\n\nClose the issue?`,
+        confirmLabel: "Close Issue",
+        cancelLabel: "More Options",
+      });
+
+      if (shouldCloseIssue) {
+        githubIssueAction = "close";
+      } else {
+        const shouldDeleteIssue = await confirm({
+          title: "Delete Linked GitHub Issue",
+          message: `Delete ${issueRef} on GitHub, or leave it unchanged?`,
+          confirmLabel: "Delete Issue",
+          cancelLabel: "Leave Unchanged",
+          danger: true,
+        });
+        githubIssueAction = shouldDeleteIssue ? "delete" : "leave";
+      }
+    }
+
     try {
-      await onDeleteTask(task.id);
-      addToast(`Deleted ${task.id}`, "success");
+      if (githubIssueAction) {
+        await onDeleteTask(task.id, { githubIssueAction });
+      } else {
+        await onDeleteTask(task.id);
+      }
+      const issueSuffix = trackedIssue?.owner && trackedIssue.repo && trackedIssue.number && githubIssueAction
+        ? ` and ${githubIssueAction === "close" ? "closed" : githubIssueAction === "delete" ? "deleted" : "left"} issue ${trackedIssue.owner}/${trackedIssue.repo}#${trackedIssue.number}`
+        : "";
+      addToast(`Deleted ${task.id}${issueSuffix}`, "success");
     } catch (err) {
       const conflict = extractDependencyDeleteConflict(err);
       if (!conflict || conflict.dependentIds.length === 0) {
@@ -1148,13 +1180,13 @@ function TaskCardComponent({
       }
 
       try {
-        await onDeleteTask(task.id, { removeDependencyReferences: true });
+        await onDeleteTask(task.id, { removeDependencyReferences: true, githubIssueAction });
         addToast(`Deleted ${task.id} after removing dependency references`, "success");
       } catch (retryErr) {
         addToast(`Failed to delete ${task.id}: ${getErrorMessage(retryErr)}`, "error");
       }
     }
-  }, [addToast, confirm, onDeleteTask, task.id]);
+  }, [addToast, confirm, onDeleteTask, task.githubTracking?.enabled, task.githubTracking?.issue, task.id]);
 
   const handleOpenFiles = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();

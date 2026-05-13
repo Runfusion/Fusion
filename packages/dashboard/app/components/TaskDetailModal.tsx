@@ -7,7 +7,7 @@ import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, Settings, GlobalSettings, AgentLogEntry, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult } from "@fusion/core";
+import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, Settings, GlobalSettings, AgentLogEntry, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult, GithubIssueAction } from "@fusion/core";
 import {
   COLUMN_LABELS,
   DEFAULT_TASK_PRIORITY,
@@ -267,7 +267,7 @@ export interface TaskDetailModalProps {
   onClose: () => void;
   onOpenDetail: (task: Task | TaskDetail) => void; // For clicking dependencies
   onMoveTask: (id: string, column: Column, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
-  onDeleteTask: (id: string, options?: { removeDependencyReferences?: boolean }) => Promise<Task>;
+  onDeleteTask: (id: string, options?: { removeDependencyReferences?: boolean; githubIssueAction?: GithubIssueAction }) => Promise<Task>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onRetryTask?: (id: string) => Promise<Task>;
   onResetTask?: (id: string) => Promise<Task>;
@@ -1317,10 +1317,43 @@ export function TaskDetailContent({
       danger: true,
     });
     if (!shouldDelete) return;
+
+    const trackedIssue = task.githubTracking?.enabled === true ? task.githubTracking.issue : undefined;
+    let githubIssueAction: GithubIssueAction | undefined;
+    if (trackedIssue?.owner && trackedIssue.repo && trackedIssue.number) {
+      const issueRef = `${trackedIssue.owner}/${trackedIssue.repo}#${trackedIssue.number}`;
+      const shouldCloseIssue = await confirm({
+        title: "Linked GitHub Issue",
+        message: `Choose what to do with ${issueRef} when deleting ${task.id}.\n\nClose the issue?`,
+        confirmLabel: "Close Issue",
+        cancelLabel: "More Options",
+      });
+
+      if (shouldCloseIssue) {
+        githubIssueAction = "close";
+      } else {
+        const shouldDeleteIssue = await confirm({
+          title: "Delete Linked GitHub Issue",
+          message: `Delete ${issueRef} on GitHub, or leave it unchanged?`,
+          confirmLabel: "Delete Issue",
+          cancelLabel: "Leave Unchanged",
+          danger: true,
+        });
+        githubIssueAction = shouldDeleteIssue ? "delete" : "leave";
+      }
+    }
+
     try {
-      await onDeleteTask(task.id);
+      if (githubIssueAction) {
+        await onDeleteTask(task.id, { githubIssueAction });
+      } else {
+        await onDeleteTask(task.id);
+      }
       requestClose();
-      addToast(`Deleted ${task.id}`, "info");
+      const issueSuffix = trackedIssue?.owner && trackedIssue.repo && trackedIssue.number && githubIssueAction
+        ? ` and ${githubIssueAction === "close" ? "closed" : githubIssueAction === "delete" ? "deleted" : "left"} issue ${trackedIssue.owner}/${trackedIssue.repo}#${trackedIssue.number}`
+        : "";
+      addToast(`Deleted ${task.id}${issueSuffix}`, "info");
     } catch (err) {
       const conflict = extractDependencyDeleteConflict(err);
       if (!conflict || conflict.dependentIds.length === 0) {
@@ -1341,14 +1374,14 @@ export function TaskDetailContent({
       }
 
       try {
-        await onDeleteTask(task.id, { removeDependencyReferences: true });
+        await onDeleteTask(task.id, { removeDependencyReferences: true, githubIssueAction });
         requestClose();
         addToast(`Deleted ${task.id} after removing dependency references`, "info");
       } catch (retryErr) {
         addToast(getErrorMessage(retryErr), "error");
       }
     }
-  }, [task.id, onDeleteTask, requestClose, addToast, confirm]);
+  }, [task.githubTracking?.enabled, task.githubTracking?.issue, task.id, onDeleteTask, requestClose, addToast, confirm]);
 
   const handleMerge = useCallback(async () => {
     const shouldMerge = await confirm({

@@ -1,7 +1,7 @@
 import { memo, useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useFlashOnIncrease } from "../hooks/useFlashOnIncrease";
 import { useConfirm } from "../hooks/useConfirm";
-import type { Task, TaskDetail, Column as ColumnType, TaskCreateInput } from "@fusion/core";
+import type { Task, TaskDetail, Column as ColumnType, TaskCreateInput, GithubIssueAction } from "@fusion/core";
 import { COLUMN_LABELS, COLUMN_DESCRIPTIONS, getErrorMessage } from "@fusion/core";
 import { TaskCard } from "./TaskCard";
 import { WorktreeGroup } from "./WorktreeGroup";
@@ -38,7 +38,7 @@ interface ColumnProps {
   onRetryTask?: (id: string) => Promise<Task>;
   onArchiveTask?: (id: string) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
-  onDeleteTask?: (id: string) => Promise<Task>;
+  onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean; githubIssueAction?: GithubIssueAction }) => Promise<Task>;
   onArchiveAllDone?: () => Promise<Task[]>;
   collapsed?: boolean;
   onToggleCollapse?: () => void;

@@ -1,4 +1,4 @@
-import type { Task, TaskDetail, Column as ColumnType, TaskCreateInput } from "@fusion/core";
+import type { Task, TaskDetail, Column as ColumnType, TaskCreateInput, GithubIssueAction } from "@fusion/core";
 import { COLUMNS, DEFAULT_COLUMN, isColumn } from "@fusion/core";
 import { sortTasksForDisplayColumn } from "./taskSorting";
 import { Column } from "./Column";
@@ -28,7 +28,7 @@ interface BoardProps {
   onRetryTask?: (id: string) => Promise<Task>;
   onArchiveTask?: (id: string) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
-  onDeleteTask?: (id: string) => Promise<Task>;
+  onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean; githubIssueAction?: GithubIssueAction }) => Promise<Task>;
   onArchiveAllDone?: () => Promise<Task[]>;
   /** Lazy-load archived tasks. Called the first time the user expands the archived column. */
   onLoadArchivedTasks?: () => Promise<void>;
