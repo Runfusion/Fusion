@@ -45,37 +45,18 @@
     row-gap: var(--space-xs);
   }
 
-  /* Preserve mobile touch targets while keeping visuals compact via icon sizing/padding. */
+  /* FN-4354: settings header actions inherit desktop sizing on mobile per user direction (revert of FN-3782/FN-3913/FN-4281 touch-target inflation). Layout reflow (flex-wrap on .modal-header, flex: 1 1 100% on .settings-header-actions) is retained. */
   .settings-header-actions {
-    --settings-header-action-height: calc(var(--space-md) * 3);
-
     flex: 1 1 100%;
     justify-content: flex-start;
     margin-left: 0;
     margin-right: 0;
   }
 
-  .settings-header-actions > .btn-icon,
-  .settings-header-actions > .settings-github-star-btn,
-  .settings-header-actions > .settings-header-help-btn {
-    min-height: var(--settings-header-action-height);
-  }
-
-  .settings-header-actions > .btn-icon {
-    min-width: calc(var(--space-md) * 3);
-  }
-
-  .settings-github-star-btn__action,
-  .settings-github-star-btn__count {
-    min-height: var(--settings-header-action-height);
-  }
-
   .settings-modal .modal-close {
     flex: 0 0 auto;
     align-self: flex-start;
     margin-left: auto;
-    min-width: calc(var(--space-md) * 3);
-    min-height: calc(var(--space-md) * 3);
   }
 }
 
