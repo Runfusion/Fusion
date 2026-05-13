@@ -25,7 +25,13 @@ import {
 } from "../utils/heartbeatIntervals";
 import { isEphemeralAgent, getErrorMessage } from "@fusion/core";
 import { formatAgentSkillBadgeLabel } from "../utils/agentSkills";
-import { resolveOrgChartLayoutMode, type OrgChartLayoutMode } from "./agentsOrgChartLayout";
+import {
+  ORG_CHART_LAYOUT_STORAGE_KEY,
+  isOrgChartLayoutPreference,
+  resolveOrgChartLayoutMode,
+  type OrgChartLayoutMode,
+  type OrgChartLayoutPreference,
+} from "./agentsOrgChartLayout";
 import { AgentAvatar } from "./AgentAvatar";
 import { AgentErrorIndicator } from "./AgentErrorDetailsModal";
 
@@ -208,6 +214,11 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
     const saved = getScopedItem("fn-agent-view", projectId);
     return (saved === "list" || saved === "board" || saved === "org") ? saved : "list";
   });
+  const [orgChartLayoutPreference, setOrgChartLayoutPreference] = useState<OrgChartLayoutPreference>(() => {
+    if (typeof window === "undefined") return "auto";
+    const saved = getScopedItem(ORG_CHART_LAYOUT_STORAGE_KEY, projectId);
+    return isOrgChartLayoutPreference(saved) ? saved : "auto";
+  });
   const [orgTree, setOrgTree] = useState<OrgTreeNode[]>([]);
   const [isOrgTreeLoading, setIsOrgTreeLoading] = useState(false);
   const [orgChartViewportWidth, setOrgChartViewportWidth] = useState(0);
@@ -233,6 +244,15 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   useEffect(() => {
     setScopedItem("fn-agent-view", agentView, projectId);
   }, [agentView, projectId]);
+
+  useEffect(() => {
+    const saved = getScopedItem(ORG_CHART_LAYOUT_STORAGE_KEY, projectId);
+    setOrgChartLayoutPreference(isOrgChartLayoutPreference(saved) ? saved : "auto");
+  }, [projectId]);
+
+  useEffect(() => {
+    setScopedItem(ORG_CHART_LAYOUT_STORAGE_KEY, orgChartLayoutPreference, projectId);
+  }, [orgChartLayoutPreference, projectId]);
 
   const [editingRoleForAgent, setEditingRoleForAgent] = useState<string | null>(null);
   const roleSelectRef = useRef<HTMLSelectElement>(null);
@@ -720,7 +740,8 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   const orgChartLayoutMode: OrgChartLayoutMode = useMemo(() => resolveOrgChartLayoutMode({
     tree: displayOrgTree,
     availableWidth: orgChartViewportWidth,
-  }), [displayOrgTree, orgChartViewportWidth]);
+    preference: orgChartLayoutPreference,
+  }), [displayOrgTree, orgChartLayoutPreference, orgChartViewportWidth]);
 
   /** Get skill badges from agent metadata */
   const getSkillBadges = (agent: Agent): string[] => {
