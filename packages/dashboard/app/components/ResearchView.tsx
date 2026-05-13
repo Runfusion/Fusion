@@ -278,7 +278,10 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
                           );
                         }}
                       />
-                      <span>{PROVIDER_LABELS[provider] ?? provider}{providerLocked ? " (always on)" : ""}</span>
+                      <span>
+                        {PROVIDER_LABELS[provider] ?? provider}
+                        {providerLocked ? <span className="research-view__provider-lock">Always on</span> : null}
+                      </span>
                     </label>
                   );
                 })}

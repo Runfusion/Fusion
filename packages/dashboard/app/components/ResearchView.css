@@ -86,6 +86,11 @@
   gap: var(--space-xs);
 }
 
+.research-view__provider-lock {
+  margin-left: var(--space-xs);
+  color: var(--text-muted);
+}
+
 .research-view__history-header {
   display: flex;
   flex-direction: column;

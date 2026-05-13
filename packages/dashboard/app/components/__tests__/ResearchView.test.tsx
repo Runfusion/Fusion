@@ -384,7 +384,8 @@ describe("ResearchView", () => {
     });
     mockFetchAuthStatus.mockResolvedValue({ providers: [{ id: "openrouter", type: "api_key", authenticated: true }] });
     render(<ResearchView projectId="p1" />);
-    expect(await screen.findByText("Web Search (always on)")).toBeInTheDocument();
+    expect(await screen.findByText("Web Search")).toBeInTheDocument();
+    expect(screen.getByText("Always on")).toBeInTheDocument();
     expect(screen.getByText("Page Fetch")).toBeInTheDocument();
     expect(screen.getByText("LLM Synthesis")).toBeInTheDocument();
   });
@@ -412,7 +413,8 @@ describe("ResearchView", () => {
 
     render(<ResearchView projectId="p1" />);
 
-    const webSearch = (await screen.findByLabelText("Web Search (always on)")) as HTMLInputElement;
+    const webSearch = (await screen.findByLabelText(/Web Search/i)) as HTMLInputElement;
+    expect(screen.getByText("Always on")).toBeInTheDocument();
     const pageFetch = screen.getByLabelText("Page Fetch") as HTMLInputElement;
     expect(webSearch.disabled).toBe(true);
     expect(webSearch.checked).toBe(true);
