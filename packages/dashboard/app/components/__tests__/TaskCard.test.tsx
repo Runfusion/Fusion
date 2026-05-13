@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { TaskCard, formatElapsedDurationDone, __test_areTaskCardPropsEqual } from "../TaskCard";
+import type { ConfirmOptions } from "../../hooks/useConfirm";
 import type { Task } from "@fusion/core";
 
 // Mock lucide-react to avoid SVG rendering issues in test env
@@ -36,6 +37,11 @@ vi.mock("../../api", () => ({
   uploadAttachment: vi.fn(),
   fetchMission: vi.fn(),
   fetchAgent: vi.fn(),
+}));
+
+const mockConfirm = vi.fn<(options: ConfirmOptions) => Promise<boolean>>();
+vi.mock("../../hooks/useConfirm", () => ({
+  useConfirm: () => ({ confirm: mockConfirm }),
 }));
 
 import { uploadAttachment, fetchMission, fetchAgent } from "../../api";
@@ -87,6 +93,50 @@ afterEach(() => {
 });
 
 describe("TaskCard", () => {
+  it("uses githubIssueAction for tracked task delete", async () => {
+    const onDeleteTask = vi.fn(async () => makeTask());
+    mockConfirm
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true);
+
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "triage",
+          githubTracking: {
+            enabled: true,
+            issue: { owner: "owner", repo: "repo", number: 42, url: "https://github.com/owner/repo/issues/42", createdAt: "2026-01-01T00:00:00Z" },
+          },
+        } as any)}
+        onOpenDetail={noop}
+        addToast={noop}
+        onDeleteTask={onDeleteTask}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Delete task"));
+    });
+
+    await waitFor(() => {
+      expect(onDeleteTask).toHaveBeenCalledWith("FN-001", { githubIssueAction: "close" });
+    });
+  });
+
+  it("keeps legacy delete options for untracked task", async () => {
+    const onDeleteTask = vi.fn(async () => makeTask());
+    mockConfirm.mockResolvedValueOnce(true);
+
+    render(<TaskCard task={makeTask({ column: "triage" })} onOpenDetail={noop} addToast={noop} onDeleteTask={onDeleteTask} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Delete task"));
+    });
+
+    await waitFor(() => {
+      expect(onDeleteTask).toHaveBeenCalledWith("FN-001");
+    });
+  });
   it("renders the card ID text", () => {
     render(<TaskCard task={makeTask()} onOpenDetail={noop} addToast={noop} />);
     expect(screen.getByText("FN-001")).toBeDefined();

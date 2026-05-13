@@ -90,6 +90,68 @@ describe("TaskDetailModal", () => {
       expect(screen.getByRole("menuitem", { name: "Pause" })).toBeTruthy();
     });
 
+    it("passes githubIssueAction for tracked tasks", async () => {
+      const onDeleteTask = vi.fn().mockResolvedValue({} as Task);
+
+      mockConfirm
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true);
+
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            githubTracking: {
+              enabled: true,
+              issue: {
+                owner: "owner",
+                repo: "repo",
+                number: 42,
+                url: "https://github.com/owner/repo/issues/42",
+                createdAt: "2026-01-01T00:00:00.000Z",
+              },
+            },
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={onDeleteTask}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+      await waitFor(() => {
+        expect(onDeleteTask).toHaveBeenCalledWith("FN-099", { githubIssueAction: "close" });
+      });
+    });
+
+    it("keeps legacy delete payload for untracked tasks", async () => {
+      const onDeleteTask = vi.fn().mockResolvedValue({} as Task);
+      mockConfirm.mockResolvedValueOnce(true);
+
+      render(
+        <TaskDetailModal
+          task={makeTask()}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={onDeleteTask}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+      await waitFor(() => {
+        expect(onDeleteTask).toHaveBeenCalledWith("FN-099");
+      });
+    });
+
     it("prompts for dependency-removal confirmation and retries delete with explicit flag", async () => {
       const onDeleteTask = vi.fn();
       const conflict = new Error("Cannot delete task FN-099: still referenced as a dependency by FN-100, FN-101.") as Error & {
