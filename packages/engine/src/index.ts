@@ -90,6 +90,18 @@ export {
 } from "./agent-instructions.js";
 export { HEARTBEAT_PROCEDURE, HEARTBEAT_SYSTEM_PROMPT, HEARTBEAT_NO_TASK_SYSTEM_PROMPT } from "./agent-heartbeat.js";
 export { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees, reapOrphanWorktrees } from "./worktree-pool.js";
+export {
+  BranchConflictError,
+  isBranchConflictError,
+  inspectBranchConflict,
+  listBranchRecoveryCandidates,
+  type BranchConflictCommit,
+  type BranchConflictDetails,
+  type BranchRecoveryCandidate,
+  type BranchConflictInspectionResult,
+  type InspectBranchConflictInput,
+  type ListBranchRecoveryCandidatesInput,
+} from "./branch-conflicts.js";
 export { generateReservedWorktreeName, generateWorktreeName, planTaskWorktreePath, slugify } from "./worktree-names.js";
 export { createLogger, type Logger } from "./logger.js";
 export { fetchWebContent, assertSafeUrl, WebFetchError, type WebFetchOptions, type WebFetchResult, type WebFetchErrorCode } from "./web-fetch.js";

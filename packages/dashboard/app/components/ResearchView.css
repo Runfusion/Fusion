@@ -4,6 +4,7 @@
   gap: var(--space-md);
   height: 100%;
   min-height: 0;
+  overflow: hidden;
   padding: var(--space-lg);
   padding-bottom: var(--space-lg);
 }
@@ -30,11 +31,32 @@
   gap: var(--space-md);
   min-height: 0;
   flex: 1;
+  overflow: hidden;
 }
 
 .research-view__sidebar,
 .research-view__reader {
   padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.research-view__reader {
+  overflow: auto;
+}
+
+.research-view__reader-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-height: 0;
+}
+
+.research-view__run-detail {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
@@ -127,6 +149,7 @@
 .research-view__actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-xs);
   margin-top: var(--space-sm);
 }
@@ -171,11 +194,13 @@
   padding-left: var(--space-lg);
 }
 
-
 .research-view__stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-sm);
+  margin-top: auto;
+  padding-top: var(--space-sm);
+  border-top: var(--btn-border-width) solid var(--border);
 }
 
 .research-view__stat-card {
@@ -201,6 +226,7 @@
 @media (max-width: 768px) {
   .research-view {
     overflow-y: auto;
+    overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
     padding: var(--space-md);
     padding-bottom: calc(var(--space-md) + var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
@@ -210,6 +236,21 @@
     display: flex;
     flex-direction: column;
     grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-md);
+    flex: initial;
+    overflow: visible;
+  }
+
+  .research-view__sidebar,
+  .research-view__reader {
+    overflow: visible;
+  }
+
+  .research-view__reader {
+    overflow: visible;
+  }
+
+  .research-view__reader-content {
     flex: initial;
   }
 
@@ -221,6 +262,10 @@
 
   .research-view__header {
     flex-direction: column;
+  }
+
+  .research-view__header .btn {
+    align-self: flex-start;
   }
 
   .research-view__stats {

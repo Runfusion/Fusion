@@ -14,6 +14,19 @@ vi.mock("node:fs", () => ({
   readFileSync: vi.fn(),
 }));
 
+vi.mock("node:child_process", async () => {
+  const { promisify } = await import("node:util");
+  const execFn = vi.fn((cmd: string, opts: any, cb: any) => {
+    const callback = typeof opts === "function" ? opts : cb;
+    if (typeof callback === "function") callback(null, "", "");
+  }) as any;
+  execFn[promisify.custom] = (cmd: string, opts?: any) =>
+    new Promise((resolve) => {
+      execFn(cmd, opts, (_err: any, stdout: string, stderr: string) => resolve({ stdout, stderr }));
+    });
+  return { exec: execFn };
+});
+
 // Mock @fusion/core before importing the module under test
 vi.mock("@fusion/core", () => {
   const COLUMNS = ["triage", "specified", "in-progress", "review", "done"];
@@ -45,7 +58,7 @@ vi.mock("@fusion/core", () => {
 });
 
 // Mock @fusion/engine
-vi.mock("@fusion/engine", () => ({ aiMergeTask: vi.fn() }));
+vi.mock("@fusion/engine", () => ({ aiMergeTask: vi.fn(), listBranchRecoveryCandidates: vi.fn() }));
 
 // Mock @fusion/dashboard
 vi.mock("@fusion/dashboard", () => ({
@@ -83,7 +96,8 @@ vi.mock("../../project-context.js", () => ({
 import { createInterface } from "node:readline/promises";
 import { TaskStore, CentralCore } from "@fusion/core";
 import { watchFile, unwatchFile, statSync, existsSync, readFileSync } from "node:fs";
-import { runTaskShow, runTaskCreate, runTaskList, runTaskDuplicate, runTaskRefine, runTaskDelete, runTaskRetry, runTaskLogs, runTaskComment, runTaskComments, runTaskPrCreate, runTaskPlan, runTaskMove, runTaskAttach, runTaskPause, runTaskUnpause, runTaskArchive, runTaskUnarchive, runTaskSteer, runTaskSetNode, runTaskClearNode, runTaskImportFromGitHub, runTaskImportGitHubInteractive, runTaskUpdate, runTaskLog, runTaskMerge, type LogsOptions } from "../task.js";
+import { exec } from "node:child_process";
+import { runTaskShow, runTaskCreate, runTaskList, runTaskDuplicate, runTaskRefine, runTaskDelete, runTaskRetry, runTaskBranchRecovery, runTaskLogs, runTaskComment, runTaskComments, runTaskPrCreate, runTaskPlan, runTaskMove, runTaskAttach, runTaskPause, runTaskUnpause, runTaskArchive, runTaskUnarchive, runTaskSteer, runTaskSetNode, runTaskClearNode, runTaskImportFromGitHub, runTaskImportGitHubInteractive, runTaskUpdate, runTaskLog, runTaskMerge, type LogsOptions } from "../task.js";
 import {
   getCurrentRepo,
   isGhAuthenticated,
@@ -93,7 +107,9 @@ import {
 import { GitHubClient } from "@fusion/dashboard";
 import { createSession, submitResponse } from "@fusion/dashboard/planning";
 import { resolveProject } from "../../project-context.js";
-import { aiMergeTask } from "@fusion/engine";
+import { aiMergeTask, listBranchRecoveryCandidates } from "@fusion/engine";
+
+const mockedExec = vi.mocked(exec);
 
 function makeTask(overrides: Record<string, unknown> = {}) {
   return {
@@ -2049,6 +2065,153 @@ describe("runTaskRetry", () => {
     expect(successLine).toBeDefined();
     expect(successLine![0]).toContain("FN-001");
     expect(successLine![0]).toContain("todo");
+  });
+});
+
+describe("runTaskBranchRecovery", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+  let mockGetTask: ReturnType<typeof vi.fn>;
+  let mockUpdateTask: ReturnType<typeof vi.fn>;
+  let mockLogEntry: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? 0}`);
+    });
+    mockGetTask = vi.fn().mockResolvedValue(makeTask({
+      id: "FN-001",
+      branch: "fusion/fn-001",
+      worktree: "/tmp/fn-001",
+      executionStartBranch: "main",
+      status: "failed",
+      column: "todo",
+    }));
+    mockUpdateTask = vi.fn().mockResolvedValue(undefined);
+    mockLogEntry = vi.fn().mockResolvedValue(undefined);
+    mockedExec.mockReset();
+    vi.mocked(listBranchRecoveryCandidates).mockReset();
+
+    (TaskStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      init: vi.fn(),
+      getTask: mockGetTask,
+      updateTask: mockUpdateTask,
+      logEntry: mockLogEntry,
+    }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("prints branch recovery candidates", async () => {
+    vi.mocked(listBranchRecoveryCandidates).mockResolvedValue([
+      {
+        branchName: "fusion/fn-001",
+        tipSha: "abc123def456",
+        worktreePath: "/tmp/fn-001",
+        strandedCommits: [{ sha: "aaa111", subject: "Canonical fix" }],
+        isCanonical: true,
+      },
+      {
+        branchName: "fusion/fn-001-2",
+        tipSha: "bbb222ccc333",
+        worktreePath: "/tmp/fn-001-2",
+        strandedCommits: [{ sha: "bbb222", subject: "Sibling patch" }],
+        isCanonical: false,
+      },
+    ]);
+
+    await runTaskBranchRecovery("FN-001");
+
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("Branch recovery candidates for FN-001");
+    expect(output).toContain("fusion/fn-001 (canonical)");
+    expect(output).toContain("abc123def456");
+    expect(output).toContain("Sibling patch");
+  });
+
+  it("reclaims the selected branch for the next run", async () => {
+    vi.mocked(listBranchRecoveryCandidates).mockResolvedValue([
+      {
+        branchName: "fusion/fn-001",
+        tipSha: "abc123def456",
+        worktreePath: "/tmp/fn-001",
+        strandedCommits: [],
+        isCanonical: true,
+      },
+      {
+        branchName: "fusion/fn-001-2",
+        tipSha: "bbb222ccc333",
+        worktreePath: "/tmp/fn-001-2",
+        strandedCommits: [{ sha: "bbb222", subject: "Sibling patch" }],
+        isCanonical: false,
+      },
+    ]);
+
+    await runTaskBranchRecovery("FN-001", { reclaim: "fusion/fn-001-2" });
+
+    expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", {
+      branch: "fusion/fn-001-2",
+      worktree: "/tmp/fn-001-2",
+      status: null,
+      error: null,
+    });
+    expect(mockLogEntry).toHaveBeenCalledWith(
+      "FN-001",
+      "Branch recovery: reclaimed fusion/fn-001-2",
+      "bbb222ccc333 @ /tmp/fn-001-2",
+    );
+  });
+
+  it("refuses discard without explicit confirmation", async () => {
+    vi.mocked(listBranchRecoveryCandidates).mockResolvedValue([
+      {
+        branchName: "fusion/fn-001-2",
+        tipSha: "bbb222ccc333",
+        worktreePath: "/tmp/fn-001-2",
+        strandedCommits: [{ sha: "bbb222", subject: "Sibling patch" }],
+        isCanonical: false,
+      },
+    ]);
+
+    await expect(runTaskBranchRecovery("FN-001", { discard: "fusion/fn-001-2" })).rejects.toThrow("process.exit:1");
+    expect(errorSpy).toHaveBeenCalledWith("Error: Refusing to discard branch recovery state without --yes");
+    expect(mockedExec).not.toHaveBeenCalled();
+  });
+
+  it("discards the selected branch and worktree when confirmed", async () => {
+    vi.mocked(listBranchRecoveryCandidates).mockResolvedValue([
+      {
+        branchName: "fusion/fn-001-2",
+        tipSha: "bbb222ccc333",
+        worktreePath: "/tmp/fn-001-2",
+        strandedCommits: [{ sha: "bbb222", subject: "Sibling patch" }],
+        isCanonical: false,
+      },
+    ]);
+
+    await runTaskBranchRecovery("FN-001", { discard: "fusion/fn-001-2", yes: true });
+
+    expect(mockedExec).toHaveBeenCalledWith(
+      "git worktree remove '/tmp/fn-001-2' --force",
+      expect.objectContaining({ cwd: expect.any(String), encoding: "utf-8" }),
+      expect.any(Function),
+    );
+    expect(mockedExec).toHaveBeenCalledWith(
+      "git branch -D 'fusion/fn-001-2'",
+      expect.objectContaining({ cwd: expect.any(String), encoding: "utf-8" }),
+      expect.any(Function),
+    );
+    expect(mockUpdateTask).toHaveBeenCalledWith("FN-001", { status: null, error: null });
+    expect(mockLogEntry).toHaveBeenCalledWith(
+      "FN-001",
+      "Branch recovery: discarded fusion/fn-001-2",
+      "bbb222ccc333 @ /tmp/fn-001-2",
+    );
   });
 });
 

@@ -117,6 +117,14 @@ fn task archive FN-001
 fn task unarchive FN-001
 ```
 
+### Lifecycle invariants
+
+**Paused-state normalization on reopen:** When a task is moved from `in-progress`, `in-review`, or `done` back to `todo` or `triage` (retry/requeue), Fusion clears `task.paused` and `task.pausedByAgentId` to prevent contradictory `todo + paused` or `in-progress + paused` states. A paused task in `todo` is excluded from scheduler dispatch.
+
+**Paused-state normalization on explicit completion:** When an agent calls `fn_task_done` on a paused task, Fusion clears `task.paused` and `task.pausedByAgentId` regardless of the task's column (`in-progress` or `todo`). `task.paused` prevents new work from starting, but does not block an agent from completing in-flight work and transitioning the task to `done`. The scheduler respects `globalPause` independently.
+
+**Global pause vs task pause:** `settings.globalPause` gates new scheduler dispatches and is checked by the `fn_task_done` handoff logic. Task-level `task.paused` is a per-task gate that blocks execution start. They are independent — a task can be paused individually even when `globalPause` is `false`, and clearing `task.paused` does not affect `globalPause`.
+
 ### Branch metadata semantics
 
 Task cards on the board only surface branch metadata when it is non-default/user-meaningful: they hide the conventional auto-generated working branch (`fusion/<task-id>` and suffixed variants) and hide the default merge target (`main`), while still showing custom working branches and non-default merge targets.
@@ -134,6 +142,30 @@ Task branch fields are intentionally distinct:
 - `task.executionStartBranch` — internal execution provenance used when scheduler/executor temporarily start from a dependency branch; this is transient and cleared during execution resets/recovery.
 
 `PrInfo.baseBranch` is unchanged and continues to represent pull-request target branch metadata.
+
+### Loud branch-conflict recovery
+
+When the executor tries to allocate the canonical task branch (`fusion/<task-id>`) and finds that branch already checked out in another live worktree, Fusion now **fails loudly by default** instead of silently forking work onto `fusion/<task-id>-2`, `-3`, and similar siblings.
+
+Default behavior:
+- task moves from `in-progress` back to `todo`
+- task `status` becomes `"failed"`
+- task keeps recovery context on the canonical branch/worktree metadata
+- task lifecycle logs and agent logs include the existing tip SHA plus stranded commit subjects
+
+Recovery is explicit:
+
+```bash
+fn task branch-recovery FN-001
+fn task branch-recovery FN-001 --reclaim fusion/fn-001
+fn task branch-recovery FN-001 --discard fusion/fn-001-2 --yes
+```
+
+- **Inspect** lists the canonical branch and any sibling branches with tip SHA, attached worktree path, and stranded commits.
+- **Reclaim** updates task metadata so the next executor run resumes from the chosen branch/worktree instead of allocating a fresh sibling.
+- **Discard** removes a selected stranded branch/worktree only when `--yes` is supplied.
+
+If you must preserve the old silent suffixing flow for a legacy workflow, set project setting `executorAllowSiblingBranchRename=true`. This is discouraged because it can hide earlier commits behind suffixed sibling branches and make recovery less obvious.
 
 ### Dependency reconciliation guidance
 

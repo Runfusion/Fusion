@@ -10,6 +10,7 @@ import { reviewStep as mockedReviewStepFn } from "../reviewer.js";
 import { execSync } from "node:child_process";
 import { findWorktreeUser, aiMergeTask } from "../merger.js";
 import { WorktreePool } from "../worktree-pool.js";
+import { BranchConflictError } from "../branch-conflicts.js";
 import { generateWorktreeName, slugify } from "../worktree-names.js";
 import type { Task, TaskDetail } from "@fusion/core";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
@@ -780,39 +781,49 @@ describe("TaskExecutor worktree recovery", () => {
     );
   });
 
-  it("recovers from worktree conflict and retries", async () => {
+  it("records recovery context when handling a branch conflict", async () => {
     const store = createMockStore();
-    let callCount = 0;
+    const onError = vi.fn();
+    const executor = new TaskExecutor(store, "/tmp/test", { onError });
 
-    // First call fails with conflict, second succeeds
-    mockedExecSync.mockImplementation((cmd: string | string[]) => {
-      const command = typeof cmd === "string" ? cmd : cmd[0];
-      if (command.includes("git worktree add") && callCount++ === 0) {
-        const error: any = new Error(
-          "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
-        );
-        error.stderr = Buffer.from(
-          "fatal: 'fusion/fn-050' is already used by worktree at '/tmp/test/.worktrees/green-sage'",
-        );
-        throw error;
-      }
-      return Buffer.from("");
-    });
-
-    const executor = new TaskExecutor(store, "/tmp/test");
-    await executor.execute(makeTask());
-
-    // Should have logged cleanup and retry
-    expect(store.logEntry).toHaveBeenCalledWith(
-      "FN-050",
-      expect.stringContaining("Cleaned up conflicting worktree, retrying"),
-      "/tmp/test/.worktrees/swift-falcon",
+    await (executor as any).handleBranchConflict(
+      makeTask(),
+      new BranchConflictError({
+        branchName: "fusion/fn-050",
+        conflictingWorktreePath: "/tmp/test/.worktrees/green-sage",
+        existingTipSha: "abc123def456",
+        strandedCommits: [
+          { sha: "aaa111", subject: "Preserve prior fix" },
+          { sha: "bbb222", subject: "Add regression coverage" },
+        ],
+        startPoint: "HEAD",
+        recommendedAction: "Reclaim the existing task branch/worktree or explicitly discard prior work before retrying.",
+      }),
     );
-    // Should eventually succeed
+
     expect(store.updateTask).toHaveBeenCalledWith(
       "FN-050",
-      expect.objectContaining({ worktree: expect.any(String) }),
+      expect.objectContaining({
+        status: "failed",
+        branch: "fusion/fn-050",
+        worktree: "/tmp/test/.worktrees/green-sage",
+      }),
     );
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "todo", { preserveProgress: true });
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-050",
+      expect.stringContaining("Existing tip: abc123def456"),
+      undefined,
+      undefined,
+    );
+    expect(store.appendAgentLog).toHaveBeenCalledWith(
+      "FN-050",
+      "Branch conflict recovery required",
+      "tool_error",
+      expect.stringContaining("stranded=aaa111 Preserve prior fix"),
+      "executor",
+    );
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-050" }), expect.any(BranchConflictError));
   });
 
   it("falls back to default base and clears task.executionStartBranch when the configured base ref is missing (FN-2165)", async () => {
@@ -1060,8 +1071,16 @@ describe("TaskExecutor worktree recovery", () => {
     );
   });
 
-  it("generates new worktree name when conflicting worktree belongs to active task", async () => {
+  it("generates new worktree name when conflicting worktree belongs to active task in legacy rename mode", async () => {
     const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      executorAllowSiblingBranchRename: true,
+    });
     store.listTasks.mockResolvedValue([
       {
         id: "FN-049",
@@ -1079,6 +1098,7 @@ describe("TaskExecutor worktree recovery", () => {
     ]);
 
     mockedFindWorktreeUser.mockResolvedValue("FN-049");
+    mockedExistsSync.mockImplementation((path) => path === "/tmp/test/.worktrees/green-sage");
 
     let callCount = 0;
     mockedExecSync.mockImplementation((cmd: string | string[]) => {
@@ -1734,6 +1754,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       "/tmp/test/.worktrees/idle-wt",
       "fusion/fn-064",
       "fusion/fn-063",
+      { allowSiblingBranchRename: false, repoDir: "/tmp/test" },
     );
   });
 
@@ -1766,6 +1787,7 @@ describe("TaskExecutor dependency-based worktree creation", () => {
       "/tmp/test/.worktrees/idle-wt",
       "fusion/fn-065",
       undefined,
+      { allowSiblingBranchRename: false, repoDir: "/tmp/test" },
     );
   });
 
@@ -1994,11 +2016,9 @@ describe("TaskExecutor worktree pool integration", () => {
   it("falls through to fresh worktree when pool prepareForTask throws", async () => {
     const pool = new WorktreePool();
     pool.release("/tmp/test/.worktrees/bad-wt");
-    // Pool path must exist on disk for acquire() to return it
     mockedExistsSync.mockImplementation(
       (p) => p === "/tmp/test/.worktrees/bad-wt",
     );
-    // Make prepareForTask throw
     vi.spyOn(pool, "prepareForTask").mockImplementation(() => {
       throw new Error("branch conflict unrecoverable");
     });
@@ -2017,21 +2037,57 @@ describe("TaskExecutor worktree pool integration", () => {
     const executor = new TaskExecutor(store, "/tmp/test", { pool });
     await executor.execute(makeTask());
 
-    // Should have released the bad worktree back to pool
     expect(releaseSpy).toHaveBeenCalledWith("/tmp/test/.worktrees/bad-wt");
 
-    // Should have fallen through to fresh worktree creation
     const worktreeAddCalls = mockedExecSync.mock.calls.filter(
       (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree add"),
     );
     expect(worktreeAddCalls.length).toBeGreaterThan(0);
 
-    // Should log the pool failure
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-020",
       expect.stringContaining("Pool worktree preparation failed"),
       undefined,
       expect.objectContaining({ agentId: "executor" }),
+    );
+  });
+
+  it("does not fall through to a fresh worktree when pooled preparation hits a typed branch conflict", async () => {
+    const pool = new WorktreePool();
+    pool.release("/tmp/test/.worktrees/warm-wt");
+    mockedExistsSync.mockImplementation((p) => p === "/tmp/test/.worktrees/warm-wt");
+    vi.spyOn(pool, "prepareForTask").mockRejectedValue(
+      new BranchConflictError({
+        branchName: "fusion/fn-020",
+        conflictingWorktreePath: "/tmp/test/.worktrees/existing-fn-020",
+        existingTipSha: "abc123def456",
+        strandedCommits: [{ sha: "aaa111", subject: "Preserve prior fix" }],
+        startPoint: "main",
+        recommendedAction: "Reclaim the existing task branch/worktree or explicitly discard prior work before retrying.",
+      }),
+    );
+
+    const store = createMockStore();
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      recycleWorktrees: true,
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test", { pool });
+    await executor.execute(makeTask("FN-020"));
+
+    const worktreeAddCalls = mockedExecSync.mock.calls.filter(
+      (c) => typeof c[0] === "string" && (c[0] as string).includes("worktree add"),
+    );
+    expect(worktreeAddCalls).toHaveLength(0);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-020", "todo", { preserveProgress: true });
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-020",
+      expect.objectContaining({ branch: "fusion/fn-020", worktree: "/tmp/test/.worktrees/existing-fn-020" }),
     );
   });
 });

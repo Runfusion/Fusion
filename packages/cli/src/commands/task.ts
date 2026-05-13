@@ -1,5 +1,7 @@
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 import { TaskStore, COLUMNS, COLUMN_LABELS, CentralCore, type Settings, type Column, type StepStatus, type AgentLogType, type AgentLogEntry } from "@fusion/core";
-import { aiMergeTask } from "@fusion/engine";
+import { aiMergeTask, listBranchRecoveryCandidates, type BranchRecoveryCandidate } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 import { createSession, submitResponse, RateLimitError, SessionNotFoundError, InvalidSessionStateError } from "@fusion/dashboard/planning";
@@ -16,6 +18,7 @@ import {
 import { resolveProject, type ProjectContext } from "../project-context.js";
 import { findNodeByNameOrId } from "./node.js";
 
+const execAsync = promisify(exec);
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
 
 function getGitHubIssueUrl(sourceMetadata: unknown): string | undefined {
@@ -159,6 +162,70 @@ async function getProjectContext(projectName?: string): Promise<ProjectContext |
 
 async function getProjectPath(projectName?: string): Promise<string> {
   return (await getCommandContext(projectName)).projectPath;
+}
+
+function quoteShellArg(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function getCanonicalTaskBranch(taskId: string): string {
+  return `fusion/${taskId.toLowerCase()}`;
+}
+
+function formatRecoveryCandidate(candidate: BranchRecoveryCandidate): string[] {
+  const lines = [
+    `  • ${candidate.branchName}${candidate.isCanonical ? " (canonical)" : ""}`,
+    `    tip: ${candidate.tipSha}`,
+    `    worktree: ${candidate.worktreePath ?? "(not attached to a worktree)"}`,
+  ];
+  if (candidate.strandedCommits.length === 0) {
+    lines.push("    stranded commits: none");
+  } else {
+    lines.push("    stranded commits:");
+    for (const commit of candidate.strandedCommits) {
+      lines.push(`      - ${commit.sha.slice(0, 12)} ${commit.subject}`);
+    }
+  }
+  return lines;
+}
+
+async function runGit(projectPath: string, command: string): Promise<string> {
+  const { stdout } = await execAsync(command, { cwd: projectPath, encoding: "utf-8" });
+  return stdout.trim();
+}
+
+async function resolveBranchRecoveryCandidates(id: string, projectName?: string): Promise<{
+  store: TaskStore;
+  projectPath: string;
+  task: Awaited<ReturnType<TaskStore["getTask"]>>;
+  canonicalBranch: string;
+  candidates: BranchRecoveryCandidate[];
+}> {
+  const context = await getCommandContext(projectName);
+  const task = await context.store.getTask(id);
+  const canonicalBranch = getCanonicalTaskBranch(task.id);
+  const candidates = await listBranchRecoveryCandidates({
+    repoDir: context.projectPath,
+    branchName: canonicalBranch,
+    startPoint: task.executionStartBranch ?? undefined,
+  });
+  return {
+    store: context.store,
+    projectPath: context.projectPath,
+    task,
+    canonicalBranch,
+    candidates,
+  };
+}
+
+async function resolveRecoveryCandidateOrExit(id: string, branch: string, projectName?: string) {
+  const resolved = await resolveBranchRecoveryCandidates(id, projectName);
+  const candidate = resolved.candidates.find((entry) => entry.branchName === branch);
+  if (!candidate) {
+    console.error(`Error: Branch recovery candidate not found for ${id}: ${branch}`);
+    process.exit(1);
+  }
+  return { ...resolved, candidate };
 }
 
 async function resolveNodeByNameOrId(nodeNameOrId: string): Promise<{ id: string; name?: string }> {
@@ -827,6 +894,95 @@ export async function runTaskRetry(id: string, projectName?: string) {
   
   console.log();
   console.log(`  ✓ Retried ${id} → todo (failure state cleared)`);
+  console.log();
+}
+
+export async function runTaskBranchRecovery(
+  id: string,
+  options: { reclaim?: string; discard?: string; yes?: boolean } = {},
+  projectName?: string,
+) {
+  if (options.reclaim && options.discard) {
+    console.error("Error: --reclaim and --discard are mutually exclusive");
+    process.exit(1);
+  }
+
+  if (options.reclaim) {
+    const { store, task, candidate } = await resolveRecoveryCandidateOrExit(id, options.reclaim, projectName);
+    await store.updateTask(task.id, {
+      branch: candidate.branchName,
+      worktree: candidate.worktreePath,
+      status: null,
+      error: null,
+    });
+    await store.logEntry(
+      task.id,
+      `Branch recovery: reclaimed ${candidate.branchName}`,
+      `${candidate.tipSha}${candidate.worktreePath ? ` @ ${candidate.worktreePath}` : ""}`,
+    );
+
+    console.log();
+    console.log(`  ✓ Reclaimed ${candidate.branchName} for ${task.id}`);
+    console.log(`    Tip: ${candidate.tipSha}`);
+    console.log(`    Worktree: ${candidate.worktreePath ?? "(none)"}`);
+    console.log();
+    return;
+  }
+
+  if (options.discard) {
+    if (!options.yes) {
+      console.error("Error: Refusing to discard branch recovery state without --yes");
+      process.exit(1);
+    }
+
+    const { store, projectPath, task, candidate } = await resolveRecoveryCandidateOrExit(id, options.discard, projectName);
+    if (candidate.worktreePath) {
+      await runGit(projectPath, `git worktree remove ${quoteShellArg(candidate.worktreePath)} --force`);
+    }
+    await runGit(projectPath, `git branch -D ${quoteShellArg(candidate.branchName)}`);
+
+    const patch: Record<string, unknown> = { status: null, error: null };
+    if (task.branch === candidate.branchName) {
+      patch.branch = null;
+    }
+    if (task.worktree && task.worktree === candidate.worktreePath) {
+      patch.worktree = null;
+    }
+    await store.updateTask(task.id, patch);
+    await store.logEntry(
+      task.id,
+      `Branch recovery: discarded ${candidate.branchName}`,
+      `${candidate.tipSha}${candidate.worktreePath ? ` @ ${candidate.worktreePath}` : ""}`,
+    );
+
+    console.log();
+    console.log(`  ✓ Discarded ${candidate.branchName} for ${task.id}`);
+    if (candidate.worktreePath) {
+      console.log(`    Removed worktree: ${candidate.worktreePath}`);
+    }
+    console.log(`    Deleted branch tip: ${candidate.tipSha}`);
+    console.log();
+    return;
+  }
+
+  const { task, candidates, canonicalBranch } = await resolveBranchRecoveryCandidates(id, projectName);
+
+  console.log();
+  console.log(`  Branch recovery candidates for ${task.id}`);
+  console.log(`    Canonical branch: ${canonicalBranch}`);
+  console.log(`    Current task branch: ${task.branch ?? "(none)"}`);
+  console.log(`    Current task worktree: ${task.worktree ?? "(none)"}`);
+  if (candidates.length === 0) {
+    console.log("    No matching canonical or sibling branches were found.");
+    console.log();
+    return;
+  }
+
+  for (const candidate of candidates) {
+    for (const line of formatRecoveryCandidate(candidate)) {
+      console.log(line);
+    }
+  }
   console.log();
 }
 

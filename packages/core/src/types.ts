@@ -2081,6 +2081,10 @@ export interface ProjectSettings {
    *  of being deleted. New tasks acquire a warm worktree from the pool,
    *  preserving build caches (node_modules, target/, dist/). Default: false. */
   recycleWorktrees?: boolean;
+  /** When true, restores the legacy behavior of silently creating sibling
+   *  branches like `fusion/FN-123-2` when the canonical task branch is already
+   *  checked out elsewhere. Default: false. */
+  executorAllowSiblingBranchRename?: boolean;
   /** Controls how worktree directory names are generated when creating fresh worktrees.
    *  Only applies when recycleWorktrees is NOT enabled (pooled worktrees retain their existing names).
    *  - "random": Human-friendly adjective-noun names (e.g., swift-falcon) — default

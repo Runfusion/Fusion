@@ -73,6 +73,12 @@ describe("settings key parity", () => {
     expect(DEFAULT_PROJECT_SETTINGS.heartbeatMultiplier).toBe(1);
   });
 
+  it("defaults sibling branch rename escape hatch to disabled", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.executorAllowSiblingBranchRename).toBe(false);
+    expect(isProjectSettingsKey("executorAllowSiblingBranchRename")).toBe(true);
+    expect(isGlobalSettingsKey("executorAllowSiblingBranchRename")).toBe(false);
+  });
+
   it("defaults completionDocumentationMode to off", () => {
     expect(DEFAULT_PROJECT_SETTINGS.completionDocumentationMode).toBe("off");
   });

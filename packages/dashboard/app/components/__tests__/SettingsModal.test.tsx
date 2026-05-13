@@ -183,6 +183,7 @@ const defaultSettings = {
   verificationFixRetries: 2,
   workflowRevisionForkOnScopeMismatch: true,
   recycleWorktrees: false,
+  executorAllowSiblingBranchRename: false,
   worktreeNaming: "random",
   includeTaskIdInCommit: true,
   worktreeInitCommand: "",
@@ -258,6 +259,27 @@ describe("SettingsModal", () => {
 
     await userEvent.selectOptions(screen.getByLabelText("Auto-completion mode"), "pull-request");
     expect(screen.queryByLabelText("Direct merge commit routing")).not.toBeInTheDocument();
+  });
+
+  it("persists the legacy sibling branch rename escape hatch in worktree settings", async () => {
+    renderModal();
+    await waitForSettingsModalReady();
+
+    await userEvent.click(screen.getByRole("button", { name: /^Worktrees$/ }));
+
+    const checkbox = screen.getByRole("checkbox", { name: "Allow silent sibling branch rename during executor conflicts" });
+    expect(checkbox).not.toBeChecked();
+
+    await userEvent.click(checkbox);
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(mockUpdateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ executorAllowSiblingBranchRename: true }),
+        undefined,
+      );
+    });
+    expect(screen.getByText(/restores the legacy behavior/i)).toBeInTheDocument();
   });
 
   beforeEach(() => {

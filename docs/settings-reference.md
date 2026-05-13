@@ -209,6 +209,7 @@ Override precedence for direct merges is:
 | `testCommand` | `string` | `undefined` | Merge-time test command (hard gate). When unset, Fusion auto-detects from lockfile. |
 | `buildCommand` | `string` | `undefined` | Merge-time build command (hard gate). |
 | `recycleWorktrees` | `boolean` | `false` | Reuse worktrees from a pool for faster startup. |
+| `executorAllowSiblingBranchRename` | `boolean` | `false` | Escape hatch for legacy branch-collision behavior. When `false` (default), executor branch-name collisions fail loudly, leave the task in `todo` with `status: "failed"`, and surface stranded commits for explicit recovery. When `true`, Fusion restores the old silent sibling-branch rename flow (`fusion/<task-id>-2`, `-3`, …), which is discouraged because it can hide prior work behind suffixed branches. |
 | `worktreeNaming` | `"random" \| "task-id" \| "task-title"` | `"random"` | Naming mode for new worktree directories. |
 | `taskPrefix` | `string` | `"FN"` | Prefix used for newly generated task IDs. |
 | `includeTaskIdInCommit` | `boolean` | `true` | Include task ID as commit scope in generated commits. |

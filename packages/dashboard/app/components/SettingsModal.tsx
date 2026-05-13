@@ -394,6 +394,7 @@ export function SettingsModal({
     autoMerge: true,
     mergeStrategy: "direct",
     recycleWorktrees: false,
+    executorAllowSiblingBranchRename: false,
     worktreeNaming: "random",
     includeTaskIdInCommit: true,
     worktreeInitCommand: "",
@@ -3484,6 +3485,22 @@ export function SettingsModal({
                 Recycle worktrees
               </label>
               <small>When enabled, completed task worktrees are returned to an idle pool instead of being deleted, preserving build caches for faster startup</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="executorAllowSiblingBranchRename" className="checkbox-label">
+                <input
+                  id="executorAllowSiblingBranchRename"
+                  type="checkbox"
+                  checked={form.executorAllowSiblingBranchRename === true}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, executorAllowSiblingBranchRename: e.target.checked }))
+                  }
+                />
+                Allow silent sibling branch rename during executor conflicts
+              </label>
+              <small>
+                Discouraged. This restores the legacy behavior where a live <code>fusion/&lt;task-id&gt;</code> branch collision silently forks work onto sibling branches like <code>-2</code> and can hide prior commits from the default recovery flow.
+              </small>
             </div>
             <div className="form-group">
               <label htmlFor="worktreeNaming">Worktree Naming Style</label>

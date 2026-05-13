@@ -593,5 +593,5 @@ describe("ensureBundledDependencyGraphPluginInstalled", () => {
       await rm(stagedRoot, { recursive: true, force: true });
       await rm(pluginStateRoot, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });

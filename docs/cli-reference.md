@@ -459,6 +459,20 @@ fn task pause FN-001
 fn task unpause FN-001
 ```
 
+### Branch recovery
+
+```bash
+fn task branch-recovery FN-001
+fn task branch-recovery FN-001 --reclaim fusion/fn-001
+fn task branch-recovery FN-001 --discard fusion/fn-001-2 --yes
+```
+
+Use `fn task branch-recovery` when executor branch allocation fails because the canonical task branch is already checked out elsewhere.
+
+- No flags: inspect canonical + sibling recovery candidates, including tip SHA, attached worktree path, and stranded commits.
+- `--reclaim <branch>`: point the task back at an existing canonical/sibling branch so the next executor run resumes from that branch.
+- `--discard <branch> --yes`: explicitly delete a stranded branch/worktree. `--yes` is required for destructive cleanup.
+
 ### Node routing controls
 
 ```bash

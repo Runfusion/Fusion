@@ -322,113 +322,115 @@ export function ResearchView({ projectId, addToast, onOpenSettings, readinessVer
           {loading && <p data-testid="research-state-loading">Loading research runs…</p>}
           {!loading && error && <p data-testid="research-state-error">{error}</p>}
           {!loading && !error && runs.length === 0 && <p data-testid="research-state-empty">No research runs yet</p>}
-          {selectedRun && (
-            <div>
-              <div className="research-view__status-row">
-                <span className={statusDotClass} />
-                <strong>{statusLabel}</strong>
-              </div>
-              <h3 className="research-view__run-title">{selectedRun.title}</h3>
-              <p className="research-view__run-query">{selectedRun.query}</p>
-              <p className="research-view__run-summary" data-testid="research-state-results">{selectedRun.results?.summary ?? "No summary yet."}</p>
-              <div className="research-view__actions">
-                <button
-                  className="btn"
-                  type="button"
-                  title={!runActionState.cancelable ? runActionState.blockingReason : undefined}
-                  disabled={actionLoading === "cancel" || actionLoading === "retry" || !runActionState.cancelable}
-                  onClick={() => void runAction("cancel", () => cancelRun(selectedRun.id), "Run cancelled")}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="btn"
-                  type="button"
-                  title={!runActionState.retryable ? runActionState.blockingReason : undefined}
-                  disabled={actionLoading === "cancel" || actionLoading === "retry" || !runActionState.retryable}
-                  onClick={() => void runAction("retry", () => retryRun(selectedRun.id), "Run retried")}
-                >
-                  Retry
-                </button>
-                {supportedExportFormats.includes("markdown") && <button className="btn" type="button" disabled={actionLoading === "export-markdown"} onClick={() => void handleExport("markdown")}>Export MD</button>}
-                {supportedExportFormats.includes("json") && <button className="btn" type="button" disabled={actionLoading === "export-json"} onClick={() => void handleExport("json")}>Export JSON</button>}
-                {supportedExportFormats.includes("html") && <button className="btn" type="button" disabled={actionLoading === "export-html"} onClick={() => void handleExport("html")}>Export HTML</button>}
-              </div>
-              {selectedRun.error && <p className="research-view__error">{selectedRun.error}</p>}
-              {uiError && (
-                <div className="form-error" role="alert">
-                  <p>{uiError.message}</p>
-                  {uiError.setupHint && <p>{uiError.setupHint}</p>}
-                  {uiError.code === "MISSING_CREDENTIALS" && (
-                    <button className="btn btn-sm" type="button" onClick={() => onOpenSettings?.("authentication")}>
-                      Open Authentication Settings
-                    </button>
-                  )}
-                  {uiError.code === "FEATURE_DISABLED" && (
-                    <button className="btn btn-sm" type="button" onClick={() => onOpenSettings?.("research-project")}>
-                      Open Research Settings
-                    </button>
-                  )}
+          <div className="research-view__reader-content">
+            {selectedRun && (
+              <div className="research-view__run-detail">
+                <div className="research-view__status-row">
+                  <span className={statusDotClass} />
+                  <strong>{statusLabel}</strong>
                 </div>
-              )}
-              {runActionState.blockingReason && (
-                <p className="research-view__run-query">{runActionState.blockingReason}</p>
-              )}
-              {Array.isArray(selectedRun.results?.findings) && selectedRun.results.findings.length > 0 && (
-                <div className="research-view__findings">
-                  {selectedRun.results.findings.map((finding, index) => {
-                    const findingRecord = finding as { id?: string };
-                    const findingId = findingRecord.id?.trim() || `finding-${index + 1}`;
-                    return (
-                      <article key={findingId} className="research-view__finding card">
-                        <h4>{finding.heading}</h4>
-                        <p>{finding.content}</p>
-                        <div className="research-view__actions research-view__finding-actions">
-                          <button
-                            className="btn btn-primary btn-sm"
-                            type="button"
-                            onClick={() => setModalState({ mode: "create", findingId })}
-                          >
-                            Create Task
-                          </button>
-                          <button
-                            className="btn btn-sm"
-                            type="button"
-                            onClick={() => setModalState({ mode: "enrich", findingId })}
-                          >
-                            Enrich Task
-                          </button>
-                        </div>
-                      </article>
-                    );
-                  })}
+                <h3 className="research-view__run-title">{selectedRun.title}</h3>
+                <p className="research-view__run-query">{selectedRun.query}</p>
+                <p className="research-view__run-summary" data-testid="research-state-results">{selectedRun.results?.summary ?? "No summary yet."}</p>
+                <div className="research-view__actions">
+                  <button
+                    className="btn"
+                    type="button"
+                    title={!runActionState.cancelable ? runActionState.blockingReason : undefined}
+                    disabled={actionLoading === "cancel" || actionLoading === "retry" || !runActionState.cancelable}
+                    onClick={() => void runAction("cancel", () => cancelRun(selectedRun.id), "Run cancelled")}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="btn"
+                    type="button"
+                    title={!runActionState.retryable ? runActionState.blockingReason : undefined}
+                    disabled={actionLoading === "cancel" || actionLoading === "retry" || !runActionState.retryable}
+                    onClick={() => void runAction("retry", () => retryRun(selectedRun.id), "Run retried")}
+                  >
+                    Retry
+                  </button>
+                  {supportedExportFormats.includes("markdown") && <button className="btn" type="button" disabled={actionLoading === "export-markdown"} onClick={() => void handleExport("markdown")}>Export MD</button>}
+                  {supportedExportFormats.includes("json") && <button className="btn" type="button" disabled={actionLoading === "export-json"} onClick={() => void handleExport("json")}>Export JSON</button>}
+                  {supportedExportFormats.includes("html") && <button className="btn" type="button" disabled={actionLoading === "export-html"} onClick={() => void handleExport("html")}>Export HTML</button>}
                 </div>
-              )}
-              {Array.isArray(selectedRun.results?.citations) && selectedRun.results!.citations!.length > 0 && (
-                <ul className="research-view__citations">
-                  {selectedRun.results!.citations!.map((citation) => (
-                    <li key={citation}><a href={citation} target="_blank" rel="noreferrer">{citation}</a></li>
-                  ))}
-                </ul>
-              )}
-              {selectedRun.events.length > 0 && (
-                <details>
-                  <summary>Run history</summary>
-                  <ul className="research-view__events">
-                    {selectedRun.events.map((event) => (
-                      <li key={event.id}>{event.message}</li>
+                {selectedRun.error && <p className="research-view__error">{selectedRun.error}</p>}
+                {uiError && (
+                  <div className="form-error" role="alert">
+                    <p>{uiError.message}</p>
+                    {uiError.setupHint && <p>{uiError.setupHint}</p>}
+                    {uiError.code === "MISSING_CREDENTIALS" && (
+                      <button className="btn btn-sm" type="button" onClick={() => onOpenSettings?.("authentication")}>
+                        Open Authentication Settings
+                      </button>
+                    )}
+                    {uiError.code === "FEATURE_DISABLED" && (
+                      <button className="btn btn-sm" type="button" onClick={() => onOpenSettings?.("research-project")}>
+                        Open Research Settings
+                      </button>
+                    )}
+                  </div>
+                )}
+                {runActionState.blockingReason && (
+                  <p className="research-view__run-query">{runActionState.blockingReason}</p>
+                )}
+                {Array.isArray(selectedRun.results?.findings) && selectedRun.results.findings.length > 0 && (
+                  <div className="research-view__findings">
+                    {selectedRun.results.findings.map((finding, index) => {
+                      const findingRecord = finding as { id?: string };
+                      const findingId = findingRecord.id?.trim() || `finding-${index + 1}`;
+                      return (
+                        <article key={findingId} className="research-view__finding card">
+                          <h4>{finding.heading}</h4>
+                          <p>{finding.content}</p>
+                          <div className="research-view__actions research-view__finding-actions">
+                            <button
+                              className="btn btn-primary btn-sm"
+                              type="button"
+                              onClick={() => setModalState({ mode: "create", findingId })}
+                            >
+                              Create Task
+                            </button>
+                            <button
+                              className="btn btn-sm"
+                              type="button"
+                              onClick={() => setModalState({ mode: "enrich", findingId })}
+                            >
+                              Enrich Task
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+                {Array.isArray(selectedRun.results?.citations) && selectedRun.results!.citations!.length > 0 && (
+                  <ul className="research-view__citations">
+                    {selectedRun.results!.citations!.map((citation) => (
+                      <li key={citation}><a href={citation} target="_blank" rel="noreferrer">{citation}</a></li>
                     ))}
                   </ul>
-                </details>
-              )}
-            </div>
-          )}
-          {!selectedRun && runs.length > 0 && <p>Select a run to view details.</p>}
+                )}
+                {selectedRun.events.length > 0 && (
+                  <details>
+                    <summary>Run history</summary>
+                    <ul className="research-view__events">
+                      {selectedRun.events.map((event) => (
+                        <li key={event.id}>{event.message}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            )}
+            {!selectedRun && runs.length > 0 && <p>Select a run to view details.</p>}
 
-          <div className="research-view__stats">
-            <div className="research-view__stat-card"><div className="research-view__stat-label">Running</div><div className="research-view__stat-value">{statusCounts.running}</div></div>
-            <div className="research-view__stat-card"><div className="research-view__stat-label">Completed</div><div className="research-view__stat-value">{statusCounts.completed}</div></div>
-            <div className="research-view__stat-card"><div className="research-view__stat-label">Failed</div><div className="research-view__stat-value">{statusCounts.failed}</div></div>
+            <div className="research-view__stats">
+              <div className="research-view__stat-card"><div className="research-view__stat-label">Running</div><div className="research-view__stat-value">{statusCounts.running}</div></div>
+              <div className="research-view__stat-card"><div className="research-view__stat-label">Completed</div><div className="research-view__stat-value">{statusCounts.completed}</div></div>
+              <div className="research-view__stat-card"><div className="research-view__stat-label">Failed</div><div className="research-view__stat-value">{statusCounts.failed}</div></div>
+            </div>
           </div>
         </div>
       </div>

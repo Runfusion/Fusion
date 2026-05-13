@@ -180,6 +180,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   testCommand: undefined,
   buildCommand: undefined,
   recycleWorktrees: false,
+  executorAllowSiblingBranchRename: false,
   worktreeNaming: "random",
   taskPrefix: "FN",
   includeTaskIdInCommit: true,

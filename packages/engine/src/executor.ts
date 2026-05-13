@@ -37,6 +37,7 @@ import { reviewStep, type ReviewVerdict } from "./reviewer.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@mariozechner/pi-coding-agent";
 import { PRIORITY_EXECUTE, type AgentSemaphore } from "./concurrency.js";
 import { getRegisteredWorktreePaths, isGitRepository, isRegisteredGitWorktree, isUsableTaskWorktree, type WorktreePool } from "./worktree-pool.js";
+import { BranchConflictError, isBranchConflictError, inspectBranchConflict } from "./branch-conflicts.js";
 import { AgentLogger } from "./agent-logger.js";
 import { executorLog, reviewerLog, formatError } from "./logger.js";
 import { TokenCapDetector } from "./token-cap-detector.js";
@@ -2482,6 +2483,7 @@ export class TaskExecutor {
 
       // Resolve the base branch — set by the scheduler when a dep is in-review
       const baseBranch = task.executionStartBranch || null;
+      const allowSiblingBranchRename = settings.executorAllowSiblingBranchRename === true;
 
       if (task.worktree && isResume && !await isUsableTaskWorktree(this.rootDir, worktreePath)) {
         const invalidWorktreePath = worktreePath;
@@ -2504,7 +2506,12 @@ export class TaskExecutor {
           const pooled = this.options.pool.acquire();
           if (pooled) {
             try {
-              const actualBranch = await this.options.pool.prepareForTask(pooled, branchName, baseBranch ?? undefined);
+              const actualBranch = await this.options.pool.prepareForTask(
+                pooled,
+                branchName,
+                baseBranch ?? undefined,
+                { allowSiblingBranchRename, repoDir: this.rootDir },
+              );
               worktreePath = pooled;
               acquiredFromPool = true;
               executorLog.log(`Acquired worktree from pool: ${pooled}`);
@@ -2547,10 +2554,11 @@ export class TaskExecutor {
                 }
               }
             } catch (poolErr: unknown) {
-              // Pool preparation failed — release the worktree back and fall through
-              // to fresh worktree creation
-              const poolErrMessage = poolErr instanceof Error ? poolErr.message : String(poolErr);
               this.options.pool.release(pooled);
+              if (isBranchConflictError(poolErr)) {
+                throw poolErr;
+              }
+              const poolErrMessage = poolErr instanceof Error ? poolErr.message : String(poolErr);
               executorLog.log(`Pool prepareForTask failed, falling through to fresh worktree: ${poolErrMessage}`);
               await this.store.logEntry(
                 task.id,
@@ -2564,7 +2572,7 @@ export class TaskExecutor {
 
         // Fall through to fresh worktree creation if pool had nothing
         if (!acquiredFromPool) {
-          const created = await this.createWorktree(branchName, worktreePath, task.id, baseBranch ?? undefined);
+          const created = await this.createWorktree(branchName, worktreePath, task.id, baseBranch ?? undefined, allowSiblingBranchRename);
           worktreePath = created.path;
           await this.store.updateTask(task.id, { worktree: created.path, branch: created.branch });
           // Audit trail: record worktree creation and branch creation (FN-1404)
@@ -2701,7 +2709,7 @@ export class TaskExecutor {
         }
       } else {
         // Directory exists at generated path but task has no worktree — create via normal flow
-        const created = await this.createWorktree(branchName, worktreePath, task.id);
+        const created = await this.createWorktree(branchName, worktreePath, task.id, undefined, allowSiblingBranchRename);
         worktreePath = created.path;
         await this.store.updateTask(task.id, { worktree: created.path, branch: created.branch });
         // Audit trail: record worktree creation and branch creation (FN-1404)
@@ -4099,6 +4107,9 @@ export class TaskExecutor {
             nextRecoveryAt: null,
           });
           // Fall through to terminal failure marking
+        } else if (isBranchConflictError(err)) {
+          await this.handleBranchConflict(task, err);
+          return;
         } else if (this.options.usageLimitPauser && isUsageLimitError(errorMessage)) {
           await this.options.usageLimitPauser.onUsageLimitHit("executor", task.id, errorMessage);
         } else if (isTransientError(errorMessage)) {
@@ -6216,11 +6227,73 @@ and show an appropriate message to the user.\`
    * @param startPoint - Optional base branch/commit for new branch
    * @returns The actual worktree path (may differ if recovery generated new name)
    */
+  private formatBranchConflictLifecycleLog(taskId: string, error: BranchConflictError): string {
+    const strandedSummary = error.strandedCommits.length > 0
+      ? error.strandedCommits.map((commit) => `${commit.sha.slice(0, 12)} ${commit.subject}`).join("; ")
+      : "none";
+    const recommendation = `Run \`fn task branch-recovery ${taskId}\` to inspect candidates, then reclaim the existing branch or discard prior work explicitly.`;
+    return [
+      `Branch conflict: ${error.branchName} is already checked out at ${error.conflictingWorktreePath}`,
+      `Existing tip: ${error.existingTipSha}`,
+      `Stranded commits since ${error.startPoint}: ${strandedSummary}`,
+      recommendation,
+    ].join("\n");
+  }
+
+  private formatBranchConflictAgentLog(taskId: string, error: BranchConflictError): string {
+    const lines = [
+      `branch=${error.branchName}`,
+      `worktree=${error.conflictingWorktreePath}`,
+      `existingTipSha=${error.existingTipSha}`,
+      `startPoint=${error.startPoint}`,
+    ];
+    if (error.strandedCommits.length > 0) {
+      lines.push(
+        ...error.strandedCommits.map((commit) => `stranded=${commit.sha.slice(0, 12)} ${commit.subject}`),
+      );
+    } else {
+      lines.push("stranded=none");
+    }
+    lines.push(
+      `recommendation=Run 'fn task branch-recovery ${taskId}' to inspect candidates, then reclaim the existing branch or discard prior work explicitly.`,
+    );
+    return lines.join("\n");
+  }
+
+  private async handleBranchConflict(task: Task, error: BranchConflictError): Promise<void> {
+    const conflictMessage = `Task branch conflict: ${error.branchName} is already checked out at ${error.conflictingWorktreePath}. ` +
+      `Run 'fn task branch-recovery ${task.id}' to inspect candidates, then reclaim the existing branch or discard prior work explicitly.`;
+    await this.store.logEntry(
+      task.id,
+      this.formatBranchConflictLifecycleLog(task.id, error),
+      undefined,
+      this.currentRunContext,
+    );
+    await this.store.appendAgentLog(
+      task.id,
+      "Branch conflict recovery required",
+      "tool_error",
+      this.formatBranchConflictAgentLog(task.id, error),
+      "executor",
+    );
+    await this.store.updateTask(task.id, {
+      status: "failed",
+      error: conflictMessage,
+      branch: error.branchName,
+      worktree: error.conflictingWorktreePath,
+    });
+    await this.persistTokenUsage(task.id);
+    await this.store.moveTask(task.id, "todo", { preserveProgress: true });
+    executorLog.warn(`✗ ${task.id} branch conflict → todo: ${error.branchName} @ ${error.conflictingWorktreePath}`);
+    this.options.onError?.(task, error);
+  }
+
   private async createWorktree(
     branch: string,
     path: string,
     taskId: string,
     startPoint?: string,
+    allowSiblingBranchRename = false,
   ): Promise<{ path: string; branch: string }> {
     // Track the worktree path we're attempting to use (may change during recovery)
     const currentPath = path;
@@ -6262,7 +6335,15 @@ and show an appropriate message to the user.\`
 
     for (let attempt = 0; attempt < this.MAX_WORKTREE_RETRIES; attempt++) {
       try {
-        const result = await this.tryCreateWorktree(branch, currentPath, taskId, initialStartPoint, attempt);
+        const result = await this.tryCreateWorktree(
+          branch,
+          currentPath,
+          taskId,
+          initialStartPoint,
+          attempt,
+          0,
+          allowSiblingBranchRename,
+        );
         // Squash-import dep content into the freshly created worktree so the
         // branch contains main's history + 1 import commit instead of the
         // dep's raw commits.
@@ -6293,7 +6374,8 @@ and show an appropriate message to the user.\`
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         const isLastAttempt = attempt === this.MAX_WORKTREE_RETRIES - 1;
-        const isTerminalWorktreeError = error instanceof NonRetryableWorktreeError;
+        const isBranchConflict = isBranchConflictError(error);
+        const isTerminalWorktreeError = error instanceof NonRetryableWorktreeError || isBranchConflict;
 
         if (isLastAttempt || isTerminalWorktreeError) {
           await this.store.logEntry(
@@ -6301,6 +6383,9 @@ and show an appropriate message to the user.\`
             `Worktree creation failed after ${this.MAX_WORKTREE_RETRIES} attempts`,
             errorMessage,
           );
+          if (isBranchConflict) {
+            throw error;
+          }
           throw new Error(
             `Failed to create worktree after ${this.MAX_WORKTREE_RETRIES} attempts: ${errorMessage}`,
           );
@@ -6631,6 +6716,7 @@ and show an appropriate message to the user.\`
     startPoint?: string,
     attemptNumber = 0,
     recoveryDepth = 0,
+    allowSiblingBranchRename = false,
   ): Promise<{ path: string; branch: string }> {
     // Guard: refuse to create a worktree nested inside another worktree.
     // Nested worktrees happen when the executor is launched with rootDir pointed
@@ -6719,6 +6805,7 @@ and show an appropriate message to the user.\`
           taskId,
           startPoint,
           attemptNumber,
+          allowSiblingBranchRename,
         );
         if (result) {
           return result;
@@ -6738,7 +6825,7 @@ and show an appropriate message to the user.\`
         const branchCleaned = await this.cleanupStaleBranch(branch, taskId);
         if (branchCleaned) {
           await this.store.logEntry(taskId, `Removed stale branch reference, retrying`);
-          return this.tryCreateWorktree(branch, path, taskId, startPoint, attemptNumber, recoveryDepth + 1);
+          return this.tryCreateWorktree(branch, path, taskId, startPoint, attemptNumber, recoveryDepth + 1, allowSiblingBranchRename);
         }
         throw new Error(
           `Invalid reference for branch ${branch}: unable to clean up stale reference`,
@@ -6776,6 +6863,7 @@ and show an appropriate message to the user.\`
             taskId,
             startPoint,
             attemptNumber,
+            allowSiblingBranchRename,
           );
           if (result) {
             return result;
@@ -6795,7 +6883,7 @@ and show an appropriate message to the user.\`
           const branchCleaned = await this.cleanupStaleBranch(branch, taskId);
           if (branchCleaned) {
             await this.store.logEntry(taskId, `Cleaned up stale reference in fallback, retrying`);
-            return this.tryCreateWorktree(branch, path, taskId, startPoint, attemptNumber, recoveryDepth + 1);
+            return this.tryCreateWorktree(branch, path, taskId, startPoint, attemptNumber, recoveryDepth + 1, allowSiblingBranchRename);
           }
         }
 
@@ -6818,6 +6906,7 @@ and show an appropriate message to the user.\`
     taskId: string,
     startPoint?: string,
     attemptNumber?: number,
+    allowSiblingBranchRename = false,
   ): Promise<{ path: string; branch: string } | null> {
     const shouldGenerateNewName = await this.shouldGenerateNewWorktreeName(
       conflictPath,
@@ -6825,12 +6914,25 @@ and show an appropriate message to the user.\`
     );
 
     if (shouldGenerateNewName) {
-      // Conflicting worktree belongs to an active task — generate new path AND
-      // use a suffixed branch name so git doesn't conflict with the branch
-      // already checked out in the existing worktree. Branch conflicts here
-      // mean the original task branch already exists and is checked out
-      // elsewhere, so suffix retries must branch from that task branch tip
-      // rather than the stale base ref to preserve the task's commits.
+      const inspection = await inspectBranchConflict({
+        repoDir: this.rootDir,
+        branchName: branch,
+        conflictingWorktreePath: conflictPath,
+        startPoint,
+      });
+      if (inspection.kind === "stale") {
+        const cleanupSuccess = await this.cleanupConflictingWorktree(conflictPath, branch, taskId);
+        if (cleanupSuccess) {
+          await this.store.logEntry(taskId, `Cleaned up conflicting worktree, retrying`, path);
+          return this.tryCreateWorktree(branch, path, taskId, startPoint, attemptNumber, 0, allowSiblingBranchRename);
+        }
+        return null;
+      }
+
+      if (!allowSiblingBranchRename) {
+        throw inspection.error;
+      }
+
       const conflictStartPoint = branch;
       const newPath = join(this.rootDir, ".worktrees", generateWorktreeName(this.rootDir));
       for (let suffix = 2; suffix <= 6; suffix++) {
@@ -6841,11 +6943,10 @@ and show an appropriate message to the user.\`
             `Conflicting worktree in use by active task, trying new path with branch ${suffixedBranch}`,
             newPath,
           );
-          return await this.tryCreateWorktree(suffixedBranch, newPath, taskId, conflictStartPoint, attemptNumber);
+          return await this.tryCreateWorktree(suffixedBranch, newPath, taskId, conflictStartPoint, attemptNumber, 0, true);
         } catch (suffixErr: unknown) {
           const info = this.extractWorktreeConflictInfo(suffixErr);
           if (info.type === "already-used") {
-            // This suffixed branch is also in use — try next suffix
             continue;
           }
           throw suffixErr;
@@ -6856,11 +6957,10 @@ and show an appropriate message to the user.\`
       );
     }
 
-    // Safe to clean up - conflicting worktree is not in use
     const cleanupSuccess = await this.cleanupConflictingWorktree(conflictPath, branch, taskId);
     if (cleanupSuccess) {
       await this.store.logEntry(taskId, `Cleaned up conflicting worktree, retrying`, path);
-      return this.tryCreateWorktree(branch, path, taskId, startPoint, attemptNumber);
+      return this.tryCreateWorktree(branch, path, taskId, startPoint, attemptNumber, 0, allowSiblingBranchRename);
     }
 
     return null;
