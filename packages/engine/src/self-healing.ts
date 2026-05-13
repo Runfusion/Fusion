@@ -453,10 +453,17 @@ export class SelfHealingManager {
    * Check whether a stuck-killed task should be re-queued or marked as failed.
    * Called by StuckTaskDetector's `beforeRequeue` callback.
    *
+   * Terminal contract for stuck-loop exhaustion:
+   * - Task is marked `status: "failed"` with `error` starting with
+   *   `STUCK_LOOP_EXHAUSTED: ` and including kill count, max, and last reason.
+   * - Task is moved to `in-review` (best-effort if move fails).
+   * - Task log gets a final `STUCK_LOOP_EXHAUSTED` entry with operator guidance
+   *   to manually retry, pause, or move to triage.
+   *
    * @returns `true` if the task should be re-queued, `false` if budget exhausted
    *          (task has been marked as permanently failed).
    */
-  async checkStuckBudget(taskId: string): Promise<boolean> {
+  async checkStuckBudget(taskId: string, reason: "loop" | "inactivity" = "inactivity"): Promise<boolean> {
     try {
       const settings = await this.store.getSettings();
       const maxKills = settings.maxStuckKills ?? 6;
@@ -466,11 +473,13 @@ export class SelfHealingManager {
 
       if (newCount > maxKills) {
         // Budget exhausted — mark as permanently failed
-        log.warn(`${taskId} exceeded stuck kill budget (${newCount}/${maxKills}) — marking failed`);
+        log.warn(`${taskId} exceeded stuck kill budget (${newCount}/${maxKills}, reason=${reason}) — marking failed`);
+        const exhaustedError =
+          `STUCK_LOOP_EXHAUSTED: stuck kill budget exhausted (${newCount}/${maxKills}) after last reason=${reason}.`;
         await this.store.updateTask(taskId, {
           stuckKillCount: newCount,
           status: "failed",
-          error: `Task stuck ${newCount} times — exceeded maximum of ${maxKills} stuck kills`,
+          error: exhaustedError,
         });
         try {
           await this.store.moveTask(taskId, "in-review");
@@ -478,11 +487,11 @@ export class SelfHealingManager {
           // moveTask may fail if task was concurrently moved (e.g., dep-abort).
           // The task is already marked failed — don't allow requeue.
           const moveErrMessage = moveErr instanceof Error ? moveErr.message : String(moveErr);
-          log.warn(`${taskId} moveTask("in-review") failed (${moveErrMessage}) — task already marked failed, not re-queuing`);
+          log.warn(`${taskId} moveTask("in-review") failed (${moveErrMessage}) after STUCK_LOOP_EXHAUSTED terminalization — task already marked failed, not re-queuing`);
         }
         await this.store.logEntry(
           taskId,
-          `Permanently failed: agent stuck ${newCount} times (max: ${maxKills}) — moved to in-review`,
+          `STUCK_LOOP_EXHAUSTED: stuck kill budget exhausted (${newCount}/${maxKills}), last reason=${reason}. No further automatic retries will run. Manually retry, pause, or move the task to triage to resume work.`,
         );
         return false;
       }
