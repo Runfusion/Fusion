@@ -79,6 +79,12 @@ describe("settings key parity", () => {
     expect(isGlobalSettingsKey("executorAllowSiblingBranchRename")).toBe(false);
   });
 
+  it("defaults ephemeralAgentsEnabled to true and keeps it project-scoped", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.ephemeralAgentsEnabled).toBe(true);
+    expect(isProjectSettingsKey("ephemeralAgentsEnabled")).toBe(true);
+    expect(isGlobalSettingsKey("ephemeralAgentsEnabled")).toBe(false);
+  });
+
   it("defaults completionDocumentationMode to off", () => {
     expect(DEFAULT_PROJECT_SETTINGS.completionDocumentationMode).toBe("off");
   });

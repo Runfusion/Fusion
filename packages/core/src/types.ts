@@ -2248,6 +2248,12 @@ export interface ProjectSettings {
    *  remain in triage with status "awaiting-approval" until a user approves
    *  or rejects the plan. Default: false. */
   requirePlanApproval?: boolean;
+  /** Controls task-worker execution mode.
+   *  - true (default): spawn short-lived `executor-FN-XXXX` ephemeral workers per task
+   *  - false: disable ephemeral workers; scheduler auto-assigns dispatchable tasks
+   *    to permanent executor agents using the reporting chain heuristic.
+   *  Tasks without an eligible permanent executor remain queued. */
+  ephemeralAgentsEnabled?: boolean;
   /** Approval policy for agent provisioning tools (fn_agent_create/fn_agent_delete). */
   agentProvisioning?: {
     approvalMode?: AgentProvisioningApprovalMode;

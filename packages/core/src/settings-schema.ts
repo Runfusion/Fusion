@@ -222,6 +222,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   verificationFixRetries: 3,
   buildTimeoutMs: 300_000,
   requirePlanApproval: false,
+  ephemeralAgentsEnabled: true,
   agentProvisioning: {},
   specStalenessEnabled: false,
   specStalenessMaxAgeMs: 6 * 60 * 60 * 1000,
