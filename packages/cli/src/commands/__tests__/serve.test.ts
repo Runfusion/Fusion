@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 const { mockSyncStartupModels } = vi.hoisted(() => ({
   mockSyncStartupModels: vi.fn().mockResolvedValue(undefined),
@@ -146,23 +149,50 @@ const mocks = vi.hoisted(() => {
   });
 
   const centralCoreCtor = vi.fn().mockImplementation(() => {
+    const now = new Date().toISOString();
+    const projects = [
+      { ...PROJECT_FIXTURES.primary, createdAt: now, updatedAt: now },
+      { ...PROJECT_FIXTURES.secondary, createdAt: now, updatedAt: now },
+    ];
+
     const instance = {
       init: vi.fn().mockResolvedValue(undefined),
       close: vi.fn().mockResolvedValue(undefined),
       getProjectByPath: vi.fn().mockImplementation((cwd: string) => {
-        // Use per-test resolver when available; default to primary project
+        // Use per-test resolver when available; default to lookup by path
         if (getProjectByPathResolver) {
           return Promise.resolve(getProjectByPathResolver(cwd));
         }
-        return Promise.resolve({ ...PROJECT_FIXTURES.primary, path: cwd });
+        return Promise.resolve(projects.find((project) => project.path === cwd) ?? null);
+      }),
+      registerProject: vi.fn().mockImplementation(({ name, path, isolationMode }: { name: string; path: string; isolationMode: "in-process" | "child-process" }) => {
+        const project = {
+          id: `project-${projects.length + 1}`,
+          name,
+          path,
+          status: "inactive",
+          isolationMode,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        projects.push(project);
+        return Promise.resolve(project);
+      }),
+      updateProject: vi.fn().mockImplementation((id: string, patch: { status?: string }) => {
+        const index = projects.findIndex((project) => project.id === id);
+        if (index >= 0) {
+          projects[index] = {
+            ...projects[index],
+            ...patch,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return Promise.resolve();
       }),
       getProject: vi.fn().mockImplementation((id: string) =>
-        Promise.resolve({ id, name: `Project ${id}`, path: `/repo/${id}`, status: "active", isolationMode: "in-process", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
+        Promise.resolve(projects.find((project) => project.id === id) ?? null),
       ),
-      listProjects: vi.fn().mockResolvedValue([
-        { ...PROJECT_FIXTURES.primary, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-        { ...PROJECT_FIXTURES.secondary, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-      ]),
+      listProjects: vi.fn().mockImplementation(() => Promise.resolve([...projects])),
       listNodes: vi.fn().mockResolvedValue([
         { id: "node-local", name: "local", type: "local", status: "offline" },
       ]),
@@ -656,7 +686,12 @@ vi.mock("../task-lifecycle.js", () => ({
   processPullRequestMergeTask: vi.fn().mockResolvedValue("waiting"),
 }));
 
+vi.mock("../project-context.js", () => ({
+  resolveProject: vi.fn().mockRejectedValue(new Error("project not initialized")),
+}));
+
 const { runServe } = await import("../serve.js");
+const ensureProjectRegisteredModule = await import("../ensure-project-registered.js");
 
 describe("runServe", () => {
   it("invokes shared startup model sync", async () => {
@@ -1906,20 +1941,53 @@ describe("runServe — multi-project cwd/default engine resolution", () => {
     expect(serverOpts2.engine).toBe(originalEngine);
   });
 
-  it("exits process when cwd cannot be resolved to a registered project", async () => {
-    // Configure cwd to return null (project not registered)
-    setupProjectByPath((_cwd) => null);
+  it("auto-registers cwd project when not previously registered", async () => {
+    const freshCwd = mkdtempSync(join(tmpdir(), "serve-auto-register-"));
+    cwdSpy.mockReturnValue(freshCwd);
+    const ensureSpy = vi.spyOn(ensureProjectRegisteredModule, "ensureCwdProjectRegistered")
+      .mockResolvedValue({ ...PROJECT_FIXTURES.primary, path: freshCwd });
+
+    try {
+      await runServe(4040, {});
+
+      expect(ensureSpy).toHaveBeenCalledWith(expect.objectContaining({
+        cwd: freshCwd,
+        logPrefix: "serve",
+        autoRegister: true,
+      }));
+      expect(process.exit).not.toHaveBeenCalledWith(1);
+
+      await triggerSignal("SIGINT");
+    } finally {
+      ensureSpy.mockRestore();
+      rmSync(freshCwd, { recursive: true, force: true });
+    }
+  });
+
+  it("--no-auto-register preserves legacy exit behavior", async () => {
+    const freshCwd = mkdtempSync(join(tmpdir(), "serve-no-auto-register-"));
+    cwdSpy.mockReturnValue(freshCwd);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const ensureSpy = vi.spyOn(ensureProjectRegisteredModule, "ensureCwdProjectRegistered")
+      .mockResolvedValue(null);
 
-    await runServe(4040, {});
+    try {
+      await runServe(4040, { noAutoRegister: true });
 
-    // runServe should exit when no cwd engine can be started
-    expect(process.exit).toHaveBeenCalledWith(1);
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("[serve] No engine started for the current project")
-    );
-
-    errorSpy.mockRestore();
+      expect(ensureSpy).toHaveBeenCalledWith(expect.objectContaining({
+        cwd: freshCwd,
+        logPrefix: "serve",
+        autoRegister: false,
+      }));
+      expect(process.exit).toHaveBeenCalledWith(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("[serve] No engine started for the current project")
+      );
+    } finally {
+      ensureSpy.mockRestore();
+      errorSpy.mockRestore();
+      rmSync(freshCwd, { recursive: true, force: true });
+    }
   });
 
   it("process.exit is NOT called when cwd project is resolved", async () => {
