@@ -4,6 +4,7 @@
  */
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { readFileSync } from "node:fs";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { userEvent } from "@testing-library/user-event";
@@ -2114,7 +2115,8 @@ describe("ChatView", () => {
 
     expect(screen.getByText("Start a new conversation")).toBeInTheDocument();
     // Find the New Chat button in the empty state section
-    const emptyState = document.querySelector(".chat-empty-state") as HTMLElement | null;
+    const emptyStateText = screen.getByText("Start a new conversation");
+    const emptyState = emptyStateText.closest(".chat-empty-state") as HTMLElement | null;
     expect(within(emptyState!).getByRole("button", { name: /new chat/i })).toBeInTheDocument();
     // Should NOT have an agent selector in empty state
     expect(emptyState?.querySelector("select")).toBeNull();
@@ -4229,5 +4231,39 @@ describe("ChatView mobile CSS contract", () => {
     expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.chat-message-copy-action\s*\{[^}]*opacity:\s*1/);
     expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.chat-message-copy-action\s*\{[^}]*min-width:\s*calc\(var\(--space-lg\)\s*\*\s*2\.25\)/);
     expect(css).toMatch(/@media\s*\(max-width:\s*768px\)[\s\S]*?\.chat-message-copy-action\s*\{[^}]*min-height:\s*calc\(var\(--space-lg\)\s*\*\s*2\.25\)/);
+  });
+});
+
+describe("ChatView empty-state token guards", () => {
+  it("renders loading and empty states with chat-empty-state class and no inline text-secondary style", () => {
+    setupMockChat({
+      sessions: [],
+      filteredSessions: [],
+      sessionsLoading: true,
+      activeSession: activeSessionFixture,
+      messages: [],
+      messagesLoading: true,
+    });
+
+    render(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    const loadingNodes = screen.getAllByText("Loading messages...");
+    const sidebarLoadingNode = screen.getByText("Loading...");
+
+    expect(sidebarLoadingNode.className).toContain("chat-empty-state");
+    expect(sidebarLoadingNode.getAttribute("style") ?? "").not.toContain("--text-secondary");
+
+    for (const node of loadingNodes) {
+      expect(node.className).toContain("chat-empty-state");
+      expect(node.getAttribute("style") ?? "").not.toContain("--text-secondary");
+    }
+  });
+
+  it("keeps ChatView source files free of --text-secondary", () => {
+    const chatViewTsx = readFileSync("app/components/ChatView.tsx", "utf8");
+    const chatViewCss = readFileSync("app/components/ChatView.css", "utf8");
+
+    expect(chatViewTsx.includes("--text-secondary")).toBe(false);
+    expect(chatViewCss.includes("--text-secondary")).toBe(false);
   });
 });
