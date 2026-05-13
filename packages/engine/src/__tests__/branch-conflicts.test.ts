@@ -68,6 +68,33 @@ describe("branch-conflicts", () => {
     expect(mockedExecSync).not.toHaveBeenCalled();
   });
 
+  it("treats branch as stale-resolved when conflicting path exists but branch is not checked out in any live worktree", async () => {
+    mockedExecSync.mockImplementation((cmd: string | string[]) => {
+      const command = typeof cmd === "string" ? cmd : cmd[0];
+      if (command === "git worktree prune") return Buffer.from("");
+      if (command === "git worktree list --porcelain") {
+        return Buffer.from(["worktree /tmp/repo", "HEAD 2222222", "branch refs/heads/main", ""].join("\n"));
+      }
+      if (command.includes("git rev-parse --verify 'refs/heads/fusion/fn-4068^{commit}'")) {
+        return Buffer.from("abc123def456\n");
+      }
+      if (command.includes("git rev-parse --verify 'fusion/fn-4068^{commit}'")) {
+        return Buffer.from("abc123def456\n");
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    const result = await inspectBranchConflict({
+      repoDir: "/tmp/repo",
+      branchName: "fusion/fn-4068",
+      conflictingWorktreePath: "/tmp/stale-wt",
+      requestingTaskId: "FN-4068",
+      startPoint: "main",
+    });
+
+    expect(result).toEqual({ kind: "stale-resolved" });
+  });
+
   it("returns a typed live conflict with stranded commits", async () => {
     mockedExecSync.mockImplementation((cmd: string | string[]) => {
       const command = typeof cmd === "string" ? cmd : cmd[0];
