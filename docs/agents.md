@@ -1151,6 +1151,7 @@ Health status uses interval-based staleness evaluation:
 ### Key Behaviors
 
 - **Monitoring disabled**: Agents with `runtimeConfig.enabled === false` display "Disabled" — they are NOT falsely labeled as "Unresponsive"
+- **Interval-sized gaps are normal**: With the default `heartbeatIntervalMs = 3600000` (1 hour), an agent can legitimately go tens of minutes without a new heartbeat. Ages like 16–50 minutes are expected and should not be treated as unhealthy on interval age alone.
 - **Consistent across views**: All dashboard surfaces use the same centralized utility, ensuring consistent health labels everywhere
 - **Auto-refresh**: Health status is refreshed every 30 seconds while views are open to keep status current
 - **State-first evaluation**: Explicit non-idle states (error, paused, running) take priority over timeout-based evaluation
