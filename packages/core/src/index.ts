@@ -133,6 +133,11 @@ export { canTransition, getValidTransitions, resolveDependencyOrder } from "./bo
 export { computeBlockerFanoutMap, BLOCKER_ESCALATION_COLUMNS, isStaleBlockedByBlocker } from "./blocker-fanout.js";
 export type { BlockerFanoutEntry, BlockerEscalation, ComputeBlockerFanoutOptions } from "./blocker-fanout.js";
 export {
+  computeCapacityRisk,
+  DEFAULT_CAPACITY_RISK_TODO_THRESHOLD,
+} from "./capacity.js";
+export type { CapacityRiskSignal } from "./capacity.js";
+export {
   getTaskMergeBlocker,
   getTaskCompletionBlocker,
   isTaskReadyForMerge,

@@ -227,6 +227,8 @@ export const DEFAULT_PROJECT_SETTINGS = {
   specStalenessEnabled: false,
   specStalenessMaxAgeMs: 6 * 60 * 60 * 1000,
   taskStuckTimeoutMs: 600_000,
+  // Capacity risk warning default: only warn once todo is meaningfully backlogged.
+  capacityRiskTodoThreshold: 20,
   staleHighFanoutBlockerAgeThresholdMs: 2 * 60 * 60 * 1000,
   aiSessionTtlMs: 7 * 24 * 60 * 60 * 1000,
   aiSessionCleanupIntervalMs: 60 * 60 * 1000,

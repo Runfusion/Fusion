@@ -4969,6 +4969,10 @@ export interface AgentStats {
   failedRuns: number;
   /** Success rate (0-1) */
   successRate: number;
+  /** Number of idle non-ephemeral agents available for queue drain */
+  idleNonEphemeralCount: number;
+  /** Number of tasks currently in the todo column */
+  todoTaskCount: number;
 }
 
 /** Trigger source for an agent self-reflection run */
