@@ -73,7 +73,7 @@ export interface StuckTaskDetectorOptions {
   /** Called before re-queuing a killed task. Return false to prevent re-queue
    *  (caller is responsible for marking the task as terminally failed).
    *  Used by SelfHealingManager to enforce stuck kill budgets. */
-  beforeRequeue?: (taskId: string) => Promise<boolean>;
+  beforeRequeue?: (taskId: string, reason: "inactivity" | "loop") => Promise<boolean>;
   /** Pre-kill callback invoked ONLY when reason is "loop".
    *  Called BEFORE session.dispose() / moveTask("todo") so the caller can
    *  attempt in-process recovery (e.g. compact-and-resume) without killing
@@ -93,9 +93,10 @@ export class StuckTaskDetector {
   private interval: ReturnType<typeof setInterval> | null = null;
   private pollIntervalMs: number;
   private onStuck?: (event: StuckTaskEvent) => void;
-  private beforeRequeue?: (taskId: string) => Promise<boolean>;
+  private beforeRequeue?: (taskId: string, reason: "inactivity" | "loop") => Promise<boolean>;
   private onLoopDetected?: (event: StuckTaskEvent) => Promise<boolean>;
   private paused = false;
+  private exhaustedTasks = new Set<string>();
 
   constructor(
     private store: TaskStore,
@@ -146,15 +147,51 @@ export class StuckTaskDetector {
    *   trackingKey is used as-is (single-session mode where they are identical).
    */
   trackTask(trackingKey: string, session: DisposableSession, canonicalTaskId?: string): void {
+    const canonicalId = canonicalTaskId ?? trackingKey;
+    if (this.exhaustedTasks.has(canonicalId)) {
+      void this.store.getTask(canonicalId)
+        .then((task) => {
+          const isExhausted = task.status === "failed" && task.error?.startsWith("STUCK_LOOP_EXHAUSTED:");
+          if (isExhausted) {
+            stuckLog.log(`Skipping tracking for ${trackingKey} (canonical=${canonicalId}) — task is in STUCK_LOOP_EXHAUSTED terminal state`);
+            return;
+          }
+          this.exhaustedTasks.delete(canonicalId);
+          const now = Date.now();
+          this.tracked.set(trackingKey, {
+            session,
+            lastActivity: now,
+            lastProgressAt: now,
+            activitySinceProgress: 0,
+            canonicalTaskId: canonicalId,
+          });
+          stuckLog.log(`Tracking task ${trackingKey} (canonical=${canonicalId}, total tracked: ${this.tracked.size})`);
+        })
+        .catch((err) => {
+          stuckLog.error(`Failed to validate exhausted status for ${canonicalId}; proceeding to track:`, err);
+          this.exhaustedTasks.delete(canonicalId);
+          const now = Date.now();
+          this.tracked.set(trackingKey, {
+            session,
+            lastActivity: now,
+            lastProgressAt: now,
+            activitySinceProgress: 0,
+            canonicalTaskId: canonicalId,
+          });
+          stuckLog.log(`Tracking task ${trackingKey} (canonical=${canonicalId}, total tracked: ${this.tracked.size})`);
+        });
+      return;
+    }
+
     const now = Date.now();
     this.tracked.set(trackingKey, {
       session,
       lastActivity: now,
       lastProgressAt: now,
       activitySinceProgress: 0,
-      canonicalTaskId: canonicalTaskId ?? trackingKey,
+      canonicalTaskId: canonicalId,
     });
-    stuckLog.log(`Tracking task ${trackingKey} (canonical=${canonicalTaskId ?? trackingKey}, total tracked: ${this.tracked.size})`);
+    stuckLog.log(`Tracking task ${trackingKey} (canonical=${canonicalId}, total tracked: ${this.tracked.size})`);
   }
 
   /**
@@ -343,7 +380,7 @@ export class StuckTaskDetector {
     let shouldRequeue = true;
     if (this.beforeRequeue) {
       try {
-        shouldRequeue = await this.beforeRequeue(canonicalId);
+        shouldRequeue = await this.beforeRequeue(canonicalId, reason);
         if (!shouldRequeue) {
           stuckLog.log(`${canonicalId} exceeded stuck kill budget — not re-queuing`);
         }
@@ -393,6 +430,11 @@ export class StuckTaskDetector {
     // Notify listeners before disposing the session so executor cleanup can
     // mark the abort as intentional before the disposed session unwinds.
     this.onStuck?.(event);
+
+    if (!shouldRequeue) {
+      this.exhaustedTasks.add(canonicalId);
+      stuckLog.log(`${canonicalId} untracked due to STUCK_LOOP_EXHAUSTED terminal state (no automatic retries)`);
+    }
 
     // Dispose the agent session after listeners have marked the abort.
     try {

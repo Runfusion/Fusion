@@ -546,7 +546,8 @@ describe("StuckTaskDetector", () => {
 
       await customDetector.killAndRetry("FN-001", 60000);
 
-      expect(beforeRequeue).toHaveBeenCalledWith("FN-001");
+      expect(beforeRequeue).toHaveBeenCalledWith("FN-001", "inactivity");
+      expect(customDetector.trackedCount).toBe(0);
       expect(session.dispose).toHaveBeenCalled();
       // onStuck should still be called with shouldRequeue=false
       expect(onStuck).toHaveBeenCalledWith(
@@ -571,7 +572,7 @@ describe("StuckTaskDetector", () => {
 
       await customDetector.killAndRetry("FN-001", 60000);
 
-      expect(beforeRequeue).toHaveBeenCalledWith("FN-001");
+      expect(beforeRequeue).toHaveBeenCalledWith("FN-001", "inactivity");
       expect(onStuck).toHaveBeenCalledWith(
         expect.objectContaining({ taskId: "FN-001", shouldRequeue: true }),
       );
@@ -1315,5 +1316,32 @@ describe("StuckTaskDetector heartbeat tracking (FN-978)", () => {
     detector.trackTask("FN-001", session);
     expect(detector.getActivitySinceProgress("FN-001")).toBe(0);
     expect(detector.trackedCount).toBe(1);
+  });
+
+  it("does not re-track STUCK_LOOP_EXHAUSTED failed tasks", async () => {
+    const beforeRequeue = vi.fn().mockResolvedValue(false);
+    const exhaustedStore = createMockStore({
+      getTask: vi.fn().mockResolvedValue({
+        id: "FN-001",
+        status: "failed",
+        error: "STUCK_LOOP_EXHAUSTED: stuck kill budget exhausted (7/6) after last reason=loop.",
+      }),
+    });
+    const customDetector = new StuckTaskDetector(exhaustedStore, { beforeRequeue });
+    const session = createMockSession();
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    customDetector.trackTask("FN-001", session);
+    vi.advanceTimersByTime(61_000);
+    await customDetector.killAndRetry("FN-001", 60_000);
+    expect(customDetector.trackedCount).toBe(0);
+
+    customDetector.trackTask("FN-001-step-0", createMockSession(), "FN-001");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect((exhaustedStore.getTask as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith("FN-001");
+    expect(customDetector.trackedCount).toBe(0);
+    vi.useRealTimers();
   });
 });

@@ -337,7 +337,7 @@ export class InProcessRuntime
 
       // 5b. Initialize TaskExecutor
       this.stuckTaskDetector = new StuckTaskDetector(this.taskStore, {
-        beforeRequeue: (taskId) => this.selfHealingManager?.checkStuckBudget(taskId) ?? Promise.resolve(true),
+        beforeRequeue: (taskId, reason) => this.selfHealingManager?.checkStuckBudget(taskId, reason) ?? Promise.resolve(true),
         onLoopDetected: (event) => this.executor?.handleLoopDetected(event) ?? Promise.resolve(false),
         onStuck: (event) => {
           this.triageProcessor?.markStuckAborted(event.taskId);
