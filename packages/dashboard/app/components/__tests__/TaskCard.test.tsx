@@ -34,7 +34,7 @@ vi.mock("../../api", () => ({
 }));
 
 import { uploadAttachment, fetchMission, fetchAgent } from "../../api";
-import { loadAllAppCssBaseOnly } from "../../test/cssFixture";
+import { loadAllAppCss, loadAllAppCssBaseOnly } from "../../test/cssFixture";
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -50,6 +50,23 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 }
 
 const noop = () => {};
+
+function mountCssForBadgeTests() {
+  const style = document.createElement("style");
+  style.textContent = loadAllAppCss();
+  document.head.appendChild(style);
+  document.documentElement.style.setProperty("--status-error-bg", "rgb(255, 230, 230)");
+  document.documentElement.style.setProperty("--color-error-dark", "rgb(200, 0, 0)");
+  document.documentElement.style.setProperty("--status-in-review-bg", "rgb(230, 255, 230)");
+  document.documentElement.style.setProperty("--in-review", "rgb(0, 160, 0)");
+  return () => {
+    style.remove();
+    document.documentElement.style.removeProperty("--status-error-bg");
+    document.documentElement.style.removeProperty("--color-error-dark");
+    document.documentElement.style.removeProperty("--status-in-review-bg");
+    document.documentElement.style.removeProperty("--in-review");
+  };
+}
 
 const highFanout = {
   totalCount: 7,
@@ -151,6 +168,23 @@ describe("TaskCard", () => {
     expect(screen.getByText("Merging fixes…")).toBeDefined();
     const badge = container.querySelector(".card-status-badge");
     expect(badge?.className).toContain("pulsing");
+  });
+
+  it("FN-4208 keeps failed in-review TaskCard badge on error colors", () => {
+    const cleanupCss = mountCssForBadgeTests();
+    try {
+      const { container } = render(
+        <TaskCard task={makeTask({ column: "in-review", status: "failed" as any, error: "boom" })} onOpenDetail={noop} addToast={noop} />,
+      );
+
+      const badge = container.querySelector(".card-status-badge") as HTMLElement;
+      expect(badge.className).toContain("card-status-badge--in-review");
+      expect(badge.className).toContain("failed");
+      expect(getComputedStyle(badge).color).toBe("var(--color-error-dark)");
+      expect(getComputedStyle(badge).color).not.toBe("var(--in-review)");
+    } finally {
+      cleanupCss();
+    }
   });
 
   it("renders the status badge after the card ID in DOM order", () => {
