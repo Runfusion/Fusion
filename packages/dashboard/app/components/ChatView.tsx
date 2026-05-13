@@ -1296,7 +1296,10 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
   }, [isMobile, activeSession]);
 
   useEffect(() => {
-    if (!isMobile || (!activeSession && !roomThreadActive)) {
+    if (!activeSession && !roomThreadActive) {
+      return;
+    }
+    if (roomThreadActive && !isMobile) {
       return;
     }
 
@@ -1306,6 +1309,8 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
         return;
       }
       anchorToBottom(messagesContainer);
+      isUserScrollingRef.current = false;
+      setIsUserScrolling(false);
     };
 
     const onVisibilityChange = () => {
