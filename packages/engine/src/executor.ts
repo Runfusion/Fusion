@@ -7582,7 +7582,9 @@ and show an appropriate message to the user.\`
       return false;
     }
 
-    // Check attempt ceiling (max 1 compact-and-resume per execute() lifecycle)
+    // Check attempt ceiling (max 1 compact-and-resume per execute() lifecycle).
+    // After this fallback, StuckTaskDetector -> SelfHealingManager.checkStuckBudget
+    // enforces STUCK_LOOP_EXHAUSTED terminalization when retry budget is spent.
     const state = this.loopRecoveryState.get(taskId);
     if (state && state.attempts >= 1) {
       executorLog.log(`${taskId} loop detected but compact ceiling reached — falling back to kill/requeue`);
