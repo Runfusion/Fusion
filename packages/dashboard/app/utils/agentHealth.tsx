@@ -170,7 +170,7 @@ export function getAgentHealthStatus(agent: AgentHealthInput): AgentHealthStatus
     return {
       label: state === "active" ? "Starting..." : "Idle",
       icon: <Bot size={14} />,
-      color: "var(--text-secondary)",
+      color: "var(--text-muted)",
       stateDerived: false,
     };
   }

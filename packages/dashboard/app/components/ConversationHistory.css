@@ -18,7 +18,7 @@
 }
 
 .conversation-entry-question {
-  color: var(--text-secondary);
+  color: var(--text-muted);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -56,7 +56,7 @@
 
 .conversation-comment {
   margin: 0;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -72,7 +72,7 @@
   border-radius: 8px;
   background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
   padding: 10px;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.45;
@@ -89,7 +89,7 @@
   border: 1px solid var(--border-primary);
   border-radius: 8px;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   padding: 8px 12px;
   font-size: 12px;
   font-weight: 500;

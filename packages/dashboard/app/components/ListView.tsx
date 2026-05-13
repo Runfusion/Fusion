@@ -24,7 +24,7 @@ const COLUMN_COLOR_MAP: Record<Column, string> = {
   "in-progress": "var(--in-progress)",
   "in-review": "var(--in-review)",
   done: "var(--done)",
-  archived: "var(--text-secondary)",
+  archived: "var(--text-dim)",
 };
 
 const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "merging-fix"]);

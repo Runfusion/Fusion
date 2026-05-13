@@ -424,7 +424,7 @@
 }
 
 .wfm-model-clear-btn:hover {
-  color: var(--text-secondary);
+  color: var(--text-muted);
   background: var(--bg-tertiary);
 }
 

@@ -44,7 +44,7 @@
 .plugin-install-hint {
   margin: 0;
   font-size: var(--font-size-sm, 0.85rem);
-  color: var(--text-secondary, var(--text-muted));
+  color: var(--text-muted);
   line-height: 1.45;
 }
 
@@ -203,7 +203,7 @@
 
 .plugin-description {
   font-size: var(--font-size-md, 0.95rem);
-  color: var(--text-secondary, var(--text-muted));
+  color: var(--text-muted);
   line-height: 1.5;
 }
 

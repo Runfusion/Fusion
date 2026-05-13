@@ -52,7 +52,7 @@
 }
 
 .cli-binary-help {
-  color: var(--text-secondary, #98a3b1);
+  color: var(--text-muted);
   line-height: 1.4;
 }
 
@@ -65,7 +65,7 @@
 
 .cli-binary-status-line {
   margin: 0;
-  color: var(--text-secondary, #98a3b1);
+  color: var(--text-muted);
 }
 
 .cli-binary-status-line code {
@@ -98,7 +98,7 @@
 }
 
 .cli-binary-info-list span {
-  color: var(--text-secondary, #98a3b1);
+  color: var(--text-muted);
   min-width: 64px;
 }
 
@@ -110,7 +110,7 @@
 }
 
 .cli-binary-expected {
-  color: var(--text-secondary, #98a3b1);
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -166,7 +166,7 @@
 
 .cli-binary-commands label {
   font-size: 12px;
-  color: var(--text-secondary, #98a3b1);
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -198,7 +198,7 @@
 
 .cli-binary-install-log summary {
   cursor: pointer;
-  color: var(--text-secondary, #98a3b1);
+  color: var(--text-muted);
 }
 
 .cli-binary-install-output {

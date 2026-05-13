@@ -123,7 +123,7 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-lg);
-  color: var(--text-secondary);
+  color: var(--text-muted);
   padding: var(--space-xl);
   text-align: center;
 }
@@ -178,7 +178,7 @@
   flex-direction: column;
   gap: var(--space-xs);
   font-size: calc(var(--space-sm) + (var(--space-xs) * 1.25));
-  color: var(--text-secondary);
+  color: var(--text-muted);
 }
 
 .chat-new-dialog input,
@@ -250,7 +250,7 @@
 .chat-new-dialog-empty {
   padding: var(--space-lg);
   text-align: center;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: calc(var(--space-sm) + (var(--space-xs) * 1.5));
 }
 
@@ -296,7 +296,7 @@
 
 .chat-new-dialog-agent-role {
   font-size: var(--space-md);
-  color: var(--text-secondary);
+  color: var(--text-muted);
   text-transform: capitalize;
 }
 

@@ -94,7 +94,7 @@
   border-top: 1px solid var(--border-subtle);
   border-bottom: 1px solid var(--border-subtle);
   background: transparent;
-  color: var(--text-secondary, var(--text-muted));
+  color: var(--text-muted);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.3px;
@@ -164,7 +164,7 @@
 
 .task-form-more-options .form-group small {
   margin-top: var(--space-sm);
-  color: var(--text-secondary, var(--text-muted));
+  color: var(--text-muted);
 }
 
 .task-form-more-options .model-select-row {
@@ -338,7 +338,7 @@
   height: calc(var(--space-lg) + var(--space-xs));
   border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 11px;
   font-weight: 600;
   flex-shrink: 0;

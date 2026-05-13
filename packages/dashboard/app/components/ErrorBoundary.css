@@ -47,7 +47,7 @@
 
 .error-boundary__message {
   font-size: 0.85rem;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   background: var(--bg);
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-sm);

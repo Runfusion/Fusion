@@ -312,7 +312,7 @@ html {
   --mission-complete-bg: color-mix(in srgb, #3b82f6 15%, transparent);
   --mission-complete-text: #3b82f6;
   --mission-archived-bg: var(--bg-tertiary);
-  --mission-archived-text: var(--text-secondary);
+  --mission-archived-text: var(--text-dim);
 
   /* === Slice Status Colors === */
   --slice-pending-bg: color-mix(in srgb, var(--triage) 15%, transparent);
@@ -344,7 +344,7 @@ html {
 
   /* === Loop State Colors === */
   --loop-idle-bg: var(--bg-tertiary);
-  --loop-idle-text: var(--text-secondary);
+  --loop-idle-text: var(--text-muted);
   --loop-idle-indicator: var(--text-dim);
   --loop-implementing-bg: color-mix(in srgb, var(--in-review) 15%, transparent);
   --loop-implementing-text: var(--in-review);
@@ -1171,7 +1171,7 @@ body {
   border-radius: 50%;
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3477,7 +3477,7 @@ input[type="range"]:focus-visible {
 
 /* === Global utility classes (rescued from misclassified extractions) ====== */
 .text-muted { color: var(--text-muted); }
-.text-secondary { color: var(--text-secondary, var(--text-muted)); }
+.text-secondary { color: var(--text-muted); }
 .text-dim { color: var(--text-dim, var(--text-muted)); }
 
 /* === Column header dropdown menu (todo column "Respecify All", etc.) ====== */

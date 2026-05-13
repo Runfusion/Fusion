@@ -184,7 +184,7 @@ describe("getAgentHealthStatus", () => {
       const status = getAgentHealthStatus(agent);
       expect(status.label).toBe("Starting...");
       expect(status.stateDerived).toBe(false);
-      expect(status.color).toBe("var(--text-secondary)");
+      expect(status.color).toBe("var(--text-muted)");
     });
 
     it('returns "Idle" for non-active agents with no lastHeartbeatAt', () => {
@@ -192,7 +192,7 @@ describe("getAgentHealthStatus", () => {
       const status = getAgentHealthStatus(agent);
       expect(status.label).toBe("Idle");
       expect(status.stateDerived).toBe(false);
-      expect(status.color).toBe("var(--text-secondary)");
+      expect(status.color).toBe("var(--text-muted)");
     });
 
   });

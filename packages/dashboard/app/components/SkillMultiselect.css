@@ -8,7 +8,7 @@
 .skill-multiselect-label {
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-secondary);
+  color: var(--text-muted);
 }
 
 .skill-multiselect-chips {
@@ -23,7 +23,7 @@
   gap: 4px;
   padding: 2px 6px;
   background: var(--bg-tertiary);
-  color: var(--text-secondary);
+  color: var(--text-muted);
   border-radius: 4px;
   font-size: 12px;
   line-height: 1.4;
@@ -97,7 +97,7 @@
   display: inline-block;
   padding: 2px 6px;
   background: var(--bg-tertiary);
-  color: var(--text-secondary);
+  color: var(--text-muted);
   border-radius: 4px;
   font-size: 11px;
   line-height: 1.4;
@@ -106,7 +106,7 @@
 /* Skill badges in AgentsView */
 .badge-skill {
   background: var(--bg-tertiary);
-  color: var(--text-secondary);
+  color: var(--text-muted);
 }
 
 .agent-board-skills {
@@ -120,7 +120,7 @@
   display: inline-block;
   padding: 1px 5px;
   background: var(--bg-tertiary);
-  color: var(--text-secondary);
+  color: var(--text-muted);
   border-radius: 3px;
   font-size: 10px;
   line-height: 1.4;
@@ -135,7 +135,7 @@
   display: inline-block;
   padding: 1px 5px;
   background: var(--bg-tertiary);
-  color: var(--text-secondary);
+  color: var(--text-muted);
   border-radius: 3px;
   font-size: 10px;
   line-height: 1.4;
@@ -147,7 +147,7 @@
   display: inline-block;
   padding: 1px 5px;
   background: var(--bg-tertiary);
-  color: var(--text-secondary);
+  color: var(--text-muted);
   border-radius: 3px;
   font-size: 10px;
   line-height: 1.4;

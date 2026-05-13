@@ -30,7 +30,7 @@
 .cli-binary-banner__text {
   font-size: 13px;
   line-height: 1.5;
-  color: var(--text-secondary, #98a3b1);
+  color: var(--text-muted);
 }
 
 .cli-binary-banner__text code {
@@ -100,7 +100,7 @@
   height: 24px;
   padding: 0;
   background: transparent;
-  color: var(--text-secondary, #98a3b1);
+  color: var(--text-muted);
   border: none;
   border-radius: 4px;
   cursor: pointer;

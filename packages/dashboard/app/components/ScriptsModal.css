@@ -524,7 +524,7 @@
 .schedule-steps-badge {
   font-size: 11px;
   font-weight: 500;
-  color: var(--text-secondary);
+  color: var(--text-muted);
 }
 
 .schedule-meta-command-preview {
@@ -534,7 +534,7 @@
 
 .schedule-command-preview {
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -643,7 +643,7 @@
 .steps-editor-title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: var(--text-muted);
 }
 
 .steps-empty-state {
@@ -755,7 +755,7 @@
   font-weight: 500;
   border: none;
   background: var(--bg-secondary);
-  color: var(--text-secondary);
+  color: var(--text-muted);
   cursor: pointer;
   transition: background var(--transition-fast), color var(--transition-fast);
 }
@@ -1054,7 +1054,7 @@
   padding: 1px 7px;
   background: var(--bg-secondary);
   border-radius: var(--radius-sm);
-  color: var(--text-secondary);
+  color: var(--text-muted);
 }
 
 .routine-card-history {
@@ -1100,7 +1100,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg);
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -1129,7 +1129,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--text-muted);
 }
 
 /* Routine mobile responsive */
