@@ -2632,9 +2632,9 @@ describe("FN-3911 chat session list layout", () => {
     expect(previewMatch?.[1]).toMatch(/padding-right:\s*calc\(var\(--space-md\)\s*\*\s*3\)/);
   });
 
-  it("FN-4352: keeps mobile title/preview clearance aligned to compact delete control", () => {
+  it("FN-4387: keeps mobile title/preview clearance matched to compact delete button", () => {
     expect(css).toMatch(
-      /@media\s*\(max-width:\s*768px\)[\s\S]*?\.chat-session-title,\s*\.chat-session-preview\s*\{\s*padding-right:\s*calc\(\(var\(--space-md\)\s*\*\s*2\)\s*\+\s*var\(--space-sm\)\);\s*\}/,
+      /@media\s*\(max-width:\s*768px\)[\s\S]*?\.chat-session-title,\s*\.chat-session-preview\s*\{\s*padding-right:\s*calc\(var\(--space-md\)\s*\*\s*3\);\s*\}/,
     );
   });
 });
