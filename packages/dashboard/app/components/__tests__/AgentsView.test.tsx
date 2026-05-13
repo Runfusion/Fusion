@@ -5,6 +5,7 @@ import { AgentsView } from "../AgentsView";
 import * as apiModule from "../../api";
 import type { Agent, AgentState, AgentCapability, OrgTreeNode } from "../../api";
 import { scopedKey } from "../../utils/projectStorage";
+import { ORG_CHART_LAYOUT_STORAGE_KEY } from "../agentsOrgChartLayout";
 
 // Mock the API module
 vi.mock("../../api", async (importOriginal) => {
@@ -1453,6 +1454,44 @@ describe("AgentsView", () => {
         expect(chart.getAttribute("data-layout-mode")).toBe("horizontal");
         expect(chart.className).not.toContain("agent-org-chart--vertical");
       });
+      clientWidthSpy.mockRestore();
+    });
+
+    it("supports toggling org chart layout preference and persists it", async () => {
+      const clientWidthSpy = vi.spyOn(window.HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1920);
+      localStorage.setItem(scopedKey("fn-agent-view", projectId), "org");
+      localStorage.setItem(scopedKey(ORG_CHART_LAYOUT_STORAGE_KEY, projectId), "vertical");
+      mockFetchOrgTree.mockResolvedValue(orgTree);
+      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+
+      const chart = await screen.findByTestId("agent-org-chart");
+      const toggle = screen.getByTestId("agent-org-chart-layout-toggle");
+      const horizontalButton = within(toggle).getByRole("button", { name: "Horizontal layout" });
+      const verticalButton = within(toggle).getByRole("button", { name: "Vertical layout" });
+      const autoButton = within(toggle).getByRole("button", { name: "Automatic layout" });
+
+      expect(verticalButton.getAttribute("aria-pressed")).toBe("true");
+      expect(horizontalButton.getAttribute("aria-pressed")).toBe("false");
+      expect(autoButton.getAttribute("aria-pressed")).toBe("false");
+      expect(chart.getAttribute("data-layout-mode")).toBe("vertical");
+
+      fireEvent.click(horizontalButton);
+      await waitFor(() => {
+        expect(chart.getAttribute("data-layout-mode")).toBe("horizontal");
+        expect(localStorage.getItem(scopedKey(ORG_CHART_LAYOUT_STORAGE_KEY, projectId))).toBe("horizontal");
+      });
+
+      fireEvent.click(autoButton);
+      await waitFor(() => {
+        expect(chart.getAttribute("data-layout-mode")).toBe("horizontal");
+        expect(localStorage.getItem(scopedKey(ORG_CHART_LAYOUT_STORAGE_KEY, projectId))).toBe("auto");
+      });
+
+      fireEvent.click(verticalButton);
+      await waitFor(() => {
+        expect(chart.getAttribute("data-layout-mode")).toBe("vertical");
+      });
+
       clientWidthSpy.mockRestore();
     });
 
