@@ -2632,9 +2632,9 @@ describe("FN-3911 chat session list layout", () => {
     expect(previewMatch?.[1]).toMatch(/padding-right:\s*calc\(var\(--space-md\)\s*\*\s*3\)/);
   });
 
-  it("applies a mobile padding override that still clears the larger delete button", () => {
+  it("FN-4352: keeps mobile title/preview clearance aligned to compact delete control", () => {
     expect(css).toMatch(
-      /@media\s*\(max-width:\s*768px\)[\s\S]*?\.chat-session-title,\s*\.chat-session-preview\s*\{\s*padding-right:\s*calc\(\(var\(--space-lg\)\s*\*\s*2\.25\)\s*\+\s*var\(--space-sm\)\);\s*\}/,
+      /@media\s*\(max-width:\s*768px\)[\s\S]*?\.chat-session-title,\s*\.chat-session-preview\s*\{\s*padding-right:\s*calc\(\(var\(--space-md\)\s*\*\s*2\)\s*\+\s*var\(--space-sm\)\);\s*\}/,
     );
   });
 });
