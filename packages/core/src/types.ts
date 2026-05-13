@@ -1,6 +1,12 @@
 import type { InReviewStallSignal } from "./in-review-stall.js";
 import type { StalledReviewSignal } from "./stalled-review-detector.js";
 
+export {
+  computeCapacityRisk,
+  DEFAULT_CAPACITY_RISK_TODO_THRESHOLD,
+} from "./capacity.js";
+export type { CapacityRiskSignal } from "./capacity.js";
+
 /** Valid thinking effort levels for AI agent sessions, controlling the cost/quality tradeoff of reasoning. */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
@@ -2285,6 +2291,10 @@ export interface ProjectSettings {
    *  Blocker age is measured from columnMovedAt when available, otherwise updatedAt.
    *  Only blockers currently in in-progress or in-review are eligible. */
   staleHighFanoutBlockerAgeThresholdMs?: number;
+  /** Todo count threshold for raising a capacity-risk warning when there are zero
+   *  idle non-ephemeral agents available. Warning fires only when todo is strictly
+   *  greater than this threshold. Default: 20. */
+  capacityRiskTodoThreshold?: number;
   /** TTL in milliseconds for persisted AI planning/subtask/mission interview sessions.
    *  Sessions older than this cutoff are expired by the dashboard session cleanup loop.
    *  Valid range: 600000 (10 minutes) to 2592000000 (30 days).
