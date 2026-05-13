@@ -357,6 +357,38 @@ describe("PluginManager", () => {
     }
   });
 
+  it("wraps long plugin error text in the detail view while preserving the detail variant class", async () => {
+    const plugin = {
+      ...mockPlugins[0],
+      id: "plugin-error-detail-wrap",
+      name: "Long Error Plugin",
+      state: "error" as const,
+      error: "Error: Plugin loader failed while resolving /plugins/long-error-plugin/node_modules/@very-long-scope/very-long-package-name-with-no-natural-breakpoints/dist/index.mjs because configuration checksum validation did not complete successfully.",
+    };
+    vi.mocked(fetchPlugins).mockResolvedValueOnce([plugin]);
+
+    render(<PluginManager addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(plugin.name)).toBeTruthy();
+    });
+
+    const listItem = screen.getByText(plugin.name).closest(".plugin-item");
+    expect(listItem).toBeTruthy();
+
+    const settingsButton = (listItem as HTMLElement).querySelector('button[title="Settings"]');
+    expect(settingsButton).toBeTruthy();
+    await userEvent.click(settingsButton as HTMLElement);
+
+    const detailError = await screen.findByText(plugin.error);
+    expect(detailError).toHaveClass("plugin-error-text", "plugin-error-text--detail");
+
+    const detailStyle = getComputedStyle(detailError);
+    expect(detailStyle.whiteSpace).toBe("normal");
+    expect(detailStyle.overflow).toBe("visible");
+    expect(detailStyle.textOverflow).toBe("clip");
+  });
+
   it("shows setup-required action for installed built-in agent browser", async () => {
     vi.mocked(fetchPlugins).mockResolvedValueOnce([
       {
