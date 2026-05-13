@@ -1809,3 +1809,56 @@
 
 }
 
+
+.detail-in-review-stall {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+}
+
+.detail-in-review-stall-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.detail-in-review-stall-headline {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.detail-in-review-stall-reason {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.detail-in-review-stall-description,
+.detail-in-review-stall-action {
+  color: var(--text);
+}
+
+.detail-in-review-stall-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  color: var(--text-muted);
+}
+
+.detail-log-entry--stall-highlight {
+  outline: 2px solid color-mix(in srgb, var(--color-warning) 60%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  transition: outline-color var(--transition-slow);
+}
+
+@media (max-width: 768px) {
+  .detail-in-review-stall-meta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

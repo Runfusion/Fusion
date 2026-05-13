@@ -7,7 +7,7 @@ import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, Settings, GlobalSettings, AgentLogEntry, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult, GithubIssueAction } from "@fusion/core";
+import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, Settings, GlobalSettings, AgentLogEntry, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult, GithubIssueAction, InReviewStallCode } from "@fusion/core";
 import {
   COLUMN_LABELS,
   DEFAULT_TASK_PRIORITY,
@@ -45,6 +45,8 @@ import { extractDependencyDeleteConflict } from "../utils/taskDelete";
 import { computeBlockerFanoutMap } from "../hooks/useBlockerFanout";
 import { resolveEffectiveGithubRepoDefault } from "./githubTracking";
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
+import { getInReviewStallCopy, shouldShowInReviewStallBadge } from "../utils/inReviewStallCopy";
+import { findInReviewStallLogEntry, IN_REVIEW_STALL_LOG_REGEX } from "../utils/findInReviewStallLogEntry";
 
 interface ModelSelection {
   provider?: string;
@@ -535,6 +537,7 @@ export function TaskDetailContent({
   }, [task.id]);
 
   const [logSubview, setLogSubview] = useState<"activity" | "agent-log">("activity");
+  const [highlightStallCode, setHighlightStallCode] = useState<InReviewStallCode | null>(null);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [attachments, setAttachments] = useState<TaskAttachment[]>(task.attachments || []);
   const [uploading, setUploading] = useState(false);
@@ -551,6 +554,22 @@ export function TaskDetailContent({
   const [specEditContent, setSpecEditContent] = useState(workingTask.prompt || "");
   const [specFeedback, setSpecFeedback] = useState("");
   const [showRefineModal, setShowRefineModal] = useState(false);
+
+  useEffect(() => {
+    if (activeTab !== "logs" || logSubview !== "activity") {
+      setHighlightStallCode(null);
+      return;
+    }
+
+    if (!highlightStallCode) {
+      return;
+    }
+
+    const highlighted = activityListRef.current?.querySelector<HTMLElement>("[data-stall-highlight=\"true\"]");
+    if (highlighted && typeof highlighted.scrollIntoView === "function") {
+      highlighted.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [activeTab, logSubview, highlightStallCode]);
   const [refineFeedback, setRefineFeedback] = useState("");
   const [isRefining, setIsRefining] = useState(false);
 
@@ -594,6 +613,7 @@ export function TaskDetailContent({
   const [githubRepoOverrideError, setGithubRepoOverrideError] = useState<string | null>(null);
   const [isSavingGithubTracking, setIsSavingGithubTracking] = useState(false);
   const moveMenuRef = useRef<HTMLDivElement>(null);
+  const activityListRef = useRef<HTMLDivElement>(null);
   const moveButtonRef = useRef<HTMLButtonElement>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
 
@@ -2357,20 +2377,36 @@ export function TaskDetailContent({
                     </div>
                   ) : null}
                   {workingTask.log && workingTask.log.length > 0 ? (
-                    <div className="detail-activity-list">
-                      {[...workingTask.log].reverse().map((entry, i) => (
-                        <div key={i} className="detail-log-entry">
-                          <div className="detail-log-header">
-                            <span className="detail-log-timestamp">
-                              {formatTimestamp(entry.timestamp)}
-                            </span>
-                            <span className="detail-log-action">{entry.action}</span>
-                          </div>
-                          {entry.outcome && (
-                            <div className="detail-log-outcome">{entry.outcome}</div>
-                          )}
-                        </div>
-                      ))}
+                    <div className="detail-activity-list" ref={activityListRef}>
+                      {(() => {
+                        let highlightedOnce = false;
+                        return [...workingTask.log].reverse().map((entry, i) => {
+                          const stallMatch = entry.action.match(IN_REVIEW_STALL_LOG_REGEX);
+                          const isHighlighted = !highlightedOnce
+                            && highlightStallCode != null
+                            && stallMatch?.[1] === highlightStallCode;
+                          if (isHighlighted) {
+                            highlightedOnce = true;
+                          }
+                          return (
+                            <div
+                              key={i}
+                              className={`detail-log-entry${isHighlighted ? " detail-log-entry--stall-highlight" : ""}`}
+                              data-stall-highlight={isHighlighted ? "true" : undefined}
+                            >
+                              <div className="detail-log-header">
+                                <span className="detail-log-timestamp">
+                                  {formatTimestamp(entry.timestamp)}
+                                </span>
+                                <span className="detail-log-action">{entry.action}</span>
+                              </div>
+                              {entry.outcome && (
+                                <div className="detail-log-outcome">{entry.outcome}</div>
+                              )}
+                            </div>
+                          );
+                        });
+                      })()}
                     </div>
                   ) : (
                     <div className="detail-log-empty">(no activity)</div>
@@ -2989,7 +3025,51 @@ export function TaskDetailContent({
           </div>
           {/* PR Section - only for in-review tasks */}
           {task.column === "in-review" && (
-            <div className="detail-section detail-pr-section">
+            <>
+              {shouldShowInReviewStallBadge(workingTask) && workingTask.inReviewStall && (() => {
+                const copy = getInReviewStallCopy(workingTask.inReviewStall);
+                const logMatch = findInReviewStallLogEntry(workingTask, workingTask.inReviewStall.code);
+                return (
+                  <div
+                    className={`detail-section detail-in-review-stall detail-in-review-stall--${copy.code}`}
+                    data-stall-code={copy.code}
+                  >
+                    <div className="detail-in-review-stall-header">
+                      <span className="card-status-badge card-status-badge--in-review in-review-stall">
+                        {copy.badgeLabel}
+                      </span>
+                      <span className="detail-in-review-stall-headline">{copy.headline}</span>
+                    </div>
+                    <div className="detail-in-review-stall-reason">{workingTask.inReviewStall.reason}</div>
+                    <div className="detail-in-review-stall-description">{copy.description}</div>
+                    <div className="detail-in-review-stall-action">{copy.suggestedAction}</div>
+                    <div className="detail-in-review-stall-meta">
+                      <span>Observed {formatTimestamp(workingTask.inReviewStall.observedAt)}</span>
+                      {logMatch ? (
+                        <button
+                          type="button"
+                          className="btn btn-sm detail-in-review-stall-jump"
+                          onClick={() => {
+                            setActiveTab("logs");
+                            setLogSubview("activity");
+                            setHighlightStallCode(workingTask.inReviewStall?.code ?? null);
+                          }}
+                        >
+                          View activity log
+                        </button>
+                      ) : (
+                        <span
+                          className="detail-in-review-stall-no-log"
+                          title="No 'In-review stall surfaced' entry on this task yet — self-healing may not have logged one within its rate-limit window."
+                        >
+                          No log entry yet
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+              <div className="detail-section detail-pr-section">
               <PrSection
                 taskId={task.id}
                 projectId={projectId}
@@ -3008,6 +3088,7 @@ export function TaskDetailContent({
                 addToast={addToast}
               />
             </div>
+            </>
           )}
           </>
           )}
