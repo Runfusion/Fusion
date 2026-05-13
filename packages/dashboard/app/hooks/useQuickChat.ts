@@ -269,6 +269,22 @@ export function useQuickChat(
     [projectId],
   );
 
+  const clearPendingMessage = useCallback(() => {
+    pendingMessageRef.current = "";
+    setPendingMessage("");
+  }, []);
+
+  const flushPendingMessage = useCallback(() => {
+    const queuedMessage = pendingMessageRef.current.trim();
+    if (!queuedMessage) {
+      return;
+    }
+
+    pendingMessageRef.current = "";
+    setPendingMessage("");
+    void sendMessageRef.current(queuedMessage);
+  }, []);
+
   const attachIfGenerating = useCallback((
     sessionId: string,
     inFlightGeneration?: ChatInFlightGenerationState | null,
@@ -311,6 +327,7 @@ export function useQuickChat(
         void fetchChatMessages(sessionId, { limit: 50 }, projectId).then((data) => {
           setMessages(data.messages.map(mapChatMessageToInfo));
         }).catch(() => {});
+        flushPendingMessage();
       },
       onError: (data) => {
         setStreamingText("");
@@ -326,6 +343,7 @@ export function useQuickChat(
         void fetchChatMessages(sessionId, { limit: 50 }, projectId).then((resp) => {
           setMessages(resp.messages.map(mapChatMessageToInfo));
         }).catch(() => {});
+        flushPendingMessage();
       },
     });
 
@@ -335,7 +353,7 @@ export function useQuickChat(
         : {}),
     });
     return true;
-  }, [addToast, projectId]);
+  }, [addToast, projectId, flushPendingMessage]);
 
   // Fetch existing sessions and find/create one for the given target
   const initializeSession = useCallback(
@@ -446,6 +464,8 @@ export function useQuickChat(
           setStreamingThinking("");
           setStreamingToolCalls([]);
           setIsStreaming(false);
+          isStreamingRef.current = false;
+          flushPendingMessage();
         }
       } catch {
         // Silently fail - will retry on next interval
@@ -453,7 +473,7 @@ export function useQuickChat(
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [activeSession, attachIfGenerating, projectId]);
+  }, [activeSession, attachIfGenerating, projectId, flushPendingMessage]);
 
   // Reload messages from server (for same-session revisit)
   const reloadMessages = useCallback(async () => {
@@ -611,11 +631,6 @@ export function useQuickChat(
     setStreamingToolCalls([]);
   }, [activeSession, projectId]);
 
-  const clearPendingMessage = useCallback(() => {
-    pendingMessageRef.current = "";
-    setPendingMessage("");
-  }, []);
-
   const sendMessageRef = useRef<(content: string, attachments?: File[]) => Promise<void>>(() => Promise.resolve());
   const visibilitySuspension = useTabVisibilitySuspension();
 
@@ -747,12 +762,7 @@ export function useQuickChat(
             sendCompletionRef.current?.resolve();
             sendCompletionRef.current = null;
 
-            const queuedMessage = pendingMessageRef.current.trim();
-            if (queuedMessage) {
-              pendingMessageRef.current = "";
-              setPendingMessage("");
-              void sendMessageRef.current(queuedMessage);
-            }
+            flushPendingMessage();
           },
           onError: (data) => {
             setStreamingText("");
@@ -784,12 +794,7 @@ export function useQuickChat(
             sendCompletionRef.current = null;
 
             if (!cancelledByUserRef.current) {
-              const queuedMessage = pendingMessageRef.current.trim();
-              if (queuedMessage) {
-                pendingMessageRef.current = "";
-                setPendingMessage("");
-                void sendMessageRef.current(queuedMessage);
-              }
+              flushPendingMessage();
             }
 
             if (!shouldSuppressSuspensionError) {
@@ -806,7 +811,7 @@ export function useQuickChat(
       void completionPromise.catch(() => {});
       return completionPromise;
     },
-    [activeSession, projectId, addToast, reloadMessages, reconnectSessionSilently],
+    [activeSession, projectId, addToast, reloadMessages, reconnectSessionSilently, flushPendingMessage],
   );
 
   sendMessageRef.current = sendMessage;
@@ -821,7 +826,7 @@ export function useQuickChat(
         return;
       }
 
-      void fetchChatSession(currentSession.id, projectId)
+      void Promise.resolve(fetchChatSession(currentSession.id, projectId))
         .then((data) => {
           if (streamRef.current || activeSessionRef.current?.id !== currentSession.id) {
             return;
@@ -843,6 +848,7 @@ export function useQuickChat(
             setStreamingToolCalls([]);
             setIsStreaming(false);
             isStreamingRef.current = false;
+            flushPendingMessage();
             void reloadMessages();
           }
         })
@@ -852,7 +858,7 @@ export function useQuickChat(
     });
 
     return unsubscribe;
-  }, [attachIfGenerating, projectId, reloadMessages, visibilitySuspension]);
+  }, [attachIfGenerating, projectId, reloadMessages, visibilitySuspension, flushPendingMessage]);
 
   // Cleanup on unmount
   useEffect(() => {

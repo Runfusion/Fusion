@@ -406,6 +406,22 @@ export function useChat(
     setIsStreaming(false);
   }, []);
 
+  const clearPendingMessage = useCallback(() => {
+    pendingMessageRef.current = "";
+    setPendingMessage("");
+  }, []);
+
+  const flushPendingMessage = useCallback(() => {
+    const queuedMessage = pendingMessageRef.current.trim();
+    if (!queuedMessage) {
+      return;
+    }
+
+    pendingMessageRef.current = "";
+    setPendingMessage("");
+    sendMessageRef.current(queuedMessage);
+  }, []);
+
   const attachIfGenerating = useCallback((
     sessionId: string,
     inFlightGeneration?: ChatInFlightGenerationState | null,
@@ -446,6 +462,7 @@ export function useChat(
         isStreamingRef.current = false;
         streamRef.current = null;
         void loadMessages(sessionId);
+        flushPendingMessage();
       },
       onError: (data) => {
         setStreamingText("");
@@ -459,6 +476,7 @@ export function useChat(
           addToast?.(failureInfo.summary, "error");
         }
         void loadMessages(sessionId);
+        flushPendingMessage();
       },
     });
 
@@ -469,7 +487,7 @@ export function useChat(
     });
     streamRef.current = stream;
     return true;
-  }, [addToast, loadMessages, projectId]);
+  }, [addToast, loadMessages, projectId, flushPendingMessage]);
 
   // Select a session
   const selectSession = useCallback(
@@ -617,11 +635,6 @@ export function useChat(
     setStreamingToolCalls([]);
   }, [activeSession, projectId]);
 
-  const clearPendingMessage = useCallback(() => {
-    pendingMessageRef.current = "";
-    setPendingMessage("");
-  }, []);
-
   /**
    * Send a user message to the active chat session.
    * @param content Message text content to send.
@@ -754,12 +767,7 @@ export function useChat(
 
           refreshSessions();
 
-          const queuedMessage = pendingMessageRef.current.trim();
-          if (queuedMessage) {
-            pendingMessageRef.current = "";
-            setPendingMessage("");
-            sendMessageRef.current(queuedMessage);
-          }
+          flushPendingMessage();
         },
         onError: (data, tempUserMessageId) => {
           const failureInfo = normalizeFailureInfo(data);
@@ -807,19 +815,14 @@ export function useChat(
           }
 
           if (!cancelledByUserRef.current) {
-            const queuedMessage = pendingMessageRef.current.trim();
-            if (queuedMessage) {
-              pendingMessageRef.current = "";
-              setPendingMessage("");
-              sendMessageRef.current(queuedMessage);
-            }
+            flushPendingMessage();
           }
         },
       });
 
       streamRef.current = streamChatResponse(activeSession.id, content, handlers, attachments, projectId);
     },
-    [activeSession, projectId, refreshSessions, addToast, attachIfGenerating, reconnectSessionSilently],
+    [activeSession, projectId, refreshSessions, addToast, attachIfGenerating, reconnectSessionSilently, flushPendingMessage],
   );
 
   sendMessageRef.current = sendMessage;
@@ -860,6 +863,8 @@ export function useChat(
           setStreamingThinking("");
           setStreamingToolCalls([]);
           setIsStreaming(false);
+          isStreamingRef.current = false;
+          flushPendingMessage();
         }
       } catch {
         // Silently fail - will retry next interval
@@ -867,7 +872,7 @@ export function useChat(
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [attachIfGenerating, loadMessages, projectId, activeSession]);
+  }, [attachIfGenerating, loadMessages, projectId, activeSession, flushPendingMessage]);
 
   useEffect(() => {
     const unsubscribe = visibilitySuspension.onBecameVisible(() => {
@@ -899,6 +904,7 @@ export function useChat(
             setStreamingToolCalls([]);
             setIsStreaming(false);
             isStreamingRef.current = false;
+            flushPendingMessage();
             void loadMessages(currentSession.id);
           }
         })
@@ -908,7 +914,7 @@ export function useChat(
     });
 
     return unsubscribe;
-  }, [attachIfGenerating, loadMessages, projectId, visibilitySuspension]);
+  }, [attachIfGenerating, loadMessages, projectId, visibilitySuspension, flushPendingMessage]);
 
   // SSE real-time updates
   useEffect(() => {
@@ -983,6 +989,8 @@ export function useChat(
         setStreamingThinking("");
         setStreamingToolCalls([]);
         setIsStreaming(false);
+        isStreamingRef.current = false;
+        flushPendingMessage();
         return;
       }
 
@@ -1031,7 +1039,7 @@ export function useChat(
     });
 
     return unsubscribe;
-  }, [attachIfGenerating, projectId]);
+  }, [attachIfGenerating, projectId, flushPendingMessage]);
 
   // Cleanup on unmount
   useEffect(() => {

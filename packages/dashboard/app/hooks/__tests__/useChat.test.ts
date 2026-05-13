@@ -1317,6 +1317,108 @@ describe("useChat", () => {
     });
   });
 
+  describe("queued message recovery paths", () => {
+    it("flushes queued message when recovery completes via chat:message:added SSE", async () => {
+      const session = {
+        ...makeSession({ id: "session-001", agentId: "agent-001" }),
+        isGenerating: true,
+      };
+      mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+      mockAttachChatStream.mockReturnValue(null as never);
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+
+      act(() => {
+        result.current.selectSession("session-001");
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+      });
+
+      act(() => {
+        result.current.sendMessage("Queued follow-up");
+      });
+
+      await waitFor(() => {
+        expect(result.current.pendingMessage).toBe("Queued follow-up");
+      });
+
+      const subscribeOptions = mockSubscribeSse.mock.calls.at(-1)?.[1];
+      const messageAdded = subscribeOptions?.events?.["chat:message:added"];
+      expect(messageAdded).toBeTypeOf("function");
+
+      act(() => {
+        messageAdded?.({
+          data: JSON.stringify(makeMessage({
+            id: "msg-002",
+            sessionId: "session-001",
+            role: "assistant",
+            content: "Recovered",
+          })),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+        expect(mockStreamChatResponse.mock.calls[0]?.[1]).toBe("Queued follow-up");
+        expect(result.current.pendingMessage).toBe("");
+      });
+    });
+
+    it("flushes queued message when visibility resume sees generation complete", async () => {
+      const session = {
+        ...makeSession({ id: "session-001", agentId: "agent-001" }),
+        isGenerating: true,
+      };
+      mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+      mockAttachChatStream.mockReturnValue(null as never);
+      mockFetchChatSession.mockResolvedValue({
+        session: { ...session, isGenerating: false },
+      });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(1);
+      });
+
+      act(() => {
+        result.current.selectSession("session-001");
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+      });
+
+      act(() => {
+        result.current.sendMessage("Queued follow-up");
+      });
+
+      await waitFor(() => {
+        expect(result.current.pendingMessage).toBe("Queued follow-up");
+      });
+
+      act(() => {
+        setDocumentVisibilityState("hidden");
+        setDocumentVisibilityState("visible");
+      });
+
+      await waitFor(() => {
+        expect(mockFetchChatSession).toHaveBeenCalledWith("session-001", "proj-123");
+        expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+        expect(mockStreamChatResponse.mock.calls[0]?.[1]).toBe("Queued follow-up");
+        expect(result.current.pendingMessage).toBe("");
+      });
+    });
+  });
+
   it("queued message is not auto-sent after user-initiated stop", async () => {
     const session = makeSession({ id: "session-001", agentId: "agent-001" });
     mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });

@@ -739,6 +739,52 @@ describe("useQuickChat", () => {
     });
   });
 
+  describe("queued message recovery paths", () => {
+    it("flushes queued message when attached recovery stream completes", async () => {
+      const existingSession = {
+        ...makeSession({ id: "session-existing", agentId: "agent-001" }),
+        isGenerating: true,
+      };
+      const attachHandlers: Array<Parameters<typeof mockAttachChatStream>[1]> = [];
+
+      mockFetchResumeChatSession.mockResolvedValueOnce({ session: existingSession });
+      mockFetchChatMessages.mockResolvedValue({ messages: [] });
+      mockAttachChatStream.mockImplementation((_sessionId, handlers) => {
+        attachHandlers.push(handlers);
+        return { close: vi.fn(), isConnected: () => true };
+      });
+
+      const { result } = renderHook(() => useQuickChat("proj-123"));
+
+      await act(async () => {
+        await result.current.switchSession("agent-001");
+      });
+
+      await waitFor(() => {
+        expect(result.current.isStreaming).toBe(true);
+      });
+
+      const queuedSend = result.current.sendMessage("Queued follow-up");
+
+      await waitFor(() => {
+        expect(result.current.pendingMessage).toBe("Queued follow-up");
+      });
+
+      act(() => {
+        attachHandlers[0]?.onDone?.({ messageId: "msg-recovery" });
+      });
+
+      await waitFor(() => {
+        expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+        expect(mockStreamChatResponse.mock.calls[0]?.[1]).toBe("Queued follow-up");
+        expect(result.current.pendingMessage).toBe("");
+      });
+
+      await expect(queuedSend).resolves.toBeUndefined();
+    });
+
+  });
+
   it("onError does not remove user message from local state", async () => {
     const existingSession = makeSession({ id: "session-existing", agentId: "agent-001" });
     let onErrorHandler: ((data: string) => void) | undefined;
