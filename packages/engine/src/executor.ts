@@ -4428,6 +4428,7 @@ export class TaskExecutor {
   ): ToolDefinition {
     const store = this.store;
     const options = this.options;
+    const planSpecUnavailableCounts = new Map<string, number>();
 
     return {
       name: "fn_review_step",
@@ -4637,7 +4638,28 @@ export class TaskExecutor {
               }
               break;
             }
-            default: text = "UNAVAILABLE — reviewer did not produce a usable verdict.";
+            default:
+              if (reviewType === "plan" || reviewType === "spec") {
+                const key = `${reviewType}:${step}`;
+                const count = (planSpecUnavailableCounts.get(key) ?? 0) + 1;
+                planSpecUnavailableCounts.set(key, count);
+                const advisoryMessage = `${reviewType} review Step ${step}: UNAVAILABLE — proceeding advisory after fallback retry exhausted`;
+                await store.logEntry(taskId, advisoryMessage);
+                reviewerLog.warn(`${taskId}: ${advisoryMessage}`);
+                if (count >= 2) {
+                  await store.logEntry(
+                    taskId,
+                    `${reviewType} review Step ${step}: repeated UNAVAILABLE (${count}) — advisory continuation active; operator may inspect reviewer logs in dashboard`,
+                  );
+                }
+                text = `UNAVAILABLE (advisory) — reviewer could not produce a verdict after fallback retry. ${reviewType === "plan" ? "Plan" : "Spec"} reviews are advisory; proceed with implementation. Do NOT re-call fn_review_step for the ${reviewType} of Step ${step}.`;
+              } else {
+                const blockingMessage = `code review Step ${step}: UNAVAILABLE — blocking until reviewer returns a usable verdict`;
+                await store.logEntry(taskId, blockingMessage);
+                reviewerLog.warn(`${taskId}: ${blockingMessage}`);
+                text = "UNAVAILABLE — reviewer did not produce a usable verdict. Code review remains blocking; retry once or escalate via dashboard.";
+              }
+              break;
           }
 
           return { content: [{ type: "text" as const, text }], details: {} };

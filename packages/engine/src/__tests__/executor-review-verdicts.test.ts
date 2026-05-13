@@ -404,6 +404,43 @@ describe("Code review verdict tracking", () => {
     const updateResult = await tools.fn_task_update("call2", { step: 1, status: "done" });
     expect(updateResult.content[0].text).toContain("→ done");
   });
+
+  it("plan review UNAVAILABLE is advisory and does not block step completion", async () => {
+    mockedReviewStep.mockResolvedValue({
+      verdict: "UNAVAILABLE",
+      review: "Reviewer unavailable",
+      summary: "No verdict",
+    });
+
+    const tools = await captureTools();
+    const result = await tools.fn_review_step("call1", {
+      step: 0,
+      type: "plan",
+      step_name: "Implement",
+    });
+
+    expect(result.content[0].text).toContain("UNAVAILABLE (advisory)");
+    const updateResult = await tools.fn_task_update("call2", { step: 1, status: "done" });
+    expect(updateResult.content[0].text).toContain("→ done");
+  });
+
+  it("code review UNAVAILABLE remains blocking guidance", async () => {
+    mockedReviewStep.mockResolvedValue({
+      verdict: "UNAVAILABLE",
+      review: "Reviewer unavailable",
+      summary: "No verdict",
+    });
+
+    const tools = await captureTools();
+    const result = await tools.fn_review_step("call1", {
+      step: 0,
+      type: "code",
+      step_name: "Implement",
+      baseline: "abc123",
+    });
+
+    expect(result.content[0].text).toContain("Code review remains blocking");
+  });
 });
 
 describe("Code review verdict enforcement - fn_task_update blocking", () => {
