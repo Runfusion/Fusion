@@ -114,6 +114,12 @@ describe("settings key parity", () => {
     expect(isGlobalSettingsKey("staleHighFanoutBlockerAgeThresholdMs")).toBe(false);
   });
 
+  it("keeps capacity risk banner toggle project-scoped with off default", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.capacityRiskBannerEnabled).toBe(false);
+    expect(isProjectSettingsKey("capacityRiskBannerEnabled")).toBe(true);
+    expect(isGlobalSettingsKey("capacityRiskBannerEnabled")).toBe(false);
+  });
+
   it("keeps github tracking keys in expected scopes with documented defaults", () => {
     expect(DEFAULT_PROJECT_SETTINGS.githubTrackingEnabledByDefault).toBe(false);
     expect(DEFAULT_PROJECT_SETTINGS.githubTrackingDefaultRepo).toBeUndefined();

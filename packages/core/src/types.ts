@@ -2300,6 +2300,10 @@ export interface ProjectSettings {
    *  Blocker age is measured from columnMovedAt when available, otherwise updatedAt.
    *  Only blockers currently in in-progress or in-review are eligible. */
   staleHighFanoutBlockerAgeThresholdMs?: number;
+  /** When true, the dashboard shows the capacity-risk banner once
+   *  capacityRiskTodoThreshold is exceeded with zero idle non-ephemeral agents.
+   *  Default: false. */
+  capacityRiskBannerEnabled?: boolean;
   /** Todo count threshold for raising a capacity-risk warning when there are zero
    *  idle non-ephemeral agents available. Warning fires only when todo is strictly
    *  greater than this threshold. Default: 20. */
