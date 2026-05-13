@@ -2338,7 +2338,7 @@ describe("TaskDetailModal", () => {
       expect(screen.queryByRole("button", { name: "Collapse GitHub tracking details" })).toBeNull();
     });
 
-    it("keeps the inline enable button mounted and disabled while saving", async () => {
+    it("FN-4228 shows a spinner instead of the inline enable button while saving", async () => {
       const { updateTask } = await import("../../api");
       const mockUpdate = vi.mocked(updateTask);
       let resolveUpdate: ((task: Task) => void) | undefined;
@@ -2370,15 +2370,27 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("button", { name: "Enable GitHub tracking" }));
 
       await waitFor(() => {
-        expect(screen.getByRole("button", { name: "Enable GitHub tracking" })).toBeDisabled();
+        expect(screen.queryByRole("button", { name: "Enable GitHub tracking" })).toBeNull();
       });
-      expect(screen.getByRole("button", { name: "Enable GitHub tracking" })).toHaveTextContent("Saving…");
+      expect(screen.getByRole("status", { name: "Enabling GitHub tracking" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Expand GitHub tracking details" })).toHaveAttribute("aria-expanded", "false");
 
-      resolveUpdate?.({ id: "FN-001" } as Task);
+      resolveUpdate?.({
+        id: "FN-001",
+        githubTracking: {
+          enabled: true,
+          issue: {
+            number: 42,
+            title: "Tracked issue",
+            url: "https://github.com/runfusion/fusion/issues/42",
+            state: "open",
+          },
+        },
+      } as Task);
 
       await waitFor(() => {
         expect(screen.queryByRole("button", { name: "Enable GitHub tracking" })).toBeNull();
+        expect(screen.queryByRole("status", { name: "Enabling GitHub tracking" })).toBeNull();
       });
     });
 
