@@ -2,9 +2,11 @@
 
 [← Docs index](./README.md)
 
-Fusion Research lets you create bounded research runs that search, fetch, and synthesize information with built-in web tools by default, then turn structured findings into actionable tasks — all from the dashboard, CLI, or agent sessions.
+Fusion Research is a cited search-and-synthesis pipeline: create bounded research runs, gather sources with built-in web tools, and synthesize findings into actionable task context from the dashboard, CLI, or agent sessions.
 
 ---
+
+> **Not pi-autoresearch:** Fusion Research is a cited search/synthesis pipeline. The autonomous try-measure-keep-revert loop from upstream `pi-autoresearch` is a separate domain (experiment sessions); see [naming-decision-2026-05.md](./research/naming-decision-2026-05.md).
 
 ## Overview
 
@@ -160,7 +162,7 @@ Each finding has two task-facing actions:
 
 ## CLI Usage
 
-The `fn research` command provides full research run management from the terminal.
+The `fn research` command provides cited-research run management from the terminal (search/fetch/synthesis runs, not experiment sessions).
 
 ### Commands
 
@@ -284,17 +286,19 @@ Additionally, planning-mode sessions and the LLM synthesis agent can opt into ru
 
 | Tool | Description |
 |---|---|
-| `fn_research_run` | Start a bounded research run. Parameters: `query`, `wait_for_completion`, `max_wait_ms` |
-| `fn_research_list` | List recent runs. Parameters: `status`, `limit` |
-| `fn_research_get` | Get a run's structured findings. Parameters: `id` |
-| `fn_research_cancel` | Cancel an active run. Parameters: `id` |
-| `fn_research_retry` | Retry a failed/timed-out run when retryable. Parameters: `id` |
+| `fn_research_run` | Start a bounded cited-research run (search/fetch/synthesis). Parameters: `query`, `wait_for_completion`, `max_wait_ms` |
+| `fn_research_list` | List recent cited-research runs. Parameters: `status`, `limit` |
+| `fn_research_get` | Get a cited-research run's structured findings. Parameters: `id` |
+| `fn_research_cancel` | Cancel an active cited-research run. Parameters: `id` |
+| `fn_research_retry` | Retry a failed/timed-out cited-research run when retryable. Parameters: `id` |
 
 ### Tool responses
 
 All tools return:
 - **Text content** — concise human-readable summary
 - **Structured details** — machine-readable metadata (`runId`, `status`, `summary`, `findings`, `citations`, `error`, `setup`)
+
+`ResearchFinding.confidence` in this subsystem is synthesis-emitted confidence from the LLM provider (0–1), not a statistical confidence score.
 
 ### Availability checks
 
