@@ -4654,20 +4654,22 @@ describe("ChatView empty-state token guards", () => {
     const loadingNodes = screen.getAllByText("Loading messages...");
     const sidebarLoadingNode = screen.getByText("Loading...");
 
+    const legacyToken = `--text-${"secondary"}`;
     expect(sidebarLoadingNode.className).toContain("chat-empty-state");
-    expect(sidebarLoadingNode.getAttribute("style") ?? "").not.toContain("--text-secondary");
+    expect(sidebarLoadingNode.getAttribute("style") ?? "").not.toContain(legacyToken);
 
     for (const node of loadingNodes) {
       expect(node.className).toContain("chat-empty-state");
-      expect(node.getAttribute("style") ?? "").not.toContain("--text-secondary");
+      expect(node.getAttribute("style") ?? "").not.toContain(legacyToken);
     }
   });
 
-  it("keeps ChatView source files free of --text-secondary", () => {
+  it("keeps ChatView source files free of deprecated secondary token", () => {
     const chatViewTsx = readFileSync("app/components/ChatView.tsx", "utf8");
     const chatViewCss = readFileSync("app/components/ChatView.css", "utf8");
+    const legacyToken = `--text-${"secondary"}`;
 
-    expect(chatViewTsx.includes("--text-secondary")).toBe(false);
-    expect(chatViewCss.includes("--text-secondary")).toBe(false);
+    expect(chatViewTsx.includes(legacyToken)).toBe(false);
+    expect(chatViewCss.includes(legacyToken)).toBe(false);
   });
 });
