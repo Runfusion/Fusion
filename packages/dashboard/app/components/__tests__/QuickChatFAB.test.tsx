@@ -10,6 +10,7 @@ import { QuickChatFAB } from "../QuickChatFAB";
 
 vi.mock("../../api", () => ({
   fetchResumeChatSession: vi.fn(),
+  fetchChatSession: vi.fn(),
   fetchChatSessions: vi.fn(),
   createChatSession: vi.fn(),
   fetchChatMessages: vi.fn(),
