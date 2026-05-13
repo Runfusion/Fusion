@@ -132,6 +132,12 @@ export {
   type MergeTargetResolverOptions,
 } from "./task-merge.js";
 export {
+  getInReviewStallReason,
+  DEFAULT_STALE_MERGING_MIN_AGE_MS,
+  DEFAULT_MAX_AUTO_MERGE_RETRIES,
+} from "./in-review-stall.js";
+export type { InReviewStallSignal, InReviewStallCode } from "./in-review-stall.js";
+export {
   isGhAvailable, 
   isGhAuthenticated, 
   runGh, 

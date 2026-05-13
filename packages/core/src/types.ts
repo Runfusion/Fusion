@@ -1,4 +1,6 @@
 
+import type { InReviewStallSignal } from "./in-review-stall.js";
+
 /** Valid thinking effort levels for AI agent sessions, controlling the cost/quality tradeoff of reasoning. */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
@@ -1196,6 +1198,9 @@ export interface Task {
    *  this on the fly from `log`, so this field is only populated by the slim
    *  list path and may be omitted on the full-detail object. */
   timedExecutionMs?: number;
+  /** Server-computed in-review stall signal. Undefined when no stall rule matches.
+   *  Diagnostic-only: must not be used as an auto-completion signal. */
+  inReviewStall?: InReviewStallSignal;
   /** Durable aggregate token usage totals for the task. Undefined when no usage has been recorded yet. */
   tokenUsage?: TaskTokenUsage;
   size?: "S" | "M" | "L";

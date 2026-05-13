@@ -36,7 +36,7 @@ export const DEFAULT_MAX_AUTO_MERGE_RETRIES = 3;
 const TRANSIENT_MERGE_STATUSES = new Set(["merging", "merging-pr", "merging-fix"]);
 
 export function getInReviewStallReason(
-  task: Pick<Task, "id" | "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults" | "worktree" | "mergeDetails" | "mergeRetries" | "updatedAt">,
+  task: Pick<Task, "column" | "paused" | "status" | "error" | "steps" | "workflowStepResults" | "worktree" | "mergeDetails" | "mergeRetries" | "updatedAt"> & { id?: string },
   context: InReviewStallContext = {},
 ): InReviewStallSignal | undefined {
   if (task.column !== "in-review" || task.paused === true) {
@@ -52,7 +52,7 @@ export function getInReviewStallReason(
     return undefined;
   }
 
-  if (context.activeMergeTaskId === task.id || context.executingTaskIds?.has(task.id)) {
+  if (task.id && (context.activeMergeTaskId === task.id || context.executingTaskIds?.has(task.id))) {
     return undefined;
   }
 

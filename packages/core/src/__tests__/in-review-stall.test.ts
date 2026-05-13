@@ -59,6 +59,10 @@ describe("getInReviewStallReason", () => {
     expect(getInReviewStallReason({ ...baseTask, status: "awaiting-user-review" }, { now: NOW })).toBeUndefined();
   });
 
+  it("returns undefined for awaiting-approval", () => {
+    expect(getInReviewStallReason({ ...baseTask, status: "awaiting-approval" }, { now: NOW })).toBeUndefined();
+  });
+
   it("returns undefined for paused tasks", () => {
     expect(getInReviewStallReason({ ...baseTask, paused: true }, { now: NOW })).toBeUndefined();
   });
