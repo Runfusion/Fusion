@@ -1127,7 +1127,8 @@ describe("TaskCard", () => {
     const footerRow = container.querySelector(".card-footer-row");
     expect(link.getAttribute("href")).toBe("https://github.com/owner/repo/issues/42");
     expect(link.getAttribute("title")).toBe("Linked GitHub issue: owner/repo#42");
-    expect(link).toHaveClass("card-source-provenance", "card-github-tracking-link");
+    expect(link).toHaveClass("card-github-tracking-chip", "card-github-tracking-link");
+    expect(link).toHaveTextContent("#42");
     expect(bottomRightRow?.contains(link)).toBe(true);
     expect(footerRow).toBeNull();
     expect(screen.getByTestId("provider-icon-github")).toBeDefined();
@@ -1218,12 +1219,37 @@ describe("TaskCard", () => {
     expect(link.getAttribute("rel")).toContain("noreferrer");
   });
 
-  it("keeps GitHub tracking link interaction-affordance CSS contract", () => {
+  it("keeps GitHub tracking chip interaction-affordance CSS contract", () => {
     const css = loadAllAppCssBaseOnly();
 
-    expect(css).toMatch(/\.card-github-tracking-link\s*\{[^}]*min-width:[^;]+;[^}]*min-height:[^;]+;[^}]*\}/);
-    expect(css).toContain(".card-github-tracking-link:hover");
-    expect(css).toMatch(/\.card-github-tracking-link:focus-visible\s*\{[^}]*--focus-ring-strong/);
+    expect(css).toMatch(/\.card-github-tracking-chip\s*\{[^}]*display:\s*inline-flex;[^}]*font-family:\s*var\(--font-mono\);[^}]*\}/);
+    expect(css).toContain(".card-github-tracking-chip:hover");
+    expect(css).toMatch(/\.card-github-tracking-chip:focus-visible\s*\{[^}]*--focus-ring-strong/);
+
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "todo",
+          sourceType: "dashboard_ui",
+          githubTracking: {
+            issue: {
+              owner: "owner",
+              repo: "repo",
+              number: 42,
+              url: "https://github.com/owner/repo/issues/42",
+              createdAt: "2026-05-12T00:00:00.000Z",
+            },
+          },
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const link = screen.getByRole("link", { name: "Linked GitHub issue #42" });
+    const chipStyle = getComputedStyle(link);
+    expect(chipStyle.display).toBe("inline-flex");
+    expect(chipStyle.whiteSpace).toBe("nowrap");
   });
 
   it("keeps GitHub provenance indicators grouped on the right edge", () => {
@@ -1249,7 +1275,7 @@ describe("TaskCard", () => {
     expect(screen.queryByRole("link", { name: /Linked GitHub issue/i })).toBeNull();
   });
 
-  it("renders a GitHub tracking link for github_import tasks when the tracking issue is distinct from source", () => {
+  it("renders both provenance marker and tracking chip for github_import tasks when the tracking issue is distinct from source", () => {
     render(
       <TaskCard
         task={makeTask({
@@ -1275,7 +1301,7 @@ describe("TaskCard", () => {
     expect(screen.getByLabelText("Imported from GitHub")).toBeDefined();
   });
 
-  it("deduplicates the tracking link when github_import tracking issue matches source owner/repo/number", () => {
+  it("hides tracking chip when github_import tracking issue matches source owner/repo/number", () => {
     render(
       <TaskCard
         task={makeTask({
