@@ -743,6 +743,18 @@ describe("SettingsModal", () => {
       expect(payload.ephemeralAgentsEnabled).toBe(false);
     });
 
+    it("keeps ephemeral agent toggle checked when upgrading settings omit the key", async () => {
+      const { ephemeralAgentsEnabled: _omitted, ...upgradeSettings } = defaultSettings;
+      mockFetchSettings.mockResolvedValueOnce(upgradeSettings);
+      mockFetchSettingsByScope.mockResolvedValueOnce({ global: defaultSettings, project: {} });
+
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+
+      const ephemeralToggle = screen.getByLabelText("Use ephemeral task-worker agents") as HTMLInputElement;
+      expect(ephemeralToggle.checked).toBe(true);
+    });
+
     it("renders and saves GitHub tracking controls in the General section", async () => {
       renderModal({ initialSection: "general" });
       await waitForSettingsModalReady();
