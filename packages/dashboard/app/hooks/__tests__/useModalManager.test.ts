@@ -204,6 +204,31 @@ describe("useModalManager", () => {
     expect(result.current.detailTaskInitialTab).toBe("definition");
   });
 
+  it.each([
+    [undefined, undefined, null],
+    ["worktree-FN-X", undefined, null],
+    [undefined, "packages/foo/bar.ts", "packages/foo/bar.ts"],
+  ])("opens files modal with workspace %s and initial file %s", (workspace, initialFile, expectedInitialFile) => {
+    const { result } = renderHook(() =>
+      useModalManager({ projectId: "proj_1", planningSessions: [] }),
+    );
+
+    act(() => {
+      result.current.openFiles(workspace, initialFile);
+    });
+
+    expect(result.current.filesOpen).toBe(true);
+    expect(result.current.fileBrowserInitialFile).toBe(expectedInitialFile);
+    expect(result.current.fileBrowserWorkspace).toBe(workspace ?? "project");
+
+    act(() => {
+      result.current.closeFiles();
+    });
+
+    expect(result.current.filesOpen).toBe(false);
+    expect(result.current.fileBrowserInitialFile).toBeNull();
+  });
+
   it("accepts plain Task object in openDetailWithChangesTab", () => {
     const task = createTask("FN-789");
     const { result } = renderHook(() =>

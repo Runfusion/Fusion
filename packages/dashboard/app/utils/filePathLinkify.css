@@ -1,0 +1,30 @@
+.file-path-link {
+  display: inline;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  padding: 0 var(--space-xs);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-info);
+  text-decoration: underline dotted;
+  cursor: pointer;
+  font: inherit;
+}
+
+.file-path-link:hover {
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+}
+
+.file-path-link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+@media (max-width: 768px) {
+  .file-path-link {
+    padding-block: var(--space-md);
+    margin-block: calc(var(--space-md) * -1);
+  }
+}

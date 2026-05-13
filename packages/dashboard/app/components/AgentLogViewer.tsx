@@ -1,11 +1,12 @@
 import type { AgentLogEntry } from "@fusion/core";
 import { ProviderIcon } from "./ProviderIcon";
-import { useRef, useEffect, useState, useCallback, useLayoutEffect, useMemo, useId, type ReactElement } from "react";
+import React, { useRef, useEffect, useState, useCallback, useLayoutEffect, useMemo, useId, type ReactElement } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import { Maximize2, Minimize2, Loader2, ChevronDown, ChevronRight } from "lucide-react";
 import "./AgentLogViewer.css";
+import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
 
 const MARKDOWN_TOGGLE_STORAGE_KEY = "fn-agent-log-markdown";
 const TOOL_OUTPUT_TOGGLE_STORAGE_KEY = "fn-agent-log-tool-output";
@@ -46,6 +47,16 @@ function formatTimestamp(iso: string): string {
 }
 
 const markdownComponents: Components = {
+  p: ({ children, ...props }) => <p {...props}>{linkifyReactChildren(children)}</p>,
+  li: ({ children, ...props }) => <li {...props}>{linkifyReactChildren(children)}</li>,
+  code: ({ children, ...props }) => {
+    const text = typeof children === "string" ? children : React.Children.toArray(children).join("");
+    const linkedChildren = linkifyFilePaths(text);
+    if (linkedChildren.length === 1 && typeof linkedChildren[0] === "string") {
+      return <code {...props}>{children}</code>;
+    }
+    return <code {...props}>{linkedChildren}</code>;
+  },
   pre: ({ children, ...props }) => (
     <pre
       {...props}
@@ -139,7 +150,7 @@ function CollapsibleToolDetail({ detail }: CollapsibleToolDetailProps): ReactEle
         className={expanded ? "agent-log-tool-detail-content" : "agent-log-tool-detail-content agent-log-tool-detail-content--collapsed"}
         data-testid="tool-detail-content"
       >
-        <pre className="agent-log-tool-detail">{detail}</pre>
+        <pre className="agent-log-tool-detail">{linkifyFilePaths(detail)}</pre>
       </div>
     </div>
   );
@@ -649,7 +660,7 @@ export function AgentLogViewer({
                     </ReactMarkdown>
                   </div>
                 ) : (
-                  <pre className="agent-log-plain-block">{groupedText}</pre>
+                  <pre className="agent-log-plain-block">{linkifyFilePaths(groupedText)}</pre>
                 )}
               </div>
             );
@@ -665,7 +676,7 @@ export function AgentLogViewer({
                   </ReactMarkdown>
                 </div>
               ) : (
-                <pre className="agent-log-plain-block">{groupedText}</pre>
+                <pre className="agent-log-plain-block">{linkifyFilePaths(groupedText)}</pre>
               )}
             </div>
           );

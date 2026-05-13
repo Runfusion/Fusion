@@ -58,6 +58,7 @@ import { useTaskHandlers } from "./hooks/useTaskHandlers";
 import { useRemoteNodeData } from "./hooks/useRemoteNodeData";
 import { useRemoteNodeEvents } from "./hooks/useRemoteNodeEvents";
 import { NodeProvider, useNodeContext } from "./context/NodeContext";
+import { FileBrowserProvider } from "./context/FileBrowserContext";
 import { ShellProvider } from "./context/ShellContext";
 import { ShellHostProvider, useShellHostContext } from "./context/ShellHostContext";
 import { useShellConnection } from "./hooks/useShellConnection";
@@ -976,8 +977,13 @@ function AppInner() {
     }
   }, [modalManager, pushNav]);
 
-  const openFilesWithNav = useCallback(() => {
-    modalManager.openFiles();
+  const openFilesWithNav = useCallback((workspace?: string, initialFile?: string | null) => {
+    modalManager.openFiles(workspace, initialFile);
+    pushNav({ type: "modal", close: modalManager.closeFiles });
+  }, [modalManager, pushNav]);
+
+  const openFileInBrowser = useCallback((path: string, opts?: { workspace?: string; line?: number; col?: number }) => {
+    modalManager.openFiles(opts?.workspace, path);
     pushNav({ type: "modal", close: modalManager.closeFiles });
   }, [modalManager, pushNav]);
 
@@ -1515,7 +1521,7 @@ function AppInner() {
 
   return (
     <NavigationHistoryProvider value={{ pushNav, replaceCurrent }}>
-      <>
+      <FileBrowserProvider openFile={openFileInBrowser}>
       <Header
         shellHost={shellHost.host}
         onOpenSettings={openSettingsWithNav}
@@ -1793,7 +1799,7 @@ function AppInner() {
           />
         </>
       )}
-      </>
+      </FileBrowserProvider>
     </NavigationHistoryProvider>
   );
 }

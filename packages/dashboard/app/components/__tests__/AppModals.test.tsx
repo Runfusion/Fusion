@@ -155,6 +155,7 @@ describe("AppModals", () => {
     filesOpen: false,
     todosOpen: false,
     fileBrowserWorkspace: "project",
+    fileBrowserInitialFile: null,
     usageOpen: false,
     usageAnchorRect: null,
     systemStatsOpen: false,

@@ -6,6 +6,7 @@ import { X, History, Trash2, Filter, RefreshCw, CheckCircle, XCircle, ArrowRight
 import { clearActivityLog, type ActivityLogEntry, type ActivityEventType, type ActivityFeedEntry } from "../api";
 import { useActivityLog } from "../hooks/useActivityLog";
 import type { Task, ProjectInfo } from "@fusion/core";
+import { linkifyFilePaths } from "../utils/filePathLinkify";
 
 interface ActivityLogModalProps {
   isOpen: boolean;
@@ -358,7 +359,7 @@ export function ActivityLogModal({
                     {entry.taskTitle && (
                       <span className="activity-log-task-title">{entry.taskTitle}</span>
                     )}
-                    <span className="activity-log-entry-text">{entry.details}</span>
+                    <span className="activity-log-entry-text">{linkifyFilePaths(entry.details ?? "")}</span>
                   </div>
                   {entry.metadata && Object.keys(entry.metadata).length > 0 && (
                     <div className="activity-log-entry-metadata">

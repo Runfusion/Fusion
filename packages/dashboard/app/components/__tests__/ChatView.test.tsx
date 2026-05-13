@@ -10,6 +10,7 @@ import { userEvent } from "@testing-library/user-event";
 import { ChatView } from "../ChatView";
 import type { DiscoveredSkill } from "@fusion/dashboard";
 import { loadAllAppCss } from "../../test/cssFixture";
+import { FileBrowserProvider } from "../../context/FileBrowserContext";
 
 // Mock scrollIntoView for JSDOM
 Element.prototype.scrollIntoView = vi.fn();
@@ -521,6 +522,23 @@ describe("ChatView", () => {
 
     expect(screen.getByText("Hello")).toBeInTheDocument();
     expect(screen.getByText("Hi there!")).toBeInTheDocument();
+  });
+
+  it("renders file paths in assistant messages as clickable file-browser links", async () => {
+    const openFile = vi.fn();
+    setupMockChat({
+      activeSession: activeSessionFixture,
+      messages: [{ id: "msg-001", sessionId: "session-001", role: "assistant", content: "see `packages/foo/bar.ts:42` for details", createdAt: "2026-04-08T00:00:00.000Z" }],
+    });
+
+    render(
+      <FileBrowserProvider openFile={openFile}>
+        <ChatView projectId="proj-123" addToast={vi.fn()} />
+      </FileBrowserProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "packages/foo/bar.ts:42" }));
+    expect(openFile).toHaveBeenCalledWith("packages/foo/bar.ts", { line: 42, col: undefined });
   });
 
   it("does not render markdown/plain toggle controls in the thread header", () => {

@@ -17,10 +17,35 @@ import {
 } from "./TaskDetailModal.test-helpers";
 import { TaskDetailModal, TaskDetailContent } from "../TaskDetailModal";
 import * as dashboardApi from "../../api";
+import { FileBrowserProvider } from "../../context/FileBrowserContext";
 
 setupTaskDetailModalHooks();
 
 describe("TaskDetailModal", () => {
+  it("renders clickable file links in markdown content", async () => {
+    const openFile = vi.fn();
+    render(
+      <FileBrowserProvider openFile={openFile}>
+        <TaskDetailModal
+          task={makeTask({
+            column: "done",
+            summary: "See `packages/dashboard/app/App.tsx:12` for context.",
+            prompt: "# Prompt\n\nInspect `packages/dashboard/app/App.tsx:12`."
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />
+      </FileBrowserProvider>,
+    );
+
+    await userEvent.click(screen.getAllByRole("button", { name: "packages/dashboard/app/App.tsx:12" })[0]!);
+    expect(openFile).toHaveBeenCalledWith("packages/dashboard/app/App.tsx", { line: 12, col: undefined });
+  });
+
   describe("provenance display", () => {
     it.each([
       ["dashboard_ui", undefined, "Created via Dashboard"],

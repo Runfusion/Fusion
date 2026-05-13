@@ -49,9 +49,16 @@ function isImageFile(filename: string): boolean {
   return IMAGE_EXTENSIONS.has(ext);
 }
 
+function getParentDirectory(path: string): string {
+  const normalized = path.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
+  const lastSlash = normalized.lastIndexOf("/");
+  return lastSlash > 0 ? normalized.slice(0, lastSlash) : ".";
+}
+
 interface FileBrowserModalProps {
   isOpen?: boolean;
   initialWorkspace?: string;
+  initialFile?: string | null;
   onClose: () => void;
   onWorkspaceChange?: (workspace: string) => void;
   projectId?: string;
@@ -63,6 +70,7 @@ interface FileBrowserModalProps {
  */
 export function FileBrowserModal({
   initialWorkspace = "project",
+  initialFile = null,
   onClose,
   onWorkspaceChange,
   projectId,
@@ -118,6 +126,19 @@ export function FileBrowserModal({
       setMobileView("list");
     }
   }, [selectedFile]);
+
+  useEffect(() => {
+    if (!initialFile) {
+      setSelectedFile(null);
+      return;
+    }
+
+    setSelectedFile(initialFile);
+    setPath(getParentDirectory(initialFile));
+    if (isMobile) {
+      setMobileView("editor");
+    }
+  }, [initialFile, isMobile, setPath]);
 
   useEffect(() => {
     try {

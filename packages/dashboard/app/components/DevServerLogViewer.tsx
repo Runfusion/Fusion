@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { ChevronDown, Loader2, Maximize2, Minimize2, Search } from "lucide-react";
 import "./DevServerLogViewer.css";
 import type { DevServerLogEntry } from "../hooks/useDevServerLogs";
+import { linkifyReactChildren } from "../utils/filePathLinkify";
 
 interface DevServerLogViewerProps {
   entries: DevServerLogEntry[];
@@ -289,7 +290,7 @@ export function DevServerLogViewer({
                 {entry.stream === "stderr" && (
                   <span className="devserver-log-stream-badge" data-testid="devserver-log-stderr-badge">ERR</span>
                 )}
-                <span className="devserver-log-text">{highlightText(plainText, searchQuery.trim())}</span>
+                <span className="devserver-log-text">{linkifyReactChildren(highlightText(plainText, searchQuery.trim()))}</span>
               </div>
             );
           })}

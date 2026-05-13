@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { ChevronDown, Download, Upload } from "lucide-react";
 import "./SettingsSyncLog.css";
+import { linkifyFilePaths } from "../utils/filePathLinkify";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -196,7 +197,7 @@ export function SettingsSyncLog({
 
                   {entry.details && (
                     <span className="settings-sync-log__entry-details" title={entry.details}>
-                      {entry.details}
+                      {linkifyFilePaths(entry.details ?? "")}
                     </span>
                   )}
                 </div>

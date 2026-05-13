@@ -1,10 +1,11 @@
 import "./TaskDetailModal.css";
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Zap } from "lucide-react";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Task, TaskDetail, TaskAttachment, Column, MergeResult, Settings, GlobalSettings, AgentLogEntry, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult } from "@fusion/core";
 import {
@@ -43,6 +44,7 @@ import { appendTokenQuery } from "../auth";
 import { extractDependencyDeleteConflict } from "../utils/taskDelete";
 import { computeBlockerFanoutMap } from "../hooks/useBlockerFanout";
 import { resolveEffectiveGithubRepoDefault } from "./githubTracking";
+import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
 
 interface ModelSelection {
   provider?: string;
@@ -51,7 +53,18 @@ interface ModelSelection {
 
 const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "merging-fix"]);
 
-
+const markdownLinkifyComponents: Components = {
+  p: ({ children, ...props }) => <p {...props}>{linkifyReactChildren(children)}</p>,
+  li: ({ children, ...props }) => <li {...props}>{linkifyReactChildren(children)}</li>,
+  code: ({ children, ...props }) => {
+    const text = typeof children === "string" ? children : React.Children.toArray(children).join("");
+    const linkedChildren = linkifyFilePaths(text);
+    if (linkedChildren.length === 1 && typeof linkedChildren[0] === "string") {
+      return <code {...props}>{children}</code>;
+    }
+    return <code {...props}>{linkedChildren}</code>;
+  },
+};
 
 /**
  * Resolve the effective executor model following the engine's resolution order:
@@ -2308,7 +2321,7 @@ export function TaskDetailContent({
             <div className="detail-section detail-summary">
               <h4>Summary</h4>
               <div className="markdown-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownLinkifyComponents}>
                   {task.summary}
                 </ReactMarkdown>
               </div>
@@ -2654,7 +2667,7 @@ export function TaskDetailContent({
               <div className="spec-loading">Loading specification…</div>
             ) : workingTask.prompt ? (
               <div className="markdown-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownLinkifyComponents}>
                   {workingTask.prompt.replace(/^#\s+[^\n]*\n+/, "")}
                 </ReactMarkdown>
               </div>

@@ -7,15 +7,19 @@ import type { AgentLogEntry, WorkflowStep, WorkflowStepResult } from "@fusion/co
 import { fetchWorkflowSteps } from "../api";
 import { useAgentLogs } from "../hooks/useAgentLogs";
 import type { Components } from "react-markdown";
+import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
 
 // Markdown rendering components for workflow output
 const markdownComponents: Components = {
+  p: ({ children, ...props }) => <p {...props}>{linkifyReactChildren(children)}</p>,
+  li: ({ children, ...props }) => <li {...props}>{linkifyReactChildren(children)}</li>,
+  code: ({ children, ...props }) => <code {...props}>{linkifyReactChildren(children)}</code>,
   pre: ({ children, className, ...props }) => (
     <pre
       {...props}
       className={["workflow-markdown-pre", className].filter(Boolean).join(" ")}
     >
-      {children}
+      {linkifyReactChildren(children)}
     </pre>
   ),
   table: ({ children, className, ...props }) => (
@@ -146,38 +150,38 @@ function LiveAgentLogOutput({
         if (entry.type === "tool") {
           return (
             <div key={i} className="workflow-live-log-tool">
-              ⚡ {entry.text}
-              {entry.detail && <span className="workflow-live-log-detail"> — {entry.detail}</span>}
+              ⚡ {linkifyFilePaths(entry.text)}
+              {entry.detail && <span className="workflow-live-log-detail"> — {linkifyFilePaths(entry.detail)}</span>}
             </div>
           );
         }
         if (entry.type === "tool_result") {
           return (
             <div key={i} className="workflow-live-log-tool-result">
-              ✓ {entry.text}
-              {entry.detail && <span className="workflow-live-log-detail"> — {entry.detail}</span>}
+              ✓ {linkifyFilePaths(entry.text)}
+              {entry.detail && <span className="workflow-live-log-detail"> — {linkifyFilePaths(entry.detail)}</span>}
             </div>
           );
         }
         if (entry.type === "tool_error") {
           return (
             <div key={i} className="workflow-live-log-tool-error">
-              ✗ {entry.text}
-              {entry.detail && <span className="workflow-live-log-detail"> — {entry.detail}</span>}
+              ✗ {linkifyFilePaths(entry.text)}
+              {entry.detail && <span className="workflow-live-log-detail"> — {linkifyFilePaths(entry.detail)}</span>}
             </div>
           );
         }
         if (entry.type === "thinking") {
           return (
             <div key={i} className="workflow-live-log-thinking">
-              {entry.text}
+              {linkifyFilePaths(entry.text)}
             </div>
           );
         }
         // Default: text entries
         return (
           <span key={i} className="workflow-live-log-text">
-            {entry.text}
+            {linkifyFilePaths(entry.text)}
           </span>
         );
       })}
@@ -553,7 +557,7 @@ export function WorkflowResultsTab({
                         </div>
                       ) : (
                         <pre className="workflow-result-output-text">
-                          {result.output}
+                          {linkifyFilePaths(result.output)}
                         </pre>
                       )}
                     </div>
@@ -697,7 +701,7 @@ export function WorkflowResultsTab({
                       </ReactMarkdown>
                     </div>
                   ) : (
-                    <pre className="workflow-result-output-text">{result.output}</pre>
+                    <pre className="workflow-result-output-text">{linkifyFilePaths(result.output)}</pre>
                   )}
                 </div>
               </div>

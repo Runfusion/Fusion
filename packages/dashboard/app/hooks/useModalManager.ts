@@ -46,6 +46,7 @@ export interface ModalManager {
   filesOpen: boolean;
   todosOpen: boolean;
   fileBrowserWorkspace: string;
+  fileBrowserInitialFile: string | null;
   activityLogOpen: boolean;
   gitManagerOpen: boolean;
   workflowStepsOpen: boolean;
@@ -96,7 +97,7 @@ export interface ModalManager {
   toggleTerminal: () => void;
   closeTerminal: () => void;
 
-  openFiles: () => void;
+  openFiles: (workspace?: string, initialFile?: string | null) => void;
   closeFiles: () => void;
   openTodos: () => void;
   closeTodos: () => void;
@@ -161,6 +162,7 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   const [filesOpen, setFilesOpen] = useState(false);
   const [todosOpen, setTodosOpen] = useState(false);
   const [fileBrowserWorkspace, setFileBrowserWorkspace] = useState("project");
+  const [fileBrowserInitialFile, setFileBrowserInitialFile] = useState<string | null>(null);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [gitManagerOpen, setGitManagerOpen] = useState(false);
   const [workflowStepsOpen, setWorkflowStepsOpen] = useState(false);
@@ -286,8 +288,17 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     setTerminalInitialCommand(undefined);
   }, []);
 
-  const openFiles = useCallback(() => setFilesOpen(true), []);
-  const closeFiles = useCallback(() => setFilesOpen(false), []);
+  const openFiles = useCallback((workspace?: string, initialFile?: string | null) => {
+    if (workspace) {
+      setFileBrowserWorkspace(workspace);
+    }
+    setFileBrowserInitialFile(initialFile ?? null);
+    setFilesOpen(true);
+  }, []);
+  const closeFiles = useCallback(() => {
+    setFilesOpen(false);
+    setFileBrowserInitialFile(null);
+  }, []);
   const openTodos = useCallback(() => setTodosOpen(true), []);
   const closeTodos = useCallback(() => setTodosOpen(false), []);
   const setFileWorkspace = useCallback((workspace: string) => {
@@ -363,6 +374,7 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
     filesOpen,
     todosOpen,
     fileBrowserWorkspace,
+    fileBrowserInitialFile,
     activityLogOpen,
     gitManagerOpen,
     workflowStepsOpen,

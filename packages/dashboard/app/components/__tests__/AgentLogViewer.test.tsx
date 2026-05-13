@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { AgentLogViewer } from "../AgentLogViewer";
+import { FileBrowserProvider } from "../../context/FileBrowserContext";
 import type { AgentLogEntry } from "@fusion/core";
 import "../../styles.css";
 import "../TaskDetailModal.css";
@@ -130,6 +131,18 @@ describe("AgentLogViewer", () => {
     ).toBe(false);
 
     consoleErrorSpy.mockRestore();
+  });
+
+  it("renders file paths in plain log lines as clickable file-browser links", async () => {
+    const openFile = vi.fn();
+    render(
+      <FileBrowserProvider openFile={openFile}>
+        <AgentLogViewer entries={[makeEntry({ text: "writing packages/engine/src/scheduler.ts" })]} loading={false} />
+      </FileBrowserProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "packages/engine/src/scheduler.ts" }));
+    expect(openFile).toHaveBeenCalledWith("packages/engine/src/scheduler.ts", { line: undefined, col: undefined });
   });
 
   it("renders tool entries with distinct styling", () => {

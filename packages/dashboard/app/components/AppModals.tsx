@@ -249,6 +249,7 @@ export function AppModals({
       {modalManager.filesOpen && (
         <FileBrowserModal
           initialWorkspace={modalManager.fileBrowserWorkspace}
+          initialFile={modalManager.fileBrowserInitialFile}
           isOpen={true}
           onClose={modalManager.closeFiles}
           onWorkspaceChange={modalManager.setFileWorkspace}

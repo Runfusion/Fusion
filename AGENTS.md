@@ -876,6 +876,12 @@ Cards have `--focus-ring-strong` focus style and `--card-hover` background on ho
 
 ---
 
+### File-path links in dashboard text
+
+- Reuse `packages/dashboard/app/utils/filePathLinkify.tsx` plus `packages/dashboard/app/context/FileBrowserContext.tsx` whenever a dashboard surface should open workspace paths in `FileBrowserModal`.
+- Wrap plain text with `linkifyFilePaths(...)`, and wrap mixed JSX/markdown/highlight output with `linkifyReactChildren(...)` so existing formatting survives.
+- Mount surfaces under `FileBrowserProvider` and route clicks through its `openFile(path, { workspace?, line?, col? })` handler instead of adding one-off modal state plumbing.
+
 ### Adding New CSS
 
 1. **Always use tokens** — `var(--space-md)`, `var(--text-muted)`, `var(--radius-md)`, `var(--transition-fast)`, etc. Never write `padding: 8px` or `color: #e6edf3` directly.

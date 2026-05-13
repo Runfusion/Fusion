@@ -106,6 +106,24 @@ describe("FileBrowserModal", () => {
     expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "file1.ts", true, undefined);
   });
 
+  it("opens with an initial file selected", async () => {
+    render(
+      <FileBrowserModal
+        initialWorkspace="project"
+        initialFile="packages/dashboard/app/App.tsx"
+        isOpen={true}
+        onClose={mockOnClose}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("packages/dashboard/app/App.tsx").length).toBeGreaterThan(0);
+    });
+
+    expect(mockSetPath).toHaveBeenCalledWith("packages/dashboard/app");
+    expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "packages/dashboard/app/App.tsx", true, undefined);
+  });
+
   it("switches workspace and notifies parent", async () => {
     const user = userEvent.setup();
     render(

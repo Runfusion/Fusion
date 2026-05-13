@@ -7,6 +7,7 @@ import type { Components } from "react-markdown";
 import { fetchTaskReview, refreshTaskReview, reviseTaskReviewItems } from "../api";
 import type { SelectedReviewItem } from "../api";
 import type { ToastType } from "../hooks/useToast";
+import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
 
 interface Props {
   task: Task | TaskDetail;
@@ -55,6 +56,9 @@ function writeBooleanPref(key: string, value: boolean): void {
 }
 
 const markdownComponents: Components = {
+  p: ({ children, ...props }) => <p {...props}>{linkifyReactChildren(children)}</p>,
+  li: ({ children, ...props }) => <li {...props}>{linkifyReactChildren(children)}</li>,
+  code: ({ children, ...props }) => <code {...props}>{linkifyReactChildren(children)}</code>,
   pre: ({ children, ...props }) => (
     <pre
       {...props}
@@ -65,7 +69,7 @@ const markdownComponents: Components = {
         wordBreak: "break-word",
       }}
     >
-      {children}
+      {linkifyReactChildren(children)}
     </pre>
   ),
   table: ({ children, ...props }) => (
@@ -317,7 +321,7 @@ export function TaskReviewTab({ task, projectId, onTaskUpdated, addToast }: Prop
                       </ReactMarkdown>
                     </div>
                   ) : (
-                    <pre className="task-review-tab__body">{item.body}</pre>
+                    <pre className="task-review-tab__body">{linkifyFilePaths(item.body)}</pre>
                   )}
                 </div>
               </li>

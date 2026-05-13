@@ -1,6 +1,6 @@
 // ChatView.css is imported eagerly from App.tsx to avoid a flash of
 // unstyled content when the lazy chunk loads. Do not re-import here.
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
@@ -42,6 +42,7 @@ import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { matchesAgentMentionFilter } from "./mentionMatching";
 import { useNavigationHistoryContext } from "../hooks/useNavigationHistory";
+import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
 
 export interface ChatViewProps {
   projectId?: string;
@@ -329,11 +330,25 @@ function renderToolCalls(toolCalls?: ToolCallInfo[]): ReactNode {
 }
 
 const chatMarkdownComponents: Components = {
+  p: ({ children, ...props }) => (
+    <p {...props}>{linkifyReactChildren(children)}</p>
+  ),
+  li: ({ children, ...props }) => (
+    <li {...props}>{linkifyReactChildren(children)}</li>
+  ),
   pre: ({ children, ...props }) => (
     <pre {...props} className="chat-markdown-pre">
       {children}
     </pre>
   ),
+  code: ({ children, ...props }) => {
+    const text = typeof children === "string" ? children : React.Children.toArray(children).join("");
+    const linkedChildren = linkifyFilePaths(text);
+    if (linkedChildren.length === 1 && typeof linkedChildren[0] === "string") {
+      return <code {...props}>{children}</code>;
+    }
+    return <code {...props}>{linkedChildren}</code>;
+  },
   table: ({ children, ...props }) => (
     <table {...props} className="chat-markdown-table">
       {children}
@@ -795,7 +810,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
                 <TriangleAlert size={14} aria-hidden="true" />
                 <span>Failure details</span>
               </summary>
-              {failureInfo.detail && <pre className="chat-message-failure-detail">{failureInfo.detail}</pre>}
+              {failureInfo.detail && <pre className="chat-message-failure-detail">{linkifyFilePaths(failureInfo.detail)}</pre>}
               {renderFailureReference(failureInfo.reference)}
             </details>
           )}
@@ -834,7 +849,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
       {message.thinkingOutput && (
         <details className="chat-message-thinking">
           <summary>Thinking</summary>
-          <pre className="chat-message-thinking-content">{message.thinkingOutput}</pre>
+          <pre className="chat-message-thinking-content">{linkifyFilePaths(message.thinkingOutput)}</pre>
         </details>
       )}
       {renderedAttachments}
@@ -2613,7 +2628,7 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
                 {streamingThinking && (
                   <details className="chat-message-thinking">
                     <summary>Thinking</summary>
-                    <pre className="chat-message-thinking-content">{streamingThinking}</pre>
+                    <pre className="chat-message-thinking-content">{linkifyFilePaths(streamingThinking)}</pre>
                   </details>
                 )}
                 <div className="chat-typing-indicator">
