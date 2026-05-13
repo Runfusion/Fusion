@@ -2035,6 +2035,42 @@ export function SettingsModal({
               </label>
               <small>Show the floating chat button in the dashboard. Chat is still accessible from the Chat tab in the mobile navigation.</small>
             </div>
+            <h4 className="settings-section-heading settings-section-heading--spaced">Capacity Risk Banner</h4>
+            <div className="form-group">
+              <label htmlFor="capacityRiskBannerEnabled" className="checkbox-label">
+                <input
+                  id="capacityRiskBannerEnabled"
+                  type="checkbox"
+                  checked={form.capacityRiskBannerEnabled === true}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, capacityRiskBannerEnabled: e.target.checked }))
+                  }
+                />
+                Show capacity risk banner
+              </label>
+              <small>Warn on the board when todo work exceeds the threshold and no idle agents are available.</small>
+            </div>
+            <div className="form-group">
+              <label htmlFor="capacityRiskTodoThresholdGeneral">Todo threshold</label>
+              <input
+                id="capacityRiskTodoThresholdGeneral"
+                type="number"
+                min={0}
+                className="input"
+                value={form.capacityRiskTodoThreshold ?? 20}
+                disabled={form.capacityRiskBannerEnabled !== true}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    capacityRiskTodoThreshold:
+                      e.target.value === ""
+                        ? 0
+                        : Math.max(0, Number.parseInt(e.target.value, 10) || 0),
+                  }))
+                }
+              />
+              <small>Banner fires when todo count is strictly greater than this value (default 20).</small>
+            </div>
             <h4 className="settings-section-heading settings-section-heading--spaced">GitHub Tracking</h4>
             <div className="form-group">
               <label htmlFor="githubTrackingMode">Default tracking mode for new tasks</label>
