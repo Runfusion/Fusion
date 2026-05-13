@@ -163,6 +163,42 @@ describeIfGit("SelfHealingManager recoverAlreadyMergedReviewTasks (real git)", (
     20_000,
   );
 
+  it("recovers via tree-equal fallback when tips have identical trees but no trailer/ancestry/patch-id match", async () => {
+    const repo = setupRepo();
+    git(repo, "git checkout -b fusion/fn-test-tree");
+    mkdirSync(path.join(repo, "src"), { recursive: true });
+    writeFileSync(path.join(repo, "src", "tree-equal.txt"), "line-1\nline-2\n", "utf-8");
+    git(repo, "git add src/tree-equal.txt && git commit -m 'branch aggregate change'");
+    git(repo, "git checkout main");
+    mkdirSync(path.join(repo, "src"), { recursive: true });
+    writeFileSync(path.join(repo, "src", "tree-equal.txt"), "line-1\n", "utf-8");
+    git(repo, "git add src/tree-equal.txt && git commit -m 'main part 1'");
+    writeFileSync(path.join(repo, "src", "tree-equal.txt"), "line-1\nline-2\n", "utf-8");
+    git(repo, "git add src/tree-equal.txt && git commit -m 'main part 2'");
+    const landedSha = git(repo, "git rev-parse HEAD");
+
+    const worktreePath = path.join(repo, ".worktrees", "fn-test-tree");
+    mkdirSync(path.dirname(worktreePath), { recursive: true });
+    git(repo, `git worktree add ${JSON.stringify(worktreePath)} fusion/fn-test-tree`);
+
+    const tasks: TaskMap = new Map([
+      ["FN-TEST-TREE", makeTask({ id: "FN-TEST-TREE", column: "in-review", status: "failed", mergeRetries: 3, paused: false, baseBranch: "main", branch: "fusion/fn-test-tree", worktree: worktreePath })],
+    ]);
+    const store = createStore(tasks);
+    const manager = new SelfHealingManager(store, { rootDir: repo, getExecutingTaskIds: () => new Set() });
+
+    await (manager as any).runMaintenance();
+
+    const task = tasks.get("FN-TEST-TREE")!;
+    expect(task.column).toBe("done");
+    expect(task.status).toBeNull();
+    expect(task.mergeRetries).toBe(0);
+    expect(task.mergeDetails?.mergeConfirmed).toBe(true);
+    expect(task.mergeDetails?.commitSha).toBe(landedSha);
+    expect((store.logEntry as any).mock.calls.some((call: unknown[]) => String(call[1]).includes("tree-equal"))).toBe(true);
+    expect(existsSync(worktreePath)).toBe(false);
+  });
+
   it("does nothing when no match exists", async () => {
     const repo = setupRepo();
     git(repo, "git checkout -b fusion/fn-test-3");
