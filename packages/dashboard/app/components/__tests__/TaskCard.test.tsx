@@ -25,6 +25,11 @@ vi.mock("../ProviderIcon", () => ({
   ProviderIcon: ({ provider }: { provider: string }) => <span data-testid={`provider-icon-${provider}`} />,
 }));
 
+const useTaskDiffStatsMock = vi.fn(() => ({ stats: null, loading: false }));
+vi.mock("../../hooks/useTaskDiffStats", () => ({
+  useTaskDiffStats: (...args: any[]) => useTaskDiffStatsMock(...args),
+}));
+
 // Mock the api module
 vi.mock("../../api", () => ({
   fetchTaskDetail: vi.fn(),
@@ -78,6 +83,7 @@ const highFanout = {
 
 afterEach(() => {
   vi.useRealTimers();
+  useTaskDiffStatsMock.mockReturnValue({ stats: null, loading: false });
 });
 
 describe("TaskCard", () => {
@@ -1451,6 +1457,35 @@ describe("TaskCard", () => {
     expect(container.querySelector(".card-source-provenance")).not.toBeNull();
     expect(container.querySelector(".card-agent-created-badge")).not.toBeNull();
     expect(container.querySelector(".card-time-indicator")).not.toBeNull();
+  });
+
+  it("prefers done-task /diff filesChanged over mergeDetails.filesChanged", () => {
+    useTaskDiffStatsMock.mockReturnValue({
+      stats: { filesChanged: 4, additions: 10, deletions: 2 },
+      loading: false,
+    });
+
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "done",
+          mergeDetails: {
+            commitSha: "abc123",
+            filesChanged: 1,
+            insertions: 10,
+            deletions: 2,
+            mergedAt: "2026-04-25T15:00:00.000Z",
+            mergeConfirmed: true,
+          },
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onOpenDetailWithTab={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "4 files changed" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: "1 file changed" })).toBeNull();
   });
 
   it("renders files-changed metadata and timer chip in footer row", () => {

@@ -246,6 +246,35 @@ describe("TaskChangesTab — commit-backed (done tasks)", () => {
     expect(mockFetchTaskDiff).toHaveBeenCalledWith("FN-001", undefined, undefined);
   });
 
+  it("renders aggregated done-task file union and matching header count", async () => {
+    mockFetchTaskDiff.mockResolvedValue({
+      files: [
+        { path: "a.ts", status: "modified", additions: 1, deletions: 0, patch: "@@" },
+        { path: "b.ts", status: "added", additions: 2, deletions: 0, patch: "@@" },
+        { path: "c.ts", status: "deleted", additions: 0, deletions: 1, patch: "@@" },
+        { path: "d.ts", status: "modified", additions: 3, deletions: 2, patch: "@@" },
+      ],
+      stats: { filesChanged: 4, additions: 6, deletions: 3 },
+    });
+
+    render(
+      <TaskChangesTab
+        taskId="FN-001"
+        worktree={undefined}
+        column="done"
+        mergeDetails={MERGE_DETAILS}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Files Changed (4)")).toBeTruthy();
+    });
+    expect(screen.getByText("a.ts")).toBeTruthy();
+    expect(screen.getByText("b.ts")).toBeTruthy();
+    expect(screen.getByText("c.ts")).toBeTruthy();
+    expect(screen.getByText("d.ts")).toBeTruthy();
+  });
+
   it("shows commit metadata for done task", async () => {
     mockFetchTaskDiff.mockResolvedValue(DONE_TASK_DIFF);
 
