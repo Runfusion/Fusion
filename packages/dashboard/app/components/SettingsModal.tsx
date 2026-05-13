@@ -2133,34 +2133,35 @@ export function SettingsModal({
               </div>
             </div>
             <div className="form-group">
-              <label htmlFor="persistAgentThinkingLogPermanent" className="checkbox-label">
-                <input
-                  id="persistAgentThinkingLogPermanent"
-                  type="checkbox"
-                  checked={resolvePersistAgentThinkingLog(form, { ephemeral: false })}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, persistAgentThinkingLogPermanent: e.target.checked }))
-                  }
-                />
-                Save AI thinking for permanent agents
-              </label>
-            </div>
-            <div className="form-group">
-              <label htmlFor="persistAgentThinkingLogEphemeral" className="checkbox-label">
-                <input
-                  id="persistAgentThinkingLogEphemeral"
-                  type="checkbox"
-                  checked={resolvePersistAgentThinkingLog(form, { ephemeral: true })}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, persistAgentThinkingLogEphemeral: e.target.checked }))
-                  }
-                />
-                Save AI thinking for ephemeral / task-worker agents
-              </label>
-              <div className="settings-field-help">
-                Leave both thinking toggles off to keep the original default behavior.
-                This only controls persisted <code>thinking</code> rows and does not affect assistant text or tool rows.
-              </div>
+              <fieldset>
+                <legend>Save AI thinking logs</legend>
+                <label htmlFor="persistAgentThinkingLogPermanent" className="checkbox-label">
+                  <input
+                    id="persistAgentThinkingLogPermanent"
+                    type="checkbox"
+                    checked={resolvePersistAgentThinkingLog(form, { ephemeral: false })}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, persistAgentThinkingLogPermanent: e.target.checked }))
+                    }
+                  />
+                  Save AI thinking for permanent agents
+                </label>
+                <label htmlFor="persistAgentThinkingLogEphemeral" className="checkbox-label">
+                  <input
+                    id="persistAgentThinkingLogEphemeral"
+                    type="checkbox"
+                    checked={resolvePersistAgentThinkingLog(form, { ephemeral: true })}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, persistAgentThinkingLogEphemeral: e.target.checked }))
+                    }
+                  />
+                  Save AI thinking for ephemeral / task-worker agents
+                </label>
+                <div className="settings-field-help">
+                  Leave both thinking toggles off to keep the original default behavior.
+                  This only controls persisted <code>thinking</code> rows and does not affect assistant text or tool rows.
+                </div>
+              </fieldset>
             </div>
             <div className="form-group">
               <label htmlFor="fnBinaryCheckEnabled" className="checkbox-label">
