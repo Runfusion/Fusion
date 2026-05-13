@@ -439,6 +439,7 @@
 .detail-github-tracking-enable {
   margin-left: auto;
   align-self: flex-start;
+  flex: 0 0 auto;
   padding-block: calc(var(--space-xs) / 2);
   padding-inline: var(--space-sm);
   line-height: 1.2;
@@ -488,12 +489,38 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--card);
-  padding: var(--space-sm) var(--space-md);
+  padding: var(--space-xs) var(--space-md);
+}
+
+.detail-github-tracking-section .detail-source-header {
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+}
+
+.detail-github-tracking-section .detail-source-summary {
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.detail-github-tracking-section .detail-source-empty {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-github-tracking-section .detail-source-toggle {
+  flex: 0 0 auto;
+}
+
+.detail-github-tracking-section .detail-github-tracking-enable {
+  align-self: center;
 }
 
 .detail-github-tracking-content {
-  margin-top: var(--space-sm);
-  padding-top: var(--space-sm);
+  margin-top: var(--space-xs);
+  padding-top: var(--space-xs);
   border-top: 1px solid var(--border);
 }
 
@@ -1599,17 +1626,23 @@
     flex: 1 1 100%;
   }
 
-  .detail-github-tracking-section .detail-source-summary {
-    flex: 1 1 auto;
+  .detail-github-tracking-section .detail-source-header {
+    flex-wrap: nowrap;
     min-width: 0;
   }
 
-  .detail-github-tracking-enable {
+  .detail-github-tracking-section .detail-source-summary {
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    min-width: 0;
+  }
+
+  .detail-github-tracking-section .detail-github-tracking-enable {
     margin-left: auto;
     justify-content: center;
   }
 
-  .detail-source-header .detail-source-toggle {
+  .detail-github-tracking-section .detail-source-header .detail-source-toggle {
     margin-left: 0;
   }
 

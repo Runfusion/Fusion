@@ -2867,7 +2867,13 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
           existingRoomNames={rooms.rooms.map((room) => room.name)}
           onCreate={async (draft) => {
             await rooms.createRoom({ name: draft.name, memberAgentIds: draft.memberAgentIds });
+            if (chatScope !== "rooms") {
+              setChatScope("rooms");
+            }
             setCreateRoomOpen(false);
+            if (isMobile) {
+              setSidebarVisible(false);
+            }
           }}
         />
       )}
