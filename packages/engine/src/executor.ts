@@ -36,7 +36,7 @@ import { buildSessionSkillContext } from "./session-skill-context.js";
 import { reviewStep, type ReviewVerdict } from "./reviewer.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@mariozechner/pi-coding-agent";
 import { PRIORITY_EXECUTE, type AgentSemaphore } from "./concurrency.js";
-import { getRegisteredWorktreePaths, isGitRepository, isInsideWorktreesDir, isRegisteredGitWorktree, type WorktreePool } from "./worktree-pool.js";
+import { getRegisteredWorktreePaths, isGitRepository, isInsideWorktreesDir, isRegisteredGitWorktree, isUsableTaskWorktree, type WorktreePool } from "./worktree-pool.js";
 import { BranchConflictError, isBranchConflictError, inspectBranchConflict } from "./branch-conflicts.js";
 import { AgentLogger } from "./agent-logger.js";
 import { executorLog, reviewerLog, formatError } from "./logger.js";
@@ -2508,6 +2508,73 @@ export class TaskExecutor {
           executorLog.log(`Failed to capture baseCommitSha for ${task.id}: ${errorMessage}`);
           // Non-fatal: task can continue without baseCommitSha
         }
+      }
+
+      const expectedRoot = realpathSync(this.rootDir);
+      let observedWorktreeRealpath: string;
+      let livenessFailure: string | null = null;
+      try {
+        observedWorktreeRealpath = realpathSync(worktreePath);
+        if (observedWorktreeRealpath === expectedRoot) {
+          livenessFailure = "realpath_matches_repo_root";
+        }
+      } catch (error) {
+        observedWorktreeRealpath = `unresolvable:${worktreePath}`;
+        livenessFailure = `unresolvable_worktree:${error instanceof Error ? error.message : String(error)}`;
+      }
+
+      if (!livenessFailure && !isInsideWorktreesDir(this.rootDir, worktreePath)) {
+        livenessFailure = "outside_worktrees_dir";
+      }
+
+      if (!livenessFailure) {
+        const isUsable = await isUsableTaskWorktree(this.rootDir, worktreePath);
+        if (!isUsable) {
+          livenessFailure = "not_usable_task_worktree";
+        }
+      }
+
+      if (livenessFailure) {
+        const expected = `<repo>/.worktrees/* (usable, registered)`;
+        const observed = `${worktreePath} (${observedWorktreeRealpath})`;
+        const failureMessage = `worktree liveness assertion failed: ${livenessFailure} — observed=${observed}, expected=${expected}`;
+        executorLog.error(`${task.id}: ${failureMessage}`);
+        await this.store.logEntry(task.id, failureMessage, undefined, this.currentRunContext);
+
+        const priorRequeues = task.taskDoneRetryCount ?? 0;
+        const nextRequeueCount = priorRequeues + 1;
+        if (priorRequeues < MAX_TASK_DONE_REQUEUE_RETRIES) {
+          await this.store.updateTask(task.id, {
+            status: "failed",
+            error: failureMessage,
+            worktree: null,
+            branch: null,
+            sessionFile: null,
+            taskDoneRetryCount: nextRequeueCount,
+          });
+          await this.store.logEntry(
+            task.id,
+            `${failureMessage} — requeued to todo immediately (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`,
+            undefined,
+            this.currentRunContext,
+          );
+          await this.store.moveTask(task.id, "todo", { preserveProgress: true });
+          executorLog.log(`✗ ${task.id} worktree liveness failed — requeued to todo (${nextRequeueCount}/${MAX_TASK_DONE_REQUEUE_RETRIES})`);
+        } else {
+          await this.store.updateTask(task.id, {
+            status: "failed",
+            error: failureMessage,
+            worktree: null,
+            branch: null,
+            sessionFile: null,
+          });
+          await this.store.logEntry(task.id, `${failureMessage} — moved to in-review for inspection`, undefined, this.currentRunContext);
+          await this.persistTokenUsage(task.id);
+          await this.store.moveTask(task.id, "in-review");
+          executorLog.log(`✗ ${task.id} worktree liveness failed — moved to in-review`);
+        }
+        this.options.onError?.(task, new Error(failureMessage));
+        return;
       }
 
       this.activeWorktrees.set(task.id, worktreePath);
