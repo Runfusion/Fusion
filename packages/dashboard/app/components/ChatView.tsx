@@ -1444,6 +1444,20 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
     [createSession, addToast, isMobile],
   );
 
+  const resizeComposer = useCallback((textarea?: HTMLTextAreaElement | null) => {
+    const composer = textarea ?? inputRef.current;
+    if (!composer) {
+      return;
+    }
+
+    composer.style.height = "auto";
+    composer.style.height = `${clampChatInputHeight(composer.scrollHeight)}px`;
+  }, []);
+
+  useLayoutEffect(() => {
+    resizeComposer();
+  }, [messageInput, resizeComposer]);
+
   const clearComposerState = useCallback(() => {
     setMessageInput("");
     if (activeDraftKey) {
@@ -1546,8 +1560,7 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
 
         window.requestAnimationFrame(() => {
           if (!inputRef.current) return;
-          inputRef.current.style.height = "auto";
-          inputRef.current.style.height = `${clampChatInputHeight(inputRef.current.scrollHeight)}px`;
+          resizeComposer(inputRef.current);
           inputRef.current.focus();
         });
 
@@ -1558,7 +1571,7 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
       setSkillFilter("");
       setHighlightedSkillIndex(0);
     },
-    [],
+    [resizeComposer],
   );
 
   const handleMentionSelect = useCallback(
@@ -1585,13 +1598,12 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
 
       window.requestAnimationFrame(() => {
         if (!inputRef.current) return;
-        inputRef.current.style.height = "auto";
-        inputRef.current.style.height = `${clampChatInputHeight(inputRef.current.scrollHeight)}px`;
+        resizeComposer(inputRef.current);
         inputRef.current.focus();
         inputRef.current.setSelectionRange(nextCursorPos, nextCursorPos);
       });
     },
-    [mentionStartPos, messageInput],
+    [mentionStartPos, messageInput, resizeComposer],
   );
 
 
@@ -1745,9 +1757,8 @@ export function ChatView({ projectId, addToast, experimentalFeatures }: ChatView
       updateFileMentionPosition(textarea);
     }
 
-    textarea.style.height = "auto";
-    textarea.style.height = `${clampChatInputHeight(textarea.scrollHeight)}px`;
-  }, [updateMentionState]);
+    resizeComposer(textarea);
+  }, [updateMentionState, resizeComposer]);
 
   const handleInputSelectionChange = useCallback(
     (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
