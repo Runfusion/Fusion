@@ -183,7 +183,7 @@
     align-items: flex-start;
   }
 
-  /* primary touch target per AGENTS.md convention */
+  /* FN-4352: primary touch target per AGENTS.md convention (introduced by FN-4236). */
   .task-review-tab__actions .btn {
     min-width: calc(var(--space-lg) * 2 + var(--space-xs));
     min-height: calc(var(--space-lg) * 2 + var(--space-xs));
