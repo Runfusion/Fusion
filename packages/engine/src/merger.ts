@@ -4625,7 +4625,7 @@ export function resolvePostMergeAuditAction(opts: {
   mode: PostMergeAuditMode;
   strategy: PostMergeAuditStrategy;
   findings: SquashAuditFindings;
-  isTreeVerified: boolean;
+  verificationPassed: boolean;
 }): PostMergeAuditAction {
   if (opts.findings.clean) {
     // Caller should never invoke this on a clean audit, but be defensive.
@@ -4641,7 +4641,7 @@ export function resolvePostMergeAuditAction(opts: {
   if (
     opts.strategy === "rebase"
     && overlapOnly
-    && opts.isTreeVerified
+    && opts.verificationPassed
   ) {
     return { action: "pass", reason: "verified-short-circuit" };
   }
@@ -6593,6 +6593,7 @@ export async function aiMergeTask(
   // Track AI agent invocation for resolutionMethod calculation
   const aiTracker: AiInvocationTracker = { aiWasInvoked: false };
   let rebaseMergeBaseSha: string | undefined;
+  let verificationPassed = false;
 
   // Execute attempts with escalation
   let merged = false;
@@ -6615,6 +6616,7 @@ export async function aiMergeTask(
       signal: options.signal,
     });
     rebaseMergeBaseSha = rebaseResult.baseSha;
+    verificationPassed = Boolean(effectiveTestCommand || effectiveBuildCommand);
     merged = true;
   } else {
     // Attempt 1: Standard AI merge
@@ -6738,35 +6740,11 @@ export async function aiMergeTask(
           squashSha: auditSha,
         });
       if (!auditFindings.clean) {
-        // FN-4333: a verified rebase tree with overlap-only findings cannot have
-        // produced silent drops by construction. Check the verification cache to
-        // detect that case and pass through. `warn` mode passes any dirty audit.
-        let isTreeVerified = false;
-        try {
-          const { stdout: treeShaOut } = await execAsync(
-            `git rev-parse ${auditSha}^{tree}`,
-            { cwd: rootDir, encoding: "utf-8" },
-          );
-          const treeSha = treeShaOut.trim();
-          if (treeSha) {
-            const cacheHit = store.getVerificationCacheHit(
-              treeSha,
-              effectiveTestCommand ?? "",
-              effectiveBuildCommand ?? "",
-            );
-            isTreeVerified = Boolean(cacheHit);
-          }
-        } catch (err) {
-          mergerLog.warn(
-            `${taskId}: failed to resolve tree sha for audit verification short-circuit: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-
         const decision = resolvePostMergeAuditAction({
           mode: postMergeAuditMode,
           strategy: selectedPostMergeAuditStrategy,
           findings: auditFindings,
-          isTreeVerified,
+          verificationPassed,
         });
 
         if (decision.action === "block") {
@@ -6784,7 +6762,7 @@ export async function aiMergeTask(
 
         const passLabel = decision.reason === "verified-short-circuit"
           ? `${selectedPostMergeAuditStrategy === "rebase" ? "post-rebase" : "post-squash"} audit overlap cleared by deterministic verification`
-          : `${selectedPostMergeAuditStrategy === "rebase" ? "post-rebase" : "post-squash"} audit found ${auditFindings.issueCount} risk(s) — continuing (postMergeAuditMode=warn)`;
+          : `${selectedPostMergeAuditStrategy === "rebase" ? "post-rebase" : "post-squash"} audit found ${auditFindings.issueCount} risk(s) — continuing (mode=warn)`;
         await store.appendAgentLog(
           taskId,
           passLabel,
@@ -6803,7 +6781,8 @@ export async function aiMergeTask(
         );
       }
     } else if (auditSha && postMergeAuditMode === "off") {
-      mergerLog.log(`${taskId}: post-merge audit skipped (postMergeAuditMode=off)`);
+      await store.appendAgentLog(taskId, "post-merge audit skipped (mode=off)", "text", undefined, "merger");
+      mergerLog.log(`${taskId}: post-merge audit skipped (mode=off)`);
     }
     if (isEmptyCommit) {
       mergerLog.warn(
