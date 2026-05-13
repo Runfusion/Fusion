@@ -4065,7 +4065,7 @@ export function SettingsModal({
               <select
                 className="select"
                 id="postMergeAuditMode"
-                value={form.postMergeAuditMode ?? "block"}
+                value={form.postMergeAuditMode ?? "warn"}
                 onChange={(e) =>
                   setForm((f) => ({
                     ...f,
@@ -4073,12 +4073,12 @@ export function SettingsModal({
                   }))
                 }
               >
-                <option value="block">Block (default)</option>
-                <option value="warn">Warn (log findings, continue)</option>
+                <option value="block">Block (strict)</option>
+                <option value="warn">Warn (default; log findings, continue)</option>
                 <option value="off">Off (skip audit)</option>
               </select>
               <small>
-                Controls the post-merge audit gate. <strong>Block</strong> refuses to auto-complete merges that show duplicate-subject or touched-file overlap risks (most conservative). <strong>Warn</strong> logs findings but auto-completes the merge. <strong>Off</strong> skips the audit entirely. Default: Block. Switching to Warn or Off is recommended only if you trust your branches don&apos;t silently drop edits.
+                Controls the post-merge audit gate. <strong>Warn</strong> (default) logs findings but auto-completes the merge. <strong>Block</strong> is the stricter opt-in mode that refuses to auto-complete merges with duplicate-subject or touched-file overlap risks. <strong>Off</strong> skips the audit entirely. Switching to Off is recommended only if you trust your branches don&apos;t silently drop edits.
               </small>
             </div>
             <div className="form-group">
