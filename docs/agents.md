@@ -784,7 +784,7 @@ When the bound task is `executor-class` or `blocked`, the default procedure dire
 
 The manager-facing reports health block in that prompt is populated from `AgentStore.getAgentsByReportsTo(agent.id)`. Engine code must call that store method with its `AgentStore` instance binding intact because some implementations resolve direct reports through `this.listAgents()`. If the section disappears unexpectedly, look for logs like `Failed to load reports ... Cannot read properties of undefined (reading 'listAgents')`, which indicate an unbound method call regressed.
 
-Direct-report staleness in this reports-health block uses each report's configured heartbeat interval, with threshold `max(heartbeatIntervalMs × 4, 5 minutes)`. This matches dashboard health classification semantics and avoids timeout-budget-based false stale flags.
+Direct-report staleness in this reports-health block uses each report's configured heartbeat interval, with threshold `max(heartbeatIntervalMs × 1.5, 5 minutes)`. This matches the CEO manual health-check rule and avoids false positives for long-cadence reports.
 
 This behavior is inherited by new non-ephemeral agents because agent creation seeds a per-agent `HEARTBEAT.md` file from the built-in default. If an agent sets `heartbeatProcedurePath`, that markdown file fully replaces the built-in default at runtime for task-scoped heartbeats. No-task heartbeats always fall back to the ambient built-in procedure so the prompt never references task-only tools.
 
@@ -1169,7 +1169,7 @@ The dashboard displays agent health status in AgentsView, AgentListModal, and Ag
 Health status uses interval-based staleness evaluation:
 
 1. Resolve the effective heartbeat interval from `runtimeConfig.heartbeatIntervalMs` (or the default 1 hour interval)
-2. Multiply that interval by the dashboard grace multiplier (`4×`)
+2. Multiply that interval by the dashboard grace multiplier (`1.5×`)
 3. Apply a minimum staleness floor of 5 minutes
 
 ### Key Behaviors
