@@ -3580,10 +3580,54 @@ describe("SettingsModal", () => {
       await waitForSettingsModalReady();
       await openResearchProjectSection();
 
-      const webSearch = await screen.findByLabelText("Web Search");
+      const webSearch = await screen.findByRole("checkbox", { name: /Web Search/i });
       expect(webSearch).toBeChecked();
       expect(webSearch).toBeDisabled();
-      expect(screen.getByText(/Always on\./i)).toBeInTheDocument();
+      expect(screen.getByText("Always on")).toBeInTheDocument();
+      expect(screen.getByText(/Web search is always enabled\. Configure the search provider under Research Defaults\./i)).toBeInTheDocument();
+    });
+
+    it("does not mutate enabledSources.webSearch when toggling other sources", async () => {
+      mockFetchSettings.mockResolvedValueOnce({
+        ...defaultSettings,
+        experimentalFeatures: { researchView: true },
+        researchSettings: {
+          enabled: true,
+          enabledSources: {
+            webSearch: false,
+            pageFetch: true,
+            github: false,
+            localDocs: true,
+            llmSynthesis: true,
+          },
+        },
+      });
+
+      renderModal();
+      await waitForSettingsModalReady();
+      await openResearchProjectSection();
+
+      const webSearch = await screen.findByRole("checkbox", { name: /Web Search/i });
+      expect(webSearch).toBeChecked();
+      await userEvent.click(webSearch);
+      expect(webSearch).toBeChecked();
+
+      await userEvent.click(screen.getByRole("checkbox", { name: "Page Fetch" }));
+      await userEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(mockUpdateSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            researchSettings: expect.objectContaining({
+              enabledSources: expect.objectContaining({
+                webSearch: false,
+                pageFetch: false,
+              }),
+            }),
+          }),
+          undefined,
+        );
+      });
     });
 
     it("saves project research settings through updateSettings only", async () => {
