@@ -386,6 +386,7 @@ describe("PluginManager", () => {
     expect(listError).toBeTruthy();
     const listStyle = window.getComputedStyle(listError as Element);
     expect(listStyle.whiteSpace).toBe("nowrap");
+    expect(listStyle.textOverflow).toBe("ellipsis");
 
     const settingsButton = (listItem as HTMLElement).querySelector('button[title="Settings"]');
     expect(settingsButton).toBeTruthy();
