@@ -159,6 +159,17 @@ interface TrackedAgent {
   sessionIdBefore?: string;
 }
 
+/**
+ * Grace multiplier applied to each direct report's configured heartbeat
+ * interval before flagging it stale in reports-health summaries.
+ */
+const HEARTBEAT_GRACE_MULTIPLIER = 4;
+
+/**
+ * Minimum staleness threshold floor for very short heartbeat intervals.
+ */
+const MIN_HEARTBEAT_STALENESS_MS = 5 * 60_000;
+
 /** Format milliseconds into a human-readable duration string (e.g. "5m", "1h 20m", "2h"). */
 export function formatDuration(ms: number): string {
   const totalMinutes = Math.floor(ms / 60_000);
@@ -2597,7 +2608,11 @@ export class HeartbeatMonitor {
 
     const now = Date.now();
     const rows = reports.map((report) => {
-      const timeoutMs = this.resolveAgentConfig(report.id).heartbeatTimeoutMs;
+      const { pollIntervalMs, heartbeatTimeoutMs } = this.resolveAgentConfig(report.id);
+      const staleThresholdMs = Math.max(
+        pollIntervalMs * HEARTBEAT_GRACE_MULTIPLIER,
+        MIN_HEARTBEAT_STALENESS_MS,
+      );
       const lastHeartbeatTs = report.lastHeartbeatAt ? Date.parse(report.lastHeartbeatAt) : NaN;
       const heartbeatAgeMs = Number.isFinite(lastHeartbeatTs) ? Math.max(0, now - lastHeartbeatTs) : Infinity;
 
@@ -2607,8 +2622,8 @@ export class HeartbeatMonitor {
       } else if (report.state === "error") {
         health = "**stuck**";
       } else if (report.state === "running") {
-        health = heartbeatAgeMs <= timeoutMs * 2 ? "healthy" : "**stuck**";
-      } else if ((report.state === "active" || report.state === "idle") && heartbeatAgeMs > timeoutMs * 3) {
+        health = heartbeatAgeMs <= heartbeatTimeoutMs * 2 ? "healthy" : "**stuck**";
+      } else if ((report.state === "active" || report.state === "idle") && heartbeatAgeMs > staleThresholdMs) {
         health = "**stale**";
       }
 
