@@ -1270,6 +1270,10 @@
     gap: var(--space-sm);
   }
 
+  .agent-org-chart-toolbar {
+    display: none;
+  }
+
   .agent-org-chart-controls .agent-org-chart-layout-toggle {
     order: 1;
     display: grid;

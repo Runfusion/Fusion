@@ -1470,6 +1470,9 @@ describe("AgentsView", () => {
       const verticalButton = within(toggle).getByRole("button", { name: "Vertical layout" });
       const autoButton = within(toggle).getByRole("button", { name: "Automatic layout" });
 
+      expect(within(horizontalButton).getByText("Horizontal")).toBeTruthy();
+      expect(within(verticalButton).getByText("Vertical")).toBeTruthy();
+      expect(within(autoButton).getByText("Auto")).toBeTruthy();
       expect(verticalButton.getAttribute("aria-pressed")).toBe("true");
       expect(horizontalButton.getAttribute("aria-pressed")).toBe("false");
       expect(autoButton.getAttribute("aria-pressed")).toBe("false");
