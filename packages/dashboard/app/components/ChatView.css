@@ -1666,12 +1666,13 @@
     opacity: 1;
   }
 
+  /* FN-4352: secondary hover-revealed row action stays compact (inflated by FN-3628). */
   .chat-message-copy-action {
     opacity: 1;
-    width: calc(var(--space-lg) * 2.25);
-    height: calc(var(--space-lg) * 2.25);
-    min-width: calc(var(--space-lg) * 2.25);
-    min-height: calc(var(--space-lg) * 2.25);
+    width: calc(var(--space-lg) * 2);
+    height: calc(var(--space-lg) * 2);
+    min-width: calc(var(--space-lg) * 2);
+    min-height: calc(var(--space-lg) * 2);
   }
 
   .chat-tool-calls-group-summary,

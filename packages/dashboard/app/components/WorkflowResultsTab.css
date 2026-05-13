@@ -569,5 +569,5 @@
     justify-content: space-between;
   }
 
-  /* FN-4352: secondary in-row expand control stays compact per AGENTS.md convention (inflated by FN-4236). */
+  /* FN-4352: secondary in-row expand control intentionally has no mobile size override (inflated by FN-4236). */
 }
