@@ -176,7 +176,7 @@ describe("TaskCard", () => {
     expect(container.querySelector(".card-status-badge")).toBeNull();
   });
 
-  it("renders stalled badge with reason tooltip when stalledReview is set", () => {
+  it("renders stalled badge with visible reason when stalledReview is set", () => {
     render(
       <TaskCard
         task={makeTask({
@@ -197,6 +197,7 @@ describe("TaskCard", () => {
 
     const stalledBadge = screen.getByText("Stalled");
     expect(stalledBadge.getAttribute("title")).toContain("Re-enqueued for merge 3 times");
+    expect(screen.getByText("Re-enqueued for merge 3 times in the last 60 minutes without leaving in-review")).toBeDefined();
   });
 
   it("does not render stalled badge when stalledReview is undefined", () => {
@@ -213,6 +214,7 @@ describe("TaskCard", () => {
     );
 
     expect(screen.queryByText("Stalled")).toBeNull();
+    expect(screen.queryByText(/Re-enqueued for merge/)).toBeNull();
   });
 
   it("shows paused by agent label when pausedByAgentId is set", () => {

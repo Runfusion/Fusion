@@ -162,6 +162,16 @@
   border: var(--btn-border-width) solid color-mix(in srgb, var(--color-warning) 30%, transparent);
 }
 
+.card-stalled-review-reason {
+  margin-top: var(--space-xs);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .card-status-badge.paused {
   background: var(--status-done-bg-deep);
   color: var(--text-muted);
@@ -1181,6 +1191,10 @@
   .card-status-badge {
     font-size: 0.5625rem;
     padding: 1px 6px;
+  }
+
+  .card-stalled-review-reason {
+    font-size: 0.625rem;
   }
 
   .card-mission-badge {

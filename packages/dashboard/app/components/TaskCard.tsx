@@ -467,6 +467,11 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previousTask.sourceAgentId === nextTask.sourceAgentId &&
     previousTask.sourceMetadata?.issueUrl === nextTask.sourceMetadata?.issueUrl &&
     previousTask.sourceMetadata?.agentName === nextTask.sourceMetadata?.agentName &&
+    previousTask.stalledReview?.reason === nextTask.stalledReview?.reason &&
+    previousTask.stalledReview?.heuristic === nextTask.stalledReview?.heuristic &&
+    previousTask.stalledReview?.matchCount === nextTask.stalledReview?.matchCount &&
+    previousTask.stalledReview?.firstMatchAt === nextTask.stalledReview?.firstMatchAt &&
+    previousTask.stalledReview?.lastMatchAt === nextTask.stalledReview?.lastMatchAt &&
     areAttachmentsEqual(previousTask.attachments, nextTask.attachments) &&
     areCommentsEqual(previousTask.comments, nextTask.comments) &&
     areTaskDependenciesEqual(previousTask.dependencies, nextTask.dependencies) &&
@@ -746,6 +751,7 @@ function TaskCardComponent({
   const showPriorityBadge = normalizedPriority !== DEFAULT_TASK_PRIORITY;
   const isStuck = isTaskStuck(task, taskStuckTimeoutMs, lastFetchTimeMs);
   const stalledReview = getStalledReviewSignal(task);
+  const showStalledReview = Boolean(stalledReview && task.column === "in-review" && !isPaused);
   const isAwaitingApproval = task.column === "triage" && task.status === "awaiting-approval";
   const isArchived = task.column === "archived";
   const isAgentActive = !globalPaused && !queued && !isFailed && !isPaused && !isStuck && !isAwaitingApproval && (task.column === "in-progress" || ACTIVE_STATUSES.has(task.status as string));
@@ -1394,7 +1400,7 @@ function TaskCardComponent({
             Stuck
           </span>
         )}
-        {stalledReview && task.column === "in-review" && !isPaused && (
+        {showStalledReview && stalledReview && (
           <span
             className="card-status-badge card-status-badge--in-review stalled-review"
             title={stalledReview.reason}
@@ -1555,6 +1561,11 @@ function TaskCardComponent({
           )}
         </div>
       </div>
+      {showStalledReview && stalledReview && (
+        <div className="card-stalled-review-reason" title={stalledReview.reason}>
+          {stalledReview.reason}
+        </div>
+      )}
       {isFailed && task.error && (
         <div className="card-error" title={task.error}>
           <span className="card-error-icon">⚠</span>
