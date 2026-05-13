@@ -341,6 +341,22 @@ describe("SettingsModal mobile adaptations", () => {
     expectBaseRule(css, ".settings-header-actions > .settings-header-help-btn", "height: var(--settings-header-action-height);");
   });
 
+  it("FN-4354: settings header actions and modal-close have no mobile touch-target inflation", () => {
+    const css = loadAllAppCss();
+
+    // FN-4354 regression guard: mobile settings header no longer inflates compact toolbar controls.
+    const mobileBlockMatch = css.match(/@media\s*\(max-width:\s*768px\)\s*\{[\s\S]*?\.settings-modal \.modal-close\s*\{[\s\S]*?\}/);
+    const mobileBlock = mobileBlockMatch?.[0] ?? "";
+
+    expect(css.includes("--settings-header-action-height: calc(var(--space-md) * 3)")).toBe(false);
+    expect(css.includes("min-height: var(--settings-header-action-height)")).toBe(false);
+    expect(/\.settings-header-actions\s*>\s*\.btn-icon\s*\{[\s\S]*?min-width:\s*calc\(var\(--space-md\)\s*\*\s*3\)/.test(css)).toBe(false);
+    expect(/\.settings-modal \.modal-close\s*\{[^}]*min-height:/.test(mobileBlock)).toBe(false);
+    expect(/\.settings-modal \.modal-close\s*\{[^}]*min-width:/.test(mobileBlock)).toBe(false);
+
+    expectBaseRule(css, ".settings-header-actions", "--settings-header-action-height: calc(var(--space-md) * 2 + var(--space-xs) / 2);");
+  });
+
   it("styles settings scrollbar rules for sidebar and content", () => {
     const css = loadAllAppCss();
 
