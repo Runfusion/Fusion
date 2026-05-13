@@ -564,6 +564,18 @@ describe("Git Management API", () => {
       });
     });
 
+    it("sends githubIssueAction when requested", async () => {
+      const deletedTask: Task = { ...FAKE_DETAIL, column: "done" };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, deletedTask));
+
+      await deleteTask("FN-001", undefined, { githubIssueAction: "delete" });
+
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001?githubIssueAction=delete", {
+        headers: { "Content-Type": "application/json" },
+        method: "DELETE",
+      });
+    });
+
     it("throws ApiRequestError on error and preserves details payload", async () => {
       globalThis.fetch = vi.fn().mockReturnValue(
         mockFetchResponse(

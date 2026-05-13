@@ -890,7 +890,10 @@ describe("DELETE /tasks/:id", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.id).toBe("KB-001");
-    expect(store.deleteTask).toHaveBeenCalledWith("KB-001", { removeDependencyReferences: false });
+    expect(store.deleteTask).toHaveBeenCalledWith("KB-001", {
+      removeDependencyReferences: false,
+      githubIssueAction: undefined,
+    });
   });
 
   it("returns structured 409 conflict when delete is blocked by dependents", async () => {
@@ -917,7 +920,31 @@ describe("DELETE /tasks/:id", () => {
     const res = await REQUEST(buildApp(), "DELETE", "/api/tasks/KB-001?removeDependencyReferences=true");
 
     expect(res.status).toBe(200);
-    expect(store.deleteTask).toHaveBeenCalledWith("KB-001", { removeDependencyReferences: true });
+    expect(store.deleteTask).toHaveBeenCalledWith("KB-001", {
+      removeDependencyReferences: true,
+      githubIssueAction: undefined,
+    });
+  });
+
+  it.each(["close", "delete", "leave", "auto"] as const)("forwards githubIssueAction=%s", async (githubIssueAction) => {
+    const deletedTask = { ...FAKE_TASK_DETAIL, id: "KB-001" };
+    (store.deleteTask as ReturnType<typeof vi.fn>).mockResolvedValue(deletedTask);
+
+    const res = await REQUEST(buildApp(), "DELETE", `/api/tasks/KB-001?githubIssueAction=${githubIssueAction}`);
+
+    expect(res.status).toBe(200);
+    expect(store.deleteTask).toHaveBeenCalledWith("KB-001", {
+      removeDependencyReferences: false,
+      githubIssueAction,
+    });
+  });
+
+  it("rejects invalid githubIssueAction values", async () => {
+    const res = await REQUEST(buildApp(), "DELETE", "/api/tasks/KB-001?githubIssueAction=bad-value");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("githubIssueAction must be one of: close, delete, leave, auto");
+    expect(store.deleteTask).not.toHaveBeenCalled();
   });
 });
 

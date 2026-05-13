@@ -77,7 +77,7 @@ import type {
   TaskIdIntegrityReport,
 } from "@fusion/core";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
-import type { ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult } from "@fusion/core";
+import type { GithubIssueAction, ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult } from "@fusion/core";
 import type { DiscoveredSkill, CatalogEntry, CatalogFetchResult, ToggleSkillResult, SkillContent, SkillFileEntry } from "@fusion/dashboard";
 import type { MilestoneValidationTelemetry, MissionInterviewDraftSummary } from "../components/mission-types";
 import type {
@@ -106,6 +106,7 @@ export class ApiRequestError extends Error {
 
 export interface DeleteTaskOptions {
   removeDependencyReferences?: boolean;
+  githubIssueAction?: GithubIssueAction;
 }
 
 function looksLikeHtml(body: string): boolean {
@@ -454,6 +455,9 @@ export function deleteTask(id: string, projectId?: string, options?: DeleteTaskO
   const search = new URLSearchParams();
   if (options?.removeDependencyReferences) {
     search.set("removeDependencyReferences", "true");
+  }
+  if (options?.githubIssueAction) {
+    search.set("githubIssueAction", options.githubIssueAction);
   }
 
   const suffix = search.size > 0 ? `?${search.toString()}` : "";
