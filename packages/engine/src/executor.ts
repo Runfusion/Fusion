@@ -6350,7 +6350,7 @@ and show an appropriate message to the user.\`
     await this.store.updateTask(task.id, { worktree: livePath, branch });
     const message = `[recovery] reclaimed existing worktree for ${task.id} at ${livePath} (${count} commits preserved, tip ${tipSha.slice(0, 12)})`;
     await this.store.logEntry(task.id, message, undefined, this.currentRunContext);
-    await this.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "info", message, "executor");
+    await this.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "text", message, "executor");
   }
 
   private async handleBranchConflict(task: Task, error: BranchConflictError): Promise<"retry" | "reclaimed" | "sticky"> {
@@ -6365,7 +6365,7 @@ and show an appropriate message to the user.\`
     if (inspection.kind === "stale-resolved") {
       const message = `[recovery] ${task.id} stage-A: pruned stale admin entry for ${error.branchName}`;
       await this.store.logEntry(task.id, message, undefined, this.currentRunContext);
-      await this.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "info", message, "executor");
+      await this.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "text", message, "executor");
       return "retry";
     }
 
