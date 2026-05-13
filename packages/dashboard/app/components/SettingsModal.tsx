@@ -404,6 +404,8 @@ export function SettingsModal({
     ntfyEnabled: false,
     ntfyTopic: undefined,
     ntfyAccessToken: undefined,
+    failureNotificationMode: "sticky-only",
+    failureNotificationDelayMs: 30000,
     webhookEnabled: false,
     webhookUrl: undefined,
     webhookFormat: "generic",
@@ -5021,6 +5023,47 @@ export function SettingsModal({
           <>
             {renderScopeBanner()}
             <h4 className="settings-section-heading">Notifications</h4>
+
+            <div className="notification-provider-card">
+              <div className="form-group">
+                <label htmlFor="failureNotificationMode">Failure notification mode</label>
+                <select
+                  id="failureNotificationMode"
+                  value={form.failureNotificationMode ?? "sticky-only"}
+                  onChange={(e) => {
+                    const value = e.target.value as "sticky-only" | "all";
+                    setForm((f) => ({ ...f, failureNotificationMode: value }));
+                  }}
+                >
+                  <option value="sticky-only">Sticky failures only (default)</option>
+                  <option value="all">All failures (legacy)</option>
+                </select>
+                <small>
+                  Sticky-only suppresses notifications for transient failures that the engine auto-recovers. Choose &quot;All failures&quot; for the legacy immediate-notification behavior.
+                </small>
+              </div>
+              <div className="form-group">
+                <label htmlFor="failureNotificationDelayMs">Failure notification delay (ms)</label>
+                <input
+                  id="failureNotificationDelayMs"
+                  type="number"
+                  min={0}
+                  step={1000}
+                  disabled={(form.failureNotificationMode ?? "sticky-only") === "all"}
+                  value={form.failureNotificationDelayMs ?? 30000}
+                  onChange={(e) => {
+                    const parsed = Number(e.target.value);
+                    setForm((f) => ({
+                      ...f,
+                      failureNotificationDelayMs: Number.isFinite(parsed) && parsed >= 0 ? parsed : 0,
+                    }));
+                  }}
+                />
+                <small>
+                  How long a failure must persist before a push notification is sent. 0 = notify immediately.
+                </small>
+              </div>
+            </div>
 
             <div className="notification-provider-card">
               <div className="notification-provider-header">

@@ -3245,6 +3245,34 @@ describe("SettingsModal", () => {
       expect(screen.getByText("Webhook")).toBeInTheDocument();
     });
 
+    it("renders failure mode controls and persists updated values", async () => {
+      renderModal();
+      await waitForSettingsModalReady();
+      await openNotificationsSection();
+
+      const modeSelect = screen.getByLabelText("Failure notification mode") as HTMLSelectElement;
+      const delayInput = screen.getByLabelText("Failure notification delay (ms)") as HTMLInputElement;
+
+      expect(modeSelect.value).toBe("sticky-only");
+      expect(delayInput.value).toBe("30000");
+
+      await userEvent.selectOptions(modeSelect, "all");
+      expect(delayInput).toBeDisabled();
+      await userEvent.selectOptions(modeSelect, "sticky-only");
+      await userEvent.clear(delayInput);
+      await userEvent.type(delayInput, "45000");
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            failureNotificationMode: "sticky-only",
+            failureNotificationDelayMs: 45000,
+          }),
+        );
+      });
+    });
+
     it("shows ntfy fields when ntfy provider is enabled", async () => {
       mockFetchSettings.mockResolvedValueOnce({ ...defaultSettings, ntfyEnabled: true, ntfyTopic: "test-topic" });
       renderModal();
