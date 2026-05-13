@@ -115,7 +115,6 @@ import {
   PluginManager,
   STATE_COLORS,
 } from "../PluginManager";
-import { loadAllAppCss } from "../../test/cssFixture";
 import {
   fetchPlugins,
   installPlugin,
@@ -141,10 +140,6 @@ function expectEventsUrl(url: string, projectId?: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  const styleEl = document.createElement("style");
-  styleEl.setAttribute("data-test-id", "all-app-css");
-  styleEl.textContent = loadAllAppCss();
-  document.head.appendChild(styleEl);
   mockConfirm.mockReset();
   mockConfirm.mockResolvedValue(true);
   window.sessionStorage.clear();
@@ -225,7 +220,6 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
-  document.querySelector('[data-test-id="all-app-css"]')?.remove();
   vi.restoreAllMocks();
   delete (globalThis as any).__testEventSourceInstance;
 });
@@ -364,6 +358,12 @@ describe("PluginManager", () => {
   });
 
   it("wraps long plugin error text in the detail view while preserving the detail variant class", async () => {
+    const { loadAllAppCss } = await import("../../test/cssFixture");
+    const styleEl = document.createElement("style");
+    styleEl.setAttribute("data-test-id", "plugin-manager-wrap-css");
+    styleEl.textContent = loadAllAppCss();
+    document.head.appendChild(styleEl);
+
     const plugin = {
       ...mockPlugins[0],
       id: "plugin-error-detail-wrap",
@@ -400,6 +400,8 @@ describe("PluginManager", () => {
     expect(detailStyle.overflow).toBe("visible");
     expect(detailStyle.textOverflow).toBe("clip");
     expect(detailStyle.overflowWrap).toBe("anywhere");
+
+    styleEl.remove();
   });
 
   it("shows setup-required action for installed built-in agent browser", async () => {
