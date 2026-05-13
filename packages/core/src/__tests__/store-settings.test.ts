@@ -1598,6 +1598,44 @@ describe("TaskStore", () => {
   });
 
   describe("getSettingsFast()", () => {
+    it("defaults ephemeralAgentsEnabled to true for new projects", async () => {
+      const fast = await harness.store().getSettingsFast();
+      const regular = await harness.store().getSettings();
+      const scopedFast = await harness.store().getSettingsByScopeFast();
+
+      expect(fast.ephemeralAgentsEnabled).toBe(true);
+      expect(regular.ephemeralAgentsEnabled).toBe(true);
+      expect(scopedFast.project.ephemeralAgentsEnabled).toBe(true);
+    });
+
+    it("falls back to ephemeralAgentsEnabled=true when upgrading settings omit the key", async () => {
+      const db = (harness.store() as any).db;
+      const row = db.prepare("SELECT settings FROM config WHERE id = 1").get() as { settings?: string } | undefined;
+      const existingSettings = row?.settings ? JSON.parse(row.settings) : {};
+      delete existingSettings.ephemeralAgentsEnabled;
+      db.prepare("UPDATE config SET settings = ? WHERE id = 1").run(JSON.stringify(existingSettings));
+
+      const fast = await harness.store().getSettingsFast();
+      const regular = await harness.store().getSettings();
+      const scopedFast = await harness.store().getSettingsByScopeFast();
+
+      expect(fast.ephemeralAgentsEnabled).toBe(true);
+      expect(regular.ephemeralAgentsEnabled).toBe(true);
+      expect(scopedFast.project.ephemeralAgentsEnabled).toBe(true);
+    });
+
+    it("preserves explicit ephemeralAgentsEnabled=false", async () => {
+      await harness.store().updateSettings({ ephemeralAgentsEnabled: false });
+
+      const fast = await harness.store().getSettingsFast();
+      const regular = await harness.store().getSettings();
+      const scopedFast = await harness.store().getSettingsByScopeFast();
+
+      expect(fast.ephemeralAgentsEnabled).toBe(false);
+      expect(regular.ephemeralAgentsEnabled).toBe(false);
+      expect(scopedFast.project.ephemeralAgentsEnabled).toBe(false);
+    });
+
     it("returns the same merged result as getSettings()", async () => {
       await harness.store().updateGlobalSettings({ themeMode: "light", ntfyEnabled: true });
       await harness.store().updateSettings({ maxConcurrent: 5, autoMerge: false });

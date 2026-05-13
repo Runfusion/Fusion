@@ -6,6 +6,7 @@ import { existsSync, watch, type FSWatcher } from "node:fs";
 import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, TaskCommitAssociationMatchSource, TaskCommitAssociationConfidence } from "./types.js";
 import { createActivityLogSnapshot, createRunAuditSnapshot, createTaskMetadataSnapshot, toTaskMetadataRecord, validateSnapshotEnvelope, type ActivityLogSnapshot, type RunAuditSnapshot, type TaskMetadataSnapshot } from "./shared-mesh-state.js";
 import { VALID_TRANSITIONS, DEFAULT_SETTINGS, isGlobalOnlySettingsKey, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
+import { DEFAULT_PROJECT_SETTINGS } from "./settings-schema.js";
 import { normalizeTaskPriority } from "./task-priority.js";
 import { canAgentTakeImplementationTaskForExplicitRouting } from "./agent-role-policy.js";
 import { GlobalSettingsStore } from "./global-settings.js";
@@ -2089,8 +2090,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
     }
 
-    // Apply canonicalization to both the project settings and the merged result
+    // Apply canonicalization to project settings and keep upgrade-safe
+    // default fallback behavior for legacy rows that omit this key.
     const canonicalizedProject = canonicalizeSettings(projectSettings as Settings);
+    if (canonicalizedProject.ephemeralAgentsEnabled === undefined) {
+      canonicalizedProject.ephemeralAgentsEnabled = DEFAULT_PROJECT_SETTINGS.ephemeralAgentsEnabled;
+    }
 
     return { global: globalSettings, project: canonicalizedProject };
   }
@@ -2124,8 +2129,12 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
     }
 
-    // Apply canonicalization to the project settings
+    // Apply canonicalization and keep upgrade-safe default fallback behavior
+    // for legacy rows that omit this key.
     const canonicalizedProject = canonicalizeSettings(projectScoped as Settings);
+    if (canonicalizedProject.ephemeralAgentsEnabled === undefined) {
+      canonicalizedProject.ephemeralAgentsEnabled = DEFAULT_PROJECT_SETTINGS.ephemeralAgentsEnabled;
+    }
 
     return { global: globalSettings, project: canonicalizedProject };
   }
