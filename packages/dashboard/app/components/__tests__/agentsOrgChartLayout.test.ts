@@ -75,6 +75,18 @@ describe("agentsOrgChartLayout", () => {
       resolveOrgChartLayoutMode({ tree, availableWidth: 400 }),
     );
   });
+
+  it("uses compact mobile dimensions for auto mode near mobile breakpoint", () => {
+    const tree = [
+      makeNode("root", [
+        makeNode("a", [makeNode("a1"), makeNode("a2")]),
+        makeNode("b", [makeNode("b1"), makeNode("b2")]),
+      ]),
+    ];
+
+    expect(estimateOrgChartWidth(tree, 700)).toBe(680);
+    expect(resolveOrgChartLayoutMode({ tree, availableWidth: 700 })).toBe("horizontal");
+  });
 });
 
 describe("isOrgChartLayoutPreference", () => {

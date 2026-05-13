@@ -15,10 +15,28 @@ export interface OrgChartLayoutInput {
   preference?: OrgChartLayoutPreference;
 }
 
-const DEFAULT_NODE_WIDTH = 220;
-const DEFAULT_SIBLING_GAP = 24;
-const DEFAULT_ROOT_GAP = 24;
-const DEFAULT_CHART_PADDING = 16;
+interface OrgChartLayoutDimensions {
+  nodeWidth: number;
+  siblingGap: number;
+  rootGap: number;
+  chartPadding: number;
+}
+
+const MOBILE_BREAKPOINT_WIDTH = 768;
+
+const DESKTOP_LAYOUT_DIMENSIONS: OrgChartLayoutDimensions = {
+  nodeWidth: 220,
+  siblingGap: 24,
+  rootGap: 24,
+  chartPadding: 24,
+};
+
+const MOBILE_LAYOUT_DIMENSIONS: OrgChartLayoutDimensions = {
+  nodeWidth: 160,
+  siblingGap: 8,
+  rootGap: 8,
+  chartPadding: 8,
+};
 
 function getLeafCount(node: OrgTreeNode): number {
   if (node.children.length === 0) {
@@ -27,19 +45,26 @@ function getLeafCount(node: OrgTreeNode): number {
   return node.children.reduce((sum, child) => sum + getLeafCount(child), 0);
 }
 
-function estimateSubtreeWidth(node: OrgTreeNode): number {
-  const leaves = getLeafCount(node);
-  return leaves * DEFAULT_NODE_WIDTH + Math.max(0, leaves - 1) * DEFAULT_SIBLING_GAP;
+function resolveLayoutDimensions(availableWidth: number): OrgChartLayoutDimensions {
+  return availableWidth <= MOBILE_BREAKPOINT_WIDTH
+    ? MOBILE_LAYOUT_DIMENSIONS
+    : DESKTOP_LAYOUT_DIMENSIONS;
 }
 
-export function estimateOrgChartWidth(tree: OrgTreeNode[]): number {
+function estimateSubtreeWidth(node: OrgTreeNode, dimensions: OrgChartLayoutDimensions): number {
+  const leaves = getLeafCount(node);
+  return leaves * dimensions.nodeWidth + Math.max(0, leaves - 1) * dimensions.siblingGap;
+}
+
+export function estimateOrgChartWidth(tree: OrgTreeNode[], availableWidth = Number.POSITIVE_INFINITY): number {
+  const dimensions = resolveLayoutDimensions(availableWidth);
   if (tree.length === 0) {
-    return DEFAULT_NODE_WIDTH;
+    return dimensions.nodeWidth;
   }
-  const rootWidths = tree.map(estimateSubtreeWidth);
+  const rootWidths = tree.map((node) => estimateSubtreeWidth(node, dimensions));
   const totalRootsWidth = rootWidths.reduce((sum, width) => sum + width, 0);
-  const rootGapWidth = Math.max(0, tree.length - 1) * DEFAULT_ROOT_GAP;
-  return totalRootsWidth + rootGapWidth + DEFAULT_CHART_PADDING * 2;
+  const rootGapWidth = Math.max(0, tree.length - 1) * dimensions.rootGap;
+  return totalRootsWidth + rootGapWidth + dimensions.chartPadding * 2;
 }
 
 export function resolveOrgChartLayoutMode(input: OrgChartLayoutInput): OrgChartLayoutMode {
@@ -56,6 +81,6 @@ export function resolveOrgChartLayoutMode(input: OrgChartLayoutInput): OrgChartL
     return "horizontal";
   }
 
-  const estimatedWidth = estimateOrgChartWidth(input.tree);
+  const estimatedWidth = estimateOrgChartWidth(input.tree, safeAvailableWidth);
   return estimatedWidth > safeAvailableWidth ? "vertical" : "horizontal";
 }
