@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import type { TaskStore, Task, TaskDetail, Column, TaskReviewData, TaskReviewItem, TaskReviewSummary } from "@fusion/core";
+import type { TaskStore, Task, TaskDetail, Column, TaskReviewData, TaskReviewItem, TaskReviewSummary, GithubIssueAction } from "@fusion/core";
 import {
   COLUMNS,
   TASK_PRIORITIES,
@@ -2229,7 +2229,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const { store: scopedStore } = await getProjectContext(req);
       const removeDependencyReferences = req.query.removeDependencyReferences === "1"
         || req.query.removeDependencyReferences === "true";
-      const task = await scopedStore.deleteTask(req.params.id, { removeDependencyReferences });
+      const githubIssueActionRaw = req.query.githubIssueAction;
+      const githubIssueActionValues: readonly GithubIssueAction[] = ["close", "delete", "leave", "auto"];
+      let githubIssueAction: GithubIssueAction | undefined;
+      if (typeof githubIssueActionRaw === "string") {
+        if (!githubIssueActionValues.includes(githubIssueActionRaw as GithubIssueAction)) {
+          throw badRequest("githubIssueAction must be one of: close, delete, leave, auto");
+        }
+        githubIssueAction = githubIssueActionRaw as GithubIssueAction;
+      }
+      const task = await scopedStore.deleteTask(req.params.id, { removeDependencyReferences, githubIssueAction });
       res.json(task);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
