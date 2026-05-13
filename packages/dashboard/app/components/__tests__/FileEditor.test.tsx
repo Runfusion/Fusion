@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import { loadAllAppCss } from "../../test/cssFixture";
 import { FileEditor } from "../FileEditor";
 
 describe("FileEditor", () => {
@@ -341,6 +342,37 @@ describe("FileEditor", () => {
       );
 
       expect(document.querySelector(".file-editor-line-numbers")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("mobile toolbar CSS", () => {
+    it("keeps file editor toolbar action buttons at a shared mobile touch target size", () => {
+      const css = loadAllAppCss();
+      const selectorIndex = css.indexOf(".file-editor-toolbar-actions .btn");
+
+      expect(selectorIndex).toBeGreaterThanOrEqual(0);
+
+      const mediaIndex = css.lastIndexOf("@media (max-width: 768px)", selectorIndex);
+      expect(mediaIndex).toBeGreaterThanOrEqual(0);
+
+      const openBraceIndex = css.indexOf("{", mediaIndex);
+      let depth = 1;
+      let cursor = openBraceIndex + 1;
+
+      while (cursor < css.length && depth > 0) {
+        if (css[cursor] === "{") {
+          depth += 1;
+        } else if (css[cursor] === "}") {
+          depth -= 1;
+        }
+        cursor += 1;
+      }
+
+      const mobileCss = css.slice(openBraceIndex + 1, cursor - 1);
+
+      expect(mobileCss).toMatch(
+        /\.file-editor-toolbar-actions\s+\.btn\s*\{[^}]*min-height:\s*var\(--mobile-nav-height\);[^}]*min-width:\s*var\(--mobile-nav-height\);[^}]*\}/,
+      );
     });
   });
 

@@ -390,7 +390,7 @@
   }
 
   .file-editor-toolbar {
-    align-items: flex-start;
+    align-items: center;
   }
 
   .file-editor-toolbar-actions {
@@ -400,6 +400,7 @@
 
   .file-editor-toolbar-actions .btn {
     min-height: var(--mobile-nav-height);
+    min-width: var(--mobile-nav-height);
   }
 
   .file-browser-modal-header .modal-close {
