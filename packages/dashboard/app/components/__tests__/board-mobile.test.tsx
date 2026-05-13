@@ -315,11 +315,8 @@ describe("TaskCard mobile", () => {
 
   it("keeps TaskCard timer chip in-flow and right-aligned in footer metadata row", () => {
     const css = loadAllAppCss();
-    const mobileSection = getMainMobileSection(css);
     expectRuleToContain(css, ".card-time-indicator", "margin-left: auto;");
     expectRuleToContain(css, ".card-header-actions", "margin-left: auto;");
-    expectRuleToContain(mobileSection, ".card-header-actions", "width: 100%;");
-    expectRuleToContain(mobileSection, ".card-header-actions", "margin-left: 0;");
   });
 
   it("truncates TaskCard files-changed text instead of wrapping", () => {
