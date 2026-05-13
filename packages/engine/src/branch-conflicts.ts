@@ -225,7 +225,11 @@ export async function inspectBranchConflict(
     return { kind: "stale-resolved" };
   }
 
-  if (livePath && livePath !== input.conflictingWorktreePath) {
+  if (!livePath) {
+    return { kind: "stale-resolved" };
+  }
+
+  if (livePath !== input.conflictingWorktreePath) {
     const tipSha = await revParse(input.repoDir, input.branchName);
     const strandedCommits = await listStrandedCommits(input.repoDir, startPoint, input.branchName);
     const taskAttributedCommitCount = await countTaskAttributedCommits(
