@@ -873,6 +873,17 @@ describe("WorkflowResultsTab", () => {
       expect(css).toMatch(/\.workflow-output-modal-name\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/);
     });
 
+    it("keeps workflow output header actions visible without hardcoded badge sizing", () => {
+      const baseCss = loadAllAppCssBaseOnly();
+      const allCss = loadAllAppCss();
+
+      expect(baseCss).toMatch(/\.phase-badge\s*\{[^}]*font-size:\s*calc\(var\(--space-sm\) \+ var\(--space-xs\) \* 0\.75\);/);
+      expect(baseCss).toMatch(/\.workflow-result-output-header\s*\{[^}]*flex-wrap:\s*wrap;/);
+      expect(baseCss).toMatch(/\.workflow-result-output-preview\s*\{[^}]*flex:\s*1 1 calc\(var\(--space-2xl\) \* 6\);[^}]*min-width:\s*0;/);
+      expect(allCss).toMatch(/@media \(max-width: 768px\)\s*\{[\s\S]*?\.workflow-result-output-preview\s*\{[^}]*flex-basis:\s*100%;[^}]*order:\s*3;/);
+      expect(allCss).toMatch(/@media \(max-width: 768px\)\s*\{[\s\S]*?\.workflow-result-mode-toggle\s*\{[^}]*margin-left:\s*0;/);
+    });
+
     it("allows workflow modal controls to wrap on mobile so the close button stays visible", () => {
       const css = loadAllAppCss();
 

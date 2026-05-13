@@ -54,19 +54,13 @@
 
 .workflow-results-edit-toggle {
   width: auto;
-  height: calc(var(--space-lg) * 2 - var(--space-xs));
-  padding: 0 calc(var(--space-sm) + var(--space-xs) * 0.5);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
+  min-height: calc(var(--space-lg) * 2 - var(--space-xs));
+  padding-inline: calc(var(--space-sm) + var(--space-xs) * 0.5);
   color: var(--text-muted);
-  font-size: calc(var(--space-sm) + var(--space-xs));
-  font-weight: 500;
   gap: calc(var(--space-xs) + var(--space-xs) * 0.5);
 }
 
 .workflow-results-edit-toggle:hover {
-  background: var(--card-hover);
   color: var(--text);
 }
 
@@ -229,7 +223,7 @@
 /* Phase badge base and modifier classes */
 .phase-badge {
   margin-inline-start: var(--space-xs);
-  font-size: 11px;
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
   padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-sm);
 }
@@ -293,6 +287,7 @@
 
 .workflow-result-output-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-sm);
   margin-bottom: var(--space-xs);
@@ -307,6 +302,8 @@
 }
 
 .workflow-result-output-preview {
+  flex: 1 1 calc(var(--space-2xl) * 6);
+  min-width: 0;
   font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
   color: var(--text-dim);
   font-style: italic;
@@ -502,6 +499,19 @@
   .workflow-results-edit-toggle {
     min-width: calc(var(--space-lg) * 2 + var(--space-xs));
     min-height: calc(var(--space-lg) * 2 + var(--space-xs));
+  }
+
+  .workflow-result-output-header {
+    align-items: flex-start;
+  }
+
+  .workflow-result-output-preview {
+    flex-basis: 100%;
+    order: 3;
+  }
+
+  .workflow-result-mode-toggle {
+    margin-left: 0;
   }
 
   .workflow-configured-header {

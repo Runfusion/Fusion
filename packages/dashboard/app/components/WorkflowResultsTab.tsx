@@ -570,7 +570,7 @@ export function WorkflowResultsTab({
   const editButton = canEdit ? (
     <button
       type="button"
-      className="modal-edit-btn workflow-results-edit-toggle"
+      className="btn btn-sm workflow-results-edit-toggle"
       onClick={() => setIsEditing((prev) => !prev)}
       data-testid="workflow-steps-edit-toggle"
       aria-label={isEditing ? "Done editing workflow steps" : "Edit workflow steps"}

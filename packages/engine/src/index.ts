@@ -28,6 +28,9 @@ export {
   dropAutostashBySha,
   getAutostashDiff,
   notifyAutostashOrphans,
+  DiffVolumeRegressionError,
+  MergeAbortedError,
+  SquashAuditError,
   type MergerOptions,
   type AutostashOrphanRecord,
 } from "./merger.js";
