@@ -573,8 +573,5 @@
     min-height: calc(var(--space-lg) * 2 + var(--space-xs));
   }
 
-  .workflow-step-order-actions .btn {
-    min-width: calc(var(--space-lg) * 2 + var(--space-xs));
-    min-height: calc(var(--space-lg) * 2 + var(--space-xs));
-  }
+  /* FN-4352: secondary in-row reorder controls stay compact per AGENTS.md convention (inflated by FN-4236). */
 }

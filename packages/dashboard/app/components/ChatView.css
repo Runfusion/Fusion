@@ -1652,12 +1652,9 @@
     min-height: calc(var(--space-lg) * 2.25);
   }
 
+  /* FN-4352: secondary control inside tappable session row; keep compact size (inflated by FN-3628). */
   .chat-session-delete-btn {
     opacity: 1;
-    width: calc(var(--space-lg) * 2.25);
-    height: calc(var(--space-lg) * 2.25);
-    min-width: calc(var(--space-lg) * 2.25);
-    min-height: calc(var(--space-lg) * 2.25);
   }
 
   .chat-session-title,
@@ -1697,6 +1694,7 @@
     margin-left: auto;
   }
 
+  /* primary touch targets per AGENTS.md convention */
   .chat-attach-btn,
   .chat-input-send,
   .chat-input-stop {
