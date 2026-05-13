@@ -2649,7 +2649,7 @@ describe("aiMergeTask post-squash audit gate", () => {
       issueCount: 1,
       clean: false,
     });
-    const store = createAuditStore();
+    const store = createAuditStore({ postMergeAuditMode: "block" });
 
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(
       "FN-050: post-squash audit blocked auto-completion for mergedco",
@@ -2692,7 +2692,7 @@ describe("aiMergeTask post-squash audit gate", () => {
       issueCount: 1,
       clean: false,
     });
-    const store = createAuditStore();
+    const store = createAuditStore({ postMergeAuditMode: "block" });
 
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(
       "FN-050: post-squash audit blocked auto-completion for mergedco",
@@ -2738,7 +2738,7 @@ describe("aiMergeTask post-squash audit gate", () => {
       issueCount: 2,
       clean: false,
     });
-    const store = createAuditStore();
+    const store = createAuditStore({ postMergeAuditMode: "block" });
 
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(/post-squash audit blocked auto-completion/);
 
@@ -2794,6 +2794,7 @@ describe("aiMergeTask post-squash audit gate", () => {
     const store = createAuditStore({
       mergeConflictStrategy: "smart-prefer-main",
       worktreeRebaseBeforeMerge: true,
+      postMergeAuditMode: "block",
     });
 
     await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(/post-squash audit blocked auto-completion/);
