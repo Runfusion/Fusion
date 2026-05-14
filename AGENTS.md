@@ -943,3 +943,7 @@ If you're tempted to add `min-height: calc(var(--space-xl) + var(--space-md))` (
 - **BEM specificity conflicts** — When a container state class (`.quick-entry-box--expanded`) and an element modifier (`.quick-entry-input--expanded`) both target the same element, the container may win due to higher specificity. Use `:not(.modifier)` to scope container rules: `.quick-entry-box--expanded .quick-entry-input:not(.quick-entry-input--expanded)`.
 - **CSS in `@media` blocks** — Don't search backwards for the nearest `@media` to check if a rule is mobile-scoped. Track brace depth to confirm the line is inside the block. Many components are defined globally even if they only visually appear on mobile.
 - **Mobile board view-switch scroll-snap pitfall (FN-001)** — `scroll-snap-type: x mandatory` on mobile `.board` can cause iOS Safari to compress the viewport into a corner when switching from ListView because stale layout measurements are snapped before flex children resolve. Use `scroll-snap-type: x proximity` combined with `overflow-anchor: none` instead.
+
+## Reliability Mechanism Governance
+
+Reliability mechanism changes are currently under freeze pending FN-4359 governance hardening; treat new reliability-layer behavior changes as blocked unless explicitly approved in task scope.
