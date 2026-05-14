@@ -2673,6 +2673,55 @@ describe("Scheduler", () => {
     });
   });
 
+  describe("userPaused dispatch behavior", () => {
+    it("skips dispatch for todo task marked userPaused and re-enables after clearing", async () => {
+      const pausedTask = createMockTask({
+        id: "FN-UP-1",
+        column: "todo",
+        dependencies: [],
+        userPaused: true,
+      });
+      const activeTask = createMockTask({
+        id: "FN-UP-1",
+        column: "todo",
+        dependencies: [],
+      });
+      const listTasks = vi
+        .fn()
+        .mockResolvedValueOnce([pausedTask])
+        .mockResolvedValueOnce([activeTask]);
+      const getTask = vi
+        .fn()
+        .mockResolvedValueOnce(pausedTask)
+        .mockResolvedValueOnce(activeTask);
+      const updateTask = vi.fn().mockResolvedValue(undefined);
+      const moveTask = vi.fn().mockResolvedValue(undefined);
+      const store = createMockStore({
+        listTasks,
+        getTask,
+        updateTask,
+        moveTask,
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 1, groupOverlappingFiles: true }),
+        parseFileScopeFromPrompt: vi.fn().mockResolvedValue([]),
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+
+      await scheduler.schedule();
+      expect(moveTask).not.toHaveBeenCalled();
+      expect(updateTask).toHaveBeenCalledWith("FN-UP-1", { status: "queued" });
+      expect(store.logEntry).toHaveBeenCalledWith("FN-UP-1", "queued — user paused (manual move to todo)");
+
+      await scheduler.schedule();
+      expect(moveTask).toHaveBeenCalledWith(
+        "FN-UP-1",
+        "in-progress",
+        expect.objectContaining({ allocateWorktree: expect.any(Function) }),
+      );
+    });
+  });
+
   describe("autopilot integration", () => {
     it("watches missions with autopilotEnabled on start", () => {
       const store = createMockStore();

@@ -822,6 +822,14 @@ export class Scheduler {
           continue;
         }
 
+        if (task.userPaused === true) {
+          if (task.status !== "queued") {
+            await this.store.updateTask(task.id, { status: "queued" });
+          }
+          await this.logDispatchQueuedReason(task.id, "queued — user paused (manual move to todo)");
+          continue;
+        }
+
         // Validate filesystem state before starting (only for tasks with satisfied deps)
         const validation = await this.validateTaskFilesystem(task.id);
         if (!validation.valid) {
