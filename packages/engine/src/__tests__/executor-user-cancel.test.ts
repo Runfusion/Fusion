@@ -12,8 +12,9 @@ describe("TaskExecutor user cancel handling", () => {
     const callOrder: string[] = [];
     const session = {
       prompt: vi.fn(),
-      abort: vi.fn(async () => {
+      abort: vi.fn(() => {
         callOrder.push("abort");
+        return Promise.resolve();
       }),
       dispose: vi.fn(() => {
         callOrder.push("dispose");

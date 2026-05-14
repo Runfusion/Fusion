@@ -1197,11 +1197,13 @@ export class TaskExecutor {
           this.pausedAborted.add(task.id);
           this.options.stuckTaskDetector?.untrackTask(task.id);
           const stepExecutor = this.activeStepExecutors.get(task.id)!;
-          const stepExecutorWithAbort = stepExecutor as StepSessionExecutor & { abortAllSessionBash?: () => Promise<void> };
+          const stepExecutorWithAbort = stepExecutor as StepSessionExecutor & { abortAllSessionBash?: () => void };
           if (typeof stepExecutorWithAbort.abortAllSessionBash === "function") {
-            void stepExecutorWithAbort.abortAllSessionBash().catch((err) =>
-              executorLog.warn(`Failed to abort step-session bash for ${task.id}: ${err}`),
-            );
+            try {
+              stepExecutorWithAbort.abortAllSessionBash();
+            } catch (err) {
+              executorLog.warn(`Failed to abort step-session bash for ${task.id}: ${err}`);
+            }
           }
           stepExecutor.terminateAllSessions().catch((err) =>
             executorLog.error(`Failed to terminate step sessions for ${task.id}:`, err),
