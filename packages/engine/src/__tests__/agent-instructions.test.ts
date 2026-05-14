@@ -422,6 +422,26 @@ describe("resolveAgentInstructions with rating summary", () => {
     expect(result).not.toContain("Should be trimmed");
   });
 
+  it("renders index-mode memory instead of full body", async () => {
+    await mkdir(join(testDir, ".fusion", "agent-memory", "agent-test"), { recursive: true });
+    await writeFile(
+      join(testDir, ".fusion", "agent-memory", "agent-test", "MEMORY.md"),
+      "## Delegation\n\nUse concise asks\n",
+      "utf-8",
+    );
+
+    const result = await resolveAgentInstructions(makeAgent({ memory: "inline memory" }), testDir, undefined, "index");
+    expect(result).toContain("Memory is provided in index mode");
+    expect(result).toContain("## Agent Memory Index (use fn_memory_search / fn_memory_get to read)");
+    expect(result).not.toContain("inline memory");
+  });
+
+  it("omits memory section in off mode", async () => {
+    const result = await resolveAgentInstructions(makeAgent({ memory: "inline memory" }), testDir, undefined, "off");
+    expect(result).not.toContain("## Agent Memory");
+    expect(result).not.toContain("inline memory");
+  });
+
   it("omits category breakdown when category averages are empty", async () => {
     const result = await resolveAgentInstructions(
       makeAgent({ instructionsText: "Do work" }),

@@ -9,7 +9,7 @@
  */
 
 import type { TaskStore, TaskComment, AgentPromptsConfig, Settings } from "@fusion/core";
-import { buildReviewerMemoryInstructions, resolveAgentPrompt, resolvePersistAgentThinkingLog } from "@fusion/core";
+import { buildReviewerMemoryInstructions, resolveAgentPrompt, resolvePersistAgentThinkingLog, resolveAgentMemoryInclusionMode } from "@fusion/core";
 import { describeModel, promptWithFallback } from "./pi.js";
 import { isContextLimitError } from "./context-limit-detector.js";
 import { createResolvedAgentSession, extractRuntimeHint } from "./agent-session-helpers.js";
@@ -387,7 +387,8 @@ export async function reviewStep(
       const agents = await options.agentStore.listAgents({ role: "reviewer" });
       for (const agent of agents) {
         if (agent.instructionsText || agent.instructionsPath) {
-          reviewerInstructions = await resolveAgentInstructions(agent, options.rootDir);
+          const memoryMode = resolveAgentMemoryInclusionMode({ agent, projectSettings: options.settings }).mode;
+          reviewerInstructions = await resolveAgentInstructions(agent, options.rootDir, undefined, memoryMode);
           break;
         }
       }

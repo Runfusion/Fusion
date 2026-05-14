@@ -4,6 +4,7 @@ import { isAbsolute, resolve, relative, normalize, sep, dirname } from "node:pat
 import {
   readProjectMemory,
   type Agent,
+  type AgentMemoryInclusionMode,
   type AgentRatingSummary,
   type AgentStore,
   type PluginPromptSurface,
@@ -11,6 +12,7 @@ import {
 import type { PluginRunner } from "./plugin-runner.js";
 import { createLogger } from "./logger.js";
 import { readAgentMemoryWorkspaceLongTerm } from "./agent-tools.js";
+import { buildMemoryIndex } from "./agent-memory-index.js";
 
 const log = createLogger("agent-instructions");
 
@@ -188,7 +190,31 @@ function memoryWorkspaceDisplayPath(agentId: string): string {
   return `.fusion/agent-memory/${safeAgentId}/MEMORY.md`;
 }
 
-function formatMemorySection(memory: string, workspaceMemory: string, agentId: string): string {
+async function formatMemorySection(
+  memory: string,
+  workspaceMemory: string,
+  agentId: string,
+  rootDir: string,
+  inclusionMode: AgentMemoryInclusionMode,
+): Promise<string> {
+  if (inclusionMode === "off") {
+    return "";
+  }
+
+  if (inclusionMode === "index") {
+    const indexBody = await buildMemoryIndex({ rootDir, agentId });
+    if (!indexBody) {
+      return "";
+    }
+    return [
+      "## Agent Memory",
+      "",
+      "Memory is provided in index mode. Use fn_memory_search first, then fn_memory_get for relevant files/lines.",
+      "",
+      indexBody,
+    ].join("\n");
+  }
+
   const inlineTrimmed = trimAndClamp(memory, MAX_MEMORY_LENGTH, "memory", agentId);
   const workspaceTrimmed = trimAndClamp(workspaceMemory, MAX_MEMORY_LENGTH, "workspace memory", agentId);
   if (!inlineTrimmed && !workspaceTrimmed) {
@@ -260,6 +286,7 @@ export async function resolveAgentInstructions(
   agent: Agent | null | undefined,
   rootDir: string,
   ratingSummary?: AgentRatingSummary,
+  inclusionMode: AgentMemoryInclusionMode = "full",
 ): Promise<string> {
   if (!agent) return "";
 
@@ -316,7 +343,13 @@ export async function resolveAgentInstructions(
   }
 
   const workspaceMemory = await readAgentMemoryWorkspaceLongTerm(rootDir, agent.id);
-  const memorySection = formatMemorySection(agent.memory ?? "", workspaceMemory, agent.id);
+  const memorySection = await formatMemorySection(
+    agent.memory ?? "",
+    workspaceMemory,
+    agent.id,
+    rootDir,
+    inclusionMode,
+  );
   if (memorySection) {
     parts.push(memorySection);
   }
@@ -336,12 +369,13 @@ export async function resolveAgentInstructionsWithRatings(
   agent: Agent | null | undefined,
   rootDir: string,
   agentStore: AgentStore | undefined,
+  inclusionMode: AgentMemoryInclusionMode = "full",
 ): Promise<string> {
   if (!agent) {
     return "";
   }
 
-  const baseInstructions = await resolveAgentInstructions(agent, rootDir);
+  const baseInstructions = await resolveAgentInstructions(agent, rootDir, undefined, inclusionMode);
 
   if (!agentStore || !agent.id) {
     return baseInstructions;
@@ -349,7 +383,7 @@ export async function resolveAgentInstructionsWithRatings(
 
   try {
     const ratingSummary = await agentStore.getRatingSummary(agent.id);
-    return await resolveAgentInstructions(agent, rootDir, ratingSummary);
+    return await resolveAgentInstructions(agent, rootDir, ratingSummary, inclusionMode);
   } catch {
     return baseInstructions;
   }

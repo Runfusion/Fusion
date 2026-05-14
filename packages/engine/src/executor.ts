@@ -5,7 +5,7 @@ const execAsync = promisify(exec);
 import { delimiter, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { existsSync, realpathSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent } from "@fusion/core";
+import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode } from "@fusion/core";
 import {
   ApprovalRequestStore,
   buildExecutionMemoryInstructions,
@@ -15,6 +15,7 @@ import {
   resolvePersistAgentThinkingLog,
   resolveEffectiveAgentPermissionPolicy,
   resolveProjectDefaultModel,
+  resolveAgentMemoryInclusionMode,
   type RunCommandResult,
 } from "@fusion/core";
 import { findWorktreeUser } from "./merger.js";
@@ -2314,7 +2315,7 @@ export class TaskExecutor {
    * in the AgentStore that have instructions configured.
    * Returns an empty string if no instructions are found.
    */
-  private async resolveInstructionsForRole(role: string): Promise<string> {
+  private async resolveInstructionsForRole(role: string, settings?: Settings): Promise<string> {
     if (!this.options.agentStore) return "";
     try {
       const agents = await this.options.agentStore.listAgents({ role: role as AgentCapability });
@@ -2322,11 +2323,13 @@ export class TaskExecutor {
         if (agent.instructionsText || agent.instructionsPath) {
           try {
             const ratingSummary = await this.options.agentStore.getRatingSummary(agent.id);
-            return await resolveAgentInstructions(agent, this.rootDir, ratingSummary);
+            const mode = resolveAgentMemoryInclusionMode({ agent, projectSettings: settings }).mode;
+            return await resolveAgentInstructions(agent, this.rootDir, ratingSummary, mode);
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             executorLog.warn(`${agent.id}: failed to load rating summary for instruction resolution, falling back to default instructions: ${msg}`);
-            return await resolveAgentInstructions(agent, this.rootDir);
+            const mode = resolveAgentMemoryInclusionMode({ agent, projectSettings: settings }).mode;
+            return await resolveAgentInstructions(agent, this.rootDir, undefined, mode);
           }
         }
       }
@@ -3241,7 +3244,7 @@ export class TaskExecutor {
         executorLog.log(`${task.id}: creating agent session (provider=${executorProvider ?? "default"}, model=${executorModelId ?? "default"}, resuming=${isResuming})`);
 
         // Resolve per-agent custom instructions for the executor role
-        const executorInstructions = await this.resolveInstructionsForRole("executor");
+        const executorInstructions = await this.resolveInstructionsForRole("executor", settings);
 
         // Build structured layers for cross-session prompt caching.
         const executorPluginContributions = buildPluginPromptSection(
@@ -6411,7 +6414,7 @@ and show an appropriate message to the user.\`
       attemptLabel: string,
     ): Promise<WorkflowStepOutcome> => {
       // Workflow step agents inherit executor instructions
-      const stepInstructions = await this.resolveInstructionsForRole("executor");
+      const stepInstructions = await this.resolveInstructionsForRole("executor", settings);
       const stepSystemPrompt = buildSystemPromptWithInstructions(systemPrompt, stepInstructions);
 
       // Build skill selection context for workflow step session
@@ -8156,7 +8159,7 @@ and show an appropriate message to the user.\`
           await this.options.agentStore.updateAgentState(agent.id, "active");
 
           // Child agents inherit executor instructions
-          const childInstructions = await this.resolveInstructionsForRole("executor");
+          const childInstructions = await this.resolveInstructionsForRole("executor", settings);
           const childBasePrompt = `You are a child agent spawned by a parent task executor.
 
 Your role:
@@ -8373,9 +8376,12 @@ git log --oneline
   // When enabled, agents consult and update project memory for durable project learnings.
   // Backend-aware: instructions branch based on memoryBackendType (file, readonly, qmd)
   const memoryEnabled = settings?.memoryEnabled !== false;
+  const memoryMode: AgentMemoryInclusionMode = settings?.agentMemoryInclusionMode ?? "full";
   let memorySection = "";
-  if (memoryEnabled && rootDir) {
-    memorySection = "\n" + buildExecutionMemoryInstructions(rootDir, settings);
+  if (memoryEnabled && rootDir && memoryMode !== "off") {
+    memorySection = memoryMode === "index"
+      ? "\n## Project Memory (Index Only)\n\nUse fn_memory_search first to find relevant memory, then fn_memory_get for specific excerpts.\n"
+      : "\n" + buildExecutionMemoryInstructions(rootDir, settings);
   }
 
   // Build steering comments section (last 10 comments only to avoid context bloat)

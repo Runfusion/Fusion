@@ -11,6 +11,7 @@ import {
   resolveAgentPrompt,
   resolvePersistAgentThinkingLog,
   sortTasksByPriorityThenAgeAndId,
+  resolveAgentMemoryInclusionMode,
 } from "@fusion/core";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { Type, type Static } from "@mariozechner/pi-ai";
@@ -1008,10 +1009,12 @@ export class TriageProcessor {
         // Resolve per-agent custom instructions for the triage role or assigned agent.
         let triageInstructions = "";
         if (assignedAgent) {
+          const memoryMode = resolveAgentMemoryInclusionMode({ agent: assignedAgent, projectSettings: settings }).mode;
           triageInstructions = await resolveAgentInstructionsWithRatings(
             assignedAgent,
             this.rootDir,
             this.options.agentStore,
+            memoryMode,
           );
         } else if (this.options.agentStore) {
           try {
@@ -1019,7 +1022,8 @@ export class TriageProcessor {
             for (const agent of agents) {
               triageRuntimeHint ??= extractRuntimeHint(agent.runtimeConfig);
               if (agent.instructionsText || agent.instructionsPath || agent.soul || agent.memory) {
-                triageInstructions = await resolveAgentInstructions(agent, this.rootDir);
+                const memoryMode = resolveAgentMemoryInclusionMode({ agent, projectSettings: settings }).mode;
+                triageInstructions = await resolveAgentInstructions(agent, this.rootDir, undefined, memoryMode);
                 break;
               }
             }

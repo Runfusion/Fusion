@@ -17,8 +17,8 @@
  * - onTerminated: Called when a heartbeat run is terminated
  */
 
-import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask, RunMutationContext, Settings, AgentConfigRevision, ReflectionStore, ChatStore, ChatRoom, ChatRoomMessage } from "@fusion/core";
-import { ApprovalRequestStore, buildExecutionMemoryInstructions, isEphemeralAgent, hasAgentIdentity, resolveEffectiveAgentPermissionPolicy, canAgentTakeImplementationTask, canAgentTakeImplementationTaskForExplicitRouting, resolvePersistAgentThinkingLog } from "@fusion/core";
+import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask, RunMutationContext, Settings, AgentConfigRevision, ReflectionStore, ChatStore, ChatRoom, ChatRoomMessage, AgentMemoryInclusionMode } from "@fusion/core";
+import { ApprovalRequestStore, buildExecutionMemoryInstructions, isEphemeralAgent, hasAgentIdentity, resolveEffectiveAgentPermissionPolicy, canAgentTakeImplementationTask, canAgentTakeImplementationTaskForExplicitRouting, resolvePersistAgentThinkingLog, resolveAgentMemoryInclusionMode } from "@fusion/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import { createHash } from "node:crypto";
@@ -38,6 +38,16 @@ import { createResolvedAgentSession, extractRuntimeHint, resolveHeartbeatSession
 import type { AgentActionGateContext } from "./agent-action-gate.js";
 import { buildSessionSkillContextSync } from "./session-skill-context.js";
 import type { AgentReflectionService } from "./agent-reflection.js";
+
+function adjustHeartbeatMemoryPrimer(basePrompt: string, mode: AgentMemoryInclusionMode): string {
+  if (mode === "full") return basePrompt;
+  const memoryPrimer = /\nYou may receive an Agent Memory section and a Project Memory section\.[\s\S]*?repository pitfalls\.\n/;
+  if (mode === "off") return basePrompt.replace(memoryPrimer, "\n");
+  return basePrompt.replace(
+    memoryPrimer,
+    "\nWhen an Agent Memory Index is provided instead of full memory, call fn_memory_search first for task-relevant context. Use fn_memory_get to open only relevant snippets.\n",
+  );
+}
 
 interface SelfImproveServiceLike {
   shouldRunSelfImprove(agentId: string): Promise<boolean>;
@@ -1968,13 +1978,19 @@ export class HeartbeatMonitor {
         // Build skill selection context for heartbeat session (uses waking agent's skills, no role fallback)
         const skillContext = buildSessionSkillContextSync(agent, "heartbeat", rootDir, this.pluginRunner);
 
-        const baseHeartbeatSystemPrompt = isNoTaskRun
-          ? HEARTBEAT_NO_TASK_SYSTEM_PROMPT
-          : HEARTBEAT_SYSTEM_PROMPT;
+        const resolvedMemoryMode = resolveAgentMemoryInclusionMode({
+          agent,
+          projectSettings: memorySettings,
+        });
+        const priorMemoryMode = agent.runtimeConfig?.lastAgentMemoryInclusionMode;
+        const baseHeartbeatSystemPrompt = adjustHeartbeatMemoryPrimer(
+          isNoTaskRun ? HEARTBEAT_NO_TASK_SYSTEM_PROMPT : HEARTBEAT_SYSTEM_PROMPT,
+          resolvedMemoryMode.mode,
+        );
         let resolvedInstructionsForIdentity = "";
         let workspaceMemoryForIdentity = "";
         try {
-          resolvedInstructionsForIdentity = await resolveAgentInstructionsWithRatings(agent, rootDir, this.store);
+          resolvedInstructionsForIdentity = await resolveAgentInstructionsWithRatings(agent, rootDir, this.store, resolvedMemoryMode.mode);
         } catch (instructionError) {
           const message = instructionError instanceof Error ? instructionError.message : String(instructionError);
           heartbeatLog.warn(`Failed to resolve agent instructions for heartbeat ${agentId}: ${message}`);
@@ -1988,9 +2004,11 @@ export class HeartbeatMonitor {
         }
 
         let memoryInstructions = "";
-        if (memorySettings?.memoryEnabled !== false) {
+        if (resolvedMemoryMode.mode !== "off" && memorySettings?.memoryEnabled !== false) {
           try {
-            memoryInstructions = buildExecutionMemoryInstructions(rootDir, memorySettings);
+            memoryInstructions = resolvedMemoryMode.mode === "index"
+              ? "## Project Memory (Index Only)\n\nProject memory is available via fn_memory_search and fn_memory_get. Search first, then fetch only relevant excerpts."
+              : buildExecutionMemoryInstructions(rootDir, memorySettings);
           } catch (memoryInstructionErr) {
             const message = memoryInstructionErr instanceof Error ? memoryInstructionErr.message : String(memoryInstructionErr);
             heartbeatLog.warn(`Failed to resolve project memory instructions for heartbeat ${agentId}: ${message}`);
@@ -2027,6 +2045,20 @@ export class HeartbeatMonitor {
         });
 
         const systemPromptFinal = collapsePromptLayers(heartbeatLayers);
+
+        if (priorMemoryMode !== resolvedMemoryMode.mode) {
+          const from = priorMemoryMode ? priorMemoryMode : "(initial)";
+          try {
+            await this.store.appendRunLog(agentId, run.id, {
+              timestamp: new Date().toISOString(),
+              taskId: taskId ?? run.taskId ?? "heartbeat",
+              type: "text",
+              text: `Agent memory inclusion mode: ${from} → ${resolvedMemoryMode.mode} (source: ${resolvedMemoryMode.source})`,
+            });
+          } catch (modeLogError) {
+            heartbeatLog.warn(`Failed to append memory-mode transition run log for ${agentId}: ${modeLogError instanceof Error ? modeLogError.message : String(modeLogError)}`);
+          }
+        }
 
         // fn_heartbeat_done must be the last tool in the array (stable terminal signal)
         heartbeatTools.push(heartbeatDoneTool);
