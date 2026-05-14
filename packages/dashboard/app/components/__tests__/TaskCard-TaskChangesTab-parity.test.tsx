@@ -8,21 +8,28 @@ const useTaskDiffStatsMock = vi.fn();
 const fetchTaskDiffMock = vi.fn();
 const fetchTaskCommitAssociationsMock = vi.fn();
 
-vi.mock("../../hooks/useTaskDiffStats", () => ({
-  useTaskDiffStats: (...args: unknown[]) => useTaskDiffStatsMock(...args),
-}));
+vi.mock("../../hooks/useTaskDiffStats", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../hooks/useTaskDiffStats")>();
+  return {
+    ...actual,
+    useTaskDiffStats: (...args: unknown[]) => useTaskDiffStatsMock(...args),
+  };
+});
 
-vi.mock("../../api", () => ({
-  fetchTaskDiff: (...args: unknown[]) => fetchTaskDiffMock(...args),
-  fetchTaskCommitAssociations: (...args: unknown[]) => fetchTaskCommitAssociationsMock(...args),
-  fetchTaskDetail: vi.fn(),
-  uploadAttachment: vi.fn(),
-  fetchMission: vi.fn(),
-  fetchAgent: vi.fn(),
-}));
+vi.mock("../../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api")>();
+  return {
+    ...actual,
+    fetchTaskDiff: (...args: unknown[]) => fetchTaskDiffMock(...args),
+    fetchTaskCommitAssociations: (...args: unknown[]) => fetchTaskCommitAssociationsMock(...args),
+  };
+});
 
-vi.mock("lucide-react", () => ({
-  Link: () => null,
+vi.mock("lucide-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lucide-react")>();
+  return {
+    ...actual,
+    Link: () => null,
   GitBranch: () => null,
   Clock: () => null,
   Pencil: () => null,
@@ -43,7 +50,8 @@ vi.mock("lucide-react", () => ({
   GitCommit: () => null,
   WrapText: () => null,
   Maximize2: () => null,
-}));
+  };
+});
 
 vi.mock("../ProviderIcon", () => ({ ProviderIcon: () => null }));
 vi.mock("../ChangesDiffModal", () => ({ ChangesDiffModal: () => null }));
