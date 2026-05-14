@@ -237,6 +237,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   requirePlanApproval: false,
   ephemeralAgentsEnabled: true,
   agentProvisioning: {},
+  defaultAgentPermissionPolicy: undefined,
   specStalenessEnabled: false,
   specStalenessMaxAgeMs: 6 * 60 * 60 * 1000,
   taskStuckTimeoutMs: 600_000,

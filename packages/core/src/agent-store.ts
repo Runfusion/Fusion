@@ -63,7 +63,7 @@ interface CheckoutLeaseContext {
 }
 import { computeAccessState } from "./agent-permissions.js";
 import { canAgentTakeImplementationTask, canAgentTakeImplementationTaskForExplicitRouting, formatRoleMismatchReason } from "./agent-role-policy.js";
-import { resolveEffectiveAgentPermissionPolicy } from "./agent-permission-policy.js";
+import { normalizeAgentPermissionPolicy, resolveEffectiveAgentPermissionPolicy } from "./agent-permission-policy.js";
 import { Database } from "./db.js";
 import { createAgentRunSnapshot, createAgentSnapshot, validateSnapshotEnvelope, type AgentRunSnapshot, type AgentSnapshot } from "./shared-mesh-state.js";
 
@@ -1078,6 +1078,11 @@ export class AgentStore extends EventEmitter {
       const beforeSnapshot = agentToConfigSnapshot(agent);
       const updatedAt = new Date().toISOString();
 
+      const normalizedUpdatedPermissionPolicy =
+        "permissionPolicy" in updates && updates.permissionPolicy !== undefined
+          ? normalizeAgentPermissionPolicy(updates.permissionPolicy)
+          : updates.permissionPolicy;
+
       const updated: Agent = {
         ...agent,
         name: nextName ?? agent.name,
@@ -1091,7 +1096,7 @@ export class AgentStore extends EventEmitter {
         ...("runtimeConfig" in updates && { runtimeConfig: updates.runtimeConfig }),
         ...("pauseReason" in updates && { pauseReason: updates.pauseReason }),
         ...("permissions" in updates && { permissions: updates.permissions }),
-        ...("permissionPolicy" in updates && { permissionPolicy: updates.permissionPolicy }),
+        ...("permissionPolicy" in updates && { permissionPolicy: normalizedUpdatedPermissionPolicy }),
         ...("lastError" in updates && { lastError: updates.lastError }),
         ...("totalInputTokens" in updates && { totalInputTokens: updates.totalInputTokens }),
         ...("totalOutputTokens" in updates && { totalOutputTokens: updates.totalOutputTokens }),

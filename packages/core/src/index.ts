@@ -64,6 +64,7 @@ export {
   getBuiltInAgentPermissionPolicyPresets,
   resolveAgentPermissionPolicyPreset,
   normalizeAgentPermissionPolicyFromPreset,
+  normalizeAgentPermissionPolicy,
   resolveEffectiveAgentPermissionPolicy,
   isAgentPermissionPolicyPresetId,
 } from "./agent-permission-policy.js";

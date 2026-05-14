@@ -1,5 +1,6 @@
 import type {
   AgentPermissionPolicy,
+  AgentPermissionPolicyDisposition,
   AgentPermissionPolicyPresetId,
   AgentPermissionPolicyRules,
 } from "./types.js";
@@ -13,6 +14,8 @@ export interface BuiltInAgentPermissionPolicyPreset {
   description: string;
   rules: AgentPermissionPolicyRules;
 }
+
+const VALID_DISPOSITIONS: readonly AgentPermissionPolicyDisposition[] = ["allow", "block", "require-approval"] as const;
 
 const BUILT_IN_PRESETS: Record<AgentPermissionPolicyPresetId, BuiltInAgentPermissionPolicyPreset> = {
   unrestricted: {
@@ -33,13 +36,23 @@ const BUILT_IN_PRESETS: Record<AgentPermissionPolicyPresetId, BuiltInAgentPermis
     description: "Blocks all runtime action categories.",
     rules: buildRules("block"),
   },
+  custom: {
+    id: "custom",
+    name: "Custom",
+    description: "Category-level custom overrides.",
+    rules: buildRules("allow"),
+  },
 };
 
-function buildRules(disposition: AgentPermissionPolicyRules[(typeof AGENT_PERMISSION_POLICY_ACTION_CATEGORIES)[number]]): AgentPermissionPolicyRules {
+function buildRules(disposition: AgentPermissionPolicyDisposition): AgentPermissionPolicyRules {
   return AGENT_PERMISSION_POLICY_ACTION_CATEGORIES.reduce((acc, category) => {
     acc[category] = disposition;
     return acc;
   }, {} as AgentPermissionPolicyRules);
+}
+
+function isValidDisposition(value: unknown): value is AgentPermissionPolicyDisposition {
+  return typeof value === "string" && (VALID_DISPOSITIONS as readonly string[]).includes(value);
 }
 
 export function isAgentPermissionPolicyPresetId(value: unknown): value is AgentPermissionPolicyPresetId {
@@ -63,18 +76,72 @@ export function resolveAgentPermissionPolicyPreset(
 export function normalizeAgentPermissionPolicyFromPreset(
   presetId: AgentPermissionPolicyPresetId,
 ): AgentPermissionPolicy {
-  const preset = resolveAgentPermissionPolicyPreset(presetId);
+  return normalizeAgentPermissionPolicy({ presetId });
+}
+
+export function normalizeAgentPermissionPolicy(input: {
+  presetId: AgentPermissionPolicyPresetId;
+  rules?: Partial<AgentPermissionPolicyRules>;
+}): AgentPermissionPolicy {
+  const preset = resolveAgentPermissionPolicyPreset(input.presetId);
+  if (input.presetId !== "custom") {
+    return {
+      presetId: input.presetId,
+      rules: { ...preset.rules },
+    };
+  }
+
+  const rules: AgentPermissionPolicyRules = { ...resolveAgentPermissionPolicyPreset("unrestricted").rules };
+  for (const category of AGENT_PERMISSION_POLICY_ACTION_CATEGORIES) {
+    const nextValue = input.rules?.[category];
+    if (nextValue === undefined) {
+      continue;
+    }
+    if (!isValidDisposition(nextValue)) {
+      throw new Error(`Invalid permission policy disposition for ${category}: ${String(nextValue)}`);
+    }
+    rules[category] = nextValue;
+  }
+
   return {
-    presetId: preset.id,
-    rules: { ...preset.rules },
+    presetId: "custom",
+    rules,
   };
+}
+
+function normalizeProjectDefaultPolicy(
+  projectDefault: { rules?: Partial<AgentPermissionPolicyRules> } | undefined,
+): AgentPermissionPolicy {
+  const seed = resolveAgentPermissionPolicyPreset(DEFAULT_AGENT_PERMISSION_POLICY_PRESET_ID).rules;
+  const merged: Partial<AgentPermissionPolicyRules> = {};
+
+  for (const category of AGENT_PERMISSION_POLICY_ACTION_CATEGORIES) {
+    const nextValue = projectDefault?.rules?.[category];
+    if (nextValue === undefined) {
+      continue;
+    }
+    if (!isValidDisposition(nextValue)) {
+      throw new Error(`Invalid project default permission policy disposition for ${category}: ${String(nextValue)}`);
+    }
+    merged[category] = nextValue;
+  }
+
+  return normalizeAgentPermissionPolicy({
+    presetId: "custom",
+    rules: { ...seed, ...merged },
+  });
 }
 
 export function resolveEffectiveAgentPermissionPolicy(
   policy: AgentPermissionPolicy | undefined,
+  projectDefault?: { rules?: Partial<AgentPermissionPolicyRules> },
 ): AgentPermissionPolicy {
   if (!policy || !isAgentPermissionPolicyPresetId(policy.presetId)) {
-    return normalizeAgentPermissionPolicyFromPreset(DEFAULT_AGENT_PERMISSION_POLICY_PRESET_ID);
+    return normalizeProjectDefaultPolicy(projectDefault);
   }
-  return normalizeAgentPermissionPolicyFromPreset(policy.presetId);
+
+  return normalizeAgentPermissionPolicy({
+    presetId: policy.presetId,
+    rules: policy.rules,
+  });
 }

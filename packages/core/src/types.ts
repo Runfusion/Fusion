@@ -2470,6 +2470,12 @@ export interface ProjectSettings {
     trustedAgentIds?: string[];
     alwaysApproveDelete?: boolean;
   };
+  /** Project default runtime permission-policy overrides for permanent agents.
+   *  Rules are a partial map of category -> disposition (`allow` | `block` | `require-approval`).
+   *  Missing categories inherit the built-in `unrestricted` seed (`allow`). */
+  defaultAgentPermissionPolicy?: {
+    rules: Partial<AgentPermissionPolicyRules>;
+  };
   /** When true, enforces that task specifications (PROMPT.md) are refreshed if they
    *  become stale. Stale specs are detected based on specStalenessMaxAgeMs.
    *  Default: false. */
@@ -4511,7 +4517,7 @@ export interface PermanentAgentGatingContext {
 }
 
 /** Built-in permission policy preset identifiers for permanent agents. */
-export const AGENT_PERMISSION_POLICY_PRESET_IDS = ["unrestricted", "approval-required", "locked-down"] as const;
+export const AGENT_PERMISSION_POLICY_PRESET_IDS = ["unrestricted", "approval-required", "locked-down", "custom"] as const;
 
 /** A single built-in permission policy preset identifier. */
 export type AgentPermissionPolicyPresetId = (typeof AGENT_PERMISSION_POLICY_PRESET_IDS)[number];
