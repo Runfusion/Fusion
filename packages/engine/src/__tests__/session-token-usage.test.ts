@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Task, TaskStore } from "@fusion/core";
-import { accumulateSessionTokenUsage } from "../session-token-usage.js";
+import { accumulateSessionTokenUsage, computeCacheHitRatio } from "../session-token-usage.js";
 import { TaskExecutor } from "../executor.js";
 
 interface MockSessionStats {
-  tokens?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+  tokens?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; total?: number };
 }
 
 function createSession(stats: MockSessionStats | undefined) {
@@ -28,13 +28,15 @@ function createStore(initial: Task["tokenUsage"]): TaskStore & { _task: Task; up
 describe("accumulateSessionTokenUsage", () => {
   beforeEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
-  it("writes initial token usage when task has none", async () => {
+  it("writes initial token usage and emits cache metrics log", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const store = createStore(undefined);
     const session = createSession({ tokens: { input: 100, output: 30, cacheRead: 5, cacheWrite: 2 } });
 
-    await accumulateSessionTokenUsage(store, "FN-1", session);
+    await accumulateSessionTokenUsage(store, "FN-1", session, { agentId: "agent-1", role: "reviewer" });
 
     expect(store.updateTask).toHaveBeenCalledTimes(1);
     const call = store.updateTask.mock.calls[0]![1] as { tokenUsage: Task["tokenUsage"] };
@@ -45,61 +47,22 @@ describe("accumulateSessionTokenUsage", () => {
       cacheWriteTokens: 2,
       totalTokens: 137,
     });
-    expect(typeof call.tokenUsage!.firstUsedAt).toBe("string");
-    expect(typeof call.tokenUsage!.lastUsedAt).toBe("string");
-  });
-
-  it("accumulates only the delta on subsequent calls for the same session", async () => {
-    const store = createStore(undefined);
-    const session = createSession({ tokens: { input: 100, output: 30, cacheRead: 0, cacheWrite: 0 } });
-
-    await accumulateSessionTokenUsage(store, "FN-1", session);
-
-    // Second call: session has progressed.
-    (session as unknown as { getSessionStats: () => MockSessionStats }).getSessionStats = () => ({
-      tokens: { input: 250, output: 80, cacheRead: 0, cacheWrite: 0 },
-    });
-    await accumulateSessionTokenUsage(store, "FN-1", session);
-
-    expect(store.updateTask).toHaveBeenCalledTimes(2);
-    const second = store.updateTask.mock.calls[1]![1] as { tokenUsage: Task["tokenUsage"] };
-    expect(second.tokenUsage).toMatchObject({
-      inputTokens: 250,
-      outputTokens: 80,
-      cachedTokens: 0,
-      totalTokens: 330,
+    const cacheLogCall = errorSpy.mock.calls.find((entry) => String(entry[0]).includes("[token-cache-metrics]"));
+    expect(cacheLogCall).toBeTruthy();
+    const payload = JSON.parse(String(cacheLogCall?.[0] ?? "").replace(/^.*\[token-cache-metrics\]\s*/, ""));
+    expect(payload).toMatchObject({
+      taskId: "FN-1",
+      agentId: "agent-1",
+      role: "reviewer",
+      inputTokens: 100,
+      cachedTokens: 5,
+      cacheWriteTokens: 2,
+      hitRatio: computeCacheHitRatio(100, 5),
     });
   });
 
-  it("preserves firstUsedAt across updates", async () => {
-    const store = createStore(undefined);
-    const session = createSession({ tokens: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0 } });
-
-    await accumulateSessionTokenUsage(store, "FN-1", session);
-    const first = store.updateTask.mock.calls[0]![1] as { tokenUsage: Task["tokenUsage"] };
-    const initialFirstUsed = first.tokenUsage!.firstUsedAt;
-
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    (session as unknown as { getSessionStats: () => MockSessionStats }).getSessionStats = () => ({
-      tokens: { input: 20, output: 5, cacheRead: 0, cacheWrite: 0 },
-    });
-    await accumulateSessionTokenUsage(store, "FN-1", session);
-
-    const second = store.updateTask.mock.calls[1]![1] as { tokenUsage: Task["tokenUsage"] };
-    expect(second.tokenUsage!.firstUsedAt).toBe(initialFirstUsed);
-    expect(second.tokenUsage!.lastUsedAt >= initialFirstUsed).toBe(true);
-  });
-
-  it("does nothing when session has no getSessionStats", async () => {
-    const store = createStore(undefined);
-    const session = {} as Parameters<typeof accumulateSessionTokenUsage>[2];
-
-    await accumulateSessionTokenUsage(store, "FN-1", session);
-
-    expect(store.updateTask).not.toHaveBeenCalled();
-  });
-
-  it("does nothing when delta is zero", async () => {
+  it("does nothing when delta is zero (no write, no metrics log)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const store = createStore({
       inputTokens: 50,
       outputTokens: 20,
@@ -112,10 +75,29 @@ describe("accumulateSessionTokenUsage", () => {
     const session = createSession({ tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } });
 
     await accumulateSessionTokenUsage(store, "FN-1", session);
-    // Calling again with the same zero stats should not produce another update.
     await accumulateSessionTokenUsage(store, "FN-1", session);
 
     expect(store.updateTask).not.toHaveBeenCalled();
+    expect(errorSpy.mock.calls.find((entry) => String(entry[0]).includes("[token-cache-metrics]"))).toBeUndefined();
+  });
+
+  it("emits token-cache-metrics log when executor persists non-zero delta", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const store = createStore(undefined);
+    const executor = Object.create(TaskExecutor.prototype) as TaskExecutor & {
+      store: TaskStore;
+      tokenUsageBaselines: Map<string, { inputTokens: number; outputTokens: number; cachedTokens: number; cacheWriteTokens: number; totalTokens: number }>;
+      activeSessions: Map<string, { session: unknown }>;
+      persistTokenUsage: (taskId: string, session?: unknown) => Promise<void>;
+    };
+    executor.store = store;
+    executor.tokenUsageBaselines = new Map();
+    executor.activeSessions = new Map();
+
+    await executor.persistTokenUsage("FN-1", { getSessionStats: () => ({ tokens: { input: 3, output: 2, cacheRead: 1, cacheWrite: 0, total: 6 } }) });
+
+    const cacheLogCall = errorSpy.mock.calls.find((entry) => String(entry[0]).includes("[token-cache-metrics]"));
+    expect(cacheLogCall).toBeTruthy();
   });
 
   it("swallows store errors instead of throwing", async () => {

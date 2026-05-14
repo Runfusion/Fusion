@@ -1,8 +1,9 @@
-import type { TaskStore } from "@fusion/core";
+import type { AgentRole, TaskStore } from "@fusion/core";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("session-token-usage");
+const cacheMetricsLog = createLogger("token-cache-metrics");
 
 interface SessionBaseline {
   input: number;
@@ -45,6 +46,7 @@ export async function accumulateSessionTokenUsage(
   store: TaskStore,
   taskId: string,
   session: AgentSession,
+  options?: { agentId?: string; role?: AgentRole },
 ): Promise<void> {
   try {
     const stats = readSessionStats(session);
@@ -78,17 +80,28 @@ export async function accumulateSessionTokenUsage(
     const newCached = (task.tokenUsage?.cachedTokens ?? 0) + cachedDelta;
     const newCacheWrite = (task.tokenUsage?.cacheWriteTokens ?? 0) + cacheWriteDelta;
 
-    await store.updateTask(taskId, {
-      tokenUsage: {
-        inputTokens: newInput,
-        outputTokens: newOutput,
-        cachedTokens: newCached,
-        cacheWriteTokens: newCacheWrite,
-        totalTokens: newInput + newOutput + newCached + newCacheWrite,
-        firstUsedAt: task.tokenUsage?.firstUsedAt ?? now,
-        lastUsedAt: now,
-      },
-    });
+    const role = options?.role ?? "executor";
+    const tokenUsage = {
+      inputTokens: newInput,
+      outputTokens: newOutput,
+      cachedTokens: newCached,
+      cacheWriteTokens: newCacheWrite,
+      totalTokens: newInput + newOutput + newCached + newCacheWrite,
+      firstUsedAt: task.tokenUsage?.firstUsedAt ?? now,
+      lastUsedAt: now,
+    };
+
+    cacheMetricsLog.log(JSON.stringify({
+      taskId,
+      agentId: options?.agentId,
+      role,
+      inputTokens: tokenUsage.inputTokens,
+      cachedTokens: tokenUsage.cachedTokens,
+      cacheWriteTokens: tokenUsage.cacheWriteTokens,
+      hitRatio: computeCacheHitRatio(tokenUsage.inputTokens, tokenUsage.cachedTokens),
+    }));
+
+    await store.updateTask(taskId, { tokenUsage });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.warn(`${taskId}: session token usage accumulate failed: ${message}`);

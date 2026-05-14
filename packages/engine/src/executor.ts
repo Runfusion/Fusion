@@ -46,7 +46,7 @@ import {
   inspectBranchConflict,
 } from "./branch-conflicts.js";
 import { AgentLogger } from "./agent-logger.js";
-import { executorLog, reviewerLog, formatError } from "./logger.js";
+import { createLogger, executorLog, reviewerLog, formatError } from "./logger.js";
 import { TokenCapDetector } from "./token-cap-detector.js";
 import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./usage-limit-detector.js";
 import { isTransientError, isSilentTransientError } from "./transient-error-detector.js";
@@ -120,6 +120,8 @@ export {
   taskCreateParams,
   taskLogParams,
 } from "./agent-tools.js";
+
+const tokenCacheMetricsLog = createLogger("token-cache-metrics");
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
 
@@ -1984,6 +1986,16 @@ export class TaskExecutor {
     const merged = this.accumulateTokenUsage(task.tokenUsage, delta);
     if (!merged) return;
 
+    tokenCacheMetricsLog.log(JSON.stringify({
+      taskId,
+      agentId: task.assignedAgentId ?? undefined,
+      role: "executor",
+      inputTokens: merged.inputTokens,
+      cachedTokens: merged.cachedTokens,
+      cacheWriteTokens: merged.cacheWriteTokens,
+      hitRatio: merged.inputTokens + merged.cachedTokens > 0 ? merged.cachedTokens / (merged.inputTokens + merged.cachedTokens) : 0,
+    }));
+
     await this.store.updateTask(taskId, { tokenUsage: merged });
   }
 
@@ -3368,7 +3380,10 @@ export class TaskExecutor {
           // session.prompt() resolves normally even when retries are exhausted —
           // the error is stored on session.state.error instead of being thrown.
           checkSessionError(session);
-          await accumulateSessionTokenUsage(this.store, task.id, session);
+          await accumulateSessionTokenUsage(this.store, task.id, session, {
+            agentId: task.assignedAgentId ?? undefined,
+            role: "executor",
+          });
 
           // Check if proactive context compaction is needed based on token cap setting.
           // This runs after the main prompt completes to avoid interrupting active work.
@@ -3426,7 +3441,10 @@ export class TaskExecutor {
 
             await promptWithFallback(session, resumePrompt);
             checkSessionError(session);
-            await accumulateSessionTokenUsage(this.store, task.id, session);
+            await accumulateSessionTokenUsage(this.store, task.id, session, {
+            agentId: task.assignedAgentId ?? undefined,
+            role: "executor",
+          });
           }
 
           // If dependency was added during execution, discard worktree and move to triage
@@ -3665,7 +3683,10 @@ export class TaskExecutor {
               stuckDetector?.recordActivity(task.id);
               await promptWithFallback(retrySession, retryPrompt);
               checkSessionError(retrySession);
-              await accumulateSessionTokenUsage(this.store, task.id, retrySession);
+              await accumulateSessionTokenUsage(this.store, task.id, retrySession, {
+                agentId: task.assignedAgentId ?? undefined,
+                role: "executor",
+              });
 
               if (!taskDone) {
                 const implicitCheck = await this.store.getTask(task.id);
@@ -3907,7 +3928,10 @@ export class TaskExecutor {
 
               await promptWithFallback(activeEntry.session, reducedPrompt);
               checkSessionError(activeEntry.session);
-              await accumulateSessionTokenUsage(this.store, task.id, activeEntry.session);
+              await accumulateSessionTokenUsage(this.store, task.id, activeEntry.session, {
+                agentId: task.assignedAgentId ?? undefined,
+                role: "executor",
+              });
 
               // Reduced-prompt retry succeeded — return to let the finally block clean up
               // without marking the task as failed.
@@ -5462,7 +5486,10 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
             executorLog.warn(`⏳ ${task.id} executor fix agent rate limited — retry ${attempt} in ${delaySec}s: ${error.message}`);
           },
         });
-        await accumulateSessionTokenUsage(this.store, task.id, session);
+        await accumulateSessionTokenUsage(this.store, task.id, session, {
+            agentId: task.assignedAgentId ?? undefined,
+            role: "executor",
+          });
 
         // Re-run full deterministic verification (test AND build) after the fix attempt
         executorLog.log(`${task.id}: re-running deterministic verification after fix attempt ${retryNumber}/${maxRetries}`);
@@ -6478,7 +6505,10 @@ and show an appropriate message to the user.\`
 
         // Completed within the timeout — let any post-completion errors surface.
         checkSessionError(session);
-        await accumulateSessionTokenUsage(this.store, task.id, session);
+        await accumulateSessionTokenUsage(this.store, task.id, session, {
+            agentId: task.assignedAgentId ?? undefined,
+            role: "executor",
+          });
         session.dispose();
         await agentLogger.flush();
 
