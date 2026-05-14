@@ -1,9 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ExecException } from "node:child_process";
 
+const { execMock } = vi.hoisted(() => ({
+  execMock: vi.fn(),
+}));
+
 vi.mock("node:child_process", async () => {
   const { promisify } = await import("node:util");
-  const execMock = vi.fn();
 
   const execFn: any = vi.fn((cmd: string, opts: any, cb: any) => {
     const callback = typeof opts === "function" ? opts : cb;
@@ -33,7 +36,6 @@ vi.mock("node:child_process", async () => {
 });
 
 import { attemptBranchAutocorrect } from "../branch-autocorrect.js";
-import { __execMock as execMock } from "node:child_process";
 
 const mockedExec = vi.mocked(execMock);
 
@@ -72,7 +74,7 @@ describe("attemptBranchAutocorrect", () => {
     const result = await attemptBranchAutocorrect({ worktreePath: "/tmp/wt", observedBranch: "lemon-sage", expectedBranch: "fusion/fn-2", rootDir: "/tmp" });
 
     expect(result).toEqual({ status: "renamed" });
-    expect(mockedExec.mock.calls.map((c) => c[0])).toContain("git branch -m 'lemon-sage' 'fusion/fn-2'");
+    expect(mockedExec.mock.calls.map((c: unknown[]) => c[0])).toContain("git branch -m 'lemon-sage' 'fusion/fn-2'");
   });
 
   it("falls back to checkout -B when branch has upstream", async () => {
@@ -82,7 +84,7 @@ describe("attemptBranchAutocorrect", () => {
 
     const result = await attemptBranchAutocorrect({ worktreePath: "/tmp/wt", observedBranch: "lemon-sage", expectedBranch: "fusion/fn-2", rootDir: "/tmp" });
     expect(result).toEqual({ status: "checked-out" });
-    expect(mockedExec.mock.calls.map((c) => c[0])).toEqual([
+    expect(mockedExec.mock.calls.map((c: unknown[]) => c[0])).toEqual([
       "git rev-parse --abbrev-ref --symbolic-full-name 'lemon-sage'@{u}",
       "git checkout -B 'fusion/fn-2'",
     ]);

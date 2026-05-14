@@ -689,7 +689,7 @@ describe("schema migration", () => {
     db.close();
   });
 
-  it("adds workflow_steps.gateMode and backfills prompt rows to advisory", () => {
+  it("adds workflow_steps.gateMode and backfills legacy rows by mode", () => {
     const db = new Database(fusionDir);
     db.exec("CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT)");
     db.exec(`
@@ -715,7 +715,7 @@ describe("schema migration", () => {
     const rows = db.prepare("SELECT id, mode, gateMode FROM workflow_steps ORDER BY id ASC").all() as Array<{ id: string; mode: string; gateMode: string }>;
     expect(rows).toEqual([
       { id: "WS-001", mode: "prompt", gateMode: "advisory" },
-      { id: "WS-002", mode: "script", gateMode: "advisory" },
+      { id: "WS-002", mode: "script", gateMode: "gate" },
     ]);
     expect(db.getSchemaVersion()).toBe(77);
 
