@@ -1888,6 +1888,15 @@ export function QuickChatFAB({
     setMentionStartPos(-1);
   }, []);
 
+  const resizeQuickChatComposer = useCallback((composer: HTMLTextAreaElement | null = inputRef.current) => {
+    if (!composer) {
+      return;
+    }
+
+    composer.style.height = "auto";
+    composer.style.height = `${clampQuickChatInputHeight(composer.scrollHeight)}px`;
+  }, []);
+
   const handleSkillSelect = useCallback((skill: DiscoveredSkill) => {
     setMessageInput((currentInput) => {
       const triggerMatch = getSkillTriggerMatch(currentInput);
@@ -1900,6 +1909,7 @@ export function QuickChatFAB({
 
       window.requestAnimationFrame(() => {
         if (!inputRef.current) return;
+        resizeQuickChatComposer(inputRef.current);
         inputRef.current.focus();
       });
 
@@ -1909,7 +1919,7 @@ export function QuickChatFAB({
     setShowSkillMenu(false);
     setSkillFilter("");
     setHighlightedSkillIndex(0);
-  }, []);
+  }, [resizeQuickChatComposer]);
 
   const handleMentionSelect = useCallback(
     (agent: Agent) => {
@@ -1935,17 +1945,19 @@ export function QuickChatFAB({
 
       window.requestAnimationFrame(() => {
         if (!inputRef.current) return;
+        resizeQuickChatComposer(inputRef.current);
         inputRef.current.focus();
         inputRef.current.setSelectionRange(nextCursorPos, nextCursorPos);
       });
     },
-    [mentionStartPos, messageInput],
+    [mentionStartPos, messageInput, resizeQuickChatComposer],
   );
 
   const handleInputChange = useCallback(
     (event: React.ChangeEvent<HTMLTextAreaElement>) => {
       const nextValue = event.target.value;
       const cursorPos = event.target.selectionStart ?? nextValue.length;
+      resizeQuickChatComposer(event.target);
       mentionCursorPosRef.current = cursorPos;
       setMessageInput(nextValue);
       if (helpMessageVisible && nextValue.trim().length > 0) {
@@ -1969,8 +1981,12 @@ export function QuickChatFAB({
         updateFileMentionPosition(event.target);
       }
     },
-    [helpMessageVisible, updateMentionState, fileMention, updateFileMentionPosition],
+    [fileMention, helpMessageVisible, resizeQuickChatComposer, updateFileMentionPosition, updateMentionState],
   );
+
+  useLayoutEffect(() => {
+    resizeQuickChatComposer();
+  }, [messageInput, resizeQuickChatComposer]);
 
   const handleInputBlur = useCallback(() => {
     if (preserveComposerFocusRef.current) {
@@ -2627,9 +2643,10 @@ export function QuickChatFAB({
                 >
                   <Paperclip size={16} />
                 </button>
-                <input
+                <textarea
                   ref={inputRef}
-                  type="text"
+                  rows={1}
+                  className="quick-chat-textarea"
                   value={messageInput}
                   onChange={handleInputChange}
                   onKeyDown={handleInputKeyDown}
