@@ -41,6 +41,44 @@ const fileDiffsCache = new Map<
 
 type DoneTaskFileStatus = "added" | "modified" | "deleted" | "renamed";
 
+type BranchFallbackTask = {
+  branch?: string | null;
+  baseBranch?: string;
+  baseCommitSha?: string;
+};
+
+async function resolveTaskBranchRef(task: BranchFallbackTask, rootDir: string): Promise<string | undefined> {
+  const branch = task.branch?.trim();
+  if (!branch) return undefined;
+
+  try {
+    const resolved = (await runGitCommand(["rev-parse", "--verify", "--quiet", branch], rootDir, 5000)).trim();
+    if (resolved) return branch;
+  } catch {
+    // continue to refs/heads fallback
+  }
+
+  const headsRef = `refs/heads/${branch}`;
+  try {
+    const resolved = (await runGitCommand(["rev-parse", "--verify", "--quiet", headsRef], rootDir, 5000)).trim();
+    if (resolved) return headsRef;
+  } catch {
+    // unresolved
+  }
+
+  return undefined;
+}
+
+async function resolveBranchDiffBaseInRoot(task: BranchFallbackTask, rootDir: string): Promise<{ baseRef: string; branchRef: string } | undefined> {
+  const branchRef = await resolveTaskBranchRef(task, rootDir);
+  if (!branchRef) return undefined;
+
+  const baseRef = await resolveDiffBase(task, rootDir, branchRef, runGitCommand, { enableDisplayRecovery: true });
+  if (!baseRef) return undefined;
+
+  return { baseRef, branchRef };
+}
+
 type AggregatedDoneTaskFile = {
   path: string;
   status: DoneTaskFileStatus;
