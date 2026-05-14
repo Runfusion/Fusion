@@ -2424,6 +2424,31 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     return deletedCount;
   }
 
+  async getDefaultProjectId(): Promise<string | undefined> {
+    this.ensureInitialized();
+
+    const row = this.db!.prepare("SELECT defaultProjectId FROM centralSettings WHERE id = 1").get() as
+      | { defaultProjectId: string | null }
+      | undefined;
+
+    return row?.defaultProjectId ?? undefined;
+  }
+
+  async setDefaultProjectId(projectId: string | null): Promise<void> {
+    this.ensureInitialized();
+
+    if (projectId !== null) {
+      const project = await this.getProject(projectId);
+      if (!project) {
+        throw new Error(`Cannot set default project: project not found: ${projectId}`);
+      }
+    }
+
+    this.db!
+      .prepare("UPDATE centralSettings SET defaultProjectId = ?, updatedAt = ? WHERE id = 1")
+      .run(projectId, new Date().toISOString());
+  }
+
   // ── Global Concurrency API ─────────────────────────────────────────────
 
   /**

@@ -2378,6 +2378,58 @@ describe("CentralCore", () => {
     });
   });
 
+  describe("default project setting", () => {
+    beforeEach(async () => {
+      await central.init();
+    });
+
+    it("should be undefined by default", async () => {
+      await expect(central.getDefaultProjectId()).resolves.toBeUndefined();
+    });
+
+    it("should set/get and clear default project id", async () => {
+      const projectPath = join(tempDir, "default-project");
+      mkdirSync(projectPath);
+      projectPaths.push(projectPath);
+
+      const project = await central.registerProject({
+        name: "Default Project",
+        path: projectPath,
+      });
+
+      await central.setDefaultProjectId(project.id);
+      await expect(central.getDefaultProjectId()).resolves.toBe(project.id);
+
+      await central.setDefaultProjectId(null);
+      await expect(central.getDefaultProjectId()).resolves.toBeUndefined();
+    });
+
+    it("should reject unknown project id", async () => {
+      await expect(central.setDefaultProjectId("missing-project-id")).rejects.toThrow(
+        "Cannot set default project: project not found: missing-project-id",
+      );
+    });
+
+    it("should persist setting across reopen", async () => {
+      const projectPath = join(tempDir, "persisted-default-project");
+      mkdirSync(projectPath);
+      projectPaths.push(projectPath);
+
+      const project = await central.registerProject({
+        name: "Persisted Default Project",
+        path: projectPath,
+      });
+
+      await central.setDefaultProjectId(project.id);
+      await central.close();
+
+      central = new CentralCore(tempDir);
+      await central.init();
+
+      await expect(central.getDefaultProjectId()).resolves.toBe(project.id);
+    });
+  });
+
   describe("global concurrency", () => {
     beforeEach(async () => {
       await central.init();

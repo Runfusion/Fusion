@@ -29,7 +29,7 @@ export { toJson, toJsonNullable, fromJson };
 
 // ── Schema Definition ───────────────────────────────────────────────────
 
-const CENTRAL_SCHEMA_VERSION = 10;
+const CENTRAL_SCHEMA_VERSION = 11;
 
 const CENTRAL_SCHEMA_SQL = `
 -- Projects table (project registry)
@@ -106,6 +106,15 @@ CREATE TABLE IF NOT EXISTS globalConcurrency (
 -- Seed default row
 INSERT OR IGNORE INTO globalConcurrency (id, globalMaxConcurrent, currentlyActive, queuedCount) 
 VALUES (1, 4, 0, 0);
+
+-- Central settings (single row)
+CREATE TABLE IF NOT EXISTS centralSettings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  defaultProjectId TEXT,
+  updatedAt TEXT NOT NULL
+);
+INSERT OR IGNORE INTO centralSettings (id, defaultProjectId, updatedAt)
+VALUES (1, NULL, CURRENT_TIMESTAMP);
 
 -- Nodes table (runtime hosts for project execution)
 CREATE TABLE IF NOT EXISTS nodes (
@@ -433,6 +442,16 @@ CREATE TABLE IF NOT EXISTS meshWriteQueue (
 CREATE INDEX IF NOT EXISTS idxMeshWriteQueueReplay ON meshWriteQueue(targetNodeId, status, createdAt, id);
 `;
 
+const CENTRAL_SCHEMA_V11_MIGRATION_SQL = `
+CREATE TABLE IF NOT EXISTS centralSettings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  defaultProjectId TEXT,
+  updatedAt TEXT NOT NULL
+);
+INSERT OR IGNORE INTO centralSettings (id, defaultProjectId, updatedAt)
+VALUES (1, NULL, CURRENT_TIMESTAMP);
+`;
+
 // ── Central Database Class ────────────────────────────────────────────────
 
 export class CentralDatabase {
@@ -572,6 +591,11 @@ export class CentralDatabase {
 
     if (currentVersion < 10) {
       this.db.exec(CENTRAL_SCHEMA_V10_MIGRATION_SQL);
+      migrated = true;
+    }
+
+    if (currentVersion < 11) {
+      this.db.exec(CENTRAL_SCHEMA_V11_MIGRATION_SQL);
       migrated = true;
     }
 
