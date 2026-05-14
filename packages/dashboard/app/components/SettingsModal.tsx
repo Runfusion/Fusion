@@ -2164,10 +2164,10 @@ export function SettingsModal({
                 />
                 Save tool output in agent logs
               </label>
-              <div className="settings-field-help">
+              <small>
                 When disabled, tool rows are still logged but detailed tool payloads are omitted.
                 Very large tool payloads may still be clipped even when this stays enabled.
-              </div>
+              </small>
             </div>
             <div className="form-group">
               <h5 className="settings-section-heading">Save AI thinking logs</h5>
@@ -2193,10 +2193,10 @@ export function SettingsModal({
                 />
                 Save AI thinking for ephemeral / task-worker agents
               </label>
-              <div className="settings-field-help">
+              <small>
                 Leave both thinking toggles off to keep the original default behavior.
                 This only controls persisted <code>thinking</code> rows and does not affect assistant text or tool rows.
-              </div>
+              </small>
             </div>
             <div className="form-group">
               <label htmlFor="fnBinaryCheckEnabled" className="checkbox-label">
