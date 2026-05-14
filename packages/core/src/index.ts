@@ -160,6 +160,15 @@ export {
 } from "./in-review-stall.js";
 export type { InReviewStallSignal, InReviewStallCode } from "./in-review-stall.js";
 export {
+  getTaskAgeStalenessSignal,
+  DEFAULT_TASK_AGE_STALENESS_THRESHOLDS,
+} from "./task-age-staleness.js";
+export type {
+  TaskAgeStalenessLevel,
+  TaskAgeStalenessSignal,
+  TaskAgeStalenessThresholds,
+} from "./task-age-staleness.js";
+export {
   isGhAvailable, 
   isGhAuthenticated, 
   runGh, 

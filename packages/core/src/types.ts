@@ -1,5 +1,6 @@
 import type { InReviewStallSignal } from "./in-review-stall.js";
 import type { StalledReviewSignal } from "./stalled-review-detector.js";
+import type { TaskAgeStalenessSignal } from "./task-age-staleness.js";
 
 export {
   computeCapacityRisk,
@@ -1260,6 +1261,9 @@ export interface Task {
   /** Server-computed in-review stall signal. Undefined when no stall rule matches.
    *  Diagnostic-only: must not be used as an auto-completion signal. */
   inReviewStall?: InReviewStallSignal;
+  /** Server-computed task age staleness signal. Undefined when no staleness rule matches.
+   *  Diagnostic-only: must not be used as an auto-completion signal. */
+  ageStaleness?: TaskAgeStalenessSignal;
   /** Heuristic stalled-review diagnostic signal (legacy compatibility contract). */
   stalledReview?: StalledReviewSignal;
   /** Durable aggregate token usage totals for the task. Undefined when no usage has been recorded yet. */
@@ -2411,6 +2415,18 @@ export interface ProjectSettings {
    *  Blocker age is measured from columnMovedAt when available, otherwise updatedAt.
    *  Only blockers currently in in-progress or in-review are eligible. */
   staleHighFanoutBlockerAgeThresholdMs?: number;
+  /** Staleness warning threshold for tasks in in-progress, measured by column age.
+   *  0 or undefined disables surfacing at this level. */
+  staleInProgressWarningMs?: number;
+  /** Staleness critical threshold for tasks in in-progress, measured by column age.
+   *  0 or undefined disables surfacing at this level. */
+  staleInProgressCriticalMs?: number;
+  /** Staleness warning threshold for tasks in in-review, measured by column age.
+   *  0 or undefined disables surfacing at this level. */
+  staleInReviewWarningMs?: number;
+  /** Staleness critical threshold for tasks in in-review, measured by column age.
+   *  0 or undefined disables surfacing at this level. */
+  staleInReviewCriticalMs?: number;
   /** When true, the dashboard shows the capacity-risk banner once
    *  capacityRiskTodoThreshold is exceeded with zero idle non-ephemeral agents.
    *  Default: false. */
