@@ -632,6 +632,48 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
   });
 
   /**
+   * GET /api/agents/:id/token-usage
+   * Get cache/token usage summary windows for a permanent agent.
+   */
+  router.get("/agents/:id/token-usage", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const { AgentStore, aggregateAgentTokenUsage, isEphemeralAgent } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.getAgent(req.params.id);
+      if (!agent) {
+        throw notFound("Agent not found");
+      }
+      if (isEphemeralAgent(agent)) {
+        throw badRequest("Token usage is not available for ephemeral agents");
+      }
+
+      const summary = await aggregateAgentTokenUsage({
+        taskStore: scopedStore,
+        agentStore,
+        agentId: req.params.id,
+      });
+
+      if (!summary) {
+        throw notFound("Agent not found");
+      }
+
+      res.json(summary);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
+      } else {
+        rethrowAsApiError(err);
+      }
+    }
+  });
+
+  /**
    * GET /api/agents/:id/budget
    * Get budget status for an agent.
    */
