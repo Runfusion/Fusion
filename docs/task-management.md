@@ -129,6 +129,31 @@ These entries are rate-limited per `(task, code)` over `taskStuckTimeoutMs`, so 
 
 **Dashboard surface:** In-review, non-paused tasks with `inReviewStall` set show a `Stall` badge on `TaskCard` and a code-specific diagnostic row in `TaskDetailModal` above the PR section. The diagnostic row includes headline/description/action copy, raw reason text, observed timestamp, and a `View activity log` deep-link that switches to Logs → Activity and highlights the most recent matching `In-review stall surfaced [<code>]: <reason>` entry. This UI is diagnostic only: neither the badge nor the jump button mutates task state.
 
+#### Task age staleness signal
+
+Fusion now derives `task.ageStaleness` for tasks in `in-progress` and `in-review` (including paused tasks). Age is computed from `columnMovedAt` and falls back to `updatedAt` when needed.
+
+Signal levels:
+- `warning`
+- `critical`
+
+Threshold settings:
+- `staleInProgressWarningMs` (default `4h`)
+- `staleInProgressCriticalMs` (default `24h`)
+- `staleInReviewWarningMs` (default `24h`)
+- `staleInReviewCriticalMs` (default `72h`)
+
+`0` or `undefined` disables that level.
+
+Invariant: `ageStaleness` is **diagnostic-only**. It never moves, retries, pauses/unpauses, or auto-finalizes tasks.
+
+Scheduler-side reporting emits structured, rate-limited task-log and engine-log entries in this exact form:
+- `Stale task age threshold crossed [<level>]: column=<column> paused=<bool> ageMs=<n> warningThresholdMs=<n> criticalThresholdMs=<n>`
+
+**Dashboard surface:** tasks with `ageStaleness` show a stale badge on `TaskCard`, a diagnostic row in `TaskDetailModal`, and the list view provides a `Stale only` filter that narrows to tasks with a live signal.
+
+Success metric: maintainers can find all stale cards from the board UI in under 30 seconds.
+
 Auto-completion/finalization remains owned by existing recovery passes:
 - `recoverStaleMergingStatus`
 - `finalizeNoOpReviewTasks`

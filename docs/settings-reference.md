@@ -259,6 +259,10 @@ Override precedence for direct merges is:
 | `specStalenessEnabled` | `boolean` | `false` | Enforce automatic re-planning for stale plans. |
 | `specStalenessMaxAgeMs` | `number` | `21600000` | Spec staleness threshold in ms (6 hours). |
 | `taskStuckTimeoutMs` | `number` | `undefined` | Inactivity timeout for stuck-task recovery. |
+| `staleInProgressWarningMs` | `number` | `14400000` | Task-age staleness warning threshold in ms for `in-progress` tasks (4 hours). `0` or `undefined` disables warning-level surfacing. |
+| `staleInProgressCriticalMs` | `number` | `86400000` | Task-age staleness critical threshold in ms for `in-progress` tasks (24 hours). `0` or `undefined` disables critical-level surfacing. |
+| `staleInReviewWarningMs` | `number` | `86400000` | Task-age staleness warning threshold in ms for `in-review` tasks (24 hours). `0` or `undefined` disables warning-level surfacing. |
+| `staleInReviewCriticalMs` | `number` | `259200000` | Task-age staleness critical threshold in ms for `in-review` tasks (72 hours). `0` or `undefined` disables critical-level surfacing. |
 | `staleHighFanoutBlockerAgeThresholdMs` | `number` | `7200000` | Age threshold (ms) before high-fan-out blockers escalate in dashboard task cards/footer. Applies only to blockers currently in `in-progress`/`in-review`; age is computed from `columnMovedAt ?? updatedAt`. |
 | `capacityRiskBannerEnabled` | `boolean` | `false` | Opt-in gate for the board-level capacity-risk banner. When enabled, the banner is shown once risk conditions are met and can be dismissed per project. |
 | `capacityRiskTodoThreshold` | `number` | `20` | Todo threshold for the board-level capacity-risk banner (applies when `capacityRiskBannerEnabled` is true). Warning appears only when `todoCount > capacityRiskTodoThreshold` **and** there are zero idle non-ephemeral agents, auto-clears as soon as an idle agent becomes available or todo falls back to threshold/below, and re-arms after threshold/toggle changes. |
