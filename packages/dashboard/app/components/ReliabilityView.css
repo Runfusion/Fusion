@@ -1,0 +1,87 @@
+.reliability-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.reliability-card {
+  padding: var(--space-lg);
+  border: var(--border-width-thin, 0.0625rem) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+
+.reliability-headline-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.reliability-headline {
+  font-size: var(--font-size-2xl, 1.75rem);
+  font-weight: 700;
+}
+
+.reliability-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-lg);
+}
+
+.reliability-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: var(--space-sm);
+}
+
+.reliability-table th,
+.reliability-table td {
+  text-align: left;
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: var(--border-width-thin, 0.0625rem) solid var(--border);
+}
+
+.reliability-stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-xs) 0;
+}
+
+.reliability-muted {
+  color: var(--text-muted);
+}
+
+.reliability-histogram {
+  list-style: none;
+  margin: var(--space-sm) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.reliability-histogram li {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 6fr) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.reliability-histogram-bar-wrap {
+  width: 100%;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  overflow: hidden;
+}
+
+.reliability-histogram-bar {
+  height: var(--space-md);
+  background: var(--color-info);
+}
+
+@media (max-width: 768px) {
+  .reliability-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
