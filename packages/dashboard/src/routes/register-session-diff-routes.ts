@@ -112,12 +112,11 @@ async function tryBranchRefFallbackDetailedDiff(
 
   const fileMap = new Map<string, string>();
   try {
-    const nameStatusOutput = (await runGitCommand(["diff", "--name-status", `${resolved.baseRef}..${resolved.branchRef}`], rootDir, 10000)).trim();
+    const nameStatusOutput = (await runGitCommand(["diff", "--name-status", "-M", `${resolved.baseRef}..${resolved.branchRef}`], rootDir, 10000)).trim();
     for (const line of nameStatusOutput.split("\n").filter(Boolean)) {
-      const parts = line.split("\t");
-      const statusCode = parts[0] ?? "M";
-      const filePath = statusCode.startsWith("R") ? (parts[2] ?? parts[1] ?? "") : (parts[1] ?? "");
-      if (filePath) fileMap.set(filePath, statusCode);
+      const parsed = parseNameStatusLine(line);
+      if (!parsed) continue;
+      fileMap.set(parsed.path, parsed.statusCode);
     }
   } catch {
     return { files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 } };
@@ -159,17 +158,11 @@ async function tryBranchRefFallbackFileDiffs(
 
   const fileMap = new Map<string, { statusCode: string; oldPath?: string }>();
   try {
-    const nameStatusOutput = (await runGitCommand(["diff", "--name-status", `${resolved.baseRef}..${resolved.branchRef}`], rootDir, 5000)).trim();
+    const nameStatusOutput = (await runGitCommand(["diff", "--name-status", "-M", `${resolved.baseRef}..${resolved.branchRef}`], rootDir, 5000)).trim();
     for (const line of nameStatusOutput.split("\n").filter(Boolean)) {
-      const parts = line.split("\t");
-      const statusCode = parts[0] ?? "M";
-      if (statusCode.startsWith("R")) {
-        const nextPath = parts[2] ?? parts[1] ?? "";
-        if (nextPath) fileMap.set(nextPath, { statusCode, oldPath: parts[1] });
-      } else {
-        const filePath = parts[1] ?? "";
-        if (filePath) fileMap.set(filePath, { statusCode });
-      }
+      const parsed = parseNameStatusLine(line);
+      if (!parsed) continue;
+      fileMap.set(parsed.path, { statusCode: parsed.statusCode, oldPath: parsed.oldPath });
     }
   } catch {
     return [];
