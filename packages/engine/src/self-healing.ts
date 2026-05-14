@@ -2542,6 +2542,20 @@ export class SelfHealingManager {
     }
   }
 
+  private async readShortstatForSha(
+    sha: string,
+  ): Promise<{ filesChanged: number; insertions: number; deletions: number } | null> {
+    try {
+      const stats = await execAsync(`git show --shortstat --format= ${shellQuote(sha)}`, {
+        cwd: this.options.rootDir,
+        maxBuffer: 1024 * 1024,
+      });
+      return parseShortstat(stats.stdout);
+    } catch {
+      return null;
+    }
+  }
+
   async recoverDoneTaskMergeMetadata(): Promise<number> {
     try {
       const tasks = await this.store.listTasks({ column: "done", slim: true });
@@ -2563,26 +2577,47 @@ export class SelfHealingManager {
               continue;
             }
 
+            const liveShortstat = await this.readShortstatForSha(storedSha);
+            const statsMismatch = Boolean(
+              liveShortstat && (
+                task.mergeDetails?.filesChanged !== liveShortstat.filesChanged ||
+                task.mergeDetails?.insertions !== liveShortstat.insertions ||
+                task.mergeDetails?.deletions !== liveShortstat.deletions
+              ),
+            );
+
             const needsMetadataRepair =
               task.mergeDetails?.filesChanged === undefined ||
               task.mergeDetails?.insertions === undefined ||
               task.mergeDetails?.deletions === undefined ||
-              task.mergeDetails?.mergeCommitMessage === undefined;
+              task.mergeDetails?.mergeCommitMessage === undefined ||
+              statsMismatch;
 
             if (!needsMetadataRepair) continue;
+
+            const nextFilesChanged = liveShortstat?.filesChanged ?? task.mergeDetails?.filesChanged ?? landed.filesChanged;
+            const nextInsertions = liveShortstat?.insertions ?? task.mergeDetails?.insertions ?? landed.insertions;
+            const nextDeletions = liveShortstat?.deletions ?? task.mergeDetails?.deletions ?? landed.deletions;
 
             await this.store.updateTask(task.id, {
               mergeDetails: {
                 ...task.mergeDetails,
-                filesChanged: task.mergeDetails?.filesChanged ?? landed.filesChanged,
-                insertions: task.mergeDetails?.insertions ?? landed.insertions,
-                deletions: task.mergeDetails?.deletions ?? landed.deletions,
+                filesChanged: nextFilesChanged,
+                insertions: nextInsertions,
+                deletions: nextDeletions,
                 mergeCommitMessage: task.mergeDetails?.mergeCommitMessage ?? landed.subject,
                 mergedAt: task.mergeDetails?.mergedAt ?? new Date().toISOString(),
                 prNumber: task.prInfo?.number,
               },
             });
-            await this.store.logEntry(task.id, `Auto-recovered: reconciled done-task mergeDetails to owned commit ${landed.sha.slice(0, 8)}`);
+            if (statsMismatch && liveShortstat) {
+              await this.store.logEntry(
+                task.id,
+                `Auto-recovered: stale mergeDetails stats repaired (was ${task.mergeDetails?.filesChanged ?? "?"}/${task.mergeDetails?.insertions ?? "?"}/${task.mergeDetails?.deletions ?? "?"}, now ${liveShortstat.filesChanged}/${liveShortstat.insertions}/${liveShortstat.deletions}) — sha unchanged ${storedSha.slice(0, 8)}`,
+              );
+            } else {
+              await this.store.logEntry(task.id, `Auto-recovered: reconciled done-task mergeDetails to owned commit ${landed.sha.slice(0, 8)}`);
+            }
             repaired++;
             continue;
           }
@@ -2597,7 +2632,15 @@ export class SelfHealingManager {
 
           const needsRepair =
             task.mergeDetails?.commitSha !== landed.sha ||
-            task.mergeDetails?.filesChanged === undefined;
+            task.mergeDetails?.filesChanged === undefined ||
+            task.mergeDetails?.insertions === undefined ||
+            task.mergeDetails?.deletions === undefined || (
+              task.mergeDetails?.commitSha === landed.sha && (
+                task.mergeDetails?.filesChanged !== landed.filesChanged ||
+                task.mergeDetails?.insertions !== landed.insertions ||
+                task.mergeDetails?.deletions !== landed.deletions
+              )
+            );
 
           if (!needsRepair) continue;
 
