@@ -228,6 +228,20 @@ describe("MailboxView", () => {
     expect(screen.getByTestId("mailbox-tab-approvals")).toBeDefined();
   });
 
+  it("shows approvals pending badge on mount without opening Approvals tab", async () => {
+    mockFetchInbox.mockResolvedValue({ messages: [], unreadCount: 0, total: 0 });
+    mockFetchUnreadCount.mockResolvedValue({ unreadCount: 0, pendingApprovalCount: 3 });
+
+    render(<MailboxView {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mailbox-tab-inbox")).toHaveClass("active");
+      expect(screen.getByTestId("mailbox-approvals-pending-badge")).toHaveTextContent("3");
+    });
+
+    expect(mockFetchApprovals).not.toHaveBeenCalled();
+  });
+
   it("shows approvals pending badge and loads approvals tab", async () => {
     mockFetchInbox.mockResolvedValue({ messages: [], unreadCount: 0, total: 0 });
     mockFetchApprovals.mockResolvedValue({
@@ -385,6 +399,31 @@ describe("MailboxView", () => {
     await waitFor(() => {
       expect(screen.getByTestId("mailbox-approval-list")).toBeDefined();
     });
+  });
+
+  it("updates approvals pending badge on approval:requested SSE without opening Approvals tab", async () => {
+    mockFetchInbox.mockResolvedValue({ messages: [], unreadCount: 0, total: 0 });
+    mockFetchUnreadCount
+      .mockResolvedValueOnce({ unreadCount: 0, pendingApprovalCount: 1 })
+      .mockResolvedValueOnce({ unreadCount: 0, pendingApprovalCount: 5 });
+
+    render(<MailboxView {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mailbox-approvals-pending-badge")).toHaveTextContent("1");
+    });
+
+    const latest = sseSubscriptions.at(-1);
+    expect(latest).toBeDefined();
+    await act(async () => {
+      latest?.["approval:requested"]?.();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mailbox-approvals-pending-badge")).toHaveTextContent("5");
+    });
+
+    expect(mockFetchApprovals).not.toHaveBeenCalled();
   });
 
   it("refreshes approvals on approval SSE events", async () => {
