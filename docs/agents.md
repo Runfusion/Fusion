@@ -511,6 +511,7 @@ The `runtimeConfig` field on agents supports the following options:
 | `allowParallelExecution` | `boolean` | `true` (when unset) | Permanent agents only. When `false`, heartbeat and executor paths serialize symmetrically: a heartbeat will not start while the agent's bound task has an active executor session, and an executor session will not start while the agent has an active heartbeat run |
 | `skipHeartbeatWhenIdle` | `boolean` | `false` | When `true`, scheduled timer heartbeats are skipped while the agent has no assigned task. Assignment-triggered and on-demand runs still fire |
 | `messageResponseMode` | `"immediate" \| "on-heartbeat"` | `"immediate"` | Whether agent wakes immediately on message (immediate) or processes during heartbeat (on-heartbeat). See [Heartbeat Run Mailbox Checking](#heartbeat-run-mailbox-checking) |
+| `heartbeatScopeDiscipline` | `"strict" \| "lite" \| "off"` | inherits project (`"strict"`) | Per-agent heartbeat procedure template mode. Unset inherits project setting; `strict` is coordination-focused, `lite` is pre-2026-05-11 behavior, `off` is minimal. |
 | `selfImproveEnabled` | `boolean` | `true` | Enable periodic self-improvement reflection prompts during heartbeat runs |
 | `selfImproveIntervalMs` | `number` | `14400000` (4h) | Minimum delay between self-improvement cycles (minimum enforced: 3600000 ms) |
 | `lastSelfImproveAt` | `string` (ISO timestamp) | — | Last recorded self-improvement checkpoint timestamp |
@@ -520,6 +521,8 @@ The `runtimeConfig` field on agents supports the following options:
 
 Heartbeat values are validated and minimum-clamped to 5 minutes (300,000 ms).
 Project setting `heartbeatMultiplier` (default `1`) scales resolved heartbeat intervals globally; per-agent `heartbeatIntervalMs` remains the base interval before multiplier scaling. This setting is configured from the **Agents** screen's **Controls** popup under "Heartbeat Speed".
+
+Project setting `heartbeatScopeDiscipline` defaults to `strict`; set per-agent `runtimeConfig.heartbeatScopeDiscipline` to `strict`, `lite`, or `off` in **Agent Detail → Settings → Heartbeat Settings** to override.
 
 `runMissedHeartbeatOnStartup` defaults to `false` and is configured in **Agent Detail → Settings → Heartbeat Settings → Run Missed Heartbeat On Startup**.
 
