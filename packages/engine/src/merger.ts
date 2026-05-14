@@ -6928,6 +6928,28 @@ export async function aiMergeTask(
           squashSha: auditSha,
         });
       if (!auditFindings.clean) {
+        // FN-4333/FN-4344: rebase overlap-only findings can be auto-cleared
+        // when deterministic verification already proved the merged tree,
+        // even if HEAD drifts between verification and this audit read.
+        const verificationCandidateRefs = [auditSha, task.branch].filter((ref): ref is string => Boolean(ref));
+        for (const candidateRef of verificationCandidateRefs) {
+          try {
+            const { stdout: treeOut } = await execAsync(`git rev-parse ${quoteArg(candidateRef)}^{tree}`, {
+              cwd: rootDir,
+              encoding: "utf-8",
+            });
+            const treeSha = treeOut.trim();
+            if (!treeSha) continue;
+            const cacheHit = store.getVerificationCacheHit(treeSha, effectiveTestCommand, effectiveBuildCommand);
+            if (cacheHit) {
+              verificationPassed = true;
+              break;
+            }
+          } catch (err) {
+            mergerLog.warn(`${taskId}: could not resolve post-merge audit verification tree for ref ${candidateRef}: ${String(err)}`);
+          }
+        }
+
         const decision = resolvePostMergeAuditAction({
           mode: postMergeAuditMode,
           strategy: selectedPostMergeAuditStrategy,
