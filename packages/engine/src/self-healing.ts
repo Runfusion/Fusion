@@ -2550,7 +2550,12 @@ export class SelfHealingManager {
         cwd: this.options.rootDir,
         maxBuffer: 1024 * 1024,
       });
-      return parseShortstat(stats.stdout);
+      const parsed = parseShortstat(stats.stdout);
+      return {
+        filesChanged: parsed.filesChanged ?? 0,
+        insertions: parsed.insertions ?? 0,
+        deletions: parsed.deletions ?? 0,
+      };
     } catch {
       return null;
     }
@@ -2630,15 +2635,21 @@ export class SelfHealingManager {
             continue;
           }
 
+          const landedStats = {
+            filesChanged: landed.filesChanged ?? 0,
+            insertions: landed.insertions ?? 0,
+            deletions: landed.deletions ?? 0,
+          };
+
           const needsRepair =
             task.mergeDetails?.commitSha !== landed.sha ||
             task.mergeDetails?.filesChanged === undefined ||
             task.mergeDetails?.insertions === undefined ||
             task.mergeDetails?.deletions === undefined || (
               task.mergeDetails?.commitSha === landed.sha && (
-                task.mergeDetails?.filesChanged !== landed.filesChanged ||
-                task.mergeDetails?.insertions !== landed.insertions ||
-                task.mergeDetails?.deletions !== landed.deletions
+                task.mergeDetails?.filesChanged !== landedStats.filesChanged ||
+                task.mergeDetails?.insertions !== landedStats.insertions ||
+                task.mergeDetails?.deletions !== landedStats.deletions
               )
             );
 
@@ -2648,9 +2659,9 @@ export class SelfHealingManager {
             mergeDetails: {
               ...task.mergeDetails,
               commitSha: landed.sha,
-              filesChanged: landed.filesChanged,
-              insertions: landed.insertions,
-              deletions: landed.deletions,
+              filesChanged: landedStats.filesChanged,
+              insertions: landedStats.insertions,
+              deletions: landedStats.deletions,
               mergeCommitMessage: landed.subject,
               mergedAt: task.mergeDetails?.mergedAt ?? new Date().toISOString(),
               mergeConfirmed: true,

@@ -110,7 +110,7 @@ describeIfGit("SelfHealingManager recoverDoneTaskMergeMetadata stale stats", () 
   it("does not rewrite when stats are already correct", async () => {
     const { repo, sha } = setupRepo();
     const expected = parseShortstat(git(repo, `git show --shortstat --format= ${sha}`));
-    const task = makeTask("FN-4526-OK", repo, sha, expected);
+    const task = makeTask("FN-4526-STATS", repo, sha, expected);
     const tasks = new Map([[task.id, task]]);
     const store = createStore(tasks);
     const manager = new SelfHealingManager(store, { rootDir: repo, getExecutingTaskIds: () => new Set() });
@@ -118,5 +118,23 @@ describeIfGit("SelfHealingManager recoverDoneTaskMergeMetadata stale stats", () 
     await manager.recoverDoneTaskMergeMetadata();
 
     expect((store.updateTask as any).mock.calls).toHaveLength(0);
+  });
+
+  it("repairs stale stats in unconfirmed branch when SHA matches landed commit", async () => {
+    const { repo, sha } = setupRepo();
+    const expected = parseShortstat(git(repo, `git show --shortstat --format= ${sha}`));
+    const task = makeTask("FN-4526-STATS", repo, sha, { filesChanged: 777, insertions: 888, deletions: 999, mergeConfirmed: false });
+    const tasks = new Map([[task.id, task]]);
+    const store = createStore(tasks);
+    const manager = new SelfHealingManager(store, { rootDir: repo, getExecutingTaskIds: () => new Set() });
+
+    await manager.recoverDoneTaskMergeMetadata();
+
+    const repaired = tasks.get(task.id)!;
+    expect(repaired.mergeDetails?.commitSha).toBe(sha);
+    expect(repaired.mergeDetails?.filesChanged).toBe(expected.filesChanged);
+    expect(repaired.mergeDetails?.insertions).toBe(expected.insertions);
+    expect(repaired.mergeDetails?.deletions).toBe(expected.deletions);
+    expect(repaired.mergeDetails?.mergeConfirmed).toBe(true);
   });
 });
