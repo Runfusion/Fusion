@@ -6590,33 +6590,30 @@ ${failureFeedback}
    */
   private parseWorkflowStepOutput(rawOutput: string): {
     output: string;
-    verdict?: "PASS" | "FAIL";
+    verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
     notes?: string;
+    malformed?: boolean;
   } {
     const trimmed = rawOutput.trim();
-
-    // Try structured JSON block first
-    const jsonBlockMatch = trimmed.match(
-      /```json-workflow-verdict\s*\n([\s\S]*?)\n\s*```/,
-    );
-    if (jsonBlockMatch) {
-      try {
-        const parsed = JSON.parse(jsonBlockMatch[1].trim());
-        if (parsed.verdict === "PASS" || parsed.verdict === "FAIL") {
-          const proseBefore = trimmed.slice(0, trimmed.indexOf(jsonBlockMatch[0])).trim();
-          return {
-            output: proseBefore || parsed.notes || "",
-            verdict: parsed.verdict,
-            notes: parsed.notes,
-          };
-        }
-      } catch {
-        // Malformed JSON — fall through to prose parsing
-      }
+    const parsed = parseWorkflowStepVerdict(trimmed);
+    if (parsed) {
+      return {
+        output: parsed.notes || "",
+        verdict: parsed.verdict,
+        notes: parsed.notes,
+      };
     }
 
-    // Fallback: no structured block found, return raw output
-    return { output: trimmed };
+    const inferred = inferWorkflowStepVerdictFromProse(trimmed);
+    if (inferred) {
+      return {
+        output: inferred.notes || trimmed,
+        verdict: inferred.verdict,
+        notes: inferred.notes,
+      };
+    }
+
+    return { output: trimmed, malformed: true };
   }
 
   /**
