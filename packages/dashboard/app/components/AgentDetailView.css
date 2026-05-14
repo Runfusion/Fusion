@@ -1558,6 +1558,34 @@
   color: var(--color-warning);
 }
 
+.agent-heartbeat-auto-claim-card {
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+}
+
+.agent-heartbeat-preset-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.agent-heartbeat-preset-label {
+  display: block;
+  color: var(--text);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  font-weight: 600;
+  margin-bottom: calc(var(--space-xs) * 0.5);
+}
+
+.agent-heartbeat-preset-btn {
+  min-height: calc(var(--space-xl) + var(--space-md));
+  flex-shrink: 0;
+}
+
 /* === Agent Detail View Mobile Responsive === */
 @media (max-width: 768px) {
   .agent-heartbeat-preset-row {
@@ -1567,6 +1595,7 @@
 
   .agent-heartbeat-preset-btn {
     width: 100%;
+    min-height: calc(var(--space-xl) + var(--space-md));
   }
 
   .config-runtime-tabs {
