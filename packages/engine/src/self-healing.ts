@@ -238,6 +238,7 @@ interface LandedTaskCommit {
   filesChanged?: number;
   insertions?: number;
   deletions?: number;
+  rebaseBaseSha?: string;
 }
 
 type AlreadyMergedDetectionStrategy = "trailer" | "ancestry" | "patch-id" | "tree-equal";
@@ -2580,6 +2581,7 @@ export class SelfHealingManager {
           if (landedCommit) {
             const mergeDetails: MergeDetails = {
               commitSha: landedCommit.sha,
+              rebaseBaseSha: landedCommit.rebaseBaseSha,
               filesChanged: landedCommit.filesChanged,
               insertions: landedCommit.insertions,
               deletions: landedCommit.deletions,
@@ -2704,6 +2706,7 @@ export class SelfHealingManager {
                 insertions: nextInsertions,
                 deletions: nextDeletions,
                 mergeCommitMessage: task.mergeDetails?.mergeCommitMessage ?? landed.subject,
+                rebaseBaseSha: task.mergeDetails?.rebaseBaseSha ?? landed.rebaseBaseSha,
                 mergedAt: task.mergeDetails?.mergedAt ?? new Date().toISOString(),
                 prNumber: task.prInfo?.number,
               },
@@ -2756,6 +2759,7 @@ export class SelfHealingManager {
               insertions: landedStats.insertions,
               deletions: landedStats.deletions,
               mergeCommitMessage: landed.subject,
+              rebaseBaseSha: task.mergeDetails?.rebaseBaseSha ?? landed.rebaseBaseSha,
               mergedAt: task.mergeDetails?.mergedAt ?? new Date().toISOString(),
               mergeConfirmed: true,
               prNumber: task.prInfo?.number,
@@ -2898,6 +2902,7 @@ export class SelfHealingManager {
           if (landedCommit) {
             const mergeDetails: MergeDetails = {
               commitSha: landedCommit.sha,
+              rebaseBaseSha: landedCommit.rebaseBaseSha,
               filesChanged: landedCommit.filesChanged,
               insertions: landedCommit.insertions,
               deletions: landedCommit.deletions,

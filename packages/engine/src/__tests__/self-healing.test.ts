@@ -5443,6 +5443,108 @@ describe("recoverDoneTaskMergeMetadata", () => {
     manager.stop();
   });
 
+  it("populates rebaseBaseSha from landed commit when missing", async () => {
+    const store = createMockStore();
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: "FN-4518-A",
+        column: "done",
+        paused: false,
+        mergeDetails: { commitSha: "merge1", mergeConfirmed: false },
+      },
+    ]);
+
+    vi.spyOn(manager as any, "findLandedTaskCommit").mockResolvedValue({
+      sha: "merge1",
+      subject: "fix(FN-4518): landed",
+      filesChanged: 2,
+      insertions: 4,
+      deletions: 1,
+      rebaseBaseSha: "base1",
+    });
+
+    const repaired = await manager.recoverDoneTaskMergeMetadata();
+
+    expect(repaired).toBe(1);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4518-A", {
+      mergeDetails: expect.objectContaining({
+        commitSha: "merge1",
+        rebaseBaseSha: "base1",
+      }),
+    });
+
+    manager.stop();
+  });
+
+  it("does not overwrite existing rebaseBaseSha during reconciliation", async () => {
+    const store = createMockStore();
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: "FN-4518-B",
+        column: "done",
+        paused: false,
+        mergeDetails: { commitSha: "merge1", mergeConfirmed: false, rebaseBaseSha: "existing-base" },
+      },
+    ]);
+
+    vi.spyOn(manager as any, "findLandedTaskCommit").mockResolvedValue({
+      sha: "merge1",
+      subject: "fix(FN-4518): landed",
+      filesChanged: 2,
+      insertions: 4,
+      deletions: 1,
+      rebaseBaseSha: "incoming-base",
+    });
+
+    const repaired = await manager.recoverDoneTaskMergeMetadata();
+
+    expect(repaired).toBe(1);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4518-B", {
+      mergeDetails: expect.objectContaining({
+        rebaseBaseSha: "existing-base",
+      }),
+    });
+
+    manager.stop();
+  });
+
+  it("keeps rebaseBaseSha undefined when neither stored nor landed provides it", async () => {
+    const store = createMockStore();
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: "FN-4518-C",
+        column: "done",
+        paused: false,
+        mergeDetails: { commitSha: "merge1", mergeConfirmed: false },
+      },
+    ]);
+
+    vi.spyOn(manager as any, "findLandedTaskCommit").mockResolvedValue({
+      sha: "merge1",
+      subject: "fix(FN-4518): landed",
+      filesChanged: 2,
+      insertions: 4,
+      deletions: 1,
+    });
+
+    const repaired = await manager.recoverDoneTaskMergeMetadata();
+
+    expect(repaired).toBe(1);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-4518-C", {
+      mergeDetails: expect.not.objectContaining({
+        rebaseBaseSha: expect.any(String),
+      }),
+    });
+
+    manager.stop();
+  });
+
   it("FN-3862: confirmed task with unreachable stored SHA is preserved with warning", async () => {
     const store = createMockStore();
     const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });

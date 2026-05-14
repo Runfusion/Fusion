@@ -143,6 +143,27 @@ describe("formatTrackingComment", () => {
     expect(comment).toContain("Merged: 2026-05-12T10:00:00.000Z");
   });
 
+  it("keeps aggregate Files line when rebaseBaseSha is present", () => {
+    const comment = formatTrackingComment(
+      {
+        id: "FN-1",
+        title: "Build thing",
+        branch: "fusion/fn-1",
+        mergeDetails: {
+          commitSha: "abcdef1234567890",
+          rebaseBaseSha: "1234567890abcdef",
+          mergeCommitMessage: "feat(FN-1): ship thing\n\nbody",
+          filesChanged: 3,
+          insertions: 42,
+          deletions: 5,
+        },
+      },
+      "done",
+    );
+
+    expect(comment).toContain("Files: 3 changed (+42 / -5)");
+  });
+
   it("omits empty merge placeholders when only commit details are present", () => {
     const comment = formatTrackingComment(
       {
