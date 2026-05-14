@@ -287,9 +287,12 @@ describe("WorkflowStepManager", () => {
         mode: "prompt",
         phase: "pre-merge",
         prompt: undefined,
+        gateMode: "advisory",
         scriptName: undefined,
         enabled: true,
         defaultOn: undefined,
+        modelProvider: undefined,
+        modelId: undefined,
       }, undefined);
       expect(addToast).toHaveBeenCalledWith("Workflow step created", "success");
     });
@@ -479,6 +482,50 @@ describe("WorkflowStepManager", () => {
     expect(screen.queryByTestId("workflow-step-script-select")).not.toBeInTheDocument();
   });
 
+  it("renders gate mode dropdown and saves edited gate mode", async () => {
+    const stepsWithGateMode: WorkflowStep[] = [
+      { ...mockSteps[0], gateMode: "gate" as const },
+    ];
+    vi.mocked(fetchWorkflowSteps)
+      .mockResolvedValueOnce(stepsWithGateMode)
+      .mockResolvedValueOnce(stepsWithGateMode);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await screen.findByText("Documentation Review");
+    fireEvent.click(screen.getByLabelText("Edit Documentation Review"));
+
+    const gateSelect = screen.getByTestId("workflow-step-gateMode") as HTMLSelectElement;
+    expect(gateSelect.value).toBe("gate");
+
+    fireEvent.change(gateSelect, { target: { value: "advisory" } });
+    fireEvent.click(screen.getByTestId("save-workflow-step"));
+
+    await waitFor(() => {
+      expect(updateWorkflowStep).toHaveBeenCalledWith(
+        "WS-001",
+        expect.objectContaining({ gateMode: "advisory" }),
+        undefined,
+      );
+    });
+  });
+
+  it("defaults gate mode by execution mode when creating", async () => {
+    vi.mocked(fetchWorkflowSteps).mockResolvedValueOnce([]);
+
+    render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
+
+    await screen.findByTestId("add-workflow-step");
+    fireEvent.click(screen.getByTestId("add-workflow-step"));
+    fireEvent.click(screen.getByTestId("create-custom-step"));
+
+    const gateSelect = screen.getByTestId("workflow-step-gateMode") as HTMLSelectElement;
+    expect(gateSelect.value).toBe("advisory");
+
+    fireEvent.click(screen.getByTestId("mode-script"));
+    expect((screen.getByTestId("workflow-step-gateMode") as HTMLSelectElement).value).toBe("gate");
+  });
+
   it("loads script name when editing a script-mode step", async () => {
     vi.mocked(fetchWorkflowSteps)
       .mockResolvedValueOnce([{ ...mockSteps[0], mode: "script" as const, scriptName: "test", prompt: "" }])
@@ -555,9 +602,12 @@ describe("WorkflowStepManager", () => {
         mode: "prompt",
         phase: "post-merge",
         prompt: undefined,
+        gateMode: "advisory",
         scriptName: undefined,
         enabled: true,
         defaultOn: undefined,
+        modelProvider: undefined,
+        modelId: undefined,
       }, undefined);
       expect(addToast).toHaveBeenCalledWith("Workflow step created", "success");
     });
