@@ -358,6 +358,7 @@ export class SelfHealingManager {
   // ── Per-task deadlock recovery cooldown ─────────────────────────────
   private deadlockRecoveryCooldown: Map<string, number> = new Map();
   private mergeStarvationDrops: Map<string, number> = new Map();
+  private orphanArchivedAcknowledged = new Set<string>();
 
   constructor(
     private store: TaskStore,
@@ -3864,14 +3865,14 @@ export class SelfHealingManager {
 
   private async inspectOrphanedBranch(branch: string): Promise<OrphanBranchInspection | null> {
     try {
-      const tipSha = String(execSync(`git rev-parse --verify "${branch}"`, {
+      const tipSha = String(execSync(`git rev-parse --verify ${shellQuote(branch)}`, {
         cwd: this.options.rootDir,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
       })).trim();
       if (!tipSha) return null;
 
-      const uniqueCommitCount = Number.parseInt(String(execSync(`git rev-list --count "${branch}" --not main`, {
+      const uniqueCommitCount = Number.parseInt(String(execSync(`git rev-list --count ${shellQuote(branch)} --not ${shellQuote("main")}`, {
         cwd: this.options.rootDir,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
@@ -3879,7 +3880,7 @@ export class SelfHealingManager {
 
       let uniqueCommitSubjects: string[] = [];
       if (uniqueCommitCount > 0) {
-        const subjectOutput = String(execSync(`git log --format=%s --max-count=${ORPHAN_RESCUE_SUBJECT_CAP} "${branch}" --not main`, {
+        const subjectOutput = String(execSync(`git log --format=%s --max-count=${ORPHAN_RESCUE_SUBJECT_CAP} ${shellQuote(branch)} --not ${shellQuote("main")}`, {
           cwd: this.options.rootDir,
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"],
@@ -3923,7 +3924,7 @@ export class SelfHealingManager {
 
         if (inspection.uniqueCommitCount <= 0) {
           try {
-            execSync(`git branch -d "${branch}"`, {
+            execSync(`git branch -d ${shellQuote(branch)}`, {
               cwd: this.options.rootDir,
               stdio: ["pipe", "pipe", "pipe"],
             });
@@ -3958,16 +3959,8 @@ export class SelfHealingManager {
         const existingBranchTask = allTasks.find((task) => task.branch === branch);
 
         if (matchedTask?.column === "archived") {
-          const metadata = (matchedTask.metadata && typeof matchedTask.metadata === "object")
-            ? matchedTask.metadata as Record<string, unknown>
-            : {};
-          if (metadata.orphanRescueAcknowledged !== true) {
-            await this.store.updateTask(matchedTask.id, {
-              metadata: {
-                ...metadata,
-                orphanRescueAcknowledged: true,
-              },
-            });
+          if (!this.orphanArchivedAcknowledged.has(matchedTask.id)) {
+            this.orphanArchivedAcknowledged.add(matchedTask.id);
             log.warn(`[recovery] orphan-rescue-archived-skip ${matchedTask.id} branch=${branch} tip=${inspection.tipSha.slice(0, 12)} unique=${inspection.uniqueCommitCount}`);
           }
           continue;

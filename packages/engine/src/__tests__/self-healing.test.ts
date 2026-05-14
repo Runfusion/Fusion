@@ -126,6 +126,7 @@ function createMockStore(overrides: Record<string, unknown> = {}): TaskStore & E
     archiveTaskAndCleanup: vi.fn().mockResolvedValue({} as Task),
     walCheckpoint: vi.fn().mockReturnValue({ busy: 0, log: 5, checkpointed: 5 }),
     listTasks: vi.fn().mockResolvedValue([]),
+    createTask: vi.fn().mockResolvedValue({ id: "FN-RESCUE", lineageId: "lin-rescue" }),
     getRootDir: vi.fn().mockReturnValue("/tmp/test-project"),
     clearStaleExecutionStartBranchReferences: vi.fn().mockReturnValue([]),
     ...overrides,
@@ -1304,11 +1305,11 @@ describe("SelfHealingManager", () => {
 
       expect(result).toBe(2);
       expect(mockedExecSync).toHaveBeenCalledWith(
-        expect.stringContaining('git branch -d "fusion/fn-001"'),
+        expect.stringContaining("git branch -d 'fusion/fn-001'"),
         expect.objectContaining({ cwd: "/tmp/test-project" }),
       );
       expect(mockedExecSync).toHaveBeenCalledWith(
-        expect.stringContaining('git branch -d "fusion/fn-002"'),
+        expect.stringContaining("git branch -d 'fusion/fn-002'"),
         expect.objectContaining({ cwd: "/tmp/test-project" }),
       );
     });
@@ -1337,7 +1338,7 @@ describe("SelfHealingManager", () => {
 
       const result = await manager.cleanupOrphanedBranches();
 
-      expect(result).toBe(0);
+      expect(result).toBe(1);
     });
 
     it("returns 0 when scanOrphanedBranches throws", async () => {

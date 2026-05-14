@@ -96,9 +96,7 @@ describe("self-healing orphan branch rescue", () => {
     const result = await manager.cleanupOrphanedBranches();
 
     expect(result).toBe(0);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-4470", expect.objectContaining({
-      metadata: expect.objectContaining({ orphanRescueAcknowledged: true }),
-    }));
+    expect(store.updateTask).not.toHaveBeenCalled();
     expect(store.createTask).not.toHaveBeenCalled();
   });
 });
