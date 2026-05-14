@@ -801,6 +801,48 @@ fn message delete MSG-123
 
 ---
 
+## `fn chat`
+
+Interactive CLI conversation loop with a specific agent.
+
+```bash
+fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>]
+```
+
+### Behavior
+
+- `fn chat <agent-id>` starts an interactive REPL.
+- `fn chat <agent-id> <message…>` sends one message and waits for a reply (`--once` implied).
+- Messages are sent as `user-to-agent` records from CLI user `cli` with `metadata.wakeRecipient=true`.
+- Replies are polled from the CLI user inbox and printed as they arrive.
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--once` | Send one message and exit after first reply (or timeout). |
+| `--non-interactive` | Read full stdin to EOF as message body (useful for pipes/scripts). |
+| `--poll-ms <n>` | Poll interval in milliseconds (default `1000`, or `FUSION_CHAT_POLL_MS`). |
+
+### Examples
+
+```bash
+# Interactive session
+fn chat agent-abc123
+
+# One-shot message (positional message implies --once)
+fn chat agent-abc123 "status update?"
+
+# Scripted one-shot from stdin
+printf "deploy report" | fn chat agent-abc123 --once --non-interactive
+```
+
+> Agent replies require a running engine for the same project (for example `fn dashboard` or `fn serve`).
+>
+> See [Agents: Interactive CLI Chat](./agents.md#interactive-cli-chat) for agent-oriented details.
+
+---
+
 ## `fn settings`
 
 Show and manage settings.
@@ -918,5 +960,8 @@ Subcommands: `search`, `install`.
 | `--skip-existing` | `fn agent import` |
 | `--company-name` | `fn agent export` |
 | `--company-slug` | `fn agent export` |
+| `--once` | `fn chat` |
+| `--non-interactive` | `fn chat` |
+| `--poll-ms` | `fn chat` |
 
 For configuration details used by these commands, see [Settings Reference](./settings-reference.md).
