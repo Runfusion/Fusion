@@ -102,7 +102,7 @@ describe("branch-conflicts", () => {
     expect(result).toEqual({ kind: "stale-resolved" });
   });
 
-  it("FN-4476/FN-4471: classifies live branch at main tip as fully-subsumed even with stale-base churn", async () => {
+  it("FN-4476/FN-4471: classifies live branch at main tip as tip-already-merged even with stale-base churn", async () => {
     mockedExecSync.mockImplementation((cmd: string | string[]) => {
       const command = typeof cmd === "string" ? cmd : cmd[0];
       if (command === "git worktree prune") return Buffer.from("");
@@ -121,11 +121,14 @@ describe("branch-conflicts", () => {
       if (command === "git merge-base 'main' 'fusion/fn-4068'") {
         return Buffer.from("50ccd27a\n");
       }
+      if (command === "git merge-base --is-ancestor 'abc123def456' 'main'") {
+        return Buffer.from("");
+      }
       if (command === "git cherry 'main' 'fusion/fn-4068' '50ccd27a'") {
         return Buffer.from("");
       }
       if (command.includes("git log --reverse --format=%H%x09%s 'main..fusion/fn-4068'")) {
-        throw new Error("stale-base rev-list should not run when git cherry succeeds");
+        throw new Error("stale-base rev-list should not run when tip is already merged");
       }
       if (command.includes("git log --format=%H%x00%s%x00%b 'main..fusion/fn-4068'")) {
         return Buffer.from("");
@@ -142,9 +145,10 @@ describe("branch-conflicts", () => {
     });
 
     expect(result).toEqual({
-      kind: "fully-subsumed",
+      kind: "tip-already-merged",
       livePath: "/tmp/existing-wt",
       tipSha: "abc123def456",
+      integrationRef: "main",
     });
   });
 
