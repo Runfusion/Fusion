@@ -5929,17 +5929,35 @@ ${failureFeedback}
 
       if (this.isFrontendUxStep(ws)) {
         try {
-          const scopedFiles = await this.captureModifiedFiles(worktreePath, currentTask.baseCommitSha);
-          if (scopedFiles.length > 0 && !this.hasFrontendFilesInScope(scopedFiles)) {
+          const diffScopedFiles = await this.captureModifiedFiles(worktreePath, currentTask.baseCommitSha);
+          const declaredScopedFiles = await this.store.parseFileScopeFromPrompt(task.id).catch(() => [] as string[]);
+          const diffHasSignal = diffScopedFiles.length > 0;
+          const declaredHasSignal = declaredScopedFiles.length > 0;
+          const diffHasFrontendFiles = diffHasSignal && this.hasFrontendFilesInScope(diffScopedFiles);
+          const declaredHasFrontendFiles = declaredHasSignal && this.hasFrontendFilesInScope(declaredScopedFiles);
+
+          const shouldSkipForDiffOnly = diffHasSignal && !declaredHasSignal && !diffHasFrontendFiles;
+          const shouldSkipForDeclaredOnly = declaredHasSignal && !diffHasSignal && !declaredHasFrontendFiles;
+          const shouldSkipForBothSignals = diffHasSignal && declaredHasSignal && !diffHasFrontendFiles && !declaredHasFrontendFiles;
+
+          if (shouldSkipForDiffOnly || shouldSkipForDeclaredOnly || shouldSkipForBothSignals) {
+            const skippedForDeclaredScope = shouldSkipForDeclaredOnly || shouldSkipForBothSignals;
             results.push({
               workflowStepId: ws.id,
               workflowStepName: ws.name,
               phase: stepPhase,
               status: "skipped",
-              output: "No frontend/UI files in diff scope — auto-skipped (FN-3906)",
+              output: skippedForDeclaredScope
+                ? "Declared File Scope contains no frontend/UI files — auto-skipped (FN-4343)"
+                : "No frontend/UI files in diff scope — auto-skipped (FN-3906)",
             });
             await this.store.updateTask(task.id, { workflowStepResults: results });
-            await this.store.logEntry(task.id, "[pre-merge] Auto-skipped Frontend UX Design — no frontend/UI files in diff scope");
+            await this.store.logEntry(
+              task.id,
+              skippedForDeclaredScope
+                ? "[pre-merge] Auto-skipped Frontend UX Design — declared File Scope contains no frontend/UI files (FN-4343)"
+                : "[pre-merge] Auto-skipped Frontend UX Design — no frontend/UI files in diff scope",
+            );
             continue;
           }
         } catch {
