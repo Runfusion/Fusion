@@ -119,6 +119,7 @@ interface TaskRow {
   sourceIssueUrl: string | null;
   mergeDetails: string | null;
   breakIntoSubtasks: number | null;
+  noCommitsExpected: number | null;
   enabledWorkflowSteps: string | null;
   modifiedFiles: string | null;
   missionId: string | null;
@@ -1087,6 +1088,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       })(),
       mergeDetails: fromJson<import("./types.js").MergeDetails>(row.mergeDetails),
       breakIntoSubtasks: row.breakIntoSubtasks ? true : undefined,
+      noCommitsExpected: row.noCommitsExpected ? true : undefined,
       enabledWorkflowSteps: (() => { const e = fromJson<string[]>(row.enabledWorkflowSteps); return e && e.length > 0 ? e : undefined; })(),
       modifiedFiles: (() => { const m = fromJson<string[]>(row.modifiedFiles); return m && m.length > 0 ? m : undefined; })(),
       missionId: row.missionId || undefined,
@@ -1155,6 +1157,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       planningModelProvider: entry.planningModelProvider,
       planningModelId: entry.planningModelId,
       breakIntoSubtasks: entry.breakIntoSubtasks,
+      noCommitsExpected: entry.noCommitsExpected,
       modifiedFiles: slim ? undefined : entry.modifiedFiles,
       missionId: entry.missionId,
       sliceId: entry.sliceId,
@@ -1284,6 +1287,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       planningModelProvider: task.planningModelProvider,
       planningModelId: task.planningModelId,
       breakIntoSubtasks: task.breakIntoSubtasks,
+      noCommitsExpected: task.noCommitsExpected,
       baseBranch: task.baseBranch,
       branch: task.branch,
       baseCommitSha: task.baseCommitSha,
@@ -1347,7 +1351,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "createdAt", "updatedAt", "columnMovedAt", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "comments", "review", "reviewState", "workflowStepResults", "steeringComments",
       "attachments", "prInfo", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
-      "breakIntoSubtasks", "enabledWorkflowSteps", "modifiedFiles",
+      "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles",
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
       "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch",
@@ -1396,7 +1400,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "createdAt", "updatedAt", "columnMovedAt", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "attachments", "steeringComments",
       "comments", "review", "reviewState", "workflowStepResults", "prInfo", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
-      "breakIntoSubtasks", "enabledWorkflowSteps", "modifiedFiles",
+      "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles",
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
       "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch",
@@ -1498,6 +1502,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.sourceIssue?.url ?? null,
       toJsonNullable(task.mergeDetails),
       task.breakIntoSubtasks ? 1 : 0,
+      task.noCommitsExpected ? 1 : 0,
       toJson(task.enabledWorkflowSteps || []),
       toJson(task.modifiedFiles || []),
       task.missionId ?? null,
@@ -1545,7 +1550,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         dependencies, steps, log, attachments, steeringComments,
         comments, review, reviewState, workflowStepResults, prInfo, issueInfo, githubTracking,
         sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl,
-        mergeDetails, breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch
+        mergeDetails, breakIntoSubtasks, noCommitsExpected, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch
       ) VALUES (${placeholders})
     `).run(...values);
     this.db.bumpLastModified();
@@ -1570,7 +1575,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         dependencies, steps, log, attachments, steeringComments,
         comments, review, reviewState, workflowStepResults, prInfo, issueInfo, githubTracking,
         sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl,
-        mergeDetails, breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch
+        mergeDetails, breakIntoSubtasks, noCommitsExpected, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch
       ) VALUES (${placeholders})
       ON CONFLICT(id) DO UPDATE SET
         lineageId = excluded.lineageId,
@@ -1644,6 +1649,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         sourceIssueUrl = excluded.sourceIssueUrl,
         mergeDetails = excluded.mergeDetails,
         breakIntoSubtasks = excluded.breakIntoSubtasks,
+        noCommitsExpected = excluded.noCommitsExpected,
         enabledWorkflowSteps = excluded.enabledWorkflowSteps,
         modifiedFiles = excluded.modifiedFiles,
         missionId = excluded.missionId,
@@ -2945,6 +2951,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       column: input.column || "triage",
       dependencies: input.dependencies || [],
       breakIntoSubtasks: input.breakIntoSubtasks === true ? true : undefined,
+      noCommitsExpected: input.noCommitsExpected === true ? true : undefined,
       enabledWorkflowSteps: resolvedWorkflowSteps,
       modelPresetId: input.modelPresetId,
       assignedAgentId: input.assignedAgentId,
@@ -3906,7 +3913,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; status?: string | null; dependencies?: string[]; steps?: import("./types.js").TaskStep[]; currentStep?: number; blockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; tokenBudgetSoftAlertedAt?: string | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("./types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("./types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; postReviewFixCount?: number | null; recoveryRetryCount?: number | null; taskDoneRetryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningModelId?: string | null; thinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("./types.js").TaskReview | null; reviewState?: import("./types.js").TaskReviewState | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; mergeDetails?: import("./types.js").MergeDetails | null; sourceIssue?: import("./types.js").TaskSourceIssue | null; githubTracking?: import("./types.js").TaskGithubTracking | null; tokenUsage?: import("./types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null },
+    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; status?: string | null; dependencies?: string[]; steps?: import("./types.js").TaskStep[]; currentStep?: number; blockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; tokenBudgetSoftAlertedAt?: string | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("./types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("./types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; postReviewFixCount?: number | null; recoveryRetryCount?: number | null; taskDoneRetryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningModelId?: string | null; thinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("./types.js").TaskReview | null; reviewState?: import("./types.js").TaskReviewState | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; mergeDetails?: import("./types.js").MergeDetails | null; sourceIssue?: import("./types.js").TaskSourceIssue | null; githubTracking?: import("./types.js").TaskGithubTracking | null; tokenUsage?: import("./types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null },
     runContext?: RunMutationContext,
   ): Promise<Task> {
     return this.withTaskLock(id, async () => {
@@ -4194,6 +4201,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       }
       if (updates.enabledWorkflowSteps !== undefined) {
         task.enabledWorkflowSteps = await this.resolveEnabledWorkflowSteps(updates.enabledWorkflowSteps);
+      }
+      if (updates.noCommitsExpected === null) {
+        task.noCommitsExpected = undefined;
+      } else if (updates.noCommitsExpected !== undefined) {
+        task.noCommitsExpected = updates.noCommitsExpected || undefined;
       }
       if (updates.modelProvider === null) {
         task.modelProvider = undefined;
@@ -7102,6 +7114,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       planningModelProvider: entry.planningModelProvider,
       planningModelId: entry.planningModelId,
       breakIntoSubtasks: entry.breakIntoSubtasks,
+      noCommitsExpected: entry.noCommitsExpected,
       modifiedFiles: entry.modifiedFiles,
       // Intentionally NOT restoring: worktree, status, blockedBy, paused, executionStartBranch, baseCommitSha, error
     };

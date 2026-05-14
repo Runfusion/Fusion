@@ -767,6 +767,39 @@ describe("TaskStore", () => {
   });
 
 
+  describe("noCommitsExpected persistence", () => {
+    it("round-trips noCommitsExpected=true through create and reload", async () => {
+      const created = await store.createTask({
+        description: "Decision-only task",
+        noCommitsExpected: true,
+      });
+
+      expect(created.noCommitsExpected).toBe(true);
+
+      const reloaded = await store.getTask(created.id);
+      expect(reloaded.noCommitsExpected).toBe(true);
+    });
+
+    it("keeps noCommitsExpected undefined when omitted", async () => {
+      const created = await store.createTask({ description: "Regular task" });
+
+      expect(created.noCommitsExpected).toBeUndefined();
+
+      const reloaded = await store.getTask(created.id);
+      expect(reloaded.noCommitsExpected).toBeUndefined();
+    });
+
+    it("updates noCommitsExpected via updateTask", async () => {
+      const created = await store.createTask({ description: "Toggle decision-only" });
+
+      const updated = await store.updateTask(created.id, { noCommitsExpected: true });
+      expect(updated.noCommitsExpected).toBe(true);
+
+      const reloaded = await store.getTask(created.id);
+      expect(reloaded.noCommitsExpected).toBe(true);
+    });
+  });
+
   describe("executionMode persistence", () => {
     it("sets executionMode to 'fast' via createTask and persists", async () => {
       const created = await store.createTask({

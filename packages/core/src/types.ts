@@ -1209,6 +1209,8 @@ export interface Task {
   dependencies: string[];
   /** User-requested hint for triage: prefer splitting into child tasks when appropriate. */
   breakIntoSubtasks?: boolean;
+  /** When true, this decision-only task is expected to complete without creating git commits. */
+  noCommitsExpected?: boolean;
   worktree?: string;
   steps: TaskStep[];
   currentStep: number;
@@ -2989,6 +2991,7 @@ export interface ArchivedTaskEntry {
   planningModelId?: string;
   /** Optional: other metadata to preserve */
   breakIntoSubtasks?: boolean;
+  noCommitsExpected?: boolean;
   paused?: boolean;
   baseBranch?: string;
   /** Actual git branch name used for this task's worktree */

@@ -226,10 +226,10 @@ async function migrateTasks(fusionDir: string, db: Database): Promise<void> {
       columnMovedAt, dependencies, steps, log, attachments, steeringComments,
       comments, workflowStepResults, prInfo, issueInfo,
       sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl,
-      mergeDetails, breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles, sliceId
+      mergeDetails, breakIntoSubtasks, noCommitsExpected, enabledWorkflowSteps, modifiedFiles, sliceId
     ) VALUES (
       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
   `);
 
@@ -295,6 +295,7 @@ async function migrateTasks(fusionDir: string, db: Database): Promise<void> {
         task.sourceIssue?.url ?? null,
         toJsonNullable(task.mergeDetails),
         task.breakIntoSubtasks ? 1 : 0,
+        task.noCommitsExpected ? 1 : 0,
         toJson(task.enabledWorkflowSteps || []),
         toJson(task.modifiedFiles || []),
         task.sliceId ?? null,
