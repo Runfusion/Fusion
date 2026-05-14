@@ -752,6 +752,8 @@ export class TaskExecutor {
   private depAborted = new Set<string>();
   /** Tasks killed by stuck task detector. Value = shouldRequeue (budget not exhausted). */
   private stuckAborted = new Map<string, boolean>();
+  /** Tasks explicitly canceled by user move (in-progress → todo). */
+  private userCanceledTaskIds = new Set<string>();
   /** In-memory loop recovery state per task. Keyed by taskId, not persisted.
    *  Tracks compact-and-resume attempt count per execute() lifecycle.
    *  Reset at execute() lifecycle end (finally block). */
@@ -1154,9 +1156,10 @@ export class TaskExecutor {
   ) {
     executorLog.log(`TaskExecutor constructed (rootDir=${rootDir}, hasSemaphore=${!!options.semaphore}, hasStuckDetector=${!!options.stuckTaskDetector})`);
 
-    store.on("task:moved", ({ task, from, to }) => {
+    store.on("task:moved", ({ task, from, to, source }) => {
       executorLog.log(`[event:task:moved] ${task.id}: ${from} → ${to}`);
       if (to === "in-progress") {
+        this.userCanceledTaskIds.delete(task.id);
         if (this.recoveringCompleted.has(task.id)) {
           executorLog.log(`[event:task:moved] Skipping execute() for ${task.id} — completed-task recovery in progress`);
           return;
@@ -1170,6 +1173,9 @@ export class TaskExecutor {
           executorLog.error(`Failed to start ${task.id}:`, err),
         );
       } else if (from === "in-progress") {
+        if (source === "user" && to === "todo") {
+          this.userCanceledTaskIds.add(task.id);
+        }
         this.clearCompletedTaskWatchdog(task.id);
         // Task moved away from in-progress — terminate any active sessions
         if (this.activeSessions.has(task.id)) {
@@ -1177,6 +1183,12 @@ export class TaskExecutor {
           this.pausedAborted.add(task.id);
           this.options.stuckTaskDetector?.untrackTask(task.id);
           const { session } = this.activeSessions.get(task.id)!;
+          const sessionWithAbort = session as AgentSession & { abort?: () => Promise<void> };
+          if (typeof sessionWithAbort.abort === "function") {
+            void sessionWithAbort.abort().catch((err) => {
+              executorLog.warn(`Failed to abort agent session for ${task.id}: ${err}`);
+            });
+          }
           session.dispose();
           this.activeSessions.delete(task.id);
         }
@@ -1185,6 +1197,12 @@ export class TaskExecutor {
           this.pausedAborted.add(task.id);
           this.options.stuckTaskDetector?.untrackTask(task.id);
           const stepExecutor = this.activeStepExecutors.get(task.id)!;
+          const stepExecutorWithAbort = stepExecutor as StepSessionExecutor & { abortAllSessionBash?: () => Promise<void> };
+          if (typeof stepExecutorWithAbort.abortAllSessionBash === "function") {
+            void stepExecutorWithAbort.abortAllSessionBash().catch((err) =>
+              executorLog.warn(`Failed to abort step-session bash for ${task.id}: ${err}`),
+            );
+          }
           stepExecutor.terminateAllSessions().catch((err) =>
             executorLog.error(`Failed to terminate step sessions for ${task.id}:`, err),
           );
@@ -3507,6 +3525,13 @@ export class TaskExecutor {
           // after unpause. This path fires when session.dispose() causes the
           // prompt to resolve gracefully instead of throwing.
           if (this.pausedAborted.has(task.id)) {
+            if (this.userCanceledTaskIds.has(task.id)) {
+              this.pausedAborted.delete(task.id);
+              this.stuckAborted.delete(task.id);
+              this.userCanceledTaskIds.delete(task.id);
+              await this.store.logEntry(task.id, "Execution canceled by user — leaving task in todo");
+              return;
+            }
             this.pausedAborted.delete(task.id);
             wasPaused = true;
             if (await this.shouldFinalizeCompletedTask(task.id, taskDone)) {
@@ -3532,6 +3557,13 @@ export class TaskExecutor {
           // (after this.executing is cleared) to prevent a race where the
           // scheduler re-dispatches while the old execution guard is still set.
           if (this.stuckAborted.has(task.id)) {
+            if (this.userCanceledTaskIds.has(task.id)) {
+              this.pausedAborted.delete(task.id);
+              this.stuckAborted.delete(task.id);
+              this.userCanceledTaskIds.delete(task.id);
+              await this.store.logEntry(task.id, "Execution canceled by user — leaving task in todo");
+              return;
+            }
             stuckRequeue = this.stuckAborted.get(task.id) ?? true;
             this.stuckAborted.delete(task.id);
             executorLog.log(`${task.id} terminated by stuck task detector (graceful session exit)`);
@@ -3906,6 +3938,13 @@ export class TaskExecutor {
         this.options.onComplete?.(task);
       } else if (this.pausedAborted.has(task.id)) {
         // Task was paused mid-execution — clean up worktree and move to todo
+        if (this.userCanceledTaskIds.has(task.id)) {
+          this.pausedAborted.delete(task.id);
+          this.stuckAborted.delete(task.id);
+          this.userCanceledTaskIds.delete(task.id);
+          await this.store.logEntry(task.id, "Execution canceled by user — leaving task in todo");
+          return;
+        }
         this.pausedAborted.delete(task.id);
         if (await this.shouldFinalizeCompletedTask(task.id, taskDone)) {
           if (await this.shouldDeferCompletionForGlobalPause(task.id, "paused after completion")) {
@@ -3936,6 +3975,13 @@ export class TaskExecutor {
       } else if (this.stuckAborted.has(task.id)) {
         // Task was killed by stuck task detector — defer requeue to finally block
         // (after this.executing is cleared) to prevent re-dispatch race.
+        if (this.userCanceledTaskIds.has(task.id)) {
+          this.pausedAborted.delete(task.id);
+          this.stuckAborted.delete(task.id);
+          this.userCanceledTaskIds.delete(task.id);
+          await this.store.logEntry(task.id, "Execution canceled by user — leaving task in todo");
+          return;
+        }
         stuckRequeue = this.stuckAborted.get(task.id) ?? true;
         this.stuckAborted.delete(task.id);
         executorLog.log(`${task.id} terminated by stuck task detector — will ${stuckRequeue ? "retry" : "not retry (budget exhausted)"}`);
@@ -4268,6 +4314,13 @@ export class TaskExecutor {
       // which caused the new execute() call to silently no-op, stranding the
       // task in "in-progress" with no active session or worktree.
       if (stuckRequeue === true) {
+        if (this.userCanceledTaskIds.has(task.id)) {
+          this.pausedAborted.delete(task.id);
+          this.stuckAborted.delete(task.id);
+          this.userCanceledTaskIds.delete(task.id);
+          await this.store.logEntry(task.id, "Execution canceled by user — leaving task in todo");
+          return;
+        }
         try {
           // Re-read latest task state. While this execute() invocation was
           // unwinding, self-healing (e.g. recoverCompletedTasks) may have
