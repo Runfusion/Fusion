@@ -2493,7 +2493,7 @@ describe("aiMergeTask post-squash audit gate", () => {
     });
   }
 
-  function setupRebaseRouteExecSync() {
+  function setupRebaseRouteExecSync(treeOverrides?: Record<string, string | Error>) {
     let headIndex = 0;
     const landedHeads = ["landedcommit001", "landedcommit002"];
     mockedExecSync.mockImplementation((cmd: any) => {
@@ -2502,6 +2502,14 @@ describe("aiMergeTask post-squash audit gate", () => {
       if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
       if (cmdStr === "git rev-parse HEAD" || cmdStr.startsWith("git rev-parse HEAD ")) {
         return (headIndex > 0 ? landedHeads[Math.min(headIndex - 1, landedHeads.length - 1)] : "basehead123") as any;
+      }
+      if (cmdStr.includes("^{tree}") && treeOverrides) {
+        for (const [ref, value] of Object.entries(treeOverrides)) {
+          if (cmdStr.includes(`git rev-parse ${ref}^{tree}`) || cmdStr.includes(`git rev-parse "${ref}"^{tree}`)) {
+            if (value instanceof Error) throw value;
+            return `${value}\n` as any;
+          }
+        }
       }
       if (cmdStr.includes('git rev-parse "main"') || cmdStr.includes("git rev-parse main")) return "basehead123" as any;
       if (cmdStr.includes('git rev-list --count "main..fusion/fn-050"')) return "2\n" as any;
@@ -2616,6 +2624,136 @@ describe("aiMergeTask post-squash audit gate", () => {
       strategy: "squash",
       squashSha: "mergedcommit123",
     });
+  });
+
+  it("clears overlap-only post-rebase findings when branch-tip tree is verified despite audit ref drift (FN-4344)", async () => {
+    setupRebaseRouteExecSync({
+      landedcommit002: "tree-unverified",
+      "fusion/fn-050": "tree-verified",
+    });
+    mockedAuditSquashMerge.mockResolvedValue({
+      strategy: "rebase",
+      rangeBaseSha: "basehead123",
+      rangeHeadSha: "landedcommit002",
+      parentSha: "basehead123",
+      auditTargetLabel: "basehead123..landedcommit002",
+      lookback: 30,
+      branchSubjects: ["fix: substantive one", "feat: substantive two"],
+      recentMainSubjects: [],
+      duplicateSubjects: [],
+      touchedFiles: ["src/feature-a.ts"],
+      touchedFileOverlaps: [{
+        type: "touched-file-overlap",
+        file: "src/feature-a.ts",
+        recentMainCommits: [{ sha: "abc1234", subject: "fix: overlap" }],
+      }],
+      findings: [{
+        type: "touched-file-overlap",
+        file: "src/feature-a.ts",
+        recentMainCommits: [{ sha: "abc1234", subject: "fix: overlap" }],
+      }],
+      issueCount: 1,
+      clean: false,
+    });
+    mockedExistsSync.mockReturnValue(false);
+    const store = createAuditStore({ postMergeAuditMode: "block", testCommand: undefined, buildCommand: undefined }, { branch: "fusion/fn-050" });
+    vi.mocked(store.getVerificationCacheHit).mockImplementation((treeSha: string) => (
+      treeSha === "tree-verified" ? { recordedAt: "2026-05-13T00:00:00.000Z", taskId: "FN-049" } : null
+    ));
+
+    await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(store.appendAgentLog).toHaveBeenCalledWith(
+      "FN-050",
+      expect.stringContaining("post-rebase audit overlap cleared by deterministic verification"),
+      "text",
+      expect.any(String),
+      "merger",
+    );
+  });
+
+  it("keeps blocking overlap-only post-rebase findings when neither ref tree is verified (FN-4344)", async () => {
+    setupRebaseRouteExecSync({
+      landedcommit002: "tree-unverified-a",
+      "fusion/fn-050": "tree-unverified-b",
+    });
+    mockedAuditSquashMerge.mockResolvedValue({
+      strategy: "rebase",
+      rangeBaseSha: "basehead123",
+      rangeHeadSha: "landedcommit002",
+      parentSha: "basehead123",
+      auditTargetLabel: "basehead123..landedcommit002",
+      lookback: 30,
+      branchSubjects: ["fix: substantive one", "feat: substantive two"],
+      recentMainSubjects: [],
+      duplicateSubjects: [],
+      touchedFiles: ["src/feature-a.ts"],
+      touchedFileOverlaps: [{
+        type: "touched-file-overlap",
+        file: "src/feature-a.ts",
+        recentMainCommits: [{ sha: "abc1234", subject: "fix: overlap" }],
+      }],
+      findings: [{
+        type: "touched-file-overlap",
+        file: "src/feature-a.ts",
+        recentMainCommits: [{ sha: "abc1234", subject: "fix: overlap" }],
+      }],
+      issueCount: 1,
+      clean: false,
+    });
+    mockedExistsSync.mockReturnValue(false);
+    const store = createAuditStore({ postMergeAuditMode: "block", testCommand: undefined, buildCommand: undefined }, { branch: "fusion/fn-050" });
+    vi.mocked(store.getVerificationCacheHit).mockReturnValue(null);
+
+    await expect(aiMergeTask(store, "/tmp/root", "FN-050")).rejects.toThrow(/post-rebase range audit blocked auto-completion/);
+
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-050", "done");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-050", { status: null });
+  });
+
+  it("continues to branch-tip lookup when audit ref tree is unresolvable and still short-circuits on cache hit (FN-4344)", async () => {
+    const auditTreeError = new Error("fatal: bad revision 'landedcommit002^{tree}'");
+    setupRebaseRouteExecSync({
+      landedcommit002: auditTreeError,
+      "fusion/fn-050": "tree-verified",
+    });
+    mockedAuditSquashMerge.mockResolvedValue({
+      strategy: "rebase",
+      rangeBaseSha: "basehead123",
+      rangeHeadSha: "landedcommit002",
+      parentSha: "basehead123",
+      auditTargetLabel: "basehead123..landedcommit002",
+      lookback: 30,
+      branchSubjects: ["fix: substantive one", "feat: substantive two"],
+      recentMainSubjects: [],
+      duplicateSubjects: [],
+      touchedFiles: ["src/feature-a.ts"],
+      touchedFileOverlaps: [{
+        type: "touched-file-overlap",
+        file: "src/feature-a.ts",
+        recentMainCommits: [{ sha: "abc1234", subject: "fix: overlap" }],
+      }],
+      findings: [{
+        type: "touched-file-overlap",
+        file: "src/feature-a.ts",
+        recentMainCommits: [{ sha: "abc1234", subject: "fix: overlap" }],
+      }],
+      issueCount: 1,
+      clean: false,
+    });
+    mockedExistsSync.mockReturnValue(false);
+    const store = createAuditStore({ postMergeAuditMode: "block", testCommand: undefined, buildCommand: undefined }, { branch: "fusion/fn-050" });
+    vi.mocked(store.getVerificationCacheHit).mockImplementation((treeSha: string) => (
+      treeSha === "tree-verified" ? { recordedAt: "2026-05-13T00:00:00.000Z", taskId: "FN-049" } : null
+    ));
+    const warnSpy = vi.spyOn(mergerLog, "warn");
+
+    await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    expect(store.moveTask).toHaveBeenCalledWith("FN-050", "done");
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("could not resolve post-merge audit verification tree for ref landedcommit002"));
+    warnSpy.mockRestore();
   });
 
   it("honors the per-task always-squash override", async () => {
