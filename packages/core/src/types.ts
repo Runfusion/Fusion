@@ -2657,12 +2657,6 @@ export interface ProjectSettings {
    *  in their prompts and will not read or write to .fusion/memory/ files.
    *  Default: true (enabled for backward compatibility). */
   memoryEnabled?: boolean;
-  /** Agent memory prompt inclusion mode for this project.
-   *  - "full": inline full curated memory content into prompts
-   *  - "index": include only a compact memory index and fetch details via tools
-   *  - "off": omit agent-memory prompt sections entirely
-   */
-  agentMemoryInclusionMode?: AgentMemoryInclusionMode;
   /** Memory backend type for pluggable memory storage.
    *  Available built-in backends:
    *  - "qmd": QMD (Quantized Memory Distillation) backend using the qmd CLI tool (default)

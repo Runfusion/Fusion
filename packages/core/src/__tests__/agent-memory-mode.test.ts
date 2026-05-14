@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Agent, GlobalSettings, ProjectSettings } from "../types.js";
+import type { Agent, GlobalSettings } from "../types.js";
 import { resolveAgentMemoryInclusionMode } from "../agent-memory-mode.js";
 
 function makeAgent(mode?: unknown): Agent {
@@ -16,22 +16,12 @@ function makeAgent(mode?: unknown): Agent {
 }
 
 describe("resolveAgentMemoryInclusionMode", () => {
-  it("prefers per-agent override over project and global", () => {
+  it("prefers per-agent override over global", () => {
     const result = resolveAgentMemoryInclusionMode({
       agent: makeAgent("off"),
-      projectSettings: { agentMemoryInclusionMode: "index" } as ProjectSettings,
       globalSettings: { agentMemoryInclusionMode: "full" } as GlobalSettings,
     });
     expect(result).toEqual({ mode: "off", source: "agent" });
-  });
-
-  it("prefers project over global", () => {
-    const result = resolveAgentMemoryInclusionMode({
-      agent: makeAgent(),
-      projectSettings: { agentMemoryInclusionMode: "index" } as ProjectSettings,
-      globalSettings: { agentMemoryInclusionMode: "off" } as GlobalSettings,
-    });
-    expect(result).toEqual({ mode: "index", source: "project" });
   });
 
   it("prefers global over default", () => {
@@ -50,7 +40,6 @@ describe("resolveAgentMemoryInclusionMode", () => {
   it("ignores invalid values and falls through", () => {
     const result = resolveAgentMemoryInclusionMode({
       agent: makeAgent("bad"),
-      projectSettings: { agentMemoryInclusionMode: "nope" as never } as ProjectSettings,
       globalSettings: { agentMemoryInclusionMode: "index" } as GlobalSettings,
     });
     expect(result).toEqual({ mode: "index", source: "global" });

@@ -55,7 +55,7 @@ async function createHarness(mode: "full" | "index" | "off"): Promise<Harness> {
   const globalDir = mkdtempSync(join(tmpdir(), "hb-memory-mode-global-"));
   const taskStore = new TaskStore(rootDir, globalDir, { inMemoryDb: true });
   await taskStore.init();
-  await taskStore.updateSettings({ agentMemoryInclusionMode: mode });
+  await taskStore.updateGlobalSettings({ agentMemoryInclusionMode: mode });
   const agentStore = new AgentStore({ rootDir: taskStore.getFusionDir(), taskStore, inMemoryDb: true });
   const agent = await agentStore.createAgent({
     name: "Memory Mode Agent",
@@ -125,6 +125,7 @@ describe("heartbeat memory inclusion mode", () => {
 
     const transitionLogs = appendSpy.mock.calls.filter(([, , entry]) => entry.text.includes("Agent memory inclusion mode:"));
     expect(transitionLogs).toHaveLength(1);
+    expect(transitionLogs[0]?.[2].taskId).toBe("heartbeat");
 
     await harness.agentStore.updateAgent(harness.agentId, {
       runtimeConfig: { enabled: true, agentMemoryInclusionMode: "off", lastAgentMemoryInclusionMode: "index" },

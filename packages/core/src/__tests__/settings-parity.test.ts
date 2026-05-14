@@ -70,7 +70,7 @@ describe("settings key parity", () => {
     expect(isGlobalOnlySettingsKey("persistAgentThinkingLogEphemeral")).toBe(true);
     expect(isGlobalSettingsKey("researchSettings")).toBe(false);
     expect(isGlobalSettingsKey("agentMemoryInclusionMode")).toBe(true);
-    expect(isProjectSettingsKey("agentMemoryInclusionMode")).toBe(true);
+    expect(isProjectSettingsKey("agentMemoryInclusionMode")).toBe(false);
   });
 
   it("defaults persisted thinking logs to disabled", () => {
@@ -190,7 +190,7 @@ describe("settings key parity", () => {
   it("only intentional shared keys appear in both global and project scopes", () => {
     const projectKeySet = new Set(PROJECT_SETTINGS_KEYS as readonly string[]);
     const overlap = (GLOBAL_SETTINGS_KEYS as readonly string[]).filter((key) => projectKeySet.has(key));
-    expect(overlap).toEqual(["taskTokenBudget", "githubTrackingDefaultRepo", "agentMemoryInclusionMode"]);
+    expect(overlap).toEqual(["taskTokenBudget", "githubTrackingDefaultRepo"]);
   });
 });
 

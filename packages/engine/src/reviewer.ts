@@ -387,7 +387,7 @@ export async function reviewStep(
       const agents = await options.agentStore.listAgents({ role: "reviewer" });
       for (const agent of agents) {
         if (agent.instructionsText || agent.instructionsPath) {
-          const memoryMode = resolveAgentMemoryInclusionMode({ agent, projectSettings: options.settings }).mode;
+          const memoryMode = resolveAgentMemoryInclusionMode({ agent, globalSettings: options.settings }).mode;
           reviewerInstructions = await resolveAgentInstructions(agent, options.rootDir, undefined, memoryMode);
           break;
         }

@@ -2089,7 +2089,7 @@ export class HeartbeatMonitor {
 
         const resolvedMemoryMode = resolveAgentMemoryInclusionMode({
           agent,
-          projectSettings: memorySettings,
+          globalSettings: memorySettings,
         });
         const priorMemoryMode = agent.runtimeConfig?.lastAgentMemoryInclusionMode;
         const baseHeartbeatSystemPrompt = adjustHeartbeatMemoryPrimer(
@@ -2157,13 +2157,10 @@ export class HeartbeatMonitor {
 
         if (priorMemoryMode !== resolvedMemoryMode.mode) {
           const from = priorMemoryMode ? priorMemoryMode : "(initial)";
-          const runContextTaskId = typeof run.contextSnapshot?.taskId === "string"
-            ? run.contextSnapshot.taskId
-            : undefined;
           try {
             await this.store.appendRunLog(agentId, run.id, {
               timestamp: new Date().toISOString(),
-              taskId: taskId ?? runContextTaskId ?? "heartbeat",
+              taskId: taskId ?? "heartbeat",
               type: "text",
               text: `Agent memory inclusion mode: ${from} → ${resolvedMemoryMode.mode} (source: ${resolvedMemoryMode.source})`,
             });

@@ -1,10 +1,9 @@
-import type { Agent, AgentMemoryInclusionMode, GlobalSettings, ProjectSettings } from "./types.js";
+import type { Agent, AgentMemoryInclusionMode, GlobalSettings } from "./types.js";
 
-export type AgentMemoryInclusionModeSource = "agent" | "project" | "global" | "default";
+export type AgentMemoryInclusionModeSource = "agent" | "global" | "default";
 
 export interface ResolveAgentMemoryInclusionModeInput {
   agent?: Agent | null;
-  projectSettings?: ProjectSettings | null;
   globalSettings?: GlobalSettings | null;
 }
 
@@ -19,7 +18,6 @@ function isAgentMemoryInclusionMode(value: unknown): value is AgentMemoryInclusi
 
 export function resolveAgentMemoryInclusionMode({
   agent,
-  projectSettings,
   globalSettings,
 }: ResolveAgentMemoryInclusionModeInput): ResolvedAgentMemoryInclusionMode {
   const agentMode = agent?.runtimeConfig && typeof agent.runtimeConfig === "object"
@@ -27,11 +25,6 @@ export function resolveAgentMemoryInclusionMode({
     : undefined;
   if (isAgentMemoryInclusionMode(agentMode)) {
     return { mode: agentMode, source: "agent" };
-  }
-
-  const projectMode = projectSettings?.agentMemoryInclusionMode;
-  if (isAgentMemoryInclusionMode(projectMode)) {
-    return { mode: projectMode, source: "project" };
   }
 
   const globalMode = globalSettings?.agentMemoryInclusionMode;

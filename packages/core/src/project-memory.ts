@@ -94,7 +94,6 @@ export async function ensureMemoryFile(rootDir: string): Promise<boolean> {
 type MemorySettings = {
   memoryEnabled?: boolean;
   memoryBackendType?: string;
-  agentMemoryInclusionMode?: "full" | "index" | "off";
   [key: string]: unknown;
 };
 

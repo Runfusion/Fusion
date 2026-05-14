@@ -298,7 +298,6 @@ export const DEFAULT_PROJECT_SETTINGS = {
   taskEvaluationFollowUpPolicy: "off",
   taskEvaluationRetention: undefined,
   memoryEnabled: true,
-  agentMemoryInclusionMode: undefined,
   memoryBackendType: "qmd",
   memoryAutoSummarizeEnabled: false,
   memoryAutoSummarizeThresholdChars: 50_000,

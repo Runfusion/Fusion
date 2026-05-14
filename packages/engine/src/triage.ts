@@ -1039,7 +1039,7 @@ export class TriageProcessor {
         // Resolve per-agent custom instructions for the triage role or assigned agent.
         let triageInstructions = "";
         if (assignedAgent) {
-          const memoryMode = resolveAgentMemoryInclusionMode({ agent: assignedAgent, projectSettings: settings }).mode;
+          const memoryMode = resolveAgentMemoryInclusionMode({ agent: assignedAgent, globalSettings: settings }).mode;
           triageInstructions = await resolveAgentInstructionsWithRatings(
             assignedAgent,
             this.rootDir,
@@ -1052,7 +1052,7 @@ export class TriageProcessor {
             for (const agent of agents) {
               triageRuntimeHint ??= extractRuntimeHint(agent.runtimeConfig);
               if (agent.instructionsText || agent.instructionsPath || agent.soul || agent.memory) {
-                const memoryMode = resolveAgentMemoryInclusionMode({ agent, projectSettings: settings }).mode;
+                const memoryMode = resolveAgentMemoryInclusionMode({ agent, globalSettings: settings }).mode;
                 triageInstructions = await resolveAgentInstructions(agent, this.rootDir, undefined, memoryMode);
                 break;
               }

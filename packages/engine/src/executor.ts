@@ -2425,12 +2425,12 @@ export class TaskExecutor {
         if (agent.instructionsText || agent.instructionsPath) {
           try {
             const ratingSummary = await this.options.agentStore.getRatingSummary(agent.id);
-            const mode = resolveAgentMemoryInclusionMode({ agent, projectSettings: settings }).mode;
+            const mode = resolveAgentMemoryInclusionMode({ agent, globalSettings: settings }).mode;
             return await resolveAgentInstructions(agent, this.rootDir, ratingSummary, mode);
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             executorLog.warn(`${agent.id}: failed to load rating summary for instruction resolution, falling back to default instructions: ${msg}`);
-            const mode = resolveAgentMemoryInclusionMode({ agent, projectSettings: settings }).mode;
+            const mode = resolveAgentMemoryInclusionMode({ agent, globalSettings: settings }).mode;
             return await resolveAgentInstructions(agent, this.rootDir, undefined, mode);
           }
         }
