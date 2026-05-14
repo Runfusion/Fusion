@@ -56,19 +56,21 @@ export async function attemptBranchAutocorrect({
   const observedArg = quoteShellArg(observed);
   const expectedArg = quoteShellArg(expected);
   const upstream = await runGit(`git rev-parse --abbrev-ref --symbolic-full-name ${observedArg}@{u}`, worktreePath);
-  const observedShaResult = await runGit(`git rev-parse ${observedArg}`, worktreePath);
 
   let isFreshBranch = false;
-  if (!upstream.ok && observedShaResult.ok) {
-    const observedSha = observedShaResult.stdout.trim();
-    if (/^[0-9a-f]{4,64}$/i.test(observedSha)) {
-      const contains = await runGit(`git for-each-ref --format='%(refname:short)' --contains ${observedSha} refs/heads/`, worktreePath);
-      if (contains.ok) {
-        const refs = contains.stdout
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean);
-        isFreshBranch = refs.length === 1 && refs[0] === observed;
+  if (!upstream.ok) {
+    const observedShaResult = await runGit(`git rev-parse ${observedArg}`, worktreePath);
+    if (observedShaResult.ok) {
+      const observedSha = observedShaResult.stdout.trim();
+      if (/^[0-9a-f]{4,64}$/i.test(observedSha)) {
+        const contains = await runGit(`git for-each-ref --format='%(refname:short)' --contains ${observedSha} refs/heads/`, worktreePath);
+        if (contains.ok) {
+          const refs = contains.stdout
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean);
+          isFreshBranch = refs.length === 1 && refs[0] === observed;
+        }
       }
     }
   }
