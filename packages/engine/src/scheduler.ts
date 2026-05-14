@@ -24,6 +24,7 @@ import type { NodeDispatchValidationResult } from "./node-dispatch-validation.js
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { selectPermanentAgentForTask } from "./agent-assignment.js";
 import type { AutoClaimSnapshotManager } from "./auto-claim-snapshot.js";
+import { StaleTaskReporter } from "./stale-task-reporter.js";
 
 /**
  * Check whether two sets of file scope paths overlap.
@@ -187,6 +188,8 @@ export class Scheduler {
   private wasPermanentAgentUnavailable = new Set<string>();
   /** Tracks dispatch-queued reason signatures to avoid per-tick log spam. */
   private wasDispatchQueuedReasonLogged = new Set<string>();
+  private readonly staleTaskReporter: StaleTaskReporter;
+  private lastStaleTaskReportAt = 0;
 
   /**
    * Async listener guard convention:
@@ -199,6 +202,7 @@ export class Scheduler {
     private store: TaskStore,
     private options: SchedulerOptions = {},
   ) {
+    this.staleTaskReporter = new StaleTaskReporter({ store: this.store });
     /**
      * Event-driven scheduling: when a task is created, trigger a scheduling
      * pass immediately instead of waiting for the next poll interval.
@@ -1038,6 +1042,18 @@ export class Scheduler {
             settings.overlapIgnorePaths,
           );
           if (scope.length > 0) activeScopes.set(task.id, scope);
+        }
+      }
+
+      const staleWarningWindows = [settings.staleInProgressWarningMs, settings.staleInReviewWarningMs]
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);
+      const minWarningMs = staleWarningWindows.length > 0 ? Math.min(...staleWarningWindows) : 0;
+      if (minWarningMs > 0 && Date.now() - this.lastStaleTaskReportAt >= minWarningMs) {
+        try {
+          await this.staleTaskReporter.report();
+          this.lastStaleTaskReportAt = Date.now();
+        } catch (error) {
+          schedulerLog.warn("Stale task reporter failed", error);
         }
       }
     } catch (err) {

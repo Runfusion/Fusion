@@ -7,6 +7,8 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { schedulerLog } from "../logger.js";
 
+const staleReporterReportMock = vi.fn();
+
 // Mock fs modules
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -30,6 +32,12 @@ vi.mock("../logger.js", () => ({
     warn: vi.fn(),
     error: vi.fn(),
   },
+}));
+
+vi.mock("../stale-task-reporter.js", () => ({
+  StaleTaskReporter: vi.fn().mockImplementation(() => ({
+    report: staleReporterReportMock,
+  })),
 }));
 
 // Helper to create mock tasks
@@ -146,6 +154,9 @@ describe("filterPathsByIgnoreList", () => {
 });
 
 describe("Scheduler", () => {
+  beforeEach(() => {
+    staleReporterReportMock.mockReset().mockResolvedValue({ surfaced: 0 });
+  });
   // Helper to create mock MissionStore (shared across mission-related test suites)
   function createMockMissionStore(overrides = {}) {
     return {
@@ -169,6 +180,70 @@ describe("Scheduler", () => {
       ...overrides,
     };
   }
+
+  describe("stale task reporter integration", () => {
+    it("invokes reporter from schedule", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([createMockTask({ id: "FN-STALE", column: "todo", dependencies: [] })]),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          staleInProgressWarningMs: 1000,
+          staleInReviewWarningMs: 2000,
+        }),
+      });
+      const scheduler = new Scheduler(store);
+      (scheduler as unknown as { running: boolean }).running = true;
+      await scheduler.schedule();
+      expect(staleReporterReportMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not throw when reporter errors", async () => {
+      staleReporterReportMock.mockRejectedValueOnce(new Error("boom"));
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue([createMockTask({ id: "FN-STALE", column: "todo", dependencies: [] })]),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          staleInProgressWarningMs: 1000,
+          staleInReviewWarningMs: 2000,
+        }),
+      });
+      const scheduler = new Scheduler(store);
+      (scheduler as unknown as { running: boolean }).running = true;
+      await expect(scheduler.schedule()).resolves.toBeUndefined();
+      expect(schedulerLog.warn).toHaveBeenCalledWith("Stale task reporter failed", expect.any(Error));
+    });
+
+    it("rate-limits back-to-back reporter runs", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-05-14T12:00:00.000Z"));
+        vi.mocked(existsSync).mockReturnValue(true);
+        vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+        const store = createMockStore({
+          listTasks: vi.fn().mockResolvedValue([createMockTask({ id: "FN-STALE", column: "todo", dependencies: [] })]),
+          getSettings: vi.fn().mockResolvedValue({
+            maxConcurrent: 2,
+            maxWorktrees: 4,
+            staleInProgressWarningMs: 5000,
+            staleInReviewWarningMs: 10000,
+          }),
+        });
+        const scheduler = new Scheduler(store);
+        (scheduler as unknown as { running: boolean }).running = true;
+        await scheduler.schedule();
+        await scheduler.schedule();
+        expect(staleReporterReportMock).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 
   describe("constructor", () => {
     it("initializes with default options", () => {
