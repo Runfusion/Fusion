@@ -2176,21 +2176,6 @@ export function TaskDetailContent({
                     <span>{inlineExecutionMode === "fast" ? "Fast" : "Standard"}</span>
                   </button>
                 </div>
-                <div className="form-group">
-                  <label className="checkbox-label" htmlFor="detail-no-commits-expected-toggle">
-                    <input
-                      id="detail-no-commits-expected-toggle"
-                      type="checkbox"
-                      checked={inlineNoCommitsExpected}
-                      disabled={isSavingInlineNoCommitsExpected}
-                      onChange={() => {
-                        void handleInlineNoCommitsExpectedToggle();
-                      }}
-                    />
-                    No commits expected (decision-only task)
-                  </label>
-                  <small>Allows the task to complete without producing git commits. Use for evaluation, verification, or audit tasks where the deliverable is the recorded decision.</small>
-                </div>
                 {provenanceDisplay && (
                   <div className="detail-provenance">
                     <GitBranch aria-hidden="true" />
@@ -2895,6 +2880,23 @@ export function TaskDetailContent({
             ) : (
               <div className="detail-prompt">(no prompt)</div>
             )}
+          </div>
+          <div className="detail-section detail-no-commits-expected-section">
+            <div className="form-group">
+              <label className="checkbox-label" htmlFor="detail-no-commits-expected-toggle">
+                <input
+                  id="detail-no-commits-expected-toggle"
+                  type="checkbox"
+                  checked={inlineNoCommitsExpected}
+                  disabled={isSavingInlineNoCommitsExpected}
+                  onChange={() => {
+                    void handleInlineNoCommitsExpectedToggle();
+                  }}
+                />
+                No commits expected (decision-only task)
+              </label>
+              <small>Allows the task to complete without producing git commits. Use for evaluation, verification, or audit tasks where the deliverable is the recorded decision.</small>
+            </div>
           </div>
           <div className="detail-section">
             <h4>Attachments</h4>
