@@ -743,6 +743,17 @@ describe("SettingsModal", () => {
       expect(payload.ephemeralAgentsEnabled).toBe(false);
     });
 
+    it("exposes the ephemeral agents toggle via the desktop Project General sidebar nav item", async () => {
+      renderModal();
+      await waitForSettingsModalReady();
+
+      await userEvent.click(screen.getByRole("button", { name: "Project General" }));
+
+      const ephemeralToggle = screen.getByLabelText("Use ephemeral task-worker agents") as HTMLInputElement;
+      expect(ephemeralToggle).toBeInTheDocument();
+      expect(ephemeralToggle.checked).toBe(true);
+    });
+
     it("keeps ephemeral agent toggle checked when upgrading settings omit the key", async () => {
       const { ephemeralAgentsEnabled: _omitted, ...upgradeSettings } = defaultSettings;
       mockFetchSettings.mockResolvedValueOnce(upgradeSettings);
