@@ -10,7 +10,7 @@ import type { Logger } from "./logger.js";
 const execAsync = promisify(exec);
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_BUFFER = 10 * 1024 * 1024;
-const NOISE_LINE_RE = /^[\s{}()\[\];,]*$/;
+const NOISE_LINE_RE = /^[\s{}()[\];,]*$/;
 
 export interface ContributionSurvivalResult {
   file: string;
@@ -129,7 +129,7 @@ async function resolveSubjectCommits(
       .filter((entry) => entry.subject === subject)
       .map((entry) => entry.sha);
   } catch (error) {
-    mergerLog.warn(`audit recovery: failed resolving commits for subject \"${subject}\" — ${error instanceof Error ? error.message : String(error)}`);
+    mergerLog.warn(`audit recovery: failed resolving commits for subject "${subject}" — ${error instanceof Error ? error.message : String(error)}`);
     return [];
   }
 }
