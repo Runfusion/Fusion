@@ -1,12 +1,14 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Request, Response } from "express";
-import type { Agent, AgentCapability, AgentUpdateInput, TaskStore } from "@fusion/core";
+import type { Agent, AgentCapability, AgentUpdateInput, TaskStore, AgentPermissionPolicyRules, AgentPermissionPolicyDisposition } from "@fusion/core";
 import {
   ApprovalRequestStore,
+  AGENT_PERMISSION_POLICY_ACTION_CATEGORIES,
   getDefaultHeartbeatProcedurePath,
   isAgentPermissionPolicyPresetId,
   isEphemeralAgent,
+  normalizeAgentPermissionPolicy,
   normalizeAgentPermissionPolicyFromPreset,
 } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
@@ -26,6 +28,41 @@ const AVATAR_MIME_TO_EXT: Record<string, string> = {
   "image/webp": "webp",
 };
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+const VALID_POLICY_DISPOSITIONS: readonly AgentPermissionPolicyDisposition[] = ["allow", "block", "require-approval"] as const;
+
+function parsePermissionPolicyInput(input: unknown) {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw badRequest("permissionPolicy must be an object");
+  }
+  const policy = input as { presetId?: unknown; rules?: unknown };
+  if (typeof policy.presetId !== "string" || !isAgentPermissionPolicyPresetId(policy.presetId)) {
+    throw badRequest("permissionPolicy.presetId must be one of: unrestricted, approval-required, locked-down, custom");
+  }
+
+  if (policy.presetId !== "custom") {
+    return normalizeAgentPermissionPolicyFromPreset(policy.presetId);
+  }
+
+  if (policy.rules !== undefined && (typeof policy.rules !== "object" || policy.rules === null || Array.isArray(policy.rules))) {
+    throw badRequest("permissionPolicy.rules must be an object");
+  }
+
+  const customRules = (policy.rules ?? {}) as Record<string, unknown>;
+  for (const category of Object.keys(customRules)) {
+    if (!(AGENT_PERMISSION_POLICY_ACTION_CATEGORIES as readonly string[]).includes(category)) {
+      throw badRequest(`permissionPolicy.rules contains unknown category: ${category}`);
+    }
+    const disposition = customRules[category];
+    if (typeof disposition !== "string" || !(VALID_POLICY_DISPOSITIONS as readonly string[]).includes(disposition)) {
+      throw badRequest(`permissionPolicy.rules.${category} has invalid disposition: ${String(disposition)}`);
+    }
+  }
+
+  return normalizeAgentPermissionPolicy({
+    presetId: "custom",
+    rules: customRules as Partial<AgentPermissionPolicyRules>,
+  });
+}
 
 function isCompatibleDefaultHeartbeatPath(path: string | undefined, agent: Agent): boolean {
   const trimmed = path?.trim();
@@ -153,13 +190,7 @@ export function registerAgentCoreListCreateRoutes(ctx: ApiRoutesContext, deps: A
       }
       let normalizedPermissionPolicy;
       if (permissionPolicy !== undefined && permissionPolicy !== null) {
-        if (typeof permissionPolicy !== "object" || Array.isArray(permissionPolicy)) {
-          throw badRequest("permissionPolicy must be an object");
-        }
-        if (typeof permissionPolicy.presetId !== "string" || !isAgentPermissionPolicyPresetId(permissionPolicy.presetId)) {
-          throw badRequest("permissionPolicy.presetId must be one of: unrestricted, approval-required, locked-down");
-        }
-        normalizedPermissionPolicy = normalizeAgentPermissionPolicyFromPreset(permissionPolicy.presetId);
+        normalizedPermissionPolicy = parsePermissionPolicyInput(permissionPolicy);
       }
       if (!validateAgentInstructionsPayload(instructionsPath, instructionsText)) {
         return;
@@ -609,13 +640,7 @@ export function registerAgentCoreRoutes(ctx: ApiRoutesContext, deps: AgentCoreRo
 
       if ("permissionPolicy" in body) {
         if (body.permissionPolicy !== null) {
-          if (typeof body.permissionPolicy !== "object" || Array.isArray(body.permissionPolicy)) {
-            throw badRequest("permissionPolicy must be an object");
-          }
-          if (typeof body.permissionPolicy.presetId !== "string" || !isAgentPermissionPolicyPresetId(body.permissionPolicy.presetId)) {
-            throw badRequest("permissionPolicy.presetId must be one of: unrestricted, approval-required, locked-down");
-          }
-          updates.permissionPolicy = normalizeAgentPermissionPolicyFromPreset(body.permissionPolicy.presetId);
+          updates.permissionPolicy = parsePermissionPolicyInput(body.permissionPolicy);
         } else {
           updates.permissionPolicy = undefined;
         }

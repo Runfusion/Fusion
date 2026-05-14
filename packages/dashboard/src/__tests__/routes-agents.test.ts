@@ -1983,6 +1983,97 @@ describe("Agent create/update routes", () => {
     expect(res.body.error).toContain("permissionPolicy must be an object");
   });
 
+  it("POST /api/agents accepts custom permissionPolicy rules", async () => {
+    const res = await REQUEST(
+      buildAgentApp(),
+      "POST",
+      "/api/agents",
+      JSON.stringify({
+        name: "Custom Policy Agent",
+        role: "executor",
+        permissionPolicy: {
+          presetId: "custom",
+          rules: {
+            command_execution: "require-approval",
+          },
+        },
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(res.body.permissionPolicy).toMatchObject({
+      presetId: "custom",
+      rules: {
+        command_execution: "require-approval",
+        git_write: "allow",
+      },
+    });
+  });
+
+  it("POST /api/agents rejects unknown custom permissionPolicy category", async () => {
+    const res = await REQUEST(
+      buildAgentApp(),
+      "POST",
+      "/api/agents",
+      JSON.stringify({
+        name: "Bad Category Agent",
+        role: "executor",
+        permissionPolicy: {
+          presetId: "custom",
+          rules: { nope: "allow" },
+        },
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("unknown category");
+  });
+
+  it("POST /api/agents rejects invalid custom permissionPolicy disposition", async () => {
+    const res = await REQUEST(
+      buildAgentApp(),
+      "POST",
+      "/api/agents",
+      JSON.stringify({
+        name: "Bad Disposition Agent",
+        role: "executor",
+        permissionPolicy: {
+          presetId: "custom",
+          rules: { git_write: "sometimes" },
+        },
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("invalid disposition");
+  });
+
+  it("PATCH /api/agents/:id updates permissionPolicy without clobbering other fields", async () => {
+    const res = await REQUEST(
+      buildAgentApp(),
+      "PATCH",
+      `/api/agents/${agentId}`,
+      JSON.stringify({
+        permissionPolicy: {
+          presetId: "custom",
+          rules: { command_execution: "require-approval" },
+        },
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(agentId);
+    expect(res.body.name).toBe("Initial Agent");
+    expect(res.body.permissionPolicy).toMatchObject({
+      presetId: "custom",
+      rules: { command_execution: "require-approval" },
+    });
+  });
+
   it("POST /api/agents normalizes policy rules from preset and ignores caller-supplied rules", async () => {
     const res = await REQUEST(
       buildAgentApp(),
