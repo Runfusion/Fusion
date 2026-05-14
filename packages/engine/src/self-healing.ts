@@ -23,7 +23,7 @@ import { createLogger } from "./logger.js";
 import { getRegisteredWorktreePaths, isUsableTaskWorktree, scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
 import { extractMissingWorktreePathFromSessionStartFailure, isMissingWorktreeSessionStartFailure, isRecoverableMissingWorktreeReviewFailure } from "./restart-recovery-coordinator.js";
 import { classifyError, extractMissingModulePath, isOperatorActionableAgentError, isStaleWorktreeModuleResolutionError } from "./transient-error-detector.js";
-import { deriveTaskIdFromFusionBranch, inspectBranchConflict } from "./branch-conflicts.js";
+import { deriveTaskIdFromFusionBranch, inspectBranchConflict, listUniqueBranchCommits } from "./branch-conflicts.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 
 const log = createLogger("self-healing");
@@ -354,6 +354,7 @@ export class SelfHealingManager {
 
   // ── Event listener cleanup ──────────────────────────────────────────
   private settingsListener: ((data: { settings: Settings; previous: Settings }) => void) | null = null;
+  private taskMovedFanoutListener: ((data: { task: Task; from: string; to: string; source: string }) => void) | null = null;
 
   // ── Per-task deadlock recovery cooldown ─────────────────────────────
   private deadlockRecoveryCooldown: Map<string, number> = new Map();
@@ -373,6 +374,18 @@ export class SelfHealingManager {
       this.onSettingsUpdated(settings, previous);
     };
     this.store.on("settings:updated", this.settingsListener);
+
+    this.taskMovedFanoutListener = ({ task, from, to }) => {
+      const shouldReconcile =
+        (from === "in-review" && to === "done") ||
+        (from === "done" && to === "archived");
+      if (!shouldReconcile) return;
+      void this.reconcileCompletedTask(task.id).catch((err: unknown) => {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        log.warn(`[self-healing] task:moved completion fan-out failed for ${task.id}: ${errorMessage}`);
+      });
+    };
+    this.store.on("task:moved", this.taskMovedFanoutListener);
 
     // Start periodic maintenance
     this.startMaintenance();
@@ -448,6 +461,16 @@ export class SelfHealingManager {
         log.warn(`Failed to remove settings:updated listener during stop(): ${errorMessage}`);
       }
       this.settingsListener = null;
+    }
+
+    if (this.taskMovedFanoutListener) {
+      try {
+        this.store.off("task:moved", this.taskMovedFanoutListener);
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        log.warn(`Failed to remove task:moved listener during stop(): ${errorMessage}`);
+      }
+      this.taskMovedFanoutListener = null;
     }
 
     // Clear timers
@@ -1657,6 +1680,181 @@ export class SelfHealingManager {
    *
    * @returns Number of tasks unblocked
    */
+  private async findWorktreePathForBranch(branchName: string): Promise<string | null> {
+    try {
+      const { stdout } = await execAsync("git worktree list --porcelain", {
+        cwd: this.options.rootDir,
+        timeout: 30_000,
+      });
+      const lines = stdout.split("\n");
+      let currentWorktree: string | null = null;
+      let currentBranch: string | null = null;
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) {
+          if (currentWorktree && currentBranch === branchName) return currentWorktree;
+          currentWorktree = null;
+          currentBranch = null;
+          continue;
+        }
+        if (line.startsWith("worktree ")) {
+          currentWorktree = line.slice("worktree ".length).trim();
+          continue;
+        }
+        if (line.startsWith("branch refs/heads/")) {
+          currentBranch = line.slice("branch refs/heads/".length).trim();
+        }
+      }
+      if (currentWorktree && currentBranch === branchName) return currentWorktree;
+      return null;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.warn(`[self-healing] reconcileCompletedTask: failed to read worktree list for ${branchName}: ${errorMessage}`);
+      return null;
+    }
+  }
+
+  private async clearCompletionBranchIfSubsumed(task: Task, branchName: string): Promise<boolean> {
+    try {
+      await execAsync(`git rev-parse --verify ${shellQuote(branchName)}`, {
+        cwd: this.options.rootDir,
+        timeout: 30_000,
+      });
+    } catch {
+      return false;
+    }
+
+    const baseBranch = task.baseBranch || "main";
+    const comparison = await listUniqueBranchCommits(this.options.rootDir, baseBranch, branchName);
+    if (comparison.commits.length > 0) {
+      log.warn(
+        `[self-healing] reconcileCompletedTask ${task.id}: branch ${branchName} has ${comparison.commits.length} unique commit(s) vs ${comparison.mainRef}; skip deletion`,
+      );
+      return false;
+    }
+
+    try {
+      await execAsync(`git branch -D ${shellQuote(branchName)}`, {
+        cwd: this.options.rootDir,
+        timeout: 30_000,
+      });
+      return true;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.warn(`[self-healing] reconcileCompletedTask ${task.id}: failed to delete branch ${branchName}: ${errorMessage}`);
+      return false;
+    }
+  }
+
+  async reconcileCompletedTask(
+    taskId: string,
+    options?: { worktreeHint?: string },
+  ): Promise<{ blockedByCleared: number; worktreeRemoved: boolean; branchRemoved: boolean }> {
+    const result = { blockedByCleared: 0, worktreeRemoved: false, branchRemoved: false };
+    const prefix = `[self-healing] reconcileCompletedTask ${taskId}:`;
+    try {
+      const settings = await this.store.getSettings();
+      if (settings.globalPause || settings.enginePaused) return result;
+
+      const task = await this.store.getTask(taskId);
+      const allTasks = await this.store.listTasks({ slim: true, includeArchived: true });
+      const taskById = new Map(allTasks.map((t) => [t.id, t]));
+      const todoTasks = await this.store.listTasks({ column: "todo", slim: true });
+      const inProgressTasks = await this.store.listTasks({ column: "in-progress", slim: true });
+      const inReviewTasks = (await this.store.listTasks({ column: "in-review", slim: true })).filter((t) => !t.paused);
+
+      const dependents = [...todoTasks, ...inProgressTasks, ...inReviewTasks].filter((t) => t.blockedBy === taskId);
+      const todoTaskIds = new Set(todoTasks.map((t) => t.id));
+      for (const dependent of dependents) {
+        try {
+          const unresolvedDeps = dependent.dependencies.filter((depId) => {
+            const dep = taskById.get(depId);
+            return dep && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
+          });
+          if (todoTaskIds.has(dependent.id)) {
+            if (unresolvedDeps.length > 0) {
+              const nextBlocker = unresolvedDeps[0]!;
+              await this.store.updateTask(dependent.id, { blockedBy: nextBlocker, status: "queued" });
+              await this.store.logEntry(
+                dependent.id,
+                `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done; now blocked by ${nextBlocker}`,
+              );
+            } else {
+              await this.store.updateTask(dependent.id, { blockedBy: null, status: null });
+              await this.store.logEntry(
+                dependent.id,
+                `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done`,
+              );
+            }
+          } else {
+            await this.store.updateTask(dependent.id, { blockedBy: null });
+            await this.store.logEntry(
+              dependent.id,
+              `Auto-recovered (FN-4523): cleared stale blockedBy — blocker ${taskId} is done`,
+            );
+          }
+          result.blockedByCleared++;
+        } catch (err: unknown) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          log.error(`${prefix} failed blockedBy fan-out for ${dependent.id}: ${errorMessage}`);
+        }
+      }
+
+      const branchName = task?.branch || `fusion/${taskId.toLowerCase()}`;
+      let worktreePath = options?.worktreeHint;
+      if (!worktreePath || !existsSync(worktreePath)) {
+        worktreePath = await this.findWorktreePathForBranch(branchName);
+      }
+      if (worktreePath && existsSync(worktreePath)) {
+        try {
+          await execAsync(`git worktree remove --force ${shellQuote(worktreePath)}`, {
+            cwd: this.options.rootDir,
+            timeout: 30_000,
+          });
+          result.worktreeRemoved = true;
+        } catch (err: unknown) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          log.warn(`${prefix} failed to remove worktree ${worktreePath}: ${errorMessage}`);
+        }
+      } else {
+        log.log(`${prefix} no live worktree found for branch ${branchName}`);
+      }
+
+      if (task) {
+        result.branchRemoved = await this.clearCompletionBranchIfSubsumed(task, branchName);
+      }
+
+      try {
+        const auditor = createRunAuditor(this.store, {
+          runId: generateSyntheticRunId("self-heal", taskId),
+          agentId: "self-healing",
+          taskId,
+          taskLineageId: task?.lineageId,
+          phase: "completion-fanout",
+        });
+        await auditor.database({
+          type: "task:auto-recover-completion-fanout",
+          target: taskId,
+          metadata: {
+            blockedByCleared: result.blockedByCleared,
+            worktreeRemoved: result.worktreeRemoved,
+            branchRemoved: result.branchRemoved,
+            branch: branchName,
+          },
+        });
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        log.warn(`${prefix} failed to record run-audit event: ${errorMessage}`);
+      }
+
+      return result;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.warn(`${prefix} failed: ${errorMessage}`);
+      return result;
+    }
+  }
+
   async clearStaleBlockedBy(): Promise<number> {
     try {
       const settings = await this.store.getSettings();
@@ -2854,12 +3052,13 @@ export class SelfHealingManager {
             mergeRetries: 0,
             mergeDetails,
           });
+          const worktreeHint = task.worktree;
           await this.store.moveTask(task.id, "done");
           await this.store.logEntry(
             task.id,
             `Auto-recovered: phantom-merge-guard false positive — content found on ${baseBranch} at ${landed.sha.slice(0, 8)} via ${landed.strategy}`,
           );
-          await this.cleanupWorktreeOnly(task);
+          await this.reconcileCompletedTask(task.id, { worktreeHint });
           try {
             const auditor = createRunAuditor(this.store, {
               runId: generateSyntheticRunId("self-heal", task.id),
