@@ -4262,6 +4262,44 @@ async function ensureTaskTrailersOnHead(rootDir: string, task: Pick<Task, "id"> 
   }
 }
 
+type CherryPickCommitResult = { landed: boolean };
+
+export function isEmptyCherryPickError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const maybe = error as { stderr?: unknown; stdout?: unknown; message?: unknown };
+  const stderr = typeof maybe.stderr === "string" ? maybe.stderr : "";
+  const stdout = typeof maybe.stdout === "string" ? maybe.stdout : "";
+  const message = typeof maybe.message === "string" ? maybe.message : "";
+  const output = `${stderr}\n${stdout}\n${message}`;
+
+  return (
+    output.includes("The previous cherry-pick is now empty")
+    || output.includes("nothing to commit, working tree clean")
+    || output.includes("otherwise, please use 'git cherry-pick --skip'")
+    || output.includes("use 'git commit --allow-empty'")
+  );
+}
+
+export async function isCherryPickInProgress(rootDir: string): Promise<boolean> {
+  try {
+    const { stdout: cherryPickHeadPathOut } = await execAsync("git rev-parse --git-path CHERRY_PICK_HEAD", {
+      cwd: rootDir,
+      encoding: "utf-8",
+    });
+    const cherryPickHeadPath = join(rootDir, cherryPickHeadPathOut.trim());
+    if (existsSync(cherryPickHeadPath)) return true;
+
+    const { stdout: sequencerPathOut } = await execAsync("git rev-parse --git-path sequencer", {
+      cwd: rootDir,
+      encoding: "utf-8",
+    });
+    const sequencerPath = join(rootDir, sequencerPathOut.trim());
+    return existsSync(sequencerPath);
+  } catch {
+    return false;
+  }
+}
+
 async function cherryPickCommitPreservingTaskTrailers(
   rootDir: string,
   commitSha: string,
@@ -4269,12 +4307,25 @@ async function cherryPickCommitPreservingTaskTrailers(
   mergeConflictStrategy: CanonicalMergeConflictStrategy,
   smartConflictResolution: boolean,
   result: MergeResult,
-): Promise<void> {
+): Promise<CherryPickCommitResult> {
   try {
     await execAsync(`git cherry-pick ${quoteArg(commitSha)}`, { cwd: rootDir });
   } catch (error) {
     const conflictedFiles = await getConflictedFiles(rootDir);
     if (conflictedFiles.length === 0) {
+      if (isEmptyCherryPickError(error)) {
+        try {
+          await execAsync("git cherry-pick --skip", { cwd: rootDir });
+        } catch {
+          try {
+            await execAsync("git cherry-pick --abort", { cwd: rootDir });
+          } catch {
+            // best effort
+          }
+          await execAsync("git reset --hard HEAD", { cwd: rootDir });
+        }
+        return { landed: false };
+      }
       throw error;
     }
 
@@ -4299,7 +4350,7 @@ async function cherryPickCommitPreservingTaskTrailers(
       if (unresolvedComplex === 0) {
         await execAsync("git cherry-pick --continue", { cwd: rootDir });
         await ensureTaskTrailersOnHead(rootDir, task);
-        return;
+        return { landed: true };
       }
     }
 
@@ -4319,6 +4370,7 @@ async function cherryPickCommitPreservingTaskTrailers(
   }
 
   await ensureTaskTrailersOnHead(rootDir, task);
+  return { landed: true };
 }
 
 async function applyBranchCommitsPreservingHistory(params: {
@@ -4336,20 +4388,23 @@ async function applyBranchCommitsPreservingHistory(params: {
   testSource?: "explicit" | "inferred";
   buildSource?: "explicit" | "inferred";
   signal?: AbortSignal;
-}): Promise<{ landedCommitCount: number; landedCommitShas: string[]; baseSha: string }> {
+}): Promise<{ landedCommitCount: number; landedCommitShas: string[]; baseSha: string; fullySubsumedByMain: boolean; skippedEmptyCount: number }> {
   const { rootDir, baseRef, branch, task, taskId, store, mergeConflictStrategy, smartConflictResolution, result, testCommand, buildCommand, testSource, buildSource, signal } = params;
   const { stdout: baseShaStdout } = await execAsync(`git rev-parse ${quoteArg(baseRef)}`, { cwd: rootDir, encoding: "utf-8" });
   const baseSha = baseShaStdout.trim();
+  const { stdout: originalBranchShaOut } = await execAsync("git rev-parse HEAD", { cwd: rootDir, encoding: "utf-8" });
+  const originalBranchSha = originalBranchShaOut.trim();
   const { stdout: commitStdout } = await execAsync(`git rev-list --reverse ${quoteArg(`${baseSha}..${branch}`)}`, {
     cwd: rootDir,
     encoding: "utf-8",
   });
   const commitShas = commitStdout.trim().split("\n").map((line) => line.trim()).filter(Boolean);
   const landedCommitShas: string[] = [];
+  let skippedEmptyCount = 0;
 
   for (const commitSha of commitShas) {
     throwIfAborted(signal, taskId);
-    await cherryPickCommitPreservingTaskTrailers(
+    const pickResult = await cherryPickCommitPreservingTaskTrailers(
       rootDir,
       commitSha,
       task,
@@ -4357,8 +4412,47 @@ async function applyBranchCommitsPreservingHistory(params: {
       smartConflictResolution,
       result,
     );
+    if (!pickResult.landed) {
+      skippedEmptyCount += 1;
+      continue;
+    }
     const { stdout: landedShaOut } = await execAsync("git rev-parse HEAD", { cwd: rootDir, encoding: "utf-8" });
     landedCommitShas.push(landedShaOut.trim());
+  }
+
+  const fullySubsumedByMain = landedCommitShas.length === 0 && skippedEmptyCount === commitShas.length && commitShas.length > 0;
+  if (fullySubsumedByMain) {
+    await store.logEntry(taskId, `Auto-merge skipped: branch fully subsumed by main (${skippedEmptyCount} commit(s) already present)`);
+  } else if (skippedEmptyCount > 0 && landedCommitShas.length > 0) {
+    await store.logEntry(taskId, `Auto-merge skipped ${skippedEmptyCount} empty cherry-pick(s); proceeded with ${landedCommitShas.length} non-empty commit(s)`);
+  }
+
+  try {
+    const { stdout: statusOut } = await execAsync("git status --porcelain", { cwd: rootDir, encoding: "utf-8" });
+    const statusClean = statusOut.trim().length === 0;
+    const cherryPickActive = await isCherryPickInProgress(rootDir);
+    if (!statusClean || cherryPickActive) {
+      mergerLog.warn(`${taskId}: cherry-pick cleanup invariant violated (statusClean=${statusClean}, cherryPickActive=${cherryPickActive}); attempting defensive recovery`);
+      try {
+        await execAsync("git cherry-pick --abort", { cwd: rootDir });
+      } catch {
+        // best effort
+      }
+      await execAsync(`git reset --hard ${quoteArg(originalBranchSha)}`, { cwd: rootDir });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    mergerLog.warn(`${taskId}: failed while validating cherry-pick cleanup invariant (${message}); attempting defensive recovery`);
+    try {
+      await execAsync("git cherry-pick --abort", { cwd: rootDir });
+    } catch {
+      // best effort
+    }
+    try {
+      await execAsync(`git reset --hard ${quoteArg(originalBranchSha)}`, { cwd: rootDir });
+    } catch {
+      // best effort
+    }
   }
 
   if (testCommand || buildCommand) {
@@ -4379,6 +4473,8 @@ async function applyBranchCommitsPreservingHistory(params: {
     landedCommitCount: landedCommitShas.length,
     landedCommitShas,
     baseSha,
+    fullySubsumedByMain,
+    skippedEmptyCount,
   };
 }
 
@@ -6705,6 +6801,9 @@ export async function aiMergeTask(
       signal: options.signal,
     });
     rebaseMergeBaseSha = rebaseResult.baseSha;
+    if (rebaseResult.fullySubsumedByMain) {
+      mergeWasEmpty = true;
+    }
     verificationPassed = Boolean(effectiveTestCommand || effectiveBuildCommand);
     merged = true;
   } else {
