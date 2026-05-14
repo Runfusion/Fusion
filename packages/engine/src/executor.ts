@@ -4688,6 +4688,11 @@ export class TaskExecutor {
       };
     }
 
+    if (task.noCommitsExpected === true) {
+      executorLog.log(`${task.id}: fn_task_done no_commits guard skipped (noCommitsExpected=true)`);
+      return { ok: true };
+    }
+
     const baseRef = await this.resolveDiffBaseRef(worktreePath, task.baseCommitSha);
     if (!baseRef) {
       executorLog.warn(`${task.id}: unable to resolve diff base for invariant commit-count check; skipping no_commits guard`);

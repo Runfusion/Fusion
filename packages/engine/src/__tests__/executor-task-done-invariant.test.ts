@@ -102,6 +102,37 @@ describe("FN-4114 fn_task_done invariants", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-4114", "todo", { preserveProgress: true });
   });
 
+  it("FN-4114 allows no-commit completion when noCommitsExpected is true", async () => {
+    const { store, tool } = await setup({ noCommitsExpected: true });
+    mockedExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("rev-parse --show-toplevel")) return Buffer.from("/repo/.worktrees/swift-falcon\n");
+      if (cmd.includes("rev-parse --abbrev-ref HEAD")) return Buffer.from("fusion/fn-4114\n");
+      if (cmd.includes("rev-list --count")) return Buffer.from("0\n");
+      if (cmd.includes("rev-parse HEAD")) return Buffer.from("def456\n");
+      return Buffer.from("");
+    });
+
+    const result = await tool.execute("id", {});
+    expect(result.content[0].text).toContain("Task marked complete");
+    expect(store.updateStep).toHaveBeenCalled();
+    const revListCalled = mockedExecSync.mock.calls.some(([cmd]) => String(cmd).includes("rev-list --count"));
+    expect(revListCalled).toBe(false);
+  });
+
+  it("FN-4114 still refuses wrong_branch even when noCommitsExpected is true", async () => {
+    const { store, tool } = await setup({ noCommitsExpected: true });
+    mockedExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("rev-parse --show-toplevel")) return Buffer.from("/repo/.worktrees/swift-falcon\n");
+      if (cmd.includes("rev-parse --abbrev-ref HEAD")) return Buffer.from("main\n");
+      if (cmd.includes("rev-parse HEAD")) return Buffer.from("def456\n");
+      return Buffer.from("");
+    });
+
+    const result = await tool.execute("id", {});
+    expect(result.content[0].text).toContain("fn_task_done refused: wrong_branch");
+    expect(store.moveTask).toHaveBeenCalledWith("FN-4114", "todo", { preserveProgress: true });
+  });
+
   it("FN-4114 allows fn_task_done on valid worktree/branch/commit state", async () => {
     const { store, tool } = await setup();
     const result = await tool.execute("id", {});
