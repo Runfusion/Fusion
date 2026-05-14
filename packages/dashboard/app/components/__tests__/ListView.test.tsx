@@ -1227,18 +1227,18 @@ describe("ListView", () => {
     const sectionHeaders = screen.getAllByRole("row").filter(r => r.className.includes("list-section-header"));
 
     // Verify each section header has colSpan that includes the checkbox column
-    // Default visible columns: title, status, column (3 columns)
-    // Plus checkbox column = 4 total
+    // Default visible columns: title, status, column, retries (4 columns)
+    // Plus checkbox column = 5 total
     for (const header of sectionHeaders) {
       const th = header.querySelector("th.list-section-cell");
       expect(th).not.toBeNull();
-      expect(th!.getAttribute("colSpan")).toBe("4"); // visibleColumns.size (3) + 1 for checkbox
+      expect(th!.getAttribute("colSpan")).toBe("5"); // visibleColumns.size (4) + 1 for checkbox
     }
 
     // Also verify empty section cells span full width
     const emptyCells = screen.getAllByRole("cell").filter(c => c.className.includes("list-empty-cell"));
     for (const cell of emptyCells) {
-      expect(cell.getAttribute("colSpan")).toBe("4");
+      expect(cell.getAttribute("colSpan")).toBe("5");
     }
   });
 

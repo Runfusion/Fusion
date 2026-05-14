@@ -529,6 +529,7 @@ When debugging agent execution issues (agents stuck on "starting"), check these 
 10. **`[auto-claim-snapshot] rebuild generated=N reason=<ttl|invalidate>`** — Confirms project-wide auto-claim snapshot rebuild cadence
 11. **`[auto-claim-prompt] agent=<id> chars=<n> count=<n>`** — Tracks rendered no-task candidate section size
 12. **`[prompt-size] prompt-size { agentId, role, runId, template, systemChars, execChars, totalChars, isNoTaskRun }`** — Per-heartbeat prompt-size audit record
+13. **`[retry-burned] retry-burned { taskId, agentId, role, category, attempt, total, breakdown }`** — Unified retry-burn telemetry and retry-cap circuit-breaker context
 
 ### Semaphore Resilience
 

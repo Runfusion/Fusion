@@ -12,7 +12,7 @@ import type { ReactNode } from "react";
 import type { Task, TaskDetail, WorkflowStep } from "@fusion/core";
 
 /** Tab identifiers for the task detail modal. Mirrors the dashboard's local enum. */
-export type DetailTaskTab = "definition" | "logs" | "changes" | "comments" | "model" | "workflow";
+export type DetailTaskTab = "definition" | "logs" | "changes" | "comments" | "model" | "workflow" | "retries";
 
 export type PluginToastType = "success" | "error" | "warning" | "info";
 

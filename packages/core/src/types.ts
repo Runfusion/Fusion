@@ -1426,6 +1426,9 @@ export interface Task {
   /** Number of reviewer fallback retries consumed by FN-4092 fallback-model
    *  and same-model strict-prompt retry paths. */
   reviewerFallbackRetryCount?: number;
+  /** Derived retry aggregation computed at read time from retry counters.
+   *  This field is not persisted to SQLite. */
+  retrySummary?: RetrySummary;
   /** ISO-8601 timestamp indicating when the task becomes eligible for the next
    *  recovery retry. Scheduler and triage processor skip tasks whose
    *  `nextRecoveryAt` is still in the future. Cleared alongside `recoveryRetryCount`. */

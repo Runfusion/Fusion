@@ -52,7 +52,7 @@ interface ColumnProps {
    * Called when the user clicks the "Subtask" button in the inline create card.
    */
   onSubtaskBreakdown?: (description: string) => void;
-  onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes") => void;
+  onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries") => void;
   favoriteProviders?: string[];
   favoriteModels?: string[];
   onToggleFavorite?: (provider: string) => void;

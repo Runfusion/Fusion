@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
-import { RetryStormError, type TaskDetail } from "@fusion/core";
+import { DEFAULT_PROJECT_SETTINGS, RetryStormError, type TaskDetail } from "@fusion/core";
 import { recordRetry } from "../retry-burned-logger.js";
 
 function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
@@ -22,6 +22,7 @@ function makeTask(overrides: Partial<TaskDetail> = {}): TaskDetail {
 
 describe("recordRetry", () => {
   const baseSettings = {
+    ...DEFAULT_PROJECT_SETTINGS,
     maxBranchConflictRecoveries: 5,
     maxReviewerContextRetries: 2,
     maxReviewerFallbackRetries: 2,

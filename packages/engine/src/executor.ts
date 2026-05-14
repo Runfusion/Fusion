@@ -4294,7 +4294,7 @@ export class TaskExecutor {
               task: taskForRetry,
               category: "branchConflict",
               role: "executor",
-              agentId: this.agentId,
+              agentId: task.assignedAgentId ?? undefined,
               attempt,
             });
           }

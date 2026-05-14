@@ -29,7 +29,7 @@ const COLUMN_COLOR_MAP: Record<Column, string> = {
 
 const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "merging-fix"]);
 
-type SortField = "title" | "status" | "column";
+type SortField = "title" | "status" | "column" | "retries";
 
 function getTaskStatusLabel(status: string): string {
   if (status === "merging-fix") return "Merging fixes…";
@@ -38,8 +38,8 @@ function getTaskStatusLabel(status: string): string {
 type SortDirection = "asc" | "desc";
 
 // Column visibility types
-const ALL_LIST_COLUMNS = ["title", "status", "column", "dependencies", "progress"] as const;
-const DEFAULT_LIST_COLUMNS = ["title", "status", "column"] as const;
+const ALL_LIST_COLUMNS = ["title", "status", "column", "retries", "dependencies", "progress"] as const;
+const DEFAULT_LIST_COLUMNS = ["title", "status", "column", "retries"] as const;
 type ListColumn = typeof ALL_LIST_COLUMNS[number];
 
 function getNodeStatusLabel(status: NodeInfo["status"]): string {
@@ -569,6 +569,9 @@ export function ListView({
             break;
           case "column":
             comparison = a.column.localeCompare(b.column);
+            break;
+          case "retries":
+            comparison = (a.retrySummary?.total ?? 0) - (b.retrySummary?.total ?? 0);
             break;
         }
         return sortDirection === "asc" ? comparison : -comparison;
@@ -1661,6 +1664,11 @@ export function ListView({
                     Column {getSortIcon("column")}
                   </th>
                 )}
+                {visibleColumns.has("retries") && (
+                  <th className="list-header-cell" onClick={() => handleSort("retries")}>
+                    Retries {getSortIcon("retries")}
+                  </th>
+                )}
                 {visibleColumns.has("dependencies") && (
                   <th className="list-header-cell">Dependencies</th>
                 )}
@@ -1808,6 +1816,9 @@ export function ListView({
                                       {COLUMN_LABELS[task.column]}
                                     </span>
                                   </td>
+                                )}
+                                {visibleColumns.has("retries") && (
+                                  <td className="list-cell">{(task.retrySummary?.total ?? 0) > 0 ? (task.retrySummary?.total ?? 0) : "—"}</td>
                                 )}
                                 {visibleColumns.has("dependencies") && (
                                   <td className="list-cell list-cell-deps">

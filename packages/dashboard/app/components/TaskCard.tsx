@@ -27,6 +27,7 @@ import type { ToastType } from "../hooks/useToast";
 import { useConfirm } from "../hooks/useConfirm";
 import { extractDependencyDeleteConflict } from "../utils/taskDelete";
 import type { BlockerFanoutEntry } from "../hooks/useBlockerFanout";
+import { useRetryWarning } from "../context/RetryWarningContext";
 
 // ── Mission title caching ───────────────────────────────────────────────────
 
@@ -274,7 +275,7 @@ interface TaskCardProps {
   onUnarchiveTask?: (id: string) => Promise<Task>;
   onDeleteTask?: (id: string, options?: { removeDependencyReferences?: boolean; githubIssueAction?: GithubIssueAction }) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
-  onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes") => void;
+  onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries") => void;
   /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
   taskStuckTimeoutMs?: number;
   /** Called when user clicks the mission badge on a task card. */
@@ -464,6 +465,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previousTask.missionId === nextTask.missionId &&
     previousTask.assignedAgentId === nextTask.assignedAgentId &&
     previousTask.mergeRetries === nextTask.mergeRetries &&
+    previousTask.retrySummary?.total === nextTask.retrySummary?.total &&
     previousTask.sourceType === nextTask.sourceType &&
     previousTask.sourceAgentId === nextTask.sourceAgentId &&
     previousTask.sourceMetadata?.issueUrl === nextTask.sourceMetadata?.issueUrl &&
@@ -535,6 +537,7 @@ function TaskCardComponent({
   const [isInViewport, setIsInViewport] = useState(false);
   const { badgeUpdates, subscribeToBadge, unsubscribeFromBadge } = useBadgeWebSocket(projectId);
   const { confirm } = useConfirm();
+  const retryWarningThreshold = useRetryWarning();
 
   // Touch gesture detection refs
   const touchStartPosRef = useRef<{ x: number; y: number; time: number } | null>(null);
@@ -1223,6 +1226,11 @@ function TaskCardComponent({
     onOpenDetailWithTab?.(task, "changes");
   }, [task, onOpenDetailWithTab]);
 
+  const handleOpenRetries = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    onOpenDetailWithTab?.(task, "retries");
+  }, [task, onOpenDetailWithTab]);
+
   const handleToggleSteps = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     setShowSteps((current) => !current);
@@ -1761,7 +1769,7 @@ function TaskCardComponent({
           )}
         </div>
       )}
-      {((task.dependencies && task.dependencies.length > 0) || queued || task.status === "queued" || task.blockedBy || (fanout && fanout.totalCount > 0)) && (
+      {(((task.retrySummary?.total ?? 0) > 0) || (task.dependencies && task.dependencies.length > 0) || queued || task.status === "queued" || task.blockedBy || (fanout && fanout.totalCount > 0)) && (
         <div className="card-meta">
           {task.dependencies && task.dependencies.length > 0 && (
             <div className="card-dep-list">
@@ -1793,6 +1801,26 @@ function TaskCardComponent({
                 <span className="card-fanout-count">{fanout.totalCount}</span>
                 {fanout.staleBlockedByDependentIds.length > 0 ? ` (${fanout.staleBlockedByDependentIds.length} stale)` : ""}
               </span>
+            </span>
+          )}
+          {(task.retrySummary?.total ?? 0) > 0 && (
+            <span
+              className={`card-retry-badge${(retryWarningThreshold != null && (task.retrySummary?.total ?? 0) >= retryWarningThreshold) ? " card-retry-badge--error" : " card-retry-badge--warning"}`}
+              onClick={handleOpenRetries}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onOpenDetailWithTab?.(task, "retries");
+                }
+              }}
+              aria-label={`${task.retrySummary?.total ?? 0} retries`}
+              title="Open retry breakdown"
+            >
+              <RotateCw size={11} />
+              <span>{task.retrySummary?.total ?? 0}</span>
             </span>
           )}
           {(queued || task.status === "queued") && task.column !== "in-progress" && <span className="queued-badge"><Clock size={12} style={{ verticalAlign: "middle" }} /> Queued</span>}

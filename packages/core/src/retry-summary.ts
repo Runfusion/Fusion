@@ -1,10 +1,10 @@
-import type { RetrySummary, TaskDetail } from "./types.js";
+import type { RetrySummary, Task, TaskDetail } from "./types.js";
 
 export const RETRY_STORM_WARNING_RATIO = 0.8;
 
 const toCount = (value: number | null | undefined): number => (typeof value === "number" ? value : 0);
 
-export function computeRetrySummary(task: TaskDetail): RetrySummary {
+export function computeRetrySummary(task: Pick<Task | TaskDetail, "stuckKillCount" | "recoveryRetryCount" | "taskDoneRetryCount" | "workflowStepRetries" | "verificationFailureCount" | "postReviewFixCount" | "mergeConflictBounceCount" | "branchConflictRecoveryCount" | "reviewerContextRetryCount" | "reviewerFallbackRetryCount">): RetrySummary {
   const stuckKill = toCount(task.stuckKillCount);
   const recovery = toCount(task.recoveryRetryCount);
   const taskDone = toCount(task.taskDoneRetryCount);

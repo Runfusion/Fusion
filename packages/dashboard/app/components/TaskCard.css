@@ -130,6 +130,36 @@
   z-index: 1;
 }
 
+.card-retry-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-xs) / 2);
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+  border: var(--btn-border-width) solid transparent;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+
+.card-retry-badge:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.card-retry-badge--warning {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+}
+
+.card-retry-badge--error {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 45%, transparent);
+}
+
 .card-status-badge,
 .card-priority-badge,
 .card-size-badge,

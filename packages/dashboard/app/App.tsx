@@ -68,6 +68,7 @@ import { useRemoteNodeEvents } from "./hooks/useRemoteNodeEvents";
 import { NodeProvider, useNodeContext } from "./context/NodeContext";
 import { FileBrowserProvider } from "./context/FileBrowserContext";
 import { ShellProvider } from "./context/ShellContext";
+import { RetryWarningProvider } from "./context/RetryWarningContext";
 import { ShellHostProvider, useShellHostContext } from "./context/ShellHostContext";
 import { useShellConnection } from "./hooks/useShellConnection";
 import { NativeShellOnboardingModal } from "./components/NativeShellOnboardingModal";
@@ -143,6 +144,7 @@ const BASE_BRANCH_FILTER_STORAGE_KEY = "kb-dashboard-base-branch-filter";
 const NO_BRANCH_FILTER_VALUE = "__fusion:no-branch__";
 const APPROVAL_BANNER_DISMISSED_STORAGE_KEY = "fusion:approval-banner-dismissed";
 const CAPACITY_RISK_DISMISSED_KEY = "kb-capacity-risk-banner-dismissed";
+const RETRY_WARNING_RATIO = 0.8;
 
 interface ApprovalBannerCandidate {
   dedupeKey: string;
@@ -736,6 +738,7 @@ function AppInner() {
     capacityRiskBannerEnabled,
     capacityRiskTodoThreshold,
     showQuickChatFAB,
+    maxTotalRetriesBeforeFail,
     prAuthAvailable,
     settingsLoaded,
     experimentalFeatures,
@@ -941,7 +944,7 @@ function AppInner() {
     addToast,
   });
 
-  const handleOpenDetailWithTab = useCallback((task: Task | TaskDetail, initialTab: "changes") => {
+  const handleOpenDetailWithTab = useCallback((task: Task | TaskDetail, initialTab: "changes" | "retries") => {
     if (initialTab === "changes") {
       modalManager.openDetailWithChangesTab(task);
     } else {
@@ -1605,6 +1608,7 @@ function AppInner() {
   return (
     <NavigationHistoryProvider value={{ pushNav, replaceCurrent }}>
       <FileBrowserProvider openFile={openFileInBrowser}>
+        <RetryWarningProvider value={maxTotalRetriesBeforeFail * RETRY_WARNING_RATIO}>
         {!initialLoadComplete ? (
           <>
             <DashboardLoader stage={loadingStage} />
@@ -1891,6 +1895,7 @@ function AppInner() {
             )}
           </>
         )}
+        </RetryWarningProvider>
       </FileBrowserProvider>
     </NavigationHistoryProvider>
   );

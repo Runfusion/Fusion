@@ -18,7 +18,7 @@ interface WorktreeGroupProps {
     updates: { title?: string; description?: string; dependencies?: string[] }
   ) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
-  onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes") => void;
+  onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries") => void;
   /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
   taskStuckTimeoutMs?: number;
   /** Called when user clicks a mission badge on a task card */

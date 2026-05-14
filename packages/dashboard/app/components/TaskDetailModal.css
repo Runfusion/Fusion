@@ -1862,3 +1862,13 @@
     align-items: flex-start;
   }
 }
+
+.detail-retries-grid dd {
+  font-weight: 600;
+}
+
+.detail-retries-warning {
+  margin: var(--space-sm) 0 0;
+  color: var(--color-error);
+  font-size: 0.75rem;
+}

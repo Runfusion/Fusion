@@ -275,6 +275,10 @@ Override precedence for direct merges is:
 | `autoUnpauseBaseDelayMs` | `number` | `300000` | Base unpause delay in ms (5 min). |
 | `autoUnpauseMaxDelayMs` | `number` | `3600000` | Max auto-unpause delay in ms (1 hour). |
 | `maxStuckKills` | `number` | `6` | Max stuck-task terminations before permanent failure. |
+| `maxBranchConflictRecoveries` | `number` | `5` | Max branch-conflict recovery retries before retry-storm failure handling triggers. |
+| `maxReviewerContextRetries` | `number` | `2` | Max reviewer context-compaction retries (FN-4082) per task. |
+| `maxReviewerFallbackRetries` | `number` | `2` | Max reviewer fallback-model retries (FN-4092) per task. |
+| `maxTotalRetriesBeforeFail` | `number` | `25` | Master retry budget across all tracked retry counters; exceeding this fails the task with `RetryStormError`. |
 | `maxPostReviewFixes` | `number` | `1` | Max auto-revival attempts for in-review tasks failing pre-merge workflow steps. |
 | `maxSpawnedAgentsPerParent` | `number` | `5` | Max child agents per parent task. |
 | `maxSpawnedAgentsGlobal` | `number` | `20` | Max spawned agents across one executor instance. |

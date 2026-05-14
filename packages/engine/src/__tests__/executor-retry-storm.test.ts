@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  DEFAULT_PROJECT_SETTINGS,
   RetryStormError,
   serializeRetryStormError,
   type TaskDetail,
@@ -50,6 +51,7 @@ describe("executor retry storm integration", () => {
       await recordRetry({
         store: store as never,
         settings: {
+          ...DEFAULT_PROJECT_SETTINGS,
           maxReviewerContextRetries: 2,
           maxTotalRetriesBeforeFail: 25,
         },

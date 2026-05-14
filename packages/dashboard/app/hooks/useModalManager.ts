@@ -9,7 +9,8 @@ export type DetailTaskTab =
   | "changes"
   | "comments"
   | "model"
-  | "workflow";
+  | "workflow"
+  | "retries";
 
 export type DetailTaskOrigin = "list-mobile";
 

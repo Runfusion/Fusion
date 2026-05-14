@@ -271,7 +271,7 @@ function formatDurationCompact(ageMs: number): string {
   return `${minutes}m`;
 }
 
-type TabId = "definition" | "logs" | "changes" | "review" | "comments" | "model" | "workflow" | "documents" | "stats" | "routing" | `plugin-${string}`;
+type TabId = "definition" | "logs" | "changes" | "review" | "comments" | "model" | "workflow" | "documents" | "stats" | "routing" | "retries" | `plugin-${string}`;
 
 export interface TaskDetailModalProps {
   task: Task | TaskDetail;
@@ -463,7 +463,7 @@ export function TaskDetailContent({
   embedded = false,
   onRequestClose,
 }: TaskDetailContentProps) {
-  const [activeTab, setActiveTab] = useState<TabId>(initialTab);
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab === "retries" ? "definition" : initialTab);
 
   // ── Async detail loading ──────────────────────────────────────────────────
   // When opened optimistically with a Task (no prompt), fetch the full
@@ -539,7 +539,10 @@ export function TaskDetailContent({
 
   // Sync activeTab when the caller changes initialTab (e.g. opening a different tab)
   useEffect(() => {
-    setActiveTab(initialTab);
+    setActiveTab(initialTab === "retries" ? "definition" : initialTab);
+    if (initialTab === "retries") {
+      setRetriesExpanded(true);
+    }
   }, [initialTab]);
 
   // Reset description expanded state when task changes
@@ -620,6 +623,7 @@ export function TaskDetailContent({
   const [showMoveMenu, setShowMoveMenu] = useState(false);
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const [sourceIssueExpanded, setSourceIssueExpanded] = useState(false);
+  const [retriesExpanded, setRetriesExpanded] = useState(initialTab === "retries");
   const [githubTrackingExpanded, setGithubTrackingExpanded] = useState(false);
   const [githubRepoOverrideDraft, setGithubRepoOverrideDraft] = useState(task.githubTracking?.repoOverride ?? "");
   const [githubTrackingEnabledDraft, setGithubTrackingEnabledDraft] = useState<boolean | null>(null);
@@ -889,6 +893,19 @@ export function TaskDetailContent({
     && !githubTrackingDetailPending
     && (!githubTrackingEnabled || (isSavingGithubTracking && workingTask.githubTracking?.enabled !== true));
   const showGithubTrackingSection = canEditGithubTracking || githubTrackingEnabled || Boolean(githubTrackedIssue);
+  const retrySummary = task.retrySummary;
+  const retryRows = [
+    { key: "stuckKillCount", label: "Stuck kills", title: "Stuck-task detector forced agent kill retries", value: retrySummary?.stuckKillCount ?? 0 },
+    { key: "recoveryRetryCount", label: "Recovery retries", title: "Transient executor recovery retries", value: retrySummary?.recoveryRetryCount ?? 0 },
+    { key: "taskDoneRetryCount", label: "task_done retries", title: "Agent exited without task_done and task was retried", value: retrySummary?.taskDoneRetryCount ?? 0 },
+    { key: "workflowStepRetries", label: "Workflow retries", title: "Workflow step failure retries", value: retrySummary?.workflowStepRetries ?? 0 },
+    { key: "verificationFailureCount", label: "Verification bounces", title: "Verification failure bounce retries", value: retrySummary?.verificationFailureCount ?? 0 },
+    { key: "postReviewFixCount", label: "Post-review fixes", title: "Post-review remediation retries", value: retrySummary?.postReviewFixCount ?? 0 },
+    { key: "mergeConflictBounceCount", label: "Merge conflict bounces", title: "Merge conflict bounce retries", value: retrySummary?.mergeConflictBounceCount ?? 0 },
+    { key: "branchConflictRecoveryCount", label: "Branch conflict recovery", title: "FN-4068 branch-conflict recovery retries", value: retrySummary?.branchConflictRecoveryCount ?? 0 },
+    { key: "reviewerContextRetryCount", label: "Reviewer context retries", title: "FN-4082 compact reviewer retry", value: retrySummary?.reviewerContextRetryCount ?? 0 },
+    { key: "reviewerFallbackRetryCount", label: "Reviewer fallback retries", title: "FN-4092 fallback-model retry", value: retrySummary?.reviewerFallbackRetryCount ?? 0 },
+  ].filter((row) => row.value > 0);
   const githubTrackingStatus = githubTrackingDetailPending
     ? "Loading"
     : githubTrackedIssue
@@ -2507,6 +2524,38 @@ export function TaskDetailContent({
             </div>
           )}
           <MergeDetails task={task} />
+          {(retrySummary?.total ?? 0) > 0 && (
+            <div className="detail-section detail-retries-section">
+              <div className="detail-source-header">
+                <div className="detail-source-summary">
+                  <span className="detail-source-label">Retries</span>
+                  <span className="detail-source-number">{retrySummary?.total ?? 0}</span>
+                </div>
+                <button
+                  type="button"
+                  className="detail-source-toggle"
+                  aria-expanded={retriesExpanded}
+                  aria-label={retriesExpanded ? "Collapse retries details" : "Expand retries details"}
+                  onClick={() => setRetriesExpanded((expanded) => !expanded)}
+                >
+                  <ChevronRight size={16} className={retriesExpanded ? "detail-source-chevron--expanded" : undefined} />
+                </button>
+              </div>
+              {retriesExpanded && (
+                <dl className="detail-source-grid detail-retries-grid">
+                  {retryRows.map((row) => (
+                    <div key={row.key}>
+                      <dt title={row.title}>{row.label}</dt>
+                      <dd>{row.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+              {settings?.maxTotalRetriesBeforeFail != null && (retrySummary?.total ?? 0) >= settings.maxTotalRetriesBeforeFail && (
+                <p className="detail-retries-warning">Retry cap reached for this task.</p>
+              )}
+            </div>
+          )}
           {task.sourceIssue && (
             <div className="detail-section detail-source-section">
               <div className="detail-source-header">

@@ -261,6 +261,8 @@ export interface ReviewOptions {
   store?: TaskStore;
   /** Task ID for agent log persistence. Required alongside `store`. */
   taskId?: string;
+  /** Optional reviewer agent id for retry-burn telemetry. */
+  agentId?: string;
   /** Optional task title for fallback-used notification context. */
   taskTitle?: string;
   /** Task with optional assignedAgentId for skill selection. */
@@ -595,12 +597,12 @@ export async function reviewStep(
           ? "code review hit context limit — retrying with compacted request"
           : `${reviewType} review hit context limit — retrying with compacted request`;
         reviewerLog.warn(`${taskId}: ${retryLogMessage}`);
-        if (options.store && options.taskId) {
+        if (options.store && options.taskId && retrySettings && typeof options.store.getTask === "function") {
           await options.store.logEntry(options.taskId, retryLogMessage).catch(() => undefined);
           const taskForRetry = await options.store.getTask(options.taskId);
           await recordRetry({
             store: options.store,
-            settings: liveSettings ?? options.settings ?? {},
+            settings: retrySettings,
             task: taskForRetry,
             category: "reviewerContext",
             role: "reviewer",
@@ -657,6 +659,7 @@ export async function reviewStep(
   };
 
   const hasConfiguredFallback = Boolean(validatorFallbackProvider && validatorFallbackModelId);
+  const retrySettings = liveSettings ?? options.settings;
 
   let firstAttempt: { verdict: ReviewVerdict; summary: string; review: string };
   try {
@@ -664,11 +667,11 @@ export async function reviewStep(
   } catch (err) {
     if (hasConfiguredFallback) {
       await logFallbackRetry("reviewer error", `${validatorFallbackProvider}/${validatorFallbackModelId}`);
-      if (options.store && options.taskId) {
+      if (options.store && options.taskId && retrySettings && typeof options.store.getTask === "function") {
         const taskForRetry = await options.store.getTask(options.taskId);
         await recordRetry({
           store: options.store,
-          settings: liveSettings ?? options.settings ?? {},
+          settings: retrySettings,
           task: taskForRetry,
           category: "reviewerFallback",
           role: "reviewer",
@@ -686,11 +689,11 @@ export async function reviewStep(
     }
 
     await logFallbackRetry("reviewer error", "same-model strict prompt");
-    if (options.store && options.taskId) {
+    if (options.store && options.taskId && retrySettings && typeof options.store.getTask === "function") {
       const taskForRetry = await options.store.getTask(options.taskId);
       await recordRetry({
         store: options.store,
-        settings: liveSettings ?? options.settings ?? {},
+        settings: retrySettings,
         task: taskForRetry,
         category: "reviewerFallback",
         role: "reviewer",
@@ -710,11 +713,11 @@ export async function reviewStep(
 
   if (hasConfiguredFallback) {
     await logFallbackRetry("UNAVAILABLE verdict", `${validatorFallbackProvider}/${validatorFallbackModelId}`);
-    if (options.store && options.taskId) {
+    if (options.store && options.taskId && retrySettings && typeof options.store.getTask === "function") {
       const taskForRetry = await options.store.getTask(options.taskId);
       await recordRetry({
         store: options.store,
-        settings: liveSettings ?? options.settings ?? {},
+        settings: retrySettings,
         task: taskForRetry,
         category: "reviewerFallback",
         role: "reviewer",
@@ -728,11 +731,11 @@ export async function reviewStep(
   }
 
   await logFallbackRetry("UNAVAILABLE verdict", "same-model strict prompt");
-  if (options.store && options.taskId) {
+  if (options.store && options.taskId && retrySettings && typeof options.store.getTask === "function") {
     const taskForRetry = await options.store.getTask(options.taskId);
     await recordRetry({
       store: options.store,
-      settings: liveSettings ?? options.settings ?? {},
+      settings: retrySettings,
       task: taskForRetry,
       category: "reviewerFallback",
       role: "reviewer",

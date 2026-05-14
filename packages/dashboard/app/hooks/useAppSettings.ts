@@ -16,6 +16,7 @@ export interface UseAppSettingsResult {
   capacityRiskBannerEnabled: boolean;
   capacityRiskTodoThreshold: number;
   showQuickChatFAB: boolean;
+  maxTotalRetriesBeforeFail: number;
   prAuthAvailable: boolean;
   settingsLoaded: boolean;
   experimentalFeatures: Record<string, boolean>;
@@ -47,6 +48,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [capacityRiskBannerEnabled, setCapacityRiskBannerEnabled] = useState(false);
   const [capacityRiskTodoThreshold, setCapacityRiskTodoThreshold] = useState(20);
   const [showQuickChatFAB, setShowQuickChatFAB] = useState(false);
+  const [maxTotalRetriesBeforeFail, setMaxTotalRetriesBeforeFail] = useState(25);
   const [prAuthAvailable, setPrAuthAvailable] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [experimentalFeatures, setExperimentalFeatures] = useState<Record<string, boolean>>({});
@@ -82,6 +84,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
         settings.staleHighFanoutBlockerAgeThresholdMs ?? 2 * 60 * 60 * 1000,
       );
       setShowQuickChatFAB(settings.showQuickChatFAB === true);
+      setMaxTotalRetriesBeforeFail(settings.maxTotalRetriesBeforeFail ?? 25);
       setCapacityRiskBannerEnabled(settings.capacityRiskBannerEnabled === true);
       setCapacityRiskTodoThreshold(settings.capacityRiskTodoThreshold ?? 20);
       setExperimentalFeatures(settings.experimentalFeatures ?? {});
@@ -183,6 +186,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     capacityRiskBannerEnabled,
     capacityRiskTodoThreshold,
     showQuickChatFAB,
+    maxTotalRetriesBeforeFail,
     prAuthAvailable,
     settingsLoaded,
     experimentalFeatures,

@@ -1513,3 +1513,9 @@ UI contract boundary:
 - `PrSection` owns branch/PR lifecycle metadata and automation status.
 - `TaskReviewTab` owns review decisions, detailed review items, selection, and addressing progress.
 - `TaskComments` remains separate for general discussion.
+
+## Retry observability
+
+Fusion derives a per-task `retrySummary` at read time by aggregating retry counters (stuck-kill, recovery, task_done, workflow-step, verification, post-review-fix, merge-conflict bounce, branch-conflict recovery, reviewer context retry, reviewer fallback retry). The engine emits a structured `retry-burned` log channel with `{ taskId, agentId, role, category, attempt, total, breakdown }` so token-cost telemetry can correlate retry burn with spend.
+
+Project settings expose per-category caps (`maxBranchConflictRecoveries`, `maxReviewerContextRetries`, `maxReviewerFallbackRetries`) plus a master cap (`maxTotalRetriesBeforeFail`). When a cap is exceeded, engine code throws `RetryStormError`; executor terminal failure handling serializes this into `task.error` so dashboard surfaces can render structured failure details.
