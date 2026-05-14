@@ -78,6 +78,7 @@ import { createWebFetchTool } from "./agent-tools.js";
 import { auditSquashMerge, MERGER_MAIN_OVERLAP_LOOKBACK_COMMITS, type PostMergeAuditStrategy, type SquashAuditFindings } from "./merger-squash-audit.js";
 import { detectMergeOverlap, restoreBranchWinsFiles } from "./merger-overlap-guard.js";
 import { checkDiffVolume, DiffVolumeRegressionError } from "./merger-diff-volume-gate.js";
+import { ReadonlyViolationError, filterCustomToolsForReadonly } from "./workflow-step-tool-policy.js";
 
 export { DiffVolumeRegressionError } from "./merger-diff-volume-gate.js";
 
@@ -8920,6 +8921,15 @@ If issues are found that need attention, describe them clearly and include concr
     const postMergeSystemPrompt = buildSystemPromptWithInstructions(systemPrompt, postMergeInstructions);
 
     const mergerRuntimeHint = extractRuntimeHint(assignedAgent?.runtimeConfig);
+    const readonlyCustomTools = toolMode === "readonly"
+      ? filterCustomToolsForReadonly([])
+      : { allowed: [] as ToolDefinition[], denied: [] as string[] };
+    if (toolMode === "readonly" && readonlyCustomTools.denied.length > 0) {
+      await store.logEntry(
+        taskId,
+        `[readonly-violation] Post-merge workflow step '${workflowStep.name}' dropped denied custom tools: ${readonlyCustomTools.denied.join(", ")}`,
+      );
+    }
     const { session } = await createResolvedAgentSession({
       sessionPurpose: "merger",
       runtimeHint: mergerRuntimeHint,
@@ -8934,6 +8944,7 @@ If issues are found that need attention, describe them clearly and include concr
       defaultThinkingLevel: settings.defaultThinkingLevel,
       // Skill selection: use assigned agent skills if available, otherwise role fallback
       ...(postMergeSkillContext?.skillSelectionContext ? { skillSelection: postMergeSkillContext.skillSelectionContext } : {}),
+      ...(readonlyCustomTools.allowed.length > 0 ? { customTools: readonlyCustomTools.allowed } : {}),
       taskId,
       onFallbackModelUsed: createFallbackModelObserver({
         agent: "merger",
@@ -8970,6 +8981,11 @@ If issues are found that need attention, describe them clearly and include concr
     return { success: true, output };
   } catch (err: any) {
     await agentLogger.flush();
+    if ((err instanceof ReadonlyViolationError) || err?.code === "READONLY_VIOLATION") {
+      const deniedTool = err?.toolName || "unknown";
+      await store.logEntry(taskId, `[readonly-violation] Post-merge workflow step '${workflowStep.name}' attempted denied tool '${deniedTool}'`);
+      return { success: false, error: `[readonly-violation] ${err?.message ?? "Readonly policy violation"}` };
+    }
     return { success: false, error: err.message };
   }
 }

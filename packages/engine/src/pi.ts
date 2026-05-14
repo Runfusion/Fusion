@@ -57,6 +57,7 @@ import {
 } from "./agent-action-gate.js";
 import { resolvePermanentAgentToolDecision } from "./permanent-agent-gating.js";
 import type { SystemPromptLayers } from "./prompt-layers.js";
+import { READONLY_ALLOWLIST, filterCustomToolsForReadonly, isReadonlyAllowed } from "./workflow-step-tool-policy.js";
 
 export interface AgentResult {
   session: AgentSession;
@@ -1694,23 +1695,19 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
       }
     : undefined;
 
-  const tools =
-    options.tools === "readonly"
-      ? [
-          createReadTool(options.cwd),
-          createGrepTool(options.cwd),
-          createFindTool(options.cwd),
-          createLsTool(options.cwd),
-        ]
-      : [
-          createReadTool(options.cwd),
-          createBashTool(options.cwd, bashToolOptions),
-          createEditTool(options.cwd),
-          createWriteTool(options.cwd),
-          createGrepTool(options.cwd),
-          createFindTool(options.cwd),
-          createLsTool(options.cwd),
-        ];
+  const isReadonly = options.tools === "readonly";
+  const builtins = [
+    createReadTool(options.cwd),
+    createBashTool(options.cwd, bashToolOptions),
+    createEditTool(options.cwd),
+    createWriteTool(options.cwd),
+    createGrepTool(options.cwd),
+    createFindTool(options.cwd),
+    createLsTool(options.cwd),
+  ] as ToolDefinition[];
+  const tools = isReadonly
+    ? builtins.filter((tool) => isReadonlyAllowed(tool.name))
+    : builtins;
   // Suppress lint about unused presets — kept in scope for incremental migration.
   void createCodingTools;
   void createReadOnlyTools;
@@ -1807,7 +1804,6 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
   // since heartbeat/reviewer flows explicitly provide engine-owned tools.
   // This keeps summarizer/compaction sessions safe while retaining intended
   // delegation/memory tools for readonly engine sessions.
-  const isReadonly = options.tools === "readonly";
   const effectiveExtensionPaths = isReadonly ? [] : hostExtensionPaths;
   if (isReadonly && hostExtensionPaths.length > 0) {
     piLog.log(`readonly session — host extensions (${hostExtensionPaths.length}) skipped`);
@@ -1836,9 +1832,18 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     // suppress the defaults with `noTools: "builtin"` and register our wrapped
     // tools through `customTools` instead. The wrapped tools preserve the same
     // names (`read`, `bash`, ...) as the built-ins they replace.
+    const readonlyFilteredCustomTools = isReadonly
+      ? filterCustomToolsForReadonly(options.customTools ?? [])
+      : { allowed: options.customTools ?? [], denied: [] };
+    if (isReadonly && readonlyFilteredCustomTools.denied.length > 0) {
+      piLog.warn(
+        `[pi] readonly mode: dropped ${readonlyFilteredCustomTools.denied.length} denied custom tool(s): ${readonlyFilteredCustomTools.denied.join(", ")}`,
+      );
+    }
+
     const toolChainStart: ToolDefinition[] = [
       ...(tools as ToolDefinition[]),
-      ...(options.customTools ?? []),
+      ...readonlyFilteredCustomTools.allowed,
     ];
     const toolsWithPermanentGating = wrapToolsWithPermanentAgentGating(
       toolChainStart,
@@ -1885,10 +1890,13 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     };
 
     if (options.builtinToolsAllowlist && options.builtinToolsAllowlist.length > 0) {
+      const safeBuiltinAllowlist = isReadonly
+        ? options.builtinToolsAllowlist.filter((name) => READONLY_ALLOWLIST.includes(name as (typeof READONLY_ALLOWLIST)[number]))
+        : options.builtinToolsAllowlist;
       createSessionOptions.tools = [
         ...new Set([
           ...customToolList.map((tool) => tool.name),
-          ...options.builtinToolsAllowlist,
+          ...safeBuiltinAllowlist,
         ]),
       ].sort();
     }

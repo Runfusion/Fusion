@@ -68,6 +68,7 @@ import {
 import { buildPromptLayers, collapsePromptLayers } from "./prompt-layers.js";
 import type { AgentReflectionService } from "./agent-reflection.js";
 import { createRunAuditor, generateSyntheticRunId, type EngineRunContext } from "./run-audit.js";
+import { ReadonlyViolationError, filterCustomToolsForReadonly } from "./workflow-step-tool-policy.js";
 import { evaluateSpecStaleness, getPromptPath } from "./spec-staleness.js";
 import {
   createAgentCreateTool,
@@ -735,6 +736,7 @@ export class TaskExecutor {
   private activeStepExecutors = new Map<string, StepSessionExecutor>();
   /** Active pre-merge workflow step sessions per task. */
   private activeWorkflowStepSessions = new Map<string, AgentSession>();
+  private readonlyWorkflowStepAuditDone = false;
   /**
    * Reviewer subagent sessions per task. Reviewers (`reviewer.ts`) create their
    * own AgentSessions that aren't part of `activeSessions`/`activeStepExecutors`,
@@ -6018,6 +6020,7 @@ ${failureFeedback}
     settings: Settings,
     taskEnv?: NodeJS.ProcessEnv,
   ): Promise<WorkflowStepResult | "deferred-paused"> {
+    await this.auditReadonlyWorkflowStepPromptsOnce(task.id);
     // Check if task has enabled workflow steps
     const currentTask = await this.store.getTask(task.id);
     if (!currentTask.enabledWorkflowSteps?.length) return { allPassed: true };
@@ -6550,6 +6553,15 @@ and show an appropriate message to the user.\`
         ? await this.options.agentStore.getAgent(task.assignedAgentId).catch(() => null)
         : null;
       const workflowRuntimeHint = extractRuntimeHint(workflowAgent?.runtimeConfig);
+      const readonlyCustomTools = toolMode === "readonly"
+        ? filterCustomToolsForReadonly([])
+        : { allowed: [] as ToolDefinition[], denied: [] as string[] };
+      if (toolMode === "readonly" && readonlyCustomTools.denied.length > 0) {
+        await this.store.logEntry(
+          task.id,
+          `[readonly-violation] Workflow step '${workflowStep.name}' dropped denied custom tools: ${readonlyCustomTools.denied.join(", ")}`,
+        );
+      }
 
       const { session } = await createResolvedAgentSession({
         sessionPurpose: "executor",
@@ -6566,6 +6578,7 @@ and show an appropriate message to the user.\`
         taskEnv,
         // Skill selection: use assigned agent skills if available, otherwise role fallback
         ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
+        ...(readonlyCustomTools.allowed.length > 0 ? { customTools: readonlyCustomTools.allowed } : {}),
       });
 
       executorLog.log(`${task.id}: workflow step '${workflowStep.name}' using model ${describeModel(session)}${useOverride && attemptLabel === "primary" ? " (workflow step override)" : ""}${attemptLabel === "fallback" ? " (fallback after timeout)" : ""}`);
@@ -6646,6 +6659,15 @@ and show an appropriate message to the user.\`
       } catch (err: unknown) {
         await agentLogger.flush();
         try { session.dispose(); } catch { /* best-effort */ }
+        if ((err instanceof ReadonlyViolationError) || ((err as { code?: string } | null)?.code === "READONLY_VIOLATION")) {
+          const violation = err as ReadonlyViolationError;
+          const deniedTool = violation.toolName || "unknown";
+          await this.store.logEntry(
+            task.id,
+            `[readonly-violation] Workflow step '${workflowStep.name}' attempted denied tool '${deniedTool}'`,
+          );
+          return { success: false, error: `[readonly-violation] ${violation.message}` };
+        }
         const errorMessage = err instanceof Error ? err.message : String(err);
         return { success: false, error: errorMessage };
       } finally {
@@ -6673,6 +6695,28 @@ and show an appropriate message to the user.\`
 
     executorLog.log(`${task.id}: retrying workflow step '${workflowStep.name}' with fallback ${fallback.provider}/${fallback.modelId} (label=${fallback.label})`);
     return runOnce(fallback.provider, fallback.modelId, "fallback");
+  }
+
+  private async auditReadonlyWorkflowStepPromptsOnce(taskId: string): Promise<void> {
+    if (this.readonlyWorkflowStepAuditDone) return;
+    this.readonlyWorkflowStepAuditDone = true;
+    const tokens = ["edit", "write", "commit", "stage", "modify"];
+    try {
+      const steps = await this.store.listWorkflowSteps();
+      for (const step of steps) {
+        if ((step.mode || "prompt") !== "prompt" || (step.toolMode || "readonly") !== "readonly") continue;
+        const prompt = step.prompt || "";
+        for (const token of tokens) {
+          const re = new RegExp(`\\b${token}\\b`, "i");
+          if (re.test(prompt)) {
+            executorLog.warn(`[workflow-step-audit] readonly step "${step.name}" prompt contains write-implying token "${token}" — re-review intended scope (no auto-migration performed)`);
+            break;
+          }
+        }
+      }
+    } catch (error) {
+      executorLog.warn(`${taskId}: failed readonly workflow-step prompt audit: ${formatError(error)}`);
+    }
   }
 
   private MAX_WORKTREE_RETRIES = 3;

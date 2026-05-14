@@ -1266,7 +1266,7 @@ describe("createFnAgent", () => {
     expect(createSessionArgs.tools).toBeUndefined();
   });
 
-  it("passes opt-in builtin web tool allowlist to createAgentSession", async () => {
+  it("intersects readonly builtin allowlist with readonly policy", async () => {
     const { createFnAgent } = await import("../pi.js");
 
     await createFnAgent({
@@ -1282,9 +1282,9 @@ describe("createFnAgent", () => {
       "grep",
       "find",
       "ls",
-      "WebSearch",
-      "WebFetch",
     ]));
+    expect(createSessionArgs.tools).not.toContain("WebSearch");
+    expect(createSessionArgs.tools).not.toContain("WebFetch");
   });
 
   it("keeps caller customTools in coding sessions", async () => {

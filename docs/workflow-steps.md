@@ -33,6 +33,26 @@ Workflow steps run in one of two phases:
 
 Prompt mode can run with readonly or coding-capable tool access depending on step/template configuration.
 
+## Tool Modes
+
+`toolMode: "readonly"` is enforced as a hard session-level allowlist. Readonly workflow-step agents can only access:
+
+- `read`
+- `grep`
+- `find`
+- `ls`
+- `fn_web_fetch`
+- `fn_task_show`
+- `fn_task_list`
+- `fn_insight_list`
+- `fn_insight_show`
+- `fn_list_agents`
+- `fn_get_agent_config`
+
+Readonly steps cannot hold `edit`, `write`, `bash`, or task/agent mutation tools. Attempts to use denied tools fail closed with `READONLY_VIOLATION` and are surfaced as a `[readonly-violation]` workflow-step failure outcome.
+
+Use `toolMode: "coding"` for any prompt step that must modify files, run shell commands, or perform mutation actions.
+
 ## Gate Modes
 
 Workflow steps also have a `gateMode`:
