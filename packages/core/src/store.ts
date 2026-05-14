@@ -1125,7 +1125,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       reviewLevel: entry.reviewLevel,
       prInfo: slim ? undefined : entry.prInfo,
       issueInfo: slim ? undefined : entry.issueInfo,
-      githubTracking: slim ? undefined : entry.githubTracking,
+      githubTracking: entry.githubTracking,
       sourceIssue: slim ? undefined : entry.sourceIssue,
       attachments: slim ? undefined : entry.attachments,
       comments: entry.comments,
@@ -3233,7 +3233,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       if (slim) {
         task.timedExecutionMs = this.computeTimedExecutionMs(task.log);
         task.log = [];
-        task.githubTracking = undefined;
       }
 
       if (!slim || task.steps.length > 0) {
@@ -3313,7 +3312,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.timedExecutionMs = this.computeTimedExecutionMs(task.log);
       task.stalledReview = detectStalledReview(task, { now });
       task.log = [];
-      task.githubTracking = undefined;
       return task;
     });
 
@@ -3427,7 +3425,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       if (slim) {
         task.timedExecutionMs = this.computeTimedExecutionMs(task.log);
         task.log = [];
-        task.githubTracking = undefined;
       }
 
       if (task.steps.length > 0) {
