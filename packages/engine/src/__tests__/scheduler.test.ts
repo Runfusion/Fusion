@@ -2708,6 +2708,9 @@ describe("Scheduler", () => {
       const scheduler = new Scheduler(store);
       (scheduler as any).running = true;
 
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\n\n## File Scope\n- src/example.ts\n");
+
       await scheduler.schedule();
       expect(moveTask).not.toHaveBeenCalled();
       expect(updateTask).toHaveBeenCalledWith("FN-UP-1", { status: "queued" });
