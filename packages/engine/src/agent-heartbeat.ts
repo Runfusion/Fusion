@@ -892,7 +892,7 @@ export class HeartbeatMonitor {
     return this.approvalRequestStore;
   }
 
-  private buildActionGateContext(agent: Agent, taskId?: string, runId?: string, projectDefaultPolicy?: { rules?: import("@fusion/core").AgentPermissionPolicy["rules"] }): AgentActionGateContext | undefined {
+  private buildActionGateContext(agent: Agent, taskId?: string, runId?: string, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]> }): AgentActionGateContext | undefined {
     if (isEphemeralAgent(agent)) {
       return undefined;
     }
@@ -945,7 +945,7 @@ export class HeartbeatMonitor {
     };
   }
 
-  private buildPermanentAgentGatingContext(agent: Agent, taskId?: string, runId?: string, projectDefaultPolicy?: { rules?: import("@fusion/core").AgentPermissionPolicy["rules"] }): import("@fusion/core").PermanentAgentGatingContext | undefined {
+  private buildPermanentAgentGatingContext(agent: Agent, taskId?: string, runId?: string, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]> }): import("@fusion/core").PermanentAgentGatingContext | undefined {
     if (isEphemeralAgent(agent)) {
       return undefined;
     }

@@ -33,7 +33,13 @@ describe("agent action gate project-default resolution", () => {
     const permissionPolicy = resolveEffectiveAgentPermissionPolicy(
       {
         presetId: "custom",
-        rules: { command_execution: "allow" },
+        rules: {
+          git_write: "allow",
+          file_write_delete: "allow",
+          command_execution: "allow",
+          network_api: "allow",
+          task_agent_mutation: "allow",
+        },
       },
       { rules: { command_execution: "require-approval" } },
     );

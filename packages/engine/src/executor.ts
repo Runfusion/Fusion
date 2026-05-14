@@ -974,7 +974,7 @@ export class TaskExecutor {
     return this._approvalRequestStore;
   }
 
-  private buildActionGateContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: import("@fusion/core").AgentPermissionPolicy["rules"] }): AgentActionGateContext | undefined {
+  private buildActionGateContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]> }): AgentActionGateContext | undefined {
     if (!agent || isEphemeralAgent(agent)) {
       return undefined;
     }
@@ -1040,7 +1040,7 @@ export class TaskExecutor {
     };
   }
 
-  private buildPermanentAgentGatingContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: import("@fusion/core").AgentPermissionPolicy["rules"] }): import("@fusion/core").PermanentAgentGatingContext | undefined {
+  private buildPermanentAgentGatingContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]> }): import("@fusion/core").PermanentAgentGatingContext | undefined {
     if (!agent || isEphemeralAgent(agent)) {
       return undefined;
     }

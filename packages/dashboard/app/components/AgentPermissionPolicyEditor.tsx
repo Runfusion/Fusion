@@ -1,7 +1,6 @@
 import "./AgentPermissionPolicyEditor.css";
 import {
   AGENT_PERMISSION_POLICY_ACTION_CATEGORIES,
-  normalizeAgentPermissionPolicyFromPreset,
   type AgentPermissionPolicy,
   type AgentPermissionPolicyDisposition,
   type AgentPermissionPolicyRules,
@@ -37,8 +36,32 @@ function buildAllowRules(): AgentPermissionPolicyRules {
   };
 }
 
-function getPresetRules(presetId: AgentPermissionPolicy["presetId"]): AgentPermissionPolicyRules {
-  return normalizeAgentPermissionPolicyFromPreset(presetId).rules;
+const PRESET_RULES: Record<"unrestricted" | "approval-required" | "locked-down", AgentPermissionPolicyRules> = {
+  unrestricted: {
+    git_write: "allow",
+    file_write_delete: "allow",
+    command_execution: "allow",
+    network_api: "allow",
+    task_agent_mutation: "allow",
+  },
+  "approval-required": {
+    git_write: "require-approval",
+    file_write_delete: "require-approval",
+    command_execution: "require-approval",
+    network_api: "require-approval",
+    task_agent_mutation: "require-approval",
+  },
+  "locked-down": {
+    git_write: "block",
+    file_write_delete: "block",
+    command_execution: "block",
+    network_api: "block",
+    task_agent_mutation: "block",
+  },
+};
+
+function getPresetRules(presetId: "unrestricted" | "approval-required" | "locked-down"): AgentPermissionPolicyRules {
+  return PRESET_RULES[presetId];
 }
 
 function matchesRules(a: AgentPermissionPolicyRules, b: AgentPermissionPolicyRules): boolean {
@@ -46,9 +69,9 @@ function matchesRules(a: AgentPermissionPolicyRules, b: AgentPermissionPolicyRul
 }
 
 function derivePresetFromRules(rules: AgentPermissionPolicyRules): AgentPermissionPolicy["presetId"] {
-  if (matchesRules(rules, getPresetRules("unrestricted"))) return "unrestricted";
-  if (matchesRules(rules, getPresetRules("approval-required"))) return "approval-required";
-  if (matchesRules(rules, getPresetRules("locked-down"))) return "locked-down";
+  if (matchesRules(rules, PRESET_RULES.unrestricted)) return "unrestricted";
+  if (matchesRules(rules, PRESET_RULES["approval-required"])) return "approval-required";
+  if (matchesRules(rules, PRESET_RULES["locked-down"])) return "locked-down";
   return "custom";
 }
 
@@ -66,7 +89,7 @@ export function AgentPermissionPolicyEditor({ value, projectDefault, mode, onCha
       onChange({ presetId: "custom", rules: { ...rules } });
       return;
     }
-    onChange({ presetId: preset as AgentPermissionPolicy["presetId"], rules: getPresetRules(preset as AgentPermissionPolicy["presetId"]) });
+    onChange({ presetId: preset as AgentPermissionPolicy["presetId"], rules: getPresetRules(preset as "unrestricted" | "approval-required" | "locked-down") });
   };
 
   const setRule = (category: keyof AgentPermissionPolicyRules, next: string) => {
