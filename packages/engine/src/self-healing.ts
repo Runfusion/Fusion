@@ -155,6 +155,16 @@ const APPROVED_TRIAGE_RECOVERY_GRACE_MS = 60_000;
 const ORPHANED_EXECUTION_RECOVERY_GRACE_MS = 60_000;
 const ACTIVE_MERGE_STATUSES = new Set(["merging", "merging-pr", "merging-fix"]);
 const NON_TERMINAL_STEP_STATUSES = new Set(["pending", "in-progress"]);
+const STRANDED_COMPLETED_TODO_ACTIVE_STATUSES = new Set([
+  "in-progress",
+  "planning",
+  "specifying",
+  "queued",
+  "merging",
+  "merging-pr",
+  "merging-fix",
+  "mission-validation",
+]);
 /** Statuses that represent an explicit human-handoff or active merge —
  *  the ghost-review fallback must not disturb tasks parked in these states. */
 const GHOST_REVIEW_PRESERVED_STATUSES = new Set([
@@ -358,6 +368,7 @@ export class SelfHealingManager {
     const steps: Array<{ name: string; fn: () => Promise<unknown> }> = [
       { name: "no-progress-no-task-done", fn: () => this.recoverNoProgressNoTaskDoneFailures().then(() => undefined) },
       { name: "completed-tasks", fn: () => this.recoverCompletedTasks().then(() => undefined) },
+      { name: "recover-stranded-completed-todo", fn: () => this.recoverStrandedCompletedTodoTasks().then(() => undefined) },
       { name: "stale-incomplete-review", fn: () => this.recoverStaleIncompleteReviewTasks().then(() => undefined) },
       { name: "failed-pre-merge-steps", fn: () => this.recoverReviewTasksWithFailedPreMergeSteps().then(() => undefined) },
       { name: "interrupted-merging", fn: () => this.recoverInterruptedMergingTasks().then(() => undefined) },
@@ -1052,6 +1063,7 @@ export class SelfHealingManager {
         // Batch 2 — Task recovery (operations are independent of each other)
         const batch2Fns: Array<{ name: string; fn: () => Promise<unknown> }> = [
           { name: "recover-completed-tasks", fn: () => this.recoverCompletedTasks() },
+          { name: "recover-stranded-completed-todo", fn: () => this.recoverStrandedCompletedTodoTasks() },
           { name: "recover-stale-incomplete-review", fn: () => this.recoverStaleIncompleteReviewTasks() },
           { name: "recover-failed-pre-merge-steps", fn: () => this.recoverReviewTasksWithFailedPreMergeSteps() },
           { name: "recover-interrupted-merging", fn: () => this.recoverInterruptedMergingTasks() },
@@ -1241,6 +1253,58 @@ export class SelfHealingManager {
       return recovered;
     } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
       log.error(`Completed task recovery failed: ${errorMessage}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Recover todo tasks whose implementation steps are fully complete.
+   *
+   * This closes the lifecycle gap where self-healing paths can requeue a
+   * finished task back to todo with progress preserved; these tasks should be
+   * promoted via normal transition flow instead of waiting for re-execution.
+   */
+  async recoverStrandedCompletedTodoTasks(): Promise<number> {
+    const recoverFn = this.options.recoverCompletedTask;
+    if (!recoverFn) return 0;
+
+    try {
+      const tasks = await this.store.listTasks({ column: "todo", slim: true });
+      const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+
+      const stranded = tasks.filter((task) => {
+        if (task.column !== "todo" || task.paused) return false;
+        if (executingIds.has(task.id)) return false;
+        if (task.steps.length === 0 || !task.steps.every((s) => s.status === "done" || s.status === "skipped")) return false;
+        if (task.error) return false;
+        if (task.status && STRANDED_COMPLETED_TODO_ACTIVE_STATUSES.has(task.status)) return false;
+        if (task.reviewState?.refreshStatus === "refreshing") return false;
+        return true;
+      });
+
+      if (stranded.length === 0) return 0;
+
+      log.warn(`Found ${stranded.length} completed task(s) stranded in todo`);
+
+      let recovered = 0;
+      for (const task of stranded) {
+        const latestExecutingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
+        if (latestExecutingIds.has(task.id)) {
+          log.log(`${task.id} started executing concurrently — skipping stranded todo recovery this cycle`);
+          continue;
+        }
+
+        const success = await recoverFn(task);
+        if (success) recovered++;
+      }
+
+      if (recovered > 0) {
+        log.log(`Recovered ${recovered} stranded completed todo task(s)`);
+      }
+      return recovered;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      log.error(`Stranded completed todo task recovery failed: ${errorMessage}`);
       return 0;
     }
   }
