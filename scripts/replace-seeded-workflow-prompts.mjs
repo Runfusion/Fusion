@@ -7,7 +7,7 @@
  * To capture production rollback text before applying:
  * sqlite3 <db> "SELECT id, prompt FROM workflow_steps WHERE id IN ('WS-004','WS-006') ORDER BY id;"
  */
-import Database from "better-sqlite3";
+import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 
 const dbPath = (process.argv.find((arg) => arg.startsWith("--db=")) || "--db=.fusion/fusion.db").slice(5);
@@ -27,13 +27,34 @@ const seededMappings = [
   { workflowStepId: "WS-006", templateId: "frontend-ux-design" },
 ];
 
-const db = new Database(resolve(dbPath));
-const getRow = db.prepare("SELECT id, name, prompt FROM workflow_steps WHERE id = ?");
-const updateRow = db.prepare("UPDATE workflow_steps SET prompt = ?, updatedAt = ? WHERE id = ?");
+function createCliDatabase(dbFile) {
+  const runSql = (sql) => execFileSync("sqlite3", [dbFile, sql], { encoding: "utf8" });
+  const runSqlJson = (sql) => execFileSync("sqlite3", ["-json", dbFile, sql], { encoding: "utf8" });
+  return {
+    getRow(id) {
+      const escapedId = String(id).replace(/'/g, "''");
+      const output = runSqlJson(`SELECT id, name, prompt FROM workflow_steps WHERE id = '${escapedId}';`).trim();
+      if (!output) return null;
+      const rows = JSON.parse(output);
+      if (!Array.isArray(rows) || rows.length === 0) return null;
+      const row = rows[0];
+      return { id: row.id, name: row.name, prompt: row.prompt ?? "" };
+    },
+    updateRow(id, prompt, updatedAt) {
+      const escapedId = String(id).replace(/'/g, "''");
+      const escapedPrompt = String(prompt).replace(/'/g, "''");
+      const escapedUpdatedAt = String(updatedAt).replace(/'/g, "''");
+      runSql(`UPDATE workflow_steps SET prompt = '${escapedPrompt}', updatedAt = '${escapedUpdatedAt}' WHERE id = '${escapedId}';`);
+    },
+  };
+}
+
+const db = createCliDatabase(resolve(dbPath));
 
 let updated = 0;
 let skipped = 0;
 let noOp = 0;
+let differs = 0;
 
 for (const { workflowStepId, templateId } of seededMappings) {
   const nextPrompt = templateMap.get(templateId);
@@ -42,7 +63,7 @@ for (const { workflowStepId, templateId } of seededMappings) {
     process.exit(1);
   }
 
-  const row = getRow.get(workflowStepId);
+  const row = db.getRow(workflowStepId);
   if (!row) {
     skipped += 1;
     console.log(`${workflowStepId}: not present, skipping`);
@@ -57,14 +78,18 @@ for (const { workflowStepId, templateId } of seededMappings) {
   }
 
   if (checkOnly) {
-    updated += 1;
+    differs += 1;
     console.log(`${workflowStepId}: differs (check-only)`);
     continue;
   }
 
-  updateRow.run(nextPrompt, new Date().toISOString(), workflowStepId);
+  db.updateRow(workflowStepId, nextPrompt, new Date().toISOString());
   updated += 1;
   console.log(`${workflowStepId}: updated (${row.name})`);
 }
 
-console.log(`Updated ${updated} row(s), skipped ${skipped}, no-op ${noOp}`);
+console.log(
+  checkOnly
+    ? `Updated ${updated} row(s), skipped ${skipped}, no-op ${noOp}, differs ${differs}`
+    : `Updated ${updated} row(s), skipped ${skipped}, no-op ${noOp}`,
+);
