@@ -145,3 +145,39 @@ Schema details, persistence model, and endpoint implementation are out-of-scope 
 - No rollback of already-merged commits
 - No automatic retry/replay of cancelled runs
 - No cross-mesh fan-out cancellation
+
+## Compliance Contract (binding for Milestone C implementation)
+
+1. **Design tokens only**
+   - Follow `AGENTS.md` Adding New CSS rules: no hardcoded px (except `0`), no raw hex, no raw `rgba(...)`.
+   - Use dashboard tokens (`--space-*`, `--radius-*`, `--color-*`, status tokens) and `color-mix(in srgb, var(--color) X%, transparent)` for translucency.
+
+2. **Per-component CSS files only**
+   - New styles must live in `packages/dashboard/app/components/<Component>.css`.
+   - Import at top of `<Component>.tsx`.
+   - Do not add component-specific styles to `packages/dashboard/app/styles.css`; only global token definitions belong there.
+
+3. **CSS tests must use fixture helpers**
+   - Future CSS regression tests must use `packages/dashboard/app/test/cssFixture.ts` (`loadAllAppCss`, `loadAllAppCssBaseOnly`).
+   - Direct `readFileSync('../styles.css')` assertions are disallowed by lint policy.
+
+4. **Lazy-load contract for heavy DAG surfaces**
+   - Stage 2/3 surfaces are heavy and must use `React.lazy()` + `<Suspense fallback={null}>` patterns in `App.tsx` and/or `AppModals.tsx`.
+   - Add Stage 3 top-level DAG view imports to `prefetchLazyViews()` warm-up list.
+
+5. **Theme contract**
+   - Reuse existing status tokens: `--triage`, `--todo`, `--in-progress`, `--in-review`, `--done`, plus `--status-*-bg` variants.
+   - Proposed new tokens in this plan are all **semantic tokens** (`--dag-graph-edge`, `--dag-graph-node-shadow`, `--dag-graph-active-ring`) and therefore require dark/light definitions only.
+   - If implementation later needs **base tokens**, those must be added to dark/light plus all 54 theme blocks.
+
+6. **Buttons Frozen (verbatim directive + protected files)**
+   - "Do not file, plan, or implement tasks that adjust button mobile-responsiveness, touch-target sizing, or mobile reflow of header/action button rows anywhere in the dashboard (TaskCard, SettingsModal, ChatView, MissionManager, AgentsView, FAB, etc.). **Keep buttons as they are.**"
+   - Implementers must not open `SettingsModal.css`, `TaskCard.css`, `ChatView.css`, or similar mobile media blocks to alter `.btn`, `.modal-close`, `.settings-header-actions`, `.card-*` button rules.
+   - Pause/resume/cancel controls must use existing `.btn` chains with no size/touch-target changes.
+
+7. **Mobile responsive scope**
+   - Non-button reflow only, using `@media (max-width: 768px)` blocks placed at bottom of the component CSS file.
+   - Touch-target convention for non-button interactive surfaces applies (e.g., graph-node tap surfaces may be primary controls; secondary chip controls remain compact).
+
+8. **No reliability-layer behavior changes**
+   - Milestone C implementation must not modify scheduler, executor, self-healing, restart-recovery, or merger behavior while FN-4359 freeze remains active.
