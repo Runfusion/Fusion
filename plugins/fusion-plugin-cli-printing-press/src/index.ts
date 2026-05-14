@@ -2,6 +2,7 @@ import { definePlugin } from "@fusion/plugin-sdk";
 import { createCliPrintingPressRoutes } from "./routes/wizard-routes.js";
 import { buildExecutorRuntimeEnv } from "./runtime/executor-runtime-env.js";
 import { createCliPressStore, ensureCliPressSchema } from "./store/cli-press-store.js";
+import { CLI_PRINTING_PRESS_WORKFLOW_STEPS } from "./workflow-steps.js";
 
 const storeByDb = new WeakMap<object, ReturnType<typeof createCliPressStore>>();
 
@@ -20,6 +21,7 @@ const plugin = definePlugin({
     name: "CLI Printing Press",
     version: "0.1.0",
     description: "Guided wizard for drafting external service CLI definitions",
+    workflowSteps: CLI_PRINTING_PRESS_WORKFLOW_STEPS.map((step) => ({ stepId: step.stepId, name: step.name })),
   },
   state: "installed",
   hooks: {
@@ -30,6 +32,7 @@ const plugin = definePlugin({
     const store = getStore(ctx.taskStore as { getDatabase: () => object });
     return buildExecutorRuntimeEnv(store, taskCtx, ctx);
   },
+  workflowSteps: CLI_PRINTING_PRESS_WORKFLOW_STEPS,
   dashboardViews: [
     {
       viewId: "wizard",
@@ -55,4 +58,5 @@ export { CliPrintingPressWizardView } from "./dashboard-view.js";
 export { CliPrintingPressManageView } from "./manage-view.js";
 export { CliPrintingPressTestRunner } from "./run/TestRunnerPanel.js";
 export { createCliPressStore, ensureCliPressSchema } from "./store/cli-press-store.js";
+export { CLI_PRINTING_PRESS_WORKFLOW_STEPS } from "./workflow-steps.js";
 export * from "./store/cli-press-types.js";
