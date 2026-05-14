@@ -79,6 +79,21 @@ async function resolveBranchDiffBaseInRoot(task: BranchFallbackTask, rootDir: st
   return { baseRef, branchRef };
 }
 
+async function tryBranchRefFallbackFiles(
+  task: BranchFallbackTask & { id: string },
+  rootDir: string,
+): Promise<string[]> {
+  const resolved = await resolveBranchDiffBaseInRoot(task, rootDir);
+  if (!resolved) return [];
+
+  try {
+    const changed = (await runGitCommand(["diff", "--name-only", `${resolved.baseRef}..${resolved.branchRef}`], rootDir, 5000)).trim();
+    return changed.split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 type AggregatedDoneTaskFile = {
   path: string;
   status: DoneTaskFileStatus;
@@ -254,7 +269,12 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
       }
 
       if (!task.worktree) {
-        res.json([]);
+        const files = await tryBranchRefFallbackFiles(task, scopedStore.getRootDir());
+        sessionFilesCache.set(task.id, {
+          files,
+          expiresAt: Date.now() + 10000,
+        });
+        res.json(files);
         return;
       }
 
@@ -267,15 +287,23 @@ export function registerSessionDiffRoutes(router: Router, deps: SessionDiffRoute
       }
 
       if (!worktreeExists) {
-        res.json([]);
+        const files = await tryBranchRefFallbackFiles(task, scopedStore.getRootDir());
+        sessionFilesCache.set(task.id, {
+          files,
+          expiresAt: Date.now() + 10000,
+        });
+        res.json(files);
         return;
       }
 
       const worktree = task.worktree;
       if (!(await worktreeStillBelongsToTask(worktree, task.branch))) {
-        // Pool likely reassigned this path to another task — return empty
-        // rather than diffing against a foreign branch's HEAD.
-        res.json([]);
+        const files = await tryBranchRefFallbackFiles(task, scopedStore.getRootDir());
+        sessionFilesCache.set(task.id, {
+          files,
+          expiresAt: Date.now() + 10000,
+        });
+        res.json(files);
         return;
       }
       const cached = sessionFilesCache.get(task.id);
