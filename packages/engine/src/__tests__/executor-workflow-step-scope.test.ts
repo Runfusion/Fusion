@@ -44,6 +44,21 @@ function mockDiffFiles(files: string[]) {
   });
 }
 
+function mockDiffSequence(preStepFiles: string[], postStepFiles: string[]) {
+  let diffCallCount = 0;
+  mockedExecSync.mockImplementation((cmd: string | string[]) => {
+    if (typeof cmd === "string" && cmd.includes("git merge-base HEAD origin/main")) {
+      return Buffer.from("abc123\n");
+    }
+    if (typeof cmd === "string" && cmd.includes("git diff --name-only abc123..HEAD")) {
+      diffCallCount += 1;
+      const files = diffCallCount === 1 ? preStepFiles : postStepFiles;
+      return Buffer.from(files.join("\n"));
+    }
+    return Buffer.from("");
+  });
+}
+
 describe("executor workflow step scope gating", () => {
   beforeEach(() => {
     resetExecutorMocks();
@@ -113,7 +128,7 @@ describe("executor workflow step scope gating", () => {
     store.getTask.mockResolvedValue(task as any);
     store.getWorkflowStep.mockResolvedValue(createWorkflowStep({ id: "WS-001", name: "Workflow Review" }) as any);
     store.parseFileScopeFromPrompt.mockResolvedValue(["packages/engine/src/executor.ts"]);
-    mockDiffFiles(["packages/dashboard/app/components/TaskDetailModal.tsx"]);
+    mockDiffSequence([], ["packages/dashboard/app/components/TaskDetailModal.tsx"]);
 
     const executor = new TaskExecutor(store as any, "/tmp/test", {} as any);
     vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "ok" });
@@ -124,13 +139,34 @@ describe("executor workflow step scope gating", () => {
     expect(String((result as any).feedback)).toContain("wrote files outside declared File Scope");
   });
 
+  it("detects off-scope delta even when pre-step diff has in-scope files", async () => {
+    const store = createMockStore();
+    const task = { ...createTask(), enabledWorkflowSteps: ["WS-001"] };
+    store.getTask.mockResolvedValue(task as any);
+    store.getWorkflowStep.mockResolvedValue(createWorkflowStep({ id: "WS-001", name: "Workflow Review" }) as any);
+    store.parseFileScopeFromPrompt.mockResolvedValue(["packages/engine/src/executor.ts"]);
+
+    mockDiffSequence(
+      ["packages/engine/src/executor.ts"],
+      ["packages/engine/src/executor.ts", "packages/dashboard/app/components/TaskDetailModal.tsx"],
+    );
+
+    const executor = new TaskExecutor(store as any, "/tmp/test", {} as any);
+    vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "ok" });
+
+    const result = await (executor as any).runWorkflowSteps(task as any, "/tmp/test", { workflowStepScopeEnforcement: "block" } as any);
+
+    expect(result).toEqual(expect.objectContaining({ allPassed: false, revisionRequested: true }));
+    expect(String((result as any).feedback)).toContain("TaskDetailModal.tsx");
+  });
+
   it("warn mode logs but passes on off-scope writes", async () => {
     const store = createMockStore();
     const task = { ...createTask(), enabledWorkflowSteps: ["WS-001"] };
     store.getTask.mockResolvedValue(task as any);
     store.getWorkflowStep.mockResolvedValue(createWorkflowStep({ id: "WS-001", name: "Workflow Review" }) as any);
     store.parseFileScopeFromPrompt.mockResolvedValue(["packages/engine/src/executor.ts"]);
-    mockDiffFiles(["packages/dashboard/app/components/TaskDetailModal.tsx"]);
+    mockDiffSequence([], ["packages/dashboard/app/components/TaskDetailModal.tsx"]);
 
     const executor = new TaskExecutor(store as any, "/tmp/test", {} as any);
     vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "ok" });
@@ -164,7 +200,7 @@ describe("executor workflow step scope gating", () => {
     store.getTask.mockResolvedValue(task as any);
     store.getWorkflowStep.mockResolvedValue(createWorkflowStep({ id: "WS-001", name: "Workflow Review" }) as any);
     store.parseFileScopeFromPrompt.mockResolvedValue(["packages/engine/src/executor.ts"]);
-    mockDiffFiles(["packages/dashboard/app/components/TaskDetailModal.tsx"]);
+    mockDiffSequence([], ["packages/dashboard/app/components/TaskDetailModal.tsx"]);
 
     const executor = new TaskExecutor(store as any, "/tmp/test", {} as any);
     vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "ok" });

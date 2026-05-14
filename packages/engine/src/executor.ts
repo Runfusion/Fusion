@@ -5847,6 +5847,23 @@ ${failureFeedback}
     }
   }
 
+  private async captureUncommittedModifiedFiles(worktreePath: string): Promise<string[]> {
+    try {
+      const [unstaged, staged] = await Promise.all([
+        execAsync("git diff --name-only", { cwd: worktreePath, encoding: "utf-8" }),
+        execAsync("git diff --name-only --cached", { cwd: worktreePath, encoding: "utf-8" }),
+      ]);
+      const files = [...unstaged.stdout.split("\n"), ...staged.stdout.split("\n")]
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      return [...new Set(files)];
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      executorLog.log(`Failed to capture uncommitted modified files: ${errorMessage}`);
+      return [];
+    }
+  }
+
   // ── Worktree management ────────────────────────────────────────────
 
   /**
@@ -5978,6 +5995,13 @@ ${failureFeedback}
 
       const startedAt = new Date().toISOString();
       const stepStartedAtMs = Date.now();
+      const workflowStepScopeEnforcement = settings.workflowStepScopeEnforcement ?? "block";
+      const shouldCheckWorkflowStepScope = stepPhase === "pre-merge"
+        && stepMode === "prompt"
+        && workflowStepScopeEnforcement !== "off";
+      const preStepModifiedFiles = shouldCheckWorkflowStepScope
+        ? await this.captureModifiedFiles(worktreePath, currentTask.baseCommitSha)
+        : [];
 
       // Push pending entry BEFORE execution so dashboard can show live status
       results.push({
@@ -5999,18 +6023,21 @@ ${failureFeedback}
         const completedAt = new Date().toISOString();
 
         if (result.success) {
-          const workflowStepScopeEnforcement = settings.workflowStepScopeEnforcement ?? "block";
-          if (stepPhase === "pre-merge" && stepMode === "prompt" && workflowStepScopeEnforcement !== "off") {
+          if (shouldCheckWorkflowStepScope) {
             const declaredScope = await this.store.parseFileScopeFromPrompt(task.id).catch(() => [] as string[]);
             const refreshedTask = await this.store.getTask(task.id);
             if (declaredScope.length > 0 && refreshedTask?.scopeOverride !== true) {
               const postStepModifiedFiles = await this.captureModifiedFiles(worktreePath, currentTask.baseCommitSha);
-              const hasScopeOverlap = postStepModifiedFiles.some((filePath) => workflowPathMatchesDeclaredScope(filePath, declaredScope));
-              if (postStepModifiedFiles.length > 0 && !hasScopeOverlap) {
-                const scopeLeakMessage = `Workflow step '${ws.name}' wrote files outside declared File Scope. Staged: [${postStepModifiedFiles.join(", ")}]. Declared: [${declaredScope.join(", ")}]. (FN-4343)`;
+              const preStepSet = new Set(preStepModifiedFiles);
+              const stepCommittedFiles = postStepModifiedFiles.filter((filePath) => !preStepSet.has(filePath));
+              const stepUncommittedFiles = await this.captureUncommittedModifiedFiles(worktreePath);
+              const stepTouchedFiles = [...new Set([...stepCommittedFiles, ...stepUncommittedFiles])];
+              const hasScopeOverlap = stepTouchedFiles.some((filePath) => workflowPathMatchesDeclaredScope(filePath, declaredScope));
+              if (stepTouchedFiles.length > 0 && !hasScopeOverlap) {
+                const scopeLeakMessage = `Workflow step '${ws.name}' wrote files outside declared File Scope. Staged: [${stepTouchedFiles.join(", ")}]. Declared: [${declaredScope.join(", ")}]. (FN-4343)`;
                 await this.store.logEntry(
                   task.id,
-                  `[pre-merge] Workflow step scope leak: ${ws.name} wrote off-scope files [${postStepModifiedFiles.join(", ") || "<none>"}]`,
+                  `[pre-merge] Workflow step scope leak: ${ws.name} wrote off-scope files [${stepTouchedFiles.join(", ") || "<none>"}]`,
                 );
                 if (workflowStepScopeEnforcement === "warn") {
                   await this.store.logEntry(task.id, `[pre-merge] workflowStepScopeEnforcement=warn — ${scopeLeakMessage}`);
