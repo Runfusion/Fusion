@@ -632,6 +632,64 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
   });
 
   /**
+   * GET /api/agents/:id/prompt-sizes
+   * Get recent prompt-size points for a permanent agent.
+   */
+  router.get("/agents/:id/prompt-sizes", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const { AgentStore, isEphemeralAgent } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      await agentStore.init();
+
+      const agent = await agentStore.getAgent(req.params.id);
+      if (!agent) {
+        throw notFound("Agent not found");
+      }
+      if (isEphemeralAgent(agent)) {
+        throw badRequest("Prompt sizes are not available for ephemeral agents");
+      }
+
+      const rawLimit = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : 7;
+      if (!Number.isInteger(rawLimit) || rawLimit <= 0) {
+        throw badRequest("limit must be a positive integer");
+      }
+      const limit = Math.min(rawLimit, 30);
+
+      const rows = scopedStore.getDatabase().prepare(`
+        SELECT
+          id AS runId,
+          createdAt,
+          COALESCE(length(json_extract(data, '$.systemPrompt')), 0) AS systemChars,
+          COALESCE(length(json_extract(data, '$.executionPrompt')), 0) AS execChars,
+          COALESCE(length(json_extract(data, '$.systemPrompt')), 0)
+            + COALESCE(length(json_extract(data, '$.executionPrompt')), 0) AS totalChars
+        FROM agentRuns
+        WHERE json_extract(data, '$.agentId') = ?
+        ORDER BY createdAt DESC
+        LIMIT ?
+      `).all(req.params.id, limit) as Array<{
+        runId: string;
+        createdAt: string;
+        systemChars: number;
+        execChars: number;
+        totalChars: number;
+      }>;
+
+      res.json(rows);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if ((err instanceof Error ? err.message : String(err)).includes("not found")) {
+        throw notFound(err instanceof Error ? err.message : String(err));
+      } else {
+        rethrowAsApiError(err);
+      }
+    }
+  });
+
+  /**
    * GET /api/agents/:id/token-usage
    * Get cache/token usage summary windows for a permanent agent.
    */

@@ -4714,6 +4714,14 @@ import type {
 } from "@fusion/core";
 export type { Agent, AgentDetail, AgentCapability, AgentState, AgentHeartbeatEvent, AgentHeartbeatRun, AgentCreateInput, AgentUpdateInput, AgentTaskSession, AgentStats, HeartbeatInvocationSource, OrgTreeNode, AgentReflection, AgentPerformanceSummary, ReflectionTrigger, AgentBudgetStatus };
 
+export interface AgentPromptSizePoint {
+  runId: string;
+  createdAt: string;
+  systemChars: number;
+  execChars: number;
+  totalChars: number;
+}
+
 function withProjectId(path: string, projectId?: string): string {
   if (!projectId) return path;
   const separator = path.includes("?") ? "&" : "?";
@@ -4926,6 +4934,15 @@ export function fetchAgentRunDetail(agentId: string, runId: string, projectId?: 
 /** Fetch agent logs for a specific run's time window */
 export function fetchAgentRunLogs(agentId: string, runId: string, projectId?: string): Promise<AgentLogEntry[]> {
   return api<AgentLogEntry[]>(withProjectId(`/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(runId)}/logs`, projectId));
+}
+
+/** Fetch recent prompt size points for an agent */
+export function fetchAgentPromptSizes(agentId: string, limit?: number, projectId?: string): Promise<AgentPromptSizePoint[]> {
+  const params = new URLSearchParams();
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (projectId) params.set("projectId", projectId);
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return api<AgentPromptSizePoint[]>(`/agents/${encodeURIComponent(agentId)}/prompt-sizes${query}`);
 }
 
 /** Manually start a heartbeat run for an agent */

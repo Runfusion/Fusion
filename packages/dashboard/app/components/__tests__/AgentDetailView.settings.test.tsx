@@ -732,6 +732,48 @@ describe("Config autosave", () => {
     expect(latestPayload.runtimeConfig).toBeDefined();
     expect(latestPayload.runtimeConfig).not.toHaveProperty("heartbeatScopeDiscipline");
   });
+
+  it("saves heartbeat prompt template override", async () => {
+    mockFetchAgent.mockResolvedValue(createMockAgent({
+      runtimeConfig: { heartbeatPromptTemplate: "default" },
+    } as any));
+
+    const user = userEvent.setup();
+    render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+    await openSettings(user);
+
+    const select = screen.getByLabelText("Heartbeat Prompt Template") as HTMLSelectElement;
+    await user.selectOptions(select, "compact");
+
+    await waitFor(() => {
+      expect(mockUpdateAgent).toHaveBeenCalled();
+    }, { timeout: 3000 });
+
+    expect(mockUpdateAgent.mock.calls.at(-1)?.[1]).toMatchObject({
+      runtimeConfig: expect.objectContaining({ heartbeatPromptTemplate: "compact" }),
+    });
+  });
+
+  it("clears heartbeat prompt template when inherit project default is selected", async () => {
+    mockFetchAgent.mockResolvedValue(createMockAgent({
+      runtimeConfig: { heartbeatPromptTemplate: "compact" },
+    } as any));
+
+    const user = userEvent.setup();
+    render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+    await openSettings(user);
+
+    const select = screen.getByLabelText("Heartbeat Prompt Template") as HTMLSelectElement;
+    await user.selectOptions(select, "");
+
+    await waitFor(() => {
+      expect(mockUpdateAgent).toHaveBeenCalled();
+    }, { timeout: 3000 });
+
+    const latestPayload = mockUpdateAgent.mock.calls.at(-1)?.[1] as { runtimeConfig?: Record<string, unknown> };
+    expect(latestPayload.runtimeConfig).toBeDefined();
+    expect(latestPayload.runtimeConfig).not.toHaveProperty("heartbeatPromptTemplate");
+  });
 });
 
 });

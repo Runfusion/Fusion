@@ -11,8 +11,8 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { AgentDetail, AgentState, AgentHeartbeatRun, AgentBudgetStatus, ModelInfo, MemoryFileInfo, AgentCapability, PluginRuntimeInfo, SkillContent, AgentOnboardingSummary, AgentMailboxResponse } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, upgradeAgentHeartbeatProcedure, updateGlobalSettings, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox, markMessageRead } from "../api";
+import type { AgentDetail, AgentState, AgentHeartbeatRun, AgentBudgetStatus, ModelInfo, MemoryFileInfo, AgentCapability, PluginRuntimeInfo, SkillContent, AgentOnboardingSummary, AgentMailboxResponse, AgentPromptSizePoint } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, upgradeAgentHeartbeatProcedure, updateGlobalSettings, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox, markMessageRead, fetchAgentPromptSizes } from "../api";
 import type { Agent } from "../api";
 import type { AgentLogEntry, Task, Message, ParticipantType } from "@fusion/core";
 import { getErrorMessage, isEphemeralAgent } from "@fusion/core";
@@ -1684,6 +1684,7 @@ function RunsTab({
   const [detailRun, setDetailRun] = useState<AgentHeartbeatRun | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [tokenUsageSummary, setTokenUsageSummary] = useState<AgentTokenUsageSummary | null>(null);
+  const [promptSizes, setPromptSizes] = useState<AgentPromptSizePoint[]>([]);
   const hasAutoExpandedInitialRunRef = useRef(false);
   const didMountRunNowRefreshRef = useRef(false);
 
@@ -1706,12 +1707,12 @@ function RunsTab({
   useEffect(() => {
     if (isEphemeral) {
       setTokenUsageSummary(null);
+      setPromptSizes([]);
       return;
     }
 
-    const controller = new AbortController();
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
-    void fetch(`/api/agents/${encodeURIComponent(agentId)}/token-usage${query}`, { signal: controller.signal })
+    void fetch(`/api/agents/${encodeURIComponent(agentId)}/token-usage${query}`)
       .then(async (res) => {
         if (!res.ok) {
           if (res.status === 400) {
@@ -1724,13 +1725,19 @@ function RunsTab({
         setTokenUsageSummary(data);
       })
       .catch((err) => {
-        if (err instanceof Error && err.name === "AbortError") {
-          return;
-        }
         addToast(`Failed to load cache hit ratio: ${getErrorMessage(err)}`, "error");
       });
 
-    return () => controller.abort();
+    void fetchAgentPromptSizes(agentId, 7, projectId)
+      .then((data) => setPromptSizes(data))
+      .catch((err) => {
+        const message = getErrorMessage(err).toLowerCase();
+        if (message.includes("ephemeral") || message.includes("400")) {
+          setPromptSizes([]);
+          return;
+        }
+        addToast(`Failed to load prompt sizes: ${getErrorMessage(err)}`, "error");
+      });
   }, [agentId, projectId, addToast, isEphemeral]);
 
   useEffect(() => {
@@ -2100,8 +2107,33 @@ function RunsTab({
     </div>
   );
 
+  const latestPrompt = promptSizes[0];
+  const promptPoints = [...promptSizes].reverse();
+  const maxExecChars = Math.max(1, ...promptPoints.map((point) => point.execChars));
+  const promptPolyline = promptPoints
+    .map((point, index) => {
+      const x = promptPoints.length <= 1 ? 0 : (index / (promptPoints.length - 1)) * 100;
+      const y = 100 - Math.round((point.execChars / maxExecChars) * 100);
+      return `${x},${y}`;
+    })
+    .join(" ");
+
   return (
     <div className="runs-tab">
+      {promptSizes.length > 0 && latestPrompt && (
+        <div className="run-output-section">
+          <div className="run-output-label">Prompt Size</div>
+          <div className="prompt-size-summary">
+            <svg className="prompt-size-sparkline" viewBox="0 0 100 100" role="img" aria-label="Execution prompt size over last 7 runs">
+              <polyline className="prompt-size-sparkline-grid" points="0,100 100,100" />
+              <polyline className="prompt-size-sparkline-line" points={promptPolyline} />
+            </svg>
+            <span className="prompt-size-values">
+              {latestPrompt.systemChars.toLocaleString()} / {latestPrompt.execChars.toLocaleString()} / {latestPrompt.totalChars.toLocaleString()}
+            </span>
+          </div>
+        </div>
+      )}
       {tokenUsageSummary && (
         <div className="run-output-section">
           <div className="run-output-label">Cache hit ratio</div>
@@ -3250,6 +3282,11 @@ function deriveHeartbeatScopeDiscipline(runtimeConfig: AgentDetail["runtimeConfi
   return mode === "strict" || mode === "lite" || mode === "off" ? mode : "";
 }
 
+function deriveHeartbeatPromptTemplate(runtimeConfig: AgentDetail["runtimeConfig"] | undefined): "default" | "compact" | "" {
+  const template = runtimeConfig?.heartbeatPromptTemplate;
+  return template === "default" || template === "compact" ? template : "";
+}
+
 function deriveBudgetValues(runtimeConfig: AgentDetail["runtimeConfig"] | undefined): Record<string, string> {
   const bc = (runtimeConfig ?? {}).budgetConfig as Record<string, unknown> | undefined;
   const nextValues: Record<string, string> = {};
@@ -3625,6 +3662,9 @@ function ConfigTab({
   const [heartbeatScopeDiscipline, setHeartbeatScopeDiscipline] = useState<"strict" | "lite" | "off" | "">(
     () => deriveHeartbeatScopeDiscipline(agent.runtimeConfig),
   );
+  const [heartbeatPromptTemplate, setHeartbeatPromptTemplate] = useState<"default" | "compact" | "">(
+    () => deriveHeartbeatPromptTemplate(agent.runtimeConfig),
+  );
 
   // Budget config state initialised from agent.runtimeConfig.budgetConfig
   const [budgetValues, setBudgetValues] = useState<Record<string, string>>(
@@ -3913,6 +3953,7 @@ function ConfigTab({
     if (allowParallelExecution !== deriveAllowParallelExecution(agent.runtimeConfig)) return true;
     if (skipHeartbeatWhenIdle !== deriveSkipHeartbeatWhenIdle(agent.runtimeConfig)) return true;
     if (heartbeatScopeDiscipline !== deriveHeartbeatScopeDiscipline(agent.runtimeConfig)) return true;
+    if (heartbeatPromptTemplate !== deriveHeartbeatPromptTemplate(agent.runtimeConfig)) return true;
     for (const key of ["heartbeatIntervalMs", "heartbeatTimeoutMs", "maxConcurrentRuns", "messageResponseMode", "autoClaimCandidatesInPrompt"] as const) {
       const current = heartbeatValues[key]?.trim() ?? "";
       let persisted = rc[key] !== undefined && rc[key] !== null ? String(rc[key]) : "";
@@ -4171,6 +4212,12 @@ function ConfigTab({
       newRuntimeConfig.heartbeatScopeDiscipline = heartbeatScopeDiscipline;
     }
 
+    if (!heartbeatPromptTemplate) {
+      delete newRuntimeConfig.heartbeatPromptTemplate;
+    } else {
+      newRuntimeConfig.heartbeatPromptTemplate = heartbeatPromptTemplate;
+    }
+
     if (runtimeMode === "runtime") {
       if (selectedRuntimeId.trim()) {
         newRuntimeConfig.runtimeHint = selectedRuntimeId.trim();
@@ -4249,7 +4296,7 @@ function ConfigTab({
       runtimeConfig: newRuntimeConfig,
       bundleConfig: newBundleConfig,
     };
-  }, [agent.metadata, agent.runtimeConfig, allowParallelExecution, autoClaimRelevantTasksEnabled, budgetValues, bundleEntryFile, bundleExternalPath, bundleFiles, bundleMode, formValues, heartbeatEnabled, heartbeatScopeDiscipline, heartbeatValues, iconValue, modelValue, nameValue, reportsToValue, roleValue, runMissedHeartbeatOnStartup, runtimeMode, selectedRuntimeId, selectedSkills, skipHeartbeatWhenIdle, titleValue, validationErrors]);
+  }, [agent.metadata, agent.runtimeConfig, allowParallelExecution, autoClaimRelevantTasksEnabled, budgetValues, bundleEntryFile, bundleExternalPath, bundleFiles, bundleMode, formValues, heartbeatEnabled, heartbeatPromptTemplate, heartbeatScopeDiscipline, heartbeatValues, iconValue, modelValue, nameValue, reportsToValue, roleValue, runMissedHeartbeatOnStartup, runtimeMode, selectedRuntimeId, selectedSkills, skipHeartbeatWhenIdle, titleValue, validationErrors]);
 
   const persistSettings = useCallback(async (showValidationToast: boolean, source: "auto" | "manual") => {
     const payload = buildSavePayload();
@@ -4741,6 +4788,24 @@ function ConfigTab({
               <option value="off">Off</option>
             </select>
             <span className="config-hint">Strict — coordination-focused; higher per-tick tokens. Lite — pre-2026-05-11 behavior. Off — minimal procedure.</span>
+          </div>
+
+          <div className="config-field">
+            <label htmlFor="hb-heartbeatPromptTemplate">Heartbeat Prompt Template</label>
+            <select
+              id="hb-heartbeatPromptTemplate"
+              className="select"
+              value={heartbeatPromptTemplate}
+              onChange={(e) => {
+                const value = e.target.value;
+                setHeartbeatPromptTemplate(value === "default" || value === "compact" ? value : "");
+                void scheduleAutoSave();
+              }}
+            >
+              <option value="">Inherit project default</option>
+              <option value="default">Default</option>
+              <option value="compact">Compact</option>
+            </select>
           </div>
 
           <div className="config-field">

@@ -892,6 +892,38 @@
   font-size: calc(var(--space-sm) + var(--space-xs));
 }
 
+.prompt-size-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.prompt-size-sparkline {
+  width: calc(var(--space-2xl) * 2);
+  height: calc(var(--space-xl) + var(--space-md));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.prompt-size-sparkline-grid {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 1;
+}
+
+.prompt-size-sparkline-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.prompt-size-values {
+  font-family: var(--font-mono);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+  color: var(--text-muted);
+}
+
 .run-agent-logs-section {
   margin-top: var(--space-xs);
   padding-top: var(--space-sm);

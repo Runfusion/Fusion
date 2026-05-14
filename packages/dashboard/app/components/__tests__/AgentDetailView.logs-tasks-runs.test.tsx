@@ -20,6 +20,7 @@ import {
   mockFetchAgentMemoryFiles,
   mockFetchAgentRunDetail,
   mockFetchAgentRunLogs,
+  mockFetchAgentPromptSizes,
   mockFetchAgentRuns,
   mockFetchAgentTasks,
   mockFetchAgents,
@@ -257,6 +258,10 @@ describe("Tasks tab", () => {
 describe("Runs Tab — click to show logs", () => {
   it("shows cache hit ratio section for permanent agents", async () => {
     const user = userEvent.setup();
+    mockFetchAgentPromptSizes.mockResolvedValueOnce([
+      { runId: "run-1", createdAt: "2026-05-14T00:00:00.000Z", systemChars: 1500, execChars: 4800, totalChars: 6300 },
+      { runId: "run-2", createdAt: "2026-05-13T23:00:00.000Z", systemChars: 1200, execChars: 3900, totalChars: 5100 },
+    ]);
     render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
 
     await user.click(await screen.findByText("Runs"));
@@ -264,10 +269,13 @@ describe("Runs Tab — click to show logs", () => {
       expect(screen.getByText("Cache hit ratio")).toBeInTheDocument();
       expect(screen.getByText(/Last 24h:/)).toBeInTheDocument();
       expect(screen.getAllByText(/33.3%/)).toHaveLength(3);
+      expect(screen.getByText("Prompt Size")).toBeInTheDocument();
+      expect(screen.getByText("1,500 / 4,800 / 6,300")).toBeInTheDocument();
     });
   });
 
   it("hides cache hit ratio section for ephemeral agents", async () => {
+    mockFetchAgentPromptSizes.mockRejectedValueOnce(new Error("400 Prompt sizes are not available for ephemeral agents"));
     const user = userEvent.setup();
     mockFetchAgent.mockResolvedValue(createMockAgent({ metadata: { type: "spawned" } as any }));
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {

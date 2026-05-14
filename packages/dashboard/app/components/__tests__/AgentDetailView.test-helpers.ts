@@ -15,6 +15,7 @@ export const mockFetchAgentChildren = vi.fn<ApiModule["fetchAgentChildren"]>();
 export const mockFetchAgentRunLogs = vi.fn<ApiModule["fetchAgentRunLogs"]>();
 export const mockFetchAgentRuns = vi.fn<ApiModule["fetchAgentRuns"]>();
 export const mockFetchAgentRunDetail = vi.fn<ApiModule["fetchAgentRunDetail"]>();
+export const mockFetchAgentPromptSizes = vi.fn<ApiModule["fetchAgentPromptSizes"]>();
 export const mockFetchAgentTasks = vi.fn<ApiModule["fetchAgentTasks"]>();
 export const mockFetchChainOfCommand = vi.fn<ApiModule["fetchChainOfCommand"]>();
 export const mockFetchAgentBudgetStatus = vi.fn<ApiModule["fetchAgentBudgetStatus"]>();
@@ -60,6 +61,7 @@ vi.mock("../../api", () => ({
   fetchAgentChildren: (...args: Parameters<ApiModule["fetchAgentChildren"]>) => mockFetchAgentChildren(...args),
   fetchAgentRuns: (...args: Parameters<ApiModule["fetchAgentRuns"]>) => mockFetchAgentRuns(...args),
   fetchAgentRunDetail: (...args: Parameters<ApiModule["fetchAgentRunDetail"]>) => mockFetchAgentRunDetail(...args),
+  fetchAgentPromptSizes: (...args: Parameters<ApiModule["fetchAgentPromptSizes"]>) => mockFetchAgentPromptSizes(...args),
   startAgentRun: (...args: Parameters<ApiModule["startAgentRun"]>) => mockStartAgentRun(...args),
   stopAgentRun: vi.fn(),
   updateAgentInstructions: (...args: Parameters<ApiModule["updateAgentInstructions"]>) => mockUpdateAgentInstructions(...args),
@@ -257,6 +259,7 @@ export function setupAgentDetailMocks() {
   ]);
   mockFetchAgentRunLogs.mockResolvedValue([]);
   mockFetchAgentRunDetail.mockResolvedValue(mockAgent.completedRuns[0]);
+  mockFetchAgentPromptSizes.mockResolvedValue([]);
   mockFetchAgentChildren.mockResolvedValue([]);
   mockFetchAgentTasks.mockResolvedValue([]);
   mockFetchChainOfCommand.mockResolvedValue([mockAgent]);
