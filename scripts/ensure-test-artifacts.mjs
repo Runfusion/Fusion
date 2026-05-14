@@ -14,6 +14,7 @@ export const REQUIRED_BUILD_PACKAGES = [
       "plugins/fusion-plugin-hermes-runtime/dist/index.js",
       "plugins/fusion-plugin-hermes-runtime/dist/cli-spawn.js",
     ],
+    staleAgainstGlobs: [{ sourcePath: "plugins/fusion-plugin-hermes-runtime/src" }],
   },
   {
     name: "@fusion-plugin-examples/openclaw-runtime",
@@ -23,8 +24,13 @@ export const REQUIRED_BUILD_PACKAGES = [
       "plugins/fusion-plugin-openclaw-runtime/dist/pi-module.js",
       "plugins/fusion-plugin-openclaw-runtime/dist/probe.js",
     ],
+    staleAgainstGlobs: [{ sourcePath: "plugins/fusion-plugin-openclaw-runtime/src" }],
   },
-  { name: "@fusion-plugin-examples/paperclip-runtime", requiredArtifacts: ["plugins/fusion-plugin-paperclip-runtime/dist/index.js"] },
+  {
+    name: "@fusion-plugin-examples/paperclip-runtime",
+    requiredArtifacts: ["plugins/fusion-plugin-paperclip-runtime/dist/index.js"],
+    staleAgainstGlobs: [{ sourcePath: "plugins/fusion-plugin-paperclip-runtime/src" }],
+  },
 ];
 
 export function detectMissingArtifacts(rootDir = process.cwd(), existsFn = existsSync) {
