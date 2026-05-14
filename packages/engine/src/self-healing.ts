@@ -23,6 +23,7 @@ import { createLogger } from "./logger.js";
 import { getRegisteredWorktreePaths, scanIdleWorktrees, scanOrphanedBranches } from "./worktree-pool.js";
 import { extractMissingWorktreePathFromSessionStartFailure, isMissingWorktreeSessionStartFailure, isRecoverableMissingWorktreeReviewFailure } from "./restart-recovery-coordinator.js";
 import { classifyError, extractMissingModulePath, isOperatorActionableAgentError, isStaleWorktreeModuleResolutionError } from "./transient-error-detector.js";
+import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 
 const log = createLogger("self-healing");
 const execAsync = promisify(exec);
@@ -2515,6 +2516,28 @@ export class SelfHealingManager {
             `Auto-recovered: phantom-merge-guard false positive — content found on ${baseBranch} at ${landed.sha.slice(0, 8)} via ${landed.strategy}`,
           );
           await this.cleanupWorktreeOnly(task);
+          try {
+            const auditor = createRunAuditor(this.store, {
+              runId: generateSyntheticRunId("self-heal", task.id),
+              agentId: "self-healing",
+              taskId: task.id,
+              taskLineageId: task.lineageId,
+              phase: "recover-already-merged-review",
+            });
+            await auditor.database({
+              type: "task:auto-recover-already-merged",
+              target: task.id,
+              metadata: {
+                mergeSha: landed.sha,
+                mergeStrategy: landed.strategy,
+                baseBranch,
+                mergeRetries: task.mergeRetries ?? 0,
+              },
+            });
+          } catch (err: unknown) {
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            log.warn(`recoverAlreadyMergedReviewTasks: failed to record run-audit event for ${task.id}: ${errorMessage}`);
+          }
           recovered++;
         } catch (err: unknown) {
           const errorMessage = err instanceof Error ? err.message : String(err);
