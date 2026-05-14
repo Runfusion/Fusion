@@ -77,6 +77,8 @@ export type GitMutationType =
   | "merge:file-scope-violation"
   | "merge:audit-failure"
   | "branch:auto-reclaim"
+  | "branch:orphan-prune"
+  | "branch:orphan-rescued"
   | "stash:push"
   | "stash:pop";
 

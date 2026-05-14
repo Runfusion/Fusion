@@ -221,6 +221,16 @@ const DURABLE_ERROR_RECOVERY_MAX_RETRIES = 5;
 const DURABLE_ERROR_RECOVERY_BASE_COOLDOWN_MS = 30_000;
 const DURABLE_ERROR_RECOVERY_MAX_COOLDOWN_MS = 15 * 60_000;
 const RUNNING_ON_INACTIVE_TASK_STALE_RUN_MS = 5 * 60_000;
+const ORPHAN_RESCUE_SUBJECT_CAP = 10;
+
+interface OrphanBranchInspection {
+  branch: string;
+  tipSha: string;
+  uniqueCommitCount: number;
+  uniqueCommitSubjects: string[];
+  derivedTaskId: string | null;
+  registeredWorktreePath: string | null;
+}
 
 interface LandedTaskCommit {
   sha: string;
@@ -3818,18 +3828,84 @@ export class SelfHealingManager {
     return cleaned;
   }
 
+  private deriveTaskIdFromFusionBranch(branch: string): string | null {
+    const match = /^fusion\/(fn|kb)-(\d+)$/i.exec(branch.trim());
+    if (!match) return null;
+    return `${match[1].toUpperCase()}-${match[2]}`;
+  }
+
+  private async getRegisteredWorktreePathForBranch(branch: string): Promise<string | null> {
+    try {
+      const stdout = execSync("git worktree list --porcelain", {
+        cwd: this.options.rootDir,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      }) || "";
+      const lines = stdout.split("\n");
+      let currentPath: string | null = null;
+      for (const line of lines) {
+        if (line.startsWith("worktree ")) {
+          currentPath = line.slice("worktree ".length).trim();
+          continue;
+        }
+        if (line.startsWith("branch ")) {
+          const fullRef = line.slice("branch ".length).trim();
+          const branchName = fullRef.startsWith("refs/heads/") ? fullRef.slice("refs/heads/".length) : fullRef;
+          if (branchName === branch && currentPath) {
+            return currentPath;
+          }
+        }
+      }
+    } catch (err: unknown) {
+      log.warn(`Failed to inspect registered worktree for ${branch}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return null;
+  }
+
+  private async inspectOrphanedBranch(branch: string): Promise<OrphanBranchInspection | null> {
+    try {
+      const tipSha = String(execSync(`git rev-parse --verify "${branch}"`, {
+        cwd: this.options.rootDir,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      })).trim();
+      if (!tipSha) return null;
+
+      const uniqueCommitCount = Number.parseInt(String(execSync(`git rev-list --count "${branch}" --not main`, {
+        cwd: this.options.rootDir,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      })).trim(), 10) || 0;
+
+      let uniqueCommitSubjects: string[] = [];
+      if (uniqueCommitCount > 0) {
+        const subjectOutput = String(execSync(`git log --format=%s --max-count=${ORPHAN_RESCUE_SUBJECT_CAP} "${branch}" --not main`, {
+          cwd: this.options.rootDir,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+        }));
+        uniqueCommitSubjects = subjectOutput.split("\n").map((line) => line.trim()).filter(Boolean);
+      }
+
+      return {
+        branch,
+        tipSha,
+        uniqueCommitCount,
+        uniqueCommitSubjects,
+        derivedTaskId: this.deriveTaskIdFromFusionBranch(branch),
+        registeredWorktreePath: await this.getRegisteredWorktreePathForBranch(branch),
+      };
+    } catch (err: unknown) {
+      log.warn(`Failed to inspect orphaned branch ${branch}: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+
   /**
-   * Remove orphaned `fusion/*` branches that are not associated with any
-   * active (non-archived, non-merger-managed) task.
-   *
-   * For each orphaned branch:
-   * 1. Try `git branch -d` (safe delete — only works if branch is fully merged)
-   * 2. Fall back to `git branch -D` (force delete) if safe delete fails
-   * 3. Log each cleanup action
-   *
-   * Individual branch deletion failures are non-fatal.
-   *
-   * @returns Number of branches successfully deleted
+   * Resolve orphaned `fusion/*` branches.
+   * - Subsumed branches are pruned (`git branch -d`).
+   * - Unique-commit branches with missing task rows are rescued into triage tasks.
+   * - Archived matching tasks are left untouched with one-time acknowledgement logging.
    */
   async cleanupOrphanedBranches(): Promise<number> {
     try {
@@ -3837,52 +3913,122 @@ export class SelfHealingManager {
       if (orphaned.length === 0) return 0;
 
       let cleaned = 0;
-      const deletedBranches: string[] = [];
+      const prunedBranches: string[] = [];
+      const allTasks = await this.store.listTasks({ slim: true, includeArchived: true });
+      const taskById = new Map(allTasks.map((task) => [task.id.toUpperCase(), task]));
+
       for (const branch of orphaned) {
-        try {
-          // Try safe delete first (-d requires branch to be merged)
-          await execAsync(`git branch -d "${branch}"`, {
-            cwd: this.options.rootDir,
-            timeout: 30_000,
-          });
-          log.log(`Deleted branch: ${branch}`);
-          cleaned++;
-          deletedBranches.push(branch);
-        } catch (err: unknown) {
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          log.warn(
-            `Safe delete failed for orphaned branch ${branch}: ${errorMessage} — attempting force delete`,
-          );
-          // Safe delete failed (not merged) — force delete
+        const inspection = await this.inspectOrphanedBranch(branch);
+        if (!inspection) continue;
+
+        if (inspection.uniqueCommitCount <= 0) {
           try {
-            await execAsync(`git branch -D "${branch}"`, {
+            execSync(`git branch -d "${branch}"`, {
               cwd: this.options.rootDir,
-              timeout: 30_000,
+              stdio: ["pipe", "pipe", "pipe"],
             });
-            log.log(`Force-deleted branch: ${branch}`);
+            prunedBranches.push(branch);
             cleaned++;
-            deletedBranches.push(branch);
-          } catch (forceErr: unknown) {
-            const forceErrorMessage = forceErr instanceof Error ? forceErr.message : String(forceErr);
-            log.warn(`Failed to force-delete orphaned branch ${branch}: ${forceErrorMessage} — non-fatal`);
-            // Individual failure is non-fatal
+            try {
+              const auditor = createRunAuditor(this.store, {
+                runId: generateSyntheticRunId("self-heal", "orphan-branch"),
+                agentId: "self-healing",
+                phase: "orphan-branch-rescue",
+              });
+              await auditor.git({
+                type: "branch:orphan-prune",
+                target: branch,
+                metadata: {
+                  phase: "orphan-branch-rescue",
+                  tipSha: inspection.tipSha,
+                  uniqueCommitCount: inspection.uniqueCommitCount,
+                },
+              });
+            } catch (auditErr: unknown) {
+              log.warn(`Failed to write branch:orphan-prune run-audit event for ${branch}: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);
+            }
+          } catch (err: unknown) {
+            log.warn(`Failed to prune subsumed orphaned branch ${branch}: ${err instanceof Error ? err.message : String(err)} — non-fatal`);
+          }
+          continue;
+        }
+
+        const derivedTaskId = inspection.derivedTaskId;
+        const matchedTask = derivedTaskId ? taskById.get(derivedTaskId.toUpperCase()) : undefined;
+        const existingBranchTask = allTasks.find((task) => task.branch === branch);
+
+        if (matchedTask?.column === "archived") {
+          const metadata = (matchedTask.metadata && typeof matchedTask.metadata === "object")
+            ? matchedTask.metadata as Record<string, unknown>
+            : {};
+          if (metadata.orphanRescueAcknowledged !== true) {
+            await this.store.updateTask(matchedTask.id, {
+              metadata: {
+                ...metadata,
+                orphanRescueAcknowledged: true,
+              },
+            });
+            log.warn(`[recovery] orphan-rescue-archived-skip ${matchedTask.id} branch=${branch} tip=${inspection.tipSha.slice(0, 12)} unique=${inspection.uniqueCommitCount}`);
+          }
+          continue;
+        }
+
+        if (!matchedTask && !existingBranchTask) {
+          const summaryLines = [
+            `Recovered orphaned branch: ${branch}`,
+            `Tip: ${inspection.tipSha}`,
+            `Unique commits vs main: ${inspection.uniqueCommitCount}`,
+          ];
+          if (inspection.uniqueCommitSubjects.length > 0) {
+            summaryLines.push("Recent commit subjects:");
+            for (const subject of inspection.uniqueCommitSubjects) {
+              summaryLines.push(`- ${subject}`);
+            }
+          }
+          const rescueTask = await this.store.createTask({
+            title: `Recover orphaned branch ${branch}`,
+            description: summaryLines.join("\n"),
+            branch,
+            column: "triage",
+          });
+          allTasks.push({ ...rescueTask, branch, column: "triage" } as Task);
+          if (inspection.registeredWorktreePath) {
+            await this.store.updateTask(rescueTask.id, { worktree: inspection.registeredWorktreePath });
+          }
+          await this.store.logEntry(rescueTask.id, `[recovery] orphan-rescue-created ${rescueTask.id} from ${branch} (${inspection.uniqueCommitCount} unique commits)`);
+
+          try {
+            const auditor = createRunAuditor(this.store, {
+              runId: generateSyntheticRunId("self-heal", rescueTask.id),
+              agentId: "self-healing",
+              taskId: rescueTask.id,
+              taskLineageId: rescueTask.lineageId,
+              phase: "orphan-branch-rescue",
+            });
+            await auditor.git({
+              type: "branch:orphan-rescued",
+              target: branch,
+              metadata: {
+                phase: "orphan-branch-rescue",
+                rescueTaskId: rescueTask.id,
+                tipSha: inspection.tipSha,
+                uniqueCommitCount: inspection.uniqueCommitCount,
+                derivedTaskId: derivedTaskId ?? null,
+              },
+            });
+          } catch (auditErr: unknown) {
+            log.warn(`Failed to write branch:orphan-rescued run-audit event for ${branch}: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);
           }
         }
       }
 
-      if (deletedBranches.length > 0) {
-        // FN-2165 regression guard: if any dependent task stored one of these
-        // now-gone branches as its baseBranch, null it so the task doesn't
-        // hard-fail at worktree creation time.
-        const cleared = this.store.clearStaleExecutionStartBranchReferences(deletedBranches);
+      if (prunedBranches.length > 0) {
+        const cleared = this.store.clearStaleExecutionStartBranchReferences(prunedBranches);
         if (cleared.length > 0) {
           log.log(`Cleared stale baseBranch on ${cleared.length} task(s): ${cleared.join(", ")}`);
         }
       }
 
-      if (cleaned > 0) {
-        log.log(`Cleaned ${cleaned} orphaned branch(es)`);
-      }
       return cleaned;
     } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
       log.error(`Orphaned branch cleanup failed: ${errorMessage}`);

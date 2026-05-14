@@ -1294,8 +1294,11 @@ describe("SelfHealingManager", () => {
       expect(mockedExecSync).not.toHaveBeenCalled();
     });
 
-    it("deletes orphaned branches with safe delete (-d)", async () => {
+    it("deletes only subsumed orphaned branches with safe delete (-d)", async () => {
       mockedScanOrphanedBranches.mockResolvedValueOnce(["fusion/fn-001", "fusion/fn-002"]);
+      vi.spyOn(manager as any, "inspectOrphanedBranch")
+        .mockResolvedValueOnce({ branch: "fusion/fn-001", tipSha: "abc", uniqueCommitCount: 0, uniqueCommitSubjects: [], derivedTaskId: "FN-001", registeredWorktreePath: null })
+        .mockResolvedValueOnce({ branch: "fusion/fn-002", tipSha: "def", uniqueCommitCount: 0, uniqueCommitSubjects: [], derivedTaskId: "FN-002", registeredWorktreePath: null });
 
       const result = await manager.cleanupOrphanedBranches();
 
@@ -1310,45 +1313,31 @@ describe("SelfHealingManager", () => {
       );
     });
 
-    it("falls back to force delete (-D) when safe delete fails", async () => {
+    it("does not force-delete unique-commit orphaned branches", async () => {
       mockedScanOrphanedBranches.mockResolvedValueOnce(["fusion/fn-003"]);
-
-      // Safe delete fails
-      mockedExecSync.mockImplementationOnce(() => {
-        throw new Error("not fully merged");
-      });
-      // Force delete succeeds
-      mockedExecSync.mockImplementationOnce(() => Buffer.from(""));
+      vi.spyOn(manager as any, "inspectOrphanedBranch")
+        .mockResolvedValueOnce({ branch: "fusion/fn-003", tipSha: "abc", uniqueCommitCount: 2, uniqueCommitSubjects: ["feat: keep"], derivedTaskId: "FN-003", registeredWorktreePath: null });
 
       const result = await manager.cleanupOrphanedBranches();
 
-      expect(result).toBe(1);
-      expect(mockedExecSync).toHaveBeenCalledWith(
-        expect.stringContaining('git branch -d "fusion/fn-003"'),
-        expect.any(Object),
-      );
-      expect(mockedExecSync).toHaveBeenCalledWith(
+      expect(result).toBe(0);
+      expect(mockedExecSync).not.toHaveBeenCalledWith(
         expect.stringContaining('git branch -D "fusion/fn-003"'),
         expect.any(Object),
       );
     });
 
-    it("counts only successfully deleted branches", async () => {
+    it("counts only successfully pruned subsumed branches", async () => {
       mockedScanOrphanedBranches.mockResolvedValueOnce(["fusion/fn-004", "fusion/fn-005"]);
-
-      // First branch: safe delete succeeds
-      mockedExecSync.mockImplementationOnce(() => Buffer.from(""));
-      // Second branch: both safe and force delete fail
-      mockedExecSync.mockImplementationOnce(() => {
-        throw new Error("not fully merged");
-      });
-      mockedExecSync.mockImplementationOnce(() => {
-        throw new Error("branch not found");
-      });
+      vi.spyOn(manager as any, "inspectOrphanedBranch")
+        .mockResolvedValueOnce({ branch: "fusion/fn-004", tipSha: "abc", uniqueCommitCount: 0, uniqueCommitSubjects: [], derivedTaskId: "FN-004", registeredWorktreePath: null })
+        .mockResolvedValueOnce({ branch: "fusion/fn-005", tipSha: "def", uniqueCommitCount: 1, uniqueCommitSubjects: ["feat"], derivedTaskId: "FN-005", registeredWorktreePath: null });
+      mockedExecSync.mockReset();
+      mockedExecSync.mockImplementation(() => Buffer.from(""));
 
       const result = await manager.cleanupOrphanedBranches();
 
-      expect(result).toBe(1);
+      expect(result).toBe(0);
     });
 
     it("returns 0 when scanOrphanedBranches throws", async () => {
@@ -2099,7 +2088,7 @@ describe("SelfHealingManager", () => {
       (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
         taskStuckTimeoutMs: 60_000,
       });
-      const staleUpdatedAt = new Date(Date.now() - 61_000).toISOString();
+      const staleUpdatedAt = new Date(Date.now() - 6 * 60_000).toISOString();
 
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
         {
