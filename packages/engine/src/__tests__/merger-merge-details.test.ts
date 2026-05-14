@@ -762,6 +762,7 @@ describe("aiMergeTask — merge details collection", () => {
 
     const mergeDetails = mergeDetailsCall![1].mergeDetails;
     expect(mergeDetails.commitSha).toBe("mergedcommit123456789");
+    expect(mergeDetails.rebaseBaseSha).toBeUndefined();
     expect(mergeDetails.filesChanged).toBe(3);
     expect(mergeDetails.insertions).toBe(10);
     expect(mergeDetails.deletions).toBe(2);
@@ -771,6 +772,41 @@ describe("aiMergeTask — merge details collection", () => {
     expect(mergeDetails.resolutionStrategy).toBe("ai");
     expect(mergeDetails.resolutionMethod).toBe("ai");
     expect(mergeDetails.attemptsMade).toBe(1);
+  });
+
+  it("stores rebaseBaseSha when direct merge routes through rebase strategy", async () => {
+    const store = createMockStore(
+      { id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050" },
+      [{ id: "FN-050", worktree: "/tmp/root/.worktrees/KB-050", column: "in-review" } as Task],
+    );
+    mockedExistsSync.mockReturnValue(false);
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      directMergeCommitStrategy: "always-rebase",
+    });
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.includes("rev-parse --verify")) return Buffer.from("abc123");
+      if (cmdStr === "git rev-parse HEAD" || cmdStr.startsWith("git rev-parse HEAD ")) return "rebasemergedsha";
+      if (cmdStr.includes("git log")) return "- feat: something";
+      if (cmdStr.includes("merge-base")) return Buffer.from("abc123");
+      if (cmdStr.includes("rev-parse \"abc123\"")) return "rebasebase123";
+      if (cmdStr.includes("rev-list --reverse \"rebasebase123..fusion/FN-050\"")) return "";
+      if (cmdStr.includes("status --porcelain")) return "";
+      if (cmdStr.includes("rev-parse --git-path CHERRY_PICK_HEAD")) return ".git/CHERRY_PICK_HEAD";
+      if (cmdStr.includes("rev-parse --git-path sequencer")) return ".git/sequencer";
+      if (cmdStr.includes("diff --shortstat \"rebasebase123..HEAD\"")) return "2 files changed, 5 insertions(+), 1 deletions(-)";
+      if (cmdStr.includes("branch -d") || cmdStr.includes("branch -D")) return Buffer.from("");
+      if (cmdStr.includes("worktree remove")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    await aiMergeTask(store, "/tmp/root", "FN-050");
+
+    const updateCalls = (store.updateTask as ReturnType<typeof vi.fn>).mock.calls;
+    const mergeDetailsCall = updateCalls.find((call: any[]) => call[1]?.mergeDetails !== undefined);
+    expect(mergeDetailsCall?.[1].mergeDetails.rebaseBaseSha).toBe("rebasebase123");
   });
 
   it("stores AI summary in mergeDetails when useAiMergeCommitSummary is enabled", async () => {

@@ -7107,6 +7107,7 @@ export async function aiMergeTask(
 
     const mergeDetails: MergeDetails = {
       commitSha: recordedSha,
+      rebaseBaseSha: selectedPostMergeAuditStrategy === "rebase" && !mergeWasEmpty ? rebaseMergeBaseSha : undefined,
       filesChanged: recordedFilesChanged,
       insertions: recordedInsertions,
       deletions: recordedDeletions,
