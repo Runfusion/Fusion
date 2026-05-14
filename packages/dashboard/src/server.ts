@@ -60,6 +60,16 @@ import type { SkillsAdapter } from "./skills-adapter.js";
 import { createAuthMiddleware, authenticateUpgradeRequest, getDaemonToken } from "./auth-middleware.js";
 import { validateRemoteAuthToken } from "./remote-auth.js";
 import { getCliPackageVersion } from "./cli-package-version.js";
+import {
+  fileScopeInvariantFailuresPerDay,
+  inReviewDurationMetrics,
+  inReviewFailureRate7d,
+  mergeAttemptsPerMergedTask,
+  postMergeAuditFailuresPerDay,
+  recoverAlreadyMergedReviewTasksRecoveriesPerDay,
+  tasksBouncedToInProgressPerDay,
+  tasksEnteredInReviewPerDay,
+} from "./reliability-metrics.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -1097,6 +1107,87 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
   app.get("/api/health", (_req, res) => {
     res.json(buildHealthPayload(store, cliPackageVersion));
+  });
+
+  app.get("/api/health/reliability", async (req, res) => {
+    const rawWindowDays = req.query.windowDays;
+    const parsedWindowDays = rawWindowDays === undefined ? 7 : Number.parseInt(String(rawWindowDays), 10);
+
+    if (!Number.isInteger(parsedWindowDays) || parsedWindowDays < 1 || parsedWindowDays > 30) {
+      res.status(400).json({
+        error: "Invalid windowDays",
+        message: "windowDays must be an integer between 1 and 30",
+      });
+      return;
+    }
+
+    const nowMs = Date.now();
+    const windowStartMs = nowMs - parsedWindowDays * 86_400_000;
+    const startIso = new Date(windowStartMs).toISOString();
+    const endIso = new Date(nowMs).toISOString();
+
+    const [runAuditEvents, activityLog] = await Promise.all([
+      Promise.resolve(store.getRunAuditEvents({ startTime: startIso, endTime: endIso, limit: 50_000 })),
+      store.getActivityLog({ since: startIso, limit: 50_000 }),
+    ]);
+
+    const enteredByDay = tasksEnteredInReviewPerDay(activityLog, windowStartMs, nowMs);
+    const bouncedByDay = tasksBouncedToInProgressPerDay(activityLog, windowStartMs, nowMs);
+    const postMergeByDay = postMergeAuditFailuresPerDay(runAuditEvents, windowStartMs, nowMs);
+    const fileScopeByDay = fileScopeInvariantFailuresPerDay(runAuditEvents, windowStartMs, nowMs);
+    const recoveriesByDay = recoverAlreadyMergedReviewTasksRecoveriesPerDay(runAuditEvents, windowStartMs, nowMs);
+    const duration = inReviewDurationMetrics(activityLog, windowStartMs, nowMs);
+    const mergeAttempts = mergeAttemptsPerMergedTask(runAuditEvents, activityLog, windowStartMs, nowMs);
+    const headline = inReviewFailureRate7d(enteredByDay, bouncedByDay, nowMs);
+
+    const perDay: Array<{
+      date: string;
+      tasksEnteredInReview: number;
+      tasksBouncedToInProgress: number;
+      postMergeAuditFailures: { block: number; warn: number; off: number } | null;
+      fileScopeInvariantFailures: number | null;
+      recoverAlreadyMergedReviewTasksRecoveries: number | null;
+    }> = [];
+
+    const dayCursor = new Date(startIso);
+    const dayEnd = new Date(endIso);
+    dayCursor.setUTCHours(0, 0, 0, 0);
+    dayEnd.setUTCHours(0, 0, 0, 0);
+
+    while (dayCursor.getTime() <= dayEnd.getTime()) {
+      const day = dayCursor.toISOString().slice(0, 10);
+      perDay.push({
+        date: day,
+        tasksEnteredInReview: enteredByDay[day] ?? 0,
+        tasksBouncedToInProgress: bouncedByDay[day] ?? 0,
+        postMergeAuditFailures: postMergeByDay.value ? (postMergeByDay.value[day] ?? { block: 0, warn: 0, off: 0 }) : null,
+        fileScopeInvariantFailures: fileScopeByDay.value ? (fileScopeByDay.value[day] ?? 0) : null,
+        recoverAlreadyMergedReviewTasksRecoveries: recoveriesByDay.value ? (recoveriesByDay.value[day] ?? 0) : null,
+      });
+      dayCursor.setUTCDate(dayCursor.getUTCDate() + 1);
+    }
+
+    res.json({
+      windowDays: parsedWindowDays,
+      generatedAt: new Date(nowMs).toISOString(),
+      headline: {
+        inReviewFailureRate7d: headline.value,
+        ...(headline.reason ? { reason: headline.reason } : {}),
+      },
+      perDay,
+      duration: {
+        p50Ms: duration.p50Ms,
+        p95Ms: duration.p95Ms,
+        sampleCount: duration.sampleCount,
+        ...(duration.reason ? { reason: duration.reason } : {}),
+      },
+      mergeAttempts: {
+        mean: mergeAttempts.mean,
+        max: mergeAttempts.max,
+        histogram: mergeAttempts.histogram,
+        ...(mergeAttempts.reason ? { reason: mergeAttempts.reason } : {}),
+      },
+    });
   });
 
   app.post("/api/health/refresh", (_req, res) => {

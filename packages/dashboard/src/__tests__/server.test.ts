@@ -480,6 +480,131 @@ describe("createServer health and headless mode", () => {
     });
   });
 
+  it("returns reliability metrics payload from /api/health/reliability", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-13T12:00:00.000Z"));
+
+    const activityLog = [
+      { id: "e1", timestamp: "2026-05-13T10:00:00.000Z", type: "task:moved", taskId: "FN-1", details: "", metadata: { from: "todo", to: "in-review" } },
+      { id: "e2", timestamp: "2026-05-13T11:00:00.000Z", type: "task:moved", taskId: "FN-1", details: "", metadata: { from: "in-review", to: "in-progress" } },
+      { id: "m1", timestamp: "2026-05-13T11:30:00.000Z", type: "task:merged", taskId: "FN-1", details: "" },
+    ];
+    const runAuditEvents = [
+      {
+        id: "ra1",
+        timestamp: "2026-05-13T11:20:00.000Z",
+        taskId: "FN-1",
+        agentId: "agent-1",
+        runId: "run-1",
+        domain: "git",
+        mutationType: "merge:start",
+        target: "FN-1",
+        metadata: { phase: "merge-attempt-1" },
+      },
+    ];
+
+    const store = createMockStore({
+      getActivityLog: vi.fn().mockResolvedValue(activityLog),
+      getRunAuditEvents: vi.fn().mockReturnValue(runAuditEvents),
+    });
+
+    const app = createServer(store);
+    const res = await GET(app, "/api/health/reliability");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      windowDays: 7,
+      generatedAt: expect.any(String),
+      headline: { inReviewFailureRate7d: 1 },
+      perDay: expect.any(Array),
+      duration: { p50Ms: null, p95Ms: null, sampleCount: 0, reason: "insufficient-samples" },
+      mergeAttempts: { mean: 1, max: 1, histogram: { "1": 1 } },
+    });
+    expect((store.getRunAuditEvents as any).mock.calls[0][0]).toMatchObject({ limit: 50_000 });
+
+    vi.useRealTimers();
+  });
+
+  it("applies windowDays filter to activity and run-audit query windows", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-13T12:00:00.000Z"));
+
+    const store = createMockStore({
+      getActivityLog: vi.fn().mockResolvedValue([]),
+      getRunAuditEvents: vi.fn().mockReturnValue([]),
+    });
+    const app = createServer(store);
+
+    const res = await GET(app, "/api/health/reliability?windowDays=3");
+
+    expect(res.status).toBe(200);
+    expect(store.getActivityLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        since: "2026-05-10T12:00:00.000Z",
+        limit: 50_000,
+      }),
+    );
+    expect(store.getRunAuditEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        startTime: "2026-05-10T12:00:00.000Z",
+        endTime: "2026-05-13T12:00:00.000Z",
+        limit: 50_000,
+      }),
+    );
+
+    vi.useRealTimers();
+  });
+
+  it("computes headline inReviewFailureRate7d correctly", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-13T12:00:00.000Z"));
+
+    const activityLog = Array.from({ length: 10 }, (_, index) => ({
+      id: `entered-${index}`,
+      timestamp: "2026-05-13T10:00:00.000Z",
+      type: "task:moved",
+      taskId: `FN-${index}`,
+      details: "",
+      metadata: { from: "todo", to: "in-review" },
+    })).concat(
+      Array.from({ length: 2 }, (_, index) => ({
+        id: `bounce-${index}`,
+        timestamp: "2026-05-13T10:05:00.000Z",
+        type: "task:moved",
+        taskId: `FN-${index}`,
+        details: "",
+        metadata: { from: "in-review", to: "in-progress" },
+      })),
+    );
+
+    const store = createMockStore({
+      getActivityLog: vi.fn().mockResolvedValue(activityLog),
+      getRunAuditEvents: vi.fn().mockReturnValue([]),
+    });
+
+    const app = createServer(store);
+    const res = await GET(app, "/api/health/reliability");
+
+    expect(res.status).toBe(200);
+    expect(res.body.headline).toEqual({ inReviewFailureRate7d: 0.2 });
+
+    vi.useRealTimers();
+  });
+
+  it("rejects invalid windowDays values", async () => {
+    const app = createServer(createMockStore({
+      getActivityLog: vi.fn().mockResolvedValue([]),
+      getRunAuditEvents: vi.fn().mockReturnValue([]),
+    }));
+
+    const zero = await GET(app, "/api/health/reliability?windowDays=0");
+    const high = await GET(app, "/api/health/reliability?windowDays=31");
+
+    expect(zero.status).toBe(400);
+    expect(high.status).toBe(400);
+    expect(zero.body.error).toBe("Invalid windowDays");
+  });
+
   it("surfaces startup-detected nextSequence collisions end-to-end through /api/health", async () => {
     const rootDir = makeTmpDir();
     const globalDir = makeTmpDir();
