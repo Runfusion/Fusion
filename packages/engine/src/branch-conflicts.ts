@@ -102,6 +102,7 @@ export interface InspectBranchConflictInput {
 export type BranchConflictInspectionResult =
   | { kind: "stale" }
   | { kind: "stale-resolved" }
+  | { kind: "tip-already-merged"; livePath: string | null; tipSha: string; integrationRef: string }
   | { kind: "fully-subsumed"; livePath: string; tipSha: string }
   | { kind: "reclaimable"; livePath: string; tipSha: string; taskAttributedCommitCount: number; strandedCommits: BranchConflictCommit[] }
   | { kind: "live-foreign"; livePath: string; error: BranchConflictError };
@@ -134,6 +135,20 @@ async function runGit(repoDir: string, command: string): Promise<string> {
 
 async function revParse(repoDir: string, ref: string): Promise<string> {
   return runGit(repoDir, `git rev-parse --verify ${quoteShellArg(`${ref}^{commit}`)}`);
+}
+
+async function isAncestor(repoDir: string, sha: string, ref: string): Promise<boolean> {
+  try {
+    await execAsync(`git merge-base --is-ancestor ${quoteShellArg(sha)} ${quoteShellArg(ref)}`, {
+      cwd: repoDir,
+      encoding: "utf-8",
+      timeout: GIT_TIMEOUT_MS,
+      maxBuffer: GIT_MAX_BUFFER,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function listStrandedCommits(repoDir: string, startPoint: string, branchName: string): Promise<BranchConflictCommit[]> {
@@ -675,8 +690,8 @@ export async function inspectBranchConflict(
     // best-effort
   }
 
-  const worktreeMap = await getWorktreeBranchMap(input.repoDir);
-  const livePath = worktreeMap.get(input.branchName);
+  let worktreeMap = await getWorktreeBranchMap(input.repoDir);
+  let livePath = worktreeMap.get(input.branchName);
 
   try {
     await revParse(input.repoDir, `refs/heads/${input.branchName}`);
@@ -684,11 +699,32 @@ export async function inspectBranchConflict(
     return { kind: "stale-resolved" };
   }
 
+  if (livePath && !existsSync(livePath)) {
+    try {
+      await runGit(input.repoDir, "git worktree prune");
+    } catch {
+      // best-effort
+    }
+    worktreeMap = await getWorktreeBranchMap(input.repoDir);
+    const refreshedLivePath = worktreeMap.get(input.branchName);
+    livePath = refreshedLivePath && existsSync(refreshedLivePath) ? refreshedLivePath : undefined;
+  }
+
   if (!livePath) {
     return { kind: "stale-resolved" };
   }
 
   const existingTipSha = await revParse(input.repoDir, input.branchName);
+  const integrationRef = await resolveBranchComparisonRef(input.repoDir, "main", input.branchName);
+  if (await isAncestor(input.repoDir, existingTipSha, integrationRef)) {
+    return {
+      kind: "tip-already-merged",
+      livePath: livePath ?? null,
+      tipSha: existingTipSha,
+      integrationRef,
+    };
+  }
+
   const uniqueCommitResult = await listUniqueBranchCommits(input.repoDir, startPoint, input.branchName);
   const attribution = await summarizeTaskAttributedCommits(
     input.repoDir,
