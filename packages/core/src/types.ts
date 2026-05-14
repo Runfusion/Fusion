@@ -238,6 +238,7 @@ export interface ModelPreset {
 /** Execution mode for a workflow step. */
 export type WorkflowStepMode = "prompt" | "script";
 export type WorkflowStepToolMode = "readonly" | "coding";
+export type WorkflowStepGateMode = "gate" | "advisory";
 
 /** Lifecycle phase for workflow step execution. */
 export type WorkflowStepPhase = "pre-merge" | "post-merge";
@@ -256,6 +257,8 @@ export interface WorkflowStep {
   mode: WorkflowStepMode;
   /** Lifecycle phase — "pre-merge" runs before merge (default), "post-merge" runs after merge success */
   phase?: WorkflowStepPhase;
+  /** Gate behavior — gate blocks merge/auto-revive on failure, advisory records non-blocking findings. */
+  gateMode: WorkflowStepGateMode;
   /** Full agent prompt to execute when this step runs (used when mode is "prompt") */
   prompt: string;
   /** Whether failures should block merge (`gate`) or be informational (`advisory`). */
@@ -354,6 +357,8 @@ export interface WorkflowStepInput {
   mode?: WorkflowStepMode;
   /** Lifecycle phase — defaults to "pre-merge" if not specified */
   phase?: WorkflowStepPhase;
+  /** Gate behavior — defaults by mode (prompt: advisory, script: gate) when omitted. */
+  gateMode?: WorkflowStepGateMode;
   /** Agent prompt (used when mode is "prompt"). Optional — can be AI-generated later via refinement. */
   prompt?: string;
   /** Failure behavior. Defaults to advisory for prompt mode and gate for script mode. */
@@ -386,6 +391,8 @@ export interface WorkflowStepResult {
   status: "passed" | "failed" | "advisory_failure" | "skipped" | "pending";
   /** Output from the workflow step agent (findings, errors, etc.) */
   output?: string;
+  /** Optional non-blocking notes for advisory findings surfaced in task detail UI. */
+  notes?: string;
   /** ISO-8601 timestamp when the step started */
   startedAt?: string;
   /** ISO-8601 timestamp when the step completed */

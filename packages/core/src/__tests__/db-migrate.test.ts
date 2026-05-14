@@ -688,4 +688,37 @@ describe("schema migration", () => {
 
     db.close();
   });
+
+  it("adds workflow_steps.gateMode and backfills prompt rows to advisory", () => {
+    const db = new Database(fusionDir);
+    db.exec("CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT)");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS workflow_steps (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        mode TEXT NOT NULL DEFAULT 'prompt',
+        phase TEXT NOT NULL DEFAULT 'pre-merge',
+        prompt TEXT NOT NULL DEFAULT '',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      )
+    `);
+    db.exec("INSERT INTO __meta (key, value) VALUES ('schemaVersion', '75')");
+    db.exec("INSERT INTO __meta (key, value) VALUES ('lastModified', '1000')");
+    db.exec("INSERT INTO workflow_steps (id, name, description, mode, phase, prompt, enabled, createdAt, updatedAt) VALUES ('WS-001', 'Prompt', 'Prompt step', 'prompt', 'pre-merge', 'p', 1, '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z')");
+    db.exec("INSERT INTO workflow_steps (id, name, description, mode, phase, prompt, enabled, createdAt, updatedAt) VALUES ('WS-002', 'Script', 'Script step', 'script', 'pre-merge', '', 1, '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z')");
+
+    db.init();
+
+    const rows = db.prepare("SELECT id, mode, gateMode FROM workflow_steps ORDER BY id ASC").all() as Array<{ id: string; mode: string; gateMode: string }>;
+    expect(rows).toEqual([
+      { id: "WS-001", mode: "prompt", gateMode: "advisory" },
+      { id: "WS-002", mode: "script", gateMode: "gate" },
+    ]);
+    expect(db.getSchemaVersion()).toBe(76);
+
+    db.close();
+  });
 });

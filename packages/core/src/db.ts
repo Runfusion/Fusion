@@ -323,6 +323,7 @@ CREATE TABLE IF NOT EXISTS workflow_steps (
   description TEXT NOT NULL,
   mode TEXT NOT NULL DEFAULT 'prompt',
   phase TEXT NOT NULL DEFAULT 'pre-merge',
+  gateMode TEXT NOT NULL DEFAULT 'gate',
   prompt TEXT NOT NULL DEFAULT '',
   gateMode TEXT NOT NULL DEFAULT 'advisory',
   toolMode TEXT,
@@ -1769,6 +1770,7 @@ export class Database {
             description TEXT NOT NULL,
             mode TEXT NOT NULL DEFAULT 'prompt',
             phase TEXT NOT NULL DEFAULT 'pre-merge',
+            gateMode TEXT NOT NULL DEFAULT 'gate',
             prompt TEXT NOT NULL DEFAULT '',
             gateMode TEXT NOT NULL DEFAULT 'advisory',
             toolMode TEXT,
@@ -1799,6 +1801,7 @@ export class Database {
             description,
             mode,
             phase,
+            gateMode,
             prompt,
             gateMode,
             toolMode,
@@ -1823,6 +1826,7 @@ export class Database {
 
           const mode = step.mode === "script" ? "script" : "prompt";
           const phase = step.phase === "post-merge" ? "post-merge" : "pre-merge";
+          const gateMode = step.mode === "script" ? "gate" : "advisory";
           const createdAt =
             typeof step.createdAt === "string" && step.createdAt
               ? step.createdAt
@@ -1839,6 +1843,7 @@ export class Database {
             description,
             mode,
             phase,
+            gateMode,
             typeof step.prompt === "string" ? step.prompt : "",
             step.gateMode === "gate" || step.gateMode === "advisory"
               ? step.gateMode
