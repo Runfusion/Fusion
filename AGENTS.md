@@ -689,6 +689,10 @@ They are loaded in `App.tsx` / `AppModals.tsx` / `SettingsModal.tsx` / `AgentsVi
 
 A `prefetchLazyViews()` function runs once on mount via `requestIdleCallback` to warm chunks. **Do not make these eager again** — bundle size matters.
 
+### File browser editor
+
+`packages/dashboard/app/components/FileEditor.tsx` is CodeMirror 6-backed (not a plain textarea). Language resolution lives in `packages/dashboard/app/utils/codemirror-language.ts` via `resolveCodeMirrorLanguage(filePath)`, currently mapping JS/TS, CSS, JSON, and Markdown extensions; unknown extensions intentionally fall back to plain text.
+
 ### Design Tokens
 
 All new CSS **must** use these token variables instead of hardcoded values. Tokens are defined at `:root` and adapted for light mode via `[data-theme="light"]`.
