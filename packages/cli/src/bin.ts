@@ -16,6 +16,7 @@ import { createRequire } from "node:module";
 import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
+import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 // @ts-expect-error -- Bun-only global; undefined in Node
@@ -133,6 +134,7 @@ async function loadCommandHandlers() {
   const { runAgentImport } = await import("./commands/agent-import.js");
   const { runAgentExport } = await import("./commands/agent-export.js");
   const { runMessageInbox, runMessageOutbox, runMessageSend, runMessageRead, runMessageDelete, runAgentMailbox } = await import("./commands/message.js");
+  const { runChatInteractive } = await import("./commands/chat.js");
   const { runPluginList, runPluginInstall, runPluginUninstall, runPluginEnable, runPluginDisable, runPluginSetupStatus, runPluginSetup, runPluginAvailable, runPluginSettings, runPluginRescan } = await import("./commands/plugin.js");
   const { runPluginCreate } = await import("./commands/plugin-scaffold.js");
   const { runSkillsSearch, runSkillsInstall } = await import("./commands/skills.js");
@@ -234,6 +236,7 @@ async function loadCommandHandlers() {
     runResearchCancel,
     runResearchRetry,
     runUpdate,
+    runChatInteractive,
   };
 }
 
@@ -342,6 +345,8 @@ Usage:
   fn message send <agent-id> <msg>  Send a message to an agent
   fn message read <id>              Read a specific message
   fn message delete <id>            Delete a message
+  fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>]
+                                    Interactive or one-shot chat with an agent
   fn backup --create         Create a database backup immediately
   fn backup --list           List all database backups
   fn backup --restore <file> Restore database from a backup file
@@ -596,6 +601,7 @@ async function main() {
     runResearchCancel,
     runResearchRetry,
     runUpdate,
+    runChatInteractive,
   } = await loadCommandHandlers();
 
   try {
@@ -1481,6 +1487,44 @@ async function main() {
             process.exit(1);
         }
         break;
+      }
+
+      case "chat": {
+        const usage = "Usage: fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>]";
+        const agentId = args[1];
+        if (!agentId) {
+          console.error(usage);
+          process.exit(1);
+        }
+
+        const pollIdx = args.indexOf("--poll-ms");
+        const pollMs = pollIdx !== -1 && pollIdx + 1 < args.length
+          ? Number.parseInt(args[pollIdx + 1] ?? "", 10)
+          : undefined;
+
+        if (pollIdx !== -1 && (!Number.isFinite(pollMs) || (pollMs ?? 0) <= 0)) {
+          console.error(usage);
+          process.exit(1);
+        }
+
+        const filteredArgs = args.slice(2).filter((arg, idx, arr) => {
+          if (arg === "--once" || arg === "--non-interactive" || arg === "--poll-ms") return false;
+          if (idx > 0 && arr[idx - 1] === "--poll-ms") return false;
+          return true;
+        });
+        const contentArg = filteredArgs.join(" ").trim();
+        const once = args.includes("--once") || contentArg.length > 0;
+        const nonInteractive = args.includes("--non-interactive") || contentArg.length > 0;
+        const input = contentArg ? Readable.from(contentArg) : process.stdin;
+
+        const code = await runChatInteractive(agentId, {
+          project: projectName,
+          once,
+          nonInteractive,
+          pollIntervalMs: pollMs,
+          input,
+        });
+        process.exit(code);
       }
 
       case "plugin": {
