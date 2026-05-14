@@ -72,6 +72,7 @@ export function countPackageTestFiles(packageDir, { projectRoot = process.cwd() 
   return globSync("**/__tests__/**/*.test.{ts,tsx,mjs}", {
     cwd: packageRoot,
     nodir: true,
+    exclude: (p) => p.startsWith("dist/") || p.includes("/dist/"),
   }).length;
 }
 
