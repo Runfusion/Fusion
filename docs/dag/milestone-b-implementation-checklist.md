@@ -11,6 +11,8 @@ See also: [Schema migration plan](./milestone-b-schema-migration-plan.md) · [Da
 
 ## Ordered milestones
 
+ADR traceability: sequence follows ADR-0001 **Decision** (SQLite DAG + enqueue-only coordinator) and **Consequences #1/#2/#4** (additive storage, non-blocking runtime, unchanged merge path).
+
 1. [ ] **Land additive migration(s) from plan**
    - Outcome: `dag_run`, `dag_node`, `dag_edge` created via next schema version block.
    - File scope hints: `packages/core/src/db.ts`, `packages/core/src/__tests__/db*.test.ts`.
