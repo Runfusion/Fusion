@@ -211,7 +211,8 @@ async function probeProviderModels(
         if (parts[0] === 169 && parts[1] === 254) throw badRequest("baseUrl must not be a loopback or private address");
       }
     }
-  } catch {
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
     // DNS resolution failed — proceed without SSRF check; the fetch will fail naturally
   }
 
