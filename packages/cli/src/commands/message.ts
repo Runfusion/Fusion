@@ -24,7 +24,7 @@ async function getProjectPath(projectName?: string): Promise<string> {
  * Create a MessageStore for the given project.
  * Returns both the store and database for proper cleanup.
  */
-async function createMessageStore(projectName?: string): Promise<{ store: MessageStore; db: Database }> {
+export async function createMessageStore(projectName?: string): Promise<{ store: MessageStore; db: Database }> {
   const projectPath = await getProjectPath(projectName);
   const fusionDir = projectPath + "/.fusion";
   const db = createDatabase(fusionDir);
@@ -34,7 +34,7 @@ async function createMessageStore(projectName?: string): Promise<{ store: Messag
 }
 
 /** User ID for CLI-originated messages */
-const CLI_USER_ID = "cli";
+export const CLI_USER_ID = "cli";
 
 /**
  * List inbox messages.
@@ -211,7 +211,7 @@ export async function runAgentMailbox(agentId: string, projectName?: string): Pr
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-function formatParticipant(id: string, type: ParticipantType): string {
+export function formatParticipant(id: string, type: ParticipantType): string {
   switch (type) {
     case "agent": return `Agent ${id}`;
     case "user": return id === "cli" ? "You (CLI)" : id === "dashboard" ? "You (Dashboard)" : `User ${id}`;
@@ -219,7 +219,7 @@ function formatParticipant(id: string, type: ParticipantType): string {
   }
 }
 
-function formatTime(ts: string): string {
+export function formatTime(ts: string): string {
   const date = new Date(ts);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
