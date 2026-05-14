@@ -384,6 +384,7 @@ export class SelfHealingManager {
       { name: "recover-orphaned-agents", fn: () => this.recoverOrphanedAgents().then(() => undefined) },
       { name: "recover-stale-heartbeat-runs", fn: () => this.recoverStaleHeartbeatRuns().then(() => undefined) },
       { name: "recover-running-on-inactive-tasks", fn: () => this.recoverAgentsRunningOnInactiveTasks().then(() => undefined) },
+      { name: "recover-drifted-agent-task-links", fn: () => this.recoverDriftedAgentTaskLinks().then(() => undefined) },
       { name: "clear-stale-blocked-by", fn: () => this.clearStaleBlockedBy().then(() => undefined) },
       { name: "reclaim-self-owned-branch-conflicts", fn: () => this.reclaimSelfOwnedBranchConflicts().then(() => undefined) },
       { name: "surface-in-review-stalls", fn: () => this.surfaceInReviewStalls().then(() => undefined) },
@@ -1085,6 +1086,7 @@ export class SelfHealingManager {
           { name: "recover-orphaned-agents", fn: () => this.recoverOrphanedAgents() },
           { name: "recover-stale-heartbeat-runs", fn: () => this.recoverStaleHeartbeatRuns() },
           { name: "recover-running-on-inactive-tasks", fn: () => this.recoverAgentsRunningOnInactiveTasks() },
+          { name: "recover-drifted-agent-task-links", fn: () => this.recoverDriftedAgentTaskLinks() },
           { name: "clear-stale-blocked-by", fn: () => this.clearStaleBlockedBy() },
           { name: "reclaim-self-owned-branch-conflicts", fn: () => this.reclaimSelfOwnedBranchConflicts() },
           { name: "surface-in-review-stalls", fn: () => this.surfaceInReviewStalls() },
@@ -2936,6 +2938,60 @@ export class SelfHealingManager {
     }
 
     return recoveredAgentIds.size;
+  }
+
+  async recoverDriftedAgentTaskLinks(): Promise<number> {
+    const agentStore = this.options.agentStore;
+    if (!agentStore) {
+      return 0;
+    }
+
+    const now = Date.now();
+    const clearedAgentIds = new Set<string>();
+    const durableAgents = await agentStore.listAgents({ includeEphemeral: false });
+
+    for (const agent of durableAgents) {
+      if (!agent.taskId) {
+        continue;
+      }
+
+      const linkedTaskId = agent.taskId;
+      const linkedTask = await this.store.getTask(linkedTaskId);
+      let shouldClear = false;
+      let reason = "";
+
+      if (!linkedTask) {
+        shouldClear = true;
+        reason = "linked task missing";
+      } else if (linkedTask.column === "done" || linkedTask.column === "archived") {
+        shouldClear = true;
+        reason = `linked task in terminal column ${linkedTask.column}`;
+      } else if (linkedTask.assignedAgentId && linkedTask.assignedAgentId !== agent.id) {
+        shouldClear = true;
+        reason = `linked task assigned to ${linkedTask.assignedAgentId}`;
+      } else if (linkedTask.column === "todo" || linkedTask.column === "triage") {
+        const activeRun = await agentStore.getActiveHeartbeatRun(agent.id);
+        const runStartedAt = activeRun?.startedAt;
+        const runAgeMs = runStartedAt ? now - Date.parse(runStartedAt) : Number.POSITIVE_INFINITY;
+        const hasFreshRun = Boolean(activeRun) && Number.isFinite(runAgeMs) && runAgeMs <= RUNNING_ON_INACTIVE_TASK_STALE_RUN_MS;
+        const hasActiveExecution = this.options.hasActiveAgentExecution?.(agent.id) === true;
+        if (!hasFreshRun && !hasActiveExecution) {
+          shouldClear = true;
+          reason = `linked task in queued column ${linkedTask.column} without fresh run`;
+        }
+      }
+
+      if (!shouldClear) {
+        continue;
+      }
+
+      await agentStore.syncExecutionTaskLink(agent.id, undefined);
+      clearedAgentIds.add(agent.id);
+      log.log(`Cleared drifted durable agent task link for ${agent.id} (${linkedTaskId}): ${reason}`);
+    }
+
+    log.log(`Recovered ${clearedAgentIds.size} drifted durable agent task link(s)`);
+    return clearedAgentIds.size;
   }
 
   async recoverOrphanedAgents(): Promise<number> {
