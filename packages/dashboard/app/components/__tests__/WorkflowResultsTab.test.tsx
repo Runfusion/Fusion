@@ -203,6 +203,39 @@ describe("WorkflowResultsTab", () => {
     expect(within(liveLogPanel).getByText("Current workflow output")).toBeInTheDocument();
   });
 
+  it("renders advisory findings under Polish notes and keeps failure counts non-blocking", () => {
+    const advisoryResults: WorkflowStepResult[] = [
+      {
+        workflowStepId: "WS-006",
+        workflowStepName: "Frontend UX Design",
+        phase: "pre-merge",
+        status: "advisory_failure",
+        notes: "Polish spacing in `packages/dashboard/app/components/TaskCard.tsx`."
+      },
+      {
+        workflowStepId: "WS-001",
+        workflowStepName: "QA Check",
+        phase: "pre-merge",
+        status: "passed",
+        output: "All tests passed",
+      },
+    ];
+
+    render(<WorkflowResultsTab taskId="FN-001" results={advisoryResults} />);
+
+    expect(screen.getByTestId("workflow-result-badge-WS-006")).toHaveTextContent("Advisory");
+    expect(screen.getByTestId("workflow-result-badge-WS-006")).toHaveClass("workflow-result-badge--advisory_failure");
+
+    const polishNotes = screen.getByTestId("workflow-polish-notes");
+    expect(polishNotes).toHaveTextContent("Polish notes");
+    expect(polishNotes).toHaveTextContent("Non-blocking findings");
+    expect(screen.getByTestId("workflow-polish-note-WS-006")).toHaveTextContent("Frontend UX Design");
+
+    const summary = screen.getByTestId("workflow-results-summary");
+    expect(summary).toHaveTextContent("1 advisory");
+    expect(summary).not.toHaveTextContent("failed");
+  });
+
   it("shows output content when toggle is clicked to expand", () => {
     render(<WorkflowResultsTab taskId="FN-001" results={mockResults} />);
 

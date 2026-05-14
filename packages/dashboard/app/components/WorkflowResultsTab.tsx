@@ -462,6 +462,8 @@ export function WorkflowResultsTab({
     if (skipped > 0) summaryParts.push(`${skipped} skipped`);
     if (pending > 0) summaryParts.push(`${pending} running`);
 
+    const advisoryFindings = results.filter((result) => result.status === "advisory_failure" || Boolean(result.notes?.trim()));
+
     return (
       <div className="workflow-results-list" data-testid="workflow-results-list">
         <div className="workflow-results-summary-bar" data-testid="workflow-results-summary">

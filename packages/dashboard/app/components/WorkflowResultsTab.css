@@ -232,6 +232,11 @@
   color: var(--text);
 }
 
+.workflow-result-badge--advisory_failure {
+  background-color: color-mix(in srgb, var(--color-warning) 20%, var(--surface));
+  color: var(--text);
+}
+
 /* Phase badge base and modifier classes */
 .phase-badge {
   margin-inline-start: var(--space-xs);
@@ -283,6 +288,28 @@
   overflow-x: auto;
   max-height: calc(var(--space-2xl) * 9 + var(--space-xs) * 3);
   overflow-y: auto;
+}
+
+.workflow-polish-notes {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 35%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--surface));
+}
+
+.workflow-polish-notes h5 {
+  margin: 0 0 var(--space-xs) 0;
+}
+
+.workflow-polish-notes-subtitle {
+  margin: 0 0 var(--space-sm) 0;
+  color: var(--text-muted);
+}
+
+.workflow-polish-notes ul {
+  margin: 0;
+  padding-inline-start: var(--space-lg);
 }
 
 .workflow-results-summary-bar {
