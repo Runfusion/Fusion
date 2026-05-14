@@ -133,6 +133,20 @@ Board ordering behavior:
 - The `done` column is recency-ordered by completion time (newest first), using `columnMovedAt` as primary and falling back to `updatedAt` then `createdAt` for legacy tasks.
 - The dashboard **list view default ordering matches these same per-column semantics** until a user clicks a sortable header (manual list sorting still overrides defaults).
 
+#### Todo aging indicator
+
+The board Todo column header shows a client-side aging summary for Todo tasks:
+- `0–7d` (fresh)
+- `8–30d` (aging)
+- `31+d` (stale)
+
+Age uses this timestamp precedence per task:
+1. `columnMovedAt` (preferred; when the task entered Todo)
+2. `createdAt` (fallback for legacy rows)
+3. `updatedAt` (last resort)
+
+Clicking a bucket filters only the Todo column to that bucket. Clicking the active bucket again clears the filter. The filter is local UI state (not persisted) and resets when navigating away/remounting the board.
+
 ### Lifecycle commands
 
 ```bash
