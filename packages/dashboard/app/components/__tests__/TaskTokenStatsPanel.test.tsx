@@ -96,12 +96,37 @@ describe("TaskTokenStatsPanel", () => {
     expect(screen.getByText("210")).toBeInTheDocument();
     expect(screen.getByText("15")).toBeInTheDocument();
     expect(screen.getByText("1,860")).toBeInTheDocument();
+    expect(screen.getByText("Cache hit ratio:")).toBeInTheDocument();
+    expect(screen.getByText("14.9%")).toBeInTheDocument();
+    expect(screen.getByText("(read 210 / write 15 / input 1,200)")).toBeInTheDocument();
 
     const firstUsedTime = screen.getByText((_, element) => element?.tagName === "TIME" && element.getAttribute("datetime") === "2026-04-24T09:00:00.000Z");
     const lastUsedTime = screen.getByText((_, element) => element?.tagName === "TIME" && element.getAttribute("datetime") === "2026-04-24T10:15:00.000Z");
 
     expect(firstUsedTime).toBeInTheDocument();
     expect(lastUsedTime).toBeInTheDocument();
+  });
+
+  it("shows dash cache hit ratio when cache/input denominator is zero", () => {
+    render(
+      <TaskTokenStatsPanel
+        loading={false}
+        task={makeTask()}
+        tokenUsage={{
+          inputTokens: 0,
+          outputTokens: 12,
+          cachedTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 12,
+          firstUsedAt: "2026-04-24T09:00:00.000Z",
+          lastUsedAt: "2026-04-24T10:15:00.000Z",
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Cache hit ratio:")).toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.getByText("(read 0 / write 0 / input 0)")).toBeInTheDocument();
   });
 
   it("gracefully handles logs without timing patterns", () => {

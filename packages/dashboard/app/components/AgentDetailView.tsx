@@ -920,6 +920,7 @@ export function AgentDetailView({ agentId, projectId, onClose, addToast, onChild
               initialRunId={initialRunId}
               preferActiveRun={preferActiveRun}
               runNowRefreshToken={runNowRefreshToken}
+              isEphemeral={isEphemeralAgent(agent)}
             />
           )}
 
@@ -1638,6 +1639,21 @@ function MailTab({
 
 // ── Runs Tab ───────────────────────────────────────────────────────────────
 
+interface AgentTokenUsageWindowSummary {
+  totalInputTokens: number;
+  totalCachedTokens: number;
+  totalCacheWriteTokens: number;
+  totalOutputTokens: number;
+  nTasks: number;
+  hitRatio: number;
+}
+
+interface AgentTokenUsageSummary {
+  last24h: AgentTokenUsageWindowSummary;
+  last7d: AgentTokenUsageWindowSummary;
+  allTime: AgentTokenUsageWindowSummary;
+}
+
 function RunsTab({ 
   addToast,
   agentId,
@@ -1647,6 +1663,7 @@ function RunsTab({
   initialRunId,
   preferActiveRun,
   runNowRefreshToken,
+  isEphemeral,
 }: { 
   addToast: (msg: string, type?: "success" | "error") => void;
   agentId: string;
@@ -1656,6 +1673,7 @@ function RunsTab({
   initialRunId?: string | null;
   preferActiveRun?: boolean;
   runNowRefreshToken: number;
+  isEphemeral: boolean;
 }) {
   const [runs, setRuns] = useState<AgentHeartbeatRun[]>([]);
   const { confirm } = useConfirm();
@@ -1665,6 +1683,7 @@ function RunsTab({
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const [detailRun, setDetailRun] = useState<AgentHeartbeatRun | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const [tokenUsageSummary, setTokenUsageSummary] = useState<AgentTokenUsageSummary | null>(null);
   const hasAutoExpandedInitialRunRef = useRef(false);
   const didMountRunNowRefreshRef = useRef(false);
 
@@ -1683,6 +1702,36 @@ function RunsTab({
   useEffect(() => {
     void loadRuns();
   }, [loadRuns]);
+
+  useEffect(() => {
+    if (isEphemeral) {
+      setTokenUsageSummary(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    void fetch(`/api/agents/${encodeURIComponent(agentId)}/token-usage${query}`, { signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok) {
+          if (res.status === 400) {
+            setTokenUsageSummary(null);
+            return;
+          }
+          throw new Error(`Request failed: ${res.status}`);
+        }
+        const data = (await res.json()) as AgentTokenUsageSummary;
+        setTokenUsageSummary(data);
+      })
+      .catch((err) => {
+        if (err instanceof Error && err.name === "AbortError") {
+          return;
+        }
+        addToast(`Failed to load cache hit ratio: ${getErrorMessage(err)}`, "error");
+      });
+
+    return () => controller.abort();
+  }, [agentId, projectId, addToast, isEphemeral]);
 
   useEffect(() => {
     if (!didMountRunNowRefreshRef.current) {
@@ -2044,8 +2093,25 @@ function RunsTab({
     );
   };
 
+  const renderCacheWindow = (label: string, window: AgentTokenUsageWindowSummary) => (
+    <div className="run-context-item" key={label}>
+      <span className="text-muted">{label}:</span>{" "}
+      <span>{(window.hitRatio * 100).toFixed(1)}% ({window.totalCachedTokens.toLocaleString()} / {window.totalCacheWriteTokens.toLocaleString()} / {window.totalInputTokens.toLocaleString()} / {window.nTasks.toLocaleString()})</span>
+    </div>
+  );
+
   return (
     <div className="runs-tab">
+      {tokenUsageSummary && (
+        <div className="run-output-section">
+          <div className="run-output-label">Cache hit ratio</div>
+          <div className="run-context-grid">
+            {renderCacheWindow("Last 24h", tokenUsageSummary.last24h)}
+            {renderCacheWindow("Last 7d", tokenUsageSummary.last7d)}
+            {renderCacheWindow("All time", tokenUsageSummary.allTime)}
+          </div>
+        </div>
+      )}
       <div className="runs-toolbar runs-toolbar--between">
         <span className="runs-toolbar-meta">
           {runs.length} run{runs.length !== 1 ? "s" : ""}

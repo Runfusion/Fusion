@@ -132,6 +132,25 @@
   font-size: calc(var(--space-sm) + var(--space-xs));
 }
 
+.task-token-stats-panel__cache-ratio {
+  color: var(--text);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+}
+
+.task-token-stats-panel__cache-ratio-label {
+  color: var(--text-muted);
+}
+
+.task-token-stats-panel__cache-ratio-value {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.task-token-stats-panel__cache-breakdown {
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs));
+}
+
 .task-token-stats-panel__empty,
 .task-token-stats-panel__loading {
   border: 1px dashed var(--border);

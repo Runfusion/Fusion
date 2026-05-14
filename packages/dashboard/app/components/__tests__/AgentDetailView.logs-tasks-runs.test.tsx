@@ -50,6 +50,17 @@ import { AgentDetailView } from "../AgentDetailView";
 describe("AgentDetailView — logs, tasks, and runs", () => {
   beforeEach(() => {
     setupAgentDetailMocks();
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/token-usage")) {
+        return new Response(JSON.stringify({
+          last24h: { totalInputTokens: 100, totalCachedTokens: 50, totalCacheWriteTokens: 10, totalOutputTokens: 20, nTasks: 2, hitRatio: 0.3333 },
+          last7d: { totalInputTokens: 200, totalCachedTokens: 100, totalCacheWriteTokens: 20, totalOutputTokens: 40, nTasks: 3, hitRatio: 0.3333 },
+          allTime: { totalInputTokens: 300, totalCachedTokens: 150, totalCacheWriteTokens: 30, totalOutputTokens: 60, nTasks: 4, hitRatio: 0.3333 },
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    }));
   });
 
 describe("Logs tab", () => {
@@ -244,6 +255,36 @@ describe("Tasks tab", () => {
 
 
 describe("Runs Tab — click to show logs", () => {
+  it("shows cache hit ratio section for permanent agents", async () => {
+    const user = userEvent.setup();
+    render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+
+    await user.click(await screen.findByText("Runs"));
+    await waitFor(() => {
+      expect(screen.getByText("Cache hit ratio")).toBeInTheDocument();
+      expect(screen.getByText(/Last 24h:/)).toBeInTheDocument();
+      expect(screen.getAllByText(/33.3%/)).toHaveLength(3);
+    });
+  });
+
+  it("hides cache hit ratio section for ephemeral agents", async () => {
+    const user = userEvent.setup();
+    mockFetchAgent.mockResolvedValue(createMockAgent({ metadata: { type: "spawned" } as any }));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/token-usage")) {
+        return new Response(JSON.stringify({ error: "Token usage is not available for ephemeral agents" }), { status: 400 });
+      }
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    }));
+
+    render(<AgentDetailView agentId="agent-001" onClose={vi.fn()} addToast={vi.fn()} />);
+    await user.click(await screen.findByText("Runs"));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Cache hit ratio")).not.toBeInTheDocument();
+    });
+  });
   const navigateToRuns = async (user: ReturnType<typeof userEvent.setup>) => {
     await waitFor(() => {
       expect(screen.getByText("Runs")).toBeInTheDocument();

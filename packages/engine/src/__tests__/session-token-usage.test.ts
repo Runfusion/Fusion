@@ -84,12 +84,7 @@ describe("accumulateSessionTokenUsage", () => {
   it("emits token-cache-metrics log when executor persists non-zero delta", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const store = createStore(undefined);
-    const executor = Object.create(TaskExecutor.prototype) as TaskExecutor & {
-      store: TaskStore;
-      tokenUsageBaselines: Map<string, { inputTokens: number; outputTokens: number; cachedTokens: number; cacheWriteTokens: number; totalTokens: number }>;
-      activeSessions: Map<string, { session: unknown }>;
-      persistTokenUsage: (taskId: string, session?: unknown) => Promise<void>;
-    };
+    const executor = Object.create(TaskExecutor.prototype) as any;
     executor.store = store;
     executor.tokenUsageBaselines = new Map();
     executor.activeSessions = new Map();

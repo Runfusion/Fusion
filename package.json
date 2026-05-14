@@ -28,6 +28,7 @@
     "build:exe:all": "pnpm build && pnpm --filter @runfusion/fusion build:exe:all",
     "test": "node scripts/test-changed.mjs",
     "test:scripts": "node --test scripts/__tests__/*.test.mjs",
+    "fn:cache-stats": "node scripts/cache-stats.mjs",
     "test:full": "node scripts/test-changed.mjs --full --no-cache",
     "test:ci:shard": "node scripts/ci-test-shard.mjs",
     "test:serial": "FUSION_TEST_CONCURRENCY=1 FUSION_TEST_WORKSPACE_CONCURRENCY=1 pnpm test:full",

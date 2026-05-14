@@ -41,6 +41,10 @@ function formatTokenCount(value: number): string {
   return value.toLocaleString();
 }
 
+function formatHitRatio(ratio: number): string {
+  return `${(ratio * 100).toFixed(1)}%`;
+}
+
 function formatTimestamp(value: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
@@ -264,6 +268,17 @@ export function TaskTokenStatsPanel({ tokenUsage, loading, task }: TaskTokenStat
                 <span className="task-token-stats-panel__label">Total</span>
                 <span className="task-token-stats-panel__value">{formatTokenCount(tokenUsage.totalTokens)}</span>
               </div>
+            </div>
+            <div className="task-token-stats-panel__cache-ratio">
+              <span className="task-token-stats-panel__cache-ratio-label">Cache hit ratio:</span>{" "}
+              <span className="task-token-stats-panel__cache-ratio-value">
+                {(tokenUsage.inputTokens + tokenUsage.cachedTokens) > 0
+                  ? formatHitRatio(tokenUsage.cachedTokens / (tokenUsage.inputTokens + tokenUsage.cachedTokens))
+                  : "—"}
+              </span>
+            </div>
+            <div className="task-token-stats-panel__cache-breakdown">
+              (read {formatTokenCount(tokenUsage.cachedTokens)} / write {formatTokenCount(tokenUsage.cacheWriteTokens ?? 0)} / input {formatTokenCount(tokenUsage.inputTokens)})
             </div>
             <dl className="task-token-stats-panel__timestamps">
               <div className="task-token-stats-panel__timestamp-row">
