@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { promisify } from "node:util";
 import { acquireTaskWorktree } from "../worktree-acquisition.js";
 
 vi.mock("../worktree-pool.js", async () => {
@@ -115,5 +116,54 @@ describe("acquireTaskWorktree", () => {
       runInitCommand: false,
     });
     expect(runConfiguredCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe("acquireTaskWorktree foreign start-point warning", () => {
+  it("emits warning/log for fusion/fn-* start point with foreign-attributed tip and stays silent for main", async () => {
+    vi.resetModules();
+    const warn = vi.fn();
+    const logEntry = vi.fn().mockResolvedValue(undefined);
+
+    const execMock: any = (command: string, _opts: any, cb: any) => cb(null, "", "");
+    execMock[promisify.custom] = (command: string) => {
+      if (command.startsWith("git rev-parse --verify \"fusion/fn-4367^")) {
+        return Promise.resolve({ stdout: "deadbeefdeadbeef\n", stderr: "" });
+      }
+      if (command.startsWith("git log -1 --format=%s%x1f%b")) {
+        return Promise.resolve({ stdout: "feat(FN-4367): dep\u001fFusion-Task-Id: FN-4367\n", stderr: "" });
+      }
+      return Promise.resolve({ stdout: "", stderr: "" });
+    };
+
+    vi.doMock("node:child_process", () => ({ exec: execMock }));
+    const mod = await import("../worktree-acquisition.js");
+
+    await mod.acquireTaskWorktree({
+      task: { id: "FN-4488", title: "Task", description: "Desc", branch: null, worktree: null, executionStartBranch: "fusion/fn-4367" } as any,
+      rootDir: "/tmp/repo",
+      store: { updateTask: vi.fn().mockResolvedValue(undefined), logEntry } as any,
+      settings: {},
+      logger: { log: vi.fn(), warn, error: vi.fn() },
+      createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/repo/.worktrees/x", branch: "fusion/fn-4488" }),
+    });
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("worktree acquired with foreign-task start point: fusion/fn-4367"));
+    expect(logEntry).toHaveBeenCalledWith("FN-4488", expect.stringContaining("worktree acquired with foreign-task start point: fusion/fn-4367"), undefined, undefined);
+
+    warn.mockClear();
+    logEntry.mockClear();
+
+    await mod.acquireTaskWorktree({
+      task: { id: "FN-4488", title: "Task", description: "Desc", branch: null, worktree: null, executionStartBranch: "main" } as any,
+      rootDir: "/tmp/repo",
+      store: { updateTask: vi.fn().mockResolvedValue(undefined), logEntry } as any,
+      settings: {},
+      logger: { log: vi.fn(), warn, error: vi.fn() },
+      createWorktree: vi.fn().mockResolvedValue({ path: "/tmp/repo/.worktrees/x", branch: "fusion/fn-4488" }),
+    });
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(logEntry).not.toHaveBeenCalledWith("FN-4488", expect.stringContaining("foreign-task start point"), undefined, undefined);
   });
 });

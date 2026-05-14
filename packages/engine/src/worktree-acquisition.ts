@@ -57,6 +57,38 @@ function configuredCommandErrorMessage(result: { spawnError?: string | Error; ti
   return `Command exited with code ${result.exitCode ?? "unknown"}`;
 }
 
+async function maybeWarnForeignTaskStartPoint(
+  input: {
+    baseBranch: string | null;
+    rootDir: string;
+    worktreePath: string;
+    branch: string;
+    taskId: string;
+    logger?: { warn: (m: string) => void };
+    store: TaskStore;
+    runContext?: RunMutationContext;
+  },
+): Promise<void> {
+  const { baseBranch, rootDir, worktreePath, branch, taskId, logger, store, runContext } = input;
+  if (!baseBranch || !/^fusion\/fn-\d+$/i.test(baseBranch)) return;
+
+  try {
+    const tipSha = (await execAsync(`git rev-parse --verify ${JSON.stringify(`${baseBranch}^{commit}`)}`, { cwd: rootDir, encoding: "utf-8" })).stdout.trim();
+    const details = (await execAsync(`git log -1 --format=%s%x1f%b ${JSON.stringify(tipSha)}`, { cwd: worktreePath, encoding: "utf-8" })).stdout.trim();
+    const [subject = "", body = ""] = details.split("\u001f");
+    const subjectMatch = subject.match(/^(?:feat|fix|test|chore|docs|refactor|perf|build)\((FN-\d+)\):/i);
+    const trailerMatch = body.match(/(?:^|\n)Fusion-Task-Id:\s*(FN-\d+)\s*(?:\n|$)/i);
+    const attributedTaskId = (trailerMatch?.[1] ?? subjectMatch?.[1] ?? "").toUpperCase();
+    if (!attributedTaskId || attributedTaskId === taskId.toUpperCase()) return;
+
+    const warning = `worktree acquired with foreign-task start point: ${baseBranch} (resolved tip ${tipSha.slice(0, 12)}) — bootstrap-misbinding recovery may engage on contamination check`;
+    logger?.warn(`${taskId}: ${warning}`);
+    await store.logEntry(taskId, warning, undefined, runContext);
+  } catch {
+    // best-effort observability only
+  }
+}
+
 async function createWorktreeFallback(
   rootDir: string,
   branch: string,
@@ -171,6 +203,16 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
         } else {
           await store.logEntry(task.id, `Acquired worktree from pool: ${worktreePath}`, undefined, runContext);
         }
+        await maybeWarnForeignTaskStartPoint({
+          baseBranch,
+          rootDir,
+          worktreePath,
+          branch,
+          taskId: task.id,
+          logger,
+          store,
+          runContext,
+        });
         const hydrated = await hydrate(worktreePath);
         return {
           worktreePath,
@@ -230,6 +272,16 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
     }
   }
 
+  await maybeWarnForeignTaskStartPoint({
+    baseBranch,
+    rootDir,
+    worktreePath,
+    branch,
+    taskId: task.id,
+    logger,
+    store,
+    runContext,
+  });
   const hydrated = await hydrate(worktreePath);
   return { worktreePath, branch, source: acquiredFromPool ? "pool" : "fresh", hydrated, isResume: false };
 }
