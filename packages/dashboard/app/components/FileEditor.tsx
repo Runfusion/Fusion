@@ -157,16 +157,7 @@ export function FileEditor({
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
         </div>
       ) : (
-        <>
-          <textarea
-            className={`file-editor-textarea ${wordWrap ? "file-editor-textarea--wrap" : ""}`}
-            aria-label={filePath ? `Editor for ${filePath}` : "File editor"}
-            value={content}
-            onChange={(event) => onChange(event.target.value)}
-            readOnly={readOnly}
-          />
-          <div className="file-editor-codemirror" ref={editorHostRef} aria-hidden="true" />
-        </>
+        <div className="file-editor-codemirror" ref={editorHostRef} aria-label={filePath ? `Editor for ${filePath}` : "File editor"} />
       )}
     </div>
   );
