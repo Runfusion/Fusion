@@ -1578,3 +1578,33 @@ describe("TaskExecutor fn_task_done blockers", () => {
   });
 });
 
+
+describe("TaskExecutor recoverCompletedTask", () => {
+  beforeEach(() => {
+    resetExecutorMocks();
+  });
+
+  it("uses todo -> in-progress -> in-review transitions for todo-origin recovery", async () => {
+    const store = createMockStore();
+    const executor = new TaskExecutor(store as any, "/tmp/test");
+
+    const task = {
+      id: "FN-4086",
+      title: "Recover todo completed task",
+      description: "Recover todo completed task",
+      column: "todo",
+      dependencies: [],
+      steps: [{ name: "s1", status: "done" }],
+      currentStep: 1,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as any;
+
+    const ok = await executor.recoverCompletedTask(task);
+
+    expect(ok).toBe(true);
+    expect(store.moveTask).toHaveBeenNthCalledWith(1, "FN-4086", "in-progress");
+    expect(store.moveTask).toHaveBeenNthCalledWith(2, "FN-4086", "in-review");
+  });
+});

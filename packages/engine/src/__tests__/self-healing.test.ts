@@ -1659,6 +1659,111 @@ describe("SelfHealingManager", () => {
     });
   });
 
+  describe("recoverStrandedCompletedTodoTasks", () => {
+    it("promotes completed todo tasks and calls recover fn once per qualifying task", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const getExecuting = vi.fn().mockReturnValue(new Set<string>());
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: getExecuting,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-101",
+          column: "todo",
+          paused: false,
+          error: null,
+          reviewLevel: 2,
+          steps: [{ status: "done" }, { status: "skipped" }],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverStrandedCompletedTodoTasks();
+
+      expect(result).toBe(1);
+      expect(store.listTasks).toHaveBeenCalledWith({ column: "todo", slim: true });
+      expect(recoverFn).toHaveBeenCalledTimes(1);
+      expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-101" }));
+
+      managerWithRecovery.stop();
+    });
+
+    it("leaves incomplete/error/executing todo tasks untouched", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const getExecuting = vi.fn().mockReturnValue(new Set<string>(["FN-105"]));
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: getExecuting,
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-103",
+          column: "todo",
+          paused: false,
+          error: null,
+          steps: [{ status: "done" }, { status: "pending" }],
+        },
+        {
+          id: "FN-104",
+          column: "todo",
+          paused: false,
+          error: "failed earlier",
+          steps: [{ status: "done" }],
+        },
+        {
+          id: "FN-105",
+          column: "todo",
+          paused: false,
+          error: null,
+          steps: [{ status: "done" }],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverStrandedCompletedTodoTasks();
+
+      expect(result).toBe(0);
+      expect(recoverFn).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("recovers blockedBy todo tasks when all steps are complete", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverCompletedTask: recoverFn,
+        getExecutingTaskIds: () => new Set<string>(),
+      });
+
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: "FN-106",
+          column: "todo",
+          paused: false,
+          blockedBy: "FN-001",
+          status: "queued",
+          error: null,
+          reviewLevel: 0,
+          steps: [{ status: "done" }, { status: "done" }],
+        },
+      ]);
+
+      const result = await managerWithRecovery.recoverStrandedCompletedTodoTasks();
+
+      expect(result).toBe(1);
+      expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-106" }));
+
+      managerWithRecovery.stop();
+    });
+  });
+
   describe("recoverMissingWorktreeReviewFailures", () => {
     it("requeues failed in-review tasks with missing-worktree session-start errors", async () => {
       const managerWithRecovery = new SelfHealingManager(store, {
@@ -5606,6 +5711,7 @@ describe("maintenance cycle concurrency", () => {
       }) as any);
 
     makeSlow("recoverCompletedTasks");
+    makeSlow("recoverStrandedCompletedTodoTasks");
     makeSlow("recoverStaleIncompleteReviewTasks");
     makeSlow("recoverInterruptedMergingTasks");
     makeSlow("recoverStaleMergingStatus");
@@ -5635,6 +5741,7 @@ describe("maintenance cycle concurrency", () => {
   it("one failing batch 2 operation does not abort the batch", async () => {
     const batch2Operations = [
       "recoverCompletedTasks",
+      "recoverStrandedCompletedTodoTasks",
       "recoverStaleIncompleteReviewTasks",
       "recoverInterruptedMergingTasks",
       "recoverStaleMergingStatus",
