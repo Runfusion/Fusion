@@ -1159,6 +1159,34 @@ describe("TaskDetailModal", () => {
       });
     });
 
+    it("renders no-commits-expected toggle after plan and before attachments", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            id: "FN-001",
+            column: "todo",
+            noCommitsExpected: false,
+            prompt: "# FN-001\n\n## Plan\n\nPlan marker text for ordering assertion.",
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const planMarker = screen.getByText("Plan marker text for ordering assertion.");
+      const noCommitsCheckbox = screen.getByLabelText("No commits expected (decision-only task)");
+      const attachmentsHeading = screen.getByRole("heading", { name: "Attachments" });
+
+      const noCommitsWrapper = noCommitsCheckbox.closest(".detail-section");
+      expect(noCommitsWrapper).toBeTruthy();
+      expect(planMarker.compareDocumentPosition(noCommitsWrapper!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(noCommitsWrapper!.compareDocumentPosition(attachmentsHeading)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+
     it("toggles no-commits-expected checkbox and patches task", async () => {
       const { updateTask } = await import("../../api");
       const mockUpdate = vi.mocked(updateTask);
