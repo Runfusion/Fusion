@@ -14,6 +14,8 @@ This design is architecture-only. Milestone B implementation requires freeze lif
 
 ## Adapter contract
 
+ADR traceability: derived from ADR-0001 **Decision** (enqueue-only scheduling boundary) and **Consequences #4** (no merge-path changes).
+
 Proposed file: `packages/engine/src/dag-coordinator.ts`.
 
 `DagCoordinator` is **enqueue-only**:
@@ -100,6 +102,8 @@ Run-audit linkage:
 - filesystem-domain only for normal task artifacts, not DAG-specific side channels.
 
 ## Multi-project scope
+
+ADR traceability: aligns with ADR-0001 **Consequences #3** (single-project prototype scope).
 
 Decision: **per-project coordinator instance**.
 
