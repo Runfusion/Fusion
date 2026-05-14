@@ -128,6 +128,23 @@ export {
   type LogExperimentInput,
 } from "./experiment-executor.js";
 export {
+  ExperimentFinalizeService,
+  __activeFinalizeLocksForTesting,
+} from "./experiment/finalize-service.js";
+export {
+  ExperimentFinalizeStateError,
+  ExperimentFinalizeNoKeptRunsError,
+  ExperimentFinalizePlanError,
+  ExperimentFinalizeMergeBaseError,
+  ExperimentFinalizeCherryPickConflictError,
+  ExperimentFinalizeBranchExistsError,
+  type FinalizeGroup,
+  type FinalizePlan,
+  type FinalizeResult,
+  type FinalizePlanOverride,
+  type FinalizePlanOverrideGroup,
+} from "./experiment/finalize-types.js";
+export {
   ResearchStepRunner,
   ResearchStepTimeoutError,
   ResearchStepAbortError,
