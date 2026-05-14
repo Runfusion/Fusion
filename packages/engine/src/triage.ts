@@ -250,6 +250,21 @@ When the planning conversation produces a structured plan, save it as a document
 - Testing & Verification must run before Documentation & Delivery
 - Avoid giant catch-all steps; split outcomes so execution can be verified incrementally
 
+## Decision-only task flag (noCommitsExpected)
+When ALL of the following are true, include this metadata line in the header block after Size/Review Level:
+
+- Add this exact line: **No commits expected:** true
+
+Set it only when all of these conditions hold:
+- Title/mission starts with decision verbs like "Decide", "Evaluate", "Verify", "Confirm", "Audit", "Review whether", or "Investigate and report"
+- Acceptance criteria are strictly observational (record findings, log a decision, update task log/docs) with no required code/config/file mutations
+- Task description explicitly says things like "no code changes expected" or "the deliverable is the recorded decision"
+
+Anti-heuristics (bias to false-negative when ambiguous):
+- SET: Decide whether FN-XYZ needs a fix
+- LEAVE UNSET: Investigate FN-XYZ
+- LEAVE UNSET: Investigate FN-XYZ and fix if needed
+
 ## Guidelines
 - Read the project structure and relevant source files to understand context BEFORE writing
 - Check package.json/scripts and explicit project commands to align real lint/test/build/typecheck commands
@@ -450,6 +465,21 @@ If an existing task already covers the same work, do NOT write a PROMPT.md. Inst
 ## Dependency awareness
 When adding a dependency in \`## Dependencies\`, first call \`fn_task_get\` for that task and read its PROMPT.md.
 Use that context to align file paths, APIs, assumptions, and completion expectations. If the dependency has no PROMPT.md yet, note that explicitly.
+
+## Decision-only task flag (noCommitsExpected)
+When ALL of the following are true, include this metadata line in the header block after Size:
+
+- Add this exact line: **No commits expected:** true
+
+Set it only when all of these conditions hold:
+- Title/mission starts with decision verbs like "Decide", "Evaluate", "Verify", "Confirm", "Audit", "Review whether", or "Investigate and report"
+- Acceptance criteria are strictly observational (record findings, log a decision, update task log/docs) with no required code/config/file mutations
+- Task description explicitly says things like "no code changes expected" or "the deliverable is the recorded decision"
+
+Anti-heuristics (bias to false-negative when ambiguous):
+- SET: Decide whether FN-XYZ needs a fix
+- LEAVE UNSET: Investigate FN-XYZ
+- LEAVE UNSET: Investigate FN-XYZ and fix if needed
 
 ## Guidelines
 - Read relevant source files before writing the spec
@@ -2083,6 +2113,11 @@ export class TriageProcessor {
     const reviewMatch = written.match(/^##\s+Review\s+Level:\s+(\d+)/m);
     if (reviewMatch) {
       taskUpdates.reviewLevel = parseInt(reviewMatch[1], 10);
+    }
+
+    const noCommitsExpectedMatch = written.match(/^\*\*No commits expected:\*\*\s*(true|yes)\b/im);
+    if (noCommitsExpectedMatch) {
+      taskUpdates.noCommitsExpected = true;
     }
 
     // Apply non-title metadata first. The title is held back and applied AFTER

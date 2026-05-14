@@ -1513,7 +1513,7 @@ describe("approved triage recovery", () => {
     await mkdir(join(rootDir, ".fusion", "tasks", "FN-001"), { recursive: true });
     await writeFile(
       join(rootDir, ".fusion", "tasks", "FN-001", "PROMPT.md"),
-      "# Task: FN-001\n\n**Size:** M\n\n## Review Level: 2\n\nRecovered specification",
+      "# Task: FN-001\n\n**Size:** M\n\n**No commits expected:** true\n\n## Review Level: 2\n\nRecovered specification",
     );
   });
 
@@ -1558,6 +1558,7 @@ describe("approved triage recovery", () => {
       dependencies: ["FN-1247"],
       size: "M",
       reviewLevel: 2,
+      noCommitsExpected: true,
     });
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
     expect(store.logEntry).toHaveBeenCalledWith(
@@ -1642,6 +1643,13 @@ describe("approved triage recovery", () => {
       "FN-001",
       expect.not.objectContaining({ title: expect.any(String) }),
     );
+  });
+
+  it("includes decision-only noCommitsExpected heuristic instructions in system prompts", () => {
+    expect(TRIAGE_SYSTEM_PROMPT).toContain("**No commits expected:** true");
+    expect(TRIAGE_SYSTEM_PROMPT).toContain("Decide whether FN-XYZ needs a fix");
+    expect(TRIAGE_SYSTEM_PROMPT).toContain("Investigate FN-XYZ and fix if needed");
+    expect(FAST_TRIAGE_SYSTEM_PROMPT).toContain("**No commits expected:** true");
   });
 
   it("preserves imported GitHub issue titles during planning recovery", async () => {
