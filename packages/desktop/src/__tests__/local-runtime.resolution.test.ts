@@ -7,6 +7,8 @@ describe("desktop runtime package resolution", () => {
     const dashboard = await import("@fusion/dashboard");
 
     expect(core.TaskStore).toBeTypeOf("function");
+    expect(core.Database).toBeTypeOf("function");
+    expect(core.PluginStore).toBeTypeOf("function");
     expect(dashboard.createServer).toBeTypeOf("function");
   }, 15000);
 
