@@ -178,7 +178,12 @@ export async function runChatInteractive(agentId: string, options: ChatInteracti
     rl.on("close", () => abortController.abort());
 
     while (true) {
-      const line = (await rl.question("> ")).trim();
+      let line: string;
+      try {
+        line = (await rl.question("> ")).trim();
+      } catch {
+        break;
+      }
       if (!line) continue;
       if (line === "/exit" || line === "/quit") break;
       if (line === "/help") {
