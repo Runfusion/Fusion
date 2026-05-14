@@ -432,13 +432,15 @@ export interface WorkflowStepOutcome {
   output?: string;
   error?: string;
   /** Machine-readable verdict extracted from structured JSON output. */
-  verdict?: "PASS" | "FAIL";
+  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
   /** Notes extracted from structured JSON output (distinct from raw output). */
   notes?: string;
   /** Set when the call exceeded `settings.workflowStepTimeoutMs`. Signals the
    *  caller to escalate to the fallback model rather than treat the failure
    *  as a generic revision request. */
   timedOut?: boolean;
+  /** True when no structured or prose verdict could be inferred. */
+  malformed?: boolean;
 }
 
 /**
@@ -451,6 +453,49 @@ export type WorkflowStepResult =
   | { allPassed: false; revisionRequested: false; feedback: string; stepName: string }
   | { allPassed: false; revisionRequested: true; feedback: string; stepName: string };
 
+const WORKFLOW_STEP_VERDICTS = new Set(["APPROVE", "APPROVE_WITH_NOTES", "REVISE"] as const);
+
+export function parseWorkflowStepVerdict(rawOutput: string): { verdict: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE"; notes: string } | null {
+  const trimmed = rawOutput.trim();
+  const candidates: string[] = [];
+  const fencedMatches = [...trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
+  for (const match of fencedMatches) {
+    candidates.push(match[1].trim());
+  }
+  const jsonObjectMatches = trimmed.match(/\{[\s\S]*\}/g);
+  if (jsonObjectMatches) {
+    candidates.push(...jsonObjectMatches.map((value) => value.trim()));
+  }
+
+  for (let i = candidates.length - 1; i >= 0; i -= 1) {
+    try {
+      const parsed = JSON.parse(candidates[i]) as { verdict?: string; notes?: unknown };
+      if (!parsed || typeof parsed.verdict !== "string" || !WORKFLOW_STEP_VERDICTS.has(parsed.verdict as "APPROVE")) {
+        continue;
+      }
+      return {
+        verdict: parsed.verdict as "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE",
+        notes: typeof parsed.notes === "string" ? parsed.notes : "",
+      };
+    } catch {
+      // continue
+    }
+  }
+
+  return null;
+}
+
+export function inferWorkflowStepVerdictFromProse(rawOutput: string): { verdict: "APPROVE" | "REVISE"; notes: string } | null {
+  const trimmed = rawOutput.trim();
+  const revisionMatch = trimmed.match(/^REQUEST REVISION\s*\n*/i);
+  if (revisionMatch) {
+    return { verdict: "REVISE", notes: trimmed.slice(revisionMatch[0].length).trim() || "Revision requested" };
+  }
+  if (/\b(approve|approved|looks good|no issues|out of scope)\b/i.test(trimmed)) {
+    return { verdict: "APPROVE", notes: "" };
+  }
+  return null;
+}
 
 const reviewStepParams = Type.Object({
   step: Type.Number({ description: "Step number to review" }),
@@ -6303,12 +6348,13 @@ ${failureFeedback}
           // Update existing pending entry in place
           const existingIdx = results.findIndex(r => r.workflowStepId === ws.id);
           if (existingIdx >= 0) {
+            const malformed = result.malformed === true;
             results[existingIdx] = {
               ...results[existingIdx],
-              status: "passed",
-              output: result.output,
+              status: malformed ? "skipped" : "passed",
+              output: malformed ? "malformed output — no verdict extracted" : result.output,
               verdict: result.verdict,
-              notes: result.notes ?? result.output,
+              notes: result.notes ?? (malformed ? undefined : result.output),
               completedAt,
             };
           }
@@ -6500,48 +6546,33 @@ ${failureFeedback}
     });
   }
 
-  /**
-   * Parse structured JSON verdict from workflow step output.
-   *
-   * Looks for a trailing JSON block of the form:
-   *   ```json-workflow-verdict
-   *   {"verdict":"PASS"|"FAIL","notes":"..."}
-   *   ```
-   *
-   * If found, extracts verdict/notes and returns the prose before the block
-   * as `output`.
-   *
-   * Falls back to prose-only parsing (REQUEST REVISION) for backward compat.
-   */
+  /** Parse structured JSON verdict from workflow step output. */
   private parseWorkflowStepOutput(rawOutput: string): {
     output: string;
-    verdict?: "PASS" | "FAIL";
+    verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
     notes?: string;
+    malformed?: boolean;
   } {
     const trimmed = rawOutput.trim();
-
-    // Try structured JSON block first
-    const jsonBlockMatch = trimmed.match(
-      /```json-workflow-verdict\s*\n([\s\S]*?)\n\s*```/,
-    );
-    if (jsonBlockMatch) {
-      try {
-        const parsed = JSON.parse(jsonBlockMatch[1].trim());
-        if (parsed.verdict === "PASS" || parsed.verdict === "FAIL") {
-          const proseBefore = trimmed.slice(0, trimmed.indexOf(jsonBlockMatch[0])).trim();
-          return {
-            output: proseBefore || parsed.notes || "",
-            verdict: parsed.verdict,
-            notes: parsed.notes,
-          };
-        }
-      } catch {
-        // Malformed JSON — fall through to prose parsing
-      }
+    const parsed = parseWorkflowStepVerdict(trimmed);
+    if (parsed) {
+      return {
+        output: parsed.notes || "",
+        verdict: parsed.verdict,
+        notes: parsed.notes,
+      };
     }
 
-    // Fallback: no structured block found, return raw output
-    return { output: trimmed };
+    const inferred = inferWorkflowStepVerdictFromProse(trimmed);
+    if (inferred) {
+      return {
+        output: inferred.notes || trimmed,
+        verdict: inferred.verdict,
+        notes: inferred.notes,
+      };
+    }
+
+    return { output: trimmed, malformed: true };
   }
 
   /**
@@ -6613,33 +6644,17 @@ You have access to the file system to review changes.
 
 ## Feedback Format
 
-When your review is complete, your response MUST end with a structured verdict block.
+When your review is complete, your final line MUST be a single JSON object (no markdown fences):
 
-**Structure:**
-1. Your prose findings (any length — explain what you reviewed, what passed, what didn't).
-2. A fenced JSON block at the very end:
+{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}
 
-\`\`\`json-workflow-verdict
-{"verdict":"PASS","notes":"<optional short summary>"}
-\`\`\`
+Rules:
+- Output exactly one trailing JSON object and stop.
+- verdict must be exactly APPROVE, APPROVE_WITH_NOTES, or REVISE.
+- notes should be concise and actionable. Use an empty string when there are no notes.
+- For out-of-scope fast-bail responses, use: {"verdict":"APPROVE","notes":"out of scope: no UI files changed"}
 
-or for failures:
-
-\`\`\`json-workflow-verdict
-{"verdict":"FAIL","notes":"<what needs to change>"}
-\`\`\`
-
-**Rules:**
-- The JSON block MUST be the last thing in your response.
-- \`verdict\` must be exactly \`"PASS"\` or \`"FAIL"\`.
-- \`notes\` is optional but recommended — a concise human-readable summary.
-- For FAIL, describe what needs to change in both the prose and \`notes\`.
-- If this step is out of scope (no relevant files), fast-bail:
-  \`\`\`json-workflow-verdict
-  {"verdict":"PASS","notes":"No relevant changes in scope — approved."}
-  \`\`\`
-
-**Backward compat:** If you cannot produce JSON, you may still use \`REQUEST REVISION\` at the start of your response to signal failure. The prose format is deprecated — prefer JSON.`;
+Backward compat fallback: if JSON is unavailable, you may still begin output with REQUEST REVISION to request changes.`;
 
     const agentLogger = new AgentLogger({
       store: this.store,
@@ -6795,35 +6810,26 @@ or for failures:
         await agentLogger.flush();
 
         const parsed = this.parseWorkflowStepOutput(output);
-        const trimmedOutput = output.trim();
-
-        // Structured verdict takes priority
         if (parsed.verdict) {
-          if (parsed.verdict === "FAIL") {
-            return {
-              success: false,
-              revisionRequested: true,
-              output: parsed.output,
-              verdict: "FAIL",
-              notes: parsed.notes,
-            };
-          }
+          const revisionRequested = parsed.verdict === "REVISE";
           return {
-            success: true,
+            success: !revisionRequested,
+            revisionRequested,
             output: parsed.output,
-            verdict: "PASS",
+            verdict: parsed.verdict,
             notes: parsed.notes,
           };
         }
 
-        // Fallback: prose-based REQUEST REVISION detection
-        const revisionMatch = trimmedOutput.match(/^REQUEST REVISION\s*\n*/i);
-        if (revisionMatch) {
-          const feedbackStart = revisionMatch[0].length;
-          const feedback = trimmedOutput.slice(feedbackStart).trim();
-          return { success: false, revisionRequested: true, output: feedback };
+        if (parsed.malformed) {
+          await this.store.logEntry(
+            task.id,
+            `[pre-merge] Workflow step '${workflowStep.name}' produced malformed output — treating as skipped`,
+          );
+          return { success: true, output: parsed.output, notes: undefined, malformed: true };
         }
-        return { success: true, output: trimmedOutput };
+
+        return { success: true, output: parsed.output };
       } catch (err: unknown) {
         await agentLogger.flush();
         try { session.dispose(); } catch { /* best-effort */ }

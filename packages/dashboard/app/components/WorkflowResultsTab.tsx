@@ -514,7 +514,10 @@ export function WorkflowResultsTab({
 
               {result.notes && result.status !== "pending" && (
                 <div className="workflow-result-notes" data-testid={`workflow-result-notes-${result.workflowStepId}`}>
-                  <span className="workflow-result-notes-label">Notes:</span> {linkifyFilePaths(result.notes)}
+                  <span className="workflow-result-notes-label">Notes:</span>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                    {result.notes}
+                  </ReactMarkdown>
                 </div>
               )}
 

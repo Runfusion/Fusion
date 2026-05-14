@@ -1167,7 +1167,7 @@ describe("WorkflowResultsTab", () => {
           workflowStepId: "WS-001",
           workflowStepName: "QA Check",
           status: "passed",
-          verdict: "PASS",
+          verdict: "APPROVE",
           output: "All tests passed.",
         },
       ];
@@ -1175,8 +1175,8 @@ describe("WorkflowResultsTab", () => {
       render(<WorkflowResultsTab taskId="FN-001" results={results} />);
 
       const badge = screen.getByTestId("workflow-verdict-badge-WS-001");
-      expect(badge).toHaveTextContent("PASS");
-      expect(badge.className).toContain("workflow-verdict-badge--PASS");
+      expect(badge).toHaveTextContent("APPROVE");
+      expect(badge.className).toContain("workflow-verdict-badge--APPROVE");
     });
 
     it("renders FAIL verdict badge when verdict is present", () => {
@@ -1185,7 +1185,7 @@ describe("WorkflowResultsTab", () => {
           workflowStepId: "WS-002",
           workflowStepName: "Security Audit",
           status: "failed",
-          verdict: "FAIL",
+          verdict: "REVISE",
           output: "Found issues in auth.ts.",
         },
       ];
@@ -1193,8 +1193,8 @@ describe("WorkflowResultsTab", () => {
       render(<WorkflowResultsTab taskId="FN-001" results={results} />);
 
       const badge = screen.getByTestId("workflow-verdict-badge-WS-002");
-      expect(badge).toHaveTextContent("FAIL");
-      expect(badge.className).toContain("workflow-verdict-badge--FAIL");
+      expect(badge).toHaveTextContent("REVISE");
+      expect(badge.className).toContain("workflow-verdict-badge--REVISE");
     });
 
     it("does not render verdict badge when verdict is undefined", () => {
@@ -1218,7 +1218,7 @@ describe("WorkflowResultsTab", () => {
           workflowStepId: "WS-001",
           workflowStepName: "QA Check",
           status: "passed",
-          verdict: "PASS",
+          verdict: "APPROVE",
           notes: "No relevant changes in scope — approved.",
           output: "Reviewed files.",
         },
@@ -1252,7 +1252,7 @@ describe("WorkflowResultsTab", () => {
           workflowStepId: "WS-003",
           workflowStepName: "UX Review",
           status: "advisory_failure",
-          verdict: "FAIL",
+          verdict: "REVISE",
           notes: "Spacing needs adjustment.",
           output: "Detailed findings here.",
         },
@@ -1260,7 +1260,7 @@ describe("WorkflowResultsTab", () => {
 
       render(<WorkflowResultsTab taskId="FN-001" results={results} />);
 
-      expect(screen.getByTestId("workflow-verdict-badge-WS-003")).toHaveTextContent("FAIL");
+      expect(screen.getByTestId("workflow-verdict-badge-WS-003")).toHaveTextContent("REVISE");
       expect(screen.getByTestId("workflow-result-notes-WS-003")).toHaveTextContent("Spacing needs adjustment.");
     });
   });

@@ -7476,7 +7476,6 @@ ${stepsSection}`;
     if (updates.gateMode !== undefined) step.gateMode = updates.gateMode;
     if (updates.prompt !== undefined && step.mode === "prompt") step.prompt = updates.prompt;
     if (updates.toolMode !== undefined && step.mode === "prompt") step.toolMode = updates.toolMode;
-    if (updates.gateMode !== undefined) step.gateMode = updates.gateMode;
     if (updates.scriptName !== undefined && step.mode === "script") step.scriptName = updates.scriptName;
     if (updates.enabled !== undefined) step.enabled = updates.enabled;
     if (updates.defaultOn !== undefined) step.defaultOn = updates.defaultOn;
@@ -7498,7 +7497,6 @@ ${stepsSection}`;
            phase = ?,
            gateMode = ?,
            prompt = ?,
-           gateMode = ?,
            toolMode = ?,
            scriptName = ?,
            enabled = ?,
@@ -7515,7 +7513,6 @@ ${stepsSection}`;
       step.phase || "pre-merge",
       step.gateMode,
       step.prompt,
-      step.gateMode ?? (step.mode === "script" ? "gate" : "advisory"),
       step.toolMode ?? null,
       step.scriptName ?? null,
       step.enabled ? 1 : 0,

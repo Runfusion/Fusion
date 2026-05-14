@@ -256,14 +256,19 @@
   font-family: var(--font-mono);
 }
 
-.workflow-verdict-badge--PASS {
+.workflow-verdict-badge--APPROVE {
   background-color: color-mix(in srgb, var(--color-success) 15%, transparent);
   color: var(--color-success);
 }
 
-.workflow-verdict-badge--FAIL {
-  background-color: color-mix(in srgb, var(--color-error) 15%, transparent);
-  color: var(--color-error);
+.workflow-verdict-badge--APPROVE_WITH_NOTES {
+  background-color: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
+}
+
+.workflow-verdict-badge--REVISE {
+  background-color: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
 }
 
 /* Workflow result notes */

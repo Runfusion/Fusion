@@ -225,6 +225,17 @@ For long outputs, click the expand icon (maximize) to open a larger viewer modal
 
 This makes it easier to read structured markdown output and long logs.
 
+### Prompt-mode Structured Verdict Contract
+
+Prompt-mode workflow agents should emit a trailing JSON object:
+
+`{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}`
+
+- `verdict` and `notes` are persisted on `WorkflowStepResult` when present.
+- Script-mode steps do not populate these fields.
+- Backward compatibility remains for legacy prose-only responses via heuristic fallback (`REQUEST REVISION` and approval keywords).
+- If neither structured JSON nor fallback prose can be interpreted, the step is treated as skipped (malformed output) instead of hard-failing the task.
+
 ## Workflow Step APIs
 
 | Endpoint | Purpose |

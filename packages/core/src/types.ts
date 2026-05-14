@@ -388,9 +388,15 @@ export interface WorkflowStepResult {
   status: "passed" | "failed" | "advisory_failure" | "skipped" | "pending";
   /** Output from the workflow step agent (findings, errors, etc.) */
   output?: string;
-  /** Machine-readable verdict from the workflow step agent. */
-  verdict?: "PASS" | "FAIL";
-  /** Optional non-blocking notes for advisory findings surfaced in task detail UI. */
+  /**
+   * Machine-readable verdict from prompt-mode structured output.
+   * Absent for script-mode steps and legacy prose-only prompt outputs.
+   */
+  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
+  /**
+   * Optional notes from prompt-mode structured output.
+   * Absent for script-mode steps and legacy prose-only prompt outputs.
+   */
   notes?: string;
   /** ISO-8601 timestamp when the step started */
   startedAt?: string;
