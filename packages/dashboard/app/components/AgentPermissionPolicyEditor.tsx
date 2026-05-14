@@ -41,8 +41,20 @@ function getPresetRules(presetId: AgentPermissionPolicy["presetId"]): AgentPermi
   return normalizeAgentPermissionPolicyFromPreset(presetId).rules;
 }
 
+function matchesRules(a: AgentPermissionPolicyRules, b: AgentPermissionPolicyRules): boolean {
+  return AGENT_PERMISSION_POLICY_ACTION_CATEGORIES.every((category) => a[category] === b[category]);
+}
+
+function derivePresetFromRules(rules: AgentPermissionPolicyRules): AgentPermissionPolicy["presetId"] {
+  if (matchesRules(rules, getPresetRules("unrestricted"))) return "unrestricted";
+  if (matchesRules(rules, getPresetRules("approval-required"))) return "approval-required";
+  if (matchesRules(rules, getPresetRules("locked-down"))) return "locked-down";
+  return "custom";
+}
+
 export function AgentPermissionPolicyEditor({ value, projectDefault, mode, onChange, disabled = false }: Props) {
-  const currentPreset = mode === "agent-override" && !value ? "inherit" : (value?.presetId ?? "unrestricted");
+  const derivedPreset = value ? derivePresetFromRules(value.rules) : "unrestricted";
+  const currentPreset = mode === "agent-override" && !value ? "inherit" : (value?.presetId === "custom" ? derivedPreset : (value?.presetId ?? "unrestricted"));
   const rules = value?.rules ?? buildAllowRules();
 
   const setPreset = (preset: string) => {

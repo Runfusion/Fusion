@@ -2112,3 +2112,15 @@
     justify-content: center;
   }
 }
+
+.agent-permission-inherit-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  margin-bottom: var(--space-sm);
+}

@@ -42,6 +42,26 @@ describe("AgentPermissionPolicyEditor", () => {
     expect(payload.presetId).toBe("custom");
   });
 
+  it("agent override inherit preset emits undefined", () => {
+    const onChange = vi.fn();
+    render(
+      <AgentPermissionPolicyEditor
+        mode="agent-override"
+        value={{ presetId: "custom", rules: {
+          git_write: "allow",
+          file_write_delete: "allow",
+          command_execution: "allow",
+          network_api: "allow",
+          task_agent_mutation: "allow",
+        } }}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Preset"), { target: { value: "inherit" } });
+    expect(onChange).toHaveBeenLastCalledWith(undefined);
+  });
+
   it("shows inherit annotation from project default", () => {
     render(
       <AgentPermissionPolicyEditor

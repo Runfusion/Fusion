@@ -39,6 +39,7 @@ import { LoginInstructions } from "./LoginInstructions";
 import { OAuthManualCodeForm } from "./OAuthManualCodeForm";
 import { ProviderIcon } from "./ProviderIcon";
 import { CustomProvidersSection } from "./CustomProvidersSection";
+import { AgentPermissionPolicyEditor } from "./AgentPermissionPolicyEditor";
 import { applyPresetToSelection, generateUniquePresetId } from "../utils/modelPresets";
 import { appendTokenQuery } from "../auth";
 import { useConfirm } from "../hooks/useConfirm";
@@ -228,6 +229,7 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "worktrees", label: "Worktrees", scope: "project" },
   { id: "commands", label: "Commands", scope: "project" },
   { id: "merge", label: "Merge", scope: "project" },
+  { id: "agent-permissions", label: "Agent Permissions", scope: "project" },
   { id: "memory", label: "Memory", scope: "project" },
   { id: "research-project", label: "Research", scope: "project" },
   { id: "prompts", label: "Prompts", scope: "project" },
@@ -4184,6 +4186,26 @@ export function SettingsModal({
                 </details>
               </div>
             )}
+          </>
+        );
+      case "agent-permissions":
+        return (
+          <>
+            {renderScopeBanner()}
+            <h4 className="settings-section-heading">Agent Permissions</h4>
+            <div className="form-group">
+              <small className="settings-muted">Per-agent settings override project defaults. Each category controls a separate approval gate.</small>
+            </div>
+            <AgentPermissionPolicyEditor
+              mode="project-default"
+              value={form.defaultAgentPermissionPolicy ? { presetId: "custom", rules: form.defaultAgentPermissionPolicy.rules ?? {} } : { presetId: "custom", rules: {} }}
+              onChange={(next) =>
+                setForm((f) => ({
+                  ...f,
+                  defaultAgentPermissionPolicy: { rules: next?.rules ?? {} },
+                }))
+              }
+            />
           </>
         );
       case "memory": {

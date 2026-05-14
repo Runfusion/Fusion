@@ -12,9 +12,9 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { AgentDetail, AgentState, AgentHeartbeatRun, AgentBudgetStatus, ModelInfo, MemoryFileInfo, AgentCapability, PluginRuntimeInfo, SkillContent, AgentOnboardingSummary, AgentMailboxResponse, AgentPromptSizePoint } from "../api";
-import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, upgradeAgentHeartbeatProcedure, updateGlobalSettings, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox, markMessageRead, fetchAgentPromptSizes } from "../api";
+import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, fetchSettingsByScope, upgradeAgentHeartbeatProcedure, updateGlobalSettings, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox, markMessageRead, fetchAgentPromptSizes } from "../api";
 import type { Agent } from "../api";
-import type { AgentLogEntry, Task, Message, ParticipantType } from "@fusion/core";
+import type { AgentLogEntry, Task, Message, ParticipantType, AgentPermissionPolicy, AgentPermissionPolicyRules } from "@fusion/core";
 import { getErrorMessage, isEphemeralAgent } from "@fusion/core";
 import { AgentLogViewer } from "./AgentLogViewer";
 import { AgentReflectionsTab } from "./AgentReflectionsTab";
@@ -30,6 +30,7 @@ import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { AgentAvatar } from "./AgentAvatar";
 import { AgentErrorIndicator } from "./AgentErrorDetailsModal";
 import { ExperimentalAgentOnboardingModal } from "./ExperimentalAgentOnboardingModal";
+import { AgentPermissionPolicyEditor } from "./AgentPermissionPolicyEditor";
 
 /**
  * Simple className utility - joins class names conditionally
@@ -3706,6 +3707,8 @@ function ConfigTab({
   const [runtimeMode, setRuntimeMode] = useState<"model" | "runtime">(initialRuntimeHint ? "runtime" : "model");
   const [modelValue, setModelValue] = useState(initialModelValue);
   const [selectedRuntimeId, setSelectedRuntimeId] = useState(initialRuntimeHint);
+  const [permissionPolicyValue, setPermissionPolicyValue] = useState<AgentPermissionPolicy | undefined>(agent.permissionPolicy);
+  const [projectDefaultPermissionPolicy, setProjectDefaultPermissionPolicy] = useState<Partial<AgentPermissionPolicyRules> | undefined>(undefined);
 
   const managerSelection = reportsToValue.trim();
   const availableManagers = useMemo(
@@ -3797,6 +3800,27 @@ function ConfigTab({
     setIsAiInterviewOpen(false);
     addToast("Interview draft applied. Review and save when ready.", "success");
   }, [addToast, onAgentDraftApplied]);
+
+  useEffect(() => {
+    setPermissionPolicyValue(agent.permissionPolicy);
+  }, [agent.permissionPolicy]);
+
+  useEffect(() => {
+    fetchSettingsByScope(projectId)
+      .then((scoped) => setProjectDefaultPermissionPolicy(scoped.project?.defaultAgentPermissionPolicy?.rules))
+      .catch(() => setProjectDefaultPermissionPolicy(undefined));
+  }, [projectId]);
+
+  const handlePermissionPolicyChange = async (next: AgentPermissionPolicy | undefined) => {
+    setPermissionPolicyValue(next);
+    try {
+      await updateAgent(agent.id, { permissionPolicy: next }, projectId);
+      await onSaved();
+      addToast("Permission policy updated", "success");
+    } catch (err) {
+      addToast(`Failed to update permission policy: ${getErrorMessage(err)}`, "error");
+    }
+  };
 
   // Load candidate managers for reports-to dropdown
   useEffect(() => {
@@ -4664,6 +4688,40 @@ function ConfigTab({
             </div>
           )}
         </div>
+      </div>
+
+      <div className="config-section">
+        <h3>Permissions</h3>
+        <p className="config-description">
+          Per-agent settings override project defaults. Each category controls a separate approval gate.
+        </p>
+        {permissionPolicyValue === undefined ? (
+          <div className="agent-permission-inherit-banner">
+            <span>Inheriting project default — no per-agent override set</span>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => void handlePermissionPolicyChange({
+                presetId: "custom",
+                rules: {
+                  git_write: projectDefaultPermissionPolicy?.git_write ?? "allow",
+                  file_write_delete: projectDefaultPermissionPolicy?.file_write_delete ?? "allow",
+                  command_execution: projectDefaultPermissionPolicy?.command_execution ?? "allow",
+                  network_api: projectDefaultPermissionPolicy?.network_api ?? "allow",
+                  task_agent_mutation: projectDefaultPermissionPolicy?.task_agent_mutation ?? "allow",
+                },
+              })}
+            >
+              Customize for this agent
+            </button>
+          </div>
+        ) : null}
+        <AgentPermissionPolicyEditor
+          mode="agent-override"
+          value={permissionPolicyValue}
+          projectDefault={projectDefaultPermissionPolicy}
+          onChange={(next) => { void handlePermissionPolicyChange(next); }}
+        />
       </div>
 
       <div className="config-section">
