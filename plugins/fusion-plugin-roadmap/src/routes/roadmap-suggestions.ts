@@ -1,6 +1,6 @@
 import type { CreateAiSessionFactory } from "@fusion/core";
 
-type LegacyCreateFnAgent = (options: {
+interface RoadmapSuggestionRequestOptions {
   cwd: string;
   systemPrompt: string;
   tools?: "coding" | "readonly";
@@ -8,7 +8,9 @@ type LegacyCreateFnAgent = (options: {
   defaultModelId?: string;
   onThinking?: () => void;
   onText?: () => void;
-}) => Promise<{
+}
+
+type LegacyCreateFnAgent = (options: RoadmapSuggestionRequestOptions) => Promise<{
   session: {
     prompt(text: string): Promise<void>;
     state: { messages: Array<{ role: string; content?: string | Array<{ type: string; text: string }> }> };
@@ -373,7 +375,7 @@ export function __setCreateFnAgent(mock: LegacyCreateFnAgent | undefined): void 
     injectedCreateAiSession = undefined;
     return;
   }
-  injectedCreateAiSession = async (options) => mock(options);
+  injectedCreateAiSession = async (options: RoadmapSuggestionRequestOptions) => mock(options);
 }
 
 export function __setCreateAiSessionFactory(mock: CreateAiSessionFactory | undefined): void {
