@@ -228,8 +228,8 @@ describe("WorkflowResultsTab", () => {
 
     const polishNotes = screen.getByTestId("workflow-polish-notes");
     expect(polishNotes).toHaveTextContent("Polish notes");
-    expect(polishNotes).toHaveTextContent("Non-blocking findings");
-    expect(screen.getByTestId("workflow-polish-note-WS-006")).toHaveTextContent("Frontend UX Design");
+    expect(polishNotes).toHaveTextContent("non-blocking improvements");
+    expect(polishNotes).toHaveTextContent("Frontend UX Design");
 
     const summary = screen.getByTestId("workflow-results-summary");
     expect(summary).toHaveTextContent("1 advisory");

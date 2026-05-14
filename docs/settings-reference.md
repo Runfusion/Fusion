@@ -45,8 +45,9 @@ Defaults from `DEFAULT_GLOBAL_SETTINGS`; key scope from `GLOBAL_SETTINGS_KEYS`.
 | `ntfyTopic` | `string` | `undefined` | ntfy topic name. |
 | `ntfyBaseUrl` | `string` | `undefined` | Optional custom ntfy server base URL (must use `http://` or `https://`). If blank/unset, Fusion uses `https://ntfy.sh` for both runtime and test notifications. |
 | `ntfyAccessToken` | `string` | `undefined` | Optional ntfy access token. When set, Fusion sends `Authorization: Bearer <token>` with ntfy publish requests, including Settings → Notifications test sends. Leave blank/unset to publish without authentication. |
-| `ntfyEvents` | `("in-review" \| "merged" \| "failed" \| "awaiting-approval" \| "awaiting-user-review" \| "planning-awaiting-input" \| "gridlock" \| "fallback-used" \| "memory-dreams-processed" \| "message:agent-to-user" \| "message:agent-to-agent" \| "message:room")[]` | `["in-review","merged","failed","awaiting-approval","awaiting-user-review","planning-awaiting-input","gridlock","fallback-used","memory-dreams-processed","message:agent-to-user","message:agent-to-agent","message:room"]` | Event types that trigger ntfy notifications. `planning-awaiting-input` fires when planning mode is waiting on user input. `gridlock` fires when all schedulable todo tasks are blocked; delivery is cooldown-throttled (first alert immediately, then suppressed for 15 minutes until gridlock resolves). `fallback-used` fires when Fusion recovers from a retryable model failure by switching to a configured fallback model. `memory-dreams-processed` fires when manual dream processing writes a new `DREAMS.md` entry (project and/or agent); disable it via ntfy/webhook event filters if you want to opt out. `message:agent-to-user` fires when an agent sends a direct message to the user. `message:agent-to-agent` fires when an agent sends a message to another agent (including replies). `message:room` fires when an agent posts an assistant reply in a chat room. If you use a custom `ntfyEvents` list, these message events must be present (or `ntfyEvents` must be unset so defaults apply) for the corresponding notifications to send. |
+| `ntfyEvents` | `("in-review" \| "merged" \| "failed" \| "awaiting-approval" \| "awaiting-user-review" \| "planning-awaiting-input" \| "gridlock" \| "fallback-used" \| "memory-dreams-processed" \| "message:agent-to-user" \| "message:agent-to-agent" \| "message:room" \| "token-budget")[]` | `["in-review","merged","failed","awaiting-approval","awaiting-user-review","planning-awaiting-input","gridlock","fallback-used","memory-dreams-processed","message:agent-to-user","message:agent-to-agent","message:room","token-budget"]` | Event types that trigger ntfy notifications. `planning-awaiting-input` fires when planning mode is waiting on user input. `gridlock` fires when all schedulable todo tasks are blocked; delivery is cooldown-throttled (first alert immediately, then suppressed for 15 minutes until gridlock resolves). `fallback-used` fires when Fusion recovers from a retryable model failure by switching to a configured fallback model. `memory-dreams-processed` fires when manual dream processing writes a new `DREAMS.md` entry (project and/or agent); disable it via ntfy/webhook event filters if you want to opt out. `message:agent-to-user` fires when an agent sends a direct message to the user. `message:agent-to-agent` fires when an agent sends a message to another agent (including replies). `message:room` fires when an agent posts an assistant reply in a chat room. `token-budget` fires when a task crosses token soft/hard caps. If you use a custom `ntfyEvents` list, these message events must be present (or `ntfyEvents` must be unset so defaults apply) for the corresponding notifications to send. |
 | `ntfyDashboardHost` | `string` | `undefined` | Dashboard host used to build deep links in notifications. |
+| `taskTokenBudget` | `{ soft?: number; hard?: number; perSize?: { S?: { soft?: number; hard?: number }; M?: { soft?: number; hard?: number }; L?: { soft?: number; hard?: number } } }` | `undefined` | Global fallback per-task token budget policy. Project `taskTokenBudget` overrides this. |
 | `webhookEnabled` | `boolean` | `false` | Enable webhook notifications for task lifecycle events. Part of the legacy flat settings; prefer `notificationProviders` for new setups. |
 
 In **Settings → Notifications**, use **Test message inbox** or **Test room reply** to exercise the full message-dispatch pipeline (`NotificationService.dispatch` → provider delivery), not just a raw ntfy POST.
@@ -322,6 +323,7 @@ Override precedence for direct merges is:
 | `memoryDreamsEnabled` | `boolean` | `false` | Enable dream processing that synthesizes daily notes and promotes durable lessons. |
 | `memoryDreamsSchedule` | `string` | `"0 4 * * *"` | Cron schedule for dream processing. |
 | `tokenCap` | `number` | `undefined` | Proactive token threshold for context compaction. |
+| `taskTokenBudget` | `{ soft?: number; hard?: number; perSize?: { S?: { soft?: number; hard?: number }; M?: { soft?: number; hard?: number }; L?: { soft?: number; hard?: number } } }` | `undefined` | Per-task token budget policy. Soft cap sends a one-time alert per task; hard cap pauses the task with `pausedReason: "token_budget_exceeded"`. |
 | `runStepsInNewSessions` | `boolean` | `false` | Run each task step in a fresh agent session. |
 | `maxParallelSteps` | `number` | `2` | Max concurrent step sessions when per-step sessions are enabled. |
 | `missionStaleThresholdMs` | `number` | `600000` | Mission stale threshold in ms while `activating` (10 min). |
@@ -343,6 +345,32 @@ Override precedence for direct merges is:
 | `researchDefaultTimeout` | `number` | `undefined` | Project-level default run timeout in milliseconds. |
 | `researchMaxSourcesPerRun` | `number` | `undefined` | Project-level max sources per run. |
 | `researchMaxSynthesisRounds` | `number` | `undefined` | Project-level max synthesis rounds. |
+
+### Per-task token budget
+
+`taskTokenBudget` can be configured in both global and project settings. Resolution precedence at runtime is:
+
+1. Task override (`task.tokenBudgetOverride`)
+2. Project per-size (`project.taskTokenBudget.perSize[task.size]`)
+3. Project base (`project.taskTokenBudget.soft/hard`)
+4. Global per-size (`global.taskTokenBudget.perSize[task.size]`)
+5. Global base (`global.taskTokenBudget.soft/hard`)
+
+Example:
+
+```json
+{
+  "taskTokenBudget": {
+    "soft": 8000000,
+    "hard": 12000000,
+    "perSize": {
+      "S": { "soft": 2000000, "hard": 4000000 },
+      "M": { "soft": 6000000, "hard": 9000000 },
+      "L": { "soft": 12000000, "hard": 18000000 }
+    }
+  }
+}
+```
 
 ### Research settings hierarchy and credentials
 

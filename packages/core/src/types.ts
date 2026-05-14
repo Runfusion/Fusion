@@ -242,7 +242,6 @@ export type WorkflowStepGateMode = "gate" | "advisory";
 
 /** Lifecycle phase for workflow step execution. */
 export type WorkflowStepPhase = "pre-merge" | "post-merge";
-export type WorkflowStepGateMode = "gate" | "advisory";
 
 export interface WorkflowStep {
   /** Unique identifier (e.g., "WS-001") */
@@ -261,8 +260,6 @@ export interface WorkflowStep {
   gateMode: WorkflowStepGateMode;
   /** Full agent prompt to execute when this step runs (used when mode is "prompt") */
   prompt: string;
-  /** Whether failures should block merge (`gate`) or be informational (`advisory`). */
-  gateMode?: WorkflowStepGateMode;
   /** Tool set available to prompt-mode workflow agents. Defaults to readonly. */
   toolMode?: WorkflowStepToolMode;
   /** Name of a script from project settings `scripts` map to execute (required when mode is "script") */
@@ -363,8 +360,6 @@ export interface WorkflowStepInput {
   gateMode?: WorkflowStepGateMode;
   /** Agent prompt (used when mode is "prompt"). Optional — can be AI-generated later via refinement. */
   prompt?: string;
-  /** Failure behavior. Defaults to advisory for prompt mode and gate for script mode. */
-  gateMode?: WorkflowStepGateMode;
   /** Tool set available to prompt-mode workflow agents. Defaults to readonly. */
   toolMode?: WorkflowStepToolMode;
   /** Script name from project settings (required when mode is "script").

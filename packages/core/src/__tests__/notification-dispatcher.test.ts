@@ -158,6 +158,7 @@ describe("NotificationDispatcher", () => {
       "gridlock",
       "fallback-used",
       "memory-dreams-processed",
+      "token-budget",
     ]);
     expect(DEFAULT_GLOBAL_SETTINGS.notificationProviders).toEqual([]);
     expect(DEFAULT_GLOBAL_SETTINGS.failureNotificationDelayMs).toBe(30000);

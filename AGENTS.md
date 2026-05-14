@@ -589,6 +589,17 @@ See [docs/settings-reference.md](./docs/settings-reference.md) for the complete 
 5. Global `defaultProvider`/`defaultModelId`
 6. Automatic provider/model resolution
 
+### Per-Task Token Budget Precedence
+
+Task token budgets resolve in this order:
+1. Per-task `task.tokenBudgetOverride`
+2. Project `taskTokenBudget.perSize[task.size]`
+3. Project `taskTokenBudget.soft/hard`
+4. Global `taskTokenBudget.perSize[task.size]`
+5. Global `taskTokenBudget.soft/hard`
+
+Hard-cap hits pause the task with `pausedReason: "token_budget_exceeded"`; soft-cap hits emit a one-shot alert per task.
+
 ## Per-Task Model Overrides
 
 Tasks can override project/global AI model settings on a per-task basis:

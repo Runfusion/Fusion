@@ -348,6 +348,7 @@ describe("GlobalSettingsStore", () => {
         "gridlock",
         "fallback-used",
         "memory-dreams-processed",
+        "token-budget",
       ]);
     });
 

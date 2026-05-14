@@ -2593,7 +2593,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       phase: "pre-merge",
       gateMode: "advisory",
       prompt: template.prompt,
-      gateMode: "advisory",
       toolMode: template.toolMode || "readonly",
       enabled: true,
       createdAt: now,
@@ -2610,7 +2609,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     phase: string | null;
     gateMode: string | null;
     prompt: string;
-    gateMode: string | null;
     toolMode: string | null;
     scriptName: string | null;
     enabled: number;
@@ -2631,9 +2629,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         ? row.gateMode
         : (row.mode === "script" ? "gate" : "advisory"),
       prompt: row.prompt || "",
-      gateMode: row.gateMode === "gate" || row.gateMode === "advisory"
-        ? row.gateMode
-        : (row.mode === "script" ? "gate" : "advisory"),
       toolMode: row.toolMode === "coding" || row.toolMode === "readonly" ? row.toolMode : undefined,
       scriptName: row.scriptName ?? undefined,
       enabled: Boolean(row.enabled),
@@ -7202,7 +7197,6 @@ ${stepsSection}`;
         phase: input.phase || "pre-merge",
         gateMode,
         prompt: mode === "prompt" ? (input.prompt || "") : "",
-        gateMode: input.gateMode || (mode === "script" ? "gate" : "advisory"),
         toolMode: mode === "prompt" ? (input.toolMode || "readonly") : undefined,
         scriptName: mode === "script" ? input.scriptName : undefined,
         enabled: input.enabled !== undefined ? input.enabled : true,
@@ -7223,7 +7217,6 @@ ${stepsSection}`;
           phase,
           gateMode,
           prompt,
-          gateMode,
           toolMode,
           scriptName,
           enabled,
@@ -7242,7 +7235,6 @@ ${stepsSection}`;
         step.phase || "pre-merge",
         step.gateMode,
         step.prompt,
-        step.gateMode ?? (step.mode === "script" ? "gate" : "advisory"),
         step.toolMode ?? null,
         step.scriptName ?? null,
         step.enabled ? 1 : 0,
@@ -7284,9 +7276,8 @@ ${stepsSection}`;
       description: entry.template.description,
       mode: entry.template.mode ?? "prompt",
       phase: entry.template.phase ?? "pre-merge",
-      gateMode: (entry.template.mode ?? "prompt") === "script" ? "gate" : "advisory",
-      prompt: entry.template.prompt ?? "",
       gateMode: entry.template.gateMode ?? ((entry.template.mode ?? "prompt") === "script" ? "gate" : "advisory"),
+      prompt: entry.template.prompt ?? "",
       scriptName: entry.template.scriptName,
       toolMode: entry.template.toolMode,
       enabled: entry.template.enabled ?? true,
@@ -7351,7 +7342,6 @@ ${stepsSection}`;
           phase: string | null;
           gateMode: string | null;
           prompt: string;
-          gateMode: string | null;
           toolMode: string | null;
           scriptName: string | null;
           enabled: number;
@@ -7378,7 +7368,6 @@ ${stepsSection}`;
           phase: string | null;
           gateMode: string | null;
           prompt: string;
-          gateMode: string | null;
           toolMode: string | null;
           scriptName: string | null;
           enabled: number;
@@ -7412,7 +7401,6 @@ ${stepsSection}`;
           phase: string | null;
           gateMode: string | null;
           prompt: string;
-          gateMode: string | null;
           toolMode: string | null;
           scriptName: string | null;
           enabled: number;

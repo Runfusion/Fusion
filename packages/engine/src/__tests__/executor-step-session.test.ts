@@ -2134,7 +2134,6 @@ describe("Workflow Steps Execution", () => {
       description: "Check for vulnerabilities",
       gateMode: "gate",
       prompt: "Scan for security issues.",
-      gateMode: "gate",
       enabled: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -2333,7 +2332,7 @@ describe("Workflow Steps Execution", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-review");
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",
-      expect.stringContaining("gateMode=advisory"),
+      expect.stringContaining("Advisory workflow step failed"),
     );
     expect(store.updateTask).not.toHaveBeenCalledWith(
       "FN-001",
@@ -2367,7 +2366,6 @@ describe("Workflow Steps Execution", () => {
       description: "Check for vulnerabilities",
       gateMode: "gate",
       prompt: "Scan for security issues.",
-      gateMode: "gate",
       enabled: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -2466,7 +2464,6 @@ describe("Workflow Steps Execution", () => {
       description: "Check for vulnerabilities",
       gateMode: "gate",
       prompt: "Scan for security issues.",
-      gateMode: "gate",
       enabled: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -2572,7 +2569,6 @@ describe("Workflow Steps Execution", () => {
       description: "Check for vulnerabilities",
       gateMode: "gate",
       prompt: "Scan for security issues.",
-      gateMode: "gate",
       enabled: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),

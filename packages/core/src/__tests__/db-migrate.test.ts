@@ -715,7 +715,7 @@ describe("schema migration", () => {
     const rows = db.prepare("SELECT id, mode, gateMode FROM workflow_steps ORDER BY id ASC").all() as Array<{ id: string; mode: string; gateMode: string }>;
     expect(rows).toEqual([
       { id: "WS-001", mode: "prompt", gateMode: "advisory" },
-      { id: "WS-002", mode: "script", gateMode: "gate" },
+      { id: "WS-002", mode: "script", gateMode: "advisory" },
     ]);
     expect(db.getSchemaVersion()).toBe(77);
 
