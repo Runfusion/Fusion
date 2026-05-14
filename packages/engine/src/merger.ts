@@ -3171,6 +3171,7 @@ export async function commitOrAmendMergeWithFixes(
   aiSubject?: string | null,
   fixModifiedFiles: ReadonlySet<string> = new Set(),
   store?: TaskStore,
+  auditor?: RunAuditor,
 ): Promise<MergeFinalizeResult> {
   try {
     // Build an allowlist of paths we are permitted to stage.
@@ -3517,7 +3518,7 @@ export async function commitOrAmendMergeWithFixes(
           rootDir,
           task: await store.getTask(taskId),
           resetLabel: "file-scope invariant violation",
-          auditor: audit,
+          auditor,
         });
       }
       await runDiffVolumeGate({
@@ -3560,7 +3561,7 @@ export async function commitOrAmendMergeWithFixes(
         rootDir,
         task: await store.getTask(taskId),
         resetLabel: "file-scope invariant violation",
-        auditor: audit,
+        auditor,
       });
     }
     await runDiffVolumeGate({
@@ -3770,7 +3771,7 @@ export function formatFileScopeViolationAgentLog(error: FileScopeViolationError)
   ].join("\n");
 }
 
-async function enforceSquashFileScopeInvariant(params: {
+export async function enforceSquashFileScopeInvariant(params: {
   store: TaskStore;
   taskId: string;
   rootDir: string;
@@ -6669,6 +6670,7 @@ export async function aiMergeTask(
                 aiMergeSubject,
                 verificationFixModifiedFiles,
                 store,
+                audit,
               );
               if (!finalized.ok) {
                 // Phantom-merge guard: refused to fabricate a commit. Reset
@@ -6791,6 +6793,7 @@ export async function aiMergeTask(
               aiMergeSubject,
               buildFixModifiedFiles,
               store,
+              audit,
             );
             if (!finalized.ok) {
               // Phantom-merge guard: the verification fix passed but no

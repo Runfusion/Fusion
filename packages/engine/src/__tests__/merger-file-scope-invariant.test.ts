@@ -6,6 +6,7 @@ import {
   assertSquashOverlapsFileScope,
   attemptWithSideStrategy,
   commitOrAmendMergeWithFixes,
+  enforceSquashFileScopeInvariant,
   executeMergeAttempt,
   FileScopeViolationError,
 } from "../merger.js";
@@ -192,6 +193,108 @@ describe("assertSquashOverlapsFileScope", () => {
       undefined,
       "merger",
     );
+  });
+});
+
+describe("enforceSquashFileScopeInvariant audit emission", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("emits run_audit event on file-scope violation", async () => {
+    const store = createInvariantStore(["packages/engine/src/merger.ts"]);
+    const auditor = { git: vi.fn().mockResolvedValue(undefined) };
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr === "git diff --cached --name-only") return "packages/core/src/store.ts";
+      if (cmdStr === "git reset --merge") return "";
+      return "";
+    });
+
+    await expect(enforceSquashFileScopeInvariant({
+      store: store as never,
+      taskId: "FN-4073",
+      rootDir: "/tmp/root",
+      task: await (store as any).getTask("FN-4073"),
+      resetLabel: "file-scope invariant violation",
+      auditor: auditor as any,
+    })).rejects.toBeInstanceOf(FileScopeViolationError);
+
+    expect(auditor.git).toHaveBeenCalledTimes(1);
+    expect(auditor.git).toHaveBeenCalledWith({
+      type: "merge:file-scope-violation",
+      target: "FN-4073",
+      metadata: {
+        resetLabel: "file-scope invariant violation",
+        stagedFiles: ["packages/core/src/store.ts"],
+        declaredScope: ["packages/engine/src/merger.ts"],
+        stagedFileCount: 1,
+        declaredScopeCount: 1,
+      },
+    });
+  });
+
+  it("does not emit when scopeOverride bypasses invariant", async () => {
+    const store = createInvariantStore(["packages/engine/src/merger.ts"], { scopeOverride: true });
+    const auditor = { git: vi.fn().mockResolvedValue(undefined) };
+    mockedExecSync.mockImplementation(() => "packages/core/src/store.ts");
+
+    await expect(enforceSquashFileScopeInvariant({
+      store: store as never,
+      taskId: "FN-4073",
+      rootDir: "/tmp/root",
+      task: await (store as any).getTask("FN-4073"),
+      resetLabel: "file-scope invariant violation",
+      auditor: auditor as any,
+    })).resolves.toBeUndefined();
+
+    expect(auditor.git).not.toHaveBeenCalled();
+  });
+
+  it("does not mask original violation when audit emission fails", async () => {
+    const store = createInvariantStore(["packages/engine/src/merger.ts"]);
+    const auditor = { git: vi.fn().mockRejectedValue(new Error("audit boom")) };
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr === "git diff --cached --name-only") return "packages/core/src/store.ts";
+      if (cmdStr === "git reset --merge") return "";
+      return "";
+    });
+
+    await expect(enforceSquashFileScopeInvariant({
+      store: store as never,
+      taskId: "FN-4073",
+      rootDir: "/tmp/root",
+      task: await (store as any).getTask("FN-4073"),
+      resetLabel: "file-scope invariant violation",
+      auditor: auditor as any,
+    })).rejects.toBeInstanceOf(FileScopeViolationError);
+
+    expect(store.appendAgentLog).toHaveBeenCalledWith(
+      "FN-4073",
+      expect.stringContaining("File-scope invariant violation"),
+      "tool_error",
+      expect.stringContaining("declaredScope:"),
+      "merger",
+    );
+  });
+
+  it("keeps backward compatibility when auditor is omitted", async () => {
+    const store = createInvariantStore(["packages/engine/src/merger.ts"]);
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr === "git diff --cached --name-only") return "packages/core/src/store.ts";
+      if (cmdStr === "git reset --merge") return "";
+      return "";
+    });
+
+    await expect(enforceSquashFileScopeInvariant({
+      store: store as never,
+      taskId: "FN-4073",
+      rootDir: "/tmp/root",
+      task: await (store as any).getTask("FN-4073"),
+      resetLabel: "file-scope invariant violation",
+    })).rejects.toBeInstanceOf(FileScopeViolationError);
   });
 });
 
