@@ -1481,7 +1481,19 @@ export class SelfHealingManager {
             startPoint: task.baseCommitSha ?? task.mergeDetails?.mergeTargetBranch ?? "main",
           });
 
-          if (inspection.kind === "stale" || inspection.kind === "stale-resolved") {
+          if (inspection.kind === "stale") {
+            continue;
+          }
+          if (inspection.kind === "stale-resolved") {
+            await this.store.updateTask(task.id, {
+              worktree: null,
+              branch: null,
+              baseCommitSha: null,
+            });
+            await this.store.logEntry(
+              task.id,
+              `[recovery] cache-invalidate ${task.id} branch=${task.branch ?? "?"} reason=stale-resolved-no-live-ref-or-mapping`,
+            );
             continue;
           }
           if (inspection.kind === "tip-already-merged") {
