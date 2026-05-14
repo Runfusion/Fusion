@@ -1,23 +1,37 @@
 import { describe, expect, it } from "vitest";
 import { loadAllAppCss } from "../../test/cssFixture";
 
-function extractMediaBlock(css: string, mediaQuery: string): string {
-  const start = css.indexOf(mediaQuery);
-  expect(start).toBeGreaterThanOrEqual(0);
+function extractMediaBlocks(css: string, mediaQuery: string): string[] {
+  const blocks: string[] = [];
+  let searchFrom = 0;
 
-  const openBrace = css.indexOf("{", start);
-  expect(openBrace).toBeGreaterThanOrEqual(0);
+  while (searchFrom < css.length) {
+    const start = css.indexOf(mediaQuery, searchFrom);
+    if (start < 0) break;
 
-  let depth = 1;
-  for (let i = openBrace + 1; i < css.length; i += 1) {
-    if (css[i] === "{") depth += 1;
-    if (css[i] === "}") depth -= 1;
-    if (depth === 0) {
-      return css.slice(openBrace + 1, i);
+    const openBrace = css.indexOf("{", start);
+    expect(openBrace).toBeGreaterThanOrEqual(0);
+
+    let depth = 1;
+    let end = -1;
+    for (let i = openBrace + 1; i < css.length; i += 1) {
+      if (css[i] === "{") depth += 1;
+      if (css[i] === "}") depth -= 1;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
     }
+
+    if (end < 0) {
+      throw new Error(`Unable to extract media block for ${mediaQuery}`);
+    }
+
+    blocks.push(css.slice(openBrace + 1, end));
+    searchFrom = end + 1;
   }
 
-  throw new Error(`Unable to extract media block for ${mediaQuery}`);
+  return blocks;
 }
 
 describe("FN-4416 SettingsModal memory editor mobile height", () => {
@@ -29,8 +43,10 @@ describe("FN-4416 SettingsModal memory editor mobile height", () => {
     const baseHeight = Number(baseMatch?.[1]);
     expect(baseHeight).toBe(50);
 
-    const mobileBlock = extractMediaBlock(css, "@media (max-width: 768px)");
-    const mobileMatch = mobileBlock.match(/\.memory-editor-frame\s*\{[^}]*min-height\s*:\s*(\d+(?:\.\d+)?)vh\s*;[^}]*\}/);
+    const mobileBlocks = extractMediaBlocks(css, "@media (max-width: 768px)");
+    const mobileMatch = mobileBlocks
+      .map((block) => block.match(/\.memory-editor-frame\s*\{[^}]*min-height\s*:\s*(\d+(?:\.\d+)?)vh\s*;[^}]*\}/))
+      .find((match): match is RegExpMatchArray => match !== null);
     expect(mobileMatch).not.toBeNull();
 
     const mobileHeight = Number(mobileMatch?.[1]);
