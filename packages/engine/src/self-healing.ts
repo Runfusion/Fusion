@@ -158,7 +158,7 @@ const STRANDED_COMPLETED_TODO_ACTIVE_STATUSES = new Set([
   "in-progress",
   "planning",
   "specifying",
-  "queued",
+
   "merging",
   "merging-pr",
   "merging-fix",
