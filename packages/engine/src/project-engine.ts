@@ -626,6 +626,11 @@ export class ProjectEngine {
     return this.config.workingDirectory;
   }
 
+  /** Get the project id. */
+  getProjectId(): string {
+    return this.config.projectId;
+  }
+
   /** Get the PrMonitor (if initialized). */
   getPrMonitor(): PrMonitor | undefined {
     return this.prMonitor;

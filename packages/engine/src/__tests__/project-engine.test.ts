@@ -306,6 +306,24 @@ describe("ProjectEngine notification ownership wiring", () => {
   });
 });
 
+describe("ProjectEngine accessors", () => {
+  it("returns configured project id", () => {
+    const engine = new ProjectEngine(
+      {
+        projectId: "proj_accessor",
+        workingDirectory: "/tmp/proj_accessor",
+        isolationMode: "in-process",
+        maxConcurrent: 2,
+        maxWorktrees: 2,
+      },
+      {} as never,
+      { skipNotifier: true },
+    );
+
+    expect(engine.getProjectId()).toBe("proj_accessor");
+  });
+});
+
 describe("ProjectEngine PR monitoring wiring", () => {
   it("wires runtime scheduler PR monitoring with closed-PR follow-up handler", async () => {
     const { store } = createMockStore(baseSettings);
