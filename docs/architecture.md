@@ -1282,8 +1282,8 @@ Dashboard session-diff route registration (`packages/dashboard/src/routes/regist
 
 Done-task `files changed` data shown on Task Cards and Task Changes tabs comes from the dashboard diff endpoints (`/api/tasks/:id/diff` and `/api/tasks/:id/file-diffs`) using this precedence:
 
-1. If the task has a `lineageId`, aggregate the union of file changes across reachable commits from `task_commit_associations` for that lineage (plus `mergeDetails.commitSha` when missing from associations).
-2. If no lineage commits are usable, fall back to legacy single-commit behavior based on `mergeDetails.commitSha^..mergeDetails.commitSha`.
+1. If the task has a `lineageId`, aggregate reachable lineage commits from `task_commit_associations` (plus `mergeDetails.commitSha` when missing), then recompute net file patches/counts from the earliest reachable parent through the latest reachable SHA.
+2. If lineage aggregation is unavailable or appears incomplete versus `mergeDetails.filesChanged`, fall back to commit-sha enumeration from `mergeDetails.commitSha` using merge-aware ranges (`^..` for normal commits, `^1...^2` for merge commits, empty-tree base for root commits).
 3. If no commit SHA is available, return merge summary numbers only (`mergeDetails.filesChanged/insertions/deletions`) without file patches.
 
 This keeps multi-commit landed tasks accurate while preserving compatibility for legacy/self-healed done tasks.
