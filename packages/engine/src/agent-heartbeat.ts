@@ -30,9 +30,9 @@ import {
   buildPluginPromptSection,
   resolveAgentHeartbeatProcedure,
 } from "./agent-instructions.js";
-import { resolveHeartbeatScopeDisciplineMode, selectHeartbeatProcedure } from "./heartbeat-procedure-resolver.js";
+import { resolveHeartbeatPromptTemplate, resolveHeartbeatScopeDisciplineMode, selectHeartbeatProcedure } from "./heartbeat-procedure-resolver.js";
 import { buildPromptLayers, collapsePromptLayers } from "./prompt-layers.js";
-import { heartbeatLog, formatError } from "./logger.js";
+import { createLogger, heartbeatLog, formatError } from "./logger.js";
 import { acquireTaskWorktree } from "./worktree-acquisition.js";
 import { createRunAuditor, type EngineRunContext } from "./run-audit.js";
 import { promptWithFallback } from "./pi.js";
@@ -40,6 +40,9 @@ import { createResolvedAgentSession, extractRuntimeHint, resolveHeartbeatSession
 import type { AgentActionGateContext } from "./agent-action-gate.js";
 import { buildSessionSkillContextSync } from "./session-skill-context.js";
 import type { AgentReflectionService } from "./agent-reflection.js";
+import { trimPromptMd, trimTaskDescription, trimTriggeringComments } from "./heartbeat-prompt-trim.js";
+
+const promptSizeLog = createLogger("prompt-size");
 
 function adjustHeartbeatMemoryPrimer(basePrompt: string, mode: AgentMemoryInclusionMode): string {
   if (mode === "full") return basePrompt;
@@ -2377,6 +2380,7 @@ export class HeartbeatMonitor {
             );
           }
           const heartbeatScopeDiscipline = resolveHeartbeatScopeDisciplineMode(heartbeatModelSettings, agent);
+          const promptTemplate = resolveHeartbeatPromptTemplate(heartbeatModelSettings, agent);
           const resolvedProcedureTemplate = selectHeartbeatProcedure(heartbeatScopeDiscipline, isNoTaskRun, {
             task: {
               strict: HEARTBEAT_PROCEDURE_STRICT,
@@ -2576,10 +2580,10 @@ export class HeartbeatMonitor {
               heartbeatProcedureText,
               "",
               "Task description:",
-              taskDetail!.description,
+              trimTaskDescription(taskDetail!.description, promptTemplate),
               "",
-              taskDetail!.prompt ? `PROMPT.md:\n${taskDetail!.prompt}` : "No PROMPT.md available.",
-              ...triggeringCommentLines,
+              taskDetail!.prompt ? `PROMPT.md:\n${trimPromptMd(taskDetail!.prompt, promptTemplate)}` : "No PROMPT.md available.",
+              ...trimTriggeringComments(triggeringCommentLines, promptTemplate),
               ...pendingMessagesLines,
               ...pendingRoomMessagesLines,
               ...(reportsHealthSection ? ["", reportsHealthSection] : []),
@@ -2599,8 +2603,19 @@ export class HeartbeatMonitor {
               contextSnapshot: {
                 ...(run.contextSnapshot ?? {}),
                 heartbeatScopeDiscipline,
+                heartbeatPromptTemplate: promptTemplate,
               },
             };
+            promptSizeLog.log("prompt-size", {
+              agentId: agent.id,
+              role: agent.role,
+              runId: run.id,
+              template: promptTemplate,
+              systemChars: systemPromptFinal.length,
+              execChars: executionPrompt.length,
+              totalChars: systemPromptFinal.length + executionPrompt.length,
+              isNoTaskRun,
+            });
             await this.store.saveRun(runWithPrompts);
             // Update local run reference so completeRun merges correctly
             Object.assign(run, {
