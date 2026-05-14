@@ -74,8 +74,6 @@ function renderNewTaskModal(props = {}) {
     tasks: [] as Task[],
     onCreateTask: vi.fn().mockResolvedValue({ id: "FN-001" }),
     addToast: vi.fn(),
-    onPlanningMode: vi.fn(),
-    onSubtaskBreakdown: vi.fn(),
   };
   const mergedProps = { ...defaultProps, ...props };
   const result = render(<NewTaskModal {...mergedProps} />);
@@ -125,8 +123,9 @@ describe("NewTaskModal", () => {
 
     expect(screen.getByText("New Task")).toBeTruthy();
     expect(screen.getByRole('textbox')).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Plan" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Subtask" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Plan" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Subtask" })).toBeNull();
+    expect(screen.queryByTestId("task-form-description-actions")).toBeNull();
 
     // Dependencies and agent are in quick-fields — visible by default (no toggle needed)
     expect(screen.getByTestId("dep-trigger")).toBeInTheDocument();
@@ -291,14 +290,6 @@ describe("NewTaskModal", () => {
     });
   });
 
-  it("has working Plan button for AI-assisted creation", () => {
-    const onPlanningMode = vi.fn();
-    renderNewTaskModal({ onPlanningMode });
-    
-    // The Plan button should be present and disabled when no description
-    const planButton = screen.getByRole("button", { name: "Plan" });
-    expect(planButton).toBeTruthy();
-  });
 
   it("shows success toast after creation", async () => {
     const { props } = renderNewTaskModal({
@@ -360,35 +351,14 @@ describe("NewTaskModal", () => {
     });
   });
 
-  // Plan mode tests - using Plan button instead of checkbox
-  it("calls onPlanningMode when Plan button is clicked with description", async () => {
-    const onPlanningMode = vi.fn();
-    const { props } = renderNewTaskModal({ onPlanningMode });
-    
-    const descTextarea = screen.getByRole('textbox');
-    fireEvent.change(descTextarea, { target: { value: "Build a login system" } });
-    
-    // Wait for models to load
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Plan" })).not.toBeDisabled();
-    });
-    
-    fireEvent.click(screen.getByRole("button", { name: "Plan" }));
-    
-    await waitFor(() => {
-      expect(onPlanningMode).toHaveBeenCalledWith("Build a login system");
-    });
-  });
+  it("calls onCreateTask when form is submitted", async () => {
+    const { props } = renderNewTaskModal();
 
-  it("calls onCreateTask normally when form is submitted", async () => {
-    const onPlanningMode = vi.fn();
-    const { props } = renderNewTaskModal({ onPlanningMode });
-    
     const descTextarea = screen.getByRole('textbox');
     fireEvent.change(descTextarea, { target: { value: "Normal task" } });
-    
+
     fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
-    
+
     await waitFor(() => {
       expect(props.onCreateTask).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -396,10 +366,7 @@ describe("NewTaskModal", () => {
         }),
       );
     });
-    
-    expect(onPlanningMode).not.toHaveBeenCalled();
   });
-
 
 
   it("disables Create Task when description is empty", () => {
