@@ -5768,9 +5768,16 @@ ${failureFeedback}
    * the caller is expected to treat that as "contamination check skipped".
    */
   private async resolveContaminationBaseRef(worktreePath: string): Promise<string | undefined> {
+    // Prefer LOCAL main over origin/main. origin/main is a tracking ref that
+    // is only as fresh as the last `git fetch` — on dev machines that haven't
+    // pushed in a while it can lag local main by hundreds of commits, which
+    // re-introduces the FN-4417 false positive at a smaller scale (the
+    // merge-base falls back to the last common ancestor between HEAD and the
+    // stale origin/main, and every commit on local main since then looks
+    // "foreign"). Local main is the canonical integration target for Fusion.
     try {
       const { stdout } = await execAsync(
-        "git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main",
+        "git merge-base HEAD main 2>/dev/null || git merge-base HEAD origin/main",
         { cwd: worktreePath, encoding: "utf-8" },
       );
       const ref = stdout.trim();

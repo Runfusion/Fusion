@@ -40,9 +40,19 @@ describe("resolveContaminationBaseRef (FN-4417)", () => {
     );
 
     expect(result).toBe("fresh_main_sha");
-    // Must have asked for merge-base against origin/main || main, never
-    // fallen back to HEAD~1 or read task.baseCommitSha.
-    expect(calls.some((c) => c.includes("merge-base HEAD origin/main"))).toBe(true);
+    // Must have asked for merge-base against local main first (preferred
+    // over origin/main, which can lag local main by hundreds of commits on
+    // dev machines and re-introduce the FN-4417 false positive). Must not
+    // fall back to HEAD~1 (which on a force-reset branch is a commit on
+    // main itself).
+    const mergeBaseCall = calls.find((c) => c.includes("merge-base"));
+    expect(mergeBaseCall).toBeDefined();
+    // Local `main` must appear before `origin/main` in the command so the
+    // shell `||` fallback prefers it.
+    const localMainIdx = mergeBaseCall!.indexOf("merge-base HEAD main");
+    const originMainIdx = mergeBaseCall!.indexOf("merge-base HEAD origin/main");
+    expect(localMainIdx).toBeGreaterThanOrEqual(0);
+    expect(localMainIdx).toBeLessThan(originMainIdx === -1 ? Number.MAX_SAFE_INTEGER : originMainIdx);
     expect(calls.some((c) => c.includes("HEAD~1"))).toBe(false);
   });
 
