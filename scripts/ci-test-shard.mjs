@@ -172,7 +172,8 @@ export function planShardAssignments(packages, total, options = {}) {
       name: entry.name,
       shardIndex: entry.shardIndex,
       shardCount: entry.shardCount,
-    } : { name: entry.name });
+      weight: entry.weight,
+    } : { name: entry.name, weight: entry.weight });
     shardWeights[targetIndex] += entry.weight;
   }
 
