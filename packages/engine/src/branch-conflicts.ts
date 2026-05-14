@@ -507,6 +507,52 @@ export async function classifyForeignCommits(
   }
 }
 
+export interface ReanchorBranchToBaseInput {
+  repoDir: string;
+  worktreePath: string;
+  branchName: string;
+  baseSha: string;
+  taskId: string;
+}
+
+export interface ReanchorBranchToBaseResult {
+  previousTipSha: string;
+  newTipSha: string;
+}
+
+export async function reanchorBranchToBase(
+  input: ReanchorBranchToBaseInput,
+): Promise<ReanchorBranchToBaseResult> {
+  const { repoDir, worktreePath, branchName, baseSha, taskId } = input;
+  const previousTipSha = await revParse(repoDir, branchName);
+
+  try {
+    await execAsync("git checkout -- .", {
+      cwd: worktreePath,
+      encoding: "utf-8",
+      timeout: GIT_TIMEOUT_MS,
+      maxBuffer: GIT_MAX_BUFFER,
+    });
+  } catch {
+    // best-effort: worktree may already be clean
+  }
+
+  await execAsync("git clean -fd", {
+    cwd: worktreePath,
+    encoding: "utf-8",
+    timeout: GIT_TIMEOUT_MS,
+    maxBuffer: GIT_MAX_BUFFER,
+  });
+  await runGit(worktreePath, `git checkout --detach ${quoteShellArg(baseSha)}`);
+  await runGit(worktreePath, `git checkout -B ${quoteShellArg(branchName)} ${quoteShellArg(baseSha)}`);
+  await assertCleanBranchAtBase(repoDir, branchName, baseSha, taskId);
+
+  return {
+    previousTipSha,
+    newTipSha: await revParse(repoDir, branchName),
+  };
+}
+
 export interface AutoRecoverCrossContaminationInput {
   repoDir: string;
   branchName: string;

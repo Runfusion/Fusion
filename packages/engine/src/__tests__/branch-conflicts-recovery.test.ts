@@ -6,6 +6,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import {
   autoRecoverCrossContamination,
+  reanchorBranchToBase,
   classifyBootstrapMisbinding,
   classifyForeignCommits,
   type BranchCrossContaminationCommit,
@@ -183,6 +184,27 @@ describe("branch contamination recovery classification", () => {
     });
   });
 
+  it("reanchors branch to base and clears bootstrap foreign history", async () => {
+    const { repoDir, baseSha } = await setupRepo();
+    const foreign = await makeCommit(repoDir, "foreign-reanchor", "feat(FN-4367): dependency change", "FN-4367");
+    const before = await run("git rev-parse feature", repoDir);
+
+    const result = await reanchorBranchToBase({
+      repoDir,
+      worktreePath: repoDir,
+      branchName: "feature",
+      baseSha,
+      taskId: "FN-4488",
+    });
+
+    const after = await run("git rev-parse feature", repoDir);
+    const range = await run(`git rev-list --count ${baseSha}..feature`, repoDir);
+    expect(result.previousTipSha).toBe(before);
+    expect(result.newTipSha).toBe(after);
+    expect(result.previousTipSha).toBe(foreign.sha);
+    expect(range).toBe("0");
+  });
+
   it("auto-recovers by dropping already-upstream foreign commits and preserving remaining branch work", async () => {
     const { repoDir, baseSha } = await setupRepo();
     await writeFile(path.join(repoDir, "foreign.txt"), "", "utf-8");
@@ -212,3 +234,4 @@ describe("branch contamination recovery classification", () => {
     expect(result.newTipSha).not.toEqual(originalTip);
   });
 });
+
