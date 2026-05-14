@@ -2,6 +2,8 @@ import {
   getCurrentRepo,
   resolveDependencyOrder,
   sortTasksByPriorityThenAgeAndId,
+  computeBlockerFanoutMap,
+  HIGH_FANOUT_BLOCKER_TODO_THRESHOLD,
   type TaskStore,
   type Task,
   type MissionStore,
@@ -190,6 +192,7 @@ export class Scheduler {
   private wasDispatchQueuedReasonLogged = new Set<string>();
   private readonly staleTaskReporter: StaleTaskReporter;
   private lastStaleTaskReportAt = 0;
+  private readonly lastHighOverlapFanoutWarningKey = new Map<string, string>();
 
   /**
    * Async listener guard convention:
@@ -502,6 +505,33 @@ export class Scheduler {
     this.clearDispatchQueuedReasonMemo(taskId);
     this.wasDispatchQueuedReasonLogged.add(key);
     await this.store.logEntry(taskId, reason);
+  }
+
+  private async emitHighOverlapFanoutWarnings(tasks: Task[]): Promise<void> {
+    const fanoutMap = computeBlockerFanoutMap(tasks, 3);
+    const seenBlockers = new Set<string>();
+
+    for (const [blockerId, fanout] of fanoutMap) {
+      if (fanout.overlapBlockedTodoCount < HIGH_FANOUT_BLOCKER_TODO_THRESHOLD) continue;
+      const state = fanout.escalation ? "long-lived" : "temporary";
+      const dedupeKey = `${fanout.overlapBlockedTodoCount}:${state}`;
+      seenBlockers.add(blockerId);
+
+      if (this.lastHighOverlapFanoutWarningKey.get(blockerId) === dedupeKey) {
+        continue;
+      }
+
+      const message = `Overlap bottleneck: ${blockerId} is currently blocking ${fanout.overlapBlockedTodoCount} todo task(s) via blockedBy (${state}).`;
+      schedulerLog.warn(message);
+      await this.store.logEntry(blockerId, message);
+      this.lastHighOverlapFanoutWarningKey.set(blockerId, dedupeKey);
+    }
+
+    for (const blockerId of this.lastHighOverlapFanoutWarningKey.keys()) {
+      if (!seenBlockers.has(blockerId)) {
+        this.lastHighOverlapFanoutWarningKey.delete(blockerId);
+      }
+    }
   }
 
   private async rollbackRunningAgentsForQueuedTodoTask(taskId: string): Promise<void> {
@@ -1052,6 +1082,8 @@ export class Scheduler {
           if (scope.length > 0) activeScopes.set(task.id, scope);
         }
       }
+
+      await this.emitHighOverlapFanoutWarnings(tasks);
 
       const staleWarningWindows = [settings.staleInProgressWarningMs, settings.staleInReviewWarningMs]
         .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);

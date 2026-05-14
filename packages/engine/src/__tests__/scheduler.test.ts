@@ -3018,6 +3018,91 @@ describe("Scheduler", () => {
     });
   });
 
+  describe("overlap bottleneck warnings", () => {
+    it("logs scheduler warning and blocker task log for high overlap fan-out", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const tasks = [
+        createMockTask({ id: "FN-B", column: "in-progress", blockedBy: undefined }),
+        createMockTask({ id: "FN-1", column: "todo", blockedBy: "FN-B", dependencies: [] }),
+        createMockTask({ id: "FN-2", column: "todo", blockedBy: "FN-B", dependencies: [] }),
+        createMockTask({ id: "FN-3", column: "todo", blockedBy: "FN-B", dependencies: [] }),
+        createMockTask({ id: "FN-4", column: "todo", blockedBy: "FN-B", dependencies: [] }),
+        createMockTask({ id: "FN-5", column: "todo", blockedBy: "FN-B", dependencies: [] }),
+      ];
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 10, maxWorktrees: 10, groupOverlappingFiles: false }),
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect(schedulerLog.warn).toHaveBeenCalledWith(expect.stringContaining("Overlap bottleneck: FN-B is currently blocking 5 todo task(s) via blockedBy"));
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-B",
+        expect.stringContaining("Overlap bottleneck: FN-B is currently blocking 5 todo task(s) via blockedBy"),
+      );
+    });
+
+    it("does not warn for small or dependency-only fan-out", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const tasks = [
+        createMockTask({ id: "FN-B", column: "in-progress" }),
+        createMockTask({ id: "FN-1", column: "todo", dependencies: ["FN-B"] }),
+        createMockTask({ id: "FN-2", column: "todo", dependencies: ["FN-B"] }),
+        createMockTask({ id: "FN-3", column: "todo", blockedBy: "FN-B" }),
+      ];
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 10, maxWorktrees: 10, groupOverlappingFiles: false }),
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+
+      expect((store.logEntry as ReturnType<typeof vi.fn>).mock.calls.some((call) =>
+        call[0] === "FN-B" && String(call[1]).includes("Overlap bottleneck:"),
+      )).toBe(false);
+    });
+
+    it("dedupes unchanged overlap bottleneck warnings across passes", async () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFile).mockResolvedValue("# Task\nDo something");
+
+      const tasks = [
+        createMockTask({ id: "FN-B", column: "in-progress" }),
+        createMockTask({ id: "FN-1", column: "todo", blockedBy: "FN-B" }),
+        createMockTask({ id: "FN-2", column: "todo", blockedBy: "FN-B" }),
+        createMockTask({ id: "FN-3", column: "todo", blockedBy: "FN-B" }),
+        createMockTask({ id: "FN-4", column: "todo", blockedBy: "FN-B" }),
+        createMockTask({ id: "FN-5", column: "todo", blockedBy: "FN-B" }),
+      ];
+
+      const store = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({ maxConcurrent: 10, maxWorktrees: 10, groupOverlappingFiles: false }),
+      });
+
+      const scheduler = new Scheduler(store);
+      (scheduler as any).running = true;
+      await scheduler.schedule();
+      await scheduler.schedule();
+
+      const overlapLogs = (store.logEntry as ReturnType<typeof vi.fn>).mock.calls.filter((call) =>
+        call[0] === "FN-B" && String(call[1]).includes("Overlap bottleneck:"),
+      );
+      expect(overlapLogs).toHaveLength(1);
+    });
+  });
+
   describe("reconcileAllMissionFeatures", () => {
     it("returns early when missionStore is not provided", async () => {
       const store = createMockStore();
