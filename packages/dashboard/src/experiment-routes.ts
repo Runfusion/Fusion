@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { ExperimentSessionStore, TaskStore } from "@fusion/core";
+import type { TaskStore } from "@fusion/core";
 import {
   defaultGitOps,
   ExperimentFinalizeBranchExistsError,
@@ -41,10 +41,7 @@ function rethrowAsApiError(error: unknown, fallback = "Failed to finalize experi
 export function createExperimentRouter(store: TaskStore): Router {
   const router = Router();
 
-  const sessionStore = (store as { getExperimentSessionStore?: () => ExperimentSessionStore }).getExperimentSessionStore?.();
-  if (!sessionStore) {
-    return router;
-  }
+  const sessionStore = store.getExperimentSessionStore();
   const service = new ExperimentFinalizeService({
     store: sessionStore,
     git: defaultGitOps(store.getRootDir()),
