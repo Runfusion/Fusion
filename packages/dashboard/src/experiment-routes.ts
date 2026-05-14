@@ -41,7 +41,10 @@ function rethrowAsApiError(error: unknown, fallback = "Failed to finalize experi
 export function createExperimentRouter(store: TaskStore): Router {
   const router = Router();
 
-  const sessionStore = store.getExperimentSessionStore();
+  const sessionStore = (store as TaskStore & { getExperimentSessionStore?: () => ReturnType<TaskStore["getExperimentSessionStore"]> }).getExperimentSessionStore?.();
+  if (!sessionStore) {
+    return router;
+  }
   const service = new ExperimentFinalizeService({
     store: sessionStore,
     git: defaultGitOps(store.getRootDir()),
