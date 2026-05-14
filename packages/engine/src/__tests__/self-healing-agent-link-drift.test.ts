@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { Agent, AgentStore, Task } from "@fusion/core";
+import { isEphemeralAgent, type Agent, type AgentStore, type Task } from "@fusion/core";
 
 import { SelfHealingManager } from "../self-healing";
 
@@ -15,7 +15,12 @@ describe("FN-4296: self-healing agent link drift", () => {
     } as any;
 
     const agentStore = {
-      listAgents: vi.fn(async () => agents),
+      listAgents: vi.fn(async (filter?: { includeEphemeral?: boolean }) => {
+        if (filter?.includeEphemeral === false) {
+          return agents.filter((agent) => !isEphemeralAgent(agent));
+        }
+        return agents;
+      }),
       getActiveHeartbeatRun: vi.fn(async () => null),
       syncExecutionTaskLink: vi.fn(async (agentId: string, taskId?: string) => {
         const agent = agents.find((candidate) => candidate.id === agentId);
@@ -87,14 +92,16 @@ describe("FN-4296: self-healing agent link drift", () => {
   it("FN-4296: ephemeral agents are not touched", async () => {
     const durable = makeAgent("agent-1", "FN-1");
     const ephemeral = makeAgent("temp-worker", "FN-2");
-    const agents = [durable];
-    const { manager } = buildManager(agents, {
+    (ephemeral as Agent & { metadata?: { type: string } }).metadata = { type: "spawned" };
+    const agents = [durable, ephemeral];
+    const { manager, agentStore } = buildManager(agents, {
       "FN-1": { id: "FN-1", column: "done" } as Task,
       "FN-2": { id: "FN-2", column: "done" } as Task,
     });
     await manager.recoverDriftedAgentTaskLinks();
     expect(durable.taskId).toBeUndefined();
     expect(ephemeral.taskId).toBe("FN-2");
+    expect((agentStore as any).syncExecutionTaskLink).toHaveBeenCalledTimes(1);
     manager.stop();
   });
 });
