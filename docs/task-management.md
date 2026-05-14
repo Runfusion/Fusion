@@ -100,6 +100,16 @@ Fusion task columns:
    - Repeated engine merge-queue drops now escalate to an explicit recoverable review failure: if auto-recovery hits `Auto-merge starvation:` in the task `error`, Fusion has already seen three consecutive enqueue attempts rejected by the engine merge queue. Operators can recover by clearing the failed state from the dashboard, which lets the usual unpause/clear flow re-attempt merge once the underlying queue wedge is resolved.
    - Non-recoverable state-machine errors during finalization (for example `Invalid transition: 'todo' → 'done'`) are treated as terminal review failures: recovery must not re-enqueue these tasks for merge unless task state changes prove they are recoverable.
 
+#### Self-healing: stranded-completed-todo recovery
+
+Fusion now enforces a recovery invariant for completed work that is accidentally returned to `todo`:
+
+- `todo` tasks with all steps terminal (`done`/`skipped`), no active execution, and no unrecoverable error are auto-promoted by self-healing.
+- Promotion always respects the transition table (`todo → in-progress → in-review`) via `TaskStore.moveTask()`; no direct `todo → in-review` mutation is used.
+- Review Level `0` tasks are finalized to `done` by the existing no-op review finalization flow after promotion to `in-review`; Review Level `>0` tasks remain in `in-review` for normal review/merge handling.
+
+This is a forward-safety guard for stranded completed tasks. See FN-4055/FN-4079 for deeper lifecycle root-cause and operational repair work.
+
 #### In-review stall signal
 
 Fusion now derives `task.inReviewStall` for non-paused `in-review` tasks when a known stuck-state shape is detected. This signal is state-based (not log-heuristic) and is computed server-side on task hydration.
