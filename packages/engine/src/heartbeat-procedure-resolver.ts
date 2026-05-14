@@ -1,9 +1,14 @@
-import type { Agent, HeartbeatScopeDisciplineMode, ProjectSettings } from "@fusion/core";
+import type { Agent, HeartbeatPromptTemplate, HeartbeatScopeDisciplineMode, ProjectSettings } from "@fusion/core";
 
 const VALID_MODES: readonly HeartbeatScopeDisciplineMode[] = ["strict", "lite", "off"] as const;
+const VALID_TEMPLATES: readonly HeartbeatPromptTemplate[] = ["default", "compact"] as const;
 
 function isHeartbeatScopeDisciplineMode(value: unknown): value is HeartbeatScopeDisciplineMode {
   return typeof value === "string" && (VALID_MODES as readonly string[]).includes(value);
+}
+
+function isHeartbeatPromptTemplate(value: unknown): value is HeartbeatPromptTemplate {
+  return typeof value === "string" && (VALID_TEMPLATES as readonly string[]).includes(value);
 }
 
 export function resolveHeartbeatScopeDisciplineMode(
@@ -22,6 +27,28 @@ export function resolveHeartbeatScopeDisciplineMode(
   }
 
   return "strict";
+}
+
+export function resolveHeartbeatPromptTemplate(
+  projectSettings: Pick<ProjectSettings, "heartbeatPromptTemplate"> | undefined,
+  agent: Pick<Agent, "runtimeConfig" | "role"> | undefined,
+): HeartbeatPromptTemplate {
+  const runtimeConfig = agent?.runtimeConfig as Record<string, unknown> | undefined;
+  const agentTemplate = runtimeConfig?.heartbeatPromptTemplate;
+  if (isHeartbeatPromptTemplate(agentTemplate)) {
+    return agentTemplate;
+  }
+
+  const projectTemplate = projectSettings?.heartbeatPromptTemplate;
+  if (isHeartbeatPromptTemplate(projectTemplate)) {
+    return projectTemplate;
+  }
+
+  if (!agent) {
+    return "default";
+  }
+
+  return agent.role === "executor" ? "default" : "compact";
 }
 
 export function selectHeartbeatProcedure<T>(

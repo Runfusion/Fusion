@@ -1,9 +1,18 @@
 import type { Agent, ProjectSettings } from "@fusion/core";
 import { describe, expect, it } from "vitest";
-import { resolveHeartbeatScopeDisciplineMode, selectHeartbeatProcedure } from "../heartbeat-procedure-resolver.js";
+import {
+  resolveHeartbeatPromptTemplate,
+  resolveHeartbeatScopeDisciplineMode,
+  selectHeartbeatProcedure,
+} from "../heartbeat-procedure-resolver.js";
 
 const project = (mode?: ProjectSettings["heartbeatScopeDiscipline"]) => ({ heartbeatScopeDiscipline: mode });
 const agent = (mode?: unknown) => ({ runtimeConfig: mode === undefined ? {} : { heartbeatScopeDiscipline: mode } }) as Pick<Agent, "runtimeConfig">;
+const projectTemplate = (template?: ProjectSettings["heartbeatPromptTemplate"]) => ({ heartbeatPromptTemplate: template });
+const templateAgent = (role: Agent["role"], template?: unknown) => ({
+  role,
+  runtimeConfig: template === undefined ? {} : { heartbeatPromptTemplate: template },
+}) as Pick<Agent, "runtimeConfig" | "role">;
 
 describe("resolveHeartbeatScopeDisciplineMode", () => {
   it.each(["strict", "lite", "off"] as const)("prefers agent override: %s", (mode) => {
@@ -28,6 +37,39 @@ describe("resolveHeartbeatScopeDisciplineMode", () => {
 
   it("defaults to strict when unset", () => {
     expect(resolveHeartbeatScopeDisciplineMode(undefined, undefined)).toBe("strict");
+  });
+});
+
+describe("resolveHeartbeatPromptTemplate", () => {
+  it("prefers agent override over project and role defaults", () => {
+    expect(resolveHeartbeatPromptTemplate(projectTemplate("default"), templateAgent("triage", "compact"))).toBe("compact");
+  });
+
+  it("uses project setting when agent override is unset", () => {
+    expect(resolveHeartbeatPromptTemplate(projectTemplate("compact"), templateAgent("executor"))).toBe("compact");
+  });
+
+  it.each(["triage", "reviewer", "merger", "scheduler", "engineer", "custom"] as const)(
+    "defaults non-executor role %s to compact",
+    (role) => {
+      expect(resolveHeartbeatPromptTemplate(undefined, templateAgent(role))).toBe("compact");
+    },
+  );
+
+  it("defaults executor role to default", () => {
+    expect(resolveHeartbeatPromptTemplate(undefined, templateAgent("executor"))).toBe("default");
+  });
+
+  it("falls through invalid agent template to project", () => {
+    expect(resolveHeartbeatPromptTemplate(projectTemplate("compact"), templateAgent("executor", "invalid"))).toBe("compact");
+  });
+
+  it("falls through invalid project template to role default", () => {
+    expect(resolveHeartbeatPromptTemplate(projectTemplate("tiny" as never), templateAgent("triage"))).toBe("compact");
+  });
+
+  it("returns default when agent is undefined", () => {
+    expect(resolveHeartbeatPromptTemplate(projectTemplate("tiny" as never), undefined)).toBe("default");
   });
 });
 
