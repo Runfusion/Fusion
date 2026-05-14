@@ -1340,6 +1340,8 @@ export function QuickChatFAB({
       return;
     }
 
+    hasAppliedInitialSessionRef.current = false;
+    restoredFromExistingSessionRef.current = false;
     setMentionPopupVisible(false);
     setMentionFilter("");
     setMentionStartPos(-1);
