@@ -3266,7 +3266,7 @@ export class TaskExecutor {
         this.createTaskLogTool(task.id),
         this.createTaskCreateTool(),
         this.createTaskAddDepTool(task.id),
-        this.createTaskDoneTool(task.id, worktreePath, () => { taskDone = true; }),
+        this.createTaskDoneTool(task.id, worktreePath, detail.prompt ?? "", () => { taskDone = true; }),
         createRunVerificationTool({
           worktreePath,
           rootDir: this.rootDir,
@@ -4875,6 +4875,7 @@ export class TaskExecutor {
   private async evaluateTaskDoneScopeLeak(
     task: Task,
     worktreePath: string,
+    promptContent: string,
     settings: Settings,
   ): Promise<{ blocked: false } | { blocked: true; message: string }> {
     if (task.scopeOverride === true) {
@@ -4888,7 +4889,7 @@ export class TaskExecutor {
       return { blocked: false };
     }
 
-    const reviewLevel = parseReviewLevelFromPrompt(task.prompt ?? "");
+    const reviewLevel = parseReviewLevelFromPrompt(promptContent);
     const configuredMode = settings.planOnlyScopeLeakEnforcement ?? "warn";
     const enforcementMode: "off" | "warn" | "block" = reviewLevel === 1
       ? configuredMode
@@ -4928,7 +4929,7 @@ export class TaskExecutor {
     return { blocked: false };
   }
 
-  private createTaskDoneTool(taskId: string, worktreePath: string, onDone: () => void): ToolDefinition {
+  private createTaskDoneTool(taskId: string, worktreePath: string, promptContent: string, onDone: () => void): ToolDefinition {
     const store = this.store;
     return {
       name: "fn_task_done",
@@ -5008,7 +5009,7 @@ export class TaskExecutor {
         }
 
         const settings = await store.getSettings();
-        const scopeLeakCheck = await this.evaluateTaskDoneScopeLeak(task, worktreePath, settings)
+        const scopeLeakCheck = await this.evaluateTaskDoneScopeLeak(task, worktreePath, promptContent, settings)
           .catch((error: unknown) => {
             const errorMessage = error instanceof Error ? error.message : String(error);
             executorLog.warn(`${taskId}: scope-leak guard failed open: ${errorMessage}`);

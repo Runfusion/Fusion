@@ -91,7 +91,7 @@ describe("FN-4482 plan-only scope leak guard", () => {
     const { store, tool } = await setup({ unstaged: ["docs/foo.md"] });
     const result = await tool.execute("id", {});
     expect(result.content[0].text).toContain("Task marked complete");
-    expect(store.logEntry.mock.calls.some(([_, message]) => String(message).includes("[scope-leak] reviewLevel="))).toBe(false);
+    expect(store.logEntry.mock.calls.some((call: unknown[]) => String(call[1]).includes("[scope-leak] reviewLevel="))).toBe(false);
   });
 
   it("warns but allows plan-only off-scope edits in default warn mode", async () => {
@@ -131,7 +131,7 @@ describe("FN-4482 plan-only scope leak guard", () => {
     const { store, tool } = await setup({ enforcement: "off", unstaged: ["packages/core/src/db.ts"] });
     const result = await tool.execute("id", {});
     expect(result.content[0].text).toContain("Task marked complete");
-    expect(store.logEntry.mock.calls.some(([_, message]) => String(message).includes("[scope-leak] reviewLevel="))).toBe(false);
+    expect(store.logEntry.mock.calls.some((call: unknown[]) => String(call[1]).includes("[scope-leak] reviewLevel="))).toBe(false);
   });
 
   it.each([0, 2])("uses warn-only behavior for non-plan-only review level %s", async (reviewLevel) => {
@@ -151,6 +151,6 @@ describe("FN-4482 plan-only scope leak guard", () => {
     const result = await tool.execute("id", {});
     expect(result.content[0].text).toContain("Task marked complete");
     expect((executorLog.warn as any).mock.calls.some(([message]: [string]) => message.includes("Failed to capture uncommitted modified files"))).toBe(true);
-    expect(store.logEntry.mock.calls.some(([_, message]) => String(message).includes("[scope-leak] reviewLevel="))).toBe(false);
+    expect(store.logEntry.mock.calls.some((call: unknown[]) => String(call[1]).includes("[scope-leak] reviewLevel="))).toBe(false);
   });
 });
