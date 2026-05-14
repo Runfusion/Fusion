@@ -4,8 +4,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
+import { URL, fileURLToPath } from "node:url";
 
-const root = resolve(new URL("../../", import.meta.url).pathname);
+const root = resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const scriptPath = join(root, "scripts/replace-seeded-workflow-prompts.mjs");
 const coreDistPath = join(root, "packages/core/dist/types.js");
 
