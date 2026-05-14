@@ -141,6 +141,39 @@ describe("TaskStore", () => {
       expect(detail.tokenUsage).toEqual(tokenUsage);
     });
 
+    it("round-trips token budget alert sentinels and overrides", async () => {
+      const created = await harness.store().createTask({
+        description: "Token budget fields",
+      });
+      (harness.store() as any).db.prepare(`
+        UPDATE tasks
+        SET tokenBudgetSoftAlertedAt = ?,
+            tokenBudgetHardAlertedAt = ?,
+            tokenBudgetOverride = ?
+        WHERE id = ?
+      `).run(
+        "2026-05-14T01:00:00.000Z",
+        "2026-05-14T01:05:00.000Z",
+        JSON.stringify({
+          soft: 1_000_000,
+          hard: 2_000_000,
+          raisedAt: "2026-05-14T01:06:00.000Z",
+          reason: "manual override",
+        }),
+        created.id,
+      );
+
+      const reloaded = await harness.store().getTask(created.id);
+      expect(reloaded.tokenBudgetSoftAlertedAt).toBe("2026-05-14T01:00:00.000Z");
+      expect(reloaded.tokenBudgetHardAlertedAt).toBe("2026-05-14T01:05:00.000Z");
+      expect(reloaded.tokenBudgetOverride).toEqual({
+        soft: 1_000_000,
+        hard: 2_000_000,
+        raisedAt: "2026-05-14T01:06:00.000Z",
+        reason: "manual override",
+      });
+    });
+
     it("clears token usage via null update and keeps it absent after reload", async () => {
       // Cross-instance persistence test — see counterpart above.
       harness.store().close();

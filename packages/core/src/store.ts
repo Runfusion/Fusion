@@ -92,6 +92,9 @@ interface TaskRow {
   tokenUsageTotalTokens: number | null;
   tokenUsageFirstUsedAt: string | null;
   tokenUsageLastUsedAt: string | null;
+  tokenBudgetSoftAlertedAt: string | null;
+  tokenBudgetHardAlertedAt: string | null;
+  tokenBudgetOverride: string | null;
   createdAt: string;
   updatedAt: string;
   columnMovedAt: string | null;
@@ -1015,6 +1018,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       dependencies: fromJson<string[]>(row.dependencies) || [],
       steps: fromJson<import("./types.js").TaskStep[]>(row.steps) || [],
       log: fromJson<import("./types.js").TaskLogEntry[]>(row.log) || [],
+      tokenBudgetSoftAlertedAt: row.tokenBudgetSoftAlertedAt || undefined,
+      tokenBudgetHardAlertedAt: row.tokenBudgetHardAlertedAt || undefined,
+      tokenBudgetOverride: fromJson<import("./types.js").TaskTokenBudgetOverride>(row.tokenBudgetOverride) ?? undefined,
       tokenUsage: (() => {
         if (
           row.tokenUsageInputTokens === null
@@ -1337,7 +1343,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "planningModelProvider", "planningModelId",
       "mergeRetries", "workflowStepRetries", "stuckKillCount", "postReviewFixCount", "recoveryRetryCount", "taskDoneRetryCount", "verificationFailureCount", "mergeConflictBounceCount", "mergeAuditBounceCount", "nextRecoveryAt",
       "error", "summary", "thinkingLevel", "executionMode",
-      "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt",
+      "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt", "tokenBudgetSoftAlertedAt", "tokenBudgetHardAlertedAt", "tokenBudgetOverride",
       "createdAt", "updatedAt", "columnMovedAt", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "comments", "review", "reviewState", "workflowStepResults", "steeringComments",
       "attachments", "prInfo", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
@@ -1386,7 +1392,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "planningModelProvider", "planningModelId",
       "mergeRetries", "workflowStepRetries", "stuckKillCount", "postReviewFixCount", "recoveryRetryCount", "taskDoneRetryCount", "verificationFailureCount", "mergeConflictBounceCount", "mergeAuditBounceCount", "nextRecoveryAt",
       "error", "summary", "thinkingLevel", "executionMode",
-      "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt",
+      "tokenUsageInputTokens", "tokenUsageOutputTokens", "tokenUsageCachedTokens", "tokenUsageCacheWriteTokens", "tokenUsageTotalTokens", "tokenUsageFirstUsedAt", "tokenUsageLastUsedAt", "tokenBudgetSoftAlertedAt", "tokenBudgetHardAlertedAt", "tokenBudgetOverride",
       "createdAt", "updatedAt", "columnMovedAt", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "attachments", "steeringComments",
       "comments", "review", "reviewState", "workflowStepResults", "prInfo", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "mergeDetails",
@@ -1465,6 +1471,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       task.tokenUsage?.totalTokens ?? null,
       task.tokenUsage?.firstUsedAt ?? null,
       task.tokenUsage?.lastUsedAt ?? null,
+      task.tokenBudgetSoftAlertedAt ?? null,
+      task.tokenBudgetHardAlertedAt ?? null,
+      toJsonNullable(task.tokenBudgetOverride),
       task.createdAt,
       task.updatedAt,
       task.columnMovedAt ?? null,
@@ -1522,6 +1531,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * duplicate IDs instead of silently rewriting the existing row.
    */
   private insertTask(task: Task): void {
+    const values = this.getTaskPersistValues(task);
+    const placeholders = values.map(() => "?").join(", ");
     this.db.prepare(`
       INSERT INTO tasks (
         id, lineageId, title, description, priority, "column", status, size, reviewLevel, currentStep,
@@ -1529,16 +1540,14 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         modelId, validatorModelProvider, validatorModelId, planningModelProvider, planningModelId, mergeRetries,
         workflowStepRetries, stuckKillCount, postReviewFixCount, recoveryRetryCount, taskDoneRetryCount, verificationFailureCount, mergeConflictBounceCount, mergeAuditBounceCount, nextRecoveryAt, error,
         summary, thinkingLevel, executionMode, tokenUsageInputTokens, tokenUsageOutputTokens, tokenUsageCachedTokens,
-        tokenUsageCacheWriteTokens, tokenUsageTotalTokens, tokenUsageFirstUsedAt, tokenUsageLastUsedAt, createdAt, updatedAt, columnMovedAt,
+        tokenUsageCacheWriteTokens, tokenUsageTotalTokens, tokenUsageFirstUsedAt, tokenUsageLastUsedAt, tokenBudgetSoftAlertedAt, tokenBudgetHardAlertedAt, tokenBudgetOverride, createdAt, updatedAt, columnMovedAt,
         executionStartedAt, executionCompletedAt,
         dependencies, steps, log, attachments, steeringComments,
         comments, review, reviewState, workflowStepResults, prInfo, issueInfo, githubTracking,
         sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl,
         mergeDetails, breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch
-      ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-      )
-    `).run(...this.getTaskPersistValues(task));
+      ) VALUES (${placeholders})
+    `).run(...values);
     this.db.bumpLastModified();
   }
 
@@ -1547,6 +1556,8 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    * semantics; create paths must use insertTask() instead.
    */
   private upsertTask(task: Task): void {
+    const values = this.getTaskPersistValues(task);
+    const placeholders = values.map(() => "?").join(", ");
     this.db.prepare(`
       INSERT INTO tasks (
         id, lineageId, title, description, priority, "column", status, size, reviewLevel, currentStep,
@@ -1554,15 +1565,13 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         modelId, validatorModelProvider, validatorModelId, planningModelProvider, planningModelId, mergeRetries,
         workflowStepRetries, stuckKillCount, postReviewFixCount, recoveryRetryCount, taskDoneRetryCount, verificationFailureCount, mergeConflictBounceCount, mergeAuditBounceCount, nextRecoveryAt, error,
         summary, thinkingLevel, executionMode, tokenUsageInputTokens, tokenUsageOutputTokens, tokenUsageCachedTokens,
-        tokenUsageCacheWriteTokens, tokenUsageTotalTokens, tokenUsageFirstUsedAt, tokenUsageLastUsedAt, createdAt, updatedAt, columnMovedAt,
+        tokenUsageCacheWriteTokens, tokenUsageTotalTokens, tokenUsageFirstUsedAt, tokenUsageLastUsedAt, tokenBudgetSoftAlertedAt, tokenBudgetHardAlertedAt, tokenBudgetOverride, createdAt, updatedAt, columnMovedAt,
         executionStartedAt, executionCompletedAt,
         dependencies, steps, log, attachments, steeringComments,
         comments, review, reviewState, workflowStepResults, prInfo, issueInfo, githubTracking,
         sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl,
         mergeDetails, breakIntoSubtasks, enabledWorkflowSteps, modifiedFiles, missionId, sliceId, scopeOverride, scopeOverrideReason, assignedAgentId, pausedByAgentId, assigneeUserId, nodeId, effectiveNodeId, effectiveNodeSource, sourceType, sourceAgentId, sourceRunId, sourceSessionId, sourceMessageId, sourceParentTaskId, sourceMetadata, checkedOutBy, checkedOutAt, checkoutNodeId, checkoutRunId, checkoutLeaseRenewedAt, checkoutLeaseEpoch
-      ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-      )
+      ) VALUES (${placeholders})
       ON CONFLICT(id) DO UPDATE SET
         lineageId = excluded.lineageId,
         title = excluded.title,
@@ -1608,6 +1617,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         tokenUsageTotalTokens = excluded.tokenUsageTotalTokens,
         tokenUsageFirstUsedAt = excluded.tokenUsageFirstUsedAt,
         tokenUsageLastUsedAt = excluded.tokenUsageLastUsedAt,
+        tokenBudgetSoftAlertedAt = excluded.tokenBudgetSoftAlertedAt,
+        tokenBudgetHardAlertedAt = excluded.tokenBudgetHardAlertedAt,
+        tokenBudgetOverride = excluded.tokenBudgetOverride,
         createdAt = excluded.createdAt,
         updatedAt = excluded.updatedAt,
         columnMovedAt = excluded.columnMovedAt,

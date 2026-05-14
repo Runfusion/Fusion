@@ -717,7 +717,7 @@ describe("schema migration", () => {
       { id: "WS-001", mode: "prompt", gateMode: "advisory" },
       { id: "WS-002", mode: "script", gateMode: "gate" },
     ]);
-    expect(db.getSchemaVersion()).toBe(76);
+    expect(db.getSchemaVersion()).toBe(77);
 
     db.close();
   });

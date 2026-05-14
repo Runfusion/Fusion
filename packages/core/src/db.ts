@@ -119,7 +119,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 76;
+const SCHEMA_VERSION = 77;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -224,6 +224,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   tokenUsageTotalTokens INTEGER,
   tokenUsageFirstUsedAt TEXT,
   tokenUsageLastUsedAt TEXT,
+  tokenBudgetSoftAlertedAt TEXT,
+  tokenBudgetHardAlertedAt TEXT,
+  tokenBudgetOverride TEXT,
   createdAt TEXT NOT NULL,
   updatedAt TEXT NOT NULL,
   columnMovedAt TEXT,
@@ -323,7 +326,6 @@ CREATE TABLE IF NOT EXISTS workflow_steps (
   description TEXT NOT NULL,
   mode TEXT NOT NULL DEFAULT 'prompt',
   phase TEXT NOT NULL DEFAULT 'pre-merge',
-  gateMode TEXT NOT NULL DEFAULT 'gate',
   prompt TEXT NOT NULL DEFAULT '',
   gateMode TEXT NOT NULL DEFAULT 'advisory',
   toolMode TEXT,
@@ -1770,7 +1772,6 @@ export class Database {
             description TEXT NOT NULL,
             mode TEXT NOT NULL DEFAULT 'prompt',
             phase TEXT NOT NULL DEFAULT 'pre-merge',
-            gateMode TEXT NOT NULL DEFAULT 'gate',
             prompt TEXT NOT NULL DEFAULT '',
             gateMode TEXT NOT NULL DEFAULT 'advisory',
             toolMode TEXT,
@@ -1801,7 +1802,6 @@ export class Database {
             description,
             mode,
             phase,
-            gateMode,
             prompt,
             gateMode,
             toolMode,
@@ -3259,6 +3259,14 @@ export class Database {
       this.applyMigration(76, () => {
         this.addColumnIfMissing("workflow_steps", "gateMode", "TEXT NOT NULL DEFAULT 'advisory'");
         this.db.exec("UPDATE workflow_steps SET gateMode = CASE WHEN mode = 'script' THEN 'gate' ELSE 'advisory' END WHERE gateMode IS NULL OR gateMode = ''");
+      });
+    }
+
+    if (version < 77) {
+      this.applyMigration(77, () => {
+        this.addColumnIfMissing("tasks", "tokenBudgetSoftAlertedAt", "TEXT");
+        this.addColumnIfMissing("tasks", "tokenBudgetHardAlertedAt", "TEXT");
+        this.addColumnIfMissing("tasks", "tokenBudgetOverride", "TEXT");
       });
     }
 
