@@ -507,10 +507,54 @@ export async function autoRecoverCrossContamination(
   };
 }
 
-function deriveTaskIdFromFusionBranch(branchName: string): string | null {
+export function deriveTaskIdFromFusionBranch(branchName: string): string | null {
   const match = /^fusion\/(fn-\d+)$/i.exec(branchName.trim());
   if (!match) return null;
   return match[1].toUpperCase();
+}
+
+async function isZeroUniqueCommitBranchViaPatchIdFallback(
+  repoDir: string,
+  startPoint: string,
+  branchName: string,
+  mainRef: string,
+): Promise<boolean> {
+  const range = `${startPoint}..${branchName}`;
+  const branchCommitsOutput = await runGit(repoDir, `git rev-list ${quoteShellArg(range)}`).catch(() => "");
+  const branchCommitShas = branchCommitsOutput
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (branchCommitShas.length === 0) {
+    return true;
+  }
+
+  const upstreamPatchIdsOutput = await runGit(
+    repoDir,
+    `git rev-list ${quoteShellArg(mainRef)} | while read c; do git show "$c" | git patch-id --stable; done`,
+  ).catch(() => "");
+
+  const upstreamPatchIds = new Set(
+    upstreamPatchIdsOutput
+      .split("\n")
+      .map((line) => line.trim().split(" ")[0])
+      .filter(Boolean),
+  );
+
+  if (upstreamPatchIds.size === 0) {
+    return false;
+  }
+
+  for (const sha of branchCommitShas) {
+    const patchIdLine = await runGit(repoDir, `git show ${quoteShellArg(sha)} | git patch-id --stable`).catch(() => "");
+    const patchId = patchIdLine.trim().split(" ")[0];
+    if (!patchId || !upstreamPatchIds.has(patchId)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 export async function inspectBranchConflict(
@@ -555,6 +599,22 @@ export async function inspectBranchConflict(
       livePath,
       tipSha: existingTipSha,
     };
+  }
+
+  if (uniqueCommitResult.degraded && uniqueCommitResult.commits.length === 0) {
+    const isZeroUnique = await isZeroUniqueCommitBranchViaPatchIdFallback(
+      input.repoDir,
+      startPoint,
+      input.branchName,
+      uniqueCommitResult.mainRef,
+    );
+    if (isZeroUnique) {
+      return {
+        kind: "fully-subsumed",
+        livePath,
+        tipSha: existingTipSha,
+      };
+    }
   }
 
   const normalizedOwnerTaskId = (input.ownerTaskId ?? input.requestingTaskId).trim().toUpperCase();
