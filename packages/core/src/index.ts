@@ -87,6 +87,8 @@ export type {
   AgentProvisioningPolicyDecision,
 } from "./agent-provisioning-policy.js";
 export { TaskStore } from "./store.js";
+export { aggregateAgentTokenUsage } from "./agent-token-usage.js";
+export type { AgentTokenUsageSummary, AgentTokenUsageWindowSummary } from "./agent-token-usage.js";
 export {
   STALLED_REVIEW_REENQUEUE_THRESHOLD,
   STALLED_REVIEW_INVALID_TRANSITION_THRESHOLD,
