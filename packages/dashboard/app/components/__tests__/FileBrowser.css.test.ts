@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadAllAppCss } from "../../test/cssFixture";
+import { loadAllAppCss, loadAllAppCssBaseOnly } from "../../test/cssFixture";
 
 function extractMediaBlocks(css: string, query: string): string[] {
   const blocks: string[] = [];
@@ -22,6 +22,12 @@ function extractMediaBlocks(css: string, query: string): string[] {
 }
 
 describe("FileBrowser mobile dropdown regression", () => {
+  it("FN-4480: collapsed editor toolbar region is hidden via display: none", async () => {
+    const css = await loadAllAppCssBaseOnly();
+
+    expect(css).toMatch(/\.file-editor-toolbar-collapsible\[hidden\]\s*\{[^}]*display:\s*none;[^}]*\}/);
+  });
+
   it("keeps mobile file-browser header overflow unclipped", () => {
     const css = loadAllAppCss();
     const mobileBlocks = extractMediaBlocks(css, "(max-width: 768px)");
