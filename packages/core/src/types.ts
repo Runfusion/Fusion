@@ -209,6 +209,18 @@ export function normalizePostMergeAuditMode(value: unknown): PostMergeAuditMode 
     ? (value as PostMergeAuditMode)
     : "block";
 }
+
+export const MERGE_AUDIT_AUTO_RECOVERY_MODES = ["deterministic-only", "programmatic", "ai-assisted", "off"] as const;
+
+/** Controls how aggressively the merger tries to auto-recover from audit blocks (FN-4315). */
+export type MergeAuditAutoRecoveryMode = (typeof MERGE_AUDIT_AUTO_RECOVERY_MODES)[number];
+
+export function normalizeMergeAuditAutoRecovery(value: unknown): MergeAuditAutoRecoveryMode {
+  return typeof value === "string"
+    && (MERGE_AUDIT_AUTO_RECOVERY_MODES as readonly string[]).includes(value)
+    ? (value as MergeAuditAutoRecoveryMode)
+    : "ai-assisted";
+}
 /** Policy for handling task execution when the selected node is unavailable/unhealthy. */
 export type UnavailableNodePolicy = "block" | "fallback-local";
 
@@ -1305,6 +1317,13 @@ export interface Task {
    *  `status="failed"` and a follow-up triage task is created — preventing the
    *  cooldown sweep from re-attempting the same impossible merge forever. */
   mergeConflictBounceCount?: number;
+  /** Number of times this task has bounced from `in-review` back to `in-progress`
+   *  due to post-merge audit recovery escalation. Incremented by the auto-merge
+   *  error handler (project-engine.ts) when a `SquashAuditError` remains unresolved
+   *  after deterministic/programmatic/AI recovery passes. When this reaches
+   *  `MAX_MERGE_AUDIT_BOUNCES`, the task is parked with `status="failed"` and a
+   *  recovery follow-up task is created. */
+  mergeAuditBounceCount?: number;
   /** ISO-8601 timestamp indicating when the task becomes eligible for the next
    *  recovery retry. Scheduler and triage processor skip tasks whose
    *  `nextRecoveryAt` is still in the future. Cleared alongside `recoveryRetryCount`. */
@@ -2278,6 +2297,13 @@ export interface ProjectSettings {
    *  rebase-strategy path when deterministic merge verification has already proven
    *  the resulting tree (silent drops are impossible by construction in that case). */
   postMergeAuditMode?: PostMergeAuditMode;
+  /** Controls Stage 1–3 post-merge audit auto-recovery behavior before bounce/park.
+   *  - "deterministic-only": verified-rebase short-circuit only.
+   *  - "programmatic": deterministic + per-file contribution survival checks.
+   *  - "ai-assisted" (default): programmatic + one AI restoration commit attempt.
+   *  - "off": disable all recovery; audit blocks immediately.
+   */
+  mergeAuditAutoRecovery?: MergeAuditAutoRecoveryMode;
   /** Wall-clock timeout (ms) for a single pre-merge workflow step's AI call.
    *  When a step exceeds this, the session is aborted and the executor is
    *  given one shot to retry with the configured fallback model before the

@@ -119,7 +119,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 72;
+const SCHEMA_VERSION = 73;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -210,6 +210,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   workflowStepRetries INTEGER,
   recoveryRetryCount INTEGER,
   taskDoneRetryCount INTEGER DEFAULT 0,
+  mergeConflictBounceCount INTEGER DEFAULT 0,
+  mergeAuditBounceCount INTEGER DEFAULT 0,
   nextRecoveryAt TEXT,
   error TEXT,
   summary TEXT,
@@ -3146,6 +3148,12 @@ export class Database {
         `);
         this.db.exec("CREATE INDEX IF NOT EXISTS idxTaskCommitAssociationsLineage ON task_commit_associations(taskLineageId)");
         this.db.exec("CREATE INDEX IF NOT EXISTS idxTaskCommitAssociationsCommitSha ON task_commit_associations(commitSha)");
+      });
+    }
+
+    if (version < 73) {
+      this.applyMigration(73, () => {
+        this.addColumnIfMissing("tasks", "mergeAuditBounceCount", "INTEGER DEFAULT 0");
       });
     }
 
