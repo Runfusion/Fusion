@@ -10,6 +10,10 @@ export interface BranchConflictCommit {
   subject: string;
 }
 
+export interface BranchCrossContaminationCommit extends BranchConflictCommit {
+  foreignTaskId: string;
+}
+
 export interface BranchRecoveryCandidate {
   branchName: string;
   tipSha: string;
@@ -56,6 +60,32 @@ export class BranchConflictError extends Error implements BranchConflictDetails 
 
 export function isBranchConflictError(error: unknown): error is BranchConflictError {
   return error instanceof BranchConflictError;
+}
+
+export interface BranchCrossContaminationDetails {
+  branchName: string;
+  baseSha: string;
+  taskId: string;
+  foreignCommits: BranchCrossContaminationCommit[];
+}
+
+export class BranchCrossContaminationError extends Error implements BranchCrossContaminationDetails {
+  readonly name = "BranchCrossContaminationError";
+  readonly branchName: string;
+  readonly baseSha: string;
+  readonly taskId: string;
+  readonly foreignCommits: BranchCrossContaminationCommit[];
+
+  constructor(details: BranchCrossContaminationDetails) {
+    super(
+      `Branch ${details.branchName} contains ${details.foreignCommits.length} foreign task-attributed commits ` +
+      `since base ${details.baseSha.slice(0, 12)} for ${details.taskId}`,
+    );
+    this.branchName = details.branchName;
+    this.baseSha = details.baseSha;
+    this.taskId = details.taskId;
+    this.foreignCommits = details.foreignCommits;
+  }
 }
 
 export interface InspectBranchConflictInput {
@@ -200,6 +230,34 @@ async function countTaskAttributedCommits(repoDir: string, range: string, taskId
     }
   }
   return count;
+}
+
+export async function assertCleanBranchAtBase(
+  repoDir: string,
+  branchName: string,
+  baseSha: string,
+  taskId: string,
+): Promise<void> {
+  const output = await runGit(repoDir, `git log --format=%H%x1f%s%x1f%b ${quoteShellArg(`${baseSha}..${branchName}`)}`)
+    .catch(() => "");
+  if (!output) return;
+
+  const subjectPattern = /^(feat|fix|test|chore|docs|refactor|perf|build)\((FN-\d+)\):/i;
+  const trailerPattern = /(?:^|\n)Fusion-Task-Id:\s*(FN-\d+)\s*(?:\n|$)/i;
+  const foreignCommits: BranchCrossContaminationCommit[] = [];
+  for (const line of output.split("\n").map((entry) => entry.trim()).filter(Boolean)) {
+    const [sha, subject, body] = line.split("\u001f");
+    const subjectMatch = (subject ?? "").match(subjectPattern);
+    const trailerMatch = (body ?? "").match(trailerPattern);
+    const attributedTaskId = (trailerMatch?.[1] ?? subjectMatch?.[2] ?? "").toUpperCase();
+    if (attributedTaskId && attributedTaskId !== taskId.toUpperCase()) {
+      foreignCommits.push({ sha, subject: subject ?? "", foreignTaskId: attributedTaskId });
+    }
+  }
+
+  if (foreignCommits.length > 0) {
+    throw new BranchCrossContaminationError({ branchName, baseSha, taskId, foreignCommits });
+  }
 }
 
 export async function inspectBranchConflict(

@@ -42,7 +42,13 @@ vi.mock("node:fs", () => ({
 
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { inspectBranchConflict, listBranchRecoveryCandidates, BranchConflictError } from "../branch-conflicts.js";
+import {
+  BranchConflictError,
+  BranchCrossContaminationError,
+  assertCleanBranchAtBase,
+  inspectBranchConflict,
+  listBranchRecoveryCandidates,
+} from "../branch-conflicts.js";
 
 const mockedExecSync = vi.mocked(execSync);
 const mockedExistsSync = vi.mocked(existsSync);
@@ -138,6 +144,31 @@ describe("branch-conflicts", () => {
       { sha: "bbb222", subject: "Add regression coverage" },
     ]);
     expect(result.error.message).toContain("2 stranded commits since main");
+  });
+
+  it("assertCleanBranchAtBase passes when no foreign task commits exist", async () => {
+    mockedExecSync.mockImplementation((cmd: string | string[]) => {
+      const command = typeof cmd === "string" ? cmd : cmd[0];
+      if (command.includes("git log --format=%H%x1f%s%x1f%b 'main..fusion/fn-4068'")) {
+        return Buffer.from("aaa111\u001ffeat(FN-4068): own\u001fFusion-Task-Id: FN-4068\n");
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    await expect(assertCleanBranchAtBase("/tmp/repo", "fusion/fn-4068", "main", "FN-4068")).resolves.toBeUndefined();
+  });
+
+  it("assertCleanBranchAtBase throws BranchCrossContaminationError for foreign commits", async () => {
+    mockedExecSync.mockImplementation((cmd: string | string[]) => {
+      const command = typeof cmd === "string" ? cmd : cmd[0];
+      if (command.includes("git log --format=%H%x1f%s%x1f%b 'main..fusion/fn-4068'")) {
+        return Buffer.from("bbb222\u001ffeat(FN-4386): foreign\u001fFusion-Task-Id: FN-4386\n");
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    await expect(assertCleanBranchAtBase("/tmp/repo", "fusion/fn-4068", "main", "FN-4068"))
+      .rejects.toBeInstanceOf(BranchCrossContaminationError);
   });
 
   it("lists canonical and sibling recovery candidates with worktrees and stranded commits", async () => {

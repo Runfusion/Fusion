@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 import { existsSync, lstatSync, readdirSync, rmSync, realpathSync } from "node:fs";
 import { join, relative, resolve, isAbsolute } from "node:path";
 import type { Column, TaskStore } from "@fusion/core";
-import { inspectBranchConflict } from "./branch-conflicts.js";
+import { assertCleanBranchAtBase, inspectBranchConflict } from "./branch-conflicts.js";
 import { worktreePoolLog } from "./logger.js";
 
 const execAsync = promisify(exec);
@@ -101,6 +101,11 @@ export function isInsideWorktreesDir(rootDir: string, worktreePath: string): boo
  * pool. When `recycleWorktrees` is false, orphaned worktrees are cleaned
  * up via {@link cleanupOrphanedWorktrees}.
  */
+function deriveTaskIdFromBranch(branchName: string): string {
+  const match = branchName.match(/^fusion\/(fn-\d+)(?:-\d+)?$/i);
+  return match ? match[1].toUpperCase() : branchName.toUpperCase();
+}
+
 export class WorktreePool {
   private idle = new Set<string>();
 
@@ -223,10 +228,13 @@ export class WorktreePool {
 
     // Create or force-reset the branch from the start point (or main)
     const checkoutCmd = `git checkout -B "${branchName}" ${base}`;
+    const resolvedBase = (await execAsync(`git rev-parse --verify "${base}^{commit}"`, { cwd: worktreePath, encoding: "utf-8" })).stdout.trim();
+    const taskId = deriveTaskIdFromBranch(branchName);
     try {
       await execAsync(checkoutCmd, {
         cwd: worktreePath,
       });
+      await assertCleanBranchAtBase(worktreePath, branchName, resolvedBase, taskId);
       return branchName;
     } catch (err: unknown) {
       const execError = err instanceof Error ? err : new Error(String(err));
@@ -253,6 +261,7 @@ export class WorktreePool {
       if (inspection.kind === "stale") {
         await execAsync("git worktree prune", { cwd: worktreePath });
         await execAsync(checkoutCmd, { cwd: worktreePath });
+        await assertCleanBranchAtBase(worktreePath, branchName, resolvedBase, taskId);
         return branchName;
       }
 
@@ -269,6 +278,7 @@ export class WorktreePool {
         const suffixedCmd = `git checkout -B "${suffixedName}" ${conflictBase}`;
         try {
           await execAsync(suffixedCmd, { cwd: worktreePath });
+          await assertCleanBranchAtBase(worktreePath, suffixedName, resolvedBase, taskId);
           return suffixedName;
         } catch (suffixErr: unknown) {
           const suffixExecError = suffixErr instanceof Error ? suffixErr : new Error(String(suffixErr));

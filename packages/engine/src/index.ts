@@ -95,6 +95,8 @@ export { HEARTBEAT_PROCEDURE, HEARTBEAT_SYSTEM_PROMPT, HEARTBEAT_NO_TASK_SYSTEM_
 export { WorktreePool, scanIdleWorktrees, cleanupOrphanedWorktrees, reapOrphanWorktrees } from "./worktree-pool.js";
 export {
   BranchConflictError,
+  BranchCrossContaminationError,
+  assertCleanBranchAtBase,
   isBranchConflictError,
   inspectBranchConflict,
   listBranchRecoveryCandidates,

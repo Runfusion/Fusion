@@ -38,7 +38,13 @@ import { reviewStep, type ReviewVerdict } from "./reviewer.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@mariozechner/pi-coding-agent";
 import { PRIORITY_EXECUTE, type AgentSemaphore } from "./concurrency.js";
 import { getRegisteredWorktreePaths, isGitRepository, isInsideWorktreesDir, isRegisteredGitWorktree, isUsableTaskWorktree, type WorktreePool } from "./worktree-pool.js";
-import { BranchConflictError, isBranchConflictError, inspectBranchConflict } from "./branch-conflicts.js";
+import {
+  BranchConflictError,
+  BranchCrossContaminationError,
+  assertCleanBranchAtBase,
+  isBranchConflictError,
+  inspectBranchConflict,
+} from "./branch-conflicts.js";
 import { AgentLogger } from "./agent-logger.js";
 import { executorLog, reviewerLog, formatError } from "./logger.js";
 import { TokenCapDetector } from "./token-cap-detector.js";
@@ -2507,6 +2513,12 @@ export class TaskExecutor {
         await this.captureBaseCommitSha(task, worktreePath, audit);
       }
 
+      const latestTaskForBase = await this.store.getTask(task.id);
+      const contaminationBaseRef = await this.resolveDiffBaseRef(worktreePath, latestTaskForBase.baseCommitSha);
+      if (contaminationBaseRef) {
+        await assertCleanBranchAtBase(this.rootDir, acquisition.branch, contaminationBaseRef, task.id);
+      }
+
       const expectedRoot = canonicalizePath(this.rootDir);
       let observedWorktreeRealpath: string;
       let livenessFailure: string | null = null;
@@ -3948,6 +3960,18 @@ export class TaskExecutor {
             nextRecoveryAt: null,
           });
           // Fall through to terminal failure marking
+        } else if (err instanceof BranchCrossContaminationError) {
+          const details = err.foreignCommits
+            .map((commit) => `${commit.sha.slice(0, 12)}:${commit.foreignTaskId}`)
+            .join(", ");
+          await this.store.logEntry(task.id, `[recovery] branch cross-contamination detected on ${err.branchName} since ${err.baseSha}: ${details}`, undefined, this.currentRunContext);
+          await this.store.updateTask(task.id, {
+            status: "failed",
+            error: err.message,
+            paused: true,
+            pausedReason: "branch-cross-contamination",
+          });
+          return;
         } else if (isBranchConflictError(err)) {
           const conflictCount = (this.branchConflictErrorCount.get(task.id) ?? 0) + 1;
           this.branchConflictErrorCount.set(task.id, conflictCount);
@@ -6420,6 +6444,11 @@ and show an appropriate message to the user.\`
     count: number,
   ): Promise<void> {
     await this.store.updateTask(task.id, { worktree: livePath, branch });
+    const latestTask = await this.store.getTask(task.id);
+    const baseRef = await this.resolveDiffBaseRef(livePath, latestTask.baseCommitSha);
+    if (baseRef) {
+      await assertCleanBranchAtBase(this.rootDir, branch, baseRef, task.id);
+    }
     const message = `[recovery] reclaimed existing worktree for ${task.id} at ${livePath} (${count} commits preserved, tip ${tipSha.slice(0, 12)})`;
     await this.store.logEntry(task.id, message, undefined, this.currentRunContext);
     await this.store.appendAgentLog(task.id, "Branch conflict auto-recovery", "text", message, "executor");
