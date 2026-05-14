@@ -1525,6 +1525,7 @@ async function main() {
           input,
         });
         process.exit(code);
+        break;
       }
 
       case "plugin": {
