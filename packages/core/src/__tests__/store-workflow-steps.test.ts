@@ -63,7 +63,7 @@ describe("TaskStore Workflow Steps", () => {
       expect(ws.id).toBe("WS-001");
       expect(ws.name).toBe("Run Tests");
       expect(ws.mode).toBe("script");
-      expect(ws.gateMode).toBe("gate");
+      expect(ws.gateMode).toBe("advisory");
       expect(ws.prompt).toBe("");
       expect(ws.scriptName).toBe("test");
       expect(ws.modelProvider).toBeUndefined();
@@ -79,14 +79,14 @@ describe("TaskStore Workflow Steps", () => {
         prompt: "review",
       });
       const scriptStep = await store.createWorkflowStep({
-        name: "Script gate",
-        description: "gate default",
+        name: "Script advisory",
+        description: "advisory default",
         mode: "script",
         scriptName: "test",
       });
 
       expect(promptStep.gateMode).toBe("advisory");
-      expect(scriptStep.gateMode).toBe("gate");
+      expect(scriptStep.gateMode).toBe("advisory");
 
       await store.updateWorkflowStep(promptStep.id, { gateMode: "gate" });
       await store.updateWorkflowStep(scriptStep.id, { gateMode: "advisory" });
@@ -96,6 +96,18 @@ describe("TaskStore Workflow Steps", () => {
 
       expect(updatedPrompt?.gateMode).toBe("gate");
       expect(updatedScript?.gateMode).toBe("advisory");
+    });
+
+    it("should preserve explicit gate opt-in for script mode", async () => {
+      const ws = await store.createWorkflowStep({
+        name: "Script gated",
+        description: "explicit gate opt-in",
+        mode: "script",
+        scriptName: "test",
+        gateMode: "gate",
+      });
+
+      expect(ws.gateMode).toBe("gate");
     });
 
     it("should reject script mode without scriptName", async () => {
@@ -187,7 +199,7 @@ describe("TaskStore Workflow Steps", () => {
         templateId: "my-step",
         name: "My Plugin Step",
         mode: "script",
-        gateMode: "gate",
+        gateMode: "advisory",
         phase: "pre-merge",
         scriptName: "my-plugin:run-step",
         defaultOn: false,
@@ -200,7 +212,7 @@ describe("TaskStore Workflow Steps", () => {
         id: "plugin:my-plugin:my-step",
         templateId: "my-step",
         mode: "script",
-        gateMode: "gate",
+        gateMode: "advisory",
         phase: "pre-merge",
         scriptName: "my-plugin:run-step",
         defaultOn: false,
