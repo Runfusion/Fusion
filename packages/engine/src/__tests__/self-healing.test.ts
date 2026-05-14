@@ -3847,7 +3847,7 @@ describe("SelfHealingManager", () => {
       const recovered = await managerWithRecovery.recoverAlreadyMergedReviewTasks();
 
       expect(recovered).toBe(1);
-      expect(recordRunAuditEvent).toHaveBeenCalledTimes(1);
+      expect(recordRunAuditEvent).toHaveBeenCalledTimes(2);
       expect(recordRunAuditEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           domain: "database",
@@ -3923,7 +3923,7 @@ describe("SelfHealingManager", () => {
 
       expect(recovered).toBe(1);
       expect(storeWithAudit.moveTask).toHaveBeenCalledWith("FN-audit-throw", "done");
-      expect(recordRunAuditEvent).toHaveBeenCalledTimes(1);
+      expect(recordRunAuditEvent).toHaveBeenCalledTimes(2);
 
       managerWithRecovery.stop();
     });

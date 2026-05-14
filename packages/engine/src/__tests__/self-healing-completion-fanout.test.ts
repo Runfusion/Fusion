@@ -106,7 +106,7 @@ describe("self-healing completion fan-out", () => {
   });
 
   it("removes worktree from hint and is idempotent when missing", async () => {
-    existsSyncMock.mockImplementation((p: string) => p === "/wt/fn-b");
+    (existsSyncMock as any).mockImplementation((p: string) => p === "/wt/fn-b");
     const blocker = makeTask("FN-B", { column: "done", branch: "fusion/fn-b" });
     const store = createStore([blocker]);
     const mgr = new SelfHealingManager(store, { rootDir: "/repo" });
@@ -127,8 +127,8 @@ describe("self-healing completion fan-out", () => {
   });
 
   it("derives worktree from worktree list and skips branch delete when unique commits exist", async () => {
-    existsSyncMock.mockImplementation((p: string) => String(p).includes("/wt/fn-c"));
-    uniqueCommitsMock.mockResolvedValue({ commits: [{ sha: "abc", subject: "x" }], mainRef: "main", degraded: false });
+    (existsSyncMock as any).mockImplementation((p: string) => String(p).includes("/wt/fn-c"));
+    uniqueCommitsMock.mockResolvedValue({ commits: [{ sha: "abc", subject: "x" }] as any, mainRef: "main", degraded: false });
     execMock.mockImplementation((cmd: string, _opts: unknown, cb: (err: unknown, stdout: string, stderr: string) => void) => {
       cb(null, "", "");
     });

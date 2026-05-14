@@ -127,7 +127,7 @@ describeIfGit("SelfHealingManager recoverAlreadyMergedReviewTasks (real git)", (
     expect(task.mergeDetails?.mergeConfirmed).toBe(true);
     expect(existsSync(worktreePath)).toBe(false);
     expect(git(repo, "git worktree list")).not.toContain(worktreePath);
-    expect((store as any).recordRunAuditEvent).toHaveBeenCalledTimes(1);
+    expect((store as any).recordRunAuditEvent).toHaveBeenCalledTimes(2);
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         domain: "database",

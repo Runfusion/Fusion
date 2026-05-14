@@ -1680,21 +1680,21 @@ export class SelfHealingManager {
    *
    * @returns Number of tasks unblocked
    */
-  private async findWorktreePathForBranch(branchName: string): Promise<string | null> {
+  private async findWorktreePathForBranch(branchName: string): Promise<string | undefined> {
     try {
       const { stdout } = await execAsync("git worktree list --porcelain", {
         cwd: this.options.rootDir,
         timeout: 30_000,
       });
       const lines = stdout.split("\n");
-      let currentWorktree: string | null = null;
-      let currentBranch: string | null = null;
+      let currentWorktree: string | undefined;
+      let currentBranch: string | undefined;
       for (const rawLine of lines) {
         const line = rawLine.trim();
         if (!line) {
           if (currentWorktree && currentBranch === branchName) return currentWorktree;
-          currentWorktree = null;
-          currentBranch = null;
+          currentWorktree = undefined;
+          currentBranch = undefined;
           continue;
         }
         if (line.startsWith("worktree ")) {
@@ -1706,11 +1706,11 @@ export class SelfHealingManager {
         }
       }
       if (currentWorktree && currentBranch === branchName) return currentWorktree;
-      return null;
+      return undefined;
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.warn(`[self-healing] reconcileCompletedTask: failed to read worktree list for ${branchName}: ${errorMessage}`);
-      return null;
+      return undefined;
     }
   }
 
@@ -1829,7 +1829,7 @@ export class SelfHealingManager {
           runId: generateSyntheticRunId("self-heal", taskId),
           agentId: "self-healing",
           taskId,
-          taskLineageId: task?.lineageId,
+          taskLineageId: task?.lineageId ?? undefined,
           phase: "completion-fanout",
         });
         await auditor.database({
