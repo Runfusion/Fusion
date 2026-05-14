@@ -495,10 +495,9 @@ describe("WorkflowStepManager", () => {
     await screen.findByText("Documentation Review");
     fireEvent.click(screen.getByLabelText("Edit Documentation Review"));
 
-    const gateSelect = screen.getByTestId("workflow-step-gateMode") as HTMLSelectElement;
-    expect(gateSelect.value).toBe("gate");
+    expect(screen.getByTestId("gate-mode-gate")).toHaveClass("btn-primary");
 
-    fireEvent.change(gateSelect, { target: { value: "advisory" } });
+    fireEvent.click(screen.getByTestId("gate-mode-advisory"));
     fireEvent.click(screen.getByTestId("save-workflow-step"));
 
     await waitFor(() => {
@@ -519,17 +518,16 @@ describe("WorkflowStepManager", () => {
     fireEvent.click(screen.getByTestId("add-workflow-step"));
     fireEvent.click(screen.getByTestId("create-custom-step"));
 
-    const gateSelect = screen.getByTestId("workflow-step-gateMode") as HTMLSelectElement;
-    expect(gateSelect.value).toBe("advisory");
+    expect(screen.getByTestId("gate-mode-advisory")).toHaveClass("btn-primary");
 
     fireEvent.click(screen.getByTestId("mode-script"));
-    expect((screen.getByTestId("workflow-step-gateMode") as HTMLSelectElement).value).toBe("gate");
+    expect(screen.getByTestId("gate-mode-gate")).toHaveClass("btn-primary");
   });
 
   it("loads script name when editing a script-mode step", async () => {
-    vi.mocked(fetchWorkflowSteps)
-      .mockResolvedValueOnce([{ ...mockSteps[0], mode: "script" as const, scriptName: "test", prompt: "" }])
-      .mockResolvedValueOnce([{ ...mockSteps[0], mode: "script" as const, scriptName: "test", prompt: "" }]);
+    vi.mocked(fetchWorkflowSteps).mockResolvedValue([
+      { ...mockSteps[0], mode: "script" as const, scriptName: "test", prompt: "" },
+    ]);
 
     render(<WorkflowStepManager isOpen={true} onClose={onClose} addToast={addToast} />);
 
@@ -983,7 +981,8 @@ describe("WorkflowStepManager theme class structure", () => {
     fireEvent.click(screen.getByTestId("create-custom-step"));
 
     expect(container.querySelector(".wfm-mode-selector")).toBeInTheDocument();
-    expect(container.querySelectorAll(".wfm-mode-btn")).toHaveLength(4); // 2 mode + 2 phase
+    // 6 buttons total: 2 execution mode + 2 phase + 2 failure-behavior (gate mode)
+    expect(container.querySelectorAll(".wfm-mode-btn")).toHaveLength(6);
   });
 
   it("uses wfm-prompt-textarea class for the prompt textarea", async () => {
