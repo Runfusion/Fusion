@@ -160,6 +160,13 @@
   gap: var(--space-md);
 }
 
+.workflow-polish-notes {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  background: color-mix(in srgb, var(--color-info) 8%, var(--surface));
+}
+
 .workflow-result-item {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -207,6 +214,11 @@
 
 .workflow-result-badge--failed {
   background-color: color-mix(in srgb, var(--color-error) 20%, var(--surface));
+  color: var(--text);
+}
+
+.workflow-result-badge--advisory_failure {
+  background-color: color-mix(in srgb, var(--color-info) 20%, var(--surface));
   color: var(--text);
 }
 

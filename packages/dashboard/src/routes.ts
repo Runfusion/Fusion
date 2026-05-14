@@ -2659,7 +2659,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.post("/workflow-steps", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const { name, description, mode, phase, prompt, toolMode, scriptName, enabled, defaultOn, modelProvider, modelId } = req.body;
+      const { name, description, mode, phase, prompt, gateMode, toolMode, scriptName, enabled, defaultOn, modelProvider, modelId } = req.body;
 
       if (!name || typeof name !== "string" || !name.trim()) {
         throw badRequest("name is required");
@@ -2681,6 +2681,9 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
 
       if (prompt !== undefined && typeof prompt !== "string") {
         throw badRequest("prompt must be a string");
+      }
+      if (gateMode !== undefined && gateMode !== "gate" && gateMode !== "advisory") {
+        throw badRequest("gateMode must be 'gate' or 'advisory'");
       }
       if (toolMode !== undefined && toolMode !== "readonly" && toolMode !== "coding") {
         throw badRequest("toolMode must be 'readonly' or 'coding'");
@@ -2722,6 +2725,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         mode: resolvedMode,
         phase,
         prompt: prompt?.trim(),
+        gateMode,
         toolMode,
         scriptName: scriptName?.trim(),
         enabled,
@@ -2748,7 +2752,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
   router.patch("/workflow-steps/:id", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const { name, description, mode, phase, prompt, toolMode, scriptName, enabled, defaultOn, modelProvider, modelId } = req.body;
+      const { name, description, mode, phase, prompt, gateMode, toolMode, scriptName, enabled, defaultOn, modelProvider, modelId } = req.body;
 
       const updates: Record<string, unknown> = {};
       if (name !== undefined) {
@@ -2780,6 +2784,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
           throw badRequest("prompt must be a string");
         }
         updates.prompt = prompt;
+      }
+      if (gateMode !== undefined) {
+        if (gateMode !== "gate" && gateMode !== "advisory") {
+          throw badRequest("gateMode must be 'gate' or 'advisory'");
+        }
+        updates.gateMode = gateMode;
       }
       if (toolMode !== undefined) {
         if (toolMode !== "readonly" && toolMode !== "coding") {

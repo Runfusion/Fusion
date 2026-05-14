@@ -6049,6 +6049,7 @@ ${failureFeedback}
 
       // Normalize legacy steps without mode to prompt-mode
       const stepMode: "prompt" | "script" = ws.mode || "prompt";
+      const gateMode: "gate" | "advisory" = ws.gateMode || (stepMode === "script" ? "gate" : "advisory");
 
       // Skip validation per mode
       if (stepMode === "prompt" && !ws.prompt?.trim()) {
@@ -6179,12 +6180,17 @@ ${failureFeedback}
                   if (existingIdx >= 0) {
                     results[existingIdx] = {
                       ...results[existingIdx],
-                      status: "failed",
+                      status: gateMode === "advisory" ? "advisory_failure" : "failed",
                       output: scopeLeakMessage,
                       completedAt,
                     };
                   }
                   await this.store.updateTask(task.id, { workflowStepResults: results });
+                  if (gateMode === "advisory") {
+                    await this.store.updateTask(task.id, { status: "advisory_failure" });
+                    await this.store.logEntry(task.id, `[pre-merge] Advisory workflow step scope warning: ${ws.name}`);
+                    continue;
+                  }
                   return {
                     allPassed: false,
                     revisionRequested: true,
@@ -6224,12 +6230,16 @@ ${failureFeedback}
           if (existingIdx >= 0) {
             results[existingIdx] = {
               ...results[existingIdx],
-              status: "failed",
+              status: gateMode === "advisory" ? "advisory_failure" : "failed",
               output: result.output || "Revision requested",
               completedAt,
             };
           }
           await this.store.updateTask(task.id, { workflowStepResults: results });
+          if (gateMode === "advisory") {
+            await this.store.logEntry(task.id, `[pre-merge] Advisory workflow step failed: ${ws.name}`);
+            continue;
+          }
           return {
             allPassed: false,
             revisionRequested: true,
@@ -6250,12 +6260,17 @@ ${failureFeedback}
           if (existingIdx >= 0) {
             results[existingIdx] = {
               ...results[existingIdx],
-              status: "failed",
+              status: gateMode === "advisory" ? "advisory_failure" : "failed",
               output: result.error || "Workflow step failed",
               completedAt,
             };
           }
           await this.store.updateTask(task.id, { workflowStepResults: results });
+          if (gateMode === "advisory") {
+            await this.store.updateTask(task.id, { status: "advisory_failure" });
+            await this.store.logEntry(task.id, `[pre-merge] Advisory workflow step failed: ${ws.name}`);
+            continue;
+          }
           return {
             allPassed: false,
             revisionRequested: false,
@@ -6280,12 +6295,17 @@ ${failureFeedback}
         if (existingIdx >= 0) {
           results[existingIdx] = {
             ...results[existingIdx],
-            status: "failed",
+            status: gateMode === "advisory" ? "advisory_failure" : "failed",
             output: errorMessage || "Workflow step error",
             completedAt,
           };
         }
         await this.store.updateTask(task.id, { workflowStepResults: results });
+        if (gateMode === "advisory") {
+          await this.store.updateTask(task.id, { status: "advisory_failure" });
+          await this.store.logEntry(task.id, `[pre-merge] Advisory workflow step error: ${ws.name}`);
+          continue;
+        }
         return {
           allPassed: false,
           revisionRequested: false,

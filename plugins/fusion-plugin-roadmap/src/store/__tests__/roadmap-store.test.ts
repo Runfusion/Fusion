@@ -743,8 +743,8 @@ describe("RoadmapStore", () => {
   });
 
   describe("schema version", () => {
-    it("schema version is 75 after init", () => {
-      expect(db.getSchemaVersion()).toBe(75);
+    it("schema version is 76 after init", () => {
+      expect(db.getSchemaVersion()).toBe(76);
     });
   });
 

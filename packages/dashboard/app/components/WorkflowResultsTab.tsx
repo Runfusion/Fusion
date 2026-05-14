@@ -57,6 +57,8 @@ function getStatusLabel(status: WorkflowStepResult["status"]): string {
       return "Passed";
     case "failed":
       return "Failed";
+    case "advisory_failure":
+      return "Advisory failure";
     case "skipped":
       return "Skipped";
     case "pending":
@@ -449,12 +451,14 @@ export function WorkflowResultsTab({
 
     const passed = results.filter((r) => r.status === "passed").length;
     const failed = results.filter((r) => r.status === "failed").length;
+    const advisoryFailures = results.filter((r) => r.status === "advisory_failure");
     const skipped = results.filter((r) => r.status === "skipped").length;
     const pending = results.filter((r) => r.status === "pending").length;
 
     const summaryParts: string[] = [`${results.length} step${results.length !== 1 ? "s" : ""}`];
     if (passed > 0) summaryParts.push(`${passed} passed`);
     if (failed > 0) summaryParts.push(`${failed} failed`);
+    if (advisoryFailures.length > 0) summaryParts.push(`${advisoryFailures.length} advisory`);
     if (skipped > 0) summaryParts.push(`${skipped} skipped`);
     if (pending > 0) summaryParts.push(`${pending} running`);
 
@@ -463,6 +467,19 @@ export function WorkflowResultsTab({
         <div className="workflow-results-summary-bar" data-testid="workflow-results-summary">
           {summaryParts.join(" · ")}
         </div>
+        {advisoryFailures.length > 0 && (
+          <div className="workflow-polish-notes" data-testid="workflow-polish-notes">
+            <h4>Polish notes</h4>
+            <p>Advisory workflow steps flagged non-blocking improvements:</p>
+            <ul>
+              {advisoryFailures.map((result, index) => (
+                <li key={`advisory-${result.workflowStepId}-${index}`}>
+                  <strong>{result.workflowStepName}:</strong> {result.output || "Needs follow-up review."}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {results.map((result, index) => {
           const phase = (result.phase || "pre-merge") as "pre-merge" | "post-merge";
           const isExpanded = expandedOutputs[result.workflowStepId] ?? false;

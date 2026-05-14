@@ -240,6 +240,7 @@ export type WorkflowStepToolMode = "readonly" | "coding";
 
 /** Lifecycle phase for workflow step execution. */
 export type WorkflowStepPhase = "pre-merge" | "post-merge";
+export type WorkflowStepGateMode = "gate" | "advisory";
 
 export interface WorkflowStep {
   /** Unique identifier (e.g., "WS-001") */
@@ -256,6 +257,8 @@ export interface WorkflowStep {
   phase?: WorkflowStepPhase;
   /** Full agent prompt to execute when this step runs (used when mode is "prompt") */
   prompt: string;
+  /** Whether failures should block merge (`gate`) or be informational (`advisory`). */
+  gateMode?: WorkflowStepGateMode;
   /** Tool set available to prompt-mode workflow agents. Defaults to readonly. */
   toolMode?: WorkflowStepToolMode;
   /** Name of a script from project settings `scripts` map to execute (required when mode is "script") */
@@ -352,6 +355,8 @@ export interface WorkflowStepInput {
   phase?: WorkflowStepPhase;
   /** Agent prompt (used when mode is "prompt"). Optional — can be AI-generated later via refinement. */
   prompt?: string;
+  /** Failure behavior. Defaults to advisory for prompt mode and gate for script mode. */
+  gateMode?: WorkflowStepGateMode;
   /** Tool set available to prompt-mode workflow agents. Defaults to readonly. */
   toolMode?: WorkflowStepToolMode;
   /** Script name from project settings (required when mode is "script").
@@ -377,7 +382,7 @@ export interface WorkflowStepResult {
   /** Lifecycle phase at execution time */
   phase?: WorkflowStepPhase;
   /** Execution status */
-  status: "passed" | "failed" | "skipped" | "pending";
+  status: "passed" | "failed" | "advisory_failure" | "skipped" | "pending";
   /** Output from the workflow step agent (findings, errors, etc.) */
   output?: string;
   /** ISO-8601 timestamp when the step started */
@@ -404,6 +409,8 @@ export interface WorkflowStepTemplate {
   scriptName?: string;
   /** Tool set available when the template runs as a prompt-mode step. */
   toolMode?: WorkflowStepToolMode;
+  /** Failure behavior for materialized steps from this template. */
+  gateMode?: WorkflowStepGateMode;
   /** Whether this template should be auto-selected for new tasks. */
   defaultOn?: boolean;
   /** AI model provider override for prompt-mode templates. */

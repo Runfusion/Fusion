@@ -149,6 +149,16 @@
   color: var(--ws-warning);
 }
 
+.wfm-badge-gate {
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
+}
+
+.wfm-badge-advisory {
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
+}
+
 .wfm-badge-category {
   font-size: 11px;
   padding: 2px 6px;

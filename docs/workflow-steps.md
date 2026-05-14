@@ -33,6 +33,17 @@ Workflow steps run in one of two phases:
 
 Prompt mode can run with readonly or coding-capable tool access depending on step/template configuration.
 
+## Gate Modes
+
+Workflow steps also have a `gateMode`:
+
+- **`gate`**: failures block merge/completion and follow normal remediation/retry flows.
+- **`advisory`**: failures are recorded as `advisory_failure` and shown as polish feedback, but never block merge.
+
+Defaults:
+- prompt steps → `advisory`
+- script steps → `gate`
+
 ## Built-In Templates (7)
 
 Fusion ships seven templates:
@@ -145,7 +156,7 @@ Not all workflow failures are revision requests:
 
 #### Pre-merge hard failure remediation flow
 
-For pre-merge workflow hard failures, executor behavior is:
+For pre-merge workflow hard failures, executor behavior is (gate-mode steps):
 
 1. Retry the failing check up to `MAX_WORKFLOW_STEP_RETRIES` within the same execution lifecycle
 2. On retry exhaustion, add a steering comment with failure details and inject a `Workflow Step Failure` section into `PROMPT.md`
@@ -157,6 +168,8 @@ Tasks are not parked in `in-review` for this remediable path unless additional t
 #### Self-healing recovery for parked review tasks
 
 If a task is found in `in-review` with failed pre-merge workflow results and no active executor, self-healing can auto-revive it (bounded by `maxPostReviewFixes`) by replaying the same remediation send-back flow.
+
+Advisory failures are intentionally excluded from merge blocking and auto-revive.
 
 ## Viewing Results
 

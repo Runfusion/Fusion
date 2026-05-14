@@ -622,6 +622,7 @@ See [docs/missions.md](./docs/missions.md) for the planning context system and i
 ## Workflow Steps
 
 Workflow steps are reusable quality gates that run at configurable lifecycle phases:
+- Workflow steps support `gateMode`: `gate` failures block merge/remediation, while `advisory` failures are recorded as `advisory_failure` and do not block merge or trigger auto-revive.
 - **Pre-merge** — After task implementation, before merge (can block)
 - **Post-merge** — After successful merge (informational only)
 

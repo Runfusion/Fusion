@@ -160,6 +160,7 @@ async function migrateConfig(fusionDir: string, db: Database): Promise<void> {
       mode,
       phase,
       prompt,
+      gateMode,
       toolMode,
       scriptName,
       enabled,
@@ -168,7 +169,7 @@ async function migrateConfig(fusionDir: string, db: Database): Promise<void> {
       modelId,
       createdAt,
       updatedAt
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   for (const step of workflowSteps) {
@@ -189,6 +190,7 @@ async function migrateConfig(fusionDir: string, db: Database): Promise<void> {
       mode,
       phase,
       mode === "prompt" ? step.prompt || "" : "",
+      step.gateMode ?? (mode === "script" ? "gate" : "advisory"),
       mode === "prompt" ? step.toolMode ?? null : null,
       mode === "script" ? step.scriptName ?? null : null,
       step.enabled === false ? 0 : 1,

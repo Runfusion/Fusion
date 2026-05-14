@@ -119,7 +119,7 @@ export function probeFts5(db: DatabaseSync): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 75;
+const SCHEMA_VERSION = 76;
 
 function normalizeTaskComments(
   steeringComments: SteeringComment[] | undefined,
@@ -324,6 +324,7 @@ CREATE TABLE IF NOT EXISTS workflow_steps (
   mode TEXT NOT NULL DEFAULT 'prompt',
   phase TEXT NOT NULL DEFAULT 'pre-merge',
   prompt TEXT NOT NULL DEFAULT '',
+  gateMode TEXT NOT NULL DEFAULT 'advisory',
   toolMode TEXT,
   scriptName TEXT,
   enabled INTEGER NOT NULL DEFAULT 1,
@@ -1769,6 +1770,7 @@ export class Database {
             mode TEXT NOT NULL DEFAULT 'prompt',
             phase TEXT NOT NULL DEFAULT 'pre-merge',
             prompt TEXT NOT NULL DEFAULT '',
+            gateMode TEXT NOT NULL DEFAULT 'advisory',
             toolMode TEXT,
             scriptName TEXT,
             enabled INTEGER NOT NULL DEFAULT 1,
@@ -1798,6 +1800,7 @@ export class Database {
             mode,
             phase,
             prompt,
+            gateMode,
             toolMode,
             scriptName,
             enabled,
@@ -1806,7 +1809,7 @@ export class Database {
             modelId,
             createdAt,
             updatedAt
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
         for (const step of workflowSteps) {
@@ -1837,6 +1840,9 @@ export class Database {
             mode,
             phase,
             typeof step.prompt === "string" ? step.prompt : "",
+            step.gateMode === "gate" || step.gateMode === "advisory"
+              ? step.gateMode
+              : (mode === "script" ? "gate" : "advisory"),
             step.toolMode === "coding" || step.toolMode === "readonly" ? step.toolMode : null,
             typeof step.scriptName === "string" ? step.scriptName : null,
             step.enabled === false ? 0 : 1,
@@ -3241,6 +3247,13 @@ export class Database {
         `);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxExperimentRecordsSessionSegment ON experiment_session_records(sessionId, segment, seq)`);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idxExperimentRecordsType ON experiment_session_records(sessionId, type)`);
+      });
+    }
+
+    if (version < 76) {
+      this.applyMigration(76, () => {
+        this.addColumnIfMissing("workflow_steps", "gateMode", "TEXT NOT NULL DEFAULT 'advisory'");
+        this.db.exec("UPDATE workflow_steps SET gateMode = CASE WHEN mode = 'script' THEN 'gate' ELSE 'advisory' END WHERE gateMode IS NULL OR gateMode = ''");
       });
     }
 

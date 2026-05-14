@@ -1,7 +1,7 @@
 import "./WorkflowStepManager.css";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
-import type { WorkflowStep, WorkflowStepInput, WorkflowStepMode, WorkflowStepPhase } from "@fusion/core";
+import type { WorkflowStep, WorkflowStepInput, WorkflowStepMode, WorkflowStepPhase, WorkflowStepGateMode } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import {
   fetchWorkflowSteps,
@@ -54,6 +54,7 @@ interface StepFormData {
   mode: WorkflowStepMode;
   phase: WorkflowStepPhase;
   prompt: string;
+  gateMode: WorkflowStepGateMode;
   scriptName: string;
   enabled: boolean;
   defaultOn: boolean;
@@ -69,6 +70,7 @@ const EMPTY_FORM: StepFormData = {
   mode: "prompt",
   phase: "pre-merge" as WorkflowStepPhase,
   prompt: "",
+  gateMode: "advisory",
   scriptName: "",
   enabled: true,
   defaultOn: false,
@@ -225,6 +227,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
       mode: step.mode || "prompt",
       phase: step.phase || "pre-merge",
       prompt: step.prompt,
+      gateMode: step.gateMode || ((step.mode || "prompt") === "script" ? "gate" : "advisory"),
       scriptName: step.scriptName || "",
       enabled: step.enabled,
       defaultOn: step.defaultOn || false,
@@ -262,6 +265,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
           mode: form.mode,
           phase: form.phase,
           prompt: form.mode === "prompt" ? (form.prompt.trim() || undefined) : undefined,
+          gateMode: form.gateMode,
           scriptName: form.mode === "script" ? form.scriptName.trim() : undefined,
           enabled: form.enabled,
           defaultOn: form.defaultOn || undefined,
@@ -276,6 +280,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
           mode: form.mode,
           phase: form.phase,
           prompt: form.mode === "prompt" ? form.prompt : "",
+          gateMode: form.gateMode,
           scriptName: form.mode === "script" ? form.scriptName.trim() : undefined,
           enabled: form.enabled,
           defaultOn: form.defaultOn,
@@ -333,6 +338,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
           description: form.description.trim(),
           mode: "prompt",
           prompt: form.prompt.trim() || undefined,
+          gateMode: form.gateMode,
           enabled: form.enabled,
           defaultOn: form.defaultOn || undefined,
           ...modelFields,
@@ -477,6 +483,9 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                                 </span>
                                 <span className={`wfm-badge ${(step.phase || "pre-merge") === "post-merge" ? "wfm-badge-post-merge" : "wfm-badge-pre-merge"}`}>
                                   {(step.phase || "pre-merge") === "post-merge" ? "Post-merge" : "Pre-merge"}
+                                </span>
+                                <span className={`wfm-badge ${(step.gateMode || ((step.mode || "prompt") === "script" ? "gate" : "advisory")) === "gate" ? "wfm-badge-gate" : "wfm-badge-advisory"}`}>
+                                  {(step.gateMode || ((step.mode || "prompt") === "script" ? "gate" : "advisory")) === "gate" ? "Gate" : "Advisory"}
                                 </span>
                                 {step.defaultOn && (
                                   <span className="wfm-badge wfm-badge-default-on">
@@ -733,7 +742,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                       <div className="wfm-mode-selector" data-testid="workflow-step-mode-selector">
                         <button
                           className={`btn ${form.mode === "prompt" ? "btn-primary" : "btn-secondary"} wfm-mode-btn`}
-                          onClick={() => setForm((prev) => ({ ...prev, mode: "prompt", scriptName: "" }))}
+                          onClick={() => setForm((prev) => ({ ...prev, mode: "prompt", gateMode: prev.gateMode || "advisory", scriptName: "" }))}
                           data-testid="mode-prompt"
                         >
                           <MessageSquare size={14} />
@@ -741,7 +750,7 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                         </button>
                         <button
                           className={`btn ${form.mode === "script" ? "btn-primary" : "btn-secondary"} wfm-mode-btn`}
-                          onClick={() => setForm((prev) => ({ ...prev, mode: "script", prompt: "", modelProvider: "", modelId: "" }))}
+                          onClick={() => setForm((prev) => ({ ...prev, mode: "script", gateMode: "gate", prompt: "", modelProvider: "", modelId: "" }))}
                           data-testid="mode-script"
                         >
                           <Terminal size={14} />
@@ -773,6 +782,32 @@ export function WorkflowStepManager({ isOpen, onClose, addToast, projectId }: Wo
                         {form.phase === "pre-merge"
                           ? "Runs before merge — can block merge on failure"
                           : "Runs after merge success — failures are logged but do not block"}
+                      </div>
+                    </div>
+
+                    {/* Gate mode */}
+                    <div className="wfm-field">
+                      <label>Failure Behavior</label>
+                      <div className="wfm-mode-selector" data-testid="workflow-step-gate-mode-selector">
+                        <button
+                          className={`btn ${form.gateMode === "advisory" ? "btn-primary" : "btn-secondary"} wfm-mode-btn`}
+                          onClick={() => setForm((prev) => ({ ...prev, gateMode: "advisory" }))}
+                          data-testid="gate-mode-advisory"
+                        >
+                          Advisory
+                        </button>
+                        <button
+                          className={`btn ${form.gateMode === "gate" ? "btn-primary" : "btn-secondary"} wfm-mode-btn`}
+                          onClick={() => setForm((prev) => ({ ...prev, gateMode: "gate" }))}
+                          data-testid="gate-mode-gate"
+                        >
+                          Gate
+                        </button>
+                      </div>
+                      <div className="wfm-field-hint">
+                        {form.gateMode === "gate"
+                          ? "Failures block merge and request remediation."
+                          : "Failures are recorded as advisory and do not block merge."}
                       </div>
                     </div>
 

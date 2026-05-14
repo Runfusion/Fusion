@@ -21,6 +21,7 @@ function mapWorkflowStatus(status: WorkflowStepResult["status"]): UnifiedTaskPro
     case "passed":
       return "done";
     case "failed":
+    case "advisory_failure":
       return "failed";
     case "skipped":
       return "skipped";

@@ -16,7 +16,7 @@ function countWorkflow(results: WorkflowStepResult[] | undefined): Deterministic
   let pending = 0;
   for (const result of list) {
     if (result.status === "passed") passed += 1;
-    else if (result.status === "failed") failed += 1;
+    else if (result.status === "failed" || result.status === "advisory_failure") failed += 1;
     else if (result.status === "pending") pending += 1;
   }
   return { total: list.length, passed, failed, pending };
