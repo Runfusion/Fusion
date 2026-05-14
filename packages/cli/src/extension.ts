@@ -21,7 +21,6 @@ import {
   formatRoleMismatchReason,
   resolveAgentProvisioningPolicy,
   TASK_PRIORITIES,
-  type ExperimentSessionStore,
 } from "@fusion/core";
 import {
   getGhErrorMessage,
@@ -1751,14 +1750,7 @@ export default function kbExtension(pi: ExtensionAPI) {
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       try {
         const store = await getStore(ctx.cwd);
-        const sessionStore = (store as { getExperimentSessionStore?: () => ExperimentSessionStore }).getExperimentSessionStore?.();
-        if (!sessionStore) {
-          return {
-            content: [{ type: "text", text: "Experiment session store is unavailable in this project." }],
-            isError: true,
-            details: { code: "STORE_UNAVAILABLE" },
-          };
-        }
+        const sessionStore = store.getExperimentSessionStore();
         const service = new ExperimentFinalizeService({
           store: sessionStore,
           git: defaultGitOps(resolveProjectRoot(ctx.cwd)),
