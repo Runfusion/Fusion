@@ -6,6 +6,8 @@ See also: [DagCoordinator design](./milestone-b-dag-coordinator-design.md) · [I
 
 ## Goals and non-goals
 
+ADR traceability: this plan derives from ADR-0001 **Decision** (first-class SQLite DAG model), **Consequences #1** (additive storage), and **Consequences #3** (project-local scope).
+
 ### Goals
 - Additive-only SQLite schema plan for per-project `.fusion/fusion.db` DAG persistence.
 - Preserve WAL mode and current migration runner contract in `packages/core/src/db.ts`.
@@ -104,6 +106,8 @@ Rationale:
   - Every project’s local `.fusion/fusion.db`: independently receives the additive tables when opened.
 
 ## Restart recovery contract
+
+ADR traceability: aligns with ADR-0001 **Decision** (SQLite-backed DAG state) and **Consequences #2** (single-event-loop/non-blocking runtime constraints).
 
 For engine boot recovery:
 - Source of truth is SQLite rows in `dag_run` + `dag_node` + `dag_edge`.
