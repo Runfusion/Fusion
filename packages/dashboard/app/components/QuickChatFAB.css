@@ -1233,6 +1233,18 @@
   border-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
 }
 
+.quick-chat-panel .quick-chat-panel-message--sent .chat-mention-chip {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  border-color: color-mix(in srgb, var(--text) 28%, transparent);
+}
+
+.quick-chat-panel .quick-chat-panel-message--sent .chat-mention-chip--non-member {
+  background: color-mix(in srgb, var(--color-warning) 25%, transparent);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--color-warning) 50%, transparent);
+}
+
 .quick-chat-panel-message--streaming {
   position: relative;
   opacity: 0.95;

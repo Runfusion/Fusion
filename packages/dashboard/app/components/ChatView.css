@@ -1791,3 +1791,15 @@
   color: var(--text-muted);
   border-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
 }
+
+.chat-message--user .chat-mention-chip {
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent-text) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent-text) 40%, transparent);
+}
+
+.chat-message--user .chat-mention-chip--non-member {
+  background: color-mix(in srgb, var(--color-warning) 30%, transparent);
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--color-warning) 55%, transparent);
+}
