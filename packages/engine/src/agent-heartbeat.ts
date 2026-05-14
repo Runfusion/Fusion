@@ -1095,7 +1095,7 @@ export class HeartbeatMonitor {
       status: "completed" | "failed" | "terminated";
       exitCode?: number;
       sessionIdAfter?: string;
-      usageJson?: { inputTokens: number; outputTokens: number; cachedTokens: number };
+      usageJson?: { inputTokens: number; outputTokens: number; cachedTokens: number; cacheWriteTokens: number };
       resultJson?: Record<string, unknown>;
       stdoutExcerpt?: string;
       stderrExcerpt?: string;
@@ -2446,15 +2446,17 @@ export class HeartbeatMonitor {
           let usageInput = 0;
           let usageOutput = Math.ceil(outputLength / 4);
           let usageCached = 0;
+          let usageCacheWrite = 0;
           try {
             const sessionStats = (session as unknown as {
               getSessionStats?: () => { tokens?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } };
             }).getSessionStats?.();
             const tokens = sessionStats?.tokens;
             if (tokens) {
-              usageInput = (tokens.input ?? 0) + (tokens.cacheWrite ?? 0);
+              usageInput = tokens.input ?? 0;
               usageOutput = tokens.output ?? usageOutput;
               usageCached = tokens.cacheRead ?? 0;
+              usageCacheWrite = tokens.cacheWrite ?? 0;
             }
           } catch (statsErr) {
             heartbeatLog.warn(`Agent ${agentId} session stats read failed: ${statsErr instanceof Error ? statsErr.message : String(statsErr)} — using estimated tokens`);
@@ -2496,7 +2498,7 @@ export class HeartbeatMonitor {
 
           await this.completeRun(agentId, run.id, {
             status: "completed",
-            usageJson: { inputTokens: usageInput, outputTokens: usageOutput, cachedTokens: usageCached },
+            usageJson: { inputTokens: usageInput, outputTokens: usageOutput, cachedTokens: usageCached, cacheWriteTokens: usageCacheWrite },
             resultJson: completionResultJson,
             stdoutExcerpt: stdoutExcerpt || undefined,
           });
@@ -2509,7 +2511,7 @@ export class HeartbeatMonitor {
             }
           }
 
-          heartbeatLog.log(`Heartbeat completed for ${agentId} (${toolCallCount} tool calls, ${usageInput} input + ${usageOutput} output + ${usageCached} cached tokens)`);
+          heartbeatLog.log(`Heartbeat completed for ${agentId} (${toolCallCount} tool calls, ${usageInput} input + ${usageOutput} output + ${usageCached} cache-read + ${usageCacheWrite} cache-write tokens)`);
         } catch (err) {
           const errorDetail = formatError(err).detail;
           heartbeatLog.error(`Heartbeat execution failed for ${agentId}: ${errorDetail}`);

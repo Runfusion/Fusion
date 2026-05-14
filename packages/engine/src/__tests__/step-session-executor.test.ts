@@ -843,7 +843,8 @@ describe("StepSessionExecutor", () => {
         tokenUsage: {
           inputTokens: 25,
           outputTokens: 11,
-          cachedTokens: 6,
+          cachedTokens: 4,
+          cacheWriteTokens: 2,
           totalTokens: 42,
         },
       });

@@ -752,7 +752,7 @@ export class TaskExecutor {
   /** Spawned child agent IDs per parent task ID. Used for lifecycle tracking. */
   private spawnedAgents = new Map<string, Set<string>>();
   /** Per-task baseline of session stats used for delta persistence across repeated updates. */
-  private tokenUsageBaselines = new Map<string, { inputTokens: number; outputTokens: number; cachedTokens: number; totalTokens: number }>();
+  private tokenUsageBaselines = new Map<string, { inputTokens: number; outputTokens: number; cachedTokens: number; cacheWriteTokens: number; totalTokens: number }>();
   /** In-memory branch conflict error counters per task for tripwire protection. */
   private branchConflictErrorCount = new Map<string, number>();
   /** One-shot watchdogs for completed tasks that should have transitioned to in-review. */
@@ -1883,7 +1883,7 @@ export class TaskExecutor {
 
   private accumulateTokenUsage(
     existing: TaskTokenUsage | undefined,
-    delta: Pick<TaskTokenUsage, "inputTokens" | "outputTokens" | "cachedTokens" | "totalTokens"> | undefined,
+    delta: Pick<TaskTokenUsage, "inputTokens" | "outputTokens" | "cachedTokens" | "cacheWriteTokens" | "totalTokens"> | undefined,
     timestamp = new Date().toISOString(),
   ): TaskTokenUsage | undefined {
     if (!delta) return existing;
@@ -1892,6 +1892,7 @@ export class TaskExecutor {
       inputTokens: (existing?.inputTokens ?? 0) + delta.inputTokens,
       outputTokens: (existing?.outputTokens ?? 0) + delta.outputTokens,
       cachedTokens: (existing?.cachedTokens ?? 0) + delta.cachedTokens,
+      cacheWriteTokens: (existing?.cacheWriteTokens ?? 0) + delta.cacheWriteTokens,
       totalTokens: (existing?.totalTokens ?? 0) + delta.totalTokens,
       firstUsedAt: existing?.firstUsedAt ?? timestamp,
       lastUsedAt: timestamp,
@@ -1902,7 +1903,7 @@ export class TaskExecutor {
 
   private async extractSessionTokenUsage(
     session: AgentSession | undefined,
-  ): Promise<Pick<TaskTokenUsage, "inputTokens" | "outputTokens" | "cachedTokens" | "totalTokens"> | undefined> {
+  ): Promise<Pick<TaskTokenUsage, "inputTokens" | "outputTokens" | "cachedTokens" | "cacheWriteTokens" | "totalTokens"> | undefined> {
     if (!session) return undefined;
 
     try {
@@ -1933,15 +1934,15 @@ export class TaskExecutor {
 
       const inputTokens = tokens.input ?? 0;
       const outputTokens = tokens.output ?? 0;
-      const cacheReadTokens = tokens.cacheRead ?? 0;
+      const cachedTokens = tokens.cacheRead ?? 0;
       const cacheWriteTokens = tokens.cacheWrite ?? 0;
-      const cachedTokens = cacheReadTokens + cacheWriteTokens;
-      const totalTokens = tokens.total ?? (inputTokens + outputTokens + cachedTokens);
+      const totalTokens = tokens.total ?? (inputTokens + outputTokens + cachedTokens + cacheWriteTokens);
 
       return {
         inputTokens,
         outputTokens,
         cachedTokens,
+        cacheWriteTokens,
         totalTokens,
       };
     } catch (err: unknown) {
@@ -1964,6 +1965,7 @@ export class TaskExecutor {
           inputTokens: Math.max(0, currentUsage.inputTokens - baseline.inputTokens),
           outputTokens: Math.max(0, currentUsage.outputTokens - baseline.outputTokens),
           cachedTokens: Math.max(0, currentUsage.cachedTokens - baseline.cachedTokens),
+          cacheWriteTokens: Math.max(0, currentUsage.cacheWriteTokens - baseline.cacheWriteTokens),
           totalTokens: Math.max(0, currentUsage.totalTokens - baseline.totalTokens),
         }
       : currentUsage;
@@ -1972,6 +1974,7 @@ export class TaskExecutor {
       delta.inputTokens === 0
       && delta.outputTokens === 0
       && delta.cachedTokens === 0
+      && delta.cacheWriteTokens === 0
       && delta.totalTokens === 0
     ) {
       return;

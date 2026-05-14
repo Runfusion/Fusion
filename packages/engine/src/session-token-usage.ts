@@ -8,6 +8,7 @@ interface SessionBaseline {
   input: number;
   output: number;
   cached: number;
+  cacheWrite: number;
 }
 
 // Per-session cumulative-token baselines so repeated calls only persist deltas.
@@ -50,37 +51,40 @@ export async function accumulateSessionTokenUsage(
     const tokens = stats?.tokens;
     if (!tokens) return;
 
-    // Treat cache-write tokens as input (they're billed as input on first write
-    // and read back at a discount on subsequent turns).
-    const currentInput = (tokens.input ?? 0) + (tokens.cacheWrite ?? 0);
+    const currentInput = tokens.input ?? 0;
     const currentOutput = tokens.output ?? 0;
     const currentCached = tokens.cacheRead ?? 0;
+    const currentCacheWrite = tokens.cacheWrite ?? 0;
 
-    const baseline = sessionBaselines.get(session) ?? { input: 0, output: 0, cached: 0 };
+    const baseline = sessionBaselines.get(session) ?? { input: 0, output: 0, cached: 0, cacheWrite: 0 };
     const inputDelta = Math.max(0, currentInput - baseline.input);
     const outputDelta = Math.max(0, currentOutput - baseline.output);
     const cachedDelta = Math.max(0, currentCached - baseline.cached);
+    const cacheWriteDelta = Math.max(0, currentCacheWrite - baseline.cacheWrite);
 
     sessionBaselines.set(session, {
       input: currentInput,
       output: currentOutput,
       cached: currentCached,
+      cacheWrite: currentCacheWrite,
     });
 
-    if (inputDelta === 0 && outputDelta === 0 && cachedDelta === 0) return;
+    if (inputDelta === 0 && outputDelta === 0 && cachedDelta === 0 && cacheWriteDelta === 0) return;
 
     const task = await store.getTask(taskId);
     const now = new Date().toISOString();
     const newInput = (task.tokenUsage?.inputTokens ?? 0) + inputDelta;
     const newOutput = (task.tokenUsage?.outputTokens ?? 0) + outputDelta;
     const newCached = (task.tokenUsage?.cachedTokens ?? 0) + cachedDelta;
+    const newCacheWrite = (task.tokenUsage?.cacheWriteTokens ?? 0) + cacheWriteDelta;
 
     await store.updateTask(taskId, {
       tokenUsage: {
         inputTokens: newInput,
         outputTokens: newOutput,
         cachedTokens: newCached,
-        totalTokens: newInput + newOutput + newCached,
+        cacheWriteTokens: newCacheWrite,
+        totalTokens: newInput + newOutput + newCached + newCacheWrite,
         firstUsedAt: task.tokenUsage?.firstUsedAt ?? now,
         lastUsedAt: now,
       },
@@ -95,10 +99,8 @@ export async function accumulateSessionTokenUsage(
  * Compute the cache hit ratio: `cachedTokens / (inputTokens + cachedTokens)`.
  * Returns a number in [0, 1], or 0 when both arguments are 0.
  *
- * Compatible with stored `task.tokenUsage` fields: pass `inputTokens` (which
- * includes cache-write tokens per `accumulateSessionTokenUsage`) and
- * `cachedTokens` (cache-read tokens). Note this differs slightly from the
- * Anthropic console metric, which excludes cache-write from the denominator.
+ * Compatible with canonical stored `task.tokenUsage` fields: pass raw
+ * `inputTokens` and cache-read `cachedTokens`.
  */
 export function computeCacheHitRatio(
   inputTokens: number,

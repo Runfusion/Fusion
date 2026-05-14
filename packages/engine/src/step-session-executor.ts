@@ -68,6 +68,7 @@ export interface StepResult {
     inputTokens: number;
     outputTokens: number;
     cachedTokens: number;
+    cacheWriteTokens: number;
     totalTokens: number;
   };
 }
@@ -811,15 +812,15 @@ export class StepSessionExecutor {
 
       const inputTokens = tokens.input ?? 0;
       const outputTokens = tokens.output ?? 0;
-      const cacheReadTokens = tokens.cacheRead ?? 0;
+      const cachedTokens = tokens.cacheRead ?? 0;
       const cacheWriteTokens = tokens.cacheWrite ?? 0;
-      const cachedTokens = cacheReadTokens + cacheWriteTokens;
-      const totalTokens = tokens.total ?? (inputTokens + outputTokens + cachedTokens);
+      const totalTokens = tokens.total ?? (inputTokens + outputTokens + cachedTokens + cacheWriteTokens);
 
       return {
         inputTokens,
         outputTokens,
         cachedTokens,
+        cacheWriteTokens,
         totalTokens,
       };
     } catch (err: unknown) {

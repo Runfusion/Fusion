@@ -38,9 +38,10 @@ describe("accumulateSessionTokenUsage", () => {
     expect(store.updateTask).toHaveBeenCalledTimes(1);
     const call = store.updateTask.mock.calls[0]![1] as { tokenUsage: Task["tokenUsage"] };
     expect(call.tokenUsage).toMatchObject({
-      inputTokens: 102, // input + cacheWrite
+      inputTokens: 100,
       outputTokens: 30,
       cachedTokens: 5,
+      cacheWriteTokens: 2,
       totalTokens: 137,
     });
     expect(typeof call.tokenUsage!.firstUsedAt).toBe("string");
@@ -102,6 +103,7 @@ describe("accumulateSessionTokenUsage", () => {
       inputTokens: 50,
       outputTokens: 20,
       cachedTokens: 0,
+      cacheWriteTokens: 0,
       totalTokens: 70,
       firstUsedAt: "2024-01-01T00:00:00.000Z",
       lastUsedAt: "2024-01-01T00:00:00.000Z",

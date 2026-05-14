@@ -530,7 +530,7 @@ describe("Budget Governance", () => {
 
     await monitor.completeRun("agent-001", "run-budget-001", {
       status: "completed",
-      usageJson: { inputTokens: 0, outputTokens: 100, cachedTokens: 0 },
+      usageJson: { inputTokens: 0, outputTokens: 100, cachedTokens: 0, cacheWriteTokens: 0 },
     });
 
     expect(store.updateAgentState).toHaveBeenCalledWith("agent-001", "paused");
@@ -553,7 +553,7 @@ describe("Budget Governance", () => {
 
     await monitor.completeRun("agent-001", "run-budget-001", {
       status: "completed",
-      usageJson: { inputTokens: 10, outputTokens: 50, cachedTokens: 0 },
+      usageJson: { inputTokens: 10, outputTokens: 50, cachedTokens: 0, cacheWriteTokens: 0 },
     });
 
     expect(store.updateAgentState).toHaveBeenCalledWith("agent-001", "active");
@@ -568,7 +568,7 @@ describe("Budget Governance", () => {
 
     await monitor.completeRun("agent-001", "run-budget-001", {
       status: "failed",
-      usageJson: { inputTokens: 10, outputTokens: 50, cachedTokens: 0 },
+      usageJson: { inputTokens: 10, outputTokens: 50, cachedTokens: 0, cacheWriteTokens: 0 },
       stderrExcerpt: "failure",
     });
 
@@ -585,7 +585,7 @@ describe("Budget Governance", () => {
 
     await monitor.completeRun("agent-001", "run-budget-001", {
       status: "terminated",
-      usageJson: { inputTokens: 10, outputTokens: 50, cachedTokens: 0 },
+      usageJson: { inputTokens: 10, outputTokens: 50, cachedTokens: 0, cacheWriteTokens: 0 },
     });
 
     expect(store.getBudgetStatus).not.toHaveBeenCalled();

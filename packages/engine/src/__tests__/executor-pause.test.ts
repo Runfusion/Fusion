@@ -2145,7 +2145,8 @@ describe("StepSessionExecutor integration", () => {
         tokenUsage: expect.objectContaining({
           inputTokens: 31,
           outputTokens: 17,
-          cachedTokens: 7,
+          cachedTokens: 5,
+          cacheWriteTokens: 2,
           totalTokens: 55,
         }),
       }),
