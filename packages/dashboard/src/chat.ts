@@ -138,11 +138,11 @@ const MAX_MESSAGES_PER_IP_PER_MINUTE = 30;
 /** Maximum file size for # mentions (50KB). Files larger than this are skipped. */
 const MAX_REFERENCED_FILE_SIZE = 50 * 1024;
 const ROOM_AMBIENT_MAX_RESPONDERS = 5;
-const ROOM_THREAD_RECENT_VERBATIM_MESSAGES = 12;
-const ROOM_THREAD_COMPACTION_FETCH_LIMIT = 80;
+const DEFAULT_ROOM_THREAD_RECENT_VERBATIM_MESSAGES = 12;
+const DEFAULT_ROOM_THREAD_COMPACTION_FETCH_LIMIT = 80;
 const ROOM_THREAD_CONTEXT_MAX_CHARS = 8_000;
 const ROOM_THREAD_MESSAGE_CONTENT_MAX_CHARS = 1_200;
-const ROOM_THREAD_SUMMARY_MAX_CHARS = 1_500;
+const DEFAULT_ROOM_THREAD_SUMMARY_MAX_CHARS = 1_500;
 const IN_FLIGHT_PERSIST_DEBOUNCE_MS = 200;
 
 type RoomTranscriptMessage = Pick<ChatRoomMessage, "id" | "role" | "content" | "createdAt" | "senderAgentId">;
@@ -170,7 +170,10 @@ function formatRoomThreadContext(messages: RoomTranscriptMessage[], latestUserMe
   return messages.map((message) => formatRoomThreadLine(message, latestUserMessageId)).join("\n");
 }
 
-function buildRoomSummaryBlock(olderMessages: RoomTranscriptMessage[]): string {
+function buildRoomSummaryBlock(
+  olderMessages: RoomTranscriptMessage[],
+  opts?: { summaryMaxChars?: number },
+): string {
   if (olderMessages.length === 0) {
     return "";
   }
@@ -200,7 +203,8 @@ function buildRoomSummaryBlock(olderMessages: RoomTranscriptMessage[]): string {
   }
 
   const highlights = [...rankedHighlights];
-  while (`${baseSummary}\n${highlights.join("\n")}`.length > ROOM_THREAD_SUMMARY_MAX_CHARS && highlights.length > 0) {
+  const summaryMaxChars = opts?.summaryMaxChars ?? DEFAULT_ROOM_THREAD_SUMMARY_MAX_CHARS;
+  while (`${baseSummary}\n${highlights.join("\n")}`.length > summaryMaxChars && highlights.length > 0) {
     highlights.pop();
   }
 
@@ -212,6 +216,7 @@ function buildRoomSummaryBlock(olderMessages: RoomTranscriptMessage[]): string {
 export function buildCompactedRoomTranscript(
   messages: RoomTranscriptMessage[],
   latestUserMessageId: string,
+  opts?: { recentVerbatim?: number; summaryMaxChars?: number },
 ): string {
   if (messages.length === 0) {
     return "";
@@ -219,7 +224,8 @@ export function buildCompactedRoomTranscript(
 
   const messageIndexes = new Map(messages.map((message, index) => [message.id, index]));
   const latestUserMessage = messages.find((message) => message.id === latestUserMessageId);
-  const splitIndex = Math.max(0, messages.length - ROOM_THREAD_RECENT_VERBATIM_MESSAGES);
+  const recentVerbatim = Math.max(1, Math.floor(opts?.recentVerbatim ?? DEFAULT_ROOM_THREAD_RECENT_VERBATIM_MESSAGES));
+  const splitIndex = Math.max(0, messages.length - recentVerbatim);
   let olderMessages = messages.slice(0, splitIndex);
   let recentMessages = messages.slice(splitIndex);
 
@@ -229,7 +235,7 @@ export function buildCompactedRoomTranscript(
       .sort((left, right) => (messageIndexes.get(left.id) ?? 0) - (messageIndexes.get(right.id) ?? 0));
   }
 
-  const summaryLines = buildRoomSummaryBlock(olderMessages).split("\n").filter((line) => line.length > 0);
+  const summaryLines = buildRoomSummaryBlock(olderMessages, opts).split("\n").filter((line) => line.length > 0);
 
   const renderTranscript = () => {
     const summary = summaryLines.length > 0 ? summaryLines.join("\n") : "";
@@ -702,7 +708,23 @@ export class ChatManager {
       getRuntimeById?(runtimeId: string): unknown;
       createRuntimeContext?(pluginId: string): Promise<unknown>;
     },
-    private getSettings?: () => Promise<Pick<Settings, "fallbackProvider" | "fallbackModelId" | "defaultProvider" | "defaultModelId"> | undefined> | Pick<Settings, "fallbackProvider" | "fallbackModelId" | "defaultProvider" | "defaultModelId"> | undefined,
+    private getSettings?: () => Promise<Pick<Settings,
+      | "fallbackProvider"
+      | "fallbackModelId"
+      | "defaultProvider"
+      | "defaultModelId"
+      | "chatRoomRecentVerbatimMessages"
+      | "chatRoomCompactionFetchLimit"
+      | "chatRoomSummaryMaxChars"
+    > | undefined> | Pick<Settings,
+      | "fallbackProvider"
+      | "fallbackModelId"
+      | "defaultProvider"
+      | "defaultModelId"
+      | "chatRoomRecentVerbatimMessages"
+      | "chatRoomCompactionFetchLimit"
+      | "chatRoomSummaryMaxChars"
+    > | undefined,
     private messageStore?: MessageStore,
   ) {}
 
@@ -750,6 +772,41 @@ export class ChatManager {
       const message = err instanceof Error ? err.message : String(err);
       diagnostics.warn(`Failed to load chat fallback settings: ${message}`);
       return {};
+    }
+  }
+
+  private async getRoomCompactionSettings(): Promise<{
+    recentVerbatim: number;
+    fetchLimit: number;
+    summaryMaxChars: number;
+  }> {
+    const defaults = {
+      recentVerbatim: DEFAULT_ROOM_THREAD_RECENT_VERBATIM_MESSAGES,
+      fetchLimit: DEFAULT_ROOM_THREAD_COMPACTION_FETCH_LIMIT,
+      summaryMaxChars: DEFAULT_ROOM_THREAD_SUMMARY_MAX_CHARS,
+    };
+    if (!this.getSettings) {
+      return defaults;
+    }
+
+    const sanitize = (value: unknown, fallback: number, min = 1): number => {
+      if (typeof value !== "number" || !Number.isFinite(value) || Number.isNaN(value) || value <= 0) {
+        return fallback;
+      }
+      return Math.max(min, Math.floor(value));
+    };
+
+    try {
+      const settings = await this.getSettings();
+      return {
+        recentVerbatim: sanitize(settings?.chatRoomRecentVerbatimMessages, defaults.recentVerbatim),
+        fetchLimit: sanitize(settings?.chatRoomCompactionFetchLimit, defaults.fetchLimit),
+        summaryMaxChars: sanitize(settings?.chatRoomSummaryMaxChars, defaults.summaryMaxChars, 200),
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      diagnostics.warn(`Failed to load room compaction settings: ${message}`);
+      return defaults;
     }
   }
 
@@ -1188,12 +1245,16 @@ export class ChatManager {
     }
     systemPrompt = `${systemPrompt}\n\n${CHAT_AGENT_MESSAGE_ROUTING_GUIDANCE}`;
 
-    const roomMessages = this.chatStore.getRoomMessages(input.roomId, { limit: ROOM_THREAD_COMPACTION_FETCH_LIMIT });
+    const roomCompactionSettings = await this.getRoomCompactionSettings();
+    const roomMessages = this.chatStore.getRoomMessages(input.roomId, { limit: roomCompactionSettings.fetchLimit });
     const roomPrompt = [
       `You are replying as ${input.responder.name} in room #${input.roomName}.`,
       "Reply to the latest user room message in the context of this shared room thread.",
       "Room transcript (oldest to newest, bounded):",
-      this.compactRoomThreadContext(roomMessages, input.latestUserMessageId),
+      this.compactRoomThreadContext(roomMessages, input.latestUserMessageId, {
+        recentVerbatim: roomCompactionSettings.recentVerbatim,
+        summaryMaxChars: roomCompactionSettings.summaryMaxChars,
+      }),
       "Latest user message to answer:",
       input.content,
     ].join("\n\n");
@@ -1270,8 +1331,9 @@ export class ChatManager {
   private compactRoomThreadContext(
     messages: RoomTranscriptMessage[],
     latestUserMessageId: string,
+    opts?: { recentVerbatim?: number; summaryMaxChars?: number },
   ): string {
-    return buildCompactedRoomTranscript(messages, latestUserMessageId);
+    return buildCompactedRoomTranscript(messages, latestUserMessageId, opts);
   }
 
   /**
