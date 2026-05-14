@@ -100,6 +100,7 @@ const ChatView = lazy(() => import("./components/ChatView").then((m) => ({ defau
 
 const SkillsView = lazy(() => import("./components/SkillsView").then((m) => ({ default: m.SkillsView })));
 const MemoryView = lazy(() => import("./components/MemoryView").then((m) => ({ default: m.MemoryView })));
+const ReliabilityView = lazy(() => import("./components/ReliabilityView").then((m) => ({ default: m.ReliabilityView })));
 const DevServerView = lazy(() => import("./components/DevServerView").then((m) => ({ default: m.DevServerView })));
 const _TodoView = lazy(() => import("./components/TodoView").then((m) => ({ default: m.TodoView })));
 const StashRecoveryView = lazy(() => import("./components/StashRecoveryView").then((m) => ({ default: m.StashRecoveryView })));
@@ -126,6 +127,7 @@ function prefetchLazyViews() {
 
     void import("./components/SkillsView");
     void import("./components/MemoryView");
+    void import("./components/ReliabilityView");
     void import("./components/DevServerView");
     void import("./components/TodoView");
     void import("./components/StashRecoveryView");
@@ -1485,6 +1487,16 @@ function AppInner() {
         <PageErrorBoundary>
           <Suspense fallback={null}>
             <MemoryView addToast={addToast} projectId={currentProject?.id} />
+          </Suspense>
+        </PageErrorBoundary>
+      );
+    }
+
+    if (taskView === "reliability") {
+      return (
+        <PageErrorBoundary>
+          <Suspense fallback={null}>
+            <ReliabilityView />
           </Suspense>
         </PageErrorBoundary>
       );
