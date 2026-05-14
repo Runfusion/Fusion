@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { validatePluginManifest } from "@fusion/core";
-import plugin from "../index.js";
+import plugin, { CLI_PRINTING_PRESS_WORKFLOW_STEPS } from "../index.js";
 import { ensureCliPressSchema } from "../store/cli-press-store.js";
 import { makeFakeRegistry } from "./fixtures/registry.js";
 
@@ -22,5 +22,23 @@ describe("plugin registration contracts", () => {
     } finally {
       h.cleanup();
     }
+  });
+
+  it("contributes script-mode workflow step templates", () => {
+    expect(plugin.workflowSteps?.length).toBeGreaterThan(0);
+    expect(plugin.workflowSteps).toEqual(CLI_PRINTING_PRESS_WORKFLOW_STEPS);
+
+    for (const step of plugin.workflowSteps ?? []) {
+      expect(step.stepId).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+    }
+
+    expect(
+      plugin.workflowSteps?.some((step) => step.mode === "script" && step.phase === "pre-merge"),
+    ).toBe(true);
+
+    expect(plugin.manifest.workflowSteps?.map((step) => step.stepId)).toEqual(
+      plugin.workflowSteps?.map((step) => step.stepId),
+    );
+    expect(validatePluginManifest(plugin.manifest).valid).toBe(true);
   });
 });
