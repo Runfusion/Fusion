@@ -1,6 +1,7 @@
 import type {
   DirectMergeCommitStrategy,
   GithubAuthMode,
+  HeartbeatPromptTemplate,
   HeartbeatScopeDisciplineMode,
   UnavailableNodePolicy,
 } from "./types.js";
@@ -13,6 +14,10 @@ const HEARTBEAT_SCOPE_DISCIPLINE_MODES: readonly HeartbeatScopeDisciplineMode[] 
   "strict",
   "lite",
   "off",
+] as const;
+const HEARTBEAT_PROMPT_TEMPLATES: readonly HeartbeatPromptTemplate[] = [
+  "default",
+  "compact",
 ] as const;
 
 /**
@@ -81,5 +86,18 @@ export function validateHeartbeatScopeDisciplineMode(value: unknown): HeartbeatS
   }
   return (HEARTBEAT_SCOPE_DISCIPLINE_MODES as readonly string[]).includes(value)
     ? (value as HeartbeatScopeDisciplineMode)
+    : undefined;
+}
+
+/** Returns a validated heartbeat prompt template for project/agent settings, otherwise undefined. */
+export function validateHeartbeatPromptTemplate(value: unknown): HeartbeatPromptTemplate | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  return (HEARTBEAT_PROMPT_TEMPLATES as readonly string[]).includes(value)
+    ? (value as HeartbeatPromptTemplate)
     : undefined;
 }

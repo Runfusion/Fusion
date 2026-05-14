@@ -95,6 +95,12 @@ describe("settings key parity", () => {
     expect(isGlobalSettingsKey("heartbeatScopeDiscipline")).toBe(false);
   });
 
+  it("keeps heartbeatPromptTemplate project-scoped with default default", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.heartbeatPromptTemplate).toBe("default");
+    expect(isProjectSettingsKey("heartbeatPromptTemplate")).toBe(true);
+    expect(isGlobalSettingsKey("heartbeatPromptTemplate")).toBe(false);
+  });
+
   it("documents autoClaimCandidatesInPrompt expected integer range", () => {
     const inRange = [0, 1, 5, 10];
     const outOfRange = [-1, 11, 100];

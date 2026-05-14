@@ -1666,6 +1666,7 @@ export interface ResolvedEvalSettings {
 
 export type AgentMemoryInclusionMode = "full" | "index" | "off";
 export type HeartbeatScopeDisciplineMode = "strict" | "lite" | "off";
+export type HeartbeatPromptTemplate = "default" | "compact";
 
 export interface GlobalSettings {
   /** Theme mode preference: dark, light, or system (follows OS). Default: "dark". */
@@ -2102,6 +2103,11 @@ export interface ProjectSettings {
    * - "off": minimal procedure with no scope-classification step
    */
   heartbeatScopeDiscipline?: HeartbeatScopeDisciplineMode;
+  /** Heartbeat execution prompt template mode.
+   * - "default": richer context with higher caps (default)
+   * - "compact": lower caps to reduce prompt size
+   */
+  heartbeatPromptTemplate?: HeartbeatPromptTemplate;
   groupOverlappingFiles: boolean;
   /** File/directory paths to ignore when evaluating overlap serialization.
    *  Entries are project-relative paths (for example: `docs/README.md`, `docs/`, `generated/*`).
@@ -4700,6 +4706,8 @@ export interface AgentHeartbeatConfig {
   agentMemoryInclusionMode?: AgentMemoryInclusionMode;
   /** Per-agent override for heartbeat scope-discipline procedure mode. */
   heartbeatScopeDiscipline?: HeartbeatScopeDisciplineMode;
+  /** Per-agent override for heartbeat execution prompt template mode. */
+  heartbeatPromptTemplate?: HeartbeatPromptTemplate;
   /** Last resolved memory inclusion mode recorded by engine for transition logging. */
   lastAgentMemoryInclusionMode?: AgentMemoryInclusionMode;
   /**

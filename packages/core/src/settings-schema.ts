@@ -173,6 +173,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   heartbeatMultiplier: 1,
   autoClaimCandidatesInPrompt: 5,
   heartbeatScopeDiscipline: "strict",
+  heartbeatPromptTemplate: "default",
   groupOverlappingFiles: true,
   overlapIgnorePaths: [],
   autoMerge: true,
