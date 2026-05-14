@@ -660,6 +660,19 @@ describe("SettingsModal", () => {
       }
     });
 
+    it("renders helper descriptions as small text for global logging fields", async () => {
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      expect(document.querySelector(".settings-field-help")).toBeNull();
+
+      const toolOutputHelper = screen.getByText(/When disabled, tool rows are still logged but detailed tool payloads are omitted/i);
+      expect(toolOutputHelper.closest("small")).toBeTruthy();
+
+      const thinkingHelper = screen.getByText(/Leave both thinking toggles off to keep the original default behavior/i);
+      expect(thinkingHelper.closest("small")).toBeTruthy();
+    });
+
     it("renders global default tracking repo control", async () => {
       renderModal({ initialSection: "global-general" });
       await waitForSettingsModalReady();
