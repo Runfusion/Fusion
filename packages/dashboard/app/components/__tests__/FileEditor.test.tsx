@@ -396,6 +396,34 @@ describe("FileEditor", () => {
       fireEvent.click(optionsButton);
       expect(optionsButton).toHaveAttribute("aria-expanded", "true");
     });
+
+    it("FN-4480: collapsible region has computed display:none when collapsed", () => {
+      const css = loadAllAppCss();
+      const style = document.createElement("style");
+      style.textContent = css;
+      document.head.appendChild(style);
+
+      try {
+        render(<FileEditor content="x" onChange={vi.fn()} filePath="script.ts" onToggleLineNumbers={vi.fn()} />);
+
+        const optionsButton = screen.getByRole("button", { name: /toggle editor options/i });
+        const controlsId = optionsButton.getAttribute("aria-controls");
+        expect(controlsId).toBeTruthy();
+
+        const collapsibleRegion = document.getElementById(controlsId as string);
+        expect(collapsibleRegion).toBeTruthy();
+
+        expect(getComputedStyle(collapsibleRegion as HTMLElement).display).toBe("none");
+
+        fireEvent.click(optionsButton);
+        expect(getComputedStyle(collapsibleRegion as HTMLElement).display).toBe("inline-flex");
+
+        fireEvent.click(optionsButton);
+        expect(getComputedStyle(collapsibleRegion as HTMLElement).display).toBe("none");
+      } finally {
+        style.remove();
+      }
+    });
   });
 
   describe("mobile toolbar CSS", () => {
