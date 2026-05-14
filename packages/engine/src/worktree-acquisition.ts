@@ -154,6 +154,9 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
         const prepared = typeof preparedRaw === "string"
           ? { branch: preparedRaw, worktreePath: pooled, reclaimed: false as const }
           : preparedRaw;
+        if (prepared.reclaimed && prepared.worktreePath !== pooled) {
+          pool.release(pooled);
+        }
         worktreePath = prepared.worktreePath;
         branch = prepared.branch;
         acquiredFromPool = true;

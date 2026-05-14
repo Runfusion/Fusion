@@ -41,6 +41,7 @@ describe("acquireTaskWorktree", () => {
 
   it("acquires from pool when enabled", async () => {
     const prepareForTask = vi.fn().mockResolvedValue({ branch: "fusion/fn-1", worktreePath: "/tmp/pooled", reclaimed: false });
+    const release = vi.fn();
     const result = await acquireTaskWorktree({
       task,
       rootDir: process.cwd(),
@@ -49,10 +50,11 @@ describe("acquireTaskWorktree", () => {
       pool: {
         acquire: () => "/tmp/pooled",
         prepareForTask,
-        release: vi.fn(),
+        release,
       } as any,
       createWorktree: vi.fn(),
     });
+    expect(release).not.toHaveBeenCalled();
     expect(result.source).toBe("pool");
     expect(prepareForTask).toHaveBeenCalledWith(
       "/tmp/pooled",
@@ -61,6 +63,30 @@ describe("acquireTaskWorktree", () => {
       expect.objectContaining({ requestingTaskId: "FN-1" }),
     );
     expect(store.updateTask).toHaveBeenCalledWith("FN-1", { worktree: "/tmp/pooled", branch: "fusion/fn-1" });
+  });
+
+  it("releases acquired pooled worktree when prepareForTask returns reclaimed path", async () => {
+    const release = vi.fn();
+    await acquireTaskWorktree({
+      task,
+      rootDir: process.cwd(),
+      store,
+      settings: { recycleWorktrees: true } as any,
+      pool: {
+        acquire: () => "/tmp/pooled",
+        prepareForTask: vi.fn().mockResolvedValue({
+          branch: "fusion/fn-1",
+          worktreePath: "/tmp/live-existing",
+          reclaimed: true,
+          existingTipSha: "abc123",
+          strandedCommitCount: 2,
+        }),
+        release,
+      } as any,
+      createWorktree: vi.fn(),
+    });
+
+    expect(release).toHaveBeenCalledWith("/tmp/pooled");
   });
 
   it("creates fresh when pool disabled", async () => {

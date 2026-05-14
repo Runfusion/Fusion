@@ -1859,6 +1859,46 @@ describe("TaskExecutor dependency-based worktree creation", () => {
     );
   });
 
+  it("records branch:auto-reclaim run-audit event when pooled prepare returns reclaimed worktree", async () => {
+    const pool = new WorktreePool();
+    pool.release("/tmp/test/.worktrees/idle-wt");
+    mockedExistsSync.mockImplementation((p) => p === "/tmp/test/.worktrees/idle-wt" || p === "/tmp/test/.worktrees/live-wt");
+
+    vi.spyOn(pool, "prepareForTask").mockResolvedValue({
+      branch: "fusion/fn-066",
+      worktreePath: "/tmp/test/.worktrees/live-wt",
+      reclaimed: true,
+      existingTipSha: "abc123def456",
+      strandedCommitCount: 2,
+    });
+
+    const store = createMockStore();
+    store.recordRunAuditEvent = vi.fn().mockResolvedValue(undefined);
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: false,
+      recycleWorktrees: true,
+    });
+
+    const executor = new TaskExecutor(store, "/tmp/test", { pool });
+    await executor.execute(makeTask({ id: "FN-066", worktree: null, branch: null }));
+
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "branch:auto-reclaim",
+      target: "fusion/fn-066",
+      metadata: expect.objectContaining({
+        taskId: "FN-066",
+        trigger: "dispatch-preflight",
+        worktreePath: "/tmp/test/.worktrees/live-wt",
+        existingTipSha: "abc123def456",
+        strandedCommitCount: 2,
+      }),
+    }));
+  });
+
   it("stores suffixed branch name when pool returns a different name", async () => {
     const pool = new WorktreePool();
     pool.release("/tmp/test/.worktrees/idle-wt");
