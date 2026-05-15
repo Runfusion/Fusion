@@ -6173,6 +6173,117 @@ describe("SelfHealingManager reclaimSelfOwnedBranchConflicts", () => {
   });
 });
 
+describe("SelfHealingManager reclaimStaleActiveBranches (FN-4546)", () => {
+  let store: TaskStore & EventEmitter;
+  let manager: SelfHealingManager;
+
+  beforeEach(() => {
+    mockedExecSync.mockReset();
+    store = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false } as any),
+      recordRunAuditEvent: vi.fn().mockResolvedValue(undefined),
+      listTasks: vi.fn().mockResolvedValue([]),
+    });
+    manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+    mockedIsUsableTaskWorktree.mockResolvedValue(true);
+  });
+
+  it("reclaims subsumed fusion task branch with no worktree", async () => {
+    (store.listTasks as any).mockResolvedValueOnce([
+      { id: "FN-1001", column: "todo", checkedOutBy: null, userPaused: false, worktree: null, branch: null, lineageId: "lin-1" },
+    ]);
+
+    mockedExecSync.mockImplementation((command: string) => {
+      if (command.includes("git branch --list 'fusion/*'")) return Buffer.from("  fusion/fn-1001\n");
+      if (command.includes("git rev-parse --verify") && command.includes("fusion/fn-1001")) return Buffer.from("abc123def456\n");
+      if (command.includes("git rev-list --count") && command.includes("fusion/fn-1001")) return Buffer.from("0\n");
+      return Buffer.from("");
+    });
+
+    const recovered = await manager.reclaimStaleActiveBranches();
+
+    expect(recovered).toBe(1);
+    expect(mockedExecSync).toHaveBeenCalledWith(expect.stringContaining("git branch -D \"fusion/fn-1001\""), expect.anything());
+    expect(mockedExecSync).toHaveBeenCalledWith(expect.stringContaining("git worktree prune"), expect.anything());
+    expect(store.updateTask).toHaveBeenCalledWith("FN-1001", { worktree: null, branch: null, baseCommitSha: null });
+    expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      domain: "git",
+      mutationType: "branch:stale-active-reclaim",
+      target: "fusion/fn-1001",
+    }));
+  });
+
+  it("does not delete branch with unique commits", async () => {
+    (store.listTasks as any).mockResolvedValueOnce([
+      { id: "FN-1001", column: "todo", checkedOutBy: null, userPaused: false, worktree: null, branch: null },
+    ]);
+
+    mockedExecSync.mockImplementation((command: string) => {
+      if (command.includes("git branch --list 'fusion/*'")) return Buffer.from("  fusion/fn-1001\n");
+      if (command.includes("git rev-parse --verify") && command.includes("fusion/fn-1001")) return Buffer.from("abc123def456\n");
+      if (command.includes("git rev-list --count") && command.includes("fusion/fn-1001")) return Buffer.from("3\n");
+      if (command.includes("git log --format=%s")) return Buffer.from("feat: keep me\n");
+      return Buffer.from("");
+    });
+
+    const recovered = await manager.reclaimStaleActiveBranches();
+
+    expect(recovered).toBe(0);
+    expect(mockedExecSync).not.toHaveBeenCalledWith(expect.stringContaining("git branch -D \"fusion/fn-1001\""), expect.anything());
+    expect(getSelfHealingLogger().warn).toHaveBeenCalledWith(expect.stringContaining("stale-active-branch-rescue-needed FN-1001"));
+  });
+
+  it("skips task with active heartbeat run", async () => {
+    const agentStore = {
+      listActiveHeartbeatRuns: vi.fn().mockResolvedValue([{ startedAt: new Date().toISOString(), contextSnapshot: { taskId: "FN-1001" } }]),
+    } as any;
+    manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project", agentStore });
+    (store.listTasks as any).mockResolvedValueOnce([
+      { id: "FN-1001", column: "todo", checkedOutBy: null, userPaused: false, worktree: null, branch: null },
+    ]);
+    mockedExecSync.mockImplementation((command: string) => {
+      if (command.includes("git branch --list 'fusion/*'")) return Buffer.from("  fusion/fn-1001\n");
+      return Buffer.from("");
+    });
+
+    const recovered = await manager.reclaimStaleActiveBranches();
+
+    expect(recovered).toBe(0);
+    expect(mockedExecSync).not.toHaveBeenCalledWith(expect.stringContaining("git branch -D \"fusion/fn-1001\""), expect.anything());
+  });
+
+  it("skips task with usable worktree", async () => {
+    (store.listTasks as any).mockResolvedValueOnce([
+      { id: "FN-1001", column: "todo", checkedOutBy: null, userPaused: false, worktree: "/tmp/fn-1001", branch: null },
+    ]);
+    mockedIsUsableTaskWorktree.mockResolvedValueOnce(true);
+    mockedExecSync.mockImplementation((command: string) => {
+      if (command.includes("git branch --list 'fusion/*'")) return Buffer.from("  fusion/fn-1001\n");
+      return Buffer.from("");
+    });
+
+    const recovered = await manager.reclaimStaleActiveBranches();
+
+    expect(recovered).toBe(0);
+    expect(mockedExecSync).not.toHaveBeenCalledWith(expect.stringContaining("git branch -D \"fusion/fn-1001\""), expect.anything());
+  });
+
+  it("skips user-paused task", async () => {
+    (store.listTasks as any).mockResolvedValueOnce([
+      { id: "FN-1001", column: "todo", checkedOutBy: null, userPaused: true, worktree: null, branch: null },
+    ]);
+    mockedExecSync.mockImplementation((command: string) => {
+      if (command.includes("git branch --list 'fusion/*'")) return Buffer.from("  fusion/fn-1001\n");
+      return Buffer.from("");
+    });
+
+    const recovered = await manager.reclaimStaleActiveBranches();
+
+    expect(recovered).toBe(0);
+    expect(mockedExecSync).not.toHaveBeenCalledWith(expect.stringContaining("git branch -D \"fusion/fn-1001\""), expect.anything());
+  });
+});
+
 describe("SelfHealingManager no-commits-expected audit", () => {
   it("logs candidate task IDs without mutating tasks", async () => {
     const store = createMockStore();
